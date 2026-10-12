@@ -10,7 +10,7 @@
 > relayed by the orchestrator: EXEC-005's prerequisites needed to say
 > explicitly that a review/keeper session must actually be launched or
 > relaunched (not merely that a PR exists) and that an unsafe daemon `PATH`
-> is required; the EXEC-001 remediation needed validating agains
+> is required; the EXEC-001 remediation needed validating against
 > `remote_has_branch_tip`'s own SHA comparison, which it would have broken
 > had I not caught this — I found the break myself before writing the fix
 > down, by testing the exact command, and corrected it below; tracked hooks
@@ -26,7 +26,7 @@
 > EXEC-006. All open compatibility/policy decisions from revision 2 are
 > preserved unresolved, as instructed.
 >
-> Revision 4 (this one) corrects a further review pass, run agains
+> Revision 4 (this one) corrects a further review pass, run against
 > revision 2 (commit `40208ec2`) rather than revision 3, so some of its
 > findings overlap what revision 3 already fixed and some are new. It:
 > (a) corrects EXEC-005's reachability claim — a review session is never
@@ -36,7 +36,7 @@
 > plainly — "gets a review session once the user asks Ariadne for one —
 > never on its own"); (b) corrects the exact error text/exit code my
 > `--orphan` fix-verification reported, after re-testing against an
-> *actually-existing* `refs/heads/--orphan` ref rather than a non-existen
+> *actually-existing* `refs/heads/--orphan` ref rather than a non-existent
 > one, which surfaces an internal `git branch`-level failure my original
 > test did not have a ref present to trigger; (c) rebuilds the subprocess
 > inventory, which wrongly implied one wrapper covers every `git`
@@ -44,10 +44,10 @@
 > is true; (d) makes the default-case hooks/filters reproductions use
 > disposable, uniquely-named paths and an isolated `$HOME` instead of fixed
 > `/tmp/...` paths (the conditional-case reproduction already did this in
-> revision 3); (e) adds the specific evidence that Ariadne's defaul
-> permission mode (`auto`) auto-approves whatever an agent's ACP clien
+> revision 3); (e) adds the specific evidence that Ariadne's default
+> permission mode (`auto`) auto-approves whatever an agent's ACP client
 > asks for, and that a review session's entire "commit nothing, push
-> nothing" guarantee is one sentence of system-prompt tex
+> nothing" guarantee is one sentence of system-prompt text
 > (`ariadne-store/src/defaults.rs:383`), to EXEC-006; (f) checks the two
 > 2025 git advisories named by the review and adds a registry-index
 > finding (EXEC-007) the earlier revision wrongly foreclosed; and
@@ -67,7 +67,7 @@
 Can hostile repository metadata or paths cause unintended commands, file
 access, or process behavior?
 
-## Examined commi
+## Examined commit
 
 `a17283486d5fe89591edfff08832712936d73030` (branch
 `audit-repository-inputs-through-git-ahcj9j`, base `main`). The worktree was
@@ -93,7 +93,7 @@ commit.
   malicious agent *process* (e.g. constrain its shell access) once it is
   legitimately running as itself. We *are* trying to find places where
   Ariadne's own code — independent of any agent's choices — builds a
-  command, path, or process from hostile repository/forge content withou
+  command, path, or process from hostile repository/forge content without
   validating it, **including** a place where that code lets something
   *other than* the intended trusted program run in the trusted program's
   place (EXEC-005) — that is a failure of Ariadne's own launch logic, not a
@@ -128,7 +128,7 @@ here is what is actually there, verified call by call:
 **`GitManager::git` and its three direct-`Command::new` siblings provide no
 process-level containment on cancellation — corrected from the prior
 revision's unsupported claim.** The prior revision asserted these are
-"awaited synchronously; no detached child survives the call." That is no
+"awaited synchronously; no detached child survives the call." That is not
 established: none of these four call sites sets `kill_on_drop(true)` or
 wraps the call in a `tokio::time::timeout`, and per tokio's own
 documentation (<https://docs.rs/tokio/latest/tokio/process/struct.Command.html#method.kill_on_drop>),
@@ -136,14 +136,14 @@ documentation (<https://docs.rs/tokio/latest/tokio/process/struct.Command.html#m
 it is dropped" — dropping the future that owns the spawn (e.g. because an
 `axum` handler's future is itself dropped on client disconnect, or because
 a future caller wraps one of these calls in a timeout) leaves the spawned
-`git` process running, untracked, until it exits on its own. I did no
+`git` process running, untracked, until it exits on its own. I did not
 find a `tokio::time::timeout` wrapping any `gitwt.rs` call anywhere in
 `crates/ariadne-daemon/src`, and did not independently verify whether this
 codebase's `axum`/`hyper` setup actually drops a handler's future on
-client disconnect (a correct, specific claim needs that verified, no
+client disconnect (a correct, specific claim needs that verified, not
 assumed) — so the honest statement is: **these four call sites have no
 self-contained cancellation safety net, and whether anything in this
-codebase currently cancels them in practice is an open question**, no
+codebase currently cancels them in practice is an open question**, not
 "no detached child survives," and not demonstrated to let unauthorized
 work continue either — the operations here are comparatively fast,
 read-mostly git plumbing (`rev-parse`, `status`, `diff`, `merge-base`),
@@ -151,7 +151,7 @@ not long-running mutations an attacker gains by extending.
 
 **Registry-download path, traced per the review's instruction (previously
 wrongly excluded):** `download_index` (`acp_discovery.rs:266-280`) fetches
-`acp_registry_url` (defaul
+`acp_registry_url` (default
 `https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`, a
 daemon-configured constant, never repository or forge content) over
 `reqwest`'s default HTTPS client (certificate validation on, no
@@ -162,7 +162,7 @@ non-2xx response), decodes it as UTF-8, and accepts it only if
 no signature or checksum pinning beyond TLS transport security. **This is
 not a repository/forge-content vector** — nothing from a registered
 repository or a pull request reaches this URL, this client, or this
-validation — so it does not bear on the assigned question, but I traced i
+validation — so it does not bear on the assigned question, but I traced it
 rather than excluding it, per the review. What it *does* influence (which
 command *names* get searched for on `PATH` — never which file executes, see
 EXEC-POS-3/EXEC-005) remains unaffected by whether the index itself is
@@ -171,7 +171,7 @@ file genuinely present on the daemon's own `PATH`.
 
 ### Git configuration, hooks, and filters
 
-Explicitly tested, since Work item 2 asks for it and the original repor
+Explicitly tested, since Work item 2 asks for it and the original report
 only reasoned about it without evidence:
 
 **Hooks are never transferred by clone or fetch, in a clean, isolated
@@ -183,9 +183,9 @@ user's file — corrected this revision, replacing a fixed `/tmp/...` path)
 d=$(mktemp -d); export HOME="$d/home"; mkdir -p "$HOME"
 cd "$d"
 git init -q -b main evil && cd evil
-printf 'echo HOOK_RAN > "%s/hook_marker"\n' "$d" > .git/hooks/post-checkou
-chmod +x .git/hooks/post-checkou
-echo content > f.txt && git add . && git -c user.email=t@t -c user.name=t commit -q -m ini
+printf 'echo HOOK_RAN > "%s/hook_marker"\n' "$d" > .git/hooks/post-checkout
+chmod +x .git/hooks/post-checkout
+echo content > f.txt && git add . && git -c user.email=t@t -c user.name=t commit -q -m init
 cd "$d"
 git clone -q "$d/evil" victim
 test -f "$d/hook_marker" && echo BAD || echo "good: hooks are purely local"
@@ -210,7 +210,7 @@ d=$(mktemp -d); export HOME="$d/home"; mkdir -p "$HOME"
 cd "$d"
 git init -q -b main repo && cd repo
 echo "*.txt filter=evilfilter" > .gitattributes
-echo secret > data.tx
+echo secret > data.txt
 git add . && git -c user.email=t@t -c user.name=t commit -q -m "tracked attrs"
 cd "$d"
 git clone -q "$d/repo" victim2
@@ -218,7 +218,7 @@ test -f "$d/filter_marker" && echo BAD || echo "good: filter is a no-op without 
 ```
 Result: `good`. A `clean`/`smudge` filter command must be set in local
 (never-transferred) git config (`filter.<name>.clean`/`.smudge`); a
-repository's own tracked `.gitattributes` can *name* a filter but canno
+repository's own tracked `.gitattributes` can *name* a filter but cannot
 *define* one — **by default.** The next paragraph is the conditional case
 where that stops being true.
 
@@ -240,14 +240,14 @@ isolate the effect: `Repro:`
 ```sh
 d=$(mktemp -d); export HOME="$d/fake_home"; mkdir -p "$HOME"
 git config --global core.hooksPath .githooks
-git config --global filter.preconfigured.smudge
+git config --global filter.preconfigured.smudge \
   'printf "PRECONFIGURED_FILTER_RAN\n" > '"$d"'/filter_marker; cat'
 cd "$d" && git init -q -b main seed && cd seed
 mkdir -p .githooks
-printf '#!/bin/sh\nprintf "HOOK_RAN\\n" > '"$d"'/hook_marker\n' > .githooks/post-checkou
-chmod +x .githooks/post-checkou
+printf '#!/bin/sh\nprintf "HOOK_RAN\\n" > '"$d"'/hook_marker\n' > .githooks/post-checkout
+chmod +x .githooks/post-checkout
 echo "*.secret filter=preconfigured" > .gitattributes
-echo payload > data.secre
+echo payload > data.secret
 git add . && git -c user.email=t@t -c user.name=t commit -qm "tracked hook+attrs"
 cd "$d" && rm -f "$d"/hook_marker "$d"/filter_marker
 git clone -q "$d/seed" victim
@@ -265,20 +265,20 @@ Result: `hook fired: yes`, `filter fired: yes` with the preconfigured
 with the control — isolating the effect to the preexisting global config,
 not anything the repository alone supplies. **This is not a repository-
 content vector by itself** (the repository still cannot *create* the
-dangerous local prerequisite — it can only supply the payload once tha
+dangerous local prerequisite — it can only supply the payload once that
 prerequisite already exists), so it is not filed as its own EXEC finding,
 but it is a real, conditional path from "register/clone a hostile
 repository" to arbitrary local execution, gated entirely on a
 preexisting local git configuration choice. **Hardening suggestion:**
 `ariadne doctor` could cheaply warn when `core.hooksPath` is set (globally
-or in the registering user's config) to a relative path, since tha
+or in the registering user's config) to a relative path, since that
 specific, otherwise-convenient setting is what turns any future hostile
 clone's tracked content into automatic local execution.
 
 **Git's own upstream security advisories were checked against a primary
 source** (`gh api repos/git/git/security-advisories`,
 <https://github.com/git/git/security/advisories>, queried live during this
-audit) for the class most relevant to "hostile repository": clone/checkou
+audit) for the class most relevant to "hostile repository": clone/checkout
 vulnerabilities. The May 2024 batch (all published 2024-05-14) is:
 
 | CVE | Summary | Vulnerable | Patched |
@@ -295,7 +295,7 @@ each GHSA id, not paraphrased.)
 **Applicability to this codebase:** per the advisory text itself, CVE-2024-
 32002's mechanism explicitly requires `git clone --recurse-submodules` (or
 an equivalent submodule-populating step); CVE-2024-32004's advisory
-describes the vulnerable operation as cloning. `gitwt.rs` never calls `gi
+describes the vulnerable operation as cloning. `gitwt.rs` never calls `git
 clone` and `add_worktree` (`gitwt.rs:70-89`) never passes
 `--recurse-submodules` or otherwise populates submodules — the *user's own*
 initial acquisition of the checkout (before registering it with Ariadne) is
@@ -322,13 +322,13 @@ prior pass as covering only May 2024):**
 
 (Checked live via `gh api repos/git/git/security-advisories/<ghsa-id>`
 against <https://github.com/git/git/security/advisories>, same check date
-as the May 2024 batch above; ranges/versions as returned by the API, no
+as the May 2024 batch above; ranges/versions as returned by the API, not
 paraphrased.)
 
 **Applicability, assessed the same way as the May 2024 batch, including
 the negative result:** CVE-2025-48384's own advisory names its workaround
 as "avoid recursively cloning submodules in untrusted repositories" — the
-same precondition (submodule recursion on a hostile repository) tha
+same precondition (submodule recursion on a hostile repository) that
 already ruled the May 2024 batch's clone-time class out of Ariadne's own
 invocations, for the same reason: `gitwt.rs` never recurses submodules.
 **Not applicable to Ariadne's own code**, by the same negative result.
@@ -341,16 +341,16 @@ checkout mechanics. `GitManager::git` (`gitwt.rs:42-63`) sets
 `GIT_TERMINAL_PROMPT=0` for a `push` (to stop an *interactive* credential
 prompt) but does not disable or validate anything about whichever
 credential helper the host's git configuration already names, and
-`fetch_head_of`'s `from` argument (EXEC-002: forge-sourced, no
+`fetch_head_of`'s `from` argument (EXEC-002: forge-sourced, not
 independently validated at this sink) is exactly the kind of
 attacker-reachable URL this class of advisory is about. **This is a real,
-plausible cross-reference to EXEC-002, not a new independent finding**: i
+plausible cross-reference to EXEC-002, not a new independent finding**: it
 does not change EXEC-002's own evidence or severity, but it gives a
 concrete, named mechanism (rather than only "unvalidated URL, unclear
-impact") for what an unvalidated `from` could be used for *if* the hos
+impact") for what an unvalidated `from` could be used for *if* the host
 also runs a vulnerable git version and a CRLF-confusable credential
 helper — both conditions outside what this pass could check (no
-credential helper was configured in any disposable reproduction; I did no
+credential helper was configured in any disposable reproduction; I did not
 determine which credential helpers are in common use among Ariadne
 hosts). Recorded as a sharpened, better-cited version of EXEC-002's
 existing "contingent on FORGE/host configuration" framing, not a severity
@@ -379,7 +379,7 @@ only where I independently verified them against source or reproduced them
 myself; one of its framings (no discovery-to-launch TOCTOU window) was
 **wrong** and is corrected by EXEC-005 below — the sub-agent read
 `command_of`'s *doc comment* ("what the launcher runs... by its stable id")
-and the *existence* of the absolute `program` field, but did not trace tha
+and the *existence* of the absolute `program` field, but did not trace that
 `command_of` itself (the one function `launcher.rs` actually calls) returns
 the bare `command`, not `program`. This revision was caught by the human
 review, not by me independently before submission — recorded here so the
@@ -410,7 +410,7 @@ gap in my own verification process is visible, not papered over.
   not (`Path::starts_with` is component-wise).
 - **New this revision:** whether the actual program `AcpRuntime::launch`
   spawns can be substituted by repository content when the daemon's
-  ambient `PATH` contains a relative entry — confirmed yes, with a direc
+  ambient `PATH` contains a relative entry — confirmed yes, with a direct
   `std::process::Command` reproduction of the exact primitive `acp.rs`
   uses (EXEC-005).
 - **New this revision:** whether git preserves a tracked file's executable
@@ -419,7 +419,7 @@ gap in my own verification process is visible, not papered over.
 - **New this revision:** hooks-via-clone and gitattributes-filter-via-clone
   by default — both rejected — and, separately, confirmed *live* when a
   relative `core.hooksPath`/a `filter.<name>.smudge` is already configured
-  locally beforehand, with a clean-`HOME` control isolating the effec
+  locally beforehand, with a clean-`HOME` control isolating the effect
   (see "Git configuration, hooks, and filters").
 - **New this revision:** whether a detached review worktree enforces
   "read-only" at the filesystem/git level independent of agent cooperation
@@ -455,7 +455,7 @@ gap in my own verification process is visible, not papered over.
   specifically) were run on macOS/Darwin against POSIX `exec`-family
   semantics. Windows' `CreateProcess` search order for a bare executable
   name includes the calling process's own directory and, depending on a
-  registry-level safe-search setting, the current directory, *independen
+  registry-level safe-search setting, the current directory, *independent
   of `PATH` content* — meaning the Windows-side risk profile for EXEC-005
   may differ (plausibly be broader, since it might not even need a
   crafted `PATH`) but I have no Windows environment to confirm this.
@@ -465,7 +465,7 @@ gap in my own verification process is visible, not papered over.
   skill-path join the sub-agent traced, and **`acp.rs` lines ~1600–2330**
   beyond a `Command::new`/`join(` grep sweep.
 - **The ACP registry index's own download/integrity path** — traced this
-  revision (see above); concluded it is not a repository/forge-conten
+  revision (see above); concluded it is not a repository/forge-content
   vector, so no finding filed, but no longer silently excluded.
 
 ## Additional acceptance criterion
@@ -475,9 +475,9 @@ the *program name* a session is pinned to run is never chosen by repository
 or forge content — it always comes from `AgentRegistry::command_of`, fed by
 either the vendored/downloaded ACP index filtered against the daemon's own
 `PATH` (`acp_index.rs`), or the daemon's own `[[acp_agents]]`
-configuration. Repository/forge content never supplies argv\[0\]. **Wha
+configuration. Repository/forge content never supplies argv\[0\]. **What
 EXEC-005 shows is a different, narrower failure**: even though the *name*
-Ariadne decides to run is never repository-controlled, the *file tha
+Ariadne decides to run is never repository-controlled, the *file that
 actually executes under that name* can be repository-controlled, because
 the launch step re-resolves the bare name against `PATH` a second time,
 in a cwd that repository content populates, without the filtering
@@ -503,7 +503,7 @@ it started never runs.
   returns `entry.command.clone()` — the bare name; `program_of`, which
   would return the absolute `entry.program`, is `fn`-private and used only
   by `acp_discovery.rs:451` for probing, never by the launcher)
-- `crates/ariadne-daemon/src/launcher.rs:319,328-329` (`launch`: `le
+- `crates/ariadne-daemon/src/launcher.rs:319,328-329` (`launch`: `let
   command = self.registry.command_of(agent_id)...; let program =
   command.next()...` — `program` here is `entry.command[0]`, the bare
   name)
@@ -524,27 +524,27 @@ the corrected reachability statement below).
 
 **Reachability, corrected:** the prior revision claimed this is "reachable
 by anyone who can open a PR against a repository Ariadne is configured to
-review, with no local access to the daemon's host at all." **Tha
+review, with no local access to the daemon's host at all." **That
 overstates it and is corrected here.** There is no repository-level
 "configured for auto-review" mode that reviews every incoming PR. Per
 `forge/poll.rs::wants_session` (the one function that decides whether a
 request gets a review session at all):
-```rus
+```rust
 pub(crate) fn wants_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
     let asked = match row.role.as_str() {
         "reviewer" => row.review_asked && row.review_requested && row.review_model.is_some(),
         _ => row.review_asked && row.review_model.is_some(),
     };
-    asked && row.state == "open" && integration.enabled && !row.draf
+    asked && row.state == "open" && integration.enabled && !row.draft
 }
 ```
 every request needs `review_asked`/`review_model` (and, for a review the
 user was asked for, `review_requested`) set on **that specific request's
 own row** before anything happens — and spec 029 states the policy this
 implements in one sentence: "gets a review session once the user asks
-Ariadne for one — never on its own." The correct reachability statemen
+Ariadne for one — never on its own." The correct reachability statement
 is: **the PR author does not control whether or when a review session
-starts.** The user does, by explicitly asking Ariadne to review tha
+starts.** The user does, by explicitly asking Ariadne to review that
 specific request — an entirely ordinary action (reviewing external
 contributions is a primary reason this feature exists), but a required,
 human-initiated one, not a standing "auto-review" exposure. Once the user
@@ -560,11 +560,11 @@ below).
 
 **Prerequisites, stated explicitly and in full (all three must hold):**
 1. **A session for the affected seat must actually be launched or
-   relaunched**, and, for a review/keeper seat specifically, the reques
+   relaunched**, and, for a review/keeper seat specifically, the request
    must already have been asked for by name (above) — this is not automatic
-   merely because a hostile repository is registered or a pull reques
+   merely because a hostile repository is registered or a pull request
    exists. For a task/column-agent session this means
-   `start_step_agent`/`agent_switch` (`launcher.rs`) actually spawning tha
+   `start_step_agent`/`agent_switch` (`launcher.rs`) actually spawning that
    task's agent in its worktree. For a review session it means
    `spawn_pull_request_session`/`resume_pull_request_session`
    (`launcher.rs:1648-1675`, and the resume path at `:1713-1741`) actually
@@ -577,19 +577,19 @@ below).
    `Launcher::launch` (`launcher.rs:285-347`), which is also where the
    repository's `permission_mode` is resolved for every one of them (see
    EXEC-006) — the convergence is why this one fix point covers every seat.
-2. **The daemon process's own ambient `PATH` environment variable mus
-   contain both (a) an absolute entry resolving to the real agen
+2. **The daemon process's own ambient `PATH` environment variable must
+   contain both (a) an absolute entry resolving to the real agent
    binary — needed for discovery to register the agent at all — and (b) a
    relative entry** (an empty entry, `.`, or any relative directory)
    **positioned *before* that absolute entry.** Corrected this revision:
    the prior wording additionally offered "or must simply lack an absolute
-   entry for that name at all" as an alternative — that branch is no
+   entry for that name at all" as an alternative — that branch is not
    coherent and is withdrawn unless a separate, reachable configuration for
    it is found. `searchable()` (`acp_index.rs:65-76`) filters relative
    entries out *before* discovery's own `which()` call, so if the daemon's
    ambient `PATH` has no absolute entry for the agent's name at all,
    discovery itself finds nothing and the agent is never registered —
-   `command_of` then returns `None` and `launch()` fails outrigh
+   `command_of` then returns `None` and `launch()` fails outright
    ("the ACP registry holds no agent `{agent_id}`"), never reaching the
    vulnerable spawn. Both (a) and (b) must hold together.
 3. **The repository or pull-request content reaching that cwd must carry
@@ -597,7 +597,7 @@ below).
    command name** (e.g. `claude`, `codex`), with its executable bit set —
    confirmed to survive an ordinary clone (below).
 
-Prerequisite 2 is outside repository/forge control entirely and is no
+Prerequisite 2 is outside repository/forge control entirely and is not
 guaranteed to hold on any given deployment (see Severity). Prerequisite 3
 is squarely inside this audit's threat model ("hostile repository
 content"). Prerequisite 1 is an ordinary operational event for a
@@ -609,7 +609,7 @@ narrower bar than "anyone can open a PR," corrected above.
 **Reproduction (exact primitive, independently compiled and run — this is
 not a shell-level analogy, it is the same `std::process::Command` API
 `tokio::process::Command` wraps on Unix):**
-```rus
+```rust
 // repro.rs
 use std::process::Command;
 fn main() {
@@ -652,7 +652,7 @@ Result: confirmed.
 **What this is not:** this is not the real `claude`/`codex`/`gemini`/etc.
 binary behaving badly — it never runs. It is not a question of whether the
 *agent* is trustworthy. It is Ariadne's own launch code running a
-different, repository-supplied program under the name and in the role i
+different, repository-supplied program under the name and in the role it
 believes belongs to the agent it discovered, probed, and validated minutes
 or days earlier. A sufficiently capable repository-supplied stand-in could
 even proxy to the real agent afterward (having its own absolute-path
@@ -668,7 +668,7 @@ exactly this audit's threat model. For a *pull-request review* session,
 the repository-content half of the prerequisite is satisfiable by **the
 author of whichever specific request the user has asked Ariadne to
 review** — the PR author does not need any access to the daemon's host,
-account, or configuration, but, corrected this revision, they also do no
+account, or configuration, but, corrected this revision, they also do not
 get to pick which of their PRs gets reviewed or when; the user's own
 explicit "review this one" action is the thing that exposes that PR's
 content to the worktree in the first place (see the corrected reachability
@@ -688,7 +688,7 @@ vs `command`) already cited by file and line.
 **What I could not fully confirm:** I did not run this against a live
 `ariadned` daemon and a real ACP agent end-to-end (that would require
 either deliberately misconfiguring a disposable daemon's `PATH` or
-reproducing far more of the launch pipeline than the audit's time budge
+reproducing far more of the launch pipeline than the audit's time budget
 allowed) — the reproduction isolates the one primitive that matters
 (`Command::new(bare_name).current_dir(repo_content)` under the daemon's own
 process), not a full daemon session. I also did not determine how common a
@@ -700,7 +700,7 @@ need telemetry or a user survey this audit cannot gather.
 agent), spawn the already-resolved, already-containment-checked
 `entry.program` as the program, with `entry.command[1..]` (its own
 declared args, e.g. `acp` for `goose acp`) plus the agent's configured
-flags as arguments — not `entry.command[0]`. A `command_of`-equivalen
+flags as arguments — not `entry.command[0]`. A `command_of`-equivalent
 accessor should return `(PathBuf, Vec<String>)` (program, args) rather
 than a flat `Vec<String>` the launcher has to split back apart. For a
 `source == AcpAgentSource::Config` entry (the user's own `[[acp_agents]]`),
@@ -749,7 +749,8 @@ every payload tried.
 | Sink (`gitwt.rs`) | Shape | Crafted payload tried | Result | Impact class |
 |---|---|---|---|---|
 | `add_worktree` (`:70-89`), `base` at line 82 | `worktree add -b <branch> <wt> <base>` | `--output=<path>` | `error: opción … desconocida`, exit 128 | fails safely |
-| same | same | **`--orphan`** | **succeeds, exit 0** — creates `<branch>` as an *unborn* branch with no commits, no resolvable `HEAD`, none of the base branch's tracked files | **silent semantic corruption**: the task worktree is created but is not based on the repository's history at all |
+| same | same | **`--orphan`** (with `--end-of-options`, against a real `--orphan` ref) | fails, exit 255, from an *internal* `git branch`-level reparse (not the outer marker) — see the corrected text below the table | fails safely, for this one payload |
+| same | same | **`--force`** (with `--end-of-options`, against a real `--force` ref pointing at an earlier commit, `HEAD` since moved on) | **succeeds, exit 0** — creates `<branch>` from the repository's *current* `HEAD`, not the real `--force` ref's actual target | **silently wrong base**, not merely unborn: `--end-of-options` does **not** close this sink — see the corrected remediation below |
 | `delete_branch` (`:341-344`) | `branch -D <branch>` | `--output=<path>`, `-fother` (attempt to force-delete an unrelated branch `other` via bundled short flags) | both: `error: switch desconocido`/`opción … desconocida`, exit 129; `other` was **not** deleted | fails safely |
 | `remote_has_branch_tip`/`remote_branch_tip` (`:350-384`), first call `rev-parse <branch>` | standalone, first arg | `--output=<path>` | `rev-parse` does not recognize it as an option; echoes the literal string to stdout, exit 0, **no file written** | fails safely (harmless no-match) |
 | same, second call `ls-remote --heads <remote> <branch>` | second positional, *after* `remote` | `--upload-pack=<marker command>` | confirmed via `GIT_TRACE=1`: git still invokes its normal `git-upload-pack <path>`; the marker command never runs | fails safely |
@@ -776,27 +777,38 @@ anything that writes, reads elsewhere, or changes semantics, and found
 exactly one such case. This is recorded as a residual gap, not asserted as
 complete coverage.
 
-**Severity:** Medium, revised from the prior "DoS-only" framing to
-"DoS-or-silent-worktree-corruption", still well short of file write or code
-execution. The `--orphan` case is the most concrete new piece of evidence
-and the reason I would not downgrade this below Medium.
+**Severity:** Medium-High, revised again this revision. The `--orphan`
+finding alone was "DoS-or-silent-worktree-corruption" (Medium — an obvious,
+history-less worktree, likely noticed quickly). The `--force` finding is
+worse in kind, not just degree: the worktree is created successfully, with
+real, ordinary-looking history, silently based on the repository's current
+`HEAD` instead of the branch the task was supposed to be cut from — a task
+could silently work against the wrong base with no error, no empty
+worktree, and nothing that looks obviously wrong at the point of creation.
+Still well short of file write or code execution outside the git object
+model itself, which keeps this below High rather than at it.
 
 **Confidence:** High on every result in the table (each independently
-executed, not inferred); Medium on "no sink has a worse accepted option
-than what I found", for the stated reason (not exhaustive).
+executed, not inferred, including the `--force` bypass with two distinct
+commits and a real ref pointing at the earlier one); Medium on "no sink has
+a worse accepted option than what I found" for the sinks *other than*
+`add_worktree` (not exhaustively enumerated there either, see above); the
+`add_worktree` sink itself is now fixed with a resolve-to-object-id
+approach that does not depend on enumerating git's option surface at all,
+which is deliberately a stronger claim than "no worse option exists."
 
 **Corrected remediation (the prior revision's was unsafe — see why,
 below):**
 
 The prior revision recommended inserting a bare `--` before every such
-argument. This is wrong: `--` specifically tells `git diff`/`git log`/`gi
+argument. This is wrong: `--` specifically tells `git diff`/`git log`/`git
 checkout`-family commands "everything after this is a *pathspec*, not a
 revision", which is a different meaning than "stop parsing options" and
 silently breaks the very call it was meant to protect:
 ```sh
 git diff -- 'HEAD^...task'        # exit 0, EMPTY output — WRONG, should show the real diff
 git checkout --force --detach -- 'HEAD^'
-# fatal: git checkout: --detach no toma un argumento de ruta 'HEAD^'   — breaks outrigh
+# fatal: git checkout: --detach no toma un argumento de ruta 'HEAD^'   — breaks outright
 ```
 `--end-of-options` (a distinct, newer git marker) does not carry the
 pathspec meaning and was verified, per sink, to preserve correct behavior
@@ -805,7 +817,7 @@ on a legitimate value *and* still reject a crafted one:
 git diff --end-of-options 'HEAD^...task'              # correct diff, exit 0
 git checkout --force --detach --end-of-options 'HEAD^' # correct detach, exit 0
 git diff --end-of-options '--output=/tmp/x...task'     # fatal: option must come before non-optional arguments — rejected, no file written
-git worktree add -b taskA wt --end-of-options base2    # correct worktree, real base content presen
+git worktree add -b taskA wt --end-of-options base2    # correct worktree, real base content present
 git branch -D --end-of-options base2                   # correctly deletes; a crafted value after the marker is "not found", not misparsed
 git rev-list --count --end-of-options main..taskC       # correct count (1), preserved
 ```
@@ -814,7 +826,7 @@ line is **not, by itself, evidence that `--end-of-options` stopped
 anything** — revision 2 already established that `ls-remote` treats
 whatever follows the first non-option positional (the remote) as a literal
 pattern regardless, so a successful result here does not distinguish "the
-marker worked" from "nothing needed to work." Kept as harmless, not kep
+marker worked" from "nothing needed to work." Kept as harmless, not kept
 as proof.
 
 **The `--orphan` payload needed a corrected, more exact reproduction.** My
@@ -829,7 +841,7 @@ trusted:
 ```sh
 d=$(mktemp -d); cd "$d"
 git init -q -b main repo && cd repo
-echo hello > file.txt && git add . && git -c user.email=t@t -c user.name=t commit -q -m ini
+echo hello > file.txt && git add . && git -c user.email=t@t -c user.name=t commit -q -m init
 git update-ref 'refs/heads/--orphan' HEAD      # a real branch literally named --orphan
 # the vulnerable (unfixed) call still corrupts the worktree regardless of whether --orphan is a real ref:
 git worktree add -b taskV "$d/wtV" --orphan   # exit 0, unborn branch, same as before
@@ -838,21 +850,61 @@ git worktree add -b taskF "$d/wtF" --end-of-options --orphan
 ```
 Result: `error: opción `orphan' desconocida` with a **`git branch`
 usage message** (not `git worktree add`'s), exit 255 — not the
-`rev-parse`-style "invalid reference" text my first test reported. The
-fixed call still refuses to create the worktree either way (confirmed:
-`$d/wtF` does not exist afterward), so the **security conclusion is
-unchanged** (the fix holds), but the **mechanism** is different than I
-originally wrote: `git worktree add -b <branch>` creates the new branch
-through an internal branch-creation step that re-parses the commit-ish
-argument on its own, independent of the outer command's
-`--end-of-options`, and that inner step is what actually rejects `--orphan`
-here. Recorded precisely rather than left as the less accurate firs
-result.
-`has_commit` (`gitwt.rs:250-260`) already uses `--end-of-options` and is
-the existing, in-tree precedent for this fix — the recommendation is to
-extend the same marker to every other sink in the table above, **with one
-exception, caught by validating the fix against its actual outpu
-consumer rather than assuming uniformity:**
+`rev-parse`-style "invalid reference" text my first test reported. For
+*this specific payload*, the fixed call still refuses to create the
+worktree (confirmed: `$d/wtF` does not exist afterward): `git worktree add
+-b <branch>` creates the new branch through an internal branch-creation
+step that re-parses the commit-ish argument on its own, independent of the
+outer command's `--end-of-options`, and that inner step is what actually
+rejects `--orphan` here, not the outer marker.
+
+**That inner step is also where the fix breaks down for a different
+payload, and the "security conclusion unchanged" statement above does
+not generalize — withdrawn.** The review found this directly: `--orphan`
+happens to be a flag the inner branch-creation step does *not* recognize,
+so it errors; `--force` is a flag that step *does* recognize (`git
+branch` itself has a `-f`/`--force`), so instead of erroring, the inner
+step silently consumes `--force` as a flag to itself, is left with no
+commit-ish of its own, and falls back to creating the branch from
+**whatever the repository's current `HEAD` happens to be** — which is
+not the resolved target of the real `--force` ref, and not necessarily
+the registered `repo.base_branch` the task was supposed to be cut from
+either. Reproduced with two distinct commits and a real `--force` ref
+pointing at the earlier one:
+```sh
+d=$(mktemp -d); cd "$d"; git init -q -b main repo; cd repo
+echo "commit A content" > file.txt && git add . && git -c user.email=t@t -c user.name=t commit -q -m "commit A"
+sha_a=$(git rev-parse HEAD)
+git update-ref 'refs/heads/--force' HEAD        # real branch, named --force, pointing at commit A
+echo "commit B content" > file.txt && git add . && git -c user.email=t@t -c user.name=t commit -q -m "commit B"
+sha_b=$(git rev-parse HEAD)                     # current HEAD has since moved to commit B
+git worktree add -b protected "$d/wt" --end-of-options --force
+git -C "$d/wt" rev-parse HEAD                   # compare against $sha_a and $sha_b
+```
+Result: exit 0, `$d/wt/file.txt` contains "commit B content," and
+`git -C "$d/wt" rev-parse HEAD` equals `$sha_b` — **not** `$sha_a`, the
+real `--force` ref's actual target. The fixed call succeeds silently with
+the *wrong base*, which is worse than the `--orphan` case (a visible,
+history-less worktree) because nothing here looks obviously broken: the
+worktree has real history, just not the history the registered repository
+and task branch were supposed to be cut from. **`--end-of-options` is
+therefore not a safe, uniform fix for `add_worktree`'s `base` argument —
+withdrawn as the recommendation for that one sink; see the corrected
+remediation below, which replaces it with a resolve-to-an-object-id
+approach that does not depend on any subcommand's internal reparsing
+being safe.** `delete_branch`'s `--end-of-options` fix is unaffected by
+this (retested with a real `--force` branch present: `git branch -D
+--end-of-options --force` correctly deletes only that branch, because
+`branch -D` does not have the nested branch-creation step `worktree add
+-b` does); the `diff`/`committed_clean`/`rev-parse`/`ls-remote` fixes
+are unaffected for the same reason — only `add_worktree`'s internal
+branch-creation call has this specific failure mode, and the correction
+below is scoped to it.
+
+`has_commit` (`gitwt.rs:250-260`) already uses `--end-of-options` and
+remains the correct, verified pattern for the sinks in the table above
+*other than* `add_worktree`'s `base` argument, which needs the different
+treatment just described.
 
 `remote_has_branch_tip`/`remote_branch_tip`'s *first* call
 (`rev-parse <branch>`, line 356/376) is **not** safe to fix with a bare
@@ -883,21 +935,55 @@ git rev-parse --verify --quiet --end-of-options "--output=/tmp/poc_rp.txt"
 confirmed to reproduce the plain SHA exactly (`$real == $out`) on a
 legitimate branch and to still reject the crafted payload. The *second*
 call in the same two functions (`ls-remote --heads <remote> <branch>`) was
-already shown safe without any fix in revision 2 (args after the firs
+already shown safe without any fix in revision 2 (args after the first
 non-option positional are literal patterns here); adding
 `--end-of-options` there is harmless but not required.
 
-**Regression criterion:** for each guarded sink, (a) a same-shaped,
-non-malicious branch/ref name of equal or greater length continues to
-produce the identical observable result as before the fix (the specific
-commands and expected outputs above) — for `remote_has_branch_tip`'s
-`rev-parse` call specifically, the fixed call's output must be
-byte-identical to plain `git rev-parse <branch>`'s output on the same
-branch, not merely "non-empty" — and (b) a repository whose relevan
-branch/ref is named `--orphan`/`--output=<path>`/`--upload-pack=<cmd>`/
-`-fother` (one test per sink) is observed to fail with a clear git error
-rather than succeeding with different semantics or writing to any path
-outside the intended target.
+**Corrected remediation for `add_worktree`'s `base` argument specifically
+(the sink the `--force` bypass affects):** do not pass the raw branch-name
+string to `git worktree add` at all, under any marker. Resolve it to a
+verified, fully-qualified object id *first*, exactly the way the fix for
+`remote_has_branch_tip` already does, then pass only that resolved id
+downstream:
+```sh
+resolved=$(git rev-parse --verify --quiet --end-of-options "refs/heads/$base")
+# resolved is empty + non-zero exit if $base does not name a real branch —
+# treat that the same as today's existing branch_exists() check already does
+git worktree add -b "$branch" "$wt" "$resolved"
+```
+Verified this closes the `--force` bypass precisely: resolving
+`refs/heads/--force` through `rev-parse --verify --quiet --end-of-options`
+yields `$sha_a` (the real target), and `git worktree add -b protected "$wt"
+"$sha_a"` then correctly creates the worktree at commit A's content — not
+B's, and not an `--orphan`-style unborn branch either, since a 40-hex
+object id can never be mistaken for a flag by any internal git parser,
+nested or not. This is a strictly stronger fix than a parser marker:
+it does not depend on knowing, for every current and future git version,
+which flags every internal step downstream of `worktree add -b` does or
+does not recognize.
+
+**Regression criterion, revised:** for each guarded sink **other than**
+`add_worktree`'s `base` argument, (a) a same-shaped, non-malicious
+branch/ref name of equal or greater length continues to produce the
+identical observable result as before the fix (the specific commands and
+expected outputs above) — for `remote_has_branch_tip`'s `rev-parse` call
+specifically, the fixed call's output must be byte-identical to plain
+`git rev-parse <branch>`'s output on the same branch, not merely
+"non-empty" — and (b) a repository whose relevant branch/ref is named
+`--orphan`/`--output=<path>`/`--upload-pack=<cmd>`/`-fother` (one test per
+sink) is observed to fail with a clear git error rather than succeeding
+with different semantics or writing to any path outside the intended
+target. For `add_worktree`'s `base` specifically: (c) resolving a real
+branch named `--force` or `--orphan` through the recommended
+`rev-parse --verify --quiet --end-of-options refs/heads/<name>` step
+yields that branch's *actual* target object id, verified against an
+independently-captured `git rev-parse <name>` taken before any other
+commit moves `HEAD`, and (d) the resulting worktree's `HEAD`, content, and
+first-parent history match that resolved id — not the repository's
+current `HEAD` at call time, and not an unborn/orphan state — for both a
+`--force`-named and an `--orphan`-named real branch, each tested with the
+registered repository's actual `HEAD` deliberately pointed somewhere else
+at call time, exactly as the regression reproduction above does.
 
 ---
 
@@ -906,7 +992,7 @@ outside the intended target.
 
 **Affected files/lines:** `gitwt.rs:94-105` (`add_detached_worktree`) and
 `gitwt.rs:135-140` (`checkout_detached`) — both plain `git worktree
-add`/`checkout` calls; neither sets any filesystem permission, moun
+add`/`checkout` calls; neither sets any filesystem permission, mount
 option, or git-level restriction. `launcher.rs:285-347` (`launch`) is
 where every session's `permission_mode` (`auto`/`ask`/`learn`/`ai`) is
 resolved from the repository row and threaded into `AcpLaunch`, for every
@@ -915,7 +1001,7 @@ is the actual spawn (shared with EXEC-005). `acp.rs:2052-2270` is the
 `session/request_permission` handler that `auto`/`ask`/`learn`/`ai`
 actually govern.
 
-**What this finding is, precisely:** `checkout_detached`'s own doc commen
+**What this finding is, precisely:** `checkout_detached`'s own doc comment
 (`gitwt.rs`) calls the review worktree's tree "read-only by contract" —
 language that describes an *intended convention* (the review session is
 briefed not to commit) rather than a technical restriction. The task asks
@@ -930,31 +1016,53 @@ daemon answers a `session/request_permission` call, with real effects
 consulting the AI permission model) and are threaded into every launch
 uniformly via `launcher.rs:285-347`. This is not a hollow control.
 
-**The repository's *default* mode, specifically, provides none of tha
-friction.** `auto` (the default for every repository until the user
-changes it, per spec 002) resolves every `session/request_permission` call
-through `approved_option` (`acp.rs:3183-3199`):
-```rus
+**The repository's *default* mode, specifically, provides less friction
+than `ask`/`learn`/`ai` — corrected this revision to state precisely what
+it does, not "unconditionally yes."** `auto` (the default for every
+repository until the user changes it, per spec 002) resolves every
+`session/request_permission` call through `approved_option`
+(`acp.rs:3183-3199`), whose actual behavior is narrower than "answer every
+request yes":
+```rust
 fn approved_option(params: &Value) -> Option<String> {
-    // ...finds the option the AGENT ITSELF labeled "allow...",
-    // falling back to simply the first option offered if none is labeled that way
+    let options = params.get("options").and_then(Value::as_array)?;
+    options
+        .iter()
+        .find(|option| option.get("kind").and_then(Value::as_str)
+            .is_some_and(|kind| kind.starts_with("allow")))
+        .and_then(option_id)
+        .or_else(|| options.first().and_then(option_id))   // falls back to the FIRST option, not necessarily an "allow" one
 }
 ```
 and the dispatch at `acp.rs:2159-2161` routes to it on exactly this path:
-`None => (approved_option(params), "auto", None)`. In plain terms: under
-the default mode, *every* permission request the agent chooses to submi
-is automatically answered "yes," picking whichever option the agent itself
-tagged as the allowing one. Combined with the point above — that anything
-the agent does *without* submitting a request is never seen by Ariadne a
-all — the default configuration draws no practical distinction between
-"the agent asked and was allowed" and "the agent didn't ask." A user who
-wants the friction `ask`/`learn`/`ai` provide has to choose one of those
-explicitly.
+`None => (approved_option(params), "auto", None)`. **Precisely stated:**
+`auto` picks the option the agent itself labeled with a `kind` starting
+"allow", and *if the agent did not label any option that way*, falls back
+to blindly taking whichever option is *first* in the list the agent
+provided — trusting the agent's own ordering, not independently verifying
+the first option is actually a safe one to pick. If the agent's `options`
+array is empty, `approved_option` returns `None`, and the dispatch's
+`selected` is `None`; downstream (`acp.rs:2238-2240`), that maps to
+`{"outcome": "cancelled"}`, **not** to silent approval — confirmed by
+reading the exact mapping (`selected.as_ref().map_or_else(|| json!({"outcome":
+"cancelled"}), |option_id| json!({"outcome": "selected", "optionId": option_id}))`).
+So the accurate claim is: **`auto` answers a permission request using
+whatever shape of options the agent itself offers, preferring one the
+agent labeled "allow" and otherwise trusting the agent's own list order,
+and cancels outright if the agent offers nothing to choose from** — not
+"every request is unconditionally approved." Combined with the point
+below — that anything the agent does *without* submitting a request is
+never seen by Ariadne at all — the practical effect is still that a
+well-behaved ACP agent's own conventional "offer an allow option first"
+pattern sails through with no additional friction under `auto`, and
+anything the agent does through its own native tools (never asking at
+all) is outside this mechanism regardless of mode. A user who wants the
+friction `ask`/`learn`/`ai` add has to choose one of those explicitly.
 
 **The entire "commit nothing, push nothing" guarantee for a review session
 is one sentence of prompt text, confirmed by reading it:**
 `ariadne-store/src/defaults.rs:383` (`PULL_REQUEST_REVIEW_SYSTEM_PROMPT`):
-> "Work only in your worktree, detached at the head of the request. Commi
+> "Work only in your worktree, detached at the head of the request. Commit
 > nothing and push nothing."
 This is the entirety of the enforcement mechanism for that guarantee —
 natural-language instruction text, interpreted by the agent, with nothing
@@ -1006,7 +1114,7 @@ other injected instruction. Corrected this revision: the agreed scope does
 controlled service stand-ins, and only excludes *requiring containment of
 a deliberately malicious installed agent process*. The honest statement is
 narrower than "out of scope": I did not build a live daemon plus a
-stand-in agent to drive this end to end within this pass's time, not tha
+stand-in agent to drive this end to end within this pass's time, not that
 doing so would have been disallowed. No comment-driven commit or push is
 demonstrated here. A real, damaging push additionally needs real
 credentials and authorization the daemon's git identity would have to
@@ -1016,7 +1124,7 @@ agent-specific restrictions (e.g. a given adapter's own sandbox mode,
 approval settings, or read-only flag) were not measured here and may
 independently narrow what a specific installed agent would actually do in
 practice — "external agent configuration can still restrict execution,"
-and this finding does not contradict that; it only establishes tha
+and this finding does not contradict that; it only establishes that
 **Ariadne's own code** supplies no such restriction independent of the
 agent's configuration and cooperation.
 
@@ -1033,20 +1141,29 @@ severity *beyond* "the layer provides no independent technical
 restriction," since what would raise it — a real agent, under realistic
 conditions, actually doing this — was not built in this pass.
 
-**Recommendation:** document, in the user-facing manual (`docs/`), tha
+**Recommendation:** document, in the user-facing manual (`docs/`), that
 "read-only" for a review worktree is Ariadne's own convention plus the
-permission-mode system's coverage of whatever an agent chooses to submi
+permission-mode system's coverage of whatever an agent chooses to submit
 through it — not a filesystem-level guarantee — so a user's trust decision
-about which repositories to let Ariadne auto-review is made with accurate
+about which repositories to let Ariadne review is made with accurate
 information. No code change is proposed here: this is a documentation gap
 about an existing, deliberate design (ACP's `fs`/`terminal` capabilities
 are deliberately not implemented, matching EXEC-POS-4), not a defect to
-patch.
+patch. *Acceptance criterion:* the manual page describing review sessions
+states explicitly that (a) "read-only" is a prompt-level instruction the
+reviewer agent is briefed with, not a technical restriction on its
+process, (b) the `auto`/`ask`/`learn`/`ai` permission modes govern only
+actions an agent's ACP client submits as a `session/request_permission`
+call, and (c) `auto` specifically picks an agent-labeled "allow" option or
+else the first option offered, rather than withholding approval by
+default — verifiable by an independent reader comparing the documented
+text against this finding's source citations without needing to run
+anything.
 
 **Compatibility decision for the user:** whether Ariadne should ever
-implement `fs`/`terminal` ACP methods specifically to *gain* enforcemen
+implement `fs`/`terminal` ACP methods specifically to *gain* enforcement
 ability over what a review session does (trading "the agent uses its own
-tools freely" for "the daemon mediates and can refuse") is a produc
+tools freely" for "the daemon mediates and can refuse") is a product
 direction question, routed to the orchestrator, not decided here.
 
 ---
@@ -1057,61 +1174,114 @@ Five specific areas the task's Work items name, with concrete source
 evidence for each rather than left to the inventory table's general
 claims:
 
-**Cleanup destinations.** `Launcher::cleanup_task`
-(`launcher.rs:1317-1403`) removes a task's worktree with
-`self.git.remove_worktree(&repo_path, &wt)` only when the path recorded on
-the task row (`task.worktree_path`) `.exists()` — never a path derived from
-repository content, always the internally-generated worktree path
+**Cleanup destinations, corrected to cover every removal site, not only
+the task-level one.** `Launcher::cleanup_task` (`launcher.rs:1317-1403`)
+removes **two** kinds of path, not one: it iterates every session of the
+task and removes `session.worktree_path` where that session is not
+user-resumed (`launcher.rs:1361-1378`), *and* separately removes the
+task's own `task.worktree_path` (`launcher.rs:1379-1385`). Both are
+internally-generated worktree paths
 (`cfg.worktree_root.join(tail(goal_id)).join(...)`; `tail()`
 (`launcher.rs:2106-2107`) just takes the last 8 characters of a ULID
 verbatim — safe not because `tail()` filters anything itself, but because
-`goal_id`/`task.id` are minted internally as ULIDs, whose own character se
-(Crockford base32) excludes any path-traversal-meaningful character; no
-attacker-influenceable either way). Branch deletion is similarly gated: i
-only
-runs when `task.status() == TaskStatus::Finished`, `task.branch !=
-repo.base_branch` (never deletes the branch the repository itself is on),
-and `self.git.branch_exists(...)` confirms it first. `prune_worktrees` is
-then called unconditionally, which only prunes git's own bookkeeping for
-worktrees already gone from disk — no new destination is introduced.
-Cleanup is documented as idempotent and the code reads that way: every
-step either checks the thing it is about to touch still needs touching, or
-tolerates it already being gone (`.ok()` on the removal calls).
+`goal_id`/`task.id` are minted internally as ULIDs, whose own character set
+(Crockford base32) excludes any path-traversal-meaningful character), never
+a path derived from repository content. Branch deletion is similarly
+gated: it only runs when `task.status() == TaskStatus::Finished`,
+`task.branch != repo.base_branch` (never deletes the branch the repository
+itself is on), and `self.git.branch_exists(...)` confirms it first.
+`prune_worktrees` is then called unconditionally, which only prunes git's
+own bookkeeping for worktrees already gone from disk — no new destination
+is introduced.
 
-**Symlink containment:** already covered in full as EXEC-POS-6 — the
-skills-folder symlink's target is always the daemon's own configured path,
-never repository content, and its teardown checks `is_symlink()` before
-removing rather than following it.
+A **separate** removal path exists for pull-request work:
+`end_seated_pull_request_work` (`launcher.rs:1955-2029`) collects *every*
+live session's `worktree_path` for that request **plus** a generated
+fallback (`keeper_worktree_path`/`pull_request_worktree_path`, built the
+same internally-derived way as the task case), and applies its own,
+distinct guards before removing each: a keeper's worktree is kept on disk
+(not removed) if it is not `git`-clean or its branch is not judged safe to
+discard (`keeper_branch_is_safe_to_discard`), logged as "holds work the
+request's head lacks." This is a different function with different
+guards from `cleanup_task`, not a variant of it — both are destinations,
+both are internally-generated paths, and both were traced for this
+revision rather than only the first one.
+
+Cleanup is documented as idempotent and the code reads that way for both
+paths: every step either checks the thing it is about to touch still
+needs touching, or tolerates it already being gone (`.ok()` on the removal
+calls, or the explicit "leave it on disk" branch above).
+
+**Symlink containment — scope narrowed, corrected.** EXEC-POS-6 establishes
+that the *skills-folder* symlink specifically is safe: its target is
+always the daemon's own configured path, never repository content, and its
+teardown checks `is_symlink()` before removing rather than following it.
+**This does not, by itself, establish that worktree roots, their parent
+directories, or other session paths are contained against symlink
+tricks** — that is a different, broader claim this pass did not check. No
+evidence of a problem was found in the worktree-removal paths above either
+(both operate on paths the daemon itself generated, never on a
+caller-supplied or repository-supplied path), but "not found" here means
+"not specifically tested for symlink substitution," which is recorded as
+an explicit gap rather than implied coverage.
 
 **Repository identity changes between validation and execution:**
 already covered as EXEC-003 (the one place a session's `cwd` can resolve
 somewhere other than its own task's worktree) and the `Path::starts_with`
-check at `launcher.rs:300-306` (confirmed component-wise, no
+check at `launcher.rs:300-306` (confirmed component-wise, not
 string-prefix, ruling out a sibling-directory confusion). No additional
 identity-switch path was found beyond those two in this pass.
 
-**Switches and retries.** `switch_session` (`launcher.rs:987-1170`) kills
-and *waits for* the old agent (`self.acp.kill_and_wait(&old.id).await`)
-before checking `assert_no_live_session` and starting anything new — the
-old process is confirmed gone, not merely asked to stop, before the guard
-against double-staffing a seat runs. `assert_no_live_session`
+**Switches and retries, scope corrected.** `switch_session`
+(`launcher.rs:987-1170`) has **two** branches, and the prior revision's
+"kills and waits before starting anything new" claim described only one
+of them. When the switch stays on the **same underlying agent program**
+(`agent_of(old.model) == agent_of(model)`, e.g. changing only the model
+pin within the same CLI) — `launcher.rs:1009-1050` — the function calls
+`self.acp.switch_pin(...)` (an in-process instruction to the agent that is
+*already running*, not a kill) and returns without ever calling
+`kill_and_wait`; no process is killed on this path because none needs to
+be — the same process continues under a new pin. Only on the **other**
+branch — switching to a genuinely different agent program
+(`launcher.rs:1056` onward) — does the function call
+`self.acp.kill_and_wait(&old.id).await` before checking
+`assert_no_live_session` and starting anything new, confirming the old
+process is gone before the double-staffing guard runs. The
+"kill-and-wait-before-starting" guarantee therefore applies to the
+cross-agent switch only, not universally. `assert_no_live_session`
 (`launcher.rs:66-95`) itself checks the store for a live session *and*
 calls `self.session_process_alive(&s)` (which asks the ACP runtime whether
 it is actually still running, not just what the database row says) before
-refusing a second spawn — a crashed-but-not-yet-marked-exited row canno
+refusing a second spawn — a crashed-but-not-yet-marked-exited row cannot
 block a legitimate retry. A `switch_session` call is further guarded
 against being issued twice against the same old session by
 `self.store.switched_successor(&old.id)` returning an error if one already
-exists, with the prior revision's note that two racing switches are caugh
+exists, with the prior revision's note that two racing switches are caught
 by a unique store index rather than this check alone.
 
-**Cancellation.** `kill_session` (`launcher.rs:1269-1283`) calls
-`self.acp.kill_gated(&session.id)`, marks the row `Exited` only while the
-session `.status().is_live()`, and spawns a background task that awaits
-the reap (`reaped.await`) before recording the run's end — so the
-session's own bookkeeping cannot race ahead of the process actually
-exiting. This is real, verified process-lifecycle hygiene. It is a
-**separate** mechanism from the `GitManager::git`/direct-`Command::new`
+**Cancellation, corrected — the actual guarantee is a launch gate, not
+"bookkeeping cannot precede exit."** `kill_session`
+(`launcher.rs:1269-1283`) calls `self.acp.kill_gated(&session.id)`, which
+immediately marks the row `Exited` (while the session `.status().is_live()`
+holds), **before** the process has necessarily finished exiting —
+`kill_session` itself returns as soon as the background task is spawned,
+not after `reaped` resolves. The prior revision's claim that "the session's
+own bookkeeping cannot race ahead of the process actually exiting" is
+**wrong as stated and withdrawn**: the status row *does* change to
+`Exited` ahead of the actual reap. What `kill_gated` (`acp.rs:1099-1119`)
+actually provides is a `LaunchGate`: a token recorded against the session
+id that a **subsequent launch of that same session** waits on before
+starting (per `kill_session`'s own doc comment: "the session's next
+launch waits until the fact is written, so a resume neither takes the
+killed run's fact away nor adds its own turns and tokens to it") — the
+real, verified guarantee is "a new process cannot start on this session
+until the old one's reap and stats-recording have completed," not "the
+status field cannot update early." I did not find or exercise a case where
+this distinction (early status update, gated relaunch) itself lets
+unauthorized work survive a cancellation — recorded as a corrected
+description of the mechanism, not a reported exploit.
+
+This is a **separate** mechanism from the `GitManager::git`/direct-`Command::new`
 `git` subprocesses discussed in the corrected subprocess inventory above,
 which have no equivalent `kill_on_drop`/timeout of their own — cancellation
 safety for the *agent* process and for a bare `git` call are not the same
@@ -1147,7 +1317,7 @@ with an allow-list computed nearby that it does not actually enforce.
 **Rejected hypothesis, explicitly retested this revision:** `ext::` as an
 RCE vector through this sink. `Repro:` `git fetch 'ext::sh -c "touch
 <marker>"' <refspec>` against a disposable local repo →
-`fatal: transporte 'ext' no permitido`. Rejected for this git's defaul
+`fatal: transporte 'ext' no permitido`. Rejected for this git's default
 configuration; `GitManager::git` sets no `GIT_ALLOW_PROTOCOL` override, so
 this rejection comes entirely from git's own built-in default, not from
 anything Ariadne does — meaning it is not a control Ariadne can claim
@@ -1170,7 +1340,7 @@ mean.
    repository configured with a `from` value using an explicitly
    disallowed scheme (e.g. `ext::...`) is refused by git with the same
    class of error shown above, verified with this env var set **even if**
-   git's own default policy changes in a future version — i.e. the tes
+   git's own default policy changes in a future version — i.e. the test
    should not rely on git's default alone.
 2. Make `keeper_remote` return an error (not `Ok(head_repo.to_string())`)
    on both paths where `Remote::parse` cannot validate `head_repo`.
@@ -1230,7 +1400,7 @@ orchestrator.
 dismissed this as requiring a "nonstandard forge" and over-applied the
 "trust the agent" exclusion to Ariadne's own command-construction code.
 Further corrected this revision: the platform-acceptance claim was
-overstated, and the regression criterion asked for something no valid gi
+overstated, and the regression criterion asked for something no valid git
 branch name can be.)*
 
 **Affected files/lines:** `launcher.rs:1579-1585` (`keeper_push_command`,
@@ -1241,7 +1411,7 @@ Both `remote` (from `keeper_remote`, which can be a forge-sourced URL per
 EXEC-002) and `pull.head_branch` (the forge-reported PR head branch name)
 are interpolated with no quoting.
 
-**Mechanism, confirmed by a local reproduction — corrected claim abou
+**Mechanism, confirmed by a local reproduction — corrected claim about
 what that reproduction establishes:**
 ```sh
 git push origin 'HEAD:refs/heads/topic;echo${IFS}EXEC_MARKER_REPRO'
@@ -1255,7 +1425,7 @@ the prior revision's "requires a nonstandard forge" premise is still
 correctly disproven, since nothing about this test used a nonstandard
 anything. **Corrected this revision:** a local git push does **not**, by
 itself, prove GitHub's or GitLab's own server-side ref-name acceptance
-rules are equally permissive — those platforms could in principle rejec
+rules are equally permissive — those platforms could in principle reject
 or rewrite such a branch name at their own layer, and that was not tested
 here (no live GitHub/GitLab repository was used, per this audit's
 constraint against exercising external services). The accurate claim is
@@ -1287,7 +1457,7 @@ malicious installed agent — not building a stand-in to observe ordinary
 behavior). The agent in this scenario, if it ran the instruction verbatim,
 would not be misbehaving — it would be doing exactly what a well-behaved
 agent does with an instruction captioned "the command that pushes a fix."
-The unsafe artifact is the string Ariadne built; whether a real agen
+The unsafe artifact is the string Ariadne built; whether a real agent
 actually runs it verbatim rather than composing its own command is simply
 not tested in this pass (see Severity).
 
@@ -1300,7 +1470,7 @@ carries the identical risk via the identical mechanism. Recorded as
 reasoned-but-not-independently-reproduced, distinct from the branch-name
 half which is fully reproduced above.
 
-**Severity:** Medium. Confirmed mechanism (branch-name half), ordinary gi
+**Severity:** Medium. Confirmed mechanism (branch-name half), ordinary git
 usage suffices as the prerequisite for the mechanism, but the final step
 (whether an agent actually executes unmodified text it's given, rather
 than composing its own command or asking for confirmation) is
@@ -1324,7 +1494,7 @@ things separately: (i) for `pull.head_branch`, construct a real,
 git-ref-valid name containing `;`, `$()`, or backticks (all permitted by
 `check-ref-format`, confirmed above) and verify the generated, quoted
 string, run through `sh -c`, executes no side-effect command and still
-targets that literal branch name; (ii) for `remote` (not git-ref-forma
+targets that literal branch name; (ii) for `remote` (not git-ref-format
 constrained — it can be an arbitrary string), separately verify that a
 value containing a space or shell metacharacter is quoted/rejected rather
 than mis-parsed, since this argument is not limited to valid ref syntax the
@@ -1345,38 +1515,70 @@ passed to whatever is found, straight from the downloaded index document's
 fields (`target.cmd`'s basename and `target.args` for a "binary"
 distribution; `package.args` for npx/uvx). `acp_index.rs:85-109` (`found`)
 applies a package-containment check (`installs()`) **only** when
-`candidate.package` is `Some(_)` — true for the npx/uvx candidates, **never
-true for the first, "binary"-distribution candidate**, which is checked
-against `which()` alone, with no containment of any kind. `acp_discovery.rs
-:612-625` (`probe`, see the corrected subprocess inventory) then spawns
-whatever was found, with the index-supplied arguments, **before** any ACP
-protocol negotiation occurs — the process is already running by the time
-any check could tell it isn't a real ACP agent.
+`candidate.package` is `Some(_)`.
+
+**Corrected this revision — the containment gap is broader than "binary
+distributions only," which the prior text got wrong.** Re-reading
+`candidates()` precisely: for *each* npx/uvx package, it pushes **two**
+candidates, not one — first `Candidate { name: agent.id.clone(), args:
+package.args.clone(), package: None }` (named by the agent's own id, e.g.
+`"claude"`), *then* `Candidate { name: command_name(&package.package),
+args: package.args.clone(), package: Some(package_dirs(&package.package)) }`
+(named by the package's own command name). **Only the second of these two
+has `package: Some(_)` and therefore gets the `installs()` containment
+check at all.** The first npx/uvx candidate — the one named by the
+agent's own id — has `package: None`, exactly like the "binary" candidate,
+and is checked against `which()` alone. The prior text's claim that
+containment is "true for the npx/uvx candidates" was wrong: it is true for
+*one specific candidate* of the *two* each npx/uvx package contributes, not
+for the npx/uvx path in general. The actual, corrected shape of the gap is:
+**every "first-try" candidate across all three distribution kinds — the
+binary candidate and the agent-id-named npx/uvx candidate — has zero
+containment; only the package-name-named npx/uvx fallback candidate has
+any.** `acp_discovery.rs:612-625` (`probe`, see the corrected subprocess
+inventory) then spawns whatever was found, with the index-supplied
+arguments, **before** any ACP protocol negotiation occurs — the process is
+already running by the time any check could tell it isn't a real ACP
+agent.
 
 **Mechanism, traced precisely (code-level, not independently executed
-end-to-end — see Limitations):** if the fetched index claimed, for some
-agent id (say, the id a user has pinned sessions to as `"claude"`), a
-"binary" distribution whose `cmd` is some near-universally-presen
-interpreter name — `python3`, `bash`, `sh` — `which()` would find the
-*real*, locally-present interpreter (there is nothing to detect as
-anomalous: it genuinely exists on `PATH`), register it with **zero**
-containment check (the "binary" candidate path skips `installs()`
-entirely, unlike the npx/uvx path), and the daemon would then launch i
-with whatever `args` the same compromised index specified — e.g. `-c
-'<attacker code>'` for a shell or `python3`. This requires no repository
-content and no `PATH`-ordering prerequisite at all (unlike EXEC-005): the
-registry index alone decides both the name searched for and the arguments
-given to whatever answers to it, and a universally-present interpreter
-will virtually always answer.
+end-to-end — see Limitations), and broader than a fixed interpreter
+blacklist could close.** If the fetched index claimed, for some pinned
+agent id, a "binary" `cmd` (or, per the correction above, simply an
+agent-id-named npx/uvx candidate) resolving to some near-universally-
+present program, `which()` would find the *real*, locally-present program
+— there is nothing anomalous to detect, it genuinely exists on `PATH` —
+register it with **zero** containment check, and the daemon would launch
+it with whatever `args` the same compromised index specified. **Rejecting
+a fixed list of interpreter names (`sh`/`bash`/`python3`/etc.) does not
+close this**, because an interpreter name is not the only way to reach
+arbitrary execution: `/usr/bin/env`, present on effectively every POSIX
+system specifically *so that* other programs can invoke an interpreter by
+name through it, works as well or better as a laundering target — its own
+name is innocuous, and its job is exactly "look up and exec another
+program from `PATH`, with the given argv." I independently confirmed the
+underlying argv primitive, with a harmless marker, isolated from the
+registry pipeline itself (consistent with the review's own note that this
+tests the primitive, not the full pipeline):
+```sh
+env sh -c 'touch /tmp/exec007_poc_marker_$$'   # env invoking sh, which runs the given command
+test -f /tmp/exec007_poc_marker_$$ && echo confirmed
+```
+Result: confirmed — `env` (or, equivalently, any of several other
+near-universal indirection utilities: `xargs`, `find ... -exec`, `make`'s
+`-e`, a bare `perl -e`/`awk` one-liner) can be named as the resolved
+"program" and still reach arbitrary execution through its own argv,
+meaning a name-based blacklist is addressing only the most naive instance
+of a broader class, not the class itself.
 
-**Trust boundary, stated explicitly (the review's own instruction — do no
+**Trust boundary, stated explicitly (the review's own instruction — do not
 silently reject this path merely because the URL is configured
-locally):** `acp_registry_url` is a daemon-configured constan
+locally):** `acp_registry_url` is a daemon-configured constant
 (`https://cdn.agentclientprotocol.com/...`), not repository or forge
 content, and `download_index` (`acp_discovery.rs:266-280`) fetches it over
 `reqwest`'s default HTTPS client with certificate validation on. The
 prerequisite for this finding is therefore **not** "a hostile repository"
-or "a hostile pull request" — it is a compromise of the registry endpoin
+or "a hostile pull request" — it is a compromise of the registry endpoint
 itself, of the CDN serving it, or of the TLS channel between the daemon
 and it (a successful MITM defeating certificate validation, or a
 substituted/compromised server at the configured hostname). This is a
@@ -1389,33 +1591,52 @@ recorded here rather than dismissed.
 endpoint and point a disposable daemon at it — doing so would exercise the
 full daemon/discovery pipeline rather than the one function I traced, and
 was judged not to fit this pass's remaining time. The mechanism above is
-traced through source, function by function, with exact line citations;
-it is not independently reproduced the way EXEC-001/005/006 are. Treat the
-mechanism as well-evidenced and the exploit as **unproved**, exactly as the
-review instructed.
+traced through source, function by function, with exact line citations,
+and the one isolated primitive (`env` indirection) is independently
+confirmed; the finding as a whole is not reproduced end-to-end the way
+EXEC-001/005/006 are. Treat the mechanism as well-evidenced and the
+exploit as **unproved**, exactly as the review instructed — this section
+makes no claim stronger than that.
 
 **Severity:** the mechanism, if the trust boundary is defeated, is High
 (arbitrary local code execution with attacker-chosen arguments, no
-repository/forge prerequisite); the *likelihood* is gated entirely by a
-TLS/endpoint compromise this report does not claim to have observed or
-have reason to believe has occurred.
+repository/forge prerequisite, and no dependency on an interpreter-name
+blacklist since indirection defeats that class of defense); the
+*likelihood* is gated entirely by a TLS/endpoint compromise this report
+does not claim to have observed or have reason to believe has occurred.
 
 **Confidence:** High on the code-level mechanism (every step cited and
-re-read for this entry); Low on real-world likelihood, which depends
-entirely on the trust boundary above holding or not — a question abou
-CDN/TLS security practice, not about this codebase.
+re-read for this entry, including the corrected candidate-containment
+shape) and on the indirection primitive (independently reproduced); Low on
+real-world likelihood, which depends entirely on the trust boundary above
+holding or not — a question about CDN/TLS security practice, not about
+this codebase.
 
-**Recommendation, with acceptance criteria:** apply the same package-
-containment discipline to "binary"-distribution candidates that npx/uvx
-candidates already get — e.g. require a binary candidate's resolved path
-to match a recorded, pinned location (or at minimum refuse a bare
-interpreter name like `python3`/`bash`/`sh`/`perl`/`ruby`/`node` as a
-"binary" `cmd` outright, since a legitimate agent distribution would no
-plausibly be a bare shell/interpreter name). *Acceptance:* an index
-document naming a "binary" `cmd` of `sh`/`bash`/`python3` for some agent id
-is rejected at parse/`candidates()` time, before any `which()` search or
-spawn, with the entry marked rejected the same way a taken id already is
-(per spec 007's existing rejection mechanism).
+**Recommendation, with acceptance criteria covering indirection and every
+candidate path, not only the binary one:** a name blacklist
+(`sh`/`bash`/`python3`/`env`/...) is, at most, limited hardening — it
+narrows the easiest exploitation path but cannot enumerate every
+indirection-capable program on a real system, so it should not be
+presented as closing the gap. The actual control needed is over **trusted
+program identity**: every candidate that currently has `package: None`
+(the binary candidate *and* the agent-id-named npx/uvx candidate) needs
+some equivalent of the containment the package-name-named candidate
+already gets — e.g. a recorded, pinned absolute path (or hash) per agent
+id that discovery is expected to keep matching across restarts, with any
+drift treated as a rejection requiring re-confirmation, rather than silent
+re-trust of whatever the index says to search for next. *Acceptance
+criteria:* (a) an index document naming a "binary" `cmd` of `sh`/`bash`/
+`env`/`python3` for some existing agent id is rejected at
+parse/`candidates()` time, before any `which()` search or spawn, exercised
+for **both** the binary candidate path and the agent-id-named npx/uvx
+candidate path, not only one; (b) an index document that leaves the `cmd`
+unchanged but changes only `args` to something indirection-shaped (e.g.
+`["-c", "<arbitrary>"]` for a previously-benign binary) is also rejected or
+flagged, since identity alone does not bound what arguments a trusted
+binary is run with; (c) the fix is verified against the actual resolved
+path matching (or not) a previously-recorded one, not against a name
+blacklist, so that a new indirection utility added to the blacklist
+tomorrow is not required to keep the fix correct today.
 
 **Compatibility decision for the user:** whether to also add index-level
 integrity verification (a signature or checksum beyond TLS) is a larger
@@ -1436,14 +1657,14 @@ decided here.
    checks package containment** — `acp_index.rs:65-76`
    (`searchable`) and `acp_index.rs:121-137` (`installs`) are real and
    correctly implemented, and I independently re-verified `command_of`'s
-   doc comment is **aspirational, not descriptive**: it says this is "wha
+   doc comment is **aspirational, not descriptive**: it says this is "what
    the launcher runs," but the launcher does not, in fact, run the
    absolute path this filtering exists to produce. **The previous
    report's claim that this closes a discovery-to-launch TOCTOU window is
-   retracted — see EXEC-005, which is precisely that window.** Wha
+   retracted — see EXEC-005, which is precisely that window.** What
    remains true and worth keeping: the *naming decision* (which agent id
    maps to which command) cannot be influenced by a relative `PATH` entry
-   or a same-named decoy package; only the *final executed file*, a
+   or a same-named decoy package; only the *final executed file*, at
    launch time, can be — and is.
 4. **ACP declares no filesystem or terminal capability, and implements no
    handler for either.** `acp.rs:2620`
@@ -1454,7 +1675,7 @@ decided here.
    `terminal/*`.
 5. **Repository-path resolution for a loose session cannot be confused by
    a sibling directory name.** `launcher.rs:300-306` uses
-   `Path::starts_with` (component-wise), confirmed by reading the exac
+   `Path::starts_with` (component-wise), confirmed by reading the exact
    call, not a string prefix.
 6. **The skills symlink is created and torn down safely.**
    `agents/mod.rs:96-104`/`125-136` — `skills_dir` is always the daemon's
@@ -1485,7 +1706,7 @@ decided here.
 - **The skills-folder symlink being poisoned by repository content.**
   `link_skills`'s `skills_dir` argument is always the daemon's own
   configured path. Rejected as a repository-content vector.
-- **The ACP registry index download being a repository/forge-conten
+- **The ACP registry index download being a repository/forge-content
   vector specifically.** Still correct as far as it goes: the URL, client,
   and transport are all daemon-configured and TLS-protected; nothing
   repository- or forge-sourced reaches this path. Rejected *as a
@@ -1499,14 +1720,14 @@ decided here.
 
 ### Hardening suggestions (not repository/forge-content vectors; recorded because they sit on the mechanism this task asked about)
 
-- **Skill-name path traversal via the daemon's own HTTP API, no
+- **Skill-name path traversal via the daemon's own HTTP API, not
   repository content.** The sub-agent traced `agents/mod.rs`'s
   `sync_skills` (`dir = skills_dir.join(&skill.name)`) and
   `agents/prompts.rs:110` and found `skill.name` is never validated
   against `/`, `\`, or `..`. **Scope:** skills are created through the
   daemon's own API by whoever can reach it locally, not scanned out of a
   repository or a forge response — explicitly not a "hostile repository"
-  finding, carried at the sub-agent's confidence level (I did no
+  finding, carried at the sub-agent's confidence level (I did not
   independently re-verify the write path myself, only the symlink-creation
   half). **Acceptance criterion if pursued:** a skill name containing `/`,
   `\`, or a `..` component is refused at creation (400), not silently
@@ -1515,7 +1736,7 @@ decided here.
   security-patched point releases** (2.42.2, per the May 2024 batch above).
   No reachable path from Ariadne's own invocations to the vulnerable
   operation was found (see Coverage), so this is hygiene, not a finding.
-  **Acceptance criterion if pursued:** `doctor` additionally warns (no
+  **Acceptance criterion if pursued:** `doctor` additionally warns (not
   blocks) below 2.42.2 specifically, citing the CVE batch.
 
 ## Recommendation
@@ -1526,30 +1747,39 @@ through to the actual spawn for discovered agents), and it is reachable by
 the author of any request the user asks Ariadne to review, through the
 PR-review path, gated by the user's own review-request action plus the
 daemon-`PATH` prerequisites now stated
-explicitly in its finding. Fix EXEC-001 with `--end-of-options` at each
-cited sink, verified per-command exactly as shown — **except**
-`remote_has_branch_tip`'s `rev-parse` call, which needs the fuller
-`--verify --quiet --end-of-options` pattern `has_commit` already uses, or
-the fix itself would break that function's SHA comparison for every
-legitimate branch. Treat EXEC-006 as a documentation task (describe the
+explicitly in its finding. Fix EXEC-001 per sink, not with one uniform
+marker: `--end-of-options` for `delete_branch`/`diff`/`committed_clean`/
+`checkout`, the fuller `--verify --quiet --end-of-options` pattern for
+`remote_has_branch_tip`'s `rev-parse` call (a bare marker would break that
+function's SHA comparison for every legitimate branch), and a
+resolve-to-object-id step — never a marker alone — for `add_worktree`'s
+`base` argument specifically, since that sink's internal branch-creation
+step can silently consume a recognized flag (`--force`) and fall back to
+the repository's current `HEAD` instead of erroring, which no option
+marker closes. Treat EXEC-006 as a documentation task (describe the
 actual, cooperative nature of "read-only" and the permission modes
-accurately in `docs/`) rather than a code fix, pending the orchestrator's
-call on whether to pursue ACP `fs`/`terminal` mediation as a larger,
-separate product direction. Route EXEC-002 and EXEC-004 to a joint
-EXEC/FORGE follow-up per the compatibility decisions named in each — both
-still open, not decided here. Ask the orchestrator whether EXEC-003 is
-worth a dedicated reproduction task before scheduling a fix. Fix EXEC-007
-by closing the containment gap for "binary"-distribution registry
-candidates specifically (reject bare interpreter names), independent of
-whether index-level signing is ever pursued — the smaller of the two fixes
-named in its finding.
+accurately in `docs/`, including the precise, non-"always yes" shape of
+`auto`) rather than a code fix, pending the orchestrator's call on whether
+to pursue ACP `fs`/`terminal` mediation as a larger, separate product
+direction. Route EXEC-002 and EXEC-004 to a joint EXEC/FORGE follow-up per
+the compatibility decisions named in each — both still open, not decided
+here. Ask the orchestrator whether EXEC-003 is worth a dedicated
+reproduction task before scheduling a fix. For EXEC-007, do not treat an
+interpreter-name blacklist as the fix: it is limited hardening at best,
+since indirection utilities like `env` reach the same outcome; the actual
+need is a trusted-identity-and-arguments control covering every
+zero-containment candidate path (the binary candidate and the
+agent-id-named npx/uvx candidate alike), independent of whether
+index-level signing is ever pursued.
 
 ## Confidence
 
 High on EXEC-005 (direct reproduction of the exact primitive, no
 abstraction gap, prerequisites now stated explicitly) and on EXEC-001's
-per-sink table and its `remote_has_branch_tip` correction (each cell,
-including the corrected fix, independently executed). High on EXEC-006's
+per-sink table, its `remote_has_branch_tip` correction, and its `--force`
+bypass of the `add_worktree` fix (each cell, including both corrected
+fixes, independently executed with two distinct commits and a real
+dash-named ref). High on EXEC-006's
 mechanism (independently reproduced, not only cited from relayed evidence)
 and on the conditional hooks/filters path (independently reproduced with
 an isolated `$HOME` and a clean-`HOME` control). High on EXEC-007's
