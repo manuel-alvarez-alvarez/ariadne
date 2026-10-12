@@ -1600,6 +1600,36 @@ mod tests {
         assert!(prompt.contains("Call it no earlier."), "{prompt}");
     }
 
+    /// Step 2 asks one open point per turn rather than a list of them: the
+    /// skill waits for each answer before it asks the next question, and
+    /// names the five parts a question carries. A plan with two questions
+    /// folded into one turn would hand the user a wall of options with no
+    /// room to answer one at a time, which is what this guards against.
+    #[test]
+    fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for phrase in [
+            "Ask one question in a turn, then stop and wait for the answer.",
+            "Ask the next question only after the answer.",
+            "Put no second question in the context or in the options.",
+            "A title with its position, for example \"Question 2 of 3: <topic>\".",
+            "Context: the facts the user needs to answer.",
+            "Options: two or more.",
+            "A recommendation, with one reason.",
+            "One direct question, at the end.",
+            "\"Two short questions fit in one turn.\" -> Ask one; the user answers each one with its full context.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
+        assert!(
+            !prompt.contains("numbered list"),
+            "the orchestration skill still groups open points into a numbered list: {prompt}"
+        );
+    }
+
     /// The workflow is settled before planning starts, not asked about task
     /// by task: the orchestrator reads its columns off its briefing, staffs
     /// one agent per column, and asks the user nothing a column already
