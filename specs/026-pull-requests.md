@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/pull_requests.rs
+  - crates/ariadne-daemon/tests/it/pull_request_detail_skip.rs
   - crates/ariadne-daemon/tests/it/kept_requests.rs
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
@@ -110,6 +111,8 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     GitLab reads `glab api` discussions, the jobs of the latest pipeline, and the diverged commit count.
     The reads go to the forge together; only GitHub's check runs and compare wait, on the request's own read, for its head and base.
     One detail read is bounded by `Timeouts::forge_details`, 30 seconds by default. One that fails keeps the details the last read found.
+    A fetch skips the detail read of a request whose list read moves nothing a detail read would also show: the held read has details and `evidence_ok`, its `updated_at`, `head_sha`, `checks`, `review_decision`, `mergeable`, `draft`, `title` and `state` all equal the list's own read, and no comment Ariadne posted since is still unconfirmed by a detail read (`forge::live::Live::unmoved`). The held details stand in place of a fresh read.
+    A thread a human resolves on the forge does not move `updated_at`; its resolved state is read only at the next move of the request that does.
 10. A comment is the forge's, and its id is the forge's: `rc-<n>`, `ic-<n>`, `rv-<n>` or `note-<n>`.
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
     Comments on the conversation and review bodies share one thread, `conversation`.
@@ -232,6 +235,14 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `pull_requests.rs::the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review`.
 - A detail read asks the forge for its parts together:
   `pull_requests.rs::a_detail_read_asks_the_forge_for_its_parts_together`.
+- A request whose list read moves nothing skips the detail read; any one field moving, a posted comment awaiting confirmation, or a failed last detail read runs it again:
+  `forge/live.rs::tests::unmoved_holds_where_the_list_read_repeats_the_held_fields`,
+  `::unmoved_fails_where_any_one_field_moved`, `::unmoved_fails_with_no_details_or_failed_evidence`,
+  `::unmoved_fails_while_a_local_addition_awaits_confirmation`;
+  `pull_request_detail_skip.rs::two_fetches_of_an_unmoved_request_run_one_detail_read`,
+  `::a_fetch_whose_head_moved_runs_the_detail_read`,
+  `::a_fetch_after_ariadne_posts_a_comment_runs_the_detail_read`,
+  `::a_fetch_after_a_failed_detail_read_runs_the_detail_read_again`.
 - A review request has a row while it is reviewed and none once it merged:
   `pull_requests.rs::a_review_request_has_a_row_while_it_is_reviewed_and_none_once_it_merged`.
 - A request of mine has a row once a task opened it, and not before:

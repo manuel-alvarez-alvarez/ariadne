@@ -79,6 +79,35 @@ impl Live {
             local_additions: HashMap::new(),
         }
     }
+
+    /// Whether `listed`'s read of the request leaves nothing for a detail
+    /// read to catch that this held read does not already show, so
+    /// `read_row` may keep this entry's own `details` rather than pay for
+    /// a fresh detail read: `updated_at` is the forge's own "this moved"
+    /// bit; `head_sha` is a new commit on the head; `checks`,
+    /// `review_decision` and `mergeable` are each read straight off the
+    /// forge's own evidence, independently of one another, so any one of
+    /// them can move on its own; `draft`, `title` and `state` are read off
+    /// the list the same way a detail read would read them, so the list
+    /// already shows a change to them. None of that is enough on its own
+    /// where the held `details` are missing, where the last attempt to
+    /// read them failed (`evidence_ok` false), or where a comment Ariadne
+    /// itself posted has not yet been read back by a detail read
+    /// (`local_additions`): each of those leaves `details` behind a state
+    /// the list's own read never shows.
+    pub fn unmoved(&self, listed: &ForgePullRequest) -> bool {
+        self.details.is_some()
+            && self.evidence_ok
+            && self.local_additions.is_empty()
+            && self.pull.updated_at == listed.updated_at
+            && self.pull.head_sha == listed.head_sha
+            && self.pull.checks == listed.checks
+            && self.pull.review_decision == listed.review_decision
+            && self.pull.mergeable == listed.mergeable
+            && self.pull.draft == listed.draft
+            && self.pull.title == listed.title
+            && self.pull.state == listed.state
+    }
 }
 
 /// What a detail read finds of a request beyond its own read: its
@@ -921,5 +950,63 @@ mod tests {
             );
             assert_ne!(before_failure, after_failure);
         }
+    }
+
+    /// A list read that repeats every field a detail read would also show
+    /// leaves `unmoved` true, so `read_row` may skip the detail read.
+    #[test]
+    fn unmoved_holds_where_the_list_read_repeats_the_held_fields() {
+        let live = sample_live(true);
+        assert!(live.unmoved(&live.pull.clone()));
+    }
+
+    /// Each field a detail read could also catch, moved on its own, turns
+    /// `unmoved` false: the forge's own "this moved" bit, a new head, each
+    /// of the three evidence fields read independently of one another, and
+    /// the three fields a detail read would otherwise be the only place a
+    /// change to them is caught.
+    #[test]
+    fn unmoved_fails_where_any_one_field_moved() {
+        let live = sample_live(true);
+        let mutations: Vec<fn(&mut ForgePullRequest)> = vec![
+            |p| p.updated_at = "2026-10-02T00:00:00Z".into(),
+            |p| p.head_sha = "def".into(),
+            |p| p.checks = "failure".into(),
+            |p| p.review_decision = "changes_requested".into(),
+            |p| p.mergeable = "dirty".into(),
+            |p| p.draft = true,
+            |p| p.title = "Renamed".into(),
+            |p| p.state = "closed".into(),
+        ];
+        for mutate in mutations {
+            let mut listed = live.pull.clone();
+            mutate(&mut listed);
+            assert!(!live.unmoved(&listed), "{listed:?}");
+        }
+    }
+
+    /// `unmoved` fails where the held details are missing or the last
+    /// attempt to read them failed: either leaves nothing a skipped detail
+    /// read could trust.
+    #[test]
+    fn unmoved_fails_with_no_details_or_failed_evidence() {
+        let mut no_details = sample_live(true);
+        no_details.details = None;
+        assert!(!no_details.unmoved(&no_details.pull.clone()));
+
+        let failed = sample_live(false);
+        assert!(!failed.unmoved(&failed.pull.clone()));
+    }
+
+    /// A comment Ariadne itself posted, not yet read back by a detail
+    /// read, turns `unmoved` false even where the list repeats every other
+    /// field: the held `details` would otherwise go stale the moment
+    /// Ariadne's own post lands.
+    #[test]
+    fn unmoved_fails_while_a_local_addition_awaits_confirmation() {
+        let mut live = sample_live(true);
+        live.generation = 1;
+        live.local_additions.insert("ic-1".into(), 1);
+        assert!(!live.unmoved(&live.pull.clone()));
     }
 }
