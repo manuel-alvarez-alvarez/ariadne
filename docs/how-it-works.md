@@ -61,8 +61,10 @@ attention and watchdogs](../specs/009-scheduler-attention-and-watchdogs.md)
 for the rules, and [Needs attention](../specs/031-needs-attention.md) for
 the item shape and the producers that fill it.
 
-When an agent needs a human decision, Needs attention shows its question and
-the agent console. Run the listed `ariadne attach <session-id>` command to answer.
+When an agent needs a human decision, it asks in its console, as a turn of the
+conversation, and flags the wait with a one-line hint. Needs attention shows
+that hint and the agent console. Run the listed `ariadne attach <session-id>`
+command to read the question and answer it.
 
 `attach` also resumes a stored outside conversation and revives an ended
 Ariadne session, each with no separate step first. A resumed outside session

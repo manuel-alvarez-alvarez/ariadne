@@ -389,6 +389,16 @@ impl From<&AgentEventDto> for TranscriptItem {
                 meta,
                 text: "context compacted".into(),
             },
+            // The agent flagged that it waits for the user (031). The
+            // question is the agent's text above this line; the hint is the
+            // one the Needs attention list shows, so the two read as one.
+            "agent_request" => Self::SystemNote {
+                meta,
+                text: match string_at(&event.payload, "/hint") {
+                    Some(hint) => format!("waiting for you · {hint}"),
+                    None => "waiting for you".into(),
+                },
+            },
             "session_end" => Self::SystemNote {
                 meta,
                 text: "session ended".into(),
@@ -443,20 +453,36 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
         return;
     }
     if event.kind == "permission.replied"
-        && let Some(TranscriptItem::PermissionQuestion {
-            meta,
-            options,
-            answer,
-            ..
-        }) = items.iter_mut().rev().find(|item| {
+        && let Some(at) = items.iter().rposition(|item| {
             matches!(
                 item,
                 TranscriptItem::PermissionQuestion { answer: None, .. }
             )
         })
     {
-        *answer = Some(permission_answer(&event.payload, options));
-        meta.kinds.push(event.kind.clone());
+        // A permission on one of Ariadne's own tools that nobody at the
+        // console answered — the daemon's mode, the AI model or a learned
+        // rule did — asked the person nothing: the call's own block already
+        // says what the agent did, and a frame saying "permission · Allow"
+        // around it is noise in the conversation. One a person did answer
+        // stays, as the record of what they chose.
+        if let TranscriptItem::PermissionQuestion { tool, .. } = &items[at]
+            && is_ariadne_tool(&tool.name)
+            && string_at(&event.payload, "/decided_by").as_deref() != Some("console")
+        {
+            items.remove(at);
+            return;
+        }
+        if let TranscriptItem::PermissionQuestion {
+            meta,
+            options,
+            answer,
+            ..
+        } = &mut items[at]
+        {
+            *answer = Some(permission_answer(&event.payload, options));
+            meta.kinds.push(event.kind.clone());
+        }
         return;
     }
     // An advisory diagnosis (024) carries no block of its own: it reads
@@ -506,6 +532,13 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
         };
     }
     items.push(item);
+}
+
+/// Whether a call is one of Ariadne's own MCP tools, by the name the agent's
+/// client gives it: `mcp__ariadne__wait_for_user` from Claude Code, and the
+/// server's name in some other spelling from another client.
+fn is_ariadne_tool(name: &str) -> bool {
+    name.to_ascii_lowercase().contains("ariadne")
 }
 
 pub fn tool_is_terminal(status: Option<&str>) -> bool {
@@ -869,6 +902,82 @@ mod tests {
 
         assert_eq!(tool.input, json!({"command": "make"}));
         assert_eq!(tool.output.as_deref(), Some("built"));
+    }
+
+    /// The daemon's own line for a wait the agent flagged (031): the hint
+    /// under the agent's text, as one note, so the question and the line the
+    /// Needs attention list shows read together.
+    #[test]
+    fn an_agent_request_reads_as_a_waiting_note_with_its_hint() {
+        let events = [event(
+            "request",
+            "agent_request",
+            json!({"request_id": "01RQ", "hint": "Approve the plan?"}),
+        )];
+        let items = fold(&events);
+        assert!(
+            matches!(&items[0], TranscriptItem::SystemNote { text, .. }
+                if text == "waiting for you · Approve the plan?"),
+            "{items:?}"
+        );
+    }
+
+    /// A permission on one of Ariadne's own tools that the daemon answered
+    /// by itself leaves no block: the call's block says what happened. One
+    /// a person answered at the console keeps its frame and their choice,
+    /// and a permission on any other tool is untouched either way.
+    #[test]
+    fn an_automatic_permission_on_an_ariadne_tool_leaves_no_block() {
+        let asked = |id: &str, tool: &str| {
+            event(
+                id,
+                "permission_request",
+                json!({"tool_name": tool, "waiting": true,
+                       "acp": {"toolCallId": id, "title": tool, "kind": "other",
+                               "options": [{"optionId": "allow-once", "name": "Allow", "kind": "allow_once"},
+                                           {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}]}}),
+            )
+        };
+        let replied = |id: &str, decided_by: &str| {
+            event(
+                id,
+                "permission.replied",
+                json!({"option_id": "allow-once", "decided_by": decided_by}),
+            )
+        };
+
+        let auto = fold(&[
+            asked("ask-1", "mcp__ariadne__wait_for_user"),
+            replied("reply-1", "auto"),
+        ]);
+        assert!(auto.is_empty(), "{auto:?}");
+
+        let by_hand = fold(&[
+            asked("ask-2", "mcp__ariadne__wait_for_user"),
+            replied("reply-2", "console"),
+        ]);
+        assert!(
+            matches!(
+                &by_hand[0],
+                TranscriptItem::PermissionQuestion {
+                    answer: Some(_),
+                    ..
+                }
+            ),
+            "{by_hand:?}"
+        );
+
+        let other = fold(&[asked("ask-3", "Bash"), replied("reply-3", "auto")]);
+        assert!(
+            matches!(
+                &other[0],
+                TranscriptItem::PermissionQuestion {
+                    answer: Some(_),
+                    ..
+                }
+            ),
+            "{other:?}"
+        );
     }
 
     #[test]

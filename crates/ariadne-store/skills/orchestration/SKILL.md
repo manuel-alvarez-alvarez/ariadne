@@ -18,6 +18,7 @@ task runs through; your briefing lists them.
    Done when you can name each repository the goal touches.
 2. Ask the user about every unclear point.
    Write one question in your turn text.
+   Then call `wait_for_user` with a one-line hint, and end your turn.
    Wait for the answer in the console.
    Ask nothing a column already settles: how a task is reviewed and how it
    lands are the workflow's.

@@ -2120,9 +2120,13 @@ export interface components {
         ConsoleInputRequest: {
             text: string;
         };
-        /** @description An explicit request from an agent for a human answer. */
+        /** @description An agent's flag that it waits for the user (`wait_for_user`, 013). */
         CreateAgentRequest: {
-            /** @description The question or decision the human must answer. */
+            /**
+             * @description One line for the Needs attention list, at most 100 characters. The
+             *     question itself is in the agent's reply; a summary that runs longer,
+             *     or over more than one line, is refused.
+             */
             summary: string;
         };
         CreateGoalRequest: {

@@ -43,8 +43,8 @@ impl McpSeat {
     fn tools(&self) -> &'static [&'static str] {
         match self {
             McpSeat::Orchestrator => &[
-                "request_user_input",
-                "withdraw_user_request",
+                "wait_for_user",
+                "withdraw_wait_for_user",
                 "get_task",
                 "create_task",
                 "update_task",
@@ -65,8 +65,8 @@ impl McpSeat {
             // too. None of them resolves a thread: the reviewer that opened
             // it does.
             McpSeat::Agent => &[
-                "request_user_input",
-                "withdraw_user_request",
+                "wait_for_user",
+                "withdraw_wait_for_user",
                 "get_task",
                 "complete_step",
                 "fail_step",
@@ -86,8 +86,8 @@ impl McpSeat {
             // opened, once a push fixed it. No tool approves: the user gives
             // every approval (029).
             McpSeat::PullRequestReviewer => &[
-                "request_user_input",
-                "withdraw_user_request",
+                "wait_for_user",
+                "withdraw_wait_for_user",
                 "get_pull_request",
                 "get_diff",
                 "list_comments",
@@ -260,13 +260,13 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
-            "Call `request_user_input` for each user question. Write the whole question in your reply first. Do not use it for agent questions. Then wait."
+            "Ask the user each question in your reply. Then call `wait_for_user` with a one-line hint. Then wait. Do not use it for agent questions."
         }
         McpSeat::Agent => {
-            "Call `request_user_input` only where the task cannot continue without a user answer. Write the whole question in your reply first. Do not use it for agent questions."
+            "Ask the user only where the task cannot continue without a user answer. Ask in your reply. Then call `wait_for_user` with a one-line hint. Do not use it for agent questions."
         }
         McpSeat::PullRequestReviewer => {
-            "Call `request_user_input` only where the request cannot continue without a user answer. Write the whole question in your reply first. Do not use it for agent questions."
+            "Ask the user only where the request cannot continue without a user answer. Ask in your reply. Then call `wait_for_user` with a one-line hint. Do not use it for agent questions."
         }
     }
 }
@@ -450,8 +450,8 @@ pub(crate) mod tests {
             (
                 McpSeat::Orchestrator,
                 &[
-                    "request_user_input",
-                    "withdraw_user_request",
+                    "wait_for_user",
+                    "withdraw_wait_for_user",
                     "get_task",
                     "create_task",
                     "update_task",
@@ -470,8 +470,8 @@ pub(crate) mod tests {
             (
                 McpSeat::Agent,
                 &[
-                    "request_user_input",
-                    "withdraw_user_request",
+                    "wait_for_user",
+                    "withdraw_wait_for_user",
                     "get_task",
                     "complete_step",
                     "fail_step",
@@ -490,8 +490,8 @@ pub(crate) mod tests {
             (
                 McpSeat::PullRequestReviewer,
                 &[
-                    "request_user_input",
-                    "withdraw_user_request",
+                    "wait_for_user",
+                    "withdraw_wait_for_user",
                     "get_pull_request",
                     "get_diff",
                     "list_comments",
@@ -528,14 +528,14 @@ pub(crate) mod tests {
             "read_messages",
             "reply_comment",
             "report_pull_request",
-            "request_user_input",
             "resolve_thread",
             "retry_task",
             "send_message",
             "submit_review",
             "switch_session",
             "update_task",
-            "withdraw_user_request",
+            "wait_for_user",
+            "withdraw_wait_for_user",
         ];
         assert_eq!(distinct_tools(), EVERY_TOOL);
         for gone in [
@@ -579,8 +579,8 @@ pub(crate) mod tests {
             "open_pull_request",
             "complete_step",
             "fail_step",
-            "request_user_input",
-            "withdraw_user_request",
+            "wait_for_user",
+            "withdraw_wait_for_user",
         ] {
             assert!(mcp.allows(tool), "{tool} is the agent's");
         }
@@ -628,10 +628,10 @@ pub(crate) mod tests {
                 "list_comments",
                 "reply_comment",
                 "report_pull_request",
-                "request_user_input",
                 "resolve_thread",
                 "submit_review",
-                "withdraw_user_request",
+                "wait_for_user",
+                "withdraw_wait_for_user",
             ],
             "the pull request reviewer is listed eight tools"
         );
@@ -736,7 +736,7 @@ pub(crate) mod tests {
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
         let instructions = orchestrator.get_info().instructions.expect("instructions");
-        assert!(instructions.contains("Call `request_user_input` for each user question"));
+        assert!(instructions.contains("Ask the user each question in your reply."));
         assert!(instructions.contains("Then wait"));
 
         for seat in SEATS {
@@ -750,7 +750,8 @@ pub(crate) mod tests {
                 "{seat:?}: {instructions}"
             );
             assert!(
-                instructions.contains("Write the whole question in your reply first."),
+                instructions
+                    .contains("in your reply. Then call `wait_for_user` with a one-line hint."),
                 "{seat:?}: the user reads the question in the console: {instructions}"
             );
         }
@@ -762,7 +763,7 @@ pub(crate) mod tests {
         let instructions = agent.get_info().instructions.expect("instructions");
         assert!(
             instructions.contains(
-                "Call `request_user_input` only where the task cannot continue without a user answer."
+                "Ask the user only where the task cannot continue without a user answer."
             ),
             "{instructions}"
         );

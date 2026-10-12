@@ -14,11 +14,14 @@ pub struct AgentRequest {
 }
 
 impl Store {
+    /// Open one request, or answer with the pending request this session
+    /// already holds under the same summary. The flag says which: `true`
+    /// for a row this call created, `false` for the one it found.
     pub async fn create_agent_request(
         &self,
         session_id: &str,
         summary: &str,
-    ) -> Result<AgentRequest> {
+    ) -> Result<(AgentRequest, bool)> {
         let id = new_id();
         let result = sqlx::query(
             "INSERT INTO agent_requests (id, session_id, summary, created_at) VALUES (?, ?, ?, ?)",
@@ -32,14 +35,15 @@ impl Store {
         match result {
             Ok(_) => {}
             Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
-                return Ok(sqlx::query_as("SELECT * FROM agent_requests WHERE session_id = ? AND summary = ? AND answered_at IS NULL")
-                    .bind(session_id).bind(summary).fetch_one(self.r()).await?);
+                let existing = sqlx::query_as("SELECT * FROM agent_requests WHERE session_id = ? AND summary = ? AND answered_at IS NULL")
+                    .bind(session_id).bind(summary).fetch_one(self.r()).await?;
+                return Ok((existing, false));
             }
             Err(error) => return Err(error.into()),
         }
         let request = self.get_agent_request(&id).await?;
         self.publish_session_update(session_id).await?;
-        Ok(request)
+        Ok((request, true))
     }
 
     pub async fn pending_agent_requests(&self) -> Result<Vec<AgentRequest>> {

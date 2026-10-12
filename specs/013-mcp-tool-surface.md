@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-10-11
+updated: 2026-10-12
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -44,10 +44,13 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    orchestrator then waits; a column's agent works alone, and asks only where
    the task cannot go on without the answer, and a pull request reviewer
    where the request cannot. The rule names no channel — the seat's own
-   playbook already says how to ask. Every seat is told to write the whole
-   question in its reply before it calls `request_user_input`: the console
-   draws the call as any other, and its `summary` is one line for the Needs
-   attention list (031).
+   playbook already says how to ask. Every seat is told to ask in its reply,
+   and then to call `wait_for_user` with a one-line hint: the question is
+   turn text, which the console draws as the conversation it is, and the
+   tool asks nothing of its own. Its `hint` is one line for the Needs
+   attention list, and the daemon refuses one that is longer than a line or
+   than 100 characters (031 rule 11), so the question cannot move into the
+   call. `withdraw_wait_for_user` takes the flag down again.
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees. There are three seats
    (`McpSeat`): `Orchestrator`, `Agent` and `PullRequestReviewer`.
