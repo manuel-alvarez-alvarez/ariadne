@@ -75,15 +75,18 @@ decision, a merge, or a close — and leaves an idle agent alone in between.
 A session that starts with the request already open — after a restart —
 skips straight to reading that news instead of opening the request again.
 
-The agent **answers each comment once, in the shape it calls for**: a
-requested change goes onto the branch as a new commit, with the changed
-tests and lint run again before it is pushed, and the reply names the
-commit or says why the code stays; a question gets one short answer; a
-thanks gets no reply; a follow-up in a thread it already answered gets a
-new answer; and a `Still there:` reply from the reviewer gets no second
-try — you decide what happens next. A finding that carries a suggestion
-block is applied as given, and rewritten only where it fails to compile or
-pass. It **resolves no thread**: resolving a thread, once its reply
+The agent **answers each inline review comment once, in the shape it
+calls for**: a requested change goes onto the branch as a new commit, with
+the changed tests and lint run again before it is pushed, and the reply
+names the commit or says why the code stays; a question gets one short
+answer; a thanks gets no reply; a follow-up in a thread it already
+answered gets a new answer; and a reviewer reply that keeps a finding
+open gets no second try — you decide what happens next. A comment on the
+conversation is left unanswered: `reply_comment` reaches no thread there
+yet. A finding that carries a suggestion block the agent accepts is
+applied as given, and rewritten only where it fails to compile or pass;
+one it does not accept keeps the code, with a reply that says why. It
+**resolves no thread**: resolving a thread, once its reply
 satisfies you, is yours to do. A moved base branch is merged in rather
 than rebased onto, and the branch is never amended, rebased or
 force-pushed. It reports the request ready once every required approval

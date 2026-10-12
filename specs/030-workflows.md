@@ -265,14 +265,17 @@ every other wire enum (011).
     (006 rule 5). A ready report is stored but raises nothing of its own
     on that session: the `pull_request` attention producer reads the
     forge's own evidence against the claim instead (031). The agent
-    answers each comment of the other side once: a requested change as a
-    new commit, with the changed tests and lint run again before the
-    push, named by its commit, or a reason for keeping the code; a
-    question with one short answer; a thanks with no reply; a follow-up
-    in an answered thread with a new answer; and a `Still there:` from
-    the reviewer with no second try, since the user decides next. A
-    finding carrying a suggestion block is applied rather than rewritten,
-    except where it fails to compile or pass. On merge, it brings the
+    answers each inline review comment of the other side once: a
+    requested change as a new commit, with the changed tests and lint run
+    again before the push, named by its commit, or a reason for keeping
+    the code; a question with one short answer; a thanks with no reply; a
+    follow-up in an answered thread with a new answer; and a reviewer
+    reply that keeps a finding open with no second try, since the user
+    decides next. It leaves a comment on the conversation, since
+    `reply_comment` refuses one there with 400 (026 Known gap). A finding
+    carrying a suggestion block the agent accepts is applied rather than
+    rewritten, except where it fails to compile or pass; one it does not
+    accept keeps the code, with a reason. On merge, it brings the
     remote base into the checkout before completing the step. An open
     request fails the `request_merged` gate with 409 at `complete_step`;
     a fresh forge read that says merged lets the step finish. A close is

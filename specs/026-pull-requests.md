@@ -143,7 +143,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     No agent tool resolves a thread. A review session resolves a thread it opened, once a push fixed it (029); every other thread is the keeping agent's to resolve.
 16. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`; GitLab adds a note to the discussion.
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.
-    The current column agent's own reply through `reply_comment` answers each comment once, but only an inline review comment, the thread of the defect: a reply of its own to the conversation is refused with 400 (see Known gap). A review session keeps its own reach, into the conversation and a defect's thread alike (029).
+    The current column agent's own reply through `reply_comment` answers each inline review comment once, the thread of the defect; it tries no reply to the conversation, since the tool refuses one there with 400 (see Known gap). A review session keeps its own reach, into the conversation and a defect's thread alike (029).
     No body the daemon posts on a request's behalf — this reply, `open_pull_request`'s own body, and a review's summary and findings (029) — carries a trailer an agent's skill appends: a `Generated with` footer, a `Co-Authored-By`, or a tool's `Signed-off-by`, and the blank line before it, are stripped before the post.
 17. A report with `ready: true` or `ready: false` is stored and raises nothing of its own on any session (031): the `pull_request` attention producer reads the forge's own evidence against the claim instead of trusting it. A `ready: true` report also names `head_sha`, the head it was confirmed on (029 rule 15); it is stored as `ready_head_sha` and is rejected before storage when it is missing or fails the same hex-sha check `reviewed_sha` does. A request a task keeps accepts a `ready` report from the current column agent alone, never from a review session that also answers for the same row (a request of mine a task keeps can also carry an Ariadne self-review asked on it, 029) — read by seat (`Seat::Agent`), not merely by which session answers for the row.
     The state is the forge's to say: no session reports it.
@@ -316,7 +316,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `::an_agent_with_no_request_is_told_to_open_one`.
 - The skill is within its caps, names no forge CLI, timer, poll or resolve, opens the request once filling the repository's template or its three sections, starts on the news steps where one is already open, and ends on the merge or the close:
   `defaults.rs::tests::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`, `::skill_size_caps_hold`.
-- The skill answers each comment once, in one of three shapes, skips a thanks, acts on a follow-up, never retries after a `Still there:`, applies a suggestion block, and posts no unrelated reply:
+- The skill answers each inline review comment once, in one of three shapes, skips a thanks, acts on a follow-up, never retries once a reviewer reply keeps a finding open, leaves a conversation comment, applies an accepted suggestion block, and posts no unrelated reply:
   `defaults.rs::tests::the_pr_babysit_skill_answers_each_comment_once_in_its_shape`.
 - `session ls` titles a request session with its title and URL:
   `session.rs::tests::a_pull_request_session_shows_the_request_title_and_url`.
@@ -336,11 +336,9 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 
 ## Known gap
 
-`reply_comment` answers only an inline review comment. The `pr-babysit`
-skill answers a question or a thanks on the conversation thread too
-(030 rule 10), so until the tool accepts a reply there, once per comment
-of the other side, those replies get 400. The skill's own rule covers it:
-report the failed tool, and post nothing another way.
+`reply_comment` answers only an inline review comment: a reply to it
+gets 400. The `pr-babysit` skill (030 rule 10) leaves a comment on the
+conversation thread unanswered until the tool reaches it.
 
 ## Sources
 

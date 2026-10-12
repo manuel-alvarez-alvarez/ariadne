@@ -16,17 +16,19 @@ turn.
    repository's commit conventions. Fill its pull request template, or
    write three full sections: Why, What changed, How to test.
 2. Call `get_pull_request`. Call `list_comments` with `unanswered_only`.
-3. Answer each comment of the other side, once per comment:
+3. Answer each inline review comment of the other side, once per comment:
    - An ask for a change: make it in a new commit, then run the checks of
      what you changed. Push it. Reply `Fixed in <sha>: <what changed>.`
      Or reply `Not changed: <why>.`
    - A question: give one short answer.
    - Thanks or an acknowledgement: reply nothing.
    - A follow-up ask in a thread you answered: a new ask. Act on it.
-   - A `Still there:` reply from the reviewer: no second try. The user
-     decides.
-4. A finding with a suggestion block: apply the block. Write your own code
-   only where the block does not compile or pass.
+   - A reviewer reply that keeps a finding open: no second try. The
+     user decides.
+   A comment on the conversation: leave it. The tool reaches no thread
+   there yet.
+4. A suggestion block you accept: apply it. Write your own code only
+   where it does not compile or pass. Else reply `Not changed: <why>.`
 5. Fix each failed check in a new commit. Read its log at its URL. Where
    the base is ahead, run `git merge --no-edit <remote>/<base>`. Run the
    checks, then push.
@@ -56,18 +58,18 @@ turn.
 
 - "I will check the request myself, to be sure." -> Ariadne wakes you
   with its news. A check of your own finds nothing it did not say.
-- "A second reply gets the user's attention faster." -> `Still there:`
-  means the user decides next. A retry is not your call.
+- "A second reply gets the user's attention faster." -> A kept-open
+  finding means the user decides. A retry is not your call.
 - "My reply fixed it, so the thread is done." -> Closing a thread out is
   the user's to do. Leave every thread open.
-- "This is close to the suggestion, let me write it my way." -> Apply the
-  block. Write your own code only where it fails.
+- "It compiles and passes, so the suggestion must be right." -> Judge it
+  yourself. Apply only a block you accept.
 - "A thanks deserves a reply." -> A reply to a reply with nothing to
   answer starts a loop neither side ends.
 
 ## Done
 
-Each comment that waits on you has one answer, in its shape. A thanks or
-a `Still there:` gets none. Each fix is pushed after its checks pass. The
-report matches the current approvals and checks. The merge or the close
-ends the task; else your turn ends.
+Each inline comment that waits on you has one answer, in its shape. A
+thanks, or a finding the reviewer keeps open, gets none. Each fix is
+pushed after its checks pass. The report matches the current approvals
+and checks. The merge or the close ends the task; else your turn ends.

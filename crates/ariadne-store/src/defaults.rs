@@ -1252,24 +1252,29 @@ mod tests {
         assert_eq!(SkillSeat::of(PR_BABYSIT_SKILL), SkillSeat::PullRequest);
     }
 
-    /// Each comment of the other side gets one reply, in one of three
-    /// shapes: a fix with its commit or a kept line with its reason, or a
-    /// short answer to a question. A thanks gets none, a follow-up in an
-    /// answered thread gets a new answer, and a `Still there:` from the
-    /// reviewer gets no second try — the user decides. A finding with a
-    /// suggestion block is applied rather than rewritten. No unrelated
-    /// forge discussion or code change is added.
+    /// Each inline review comment of the other side gets one reply, in one
+    /// of three shapes: a fix with its commit or a kept line with its
+    /// reason, or a short answer to a question. A thanks gets none, a
+    /// follow-up in an answered thread gets a new answer, and a reviewer
+    /// reply that keeps a finding open gets no second try — the user
+    /// decides. A comment on the conversation is left: `reply_comment`
+    /// reaches no thread there (026 Known gap). A suggestion block the
+    /// agent accepts is applied rather than rewritten; one it does not
+    /// accept gets a kept line instead. No unrelated forge discussion or
+    /// code change is added.
     #[test]
     fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
         let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
         for rule in [
-            "Answer each comment of the other side, once per comment:",
+            "Answer each inline review comment of the other side, once per comment:",
             "Reply `Fixed in <sha>: <what changed>.` Or reply `Not changed: <why>.`",
             "A question: give one short answer.",
             "Thanks or an acknowledgement: reply nothing.",
             "A follow-up ask in a thread you answered: a new ask. Act on it.",
-            "A `Still there:` reply from the reviewer: no second try. The user decides.",
-            "A finding with a suggestion block: apply the block.",
+            "A reviewer reply that keeps a finding open: no second try. The user decides.",
+            "A comment on the conversation: leave it. The tool reaches no thread there yet.",
+            "A suggestion block you accept: apply it.",
+            "Else reply `Not changed: <why>.`",
             "Commit only what a comment or a failed check asks for.",
             "Leave every thread open.",
             "Post no new thread, summary or top-level comment.",
@@ -1925,25 +1930,27 @@ mod tests {
     ///
     /// `coding` gets 5400, because `testing` merged into it. `code-review`
     /// gets 4100: the review column ends its step on one of the two step
-    /// calls now, which is a step of its own. `pr-babysit` moves from 2900
-    /// to 3400: resuming on an open request is a branch of its own, and a
-    /// comment now answers in one of three shapes, through a suggestion
-    /// block and a `Still there:` stop no earlier draft carried.
+    /// calls now, which is a step of its own. `pr-babysit` moves from 3400
+    /// to 3500: the reviewer's own skill never writes a literal `Still
+    /// there:` prefix, so the stop names what the reply means instead; a
+    /// reply reaches only an inline thread, so a comment on the
+    /// conversation is named and left; and a suggestion block is applied
+    /// only once the agent has judged and accepted it.
     /// `orchestration` gets 4600: it
     /// staffs one agent per column on the column's rank, and staffs a
     /// missing column before a retry.
     #[test]
     fn skill_size_caps_hold() {
-        const TOTAL: usize = 42_800;
+        const TOTAL: usize = 42_900;
         let cap = |name: &str| match name {
             ORCHESTRATION_SKILL => 4600,
             "debugging" => 3400,
             "code-review" => 4100,
             "coding" => 5400,
             // Eight steps: the open, the read, the three reply shapes and
-            // the two loop stops (a follow-up and `Still there:`), the
+            // the two loop stops (a follow-up and a kept-open finding), the
             // suggestion rule, the checks, the report, and the two endings.
-            PR_BABYSIT_SKILL => 3400,
+            PR_BABYSIT_SKILL => 3500,
             // Eleven steps: the read, the checks, the hunt, the three
             // priorities, one inline comment per finding with its title and
             // its fix, the summary of four parts with no line in any of

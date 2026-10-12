@@ -283,11 +283,16 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
 /// it held: a review session needs it too, and a skill only a workflow
 /// column stages could never say it for both. It is the session rules'
 /// instead, the one layer every seat with a request reads (006 rule 5).
+///
+/// The `agent` seat also runs a column with no request at all, such as
+/// `coding` or `review` (013): the line holds there too, so it names the
+/// request as something the session may or may not keep, rather than one
+/// it has.
 fn request_news_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => "",
         McpSeat::Agent | McpSeat::PullRequestReviewer => {
-            "\n\nAriadne wakes the session with the request's news. Do not wait on a timer or check the request on your own."
+            "\n\nWhere you keep or review a pull or merge request, Ariadne wakes the session with its news. Do not wait on a timer or check it on your own."
         }
     }
 }
@@ -1027,7 +1032,7 @@ pub(crate) mod tests {
             ),
             (
                 "never polling a request",
-                &["Ariadne wakes the session with the request's news"][..],
+                &["Ariadne wakes the session with its news"][..],
                 &["agent session rules", "pull request reviewer session rules"][..],
             ),
         ] {
