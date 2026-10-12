@@ -699,12 +699,10 @@ impl super::Scheduler {
             let repo = self.store.get_repository(&pull.repository_id).await?;
             let worktree = session.worktree_path.clone().unwrap_or_default();
             let branch = format!("ariadne/keep-{}", pull.id);
-            let briefing = self.launcher.keeper_briefing_of(
-                pull,
-                &repo,
-                std::path::Path::new(&worktree),
-                &branch,
-            );
+            let briefing = self
+                .launcher
+                .keeper_briefing_of(pull, &repo, std::path::Path::new(&worktree), &branch)
+                .await?;
             self.check_session_quiet(&session, SITUATION.to_string(), &briefing)
                 .await?;
         }

@@ -718,6 +718,101 @@ async fn a_merge_that_auto_deletes_the_head_branch_still_cleans_up_published_wor
     .await;
 }
 
+/// A source branch that disappears without a merge is not proof of
+/// anything: the forge's last recorded head is the one the keeper itself
+/// pushed, but nobody merged it, so teardown must still preserve the
+/// branch naming it rather than trust that head as it would once the
+/// request actually landed (032).
+#[tokio::test]
+async fn a_branch_whose_source_vanished_before_any_merge_is_preserved() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
+    let branch = format!("ariadne/keep-{id}");
+
+    // The keeper pushes a fix, the forge reads it as the request's head,
+    // and then — before anybody merges it — its source branch vanishes:
+    // force-deleted, or a fork the user removed.
+    sh(
+        &worktree,
+        "echo b > b.txt && git add b.txt && \
+         git -c user.email=t@t -c user.name=t commit -qm b",
+    );
+    let pushed = sh(&worktree, "git rev-parse HEAD");
+    sh(&worktree, &format!("git push -q origin {branch}:fix"));
+    sh(&path, "git push -q origin --delete fix");
+    stub.reprogram(script(&Shown::open(&pushed)));
+    fetch_again(&h, &stub, &repo).await;
+
+    let _: Value = h
+        .json(babysit(&repo, 1, json!({"asked": false})), StatusCode::OK)
+        .await;
+    eventually(TIMEOUT, "the keeper session to end", async || {
+        !h.session_status(&session).await.is_live()
+    })
+    .await;
+    eventually(TIMEOUT, "Ariadne to stop working on it", async || {
+        h.store.get_pull_request(&id).await.is_err()
+    })
+    .await;
+    assert_eq!(
+        sh(&path, &format!("git rev-parse {branch}")),
+        pushed,
+        "the branch naming the unmerged commit is left too"
+    );
+}
+
+/// A keeper on a fork is reached the way the configured remote reaches its
+/// own repository, not the plain HTTPS URL the forge always reports for a
+/// head: a private fork needs the same credentials the base already has,
+/// which an SSH remote does not carry over HTTPS (032).
+#[tokio::test]
+async fn a_keeper_on_a_fork_pushes_through_the_configured_remotes_own_scheme() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown {
+        head_repo: "https://github.com/alice/widgets",
+        ..Shown::open(&head)
+    }));
+    let repo = repository(&h, &path).await;
+    sh(
+        &path,
+        "git remote set-url origin git@github.com:acme/widgets.git",
+    );
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+
+    let told = h.told(&session.id);
+    assert!(
+        told.contains("git push git@github.com:alice/widgets.git HEAD:fix"),
+        "{told}"
+    );
+}
+
 /// A keeper's agent that comes up and exits at once — a broken binary, a
 /// pin that will not run — spends the same spawn-retry budget a dead
 /// reviewer launch does (`start_pull_request_session`), on a budget key of

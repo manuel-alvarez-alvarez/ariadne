@@ -151,6 +151,13 @@ impl GitManager {
         Ok(())
     }
 
+    /// The URL a configured remote is read off, `git remote get-url` reads
+    /// it: a fork's own remote is built from this one's scheme and host
+    /// (032).
+    pub(crate) async fn remote_url(&self, repo: &Path, remote: &str) -> Result<String> {
+        self.git(repo, &["remote", "get-url", remote]).await
+    }
+
     pub async fn branch_exists(&self, repo: &Path, branch: &str) -> Result<bool> {
         let args = [
             "rev-parse",

@@ -1510,11 +1510,7 @@ impl Launcher {
         let at = match self.git.has_commit(&repo_path, &pull.head_sha).await? {
             true => pull.head_sha.clone(),
             false => {
-                let from = pull.head_repo.clone().unwrap_or_else(|| {
-                    repo.forge
-                        .as_ref()
-                        .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone())
-                });
+                let from = self.keeper_remote(pull, repo).await?;
                 self.git
                     .fetch_head_of(&repo_path, &from, &pull.head_branch)
                     .await
@@ -1538,50 +1534,64 @@ impl Launcher {
     /// Where a keeper pushes a fix to, and checks its safety against
     /// (032): the repository's own configured remote, whatever protocol it
     /// uses, for a head on the same repository — the forge always reports
-    /// that one over HTTPS, which an SSH-only remote cannot push to — or
-    /// the request's own head repository for a genuine fork, the same one
-    /// [`Self::keeper_worktree`] fetches the head branch from.
-    fn keeper_remote(&self, pull: &PullRequest, repo: &Repository) -> String {
+    /// that one over HTTPS, which an SSH-only remote cannot push to — or,
+    /// for a genuine fork, that remote's own scheme and host with the
+    /// fork's owner and name swapped in, so a private fork is reached
+    /// with whatever credentials the base repository already has rather
+    /// than the plain HTTPS URL the forge reports, which nobody signed in
+    /// on. Falls back to that URL where the configured remote's own
+    /// cannot be read or rewritten.
+    async fn keeper_remote(&self, pull: &PullRequest, repo: &Repository) -> Result<String> {
         let configured = repo
             .forge
             .as_ref()
             .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone());
         let Some(head_repo) = pull.head_repo.as_deref() else {
-            return configured;
+            return Ok(configured);
         };
-        let same = repo.forge.as_ref().is_some_and(|forge| {
-            crate::forge::Remote::parse(head_repo).is_some_and(|parsed| {
-                parsed.host.eq_ignore_ascii_case(&forge.host)
-                    && parsed.owner.eq_ignore_ascii_case(&forge.owner)
-                    && parsed.name.eq_ignore_ascii_case(&forge.name)
-            })
-        });
-        if same {
-            configured
-        } else {
-            head_repo.to_string()
+        let Some(forge) = repo.forge.as_ref() else {
+            return Ok(head_repo.to_string());
+        };
+        let Some(parsed) = crate::forge::Remote::parse(head_repo) else {
+            return Ok(head_repo.to_string());
+        };
+        if parsed.host.eq_ignore_ascii_case(&forge.host)
+            && parsed.owner.eq_ignore_ascii_case(&forge.owner)
+            && parsed.name.eq_ignore_ascii_case(&forge.name)
+        {
+            return Ok(configured);
         }
+        let repo_path = Path::new(&repo.path);
+        Ok(
+            match self.git.remote_url(repo_path, &configured).await.ok() {
+                Some(url) => crate::forge::Remote::rewrite(&url, &parsed)
+                    .unwrap_or_else(|| head_repo.to_string()),
+                None => head_repo.to_string(),
+            },
+        )
     }
 
     /// The command a keeper session pushes a fix with (032): its local
     /// branch onto the request's own head branch, on the request's head
     /// repository.
-    fn keeper_push_command(&self, pull: &PullRequest, repo: &Repository) -> String {
-        format!(
+    async fn keeper_push_command(&self, pull: &PullRequest, repo: &Repository) -> Result<String> {
+        Ok(format!(
             "git push {} HEAD:{}",
-            self.keeper_remote(pull, repo),
+            self.keeper_remote(pull, repo).await?,
             pull.head_branch
-        )
+        ))
     }
 
     /// Whether a keeper's local branch is safe for teardown to discard
     /// (032): its tip is already what the request's head repository has
     /// for the head branch, read with `git ls-remote` rather than a fetch.
     /// Where the remote carries no such branch any more — a merge that
-    /// deleted it, most often — safe instead where the local tip is
-    /// exactly the head the forge itself last read for the request: past
-    /// that, teardown has no evidence the forge ever saw the work, so it
-    /// must not throw away the only copy of it.
+    /// deleted it, most often — safe instead where the request is
+    /// actually merged and the local tip is exactly the head the forge
+    /// itself last read for it: an unmerged request whose source
+    /// vanished has nowhere else its commit is known, whatever head the
+    /// forge last read, so teardown must not throw away the only copy of
+    /// it either way.
     async fn keeper_branch_is_safe_to_discard(
         &self,
         repo_path: &Path,
@@ -1590,7 +1600,7 @@ impl Launcher {
         branch: &str,
     ) -> Result<bool> {
         let local = self.git.branch_tip(repo_path, branch).await?;
-        let remote = self.keeper_remote(pull, repo);
+        let remote = self.keeper_remote(pull, repo).await?;
         Ok(
             match self
                 .git
@@ -1598,7 +1608,7 @@ impl Launcher {
                 .await?
             {
                 Some(tip) => tip == local,
-                None => local == pull.head_sha,
+                None => pull.state == "merged" && local == pull.head_sha,
             },
         )
     }
@@ -1788,7 +1798,9 @@ impl Launcher {
         self.store
             .set_session_title_if_unset(&session.id, &pull.title)
             .await?;
-        let briefing = self.keeper_briefing_of(pull, &repo, &worktree, &branch);
+        let briefing = self
+            .keeper_briefing_of(pull, &repo, &worktree, &branch)
+            .await?;
         let skills = self.keeper_skills(pull).await?;
         let ctx = self
             .spawn_ctx_with(&session, worktree, briefing, skills)
@@ -1849,7 +1861,9 @@ impl Launcher {
             .store
             .restart_session(&previous.id, Some(&worktree.display().to_string()))
             .await?;
-        let briefing = self.keeper_briefing_of(pull, &repo, &worktree, &branch);
+        let briefing = self
+            .keeper_briefing_of(pull, &repo, &worktree, &branch)
+            .await?;
         self.launch_resumed(&session, worktree, &internal, &briefing)
             .await
     }
@@ -1857,27 +1871,27 @@ impl Launcher {
     /// The briefing a request's keeper session is started and resumed on
     /// (032): the request, its worktree and local branch, and the command
     /// that pushes a fix to it.
-    pub(crate) fn keeper_briefing_of(
+    pub(crate) async fn keeper_briefing_of(
         &self,
         pull: &PullRequest,
         repo: &Repository,
         worktree: &Path,
         branch: &str,
-    ) -> String {
+    ) -> Result<String> {
         let login = repo
             .forge
             .as_ref()
             .and_then(|forge| forge.login.clone())
             .unwrap_or_default();
-        prompts::pull_request_keeper_briefing(
+        Ok(prompts::pull_request_keeper_briefing(
             ariadne_store::defaults::pull_request_keeper_briefing_prompt(),
             pull,
             repo,
             &worktree.display().to_string(),
             branch,
             &login,
-            &self.keeper_push_command(pull, repo),
-        )
+            &self.keeper_push_command(pull, repo).await?,
+        ))
     }
 
     /// Kill every session of a request, reviewer's and keeper's alike, and
@@ -2024,7 +2038,9 @@ impl Launcher {
         let (worktree, briefing) = match old.seat() {
             Some(Seat::Keeper) => {
                 let (worktree, branch) = self.keeper_worktree(&pull, &repo).await?;
-                let briefing = self.keeper_briefing_of(&pull, &repo, &worktree, &branch);
+                let briefing = self
+                    .keeper_briefing_of(&pull, &repo, &worktree, &branch)
+                    .await?;
                 (worktree, briefing)
             }
             _ => {
