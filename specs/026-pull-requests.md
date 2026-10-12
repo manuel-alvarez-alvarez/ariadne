@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-12
+updated: 2026-10-13
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
