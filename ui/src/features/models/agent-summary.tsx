@@ -57,8 +57,8 @@ export function AgentSummary({
             // this one is let shrink (`min-w-0`) and break inside itself
             // (`break-words`) where a name has nowhere else to fold.
             <span key={skill} className="min-w-0 break-words">
-              {at > 0 ? <span className="text-muted-foreground">, </span> : null}
               <SkillName name={skill} />
+              {at < skills.length - 1 ? <span className="text-muted-foreground">,</span> : null}
             </span>
           ))
         )}
