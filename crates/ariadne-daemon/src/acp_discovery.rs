@@ -674,7 +674,7 @@ async fn probe(
     };
     let _ = child.start_kill();
     let _ = child.wait().await;
-    if entry.id == "opencode-acp"
+    if is_opencode(&entry.id)
         && let Some(session_id) = opened_session
     {
         delete_opencode_catalog_session(&entry, cwd, &session_id, timeout).await;
@@ -822,6 +822,13 @@ async fn read_catalog(
             .and_then(crate::acp::current_value)
             .map(str::to_string),
     })
+}
+
+/// Whether `id` names OpenCode: the shipped registry id, or the legacy
+/// `opencode-acp` a configured agent may still carry over from before the
+/// rename.
+fn is_opencode(id: &str) -> bool {
+    id == "opencode" || id == "opencode-acp"
 }
 
 /// Delete the database row left by OpenCode's catalog session. This runs
