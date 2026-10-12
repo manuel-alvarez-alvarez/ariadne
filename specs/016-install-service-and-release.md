@@ -13,6 +13,7 @@ tests:
   - scripts/tests/install-sign-macos.sh
   - scripts/tests/install-service-macos.sh
   - scripts/tests/make-signing-cert-scenarios.sh
+  - scripts/tests/release-please-config.sh
   - scripts/tests/release-notes.sh
   - .github/workflows/release-please.yml
 ---
@@ -197,7 +198,7 @@ Out: what the daemon does once running (009, 012).
   calling `ui_die` (`scripts/tests/install-service-macos.sh`).
 - `release-please-config.json` defines ✨ Features, 🐛 Bug fixes, ⚡
   Performance, and ⏪ Reverts in that order. It hides the other allowed
-  commit types from release notes.
+  commit types from release notes (`scripts/tests/release-please-config.sh`).
 - `scripts/release-notes.sh` turns a plain changelog body into one with an
   install section and an asset table ahead of it, and a re-run on a body
   that already carries the markers replaces the generated part without
@@ -226,6 +227,7 @@ fails the service step`).
 
 `scripts/install.sh`, `scripts/lib.sh`, `scripts/uninstall.sh`,
 `scripts/make-signing-cert.sh`, `scripts/release-notes.sh`,
+`scripts/tests/release-please-config.sh`,
 `.github/workflows/release.yml`, `.github/RELEASING.md`,
 `crates/ariadne-store/src/lib.rs`,
 `crates/ariadne-store/migrations/0001_init.sql`,

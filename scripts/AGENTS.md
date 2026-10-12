@@ -42,6 +42,10 @@ in the root [`AGENTS.md`](../AGENTS.md).
   remote, the same way `install.sh` resolves a release repository
   (including its check that the parsed owner and name are non-empty),
   falling back to `GITHUB_REPOSITORY`.
+- `tests/release-please-config.sh` — run as `bash
+  scripts/tests/release-please-config.sh`; it builds notes from representative
+  `perf:` and `ci:` commits, proving the first reaches ⚡ Performance and the
+  second remains hidden.
 - `tests/install-command.sh` — the stand-in for every external tool
   (`gh`, `git`, `tar`, `ldconfig`, `systemctl`, `security`, `codesign`,
   `launchctl`, …) the installer boundary tests put on `PATH`, driven by the
