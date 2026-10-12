@@ -1272,8 +1272,9 @@ mod tests {
     /// gives every approval and lands every request: the skill never
     /// approves on its own, and names no merge, sleep, poll or forge CLI.
     /// It names the three priorities, asks for changes only where a P0
-    /// stands, resolves a thread of its own once a push fixed it, and
-    /// settles a declined or a still-open one without a second warning.
+    /// stands, resolves a thread of its own once a push fixed it, settles
+    /// a declined or a still-open one without a second warning, and
+    /// suggests a fix where the edit is small and local.
     #[test]
     fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         let doc = default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill");

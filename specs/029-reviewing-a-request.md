@@ -372,7 +372,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 - The skill is within its caps, names the three priorities, names
   `request_changes` only beside P0, resolves a thread a push fixed, and
   approves on its own no more than it names merge, sleep, poll, `gh` or
-  `glab`:
+  `glab`. On a later round a `Not changed:` reply gets no reply back and
+  turns its row `declined`; a claimed fix the defect survives gets one
+  `Still there: <why>.` reply, never a second one in the same thread; and
+  a small local fix carries a `suggestion` block:
   `defaults.rs::tests::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
   `::skill_size_caps_hold`.
 - The summary is a title, then a prose paragraph, then a table of the
