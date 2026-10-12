@@ -185,7 +185,12 @@ the ACP runtime that takes a prompt (021).
     it. A pass is at its slowest under the load this folding is for, and a
     window measured from the wake is already over when a slow pass returns:
     the wakes that queued behind it would each run a pass of their own, which
-    is the pass per event this removes.
+    is the pass per event this removes. For the same reason the loop takes
+    what its channel already holds before it lets a window end: polled in
+    a random order, a window could end while the rest of a burst still sat
+    in the channel — a loop held off the CPU for longer than the window,
+    under exactly that load — and the wakes behind it would cost a pass of
+    their own.
 34. A task launch that fails because the daemon reached its open-file limit
     names that limit in the task's failure reason. Attempts after that error
     are at least 30 seconds apart, so adjacent wakes cannot spend the whole
@@ -233,7 +238,10 @@ the ACP runtime that takes a prompt (021).
 - The orchestrator of a goal under way stays up
   (`scheduler_attention.rs::an_idle_orchestrator_stays_up_for_the_whole_goal`),
   is woken once for a failed task
-  (`::a_failed_task_wakes_the_orchestrator_once`) and for a goal with nothing
+  (`::a_failed_task_wakes_the_orchestrator_once`) — once, even by the
+  pass its own answering turn's `stop` wakes, since the ACP driver
+  confirms the failure before it emits that `stop` (spec 031) — and for a
+  goal with nothing
   left running (`::a_goal_whose_tasks_all_landed_wakes_its_orchestrator`),
   and is left alone while its tasks run
   (`::a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone`). A

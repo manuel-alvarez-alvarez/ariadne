@@ -221,7 +221,15 @@ pub fn start(
         // are folded per session rather than acted on one by one.
         let mut wakes = Coalesced::new(timeouts.session_wake);
         loop {
+            // The channel first, every time: a wake already queued is
+            // folded before a window is allowed to end. Polled in a random
+            // order, a window could end while the rest of a burst still
+            // sat in the channel — a loop held off the CPU for longer than
+            // the window, under exactly the load the folding is for — and
+            // the wakes behind it then cost a pass of their own, which is
+            // the pass-per-event the window is there to stop.
             tokio::select! {
+                biased;
                 event = rx.recv() => match event {
                     Some(SchedEvent::TaskChanged(id)) => scheduler.reconcile(Target::Task(&id)).await,
                     Some(SchedEvent::GoalChanged(id)) => scheduler.reconcile(Target::Goal(&id)).await,

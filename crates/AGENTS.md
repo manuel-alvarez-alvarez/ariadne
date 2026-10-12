@@ -22,8 +22,9 @@ The desktop app under `ui/` is not part of this workspace; it has its own
 ## Checks
 
 The test runner is [cargo-nextest](https://nexte.st), which CI runs with the
-`ci` profile in [`../.config/nextest.toml`](../.config/nextest.toml). It caps
-the daemon integration test group at two threads and writes JUnit output.
+`ci` profile in [`../.config/nextest.toml`](../.config/nextest.toml). It
+runs every test, the daemon integration tests included, on one thread per
+core, and writes JUnit output.
 Install it with `cargo install cargo-nextest --locked` or
 `cargo binstall cargo-nextest`. [`../.cargo/config.toml`](../.cargo/config.toml)
 sets the Git environment for every Cargo process.
@@ -98,7 +99,8 @@ A reviewer fails a Rust change for any of these:
   when the test ends, even on failure, per
   [Processes you leave behind](../AGENTS.md#processes-you-leave-behind).
 - A test that depends on another test, or on thread order. Ask for a test
-  that holds under the `ci` profile's two-thread cap.
+  that holds with the daemon integration tests on every core at once, as
+  the `ci` profile runs them, and that still holds on a four-core runner.
 
 The pre-commit hook (`.githooks/pre-commit`) runs, for what is staged:
 `cargo fmt --all -- --check`, then `cargo clippy -p <crate> --all-targets --

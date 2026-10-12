@@ -397,7 +397,7 @@ impl super::Scheduler {
         let text = prompts::goal_attention_briefing(template, goal, &situation);
         // The delivery itself carries its own confirmation evidence,
         // written only once this exact prompt's own turn ends
-        // (`acp::serve_with_input`), so an unrelated turn landing on the
+        // (`acp::prompt_once`), so an unrelated turn landing on the
         // same session first can never confirm a failure it never
         // carried.
         if !self.hand_goal_attention(orchestrator, text, &goal.id, failed_tasks) {
