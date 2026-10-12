@@ -1510,7 +1510,7 @@ impl Launcher {
         let at = match self.git.has_commit(&repo_path, &pull.head_sha).await? {
             true => pull.head_sha.clone(),
             false => {
-                let from = self.keeper_remote(pull, repo).await?;
+                let from = self.keeper_remote(pull, repo, false).await?;
                 self.git
                     .fetch_head_of(&repo_path, &from, &pull.head_branch)
                     .await
@@ -1541,7 +1541,18 @@ impl Launcher {
     /// than the plain HTTPS URL the forge reports, which nobody signed in
     /// on. Falls back to that URL where the configured remote's own
     /// cannot be read or rewritten.
-    async fn keeper_remote(&self, pull: &PullRequest, repo: &Repository) -> Result<String> {
+    ///
+    /// `for_push` picks which of the configured remote's own URLs a
+    /// fork's is built from: its push URL for the keeper's own push and
+    /// the safety check reading where that push landed, its fetch URL for
+    /// [`Self::keeper_worktree`]'s own fetch — the two differ wherever a
+    /// remote is read over one protocol and written over another.
+    async fn keeper_remote(
+        &self,
+        pull: &PullRequest,
+        repo: &Repository,
+        for_push: bool,
+    ) -> Result<String> {
         let configured = repo
             .forge
             .as_ref()
@@ -1562,13 +1573,15 @@ impl Launcher {
             return Ok(configured);
         }
         let repo_path = Path::new(&repo.path);
-        Ok(
-            match self.git.remote_url(repo_path, &configured).await.ok() {
-                Some(url) => crate::forge::Remote::rewrite(&url, &parsed)
-                    .unwrap_or_else(|| head_repo.to_string()),
-                None => head_repo.to_string(),
-            },
-        )
+        let url = match for_push {
+            true => self.git.remote_push_url(repo_path, &configured).await,
+            false => self.git.remote_url(repo_path, &configured).await,
+        };
+        Ok(match url.ok() {
+            Some(url) => crate::forge::Remote::rewrite(&url, &parsed)
+                .unwrap_or_else(|| head_repo.to_string()),
+            None => head_repo.to_string(),
+        })
     }
 
     /// The command a keeper session pushes a fix with (032): its local
@@ -1577,7 +1590,7 @@ impl Launcher {
     async fn keeper_push_command(&self, pull: &PullRequest, repo: &Repository) -> Result<String> {
         Ok(format!(
             "git push {} HEAD:{}",
-            self.keeper_remote(pull, repo).await?,
+            self.keeper_remote(pull, repo, true).await?,
             pull.head_branch
         ))
     }
@@ -1600,7 +1613,7 @@ impl Launcher {
         branch: &str,
     ) -> Result<bool> {
         let local = self.git.branch_tip(repo_path, branch).await?;
-        let remote = self.keeper_remote(pull, repo).await?;
+        let remote = self.keeper_remote(pull, repo, true).await?;
         Ok(
             match self
                 .git

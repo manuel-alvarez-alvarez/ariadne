@@ -820,6 +820,44 @@ async fn a_keeper_on_a_fork_pushes_through_the_configured_remotes_own_scheme() {
     );
 }
 
+/// A keeper on a fork pushes through the configured remote's own push
+/// URL, not the one it fetches from, where a remote reads over one
+/// protocol and writes over another: the fetch and the push are not
+/// always the same credentials (032).
+#[tokio::test]
+async fn a_keeper_on_a_fork_pushes_through_the_configured_remotes_own_push_url() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown {
+        head_repo: "https://github.com/alice/widgets",
+        ..Shown::open(&head)
+    }));
+    let repo = repository(&h, &path).await;
+    sh(
+        &path,
+        "git remote set-url origin https://github.com/acme/widgets.git && \
+         git remote set-url --push origin git@github.com:acme/widgets.git",
+    );
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+
+    let told = h.told(&session.id);
+    assert!(
+        told.contains("git push git@github.com:alice/widgets.git HEAD:fix"),
+        "the push command follows the push URL's own scheme: {told}"
+    );
+}
+
 /// A keeper's agent that comes up and exits at once — a broken binary, a
 /// pin that will not run — spends the same spawn-retry budget a dead
 /// reviewer launch does (`start_pull_request_session`), on a budget key of
@@ -855,16 +893,18 @@ async fn a_keeper_whose_agent_dies_the_moment_it_starts_gives_up_after_the_budge
         .await;
     let id = asked["id"].as_str().expect("a row").to_string();
 
-    eventually(
-        TIMEOUT,
-        "the dead launches to run the budget out",
-        async || {
+    // Each dead launch is driven and observed on its own, with the full
+    // timeout to itself, rather than all three raced against one shared
+    // wait: a host under load may take a while to notice any one of them
+    // dead, but this still holds once it does, whatever that takes.
+    for attempt in 1..=SPAWN_RETRY_BUDGET as usize {
+        eventually(TIMEOUT, "the next dead launch to be counted", async || {
             h.state.forge_poll.wake(&repo);
             let rows = sessions(&h, &id).await;
-            rows.len() >= SPAWN_RETRY_BUDGET as usize && rows.iter().all(|s| !s.status().is_live())
-        },
-    )
-    .await;
+            rows.len() >= attempt && rows.iter().all(|s| !s.status().is_live())
+        })
+        .await;
+    }
 
     // And nothing has been started again: given up on, rather than between
     // two launches. Three more wakes is what "a tick later" needs proving,
