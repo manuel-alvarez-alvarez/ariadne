@@ -1,98 +1,129 @@
 /**
  * Where a stepped task is in its goal's workflow, and who is running each
- * column — the one section that replaces the old Agents fact and step strip,
- * which repeated the same columns as two separate displays.
+ * column, as one track: a node per column in order, and under each node the
+ * column's title, its agent's skills, the model it runs on and a link to its
+ * live session. Nothing opens and nothing is picked — every column says what
+ * it is at once, and the section is a few lines tall however many columns
+ * the workflow has. The column's description is left to the workflow's own
+ * document.
  *
- * Closed, a row is its state (done, current or pending) and its title: the
- * progress at a glance. Opened, it adds what the strip only put in a hover
- * hint and the fact only put in a separate list: the column's description,
- * its agent's skills, model and effort, and a link to its live session.
+ * A node is its state: a filled check for a column the task has been through,
+ * a pulsing dot for the one it is in, a hollow ring for one still ahead — and
+ * the track between two nodes is drawn in the completion colour up to the
+ * current one. The state is also a label read to assistive technology, so
+ * the colour never stands alone.
  *
  * A task still pending is in no column yet, so nothing is current; a
  * finished task has been through every one.
  */
 
 import { CheckIcon } from "lucide-react"
-import type { ReactNode } from "react"
 
 import type { TaskDto, WorkflowStepDto } from "@/api"
-import { StatusBadge } from "@/components/status-badge"
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion"
 import { AgentSummary } from "@/features/models/agent-summary"
+import { cn } from "@/lib/format"
 import { SessionLink } from "./task-sessions"
 
 type StepState = "done" | "current" | "ahead"
 
 const STATE_META: Record<
   StepState,
-  { label: string; tone: string; dot?: string; icon?: ReactNode; pulse?: boolean }
+  {
+    label: string
+    /** The node on the track. */
+    node: string
+    /** The track leaving the node, towards the next one. */
+    track: string
+  }
 > = {
   done: {
     label: "Done",
-    tone: "bg-status-done-soft text-status-done-fg",
-    icon: <CheckIcon className="size-3" aria-hidden />,
+    node: "border-status-done bg-status-done text-background",
+    track: "bg-status-done",
   },
   current: {
     label: "Current",
-    tone: "bg-status-active-soft text-status-active-fg",
-    dot: "bg-status-active",
-    pulse: true,
+    node: "border-status-active bg-status-active-soft",
+    track: "bg-border",
   },
   ahead: {
     label: "Pending",
-    tone: "bg-muted text-muted-foreground",
-    dot: "bg-muted-foreground/60",
+    node: "border-border bg-background",
+    track: "bg-border",
   },
 }
 
 export function WorkflowSteps({ task, steps }: { task: TaskDto; steps: WorkflowStepDto[] }) {
   const current = steps.findIndex((step) => step.id === task.step)
   return (
-    <Accordion className="rounded-lg border" multiple>
+    <ol aria-label="Workflow steps" className="flex items-start text-xs">
       {steps.map((step, index) => {
         const state = stepState(task, index, current)
         const meta = STATE_META[state]
         const agent = task.agents.find((candidate) => candidate.step === step.id)
         return (
-          <AccordionItem key={step.id} value={step.id} className="px-3">
-            <AccordionTrigger
-              aria-current={state === "current" ? "step" : undefined}
-              className="gap-3"
-            >
-              <span className="min-w-0 flex-1 text-left break-words">{step.title}</span>
-              <StatusBadge
-                size="sm"
-                label={meta.label}
-                tone={meta.tone}
-                dot={meta.dot}
-                icon={meta.icon}
-                pulse={meta.pulse}
-              />
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="flex flex-col gap-2 text-xs">
-                {step.description ? (
-                  <p className="text-muted-foreground">{step.description}</p>
-                ) : null}
-                {agent ? (
-                  <>
-                    <AgentSummary skills={agent.skills} model={agent.model} effort={agent.effort} />
-                    {agent.session_id ? <SessionLink sessionId={agent.session_id} /> : null}
-                  </>
-                ) : (
-                  <span className="text-muted-foreground italic">none staffed</span>
+          <li
+            key={step.id}
+            aria-current={state === "current" ? "step" : undefined}
+            data-step-state={state}
+            className="flex min-w-0 flex-1 flex-col items-center gap-1 text-center"
+          >
+            <span className="flex w-full items-center">
+              <span
+                className={cn(
+                  "h-px flex-1",
+                  index === 0 ? "invisible" : STATE_META[stepState(task, index - 1, current)].track,
                 )}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
+                aria-hidden
+              />
+              <span
+                className={cn(
+                  "flex size-5 shrink-0 items-center justify-center rounded-full border-2",
+                  meta.node,
+                )}
+                aria-hidden
+              >
+                {state === "done" ? (
+                  <CheckIcon className="size-3" strokeWidth={3} />
+                ) : state === "current" ? (
+                  <span className="size-2 animate-pulse rounded-full bg-status-active" />
+                ) : null}
+              </span>
+              <span
+                className={cn("h-px flex-1", index === steps.length - 1 ? "invisible" : meta.track)}
+                aria-hidden
+              />
+            </span>
+            <span
+              className={cn(
+                "max-w-full truncate px-2",
+                state === "current" ? "font-medium" : "text-muted-foreground",
+              )}
+            >
+              {step.title}
+            </span>
+            <span className="sr-only">{meta.label}</span>
+            {agent ? (
+              <span className="flex w-full min-w-0 flex-col items-center gap-0.5 px-2">
+                <AgentSummary
+                  skills={agent.skills}
+                  model={agent.model}
+                  effort={agent.effort}
+                  className="max-w-full items-center"
+                />
+                {agent.session_id ? (
+                  <span className="whitespace-nowrap">
+                    <SessionLink sessionId={agent.session_id} />
+                  </span>
+                ) : null}
+              </span>
+            ) : (
+              <span className="text-muted-foreground italic">none staffed</span>
+            )}
+          </li>
         )
       })}
-    </Accordion>
+    </ol>
   )
 }
 

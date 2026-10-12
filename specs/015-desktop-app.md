@@ -624,13 +624,14 @@ Out: the daemon endpoints themselves (012).
     sideways to its widest lane. A card whose status shows names the step
     where the status said `in progress`.
 40. The task panel of a stepped task draws one workflow section under its
-    facts, in place of a separate Agents fact and step strip: one row per
-    column, in order, closed by default. A row's state — done, current or
-    pending — is a colour paired with a label or icon, never colour alone,
-    and the current row carries `aria-current="step"`. Opening a row
-    reveals the column's description, its agent's skills, model and
-    effort, and a link to its live session, so inspecting one column never
-    requires opening the rest; there is no author or reviewer fact. The
+    facts, in place of a separate Agents fact and step strip: a track of
+    nodes, one per column in order, and under each node the column's title,
+    its agent's skills, model and effort, and a link to its live session —
+    every column at once, nothing to open, and no column description. A
+    node's state — done, current or pending — is a colour paired with an
+    icon and a text label (a check, a pulsing dot, an empty ring; the label
+    read to assistive technology), never colour alone, and the current node
+    carries `aria-current="step"`. There is no author or reviewer fact. The
     history names a step move by its `from_step` and `to_step` columns.
 41. The task form shows one row per column of the goal's workflow, prefilled
     with the column's skills, with the column's preferred rank beside the pin
@@ -1044,11 +1045,10 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/goals/goal-swimlanes.test.tsx::draws each goal workflow columns`,
   `::draws an in-progress task of a stepless goal in its own column`).
 - The task panel of a stepped task draws one workflow section in place of
-  its old Agents fact and step strip, naming every column collapsed by
-  default and opening one without expanding the rest
+  its old Agents fact and step strip: every column on the track, each with
+  its agent's skills, model and session under its name, and no description
   (`ui/src/features/tasks/task-panel.test.tsx::shows workflow agents by column`,
-  `ui/src/features/tasks/workflow-steps.test.tsx::lists every column's name and progress, without opening any of them`,
-  `::opens one column's description, skills, model and session from the keyboard, leaving the rest closed`).
+  `ui/src/features/tasks/workflow-steps.test.tsx::draws every column on the track with its agent's skills, model and session under it`).
 - A pending task's columns are all pending, an in-progress task's own
   column is current with the ones behind it done, and a finished task's
   columns are all done
