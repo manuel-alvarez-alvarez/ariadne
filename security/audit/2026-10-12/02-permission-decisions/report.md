@@ -404,12 +404,13 @@ What this proves, precisely, and no further:
   fallback the previous wording implied:
   - A **confident model allow** on the visible prefix authorizes the
     request directly (`ai_permissions_selection`, `acp.rs:2052-2058`) — no
-    learned row is consulted at all in this case.
-  - A model **Ask** (a middling score, or the cap firing on the visible
-    prefix for an unrelated reason) or an **Unanswered** model (unavailable,
-    timed out, malformed) falls back to a matching learned approval, if one
-    exists (`acp.rs:2061-2063, 2159-2161`) — this is the one case the
-    learned row actually answers.
+    learned row is used to select this answer (the lookup still runs,
+    `acp.rs:2047-2051`, but its result is not what decides the outcome).
+  - A model **Ask** (a middling score, or the cap firing on the untruncated
+    request for an unrelated reason) or an **Unanswered** model
+    (unavailable, timed out, malformed) falls back to a matching learned
+    approval, if one exists (`acp.rs:2061-2063, 2159-2161`) — this is the
+    one case the learned row actually answers.
   - A **confident model denial** overrides that fallback: if the agent
     offers a one-time reject option, the model's own denial is selected and
     the learned row is never reached (`ai_permissions_selection` is set from
@@ -418,14 +419,6 @@ What this proves, precisely, and no further:
     the request still falls to the console rather than to the row
     (`deny_without_option`, `acp.rs:2059-2063`). Either way, a confident
     denial is not something a learned allow can override.
-
-  A long, mostly-`x` prefix is also an unusual shape a real model might
-  score as `ask` or `deny` on its own terms, for reasons that have nothing
-  to do with the hostile suffix it never saw — reaching this report's
-  long-`Edit` reproduction's exact outcome (an executed auto-allow) in `ai`
-  mode specifically requires the model to confidently allow that visible
-  prefix, which is uncertain and model-dependent, exactly the kind of claim
-  Work item 7 asks this audit not to resolve by assertion.
 
   The two reproductions that *are* model-independent are 2 and 4, because
   they run in **`learn` mode**, which never asks a model at all — the
