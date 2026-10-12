@@ -1,19 +1,19 @@
 /**
  * Where a stepped task is in its goal's workflow, and who is running each
- * column, as one stepper: a track of nodes, one per column in order, with the
- * column's title under each, and beneath the track one card for the column
- * that is picked. The whole section is three or four lines tall however many
- * columns the workflow has — the detail of one column replaces the detail of
- * the last rather than stacking under it.
+ * column, as one stepper in one frame: a track of nodes along the top, one
+ * per column in order with the column's title under each, and under the
+ * track the picked column's detail, joined to its node by a caret. The whole
+ * section is three or four lines tall however many columns the workflow has
+ * — the detail of one column replaces the detail of the last rather than
+ * stacking under it.
  *
  * A node is its state: a filled check for a column the task has been through,
  * a pulsing dot for the one it is in, a hollow ring for one still ahead — and
  * the track between two nodes is drawn in the completion colour up to the
  * current one. The picked column opens on the current one, and follows the
- * task as it moves until the user picks another; its card restates the title
- * and state in full (the node's title may be cut short), the column's
- * description, its agent's skills and model on one line, and the link to its
- * live session.
+ * task as it moves until the user picks another; its detail is the column's
+ * state in words beside its description, then its agent's skills and model
+ * on one line, and the link to its live session.
  *
  * A task still pending is in no column yet, so nothing is current; a
  * finished task has been through every one.
@@ -75,9 +75,13 @@ export function WorkflowSteps({ task, steps }: { task: TaskDto; steps: WorkflowS
     <Tabs.Root
       value={selected}
       onValueChange={(value) => setPicked(String(value))}
-      className="flex flex-col gap-2"
+      className="rounded-lg border bg-card"
     >
-      <Tabs.List aria-label="Workflow steps" activateOnFocus className="flex items-start">
+      <Tabs.List
+        aria-label="Workflow steps"
+        activateOnFocus
+        className="flex items-start px-2 pt-1.5 pb-1"
+      >
         {steps.map((step, index) => {
           const state = stepState(task, index, current)
           const meta = STATE_META[state]
@@ -135,18 +139,28 @@ export function WorkflowSteps({ task, steps }: { task: TaskDto; steps: WorkflowS
           <Tabs.Panel
             key={step.id}
             value={step.id}
-            className="flex flex-col gap-1.5 rounded-lg border bg-card px-3 py-2 text-xs outline-none"
+            className="relative flex flex-col gap-1 border-t px-3 py-2 text-xs outline-none"
           >
-            <div className="flex min-w-0 items-center gap-2">
+            {/* The caret joining the detail to its node: the list's horizontal
+                padding is this wrapper's inset, so the same fraction lands on
+                the node's centre. */}
+            <span className="pointer-events-none absolute inset-x-2 top-0" aria-hidden>
+              <span
+                className="absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 border-t border-l bg-card"
+                style={{ left: `${((index + 0.5) / steps.length) * 100}%` }}
+              />
+            </span>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <StatusBadge size="sm" label={meta.label} tone={meta.tone} />
-              <span className="min-w-0 truncate font-medium">{step.title}</span>
+              {step.description ? (
+                <span className="min-w-0 flex-1 text-muted-foreground">{step.description}</span>
+              ) : null}
               {agent?.session_id ? (
                 <span className="ml-auto shrink-0">
                   <SessionLink sessionId={agent.session_id} />
                 </span>
               ) : null}
             </div>
-            {step.description ? <p className="text-muted-foreground">{step.description}</p> : null}
             {agent ? (
               <AgentSummary skills={agent.skills} model={agent.model} effort={agent.effort} />
             ) : (
