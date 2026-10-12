@@ -1092,7 +1092,8 @@ fn has(methods: &[String], method: &str) -> bool {
 }
 
 /// OpenCode's CLI removes the session that the catalog read created, after
-/// the advertised ACP close, using the session id returned by the agent.
+/// the advertised ACP close, using the session id returned by the agent —
+/// for `opencode`, the shipped registry id.
 #[tokio::test]
 async fn an_opencode_probe_closes_and_deletes_its_catalog_session() {
     let dir = tempfile::tempdir().unwrap();
@@ -1100,7 +1101,7 @@ async fn an_opencode_probe_closes_and_deletes_its_catalog_session() {
     setup["session_id"] = json!("catalog-session-123");
     setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
     let agent = stub_acp_agent(dir.path(), setup);
-    let h = harness_with_agent("opencode-acp", &agent).await;
+    let h = harness_with_agent("opencode", &agent).await;
 
     agent.clear_messages();
     let agents = h.launcher.registry.refresh().await;
@@ -1125,6 +1126,56 @@ async fn an_opencode_probe_closes_and_deletes_its_catalog_session() {
     );
 }
 
+/// The legacy `opencode-acp` id, which a configured agent may still carry
+/// from before the rename, gets the same cleanup as the shipped `opencode`
+/// id.
+#[tokio::test]
+async fn a_legacy_opencode_acp_probe_also_deletes_its_catalog_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["session_id"] = json!("legacy-catalog-session");
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("opencode-acp", &agent).await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert_eq!(agents[0]["status"], "ready", "{agents:#?}");
+    let messages = agent.messages();
+    let deletes: Vec<&Value> = messages
+        .iter()
+        .filter(|message| message["method"] == "cli/session/delete")
+        .collect();
+    assert_eq!(deletes.len(), 1, "{messages:#?}");
+    assert_eq!(
+        deletes[0]["args"],
+        json!(["session", "delete", "legacy-catalog-session"])
+    );
+}
+
+/// A catalog rejected for want of a model option still deletes the session
+/// `session/new` returned: the cleanup runs after the probe ends, whether
+/// the probe accepted the agent or not.
+#[tokio::test]
+async fn a_rejected_opencode_catalog_still_deletes_its_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["session_id"] = json!("catalog-session-rejected");
+    setup["config_options"] = json!([]);
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("opencode", &agent).await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert_eq!(agents[0]["status"], "rejected", "{agents:#?}");
+    let messages = agent.messages();
+    let delete = messages
+        .iter()
+        .find(|message| message["method"] == "cli/session/delete")
+        .unwrap_or_else(|| panic!("no delete call among {messages:#?}"));
+    assert_eq!(
+        delete["args"],
+        json!(["session", "delete", "catalog-session-rejected"])
+    );
+}
+
 /// A failed CLI delete reports no probe error and leaves the catalog usable.
 #[tokio::test]
 async fn a_failed_opencode_delete_keeps_the_agent_ready_with_its_catalog() {
@@ -1133,7 +1184,7 @@ async fn a_failed_opencode_delete_keeps_the_agent_ready_with_its_catalog() {
     setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
     setup["delete_exit"] = json!(7);
     let agent = stub_acp_agent(dir.path(), setup);
-    let h = harness_with_agent("opencode-acp", &agent).await;
+    let h = harness_with_agent("opencode", &agent).await;
 
     assert!(has(&agent.methods(), "cli/session/delete"));
     let agents: Vec<Value> = h.get("/v1/acp-agents").await;
@@ -1142,9 +1193,30 @@ async fn a_failed_opencode_delete_keeps_the_agent_ready_with_its_catalog() {
     assert!(
         models
             .iter()
-            .any(|model| model["id"] == "opencode-acp:old-model"),
+            .any(|model| model["id"] == "opencode:old-model"),
         "{models:#?}"
     );
+}
+
+/// A cached catalog, read at an earlier probe of the same agent version,
+/// opens no session on a later one — so there is nothing for that later
+/// probe to delete.
+#[tokio::test]
+async fn a_cached_opencode_catalog_probe_creates_no_session_and_runs_no_deletion() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["agent_info"] = json!({"name": "stub", "version": "1.0"});
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("opencode", &agent).await;
+    assert!(has(&agent.methods(), "session/new"));
+
+    agent.clear_messages();
+    start_discovery(&h, "opencode").await;
+
+    let methods = agent.methods();
+    assert!(has(&methods, "initialize"), "{methods:?}");
+    assert!(!has(&methods, "session/new"), "{methods:?}");
+    assert!(!has(&methods, "cli/session/delete"), "{methods:?}");
 }
 
 /// The OpenCode cleanup is selected by registry id, not by the program's
@@ -1157,7 +1229,7 @@ async fn a_non_opencode_probe_runs_no_session_delete() {
     let opencode_dir = dir.path().join("opencode");
     std::fs::create_dir(&opencode_dir).unwrap();
     let opencode = stub_acp_agent(&opencode_dir, setup.clone());
-    let opencode_h = harness_with_agent("opencode-acp", &opencode).await;
+    let opencode_h = harness_with_agent("opencode", &opencode).await;
     let opencode_agents: Vec<Value> = opencode_h.get("/v1/acp-agents").await;
     assert_eq!(
         opencode_agents[0]["status"], "ready",
@@ -1172,6 +1244,123 @@ async fn a_non_opencode_probe_runs_no_session_delete() {
     assert_eq!(agents[0]["status"], "ready", "{agents:#?}");
     assert!(has(&agent.methods(), "session/close"));
     assert!(!has(&agent.methods(), "cli/session/delete"));
+}
+
+/// Metadata listing — `initialize` then `session/list`, the way `GET
+/// /v1/sessions` reads an agent's stored conversations outside any catalog
+/// probe — opens no session and runs no OpenCode delete.
+#[tokio::test]
+async fn metadata_listing_opens_no_session_and_runs_no_delete_for_opencode() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        dir.path(),
+        crate::session_list::listing_script(json!([]), None),
+    );
+    let h = harness()
+        .home(crate::session_list::home_with_agents(&[(
+            "opencode", &stub.bin,
+        )]))
+        .discover_agents()
+        .await;
+    common::acp::discovery_accepted(&h, &stub, "opencode").await;
+
+    let _: Value = h.get("/v1/sessions?refresh=true").await;
+
+    let methods = stub.methods();
+    assert_eq!(methods, ["initialize", "session/list"], "{methods:?}");
+}
+
+/// A real `opencode` binary, if this machine has one on `PATH`, proves the
+/// same claim the stub proves above: `initialize` and `session/list` alone
+/// open no session. A fresh, isolated data directory — of its own, so this
+/// never touches a real one — keeps zero rows in its `session` table
+/// afterward.
+#[tokio::test]
+async fn real_opencode_metadata_listing_creates_no_session() {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let Some(program) = ariadne_core::probe::which(&path, "opencode") else {
+        eprintln!("opencode is not on PATH; skipping the real-CLI check");
+        return;
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let data_home = dir.path().join("data");
+    let config_home = dir.path().join("config");
+    std::fs::create_dir_all(&data_home).unwrap();
+    std::fs::create_dir_all(&config_home).unwrap();
+
+    let mut command = tokio::process::Command::new(&program);
+    command
+        .arg("acp")
+        .current_dir(dir.path())
+        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command.spawn().expect("starting the real opencode binary");
+    let stdin = child.stdin.take().expect("opencode's stdin");
+    let stdout = child.stdout.take().expect("opencode's stdout");
+
+    let listed = tokio::time::timeout(
+        TIMEOUT,
+        agent_client_protocol::Client
+            .builder()
+            .name("ariadne-discovery-check")
+            .connect_with(
+                agent_client_protocol::ByteStreams::new(
+                    tokio_util::compat::TokioAsyncWriteCompatExt::compat_write(stdin),
+                    tokio_util::compat::TokioAsyncReadCompatExt::compat(stdout),
+                ),
+                async |cx| {
+                    cx.send_request(agent_client_protocol::schema::v1::InitializeRequest::new(
+                        agent_client_protocol::schema::ProtocolVersion::V1,
+                    ))
+                    .block_task()
+                    .await
+                    .expect("initialize");
+                    let listed = cx
+                        .send_request(agent_client_protocol::schema::v1::ListSessionsRequest::new())
+                        .block_task()
+                        .await
+                        .expect("session/list");
+                    Ok(listed)
+                },
+            ),
+    )
+    .await
+    .expect("the real opencode agent to answer")
+    .expect("the ACP connection to the real opencode agent");
+
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+
+    assert!(
+        listed.sessions.is_empty(),
+        "a fresh isolated OpenCode must list no session: {:?}",
+        listed.sessions
+    );
+
+    let db_path = data_home.join("opencode").join("opencode.db");
+    if db_path.is_file() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(&db_path)
+                    .read_only(true),
+            )
+            .await
+            .expect("opening the real opencode database");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session")
+            .fetch_one(&pool)
+            .await
+            .expect("counting sessions");
+        assert_eq!(
+            count, 0,
+            "initialize and session/list must open no session in the real OpenCode database"
+        );
+    }
 }
 
 /// A daemon start reads an agent's catalog once per agent version: the store

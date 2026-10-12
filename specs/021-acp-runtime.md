@@ -66,10 +66,17 @@ beside it, which reads what this spec's rule 14 already decided and never
 changes it (024).
 
 Discovery closes each catalog session when the agent advertises `session/close`.
-For `opencode-acp`, it then runs the registry entry's program as
-`session delete <session id>` with the probe's launch environment and a
-discovery timeout. A failed close or delete is logged as a warning and does
-not reject the agent or discard its catalog.
+For OpenCode — the shipped registry id `opencode`, and the legacy
+`opencode-acp` a configured agent may still carry — it then runs the
+registry entry's program as `session delete <session id>` with the probe's
+launch environment and a discovery timeout, on the session id the probe's
+`session/new` returned, once, after the probe ends whether it accepted the
+agent or rejected its catalog. A failed close or delete is logged as a
+warning and does not reject the agent or discard its catalog. A catalog
+read from the store rather than a fresh `session/new` opens no session, so
+it leaves nothing to delete. Metadata listing (rule 5, `GET /v1/sessions`'s
+outside half) opens no session either: it asks only `initialize` and
+`session/list`.
 
 ## Behavior
 
@@ -323,12 +330,28 @@ not reject the agent or discard its catalog.
 
 ## Acceptance criteria
 
-- An OpenCode probe closes and deletes the session id returned by
-  `session/new` (`acp_discovery.rs::an_opencode_probe_closes_and_deletes_its_catalog_session`).
-- A failed OpenCode delete keeps the agent ready with its catalog
+- A model-read probe for `opencode`, the shipped id, closes and deletes the
+  session id returned by `session/new`, once
+  (`acp_discovery.rs::an_opencode_probe_closes_and_deletes_its_catalog_session`).
+- The legacy `opencode-acp` id gets the same cleanup
+  (`acp_discovery.rs::a_legacy_opencode_acp_probe_also_deletes_its_catalog_session`).
+- A catalog rejected for want of a model option still deletes the session
+  `session/new` returned
+  (`acp_discovery.rs::a_rejected_opencode_catalog_still_deletes_its_session`).
+- A failed OpenCode delete keeps the agent ready with its catalog, and does
+  not reject it
   (`acp_discovery.rs::a_failed_opencode_delete_keeps_the_agent_ready_with_its_catalog`).
+- A cached catalog, read at an earlier probe of the same agent version, opens
+  no session, so a later probe runs no deletion
+  (`acp_discovery.rs::a_cached_opencode_catalog_probe_creates_no_session_and_runs_no_deletion`).
 - A non-OpenCode probe does not run session delete
   (`acp_discovery.rs::a_non_opencode_probe_runs_no_session_delete`).
+- Metadata listing — `initialize` then `session/list`, outside any catalog
+  probe — opens no session and runs no OpenCode delete
+  (`acp_discovery.rs::metadata_listing_opens_no_session_and_runs_no_delete_for_opencode`),
+  which a real OpenCode CLI confirms too, in its own isolated data directory,
+  where this machine has one on `PATH`
+  (`acp_discovery.rs::real_opencode_metadata_listing_creates_no_session`).
 - An ACP error with `data.details` records the ACP message and detail in
   `session.error` while keeping the other fields
   (`acp_runtime.rs::an_acp_error_reports_its_details_in_the_event_message`).
