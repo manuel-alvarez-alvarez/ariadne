@@ -534,19 +534,19 @@ pub(super) async fn reply(
     // `from_review` comment, the review's own summary, counts as its own
     // side's. It never answers a comment the login's own side already
     // answered there. The seat check is the same one `report`'s `ready`
-    // claim requires (`Seat::Agent`, never a reviewer session, per 031). A
-    // review session alone keeps its wider reach, under its own name
-    // (029).
+    // claim requires (`Seat::Agent`, never a reviewer session, per 031), or
+    // the keeper a request opened by hand carries instead (032): a review
+    // session alone keeps its wider reach, under its own name (029).
     if !from_review && comment.kind != "review_comment" {
-        let keeping_agent =
-            pull.origin_task_id.is_some() && session.seat() == Some(ariadne_core::Seat::Agent);
+        let keeping_agent = session.seat() == Some(ariadne_core::Seat::Keeper)
+            || (pull.origin_task_id.is_some() && session.seat() == Some(ariadne_core::Seat::Agent));
         let unanswered_other_side = !comment.author_login.eq_ignore_ascii_case(&login)
             && !comment.from_review
             && !comment.answered;
         if !keeping_agent || !unanswered_other_side {
             return Err(ApiError::bad_request(
                 "a conversation reply answers, once, a comment of the other side, from the \
-                 task's own column agent",
+                 request's own keeping agent",
             ));
         }
     }

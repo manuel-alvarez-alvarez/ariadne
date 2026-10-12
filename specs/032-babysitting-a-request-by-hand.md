@@ -112,8 +112,13 @@ reads behind them ([026](026-pull-requests.md)).
     reviewer's. No tool resolves a thread and none submits a review: those
     stay the reviewer seat's alone (029).
 13. `reply_comment` from the keeper follows the keeping agent's own rule
-    (026 rule 16): it answers only an inline review comment, the thread of
-    the defect, and a reply to the conversation is refused with 400.
+    (026 rule 16): it answers an inline review comment, the thread of the
+    defect, and a comment of the other side in the conversation, once. It
+    may not answer a comment of its own side, nor one its own side already
+    answered there. The daemon accepts the keeper seat for this the same
+    way it accepts a task's column agent: a request a task keeps is
+    refused the ask (rule 1), so no row ever carries both, and the seat
+    alone tells the two apart.
 14. `report_pull_request` takes `ready` with `head_sha`, on a row this
     keeper answers for, by the same rule a task's column agent reports
     under (029 rule 15): a `ready: true` report with no `head_sha`, or one

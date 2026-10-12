@@ -80,6 +80,11 @@ fn script(shown: &Shown) -> Value {
         answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, "[]"),
         answer(&["api", "graphql"], 0, &threads.to_string()),
         answer(
+            &["pr", "comment"],
+            0,
+            "https://github.com/acme/widgets/pull/1#issuecomment-301"
+        ),
+        answer(
             &[
                 "api",
                 &format!("repos/acme/widgets/commits/{}/check-runs", shown.head)
@@ -293,16 +298,18 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
 
     // A reply from the keeper follows the keeping agent's own rule (026
     // rule 16): it answers an inline review comment, the thread of a
-    // defect, and a reply to the conversation itself is refused.
-    h.error(
-        as_session(
-            &format!("/v1/pull-requests/{id}/comments/ic-301/reply"),
-            &session.id,
-            json!({"body": "Thanks!"}),
-        ),
-        StatusCode::BAD_REQUEST,
-    )
-    .await;
+    // defect, and a comment of the other side in the conversation too.
+    let reply: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/ic-301/reply"),
+                &session.id,
+                json!({"body": "Thanks!"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(reply["body"], "Thanks!");
 
     // The keeper reports the request ready, on the head it read.
     let reported: Value = h
