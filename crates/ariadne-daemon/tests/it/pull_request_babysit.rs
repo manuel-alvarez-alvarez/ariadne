@@ -34,6 +34,7 @@ struct Shown<'a> {
     author: &'a str,
     state: &'a str,
     head: &'a str,
+    updated_at: &'a str,
     head_repo: &'a str,
     comments: Value,
 }
@@ -44,6 +45,7 @@ impl Shown<'_> {
             author: "me",
             state: "OPEN",
             head,
+            updated_at: "2026-10-01T00:00:00Z",
             head_repo: "https://github.com/acme/widgets",
             comments: json!([]),
         }
@@ -58,7 +60,7 @@ fn script(shown: &Shown) -> Value {
         "isDraft": false, "headRefName": "fix", "headRefOid": shown.head,
         "headRepository": {"url": shown.head_repo},
         "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
-        "createdAt": "2026-10-01T00:00:00Z"});
+        "createdAt": "2026-10-01T00:00:00Z", "updatedAt": shown.updated_at});
     let listed = match shown.state == "OPEN" {
         true => json!([read]),
         false => json!([]),
@@ -145,24 +147,13 @@ fn babysit(repo: &str, number: i64, body: Value) -> axum::http::Request<Body> {
     )
 }
 
-/// How many detail fetches of the repository the stub has answered.
-fn detail_fetches(stub: &StubForgeCli) -> usize {
-    stub.invocations()
-        .iter()
-        .filter(|i| i.args.get(1).is_some_and(|a| a.contains("/compare/")))
-        .count()
-}
-
 /// Fetch the repository once more, and wait for the resulting pass to end,
 /// so a test that proves "no news the second time" first proves the
 /// second fetch actually ran.
 async fn fetch_again(h: &Harness, stub: &StubForgeCli, repo: &str) {
-    let before = detail_fetches(stub);
+    let before = stub.fetches();
     h.state.forge_poll.wake(repo);
-    eventually(TIMEOUT, "the detail fetch", async || {
-        detail_fetches(stub) > before
-    })
-    .await;
+    eventually(TIMEOUT, "the fetch", async || stub.fetches() > before).await;
     h.flush_scheduler().await;
 }
 
@@ -269,6 +260,7 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
 
     // A comment by another login is the author's news, told once.
     stub.reprogram(script(&Shown {
+        updated_at: "2026-10-02T00:00:00Z",
         comments: json!([
             {"id": 301, "user": {"login": "alice"}, "body": "Looks good but one nit.",
              "created_at": "2026-10-02T00:00:00Z"}

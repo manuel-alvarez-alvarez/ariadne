@@ -832,7 +832,32 @@ async fn an_evidence_refresh_failure_and_recovery_at_the_same_head_publish_pull_
     use crate::common::{QUIET, TIMEOUT, drain_events, eventually, next_event};
     use ariadne_api::stream::DomainEvent;
     use ariadne_daemon::forge::poll::Mode;
-    let full = script(vec![github_pull(1, "other")], github_pull(1, "other"));
+    let local = ariadne_store::NewPullRequestComment {
+        forge_id: "ic-301".into(),
+        thread_id: "conversation".into(),
+        kind: "issue_comment".into(),
+        author_login: "me".into(),
+        author_is_bot: false,
+        body: "Ariadne note.".into(),
+        path: None,
+        line: None,
+        in_reply_to: None,
+        created_at: "2026-10-02T00:00:00Z".into(),
+        resolved: false,
+        from_review: false,
+    };
+    let comment = json!([{
+        "id": 301,
+        "user": {"login": "me", "type": "User"},
+        "body": "Ariadne note.",
+        "created_at": "2026-10-02T00:00:00Z"
+    }]);
+    let mut full = script(vec![github_pull(1, "other")], github_pull(1, "other"));
+    for entry in full.as_array_mut().unwrap() {
+        if entry["args"] == json!(["api", "repos/acme/widgets/issues/1/comments"]) {
+            entry["stdout"] = json!(comment.to_string());
+        }
+    }
     let stub = stub_forge_cli(full.clone());
     let h = harness().forge_cli(&stub).await;
     let mut events = h.bus.subscribe();
@@ -853,23 +878,31 @@ async fn an_evidence_refresh_failure_and_recovery_at_the_same_head_publish_pull_
     drain_events(&mut events);
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
 
+    // The local post makes the next same-head read eligible for details.
+    // The forge's normal read already holds the same comment, so the
+    // failure and recovery below change only `evidence_ok`.
+    let row = h
+        .store
+        .list_pull_requests(ariadne_store::PullRequestFilter::default())
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("the request row");
+    h.launcher
+        .live
+        .add_comments(&row.id, std::slice::from_ref(&local));
+
     // The next fetch finds the request's own read unchanged, but its
-    // detail entries gone: the comment evidence fails to refresh.
-    let failed = json!([
-        answer(&["auth", "status"], 0, ""),
-        answer(&["api", "user"], 0, "me"),
-        answer(
-            &["pr", "list"],
-            0,
-            &serde_json::to_string(&vec![github_pull(1, "other")]).unwrap()
-        ),
-        answer(&["pr", "view"], 0, &github_pull(1, "other").to_string()),
-        answer(
-            &["api", "repos/acme/widgets/issues?state=open&per_page=100"],
-            0,
-            "[]"
-        ),
-    ]);
+    // review-thread detail call fails. The other answers keep the fetch
+    // complete before this test reprograms the stub for recovery.
+    let mut failed = full.clone();
+    for entry in failed.as_array_mut().unwrap() {
+        if entry["args"] == json!(["api", "graphql"]) {
+            entry["exit"] = json!(1);
+            entry["stdout"] = json!("boom");
+        }
+    }
     stub.reprogram(failed);
     h.state.forge_poll.wake(&id);
     next_event(&mut events, moved).await;

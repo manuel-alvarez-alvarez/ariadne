@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-12
+updated: 2026-10-13
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -104,7 +104,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 
 ## Comments, checks and the detail read
 
-9. Each fetch reads the details of every open request Ariadne works on.
+9. Each fetch reads the details of every open request Ariadne works on, except where the held details are still current under the skip rule below.
     `ForgeClient::details(number)` answers the request, every comment with its thread and author, the failed checks, and whether the head is behind the base.
     GitHub reads `gh api` review comments, issue comments and reviews, thread ids and resolution through `gh api graphql`, check runs of the head, and a base compare.
     Every list is read with `--paginate`, the review threads and the check runs included.
@@ -112,7 +112,8 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     The reads go to the forge together; only GitHub's check runs and compare wait, on the request's own read, for its head and base.
     One detail read is bounded by `Timeouts::forge_details`, 30 seconds by default. One that fails keeps the details the last read found.
     A fetch skips the detail read of a request whose list read moves nothing a detail read would also show: the held read has details and `evidence_ok`, its `updated_at`, `head_sha`, `checks`, `review_decision`, `mergeable`, `draft`, `title` and `state` all equal the list's own read, its `LivePulls::generation` still equals the read's snapshot, and no comment Ariadne posted is still unconfirmed by a detail read (`forge::live::Live::unmoved`). The held details stand in place of a fresh read.
-    A thread a human resolves on the forge does not move `updated_at`; its resolved state is read only at the next move of the request that does.
+    A skipped read also leaves `behind_base` as its held detail value, and does not see a changed set of failed check names where normalized `checks` remains `failure`; the corresponding rule 12 news waits for a later detail read.
+    A thread a human resolves on the forge does not move `updated_at`; its resolved state is also read only at the next move of the request that does.
 10. A comment is the forge's, and its id is the forge's: `rc-<n>`, `ic-<n>`, `rv-<n>` or `note-<n>`.
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
     Comments on the conversation and review bodies share one thread, `conversation`.

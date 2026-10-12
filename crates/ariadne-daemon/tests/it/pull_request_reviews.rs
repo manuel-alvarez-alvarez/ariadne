@@ -265,22 +265,11 @@ async fn sessions(h: &Harness, pull_request_id: &str) -> Vec<AgentSession> {
         .unwrap()
 }
 
-/// How many detail fetches the stub has answered: one compare per fetch.
-fn detail_fetches(stub: &StubForgeCli) -> usize {
-    stub.invocations()
-        .iter()
-        .filter(|i| i.args.get(1).is_some_and(|a| a.contains("/compare/")))
-        .count()
-}
-
 /// Fetch the repository once more and let the scheduler act on it.
 async fn fetch_again(h: &Harness, stub: &StubForgeCli, repo: &str) {
-    let before = detail_fetches(stub);
+    let before = stub.fetches();
     h.state.forge_poll.wake(repo);
-    eventually(TIMEOUT, "the detail fetch", async || {
-        detail_fetches(stub) > before
-    })
-    .await;
+    eventually(TIMEOUT, "the fetch", async || stub.fetches() > before).await;
     h.flush_scheduler().await;
 }
 

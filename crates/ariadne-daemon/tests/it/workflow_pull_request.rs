@@ -18,6 +18,20 @@ const URL: &str = "https://github.com/acme/widgets/pull/1";
 fn script(state: &str, head: &str, comments: &[Value], failed: &[Value]) -> Value {
     let mut pull = opened_pull(URL, head);
     pull["state"] = json!(state);
+    if !comments.is_empty() {
+        pull["updatedAt"] = json!("2026-10-02T00:00:00Z");
+    }
+    pull["statusCheckRollup"] = json!(
+        failed
+            .iter()
+            .map(|check| {
+                json!({
+                    "status": check["status"],
+                    "conclusion": check["conclusion"].as_str().map(str::to_uppercase),
+                })
+            })
+            .collect::<Vec<_>>()
+    );
     let threads = json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
         {"id": "T1", "isResolved": false, "comments": {"nodes": [{"databaseId": 101}]}}
     ]}}}}});
