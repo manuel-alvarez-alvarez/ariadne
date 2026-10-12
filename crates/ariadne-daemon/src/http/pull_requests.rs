@@ -502,14 +502,14 @@ pub(super) async fn reply(
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
     // The keeping agent answers a defect in its own thread, an inline
-    // review comment, under the babysitting task's own column agent
-    // (`Seat::Agent`, the same seat `report`'s `ready` claim requires,
-    // never a reviewer session, per 031); in the conversation it answers
-    // the same way, and only once per comment of the other side — never
-    // its own side's, a `from_review` comment (the review's own summary)
-    // included, and never a comment the login's own side already answered
-    // there. A review session alone keeps its wider reach, under its own
-    // name (029).
+    // review comment. In the conversation it answers once per comment of
+    // the other side. It never answers its own side's comment. A
+    // `from_review` comment, the review's own summary, counts as its own
+    // side's. It never answers a comment the login's own side already
+    // answered there. The seat check is the same one `report`'s `ready`
+    // claim requires (`Seat::Agent`, never a reviewer session, per 031). A
+    // review session alone keeps its wider reach, under its own name
+    // (029).
     if !from_review && comment.kind != "review_comment" {
         let keeping_agent =
             pull.origin_task_id.is_some() && session.seat() == Some(ariadne_core::Seat::Agent);

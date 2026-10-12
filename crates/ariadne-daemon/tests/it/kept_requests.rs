@@ -582,7 +582,7 @@ async fn open_pull_request_strips_a_trailing_trailer_from_the_body() {
 /// the other side's: the `pr` agent's reply to it through `reply_comment`
 /// goes through the forge's `gh pr comment`, once. A second reply to the
 /// same body, and a reply to a body of the agent's own side, are refused,
-/// with no gh call either follows.
+/// and no gh call follows either refusal.
 #[tokio::test]
 async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side() {
     let threads =
@@ -593,17 +593,17 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
         {"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
          "submitted_at": "2026-10-02T00:01:00Z"},
     ]);
-    let Kept {
-        h, stub, agent, id, ..
-    } = kept_request(script_of(
+    let mut script = script_of(
         pull("OPEN", "abc"),
         &[],
         &[],
         &json!({"check_runs": []}).to_string(),
         &reviews.to_string(),
         &threads.to_string(),
-    ))
-    .await;
+    );
+    let Kept {
+        h, stub, agent, id, ..
+    } = kept_request(script.clone()).await;
     let mut stored: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "both review bodies to be stored", async || {
         stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
@@ -645,6 +645,19 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
     assert_eq!(reply["author_login"], "me");
     assert_eq!(reply["thread_id"], "conversation");
     assert_eq!(replies(&stub), before + 1, "one gh call replies");
+
+    // The forge holds the reply now, too: a background poll that reads
+    // the stub again, between this reply and the next call, must find the
+    // same answer `add_comments` already gave the live cache, not fall
+    // back to a read that never heard of it.
+    let posted = json!([{"id": 301, "user": {"login": "me", "type": "User"},
+        "body": "Thanks!", "created_at": "2026-10-03T00:00:00Z"}]);
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["api", "repos/acme/widgets/issues/1/comments"]) {
+            entry["stdout"] = json!(posted.to_string());
+        }
+    }
+    stub.reprogram(script.clone());
 
     let before = stub.invocations().len();
     h.error(
