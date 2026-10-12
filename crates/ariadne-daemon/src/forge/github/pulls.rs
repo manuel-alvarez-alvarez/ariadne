@@ -3,7 +3,7 @@ use super::Github;
 use crate::forge::pulls::ForgePullRequest;
 use serde::Deserialize;
 
-const FIELDS: &str = "number,url,title,body,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,statusCheckRollup,reviewDecision,mergeStateStatus,createdAt,updatedAt,mergeCommit";
+const FIELDS: &str = "number,url,title,body,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,statusCheckRollup,reviewDecision,mergeStateStatus,createdAt,updatedAt,mergeCommit,reviewRequests";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +33,9 @@ struct Pull {
     /// The commit a merged request landed as.
     #[serde(default)]
     merge_commit: Option<Commit>,
+    /// Absent on an older read: nobody asked stands for it.
+    #[serde(default)]
+    review_requests: Vec<ReviewRequest>,
 }
 #[derive(Deserialize)]
 struct Commit {
@@ -41,6 +44,13 @@ struct Commit {
 #[derive(Deserialize)]
 struct Login {
     login: String,
+}
+/// One entry of `reviewRequests`: a user names a `login`; a team names a
+/// `slug` or a `name` and no `login`, and is read as asking nobody.
+#[derive(Deserialize)]
+struct ReviewRequest {
+    #[serde(default)]
+    login: Option<String>,
 }
 #[derive(Deserialize)]
 struct Repository {
@@ -55,6 +65,15 @@ struct Check {
 }
 
 impl Pull {
+    /// Whether `login` is among this request's requested reviewers. A team
+    /// request names no login of its own, so it never matches one.
+    fn requests_review(&self, login: &str) -> bool {
+        self.review_requests.iter().any(|r| {
+            r.login
+                .as_deref()
+                .is_some_and(|l| l.eq_ignore_ascii_case(login))
+        })
+    }
     fn normalized(self) -> ForgePullRequest {
         let checks = self.status_check_rollup.unwrap_or_default();
         let check_state = if checks.is_empty() {
@@ -142,7 +161,7 @@ impl Pull {
     }
 }
 impl Github {
-    async fn pulls(&self, repo: &str, filter: &[&str]) -> Result<Vec<ForgePullRequest>, String> {
+    async fn rows(&self, repo: &str, filter: &[&str]) -> Result<Vec<Pull>, String> {
         // Increase the limit until the complete result fits. `gh pr list` has
         // no page flag; its limit drives the client's GraphQL pagination.
         let mut limit = 100;
@@ -156,30 +175,32 @@ impl Github {
             let rows: Vec<Pull> = serde_json::from_str(&output)
                 .map_err(|e| format!("cannot read GitHub pull requests: {e}"))?;
             if rows.len() < limit {
-                return Ok(rows.into_iter().map(Pull::normalized).collect());
+                return Ok(rows);
             }
             limit *= 2;
         }
+    }
+    async fn pulls(&self, repo: &str, filter: &[&str]) -> Result<Vec<ForgePullRequest>, String> {
+        Ok(self
+            .rows(repo, filter)
+            .await?
+            .into_iter()
+            .map(Pull::normalized)
+            .collect())
     }
     pub(crate) async fn list_open_pull_requests(
         &self,
         repo: &str,
         login: &str,
     ) -> Result<crate::forge::pulls::Listed, String> {
-        // Two reads that wait on the forge, not on each other.
-        let search = format!("review-requested:{login}");
-        let filter = ["--search", search.as_str()];
-        let (mut open, requested) =
-            tokio::try_join!(self.pulls(repo, &[]), self.pulls(repo, &filter))?;
-        let numbers = requested.iter().map(|p| p.number).collect();
-        // A request the open list missed while it paged is still open.
-        open.extend(requested);
-        open.sort_by_key(|p| p.number);
-        open.dedup_by_key(|p| p.number);
-        Ok(crate::forge::pulls::Listed {
-            open,
-            requested: numbers,
-        })
+        let rows = self.rows(repo, &[]).await?;
+        let requested = rows
+            .iter()
+            .filter(|p| p.requests_review(login))
+            .map(|p| p.number)
+            .collect();
+        let open = rows.into_iter().map(Pull::normalized).collect();
+        Ok(crate::forge::pulls::Listed { open, requested })
     }
     pub(crate) async fn search_pull_requests(
         &self,
@@ -298,5 +319,29 @@ mod tests {
         });
         let pull: Pull = serde_json::from_value(value).unwrap();
         assert_eq!(Pull::normalized(pull).mergeable, "unknown");
+    }
+
+    /// A user named among `reviewRequests` asks for that user's review.
+    #[test]
+    fn a_user_review_request_names_its_login() {
+        let pull = provider_shaped(json!({"reviewRequests": [{"login": "me"}]}));
+        assert!(pull.requests_review("me"));
+        assert!(!pull.requests_review("someone-else"));
+    }
+
+    /// A team named among `reviewRequests` has a `slug` and no `login`, so
+    /// it never matches a user's own login, whoever belongs to the team.
+    #[test]
+    fn a_team_review_request_matches_no_login() {
+        let pull = provider_shaped(json!({"reviewRequests": [{"slug": "reviewers"}]}));
+        assert!(!pull.requests_review("me"));
+    }
+
+    /// A read from before this field existed names no review request at
+    /// all: nobody asked stands for it.
+    #[test]
+    fn a_read_naming_no_review_requests_asks_for_nobody() {
+        let pull = provider_shaped(json!({}));
+        assert!(!pull.requests_review("me"));
     }
 }
