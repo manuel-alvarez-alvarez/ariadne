@@ -1866,6 +1866,25 @@ mod tests {
         }
     }
 
+    /// Never polling a request is the session rules' to state too (006 rule
+    /// 5), for the `agent` and `reviewer` seats alone: no shipped skill
+    /// names a timer or a poll of its own.
+    #[test]
+    fn no_skill_names_a_timer_or_a_poll() {
+        for (name, document) in all_skills() {
+            let words: Vec<String> = document
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .map(str::to_lowercase)
+                .collect();
+            for gone in ["timer", "poll", "polling"] {
+                assert!(
+                    !words.iter().any(|word| word == gone),
+                    "the {name} names a {gone}"
+                );
+            }
+        }
+    }
+
     /// `coding` ends its search step on what the agent knows.
     #[test]
     fn the_coding_search_step_ends_on_what_the_agent_knows() {

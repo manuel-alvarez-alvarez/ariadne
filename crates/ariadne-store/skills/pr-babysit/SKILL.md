@@ -67,6 +67,7 @@ turn.
 
 ## Done
 
-Each comment of the other side has one reply, in its shape. Each fix is
-pushed after its checks pass. The report matches the current approvals
-and checks. The merge or the close ends the task; else your turn ends.
+Each comment that waits on you has one answer, in its shape. A thanks or
+a `Still there:` gets none. Each fix is pushed after its checks pass. The
+report matches the current approvals and checks. The merge or the close
+ends the task; else your turn ends.

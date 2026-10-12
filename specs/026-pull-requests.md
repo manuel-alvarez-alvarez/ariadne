@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-11
+updated: 2026-10-12
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -95,8 +95,9 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
 The current task-column agent owns an author request, its skill, its fixes,
 and its idle handling under [030](030-workflows.md), rule 10. It never
 checks the request on its own: Ariadne wakes the session with the
-request's news instead, a rule the session rules of the `agent` seat state
-once for every seat that keeps or reviews a request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
+request's news instead, a rule the session rules of the `agent` and
+`reviewer` seats state once, for every seat that keeps or reviews a
+request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 
 ## Comments, checks and the detail read
 

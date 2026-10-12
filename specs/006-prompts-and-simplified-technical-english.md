@@ -190,9 +190,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   and when it may ask anyway
   (`mcp.rs::only_the_orchestrator_is_told_to_ask`).
 - Each rule of rule 5 is written in its owner alone
-  (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`), and no skill
+  (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`), no skill
   repeats how a check runs
-  (`defaults.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`).
+  (`defaults.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`),
+  and no skill names a timer or a poll
+  (`defaults.rs::no_skill_names_a_timer_or_a_poll`).
 - Each seat's MCP instructions hold its seat text and its skill index after
   the session rules
   (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`).
