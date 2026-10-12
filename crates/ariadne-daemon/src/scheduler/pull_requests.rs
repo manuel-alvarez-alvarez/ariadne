@@ -32,8 +32,9 @@ use crate::forge::{
 
 use super::{QUIET_NUDGE_SECS, SPAWN_RETRY_BUDGET};
 
-/// How long the tick waits before it tries a failed cleanup again. A change
-/// of the request tries at once.
+/// How long the tick waits before it reads an open kept request's forge
+/// state again, or tries a failed cleanup again. A change of the request
+/// tries at once.
 const CLEANUP_RETRY: Duration = Duration::from_secs(60);
 
 /// The situation a review session's watchdog spends its steps in: there is
@@ -222,11 +223,16 @@ impl super::Scheduler {
             // The last read may be older than the merge that ended the task:
             // a finish reads the forge at the call. The forge is asked again,
             // so a merged request still has its work taken down.
-            // A read that fails proves nothing: the row stays, and the pass
-            // after the retry wait asks again.
+            // Open or failed, the read proves nothing moved: the row stays,
+            // and the tick after the retry wait asks again, so an open
+            // request with nobody to keep it but a babysit or a review asked
+            // by hand costs one forge read per wait, not one per tick.
             match Box::pin(self.read_ended(pull)).await {
                 Ok(Some(ended)) => return Box::pin(self.end_kept_request(&ended)).await,
-                Ok(None) => {}
+                Ok(None) => {
+                    self.pull_request_cleanup_retry
+                        .insert(pull.id.clone(), Instant::now() + CLEANUP_RETRY);
+                }
                 Err(e) => {
                     self.pull_request_cleanup_retry
                         .insert(pull.id.clone(), Instant::now() + CLEANUP_RETRY);
