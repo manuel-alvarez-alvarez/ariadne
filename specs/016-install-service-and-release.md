@@ -118,7 +118,7 @@ Out: what the daemon does once running (009, 012).
     `ariadne`, `ariadned` and the Ariadne Desktop app with that identity when
     it is in the login keychain, and still produces a complete, unsigned
     build when it is not.
-15. The Release page release-please publishes carries only the changelog
+14. The Release page release-please publishes carries only the changelog
     entry, with no install steps and no asset list. Once every target in
     `release.yml`'s `build` job has staged and uploaded its
     `checksums-<target>.txt`, a `notes` job downloads every one of them,
@@ -129,14 +129,17 @@ Out: what the daemon does once running (009, 012).
     target, and its SHA-256 digest), and a compare link to the previous tag
     when one is known from `BODY_FILE` or from `git`, in that order, all
     wrapped in a pair of HTML comment markers, followed by the
-    release-please notes `BODY_FILE` already held, unchanged. The job writes
-    the result back with `gh release edit --notes-file`. A re-run - by hand,
-    or because a tag already carries the markers - replaces only what is
-    between them, so the header and the table never stack a second time; the
-    script is idempotent, giving the same body when run twice on its own
-    output. Runs under both `release: published` and `workflow_dispatch`,
-    same as the `build` job it depends on.
-16. `ui_stop_daemon` waits for launchd to drop a label it just told to
+    release-please notes `BODY_FILE` already held, unchanged. `BODY_FILE` is
+    read as `\r\n` or `\n`, since a body edited in the GitHub web UI comes
+    back with `\r\n`; a body that holds one marker but not the other is
+    refused rather than guessed at. The job writes the result back with `gh
+    release edit --notes-file`. A re-run - by hand, or because a tag already
+    carries the markers - replaces only what is between them, so the header
+    and the table never stack a second time; the script is idempotent,
+    giving the same body when run twice on its own output. Runs under both
+    `release: published` and `workflow_dispatch`, same as the `build` job it
+    depends on.
+15. `ui_stop_daemon` waits for launchd to drop a label it just told to
     bootout, and for a pid-file daemon it just killed to exit — each up to
     ~30s, going on regardless so a wait that times out never fails the
     install: `launchctl bootout` and a plain `kill` both return before the
@@ -192,8 +195,11 @@ Out: what the daemon does once running (009, 012).
   install section and an asset table ahead of it, and a re-run on a body
   that already carries the markers replaces the generated part without
   stacking a second header; an asset table built from checksums files of two
-  different targets lists every line of both under their own target
-  (`scripts/tests/release-notes.sh`: `first`, `rerun`, `two-targets`).
+  different targets lists every line of both under their own target; a
+  re-run on a body with `\r\n` line ends, as the GitHub web UI writes one,
+  still finds the markers and keeps the release-please notes
+  (`scripts/tests/release-notes.sh`: `first`, `rerun`, `two-targets`,
+  `crlf`).
 
 ## Known gap
 

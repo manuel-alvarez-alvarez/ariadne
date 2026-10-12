@@ -36,9 +36,12 @@ in the root [`AGENTS.md`](../AGENTS.md).
   from `BODY_FILE` or from `git`, wrapped in a pair of HTML comment markers,
   followed by `BODY_FILE`'s own release-please notes unchanged. Idempotent:
   a re-run on its own output replaces only what is between the markers,
-  never stacking a second header. owner/repo for the asset links comes from
-  the `origin` remote, the same way `install.sh` resolves a release
-  repository, falling back to `GITHUB_REPOSITORY`.
+  never stacking a second header. Reads `BODY_FILE` as `\r\n` or `\n`, and
+  refuses a body that holds one marker but not the other rather than
+  guessing at it. owner/repo for the asset links comes from the `origin`
+  remote, the same way `install.sh` resolves a release repository
+  (including its check that the parsed owner and name are non-empty),
+  falling back to `GITHUB_REPOSITORY`.
 - `tests/install-command.sh` — the stand-in for every external tool
   (`gh`, `git`, `tar`, `ldconfig`, `systemctl`, `security`, `codesign`,
   `launchctl`, …) the installer boundary tests put on `PATH`, driven by the

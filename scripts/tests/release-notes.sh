@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Run on any OS: bash scripts/tests/release-notes.sh CASE, for one of its
-# cases: first, rerun, two-targets. Proves scripts/release-notes.sh's own
-# behavior against a throwaway git repository (a real `origin` remote and
-# real tags - no stand-in needed, since the script shells out to nothing
-# but git, grep, awk, sed and basename).
+# cases: first, rerun, two-targets, crlf. Proves scripts/release-notes.sh's
+# own behavior against a throwaway git repository (a real `origin` remote
+# and real tags - no stand-in needed, since the script shells out to
+# nothing but git, grep, awk, sed, tr and basename).
 set -Eeuo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 test_case="${1:?name a test case}"
@@ -76,6 +76,23 @@ case "$test_case" in
         grep -F '| [ariadne-aarch64-apple-darwin.tar.gz](https://github.com/acme/widget/releases/download/v0.2.0/ariadne-aarch64-apple-darwin.tar.gz) | aarch64-apple-darwin | abc111 |' out1
         grep -F '| [ariadne-desktop-aarch64-apple-darwin.app.tar.gz](https://github.com/acme/widget/releases/download/v0.2.0/ariadne-desktop-aarch64-apple-darwin.app.tar.gz) | aarch64-apple-darwin | def222 |' out1
         grep -F '| [ariadne-x86_64-unknown-linux-gnu.tar.gz](https://github.com/acme/widget/releases/download/v0.2.0/ariadne-x86_64-unknown-linux-gnu.tar.gz) | x86_64-unknown-linux-gnu | xyz333 |' out1
+        ;;
+    crlf)
+        # A body edited in the GitHub web UI comes back with \r\n line
+        # ends. A re-run on one must still find the markers and keep the
+        # release-please notes, rather than reading the whole body as
+        # unmarked and dropping them.
+        printf '### Features\n\n* add the thing\n' > body.txt
+        printf 'abc111  ariadne-aarch64-apple-darwin.tar.gz\n' > checksums-aarch64-apple-darwin.txt
+        run v0.2.0 body.txt checksums-aarch64-apple-darwin.txt > out1
+        sed 's/$/\r/' out1 > out1.crlf
+        run v0.2.0 out1.crlf checksums-aarch64-apple-darwin.txt > out2
+        grep -Fxc '<!-- ariadne-release-notes:start -->' out2 | grep -Fxq 1
+        grep -Fxc '<!-- ariadne-release-notes:end -->' out2 | grep -Fxq 1
+        grep -Fxc '## Install' out2 | grep -Fxq 1
+        grep -Fxc '| Asset | Target | SHA-256 |' out2 | grep -Fxq 1
+        grep -Fxq '### Features' out2
+        grep -Fxq '* add the thing' out2
         ;;
     *) exit 2 ;;
 esac

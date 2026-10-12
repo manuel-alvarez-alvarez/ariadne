@@ -23,6 +23,15 @@ shift 2
 [ "$#" -gt 0 ] || { echo "name at least one checksums file" >&2; exit 2; }
 [ -f "$BODY_FILE" ] || { echo "$BODY_FILE: no such file" >&2; exit 2; }
 
+# A body edited in the GitHub web UI, or returned by some API calls, carries
+# \r\n line ends; a bare $0 == end in awk and a line-anchored match never see
+# the marker under one, so the split below would run off the end and drop
+# every release-please note. Work from a \n-only copy instead of the file
+# the caller gave us.
+BODY="$(mktemp)"
+trap 'rm -f "$BODY"' EXIT
+tr -d '\r' < "$BODY_FILE" > "$BODY"
+
 # owner/repo the asset links and the compare link point at, read off the
 # origin remote the same way scripts/install.sh resolves a release
 # repository (handles the https, ssh and scp-like forms of the URL), with
@@ -42,6 +51,8 @@ resolve_repo() {
     name="${url##*/}"
     owner="${url%/*}"
     owner="${owner##*[:/]}"
+    [ -n "$owner" ] && [ -n "$name" ] && [ "$owner" != "$url" ] \
+        || { echo "could not read owner/repo out of the origin remote ($url)" >&2; exit 2; }
     printf '%s/%s\n' "$owner" "$name"
 }
 REPO="$(resolve_repo)"
@@ -49,7 +60,7 @@ REPO="$(resolve_repo)"
 # The previous tag, read from the body first: a "Full Changelog" compare
 # line, ours from an earlier run, stays good on a re-run with no need to ask
 # git again. Falls back to git for a first run, where the body carries none.
-COMPARE_LINE="$(grep -oE 'compare/[^[:space:])]+' "$BODY_FILE" 2>/dev/null | head -1)" || true
+COMPARE_LINE="$(grep -oE 'compare/[^[:space:])]+' "$BODY" 2>/dev/null | head -1)" || true
 if [ -n "$COMPARE_LINE" ]; then
     rest="${COMPARE_LINE#compare/}"
     PREV_TAG="${rest%%...*}"
@@ -58,11 +69,18 @@ else
 fi
 
 # The release-please notes: whatever follows our own end marker, or the
-# whole input when this is the first run and no marker exists yet.
-if grep -qF "$START" "$BODY_FILE" && grep -qF "$END" "$BODY_FILE"; then
-    NOTES="$(awk -v end="$END" 'found { print } $0 == end { found = 1 }' "$BODY_FILE")"
+# whole input when this is the first run and no marker exists yet. A body
+# with one marker but not the other is not ours to guess at.
+HAS_START=0; grep -qF "$START" "$BODY" && HAS_START=1
+HAS_END=0; grep -qF "$END" "$BODY" && HAS_END=1
+if [ "$HAS_START" -ne "$HAS_END" ]; then
+    echo "$BODY_FILE: has one of the ariadne-release-notes markers but not the other" >&2
+    exit 2
+fi
+if [ "$HAS_START" -eq 1 ]; then
+    NOTES="$(awk -v end="$END" 'found { print } $0 == end { found = 1 }' "$BODY")"
 else
-    NOTES="$(cat "$BODY_FILE")"
+    NOTES="$(cat "$BODY")"
 fi
 # Drop the blank line the split leaves at the top.
 NOTES="$(printf '%s\n' "$NOTES" | sed '/./,$!d')"
