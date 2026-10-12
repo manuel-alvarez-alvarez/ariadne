@@ -275,6 +275,23 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
     }
 }
 
+/// How a seat that may keep or review a pull or merge request learns of its
+/// news: never by checking itself (026, 030). The orchestrator works no
+/// request, so it gets no line.
+///
+/// This used to be the `pr-babysit` skill's own rule, repeated nowhere else
+/// it held: a review session needs it too, and a skill only a workflow
+/// column stages could never say it for both. It is the session rules'
+/// instead, the one layer every seat with a request reads (006 rule 5).
+fn request_news_rule(seat: &McpSeat) -> &'static str {
+    match seat {
+        McpSeat::Orchestrator => "",
+        McpSeat::Agent | McpSeat::PullRequestReviewer => {
+            "\n\nAriadne wakes the session with the request's news. Do not wait on a timer or check the request on your own."
+        }
+    }
+}
+
 /// The seat a session's environment names: `ARIADNE_SEAT`, read as a seat
 /// of a pull request where `ARIADNE_PULL_REQUEST_ID` is set. A `reviewer`
 /// exists only beside a request: no task has one.
@@ -336,8 +353,9 @@ STE holds for all you write:
 - task titles and descriptions
 - step and task reasons
 - commits and pull request text
-Write no trailer anywhere: no `Co-Authored-By`, no "Generated with", no tool name."#,
-        ask_rule(seat)
+Write no trailer anywhere: no `Co-Authored-By`, no "Generated with", no tool name.{}"#,
+        ask_rule(seat),
+        request_news_rule(seat)
     )
 }
 
@@ -924,8 +942,10 @@ pub(crate) mod tests {
     /// Each rule that every seat shares is written in its owner alone (006):
     /// asking the user in the session rules and the `wait_for_user`
     /// description, the end of a turn in the descriptions of the calls that
-    /// end one, and the check block and the trailer rule in the session
-    /// rules. Every default text and shipped skill is read beside them.
+    /// end one, the check block and the trailer rule in the session rules,
+    /// and never polling a request in the session rules of the `agent` and
+    /// `reviewer` seats alone. Every default text and shipped skill is read
+    /// beside them.
     #[test]
     fn each_shared_rule_is_written_in_its_owner_alone() {
         use ariadne_store::defaults::{
@@ -934,7 +954,10 @@ pub(crate) mod tests {
         };
         let mut texts: Vec<(String, String)> = Vec::new();
         for seat in SEATS {
-            texts.push(("session rules".into(), session_rules(&seat)));
+            texts.push((
+                format!("{} session rules", seat.as_str()),
+                session_rules(&seat),
+            ));
         }
         for seat in ariadne_core::Seat::ALL {
             texts.push((
@@ -962,11 +985,21 @@ pub(crate) mod tests {
                 tool.description.as_deref().unwrap_or_default().into(),
             ));
         }
+        const EVERY_SEATS_RULES: [&str; 3] = [
+            "orchestrator session rules",
+            "agent session rules",
+            "pull request reviewer session rules",
+        ];
         for (rule, markers, owners) in [
             (
                 "asking the user",
                 &["the question in your reply"][..],
-                &["session rules", "wait_for_user description"][..],
+                &[
+                    "orchestrator session rules",
+                    "agent session rules",
+                    "pull request reviewer session rules",
+                    "wait_for_user description",
+                ][..],
             ),
             (
                 "ending the turn",
@@ -985,12 +1018,17 @@ pub(crate) mod tests {
                     "outside the worktree",
                     "Never poll",
                 ][..],
-                &["session rules"][..],
+                &EVERY_SEATS_RULES[..],
             ),
             (
                 "no trailer",
                 &["trailer", "Co-Authored-By"][..],
-                &["session rules"][..],
+                &EVERY_SEATS_RULES[..],
+            ),
+            (
+                "never polling a request",
+                &["Ariadne wakes the session with the request's news"][..],
+                &["agent session rules", "pull request reviewer session rules"][..],
             ),
         ] {
             let places: std::collections::BTreeSet<&str> = texts

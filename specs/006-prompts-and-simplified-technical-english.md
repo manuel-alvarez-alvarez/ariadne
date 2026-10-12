@@ -99,7 +99,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      rules. A skill says only which checks it runs: the checks of what it
      changed. The repository's hooks run its whole suite at a push, and the
      merge skill pushes before it fast-forwards (030);
-   - no trailer in any text: the session rules.
+   - no trailer in any text: the session rules;
+   - never polling a request: the session rules of the `agent` and
+     `reviewer` seats alone, which say that Ariadne wakes the session with
+     the request's news (026, 030) instead. No skill names a timer or a
+     poll.
 6. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
    amends nothing, since the merge column squashes. `refactoring` commits

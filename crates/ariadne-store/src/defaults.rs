@@ -1200,20 +1200,19 @@ mod tests {
     /// names none of the ways an agent would feed itself: no forge CLI, no
     /// timer, no poll. A human closes a thread and a human merges, so it
     /// names neither the call that resolves one nor a forge merge command.
-    /// The agent opens the request, filling the repository's own template
-    /// or, with none, Why, What changed and How to test, pushes each tested
-    /// fix, completes its step on the merge and fails the task on the
-    /// close. And the turn ends when the news is handled, which is what
-    /// lets the next news start a turn of its own.
+    /// The agent opens the request on a first turn with none open, and
+    /// starts on the news steps where one already is open. It completes
+    /// its step on the merge and fails the task on the close, each ending
+    /// its turn instead where it sits on no task.
     #[test]
-    fn the_pr_babysit_skill_opens_the_request_and_ends_the_step_on_the_merge() {
+    fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
         let doc = default_skill_document(PR_BABYSIT_SKILL).expect("the pr-babysit skill");
         let words: Vec<String> = doc
             .split(|c: char| !c.is_ascii_alphanumeric())
             .map(str::to_lowercase)
             .collect();
         for gone in [
-            "gh", "glab", "sleep", "poll", "polling", "resolve", "resolved",
+            "gh", "glab", "sleep", "timer", "poll", "polling", "resolve", "resolved",
         ] {
             assert!(
                 !words.iter().any(|word| word == gone),
@@ -1228,21 +1227,24 @@ mod tests {
         }
         let doc = unwrapped(doc);
         for step in [
-            "On your first turn, do step 1.",
-            "On each later turn, Ariadne sends news: do steps 2 to 7. Then end your turn.",
+            "On your first turn, with no request open, do step 1.",
+            "With one already open, start at step 2.",
+            "On each later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.",
             "`get_pull_request`",
             "`list_comments` with `unanswered_only`",
             "`git merge --no-edit <remote>/<base>`",
             "Push the task branch. Call `open_pull_request`.",
             "repository's commit conventions",
             "Fill its pull request template, or write three full sections: Why, What changed, How to test.",
-            "run the checks of what you changed, and push;",
+            "then run the checks of what you changed. Push it.",
             "Never amend, rebase or force a push.",
             "Call `report_pull_request` only when readiness changes:",
             "`ready: true` with the `head_sha`",
             "`ready: false` when one goes back",
+            "On a merge, where you sit on a task, update `<base>` in the primary checkout:",
             "Call `complete_step` with the merge as the reason.",
-            "call `fail_task`",
+            "Else end your turn: Ariadne ends your session.",
+            "On a close, where you sit on a task, call `fail_task` with the reason.",
             "## Done",
         ] {
             assert!(doc.contains(step), "the pr-babysit skill has no {step}");
@@ -1250,19 +1252,27 @@ mod tests {
         assert_eq!(SkillSeat::of(PR_BABYSIT_SKILL), SkillSeat::PullRequest);
     }
 
-    /// The keeping agent replies only where a thread asks for a change. Its
-    /// reply explains either the new commit or why the agent kept the code.
-    /// It adds no unrelated forge discussion or code change.
+    /// Each comment of the other side gets one reply, in one of three
+    /// shapes: a fix with its commit or a kept line with its reason, or a
+    /// short answer to a question. A thanks gets none, a follow-up in an
+    /// answered thread gets a new answer, and a `Still there:` from the
+    /// reviewer gets no second try — the user decides. A finding with a
+    /// suggestion block is applied rather than rewritten. No unrelated
+    /// forge discussion or code change is added.
     #[test]
-    fn the_pr_babysit_skill_replies_only_to_requested_changes() {
+    fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
         let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
         for rule in [
-            "reply once in the thread with the change and the commit.",
-            "Or reply once in the thread with why you do not make it.",
-            "Post only one reply in a thread that asks for a change.",
-            "Post no new thread, summary, top-level comment or thanks.",
+            "Answer each comment of the other side, once per comment:",
+            "Reply `Fixed in <sha>: <what changed>.` Or reply `Not changed: <why>.`",
+            "A question: give one short answer.",
+            "Thanks or an acknowledgement: reply nothing.",
+            "A follow-up ask in a thread you answered: a new ask. Act on it.",
+            "A `Still there:` reply from the reviewer: no second try. The user decides.",
+            "A finding with a suggestion block: apply the block.",
             "Commit only what a comment or a failed check asks for.",
             "Leave every thread open.",
+            "Post no new thread, summary or top-level comment.",
         ] {
             assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
         }
@@ -1896,7 +1906,11 @@ mod tests {
     ///
     /// `coding` gets 5400, because `testing` merged into it. `code-review`
     /// gets 4100: the review column ends its step on one of the two step
-    /// calls now, which is a step of its own. `orchestration` gets 4600: it
+    /// calls now, which is a step of its own. `pr-babysit` moves from 2900
+    /// to 3400: resuming on an open request is a branch of its own, and a
+    /// comment now answers in one of three shapes, through a suggestion
+    /// block and a `Still there:` stop no earlier draft carried.
+    /// `orchestration` gets 4600: it
     /// staffs one agent per column on the column's rank, and staffs a
     /// missing column before a retry.
     #[test]
@@ -1907,10 +1921,10 @@ mod tests {
             "debugging" => 3400,
             "code-review" => 4100,
             "coding" => 5400,
-            // Seven steps, one per kind of news and the report, and the two
-            // rules no other skill has: leave every thread open, and reach
-            // the forge only through the session's tools.
-            PR_BABYSIT_SKILL => 2900,
+            // Eight steps: the open, the read, the three reply shapes and
+            // the two loop stops (a follow-up and `Still there:`), the
+            // suggestion rule, the checks, the report, and the two endings.
+            PR_BABYSIT_SKILL => 3400,
             // Eleven steps: the read, the checks, the hunt, the three
             // priorities, one inline comment per finding with its title and
             // its fix, the summary of four parts with no line in any of

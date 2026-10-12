@@ -174,8 +174,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
   `::a_task_agent_cannot_be_staffed_on_the_reviewer_sessions_skill`).
 - The `pr` column's agent indexes `pr-babysit`
   (`workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`),
-  and the skill opens the request and ends the step on the merge
-  (`defaults.rs::the_pr_babysit_skill_opens_the_request_and_ends_the_step_on_the_merge`).
+  and the skill opens the request and ends on the merge or the close
+  (`defaults.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`).
 - A review session is staffed on the review pin and indexes
   `pr-reviewer`
   (`pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`),
