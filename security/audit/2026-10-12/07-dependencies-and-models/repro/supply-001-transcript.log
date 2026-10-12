@@ -1,62 +1,68 @@
-scratch directory: /tmp/supply-001-repro.x5o9B8
+scratch directory: /private/tmp/supply-001-repro.yMTYZ7
 
 --- A-unpinned, part 1: build a synthetic upstream and install it unpinned ---
 
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.x5o9B8/venv_unpinned_run1/bin/python3.14 -m pip install --upgrade pip
-this is what run.sh's 'kev[serve] @ git+https://...kev' does (no @<sha>) -- run1 installed marker: benign-v1
+[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/venv_unpinned_run1/bin/python3.14 -m pip install --upgrade pip
+this is what run.sh's 'kev[serve] @ git+https://...kev' does (no @<sha>):
+OK: demo_pkg.__file__ = /private/tmp/supply-001-repro.yMTYZ7/venv_unpinned_run1/lib/python3.14/site-packages/demo_pkg/__init__.py
+OK: demo_pkg.MARKER = benign-v1
 
 --- A-unpinned, part 2: the upstream changes (a maintainer push, or an account takeover, between two runs) ---
 
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.x5o9B8/venv_unpinned_run2/bin/python3.14 -m pip install --upgrade pip
-a second, otherwise identical, unpinned install -- run2 installed marker: SWAPPED-v2-malicious
+[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/venv_unpinned_run2/bin/python3.14 -m pip install --upgrade pip
+a second, otherwise identical, unpinned install:
+OK: demo_pkg.__file__ = /private/tmp/supply-001-repro.yMTYZ7/venv_unpinned_run2/lib/python3.14/site-packages/demo_pkg/__init__.py
+OK: demo_pkg.MARKER = SWAPPED-v2-malicious
 
 --- A-pinned: a separate repo, so the pin never shares state with the unpinned demo above ---
-pinned-demo v1 commit: 500d4ba25f9a18b7d5451d0bef1e518e4e848cc7
-pinned-demo v2 commit (the account/upstream changing after the pin): 237ba27bb8a1f23fd3cc4ba9bbbf9b023c23a870
+pinned-demo v1 commit: e54c14a2c042c0356e616b59ca9e4fd7be4a3c5e
+pinned-demo v2 commit (the account/upstream changing after the pin): 6d38286e9cf2f0603b78b6472599d653b02a54b0
 
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.x5o9B8/venv_pinned/bin/python3.14 -m pip install --upgrade pip
-pinned install, taken before the v2 push, installed marker: pinned-SWAPPED-v2-malicious
-pinned install, recorded commit (direct_url.json): {'commit_id': '500d4ba25f9a18b7d5451d0bef1e518e4e848cc7', 'requested_revision': '500d4ba25f9a18b7d5451d0bef1e518e4e848cc7', 'vcs': 'git'}
+[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/venv_pinned/bin/python3.14 -m pip install --upgrade pip
+pinned install, taken before the v2 push:
+OK: demo_pkg2.__file__ = /private/tmp/supply-001-repro.yMTYZ7/venv_pinned/lib/python3.14/site-packages/demo_pkg2/__init__.py
+OK: demo_pkg2.MARKER = pinned-benign-v1
+recorded commit (direct_url.json): {'commit_id': 'e54c14a2c042c0356e616b59ca9e4fd7be4a3c5e', 'requested_revision': 'e54c14a2c042c0356e616b59ca9e4fd7be4a3c5e', 'vcs': 'git'}
 
 --- B1: build a benign wheel and record its sha256 (stand-in for a Laya GitHub release asset) ---
 
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.x5o9B8/buildenv/bin/python3.14 -m pip install --upgrade pip
-wheel: /tmp/supply-001-repro.x5o9B8/dist_v1/demo_wheel-1.0.0-py3-none-any.whl
-sha256: 0174e2706d31cdd53144bffb5a7c107ee97c176165ba9d4c4b001613dc7c81e2
-demo-wheel @ file:///tmp/supply-001-repro.x5o9B8/dist_v1/demo_wheel-1.0.0-py3-none-any.whl --hash=sha256:0174e2706d31cdd53144bffb5a7c107ee97c176165ba9d4c4b001613dc7c81e2
+[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/buildenv/bin/python3.14 -m pip install --upgrade pip
+wheel: /private/tmp/supply-001-repro.yMTYZ7/dist_v1/demo_wheel-1.0.0-py3-none-any.whl
+sha256: 30cff7d6ee7ccdcb87cbcefb13a588ab9b27b05e5a55034104808a5a923e416c
+demo-wheel @ file:///private/tmp/supply-001-repro.yMTYZ7/dist_v1/demo_wheel-1.0.0-py3-none-any.whl --hash=sha256:30cff7d6ee7ccdcb87cbcefb13a588ab9b27b05e5a55034104808a5a923e416c
 
 --- B2: install with --require-hashes against the correct artifact (expected: succeeds) ---
 
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.x5o9B8/venv_hash_ok/bin/python3.14 -m pip install --upgrade pip
-installed marker: wheel-v1-benign
+[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/venv_hash_ok/bin/python3.14 -m pip install --upgrade pip
+OK: demo_wheel.__file__ = /private/tmp/supply-001-repro.yMTYZ7/venv_hash_ok/lib/python3.14/site-packages/demo_wheel/__init__.py
+OK: demo_wheel.MARKER = wheel-v1-benign
 
 --- B3: simulate a compromised/re-published release asset at the SAME URL, same requirements.txt ---
 
 --- B4: re-install with the OLD recorded hash against the swapped content (expected: pip refuses) ---
-exit status: 1
-[notice] To update, run: /private/tmp/supply-001-repro.x5o9B8/venv_hash_reject/bin/python3.14 -m pip install --upgrade pip
-ERROR: THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE. If you have updated the package versions, please update the hashes. Otherwise, examine the package contents carefully; someone may have tampered with them.
-    demo-wheel @ file:///tmp/supply-001-repro.x5o9B8/dist_v1/demo_wheel-1.0.0-py3-none-any.whl from file:///tmp/supply-001-repro.x5o9B8/dist_v1/demo_wheel-1.0.0-py3-none-any.whl (from -r /tmp/supply-001-repro.x5o9B8/requirements.txt (line 1)):
-        Expected sha256 0174e2706d31cdd53144bffb5a7c107ee97c176165ba9d4c4b001613dc7c81e2
-             Got        6eb95ea1fb128dce9fe5e4c964397704b8607a4538af06361ce25d48d0c5403c
+OK: refused as expected, citing: THESE PACKAGES DO NOT MATCH THE HASHES
+    demo-wheel @ file:///private/tmp/supply-001-repro.yMTYZ7/dist_v1/demo_wheel-1.0.0-py3-none-any.whl from file:///private/tmp/supply-001-repro.yMTYZ7/dist_v1/demo_wheel-1.0.0-py3-none-any.whl (from -r /private/tmp/supply-001-repro.yMTYZ7/requirements.txt (line 1)):
+        Expected sha256 30cff7d6ee7ccdcb87cbcefb13a588ab9b27b05e5a55034104808a5a923e416c
+             Got        ae09591504778b6d40f59fd7ed23f1cbaa26745d4aa2b8864a23b376e45fb020
 
 
 --- C1: --require-hashes on a git+ URL (Kev's install shape) is refused outright, pinned or not ---
-exit status: 1
+OK: refused as expected, citing: we don't have a way to hash version control repositories
 [notice] A new release of pip is available: 26.1.2 -> 26.2.1
-[notice] To update, run: /private/tmp/supply-001-repro.x5o9B8/venv_vcs_hash/bin/python3.14 -m pip install --upgrade pip
+[notice] To update, run: /private/tmp/supply-001-repro.yMTYZ7/venv_vcs_hash/bin/python3.14 -m pip install --upgrade pip
 ERROR: Can't verify hashes for these requirements because we don't have a way to hash version control repositories:
-    demo-pkg2 @ git+file:/tmp/supply-001-repro.x5o9B8/upstream_pinned.git@500d4ba25f9a18b7d5451d0bef1e518e4e848cc7 from git+file:/tmp/supply-001-repro.x5o9B8/upstream_pinned.git@500d4ba25f9a18b7d5451d0bef1e518e4e848cc7 (from -r /tmp/supply-001-repro.x5o9B8/requirements_vcs.txt (line 1))
+    demo-pkg2 @ git+file:/private/tmp/supply-001-repro.yMTYZ7/upstream_pinned.git@e54c14a2c042c0356e616b59ca9e4fd7be4a3c5e from git+file:/private/tmp/supply-001-repro.yMTYZ7/upstream_pinned.git@e54c14a2c042c0356e616b59ca9e4fd7be4a3c5e (from -r /private/tmp/supply-001-repro.yMTYZ7/requirements_vcs.txt (line 1))
 
---- done ---
+--- done — every assertion above passed ---
 This confirms: pin the commit for Kev (hash-checking cannot apply to a VCS source;
 a 40-character SHA, as install.rs already does, is the only integrity control VCS
-requirements support); add --hash to a pinned, non-latest Laya wheel URL instead of
-fetching whatever 'releases/latest' currently resolves to.
+requirements support); use a requirements file with --require-hashes and a pinned,
+non-latest Laya wheel URL instead of fetching whatever 'releases/latest' currently
+resolves to.
 
-(scratch left at /tmp/supply-001-repro.x5o9B8 for inspection; rm -rf it when done)
+(scratch left at /private/tmp/supply-001-repro.yMTYZ7 for inspection; rm -rf it when done)

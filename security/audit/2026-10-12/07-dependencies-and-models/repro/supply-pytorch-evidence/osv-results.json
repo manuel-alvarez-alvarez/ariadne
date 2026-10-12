@@ -1,0 +1,386 @@
+[
+  {
+    "name": "Jinja2",
+    "version": "3.1.6",
+    "advisory_ids": []
+  },
+  {
+    "name": "MarkupSafe",
+    "version": "3.0.4",
+    "advisory_ids": []
+  },
+  {
+    "name": "PyYAML",
+    "version": "6.0.3",
+    "advisory_ids": []
+  },
+  {
+    "name": "Pygments",
+    "version": "2.21.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "accelerate",
+    "version": "1.15.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "aiohappyeyeballs",
+    "version": "2.7.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "aiohttp",
+    "version": "3.14.5",
+    "advisory_ids": []
+  },
+  {
+    "name": "aiosignal",
+    "version": "1.4.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "annotated-doc",
+    "version": "0.0.5",
+    "advisory_ids": []
+  },
+  {
+    "name": "annotated-types",
+    "version": "0.8.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "anyio",
+    "version": "4.15.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "attrs",
+    "version": "26.1.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "click",
+    "version": "8.5.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "cloudpickle",
+    "version": "3.1.2",
+    "advisory_ids": []
+  },
+  {
+    "name": "datasets",
+    "version": "5.1.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "dill",
+    "version": "0.4.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "fastapi",
+    "version": "0.143.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "filelock",
+    "version": "4.1.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "frozenlist",
+    "version": "1.8.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "fsspec",
+    "version": "2026.7.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "h11",
+    "version": "0.16.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "hf-xet",
+    "version": "1.7.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "httpcore2",
+    "version": "2.13.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "httpx2",
+    "version": "2.13.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "huggingface_hub",
+    "version": "2.2.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "idna",
+    "version": "3.20",
+    "advisory_ids": []
+  },
+  {
+    "name": "joblib",
+    "version": "1.6.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "kev",
+    "version": "0.1.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "markdown-it-py",
+    "version": "4.2.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "mdurl",
+    "version": "0.1.2",
+    "advisory_ids": []
+  },
+  {
+    "name": "mlx",
+    "version": "0.32.3",
+    "advisory_ids": []
+  },
+  {
+    "name": "mlx-lm",
+    "version": "0.31.3",
+    "advisory_ids": []
+  },
+  {
+    "name": "mlx-metal",
+    "version": "0.32.3",
+    "advisory_ids": []
+  },
+  {
+    "name": "mpmath",
+    "version": "1.3.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "multidict",
+    "version": "7.1.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "multiprocess",
+    "version": "0.70.19",
+    "advisory_ids": []
+  },
+  {
+    "name": "narwhals",
+    "version": "2.27.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "networkx",
+    "version": "3.7",
+    "advisory_ids": []
+  },
+  {
+    "name": "numpy",
+    "version": "2.5.4",
+    "advisory_ids": []
+  },
+  {
+    "name": "opentelemetry-api",
+    "version": "1.45.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "packaging",
+    "version": "26.3",
+    "advisory_ids": []
+  },
+  {
+    "name": "pandas",
+    "version": "3.0.6",
+    "advisory_ids": []
+  },
+  {
+    "name": "peft",
+    "version": "0.21.2",
+    "advisory_ids": []
+  },
+  {
+    "name": "propcache",
+    "version": "0.5.4",
+    "advisory_ids": []
+  },
+  {
+    "name": "protobuf",
+    "version": "7.36.2",
+    "advisory_ids": []
+  },
+  {
+    "name": "psutil",
+    "version": "7.2.2",
+    "advisory_ids": []
+  },
+  {
+    "name": "pyarrow",
+    "version": "26.0.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "pydantic",
+    "version": "2.14.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "pydantic_core",
+    "version": "2.50.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "python-dateutil",
+    "version": "2.9.0.post0",
+    "advisory_ids": []
+  },
+  {
+    "name": "regex",
+    "version": "2026.9.29",
+    "advisory_ids": []
+  },
+  {
+    "name": "rich",
+    "version": "15.0.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "safetensors",
+    "version": "0.8.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "scikit-learn",
+    "version": "1.9.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "scipy",
+    "version": "1.18.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "sentencepiece",
+    "version": "0.2.2",
+    "advisory_ids": []
+  },
+  {
+    "name": "setuptools",
+    "version": "84.0.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "shellingham",
+    "version": "1.5.4",
+    "advisory_ids": []
+  },
+  {
+    "name": "six",
+    "version": "1.17.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "starlette",
+    "version": "1.7.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "sympy",
+    "version": "1.14.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "tenacity",
+    "version": "9.2.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "threadpoolctl",
+    "version": "3.7.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "tokenizers",
+    "version": "0.23.3",
+    "advisory_ids": []
+  },
+  {
+    "name": "torch",
+    "version": "2.8.0",
+    "advisory_ids": [
+      "GHSA-qfhq-4f3w-5fph",
+      "GHSA-rrmf-rvhw-rf47",
+      "GHSA-vgrw-7cvw-pwgx",
+      "PYSEC-2025-203",
+      "PYSEC-2025-204",
+      "PYSEC-2025-206",
+      "PYSEC-2026-139",
+      "PYSEC-2026-2286"
+    ]
+  },
+  {
+    "name": "tqdm",
+    "version": "4.70.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "transformers",
+    "version": "5.19.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "truststore",
+    "version": "0.10.4",
+    "advisory_ids": []
+  },
+  {
+    "name": "typer",
+    "version": "0.27.3",
+    "advisory_ids": []
+  },
+  {
+    "name": "typesafe-sdk",
+    "version": "0.7.4",
+    "advisory_ids": []
+  },
+  {
+    "name": "typing-inspection",
+    "version": "0.4.4",
+    "advisory_ids": []
+  },
+  {
+    "name": "typing_extensions",
+    "version": "4.16.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "uvicorn",
+    "version": "0.54.0",
+    "advisory_ids": []
+  },
+  {
+    "name": "xxhash",
+    "version": "4.0.1",
+    "advisory_ids": []
+  },
+  {
+    "name": "yarl",
+    "version": "1.25.1",
+    "advisory_ids": []
+  }
+]
