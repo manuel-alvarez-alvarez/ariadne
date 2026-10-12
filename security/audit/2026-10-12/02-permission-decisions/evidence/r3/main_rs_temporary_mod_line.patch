@@ -1,0 +1,12 @@
+diff --git a/crates/ariadne-daemon/tests/it/main.rs b/crates/ariadne-daemon/tests/it/main.rs
+index 625083a2..eebba3a6 100644
+--- a/crates/ariadne-daemon/tests/it/main.rs
++++ b/crates/ariadne-daemon/tests/it/main.rs
+@@ -38,6 +38,7 @@ mod logs;
+ mod managers;
+ mod models;
+ mod outcome_stats;
++mod perm_audit_repro; // TEMPORARY, disposable-copy only.
+ mod pins;
+ mod plan_finalize;
+ mod prompts;

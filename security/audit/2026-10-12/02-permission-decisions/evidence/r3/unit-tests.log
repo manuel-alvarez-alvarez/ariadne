@@ -1,0 +1,209 @@
+────────────
+ Nextest run ID d59df5c1-8c4d-4947-a94f-7fbca5c2a971 with nextest profile: default
+    Starting 22 tests across 1 binary (226 tests skipped)
+       START [         ] ( 1/22) ariadne-daemon ai_permissions::derive::tests::a_chain_takes_the_operation_with_the_largest_effect
+
+running 1 test
+test ai_permissions::derive::tests::a_chain_takes_the_operation_with_the_largest_effect ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.14s
+
+        PASS [   0.158s] ( 1/22) ariadne-daemon ai_permissions::derive::tests::a_chain_takes_the_operation_with_the_largest_effect
+       START [         ] ( 2/22) ariadne-daemon ai_permissions::derive::tests::a_comment_mark_of_three_slashes_is_not_the_root_directory
+
+running 1 test
+test ai_permissions::derive::tests::a_comment_mark_of_three_slashes_is_not_the_root_directory ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.08s
+
+        PASS [   0.099s] ( 2/22) ariadne-daemon ai_permissions::derive::tests::a_comment_mark_of_three_slashes_is_not_the_root_directory
+       START [         ] ( 3/22) ariadne-daemon ai_permissions::derive::tests::a_credential_in_the_address_of_a_request_is_a_transfer
+
+running 1 test
+test ai_permissions::derive::tests::a_credential_in_the_address_of_a_request_is_a_transfer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.18s
+
+        PASS [   0.191s] ( 3/22) ariadne-daemon ai_permissions::derive::tests::a_credential_in_the_address_of_a_request_is_a_transfer
+       START [         ] ( 4/22) ariadne-daemon ai_permissions::derive::tests::a_credential_sent_to_the_local_host_is_not_a_transfer
+
+running 1 test
+test ai_permissions::derive::tests::a_credential_sent_to_the_local_host_is_not_a_transfer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.22s
+
+        PASS [   0.236s] ( 4/22) ariadne-daemon ai_permissions::derive::tests::a_credential_sent_to_the_local_host_is_not_a_transfer
+       START [         ] ( 5/22) ariadne-daemon ai_permissions::derive::tests::a_force_or_verbose_remove_is_not_recursive
+
+running 1 test
+test ai_permissions::derive::tests::a_force_or_verbose_remove_is_not_recursive ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.10s
+
+        PASS [   0.113s] ( 5/22) ariadne-daemon ai_permissions::derive::tests::a_force_or_verbose_remove_is_not_recursive
+       START [         ] ( 6/22) ariadne-daemon ai_permissions::derive::tests::a_path_without_a_kind_has_no_operation_hint
+
+running 1 test
+test ai_permissions::derive::tests::a_path_without_a_kind_has_no_operation_hint ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.20s
+
+        PASS [   0.216s] ( 6/22) ariadne-daemon ai_permissions::derive::tests::a_path_without_a_kind_has_no_operation_hint
+       START [         ] ( 7/22) ariadne-daemon ai_permissions::derive::tests::a_pipe_to_an_inline_program_does_not_run_the_download
+
+running 1 test
+test ai_permissions::derive::tests::a_pipe_to_an_inline_program_does_not_run_the_download ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.28s
+
+        PASS [   0.292s] ( 7/22) ariadne-daemon ai_permissions::derive::tests::a_pipe_to_an_inline_program_does_not_run_the_download
+       START [         ] ( 8/22) ariadne-daemon ai_permissions::derive::tests::a_url_query_does_not_mean_a_bulk_operation
+
+running 1 test
+test ai_permissions::derive::tests::a_url_query_does_not_mean_a_bulk_operation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.39s
+
+        PASS [   0.401s] ( 8/22) ariadne-daemon ai_permissions::derive::tests::a_url_query_does_not_mean_a_bulk_operation
+       START [         ] ( 9/22) ariadne-daemon ai_permissions::derive::tests::desired_behavior_perm_001_edit_write_notebookedit_and_multiedit_all_carry_the_cap
+
+running 1 test
+desired-behavior Edit: risk_tags=[] cap=None
+
+thread 'ai_permissions::derive::tests::desired_behavior_perm_001_edit_write_notebookedit_and_multiedit_all_carry_the_cap' (387034724) panicked at crates/ariadne-daemon/src/ai_permissions/derive.rs:1420:13:
+Edit must carry reviewer_directive once the fix reads nested, non-command content
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test ai_permissions::derive::tests::desired_behavior_perm_001_edit_write_notebookedit_and_multiedit_all_carry_the_cap ... FAILED
+
+failures:
+
+failures:
+    ai_permissions::derive::tests::desired_behavior_perm_001_edit_write_notebookedit_and_multiedit_all_carry_the_cap
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.35s
+
+        FAIL [   0.362s] ( 9/22) ariadne-daemon ai_permissions::derive::tests::desired_behavior_perm_001_edit_write_notebookedit_and_multiedit_all_carry_the_cap
+       START [         ] (10/22) ariadne-daemon ai_permissions::derive::tests::desired_behavior_perm_002_a_credential_read_behind_any_wrapper_is_tagged
+
+running 1 test
+desired-behavior PERM-002: risk_tags=[]
+
+thread 'ai_permissions::derive::tests::desired_behavior_perm_002_a_credential_read_behind_any_wrapper_is_tagged' (387036000) panicked at crates/ariadne-daemon/src/ai_permissions/derive.rs:1432:9:
+a credential-reading command behind any process wrapper, listed or not, must be tagged
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test ai_permissions::derive::tests::desired_behavior_perm_002_a_credential_read_behind_any_wrapper_is_tagged ... FAILED
+
+failures:
+
+failures:
+    ai_permissions::derive::tests::desired_behavior_perm_002_a_credential_read_behind_any_wrapper_is_tagged
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.10s
+
+        FAIL [   0.113s] (10/22) ariadne-daemon ai_permissions::derive::tests::desired_behavior_perm_002_a_credential_read_behind_any_wrapper_is_tagged
+       START [         ] (11/22) ariadne-daemon ai_permissions::derive::tests::never_marks_a_path_outside_an_unknown_workspace
+
+running 1 test
+test ai_permissions::derive::tests::never_marks_a_path_outside_an_unknown_workspace ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.14s
+
+        PASS [   0.161s] (11/22) ariadne-daemon ai_permissions::derive::tests::never_marks_a_path_outside_an_unknown_workspace
+       START [         ] (12/22) ariadne-daemon ai_permissions::derive::tests::obfuscation_shapes
+
+running 1 test
+test ai_permissions::derive::tests::obfuscation_shapes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.19s
+
+        PASS [   0.212s] (12/22) ariadne-daemon ai_permissions::derive::tests::obfuscation_shapes
+       START [         ] (13/22) ariadne-daemon ai_permissions::derive::tests::path_escape_shapes
+
+running 1 test
+test ai_permissions::derive::tests::path_escape_shapes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.09s
+
+        PASS [   0.102s] (13/22) ariadne-daemon ai_permissions::derive::tests::path_escape_shapes
+       START [         ] (14/22) ariadne-daemon ai_permissions::derive::tests::perm_001_a_long_benign_prefix_pushes_the_hostile_text_past_the_model_input_cutoff
+
+running 1 test
+PERM-001 truncation: compact_raw_input_chars=2277 model_input_chars=2000 model_sees_payload=false tags=[] cap=None
+test ai_permissions::derive::tests::perm_001_a_long_benign_prefix_pushes_the_hostile_text_past_the_model_input_cutoff ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.08s
+
+        PASS [   0.098s] (14/22) ariadne-daemon ai_permissions::derive::tests::perm_001_a_long_benign_prefix_pushes_the_hostile_text_past_the_model_input_cutoff
+       START [         ] (15/22) ariadne-daemon ai_permissions::derive::tests::perm_001_a_multiedit_s_nested_payload_is_invisible_to_every_check
+
+running 1 test
+PERM-001 MultiEdit reproduction: risk_tags=[] cap=None
+test ai_permissions::derive::tests::perm_001_a_multiedit_s_nested_payload_is_invisible_to_every_check ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.08s
+
+        PASS [   0.091s] (15/22) ariadne-daemon ai_permissions::derive::tests::perm_001_a_multiedit_s_nested_payload_is_invisible_to_every_check
+       START [         ] (16/22) ariadne-daemon ai_permissions::derive::tests::perm_001_the_rust_deriver_itself_misses_an_edit_but_catches_the_same_text_in_bash
+
+running 1 test
+PERM-001 Rust-source reproduction: Edit risk_tags=[] cap=None | Bash risk_tags=["reviewer_directive"] cap=Some("reviewer_directive")
+test ai_permissions::derive::tests::perm_001_the_rust_deriver_itself_misses_an_edit_but_catches_the_same_text_in_bash ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.09s
+
+        PASS [   0.101s] (16/22) ariadne-daemon ai_permissions::derive::tests::perm_001_the_rust_deriver_itself_misses_an_edit_but_catches_the_same_text_in_bash
+       START [         ] (17/22) ariadne-daemon ai_permissions::derive::tests::perm_002_the_benign_and_hostile_stdbuf_commands_share_family_and_empty_tags
+
+running 1 test
+PERM-002 family match: benign family=stdbuf key={"command":"stdbuf -oL printf hello"} | hostile family=stdbuf key={"command":"stdbuf -oL gh auth token"}
+test ai_permissions::derive::tests::perm_002_the_benign_and_hostile_stdbuf_commands_share_family_and_empty_tags ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.10s
+
+        PASS [   0.114s] (17/22) ariadne-daemon ai_permissions::derive::tests::perm_002_the_benign_and_hostile_stdbuf_commands_share_family_and_empty_tags
+       START [         ] (18/22) ariadne-daemon ai_permissions::derive::tests::perm_002_the_wrapper_gap_is_scoped_to_tested_syntax
+
+running 1 test
+PERM-002 scoped: plain=["remote", "credential_access"] | nohup(no option, listed)=["remote", "credential_access", "background_process"] | nice -n 5(option, listed)=["credential_access"] | stdbuf -oL(unlisted)=[]
+test ai_permissions::derive::tests::perm_002_the_wrapper_gap_is_scoped_to_tested_syntax ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.19s
+
+        PASS [   0.209s] (18/22) ariadne-daemon ai_permissions::derive::tests::perm_002_the_wrapper_gap_is_scoped_to_tested_syntax
+       START [         ] (19/22) ariadne-daemon ai_permissions::derive::tests::reads_direct_paths_locations_urls_and_titles
+
+running 1 test
+test ai_permissions::derive::tests::reads_direct_paths_locations_urls_and_titles ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.09s
+
+        PASS [   0.107s] (19/22) ariadne-daemon ai_permissions::derive::tests::reads_direct_paths_locations_urls_and_titles
+       START [         ] (20/22) ariadne-daemon ai_permissions::derive::tests::su_is_privileged_only_as_a_command
+
+running 1 test
+test ai_permissions::derive::tests::su_is_privileged_only_as_a_command ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.09s
+
+        PASS [   0.106s] (20/22) ariadne-daemon ai_permissions::derive::tests::su_is_privileged_only_as_a_command
+       START [         ] (21/22) ariadne-daemon ai_permissions::derive::tests::the_local_host_is_not_a_remote_host
+
+running 1 test
+test ai_permissions::derive::tests::the_local_host_is_not_a_remote_host ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.19s
+
+        PASS [   0.205s] (21/22) ariadne-daemon ai_permissions::derive::tests::the_local_host_is_not_a_remote_host
+       START [         ] (22/22) ariadne-daemon ai_permissions::derive::tests::the_remove_option_of_a_container_is_not_a_deletion
+
+running 1 test
+test ai_permissions::derive::tests::the_remove_option_of_a_container_is_not_a_deletion ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.11s
+
+        PASS [   0.121s] (22/22) ariadne-daemon ai_permissions::derive::tests::the_remove_option_of_a_container_is_not_a_deletion
+────────────
+     Summary [   3.811s] 22 tests run: 20 passed, 2 failed, 226 skipped
+        FAIL [   0.362s] ( 9/22) ariadne-daemon ai_permissions::derive::tests::desired_behavior_perm_001_edit_write_notebookedit_and_multiedit_all_carry_the_cap
+        FAIL [   0.113s] (10/22) ariadne-daemon ai_permissions::derive::tests::desired_behavior_perm_002_a_credential_read_behind_any_wrapper_is_tagged
+error: test run failed

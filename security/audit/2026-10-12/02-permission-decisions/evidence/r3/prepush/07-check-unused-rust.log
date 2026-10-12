@@ -1,0 +1,2 @@
+pub items: every one in ariadne-core, ariadne-api, ariadne-store, ariadne-client, ariadne-console is named by another file
+check-unused-rust exit=0

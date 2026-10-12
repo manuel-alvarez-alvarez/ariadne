@@ -1,0 +1,44 @@
+────────────
+ Nextest run ID a132a3f5-bd46-4090-8d07-b968d58ee26c with nextest profile: default
+    Starting 4 tests across 2 binaries (972 tests skipped)
+       START [         ] (1/4) ariadne-daemon::it perm_audit_repro::perm_001_a_cap_that_fired_once_is_then_resolved_by_a_learned_row_with_no_human
+
+running 1 test
+PERM-001 reproduction 3: family row recorded key=ls level=family family=ls risk_tags=["reviewer_directive"] target=ai
+PERM-001 reproduction 3: second call (different task/session) attention=None decided_by=learned cap="reviewer_directive" model_calls=2
+test perm_audit_repro::perm_001_a_cap_that_fired_once_is_then_resolved_by_a_learned_row_with_no_human ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 727 filtered out; finished in 0.61s
+
+        PASS [   0.620s] (1/4) ariadne-daemon::it perm_audit_repro::perm_001_a_cap_that_fired_once_is_then_resolved_by_a_learned_row_with_no_human
+       START [         ] (2/4) ariadne-daemon::it perm_audit_repro::perm_001_ai_mode_auto_allows_an_edit_carrying_a_reviewer_directive
+
+running 1 test
+PERM-001 reproduction 1 (ai mode, Edit, hostile content): attention=None decided_by=ai label="allow" cap=null risk_tags=[] learned_rows=0
+test perm_audit_repro::perm_001_ai_mode_auto_allows_an_edit_carrying_a_reviewer_directive ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 727 filtered out; finished in 0.39s
+
+        PASS [   0.402s] (2/4) ariadne-daemon::it perm_audit_repro::perm_001_ai_mode_auto_allows_an_edit_carrying_a_reviewer_directive
+       START [         ] (3/4) ariadne-daemon::it perm_audit_repro::perm_001_learn_mode_remembered_row_reuses_across_hostile_content_cross_session
+
+running 1 test
+PERM-001 reproduction 2: benign approval recorded key={"file_path":"README.md"} level=command family=Edit risk_tags=[] target=learn
+PERM-001 reproduction 2: hostile edit (different task/session) attention=None decided_by=learned learned_rows_after=1
+test perm_audit_repro::perm_001_learn_mode_remembered_row_reuses_across_hostile_content_cross_session ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 727 filtered out; finished in 0.52s
+
+        PASS [   0.538s] (3/4) ariadne-daemon::it perm_audit_repro::perm_001_learn_mode_remembered_row_reuses_across_hostile_content_cross_session
+       START [         ] (4/4) ariadne-daemon::it perm_audit_repro::perm_002_a_family_approval_in_one_session_answers_a_later_turn_of_the_same_session
+
+running 1 test
+PERM-002 reproduction 4, turn 1: benign family row key=stdbuf level=family family=stdbuf risk_tags=[]
+PERM-002 reproduction 4, turn 2 (same session): attention=None decided_by=learned risk_tags=null learned_rows_after=1
+test perm_audit_repro::perm_002_a_family_approval_in_one_session_answers_a_later_turn_of_the_same_session ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 727 filtered out; finished in 0.43s
+
+        PASS [   0.437s] (4/4) ariadne-daemon::it perm_audit_repro::perm_002_a_family_approval_in_one_session_answers_a_later_turn_of_the_same_session
+────────────
+     Summary [   1.998s] 4 tests run: 4 passed, 972 skipped

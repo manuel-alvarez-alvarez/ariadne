@@ -1,0 +1,6 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+────────────
+ Nextest run ID c46f6ab4-0a36-438e-843f-db03dbe96346 with nextest profile: ci
+    Starting 1926 tests across 9 binaries
+────────────
+     Summary [  39.586s] 1926 tests run: 1926 passed, 0 skipped

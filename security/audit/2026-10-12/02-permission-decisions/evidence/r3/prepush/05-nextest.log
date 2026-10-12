@@ -1,0 +1,27 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+────────────
+ Nextest run ID 222eba70-3f44-4b82-b98c-73739bc7c246 with nextest profile: ci
+    Starting 1926 tests across 9 binaries
+        FAIL [   3.020s] (1074/1926) ariadne-daemon ai_permissions::install::tests::a_venv_with_a_supported_interpreter_is_kept
+  stdout ───
+
+    running 1 test
+    test ai_permissions::install::tests::a_venv_with_a_supported_interpreter_is_kept ... FAILED
+
+    failures:
+
+    failures:
+        ai_permissions::install::tests::a_venv_with_a_supported_interpreter_is_kept
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 240 filtered out; finished in 3.00s
+
+  stderr ───
+
+    thread 'ai_permissions::install::tests::a_venv_with_a_supported_interpreter_is_kept' (388333480) panicked at crates/ariadne-daemon/src/ai_permissions/install.rs:434:9:
+    assertion failed: venv_interpreter_is_supported(&supported).await
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+────────────
+     Summary [  74.832s] 1926 tests run: 1925 passed (1 slow), 1 failed, 0 skipped
+        FAIL [   3.020s] (1074/1926) ariadne-daemon ai_permissions::install::tests::a_venv_with_a_supported_interpreter_is_kept
+error: test run failed
