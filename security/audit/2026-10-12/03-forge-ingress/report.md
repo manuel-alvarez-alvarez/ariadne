@@ -60,7 +60,9 @@ them the most consequential of either prior round:
    preserved reproductions inside an actual disposable local clone of the
    examined commit (`/tmp/forge-repro-a1728348`, deleted after use, never
    part of this worktree) and rewrote the instructions to match exactly
-   what was done.
+   what was done. *(Superseded in the fourth revision: that sequence used
+   a fixed path and applied patch paths the examined commit does not hold.
+   Use `repro/run-patches.sh`.)*
 5. **Finding-identifier stability, restored.** The previous revision had
    reassigned "FORGE-002" from its original meaning (hostile issue
    import) to a new finding (the permission-mode gap), pushing the
@@ -86,6 +88,56 @@ Rules section says "Leave every thread open," the opposite of resolving
 anything. The reproduced defect (the false attribution itself) stands;
 the overclaimed behavioral consequence does not.
 
+**Fourth revision note.** The review of `da5db735` found three defects,
+and a recovery brief asked for a correction matrix covering every item
+raised so far. This revision:
+1. Rewrites FORGE-005 around three separate channels — registration,
+   provider termination, and the provider-to-daemon data connection. The
+   prerequisite is now an on-path network position, not a position inside
+   the provider. Documentation is described as risk acceptance, not a fix.
+   The remediation options are authenticated encryption on the data
+   connection, or disabling the plaintext transport in favor of a secured
+   ingress. Each comes with its own verifiable regression criterion.
+   Reassignment of a stale destination stays unresolved.
+2. Replaces the reproduction sequence with one executable workflow,
+   `repro/run-patches.sh`, replayed as committed.
+3. Completes FORGE-004's account of `keeper_remote`: four paths return
+   raw `head_repo`, two of them after a successful parse.
+
+It also adds the correction matrix below, prerequisite tables for the
+unproved branch-input and `head_repo` paths, and forge documentation on
+branch-name characters. Local git acceptance of such a name is now kept
+apart from forge acceptance, which is not tested.
+
+## Correction matrix
+
+Every item raised by a review verdict or by the orchestrator's recovery
+brief, with where this report answers it, the evidence, and what is still
+uncertain. "Review N" counts the verdicts on `31bc2796`, `af1b251a`,
+`1dc58060` and `da5db735`, in order.
+
+| Item | Report location | Evidence | Remaining uncertainty |
+|---|---|---|---|
+| Review 1.1 — FORGE-001 shallow reproduction | FORGE-001 | Existing test `asking_keeps_a_request_of_mine_by_hand_until_the_merge`, run unchanged | No real agent tested; no GitLab-backed delivery test |
+| Review 1.2 — overclaimed structural guarantees | Tracer 6-7; FORGE-008; FORGE-002 | `launcher.rs:263-349`; spec 002; spec 021 rule 9; EXEC evidence (attributed); `goal.rs:196-248` | Real deployments' permission modes unknown |
+| Review 1.3 — fork URL rejection cited the wrong check | FORGE-004; Rejected hypotheses | `launcher.rs:1449-1492, 1546-1574`; `github/pulls.rs`, `gitlab/pulls.rs`; replayed patch | Whether a forge can report a cross-host `head_repo` |
+| Review 1.4 / 3.3 / 4.1 — tunnel confidentiality | FORGE-005 Channels 1-3, Part B | `localtunnel-client` `lib.rs:329, 362-375, 379-412`; `tests/it/tunnel.rs` test run unchanged | Channels 1-2 not measured; stale reassignment unresolved |
+| Review 1.5 — coverage, sub-review evidence, REVIEW_MARK | Coverage; FORGE-003 | File list; replayed FORGE-003 patch | Human reading of the mislabeled line not measured |
+| Review 3.1 — authorship vs branch provenance | FORGE-007 | `pull_request_babysit.rs:609-639`; GitHub and GitLab docs | How common the collaboration prerequisite is |
+| Review 3.2 — transcript missing initial commit | FORGE-007 transcript | Re-run; reviewer replay passed | Forge acceptance of the name not tested |
+| Review 3.4 / 4.2 — reproduction isolation and workflow | Reproduction workflow; `repro/README.md`; `repro/run-patches.sh` | Two replays: exit 0, 2 passed, no work directory left | Clone and build steps rely on the outer time limit |
+| Review 3.5 — stable identifiers | FORGE-002, FORGE-008 headers | Header and reference scan | None |
+| Review 3.6 / 4.3 — `keeper_remote` fallbacks | FORGE-004 | `launcher.rs:1551-1573` | None for the code; reachability as in Review 1.3 |
+| Review 3.7 — FORGE-003 skill claims | FORGE-003 | `pr-babysit/SKILL.md:19-29, 52` | None |
+| Recovery 3 — registration separate from transport | FORGE-005 Channels 1 and 3 | As above | Channel 1 TLS not measured |
+| Recovery 4 — private body confidentiality, both forges | FORGE-005 "What crosses that connection" | Source; committed test (GitHub-shaped); GitLab docs | GitLab case not run through the daemon's test |
+| Recovery 6 — authorship separate from branch control | FORGE-007 | As Review 3.1 | As Review 3.1 |
+| Recovery 7 — human actions for unproved paths | FORGE-007 table; FORGE-004 prerequisites | Code and docs cited in each step | Each step is marked proved or not |
+| Recovery 9 — FORGE/EXEC/PERM boundaries | Cross-boundary evidence | Orchestrator's stated split | None |
+| Recovery 10 — capability vs causation | FORGE-008; FORGE-001; FORGE-007 steps 5-6 | EXEC evidence (capability only) | Causation not shown anywhere |
+| Recovery 11 — policy questions open | Compatibility decisions; follow-up preamble | — | All five questions open |
+| Recovery 12-13 — edits only in develop; preserve the reviewed commit | Commit history | `da5db735` unchanged and an ancestor of this revision | None |
+
 ## Question
 
 Can hostile forge traffic or content cause unauthorized local work, secret
@@ -96,16 +148,15 @@ exposure, or unintended forge actions?
 `a17283486d5fe89591edfff08832712936d73030` (branch `main`). The task
 worktree itself (`/Users/malvarez/.ariadne/worktrees/q4r9v3t3/k6n3kcgn-eng`)
 was clean at the start and end of this revision; no application file in
-it was ever touched. Every reproduction needing to run application code
-against the examined commit ran inside a disposable local clone created
-for that purpose and deleted immediately after
-(`/tmp/forge-repro-a1728348`, created via `git clone` of this worktree and
-`git checkout a17283486d5fe89591edfff08832712936d73030`, confirmed with
-`git rev-parse HEAD` before use and removed with `rm -rf` after). The one
-exception is FORGE-007's git-ref-name check, which demonstrates a general
-fact about git itself (not about Ariadne's own source) and so needed no
-copy of the application at all — it ran in its own empty, throwaway
-repository, also deleted after use.
+it was ever touched. Instrumented reproductions run only through the
+published workflow `repro/run-patches.sh`, which clones this repository
+into a new `mktemp -d` directory, checks out
+`a17283486d5fe89591edfff08832712936d73030`, verifies `HEAD`, applies the
+patches there, and removes that directory on exit (see "Reproduction
+workflow"). The existing-test evidence (FORGE-001, FORGE-005) ran
+unchanged against this worktree, which matches the examined commit in
+every application file. FORGE-007's git-ref-name check uses no
+application code and ran in its own empty, throwaway repository.
 
 ## Threat assumptions (per the task's agreed scope)
 
@@ -123,11 +174,14 @@ repository, also deleted after use.
   sensitive operation, not whether a rogue binary could misbehave on its
   own.
 - No attack was run against the user's live daemon, repositories, accounts,
-  or external services. Every reproduction below is either a pure
-  in-process unit test run inside a disposable local clone, a local
-  git-only stand-in in its own throwaway directory, or a read of this
-  sandbox's own installed `gh` binary, the vendored `localtunnel-client`
-  crate's source, and public GitHub/GitLab/RustSec documentation.
+  or external services. Every reproduction below is one of: a patched
+  unit test run by `repro/run-patches.sh` in a fresh clone; an existing
+  committed test run unchanged, including the project's own stand-in
+  tunnel provider; or a local git-only check in its own throwaway
+  directory. Everything else is a read of this sandbox's installed `gh`
+  binary, the vendored `localtunnel-client` crate's source, and public
+  GitHub/GitLab/RustSec documentation. All committed evidence uses
+  synthetic values.
 
 ## Coverage
 
@@ -170,10 +224,20 @@ repository, also deleted after use.
   `specs/002-repositories-branches-and-worktrees.md`
 - `specs/025-forge-integration.md` through `specs/029-reviewing-a-request.md`,
   `specs/032-babysitting-a-request-by-hand.md`
-- `crates/ariadne-daemon/tests/it/pull_request_babysit.rs`, in full this
-  revision (not only the two tests previously cited), to find and read
+- `crates/ariadne-daemon/tests/it/pull_request_babysit.rs`, in full, to
+  find and read
   `a_keeper_on_a_fork_is_told_to_push_to_the_forks_own_repository` and its
-  neighboring `Shown` fixture precisely.
+  `Shown` fixture precisely.
+- `crates/ariadne-daemon/tests/it/tunnel.rs`: the stand-in provider
+  (lines 26-136, in particular the raw forwarding at 84-92), the `deliver`
+  helper (498-528), and
+  `a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_fetches_once`
+  (549-599), the committed evidence for FORGE-005 Channel 3.
+- Forge documentation fetched via `WebFetch` and cited where used:
+  GitHub's REST "Create a pull request", issue-comment
+  `author_association`, and "Dealing with special characters in branch and
+  tag names"; GitLab's webhooks, project webhooks API, permissions,
+  creating merge requests, branches, and CLI `api` pages.
 
 ### Reviewed in part
 - `crates/ariadne-daemon/src/http/repositories.rs` (the `forge_asked`
@@ -215,7 +279,11 @@ repository, also deleted after use.
   `localtunnel.me` registration**, per the task's constraints. Every
   forge- or tunnel-facing claim is a code-reading claim, a reproduction
   against a local stand-in, or a citation of the forge's or the tunnel
-  crate's own published documentation/source.
+  crate's own published documentation/source. In particular, TLS on tunnel
+  registration and the provider's termination of the forge's HTTPS
+  (FORGE-005 Channels 1 and 2) are not measured.
+- **No forge push of a branch name holding shell-special characters**
+  (FORGE-007). Forge acceptance is documented in part and not tested.
 - **macOS, single-user sandbox.** No cross-platform check was performed;
   none of this report's findings are believed to be platform-specific.
 
@@ -343,59 +411,129 @@ approval-shaped subcommand is never auto-approved by `auto` mode on a
 pull-request session (if that asymmetry is chosen), or on any seat (if the
 stricter fix is chosen).
 
-### FORGE-005 — The tunnel's forwarded transport carries every webhook payload, and GitLab's secret, in plaintext; a stale destination can also receive them after the integration moves on (Confirmed, two independently demonstrated mechanisms; High)
+### FORGE-005 — Tunnel deliveries cross an unencrypted provider-to-daemon connection that any on-path observer can read; a stale hook keeps a never-rotated secret in use (Confirmed transport mechanism; stale-destination reassignment unresolved; High)
 
-**Part A — transport confidentiality (new this revision; applies the
-moment the tunnel is used at all, with no staleness or squatting
-prerequisite).**
+*(Corrected this revision. The prior text required "a position on the
+tunnel provider's own infrastructure" and suggested provider-internal TLS
+might protect the hop. Both were wrong: the plaintext socket is the
+daemon's own outbound connection, it crosses whatever network separates
+the provider from the daemon's host, and nothing inside the provider can
+encrypt it. The prior remediation also listed documentation as a way to
+"remove" the disclosure; documentation only accepts the risk.)*
 
-**Affected files/lines:**
-- `~/.cargo/registry/src/.../localtunnel-client-0.1.8/src/lib.rs:329`
-  (`tunnel_one_connection`): `TcpStream::connect(&addr)` — a bare,
-  unencrypted TCP connection to the tunnel server's assigned data port.
-- `src/lib.rs:362-375` (`proxy_through`): `io::copy_bidirectional(&mut
-  remote_stream, &mut local_stream)` — raw byte forwarding between that
-  unencrypted remote socket and the local webhook listener, with no
-  decryption, re-encryption, or integrity check of its own.
-- `src/lib.rs:392-400` (`get_tunnel_endpoint`): the *only* TLS in the
-  entire crate — a `reqwest::Client` used solely for the one-time
-  registration HTTP call that learns `server_host`/`server_port`. Grepping
-  the whole crate for `tls|rustls|native_tls|ssl|TlsConnector|TlsStream`
-  returns matches only inside `reqwest`'s own dependency tree, none in
-  this crate's own forwarding code.
+The tunnel involves three distinct channels. Each has its own question.
 
-**What this means, concretely:** when GitHub or GitLab delivers a webhook
-to the tunnel's public HTTPS URL, TLS terminates at the tunnel
-*provider's* edge (`localtunnel.me` by default), not at the daemon — that
-termination point necessarily sees the decrypted HTTP request. What
-happens next, from this client's own code, is a second, *unencrypted* TCP
-hop carrying that decrypted request from the provider's data port to the
-daemon's local relay. This is not a bug introduced by a stale or reused
-destination; it is the ordinary, successful-case behavior of using this
-tunnel feature at all, with no forged or squatted anything. Anyone
-positioned to observe that internal hop — the tunnel provider itself, or
-anyone who compromises or is positioned on its infrastructure — can read
-the complete plaintext of every webhook delivery: the full request body
-(PR/MR numbers, comment text, commit SHAs — whatever the forge includes)
-and every header, GitHub's HMAC signature included. **HMAC and (where
-chosen) secret rotation protect only authenticity/integrity of a
-delivery's origin; neither is a confidentiality mechanism, and neither
-stops this disclosure on either forge.** GitLab's plaintext
-`X-Gitlab-Token` (Part B, carried over from the prior revision) is a
-second, GitLab-specific exposure on top of this forge-agnostic one.
+**Channel 1 — Registration (daemon to `tunnel_host`).**
+- `localtunnel-client-0.1.8/src/lib.rs:379-400` (`get_tunnel_endpoint`)
+  builds `GET <tunnel_host>/<subdomain>` (lib.rs:385-386) and sends it with
+  a `reqwest` client. The workspace pins the `rustls-tls` feature
+  (`Cargo.toml:30`), and the default `tunnel_host` is
+  `https://localtunnel.me` (`crates/ariadne-daemon/src/config.rs:120`,
+  asserted at `:245`), so registration with the default host uses TLS.
+- It carries the requested subdomain only: the daemon sets
+  `credential: None` (`forge/tunnel.rs:382`), and no webhook secret or
+  payload is ever sent on this channel.
+- The answer chooses where the data connection goes: the client takes the
+  host from the answer's URL minus its first label, and the port from the
+  answer (`lib.rs:403-412`).
+- No explicit redirect policy is set (`lib.rs:392-394`), so `reqwest`'s
+  default applies. `tunnel_host` is operator configuration, not forge
+  content.
+- Limit: TLS on this channel follows from configuration and code. It was
+  not measured against the real host, which this audit does not contact.
 
-**Prerequisites:** the tunnel feature in use (not a fixed
-`webhook_public_url`, which this audit's tracer already established opens
-no tunnel at all) and a position on the tunnel provider's own
-infrastructure, or control of it. This audit did not and could not verify
-whether `localtunnel.me`'s own server-side implementation adds a
-TLS-wrapped hop internally before this client-visible plaintext leg (no
-primary source found either way, and testing the real service is out of
-scope) — what is confirmed is specifically this crate's *client-side*
-code, which the daemon runs as-is.
+**Channel 2 — Provider termination of the forge's HTTPS (a trust question,
+not a transmission question).** The forge connects to the public tunnel
+URL. That HTTPS connection ends at the provider, which must read the
+request to route it onto one of the client's connections. The project's
+own stand-in does exactly this: it reads the request and writes it onto a
+client connection (`tests/it/tunnel.rs:84-92`). That the real provider
+behaves the same way is inferred from the protocol, not measured. Any fix
+to Channel 3 leaves this in place: the provider is an endpoint of the
+forge's TLS, so it sees every delivery in clear text. Whether to trust a
+third-party relay with that is a decision for the user.
 
-**Part B — stale destination and no secret rotation (carried over,
-corrected from the prior revision's framing where noted).**
+**Channel 3 — Provider-to-daemon data connection (transmission
+confidentiality).**
+- `lib.rs:329` (`tunnel_one_connection`): `TcpStream::connect(&addr)`, a
+  bare TCP connection to the host and port the registration answer named.
+- `lib.rs:362-375` (`proxy_through`): `io::copy_bidirectional` between that
+  socket and the daemon's loopback relay, with no encryption, decryption,
+  or integrity check.
+- Grepping the whole crate for `tls|rustls|native_tls|ssl|TlsConnector|TlsStream`
+  finds nothing outside the `reqwest` registration call.
+
+This socket is the daemon's own outbound connection. It crosses the
+network between the provider and the daemon's host in clear text. **An
+on-path observer — anyone who can read traffic on that path, for example a
+shared local network, the host's ISP, or a transit network — can read every
+delivery's headers and body. The observer needs no position inside the
+provider's infrastructure.** No TLS inside the provider can protect this
+socket, because the encryption would have to be on the socket itself, and
+this client opens it without any.
+
+What crosses that connection, for each forge:
+- GitHub: the private delivery body (for example comment text, pull
+  request and commit identifiers) and `X-Hub-Signature-256`. The signature
+  is an HMAC: it proves origin and integrity, but it encrypts nothing.
+- GitLab: the private delivery body and `X-Gitlab-Token`, which *is* the
+  webhook secret ("sent as plain text in the `X-Gitlab-Token` HTTP header",
+  GitLab's own webhook documentation).
+
+HMAC signing and secret rotation do not provide confidentiality on either
+forge.
+
+**Evidence for Channel 3.**
+1. Source, as cited above.
+2. An existing committed test, run unchanged this revision:
+   `crates/ariadne-daemon/tests/it/tunnel.rs::a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_fetches_once`.
+   It runs the daemon's real `Tunnel`, loopback relay, `WebhookListen`, and
+   `localtunnel-client`. Its stand-in provider forwards a signed GitHub
+   delivery (signature header and body) as raw bytes onto the daemon's
+   tunnel connection (`tunnel.rs:88`, `conn.sendall(...)`), and the daemon
+   accepts it with 202 and fetches once. The daemon could not parse those
+   bytes if the connection carried any encryption layer.
+   ```
+   cargo nextest run -p ariadne-daemon \
+     -E 'test(a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_fetches_once)' \
+     --status-level fail --final-status-level all
+   ```
+   ```
+   PASS [2.315s] (1/1) ariadne-daemon::it tunnel::a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_fetches_once
+   Summary [2.316s] 1 test run: 1 passed, 964 skipped
+   ```
+   Log: `/tmp/forge-tunnel-existing-test.log` (outside the worktree).
+3. An additional observation, not published as a reproduction: during the
+   previous review, a standalone run of the same client crate with
+   synthetic values only showed the data connection starting with a
+   plaintext HTTP request line, and carrying a synthetic GitLab token and
+   synthetic private bodies for both forges. This report relies on items 1
+   and 2, which anyone can re-run from the repository.
+
+**Limits.** The real `localtunnel.me` was not contacted. The committed test
+sends a GitHub-shaped delivery only. The GitLab case rests on the same
+transport code, which forwards bytes without reading headers, plus
+GitLab's documentation that its token header carries the secret.
+
+**Prerequisites for Channel 3.**
+- The tunnel is in use: the tunnel switch is on, at least one integration
+  is enabled, and no `webhook_public_url` is set (spec 027 rule 12; a set
+  `webhook_public_url` opens no tunnel).
+- A delivery is in flight.
+- The observer can read packets on the network path between the provider's
+  data port and the daemon's host.
+- No provider compromise, stale destination, or subdomain squatting is
+  needed.
+
+**Severity and confidence.** High: the observer gets private repository
+content on both forges, and on GitLab the webhook secret itself. A captured
+GitLab secret then authorizes forged deliveries, whose effect is bounded to
+extra fetches (Tracer point 1). Confidence is high for Channel 3 (source
+plus a committed test of the real daemon components), and medium for
+Channel 2 (inferred from the protocol, not measured).
+
+**Part B — stale destination and no secret rotation (carried over;
+reassignment explicitly unresolved).**
 
 - `crates/ariadne-daemon/src/forge/hooks.rs:156-166` — when an enabled
   integration's public URL goes away (tunnel down, or `webhook_public_url`
@@ -412,41 +550,59 @@ corrected from the prior revision's framing where noted).**
 - `crates/ariadne-daemon/src/forge/hooks.rs:119-127` — the secret is
   generated only once and never rotated on a URL change, only on an
   identity change.
-- **Unresolved** (unchanged from the prior revision): whether an attacker
-  can realistically gain control of a specific, previously-used
-  localtunnel subdomain depends on the provider's own subdomain-reuse
-  window, which this audit did not and could not test.
-- **Impact ceiling, reassessed in light of Part A:** the prior revision
-  bounded this to "a stolen secret enables forged wakes, not data
-  injection" — true, but Part A shows the premise ("stealing the secret
-  requires squatting a stale subdomain") is not actually the only way to
-  observe it: the live, in-use tunnel discloses it on *every* delivery to
-  anyone positioned on the provider's own infrastructure, with no
-  staleness needed at all. Part B's own, additional contribution is that
-  the same secret keeps working against the *current* endpoint
-  indefinitely once observed, by either route.
+- **Unresolved, and not claimed:** whether another party can come to
+  receive traffic for a subdomain the daemon used before. That depends on
+  the provider's subdomain-reuse behavior after a disconnect. This audit
+  did not test it and found no primary source. The report does not claim
+  takeover of a stale destination.
+- **What Part B adds to Channel 3:** Channel 3 already exposes the GitLab
+  secret to an on-path observer while the tunnel works normally. Part B
+  adds two things. Deliveries keep going to an address the daemon no
+  longer holds, and the same secret stays valid against the current
+  endpoint for as long as the forge identity is unchanged, however it was
+  observed.
 
-**Recommendation (smallest remediation):** Part A has no small,
-forge-ingestion-side fix — it is inherent to this third-party tunnel
-protocol's own design, and the only ways to remove it are (i) not
-disclosing the tunnel's existence/use to the user as risk-free, i.e.
-documenting the trust dependency explicitly (a docs/UX fix, not code),
-or (ii) offering a transport that does not depend on a third party for
-TLS termination (a reverse-proxy-based alternative to `webhook_listen`
-with the operator's own certificate, which spec 027 rule 1 already
-mentions as possible: "A reverse proxy can use a fixed configured
-address"). Part B: (a) have the public-URL-withdrawn branch delete or
-update the forge-side hook when an enabled integration loses its public
-URL; and/or (b) rotate `webhook_secret` on every public-URL change, not
-only on identity change; and/or (c) adopt GitLab's `signing_token`
-(HMAC) in place of the legacy plaintext `token`, which would also narrow
-Part A's GitLab-specific secret exposure to the body-disclosure Part A
-already covers for both forges. **Regression criterion:** a `webhooks.rs`
-test asserting a tunnel-down transition on an enabled integration either
-deletes the forge-side hook or issues a fresh secret, and (for Part A, if
-the reverse-proxy alternative is pursued) a doc/config test asserting the
-tunnel path's own documentation names the third-party-visibility trust
-dependency explicitly.
+**Remediation options (the choice between them is the user's,
+compatibility question 3):**
+- *Transmission confidentiality (Channel 3)* — either of:
+  1. **Authenticated encryption on the provider-to-daemon data
+     connection**: for example TLS to the provider's data port, verifying
+     the provider's certificate. `localtunnel-client` 0.1.8 offers no such
+     option, so this needs a different tunnel client or protocol, and a
+     provider that supports it. This audit did not establish whether
+     `localtunnel.me`'s server supports it.
+  2. **Disable the plaintext tunnel transport** and use a secured ingress
+     instead: a `webhook_public_url` served by an HTTPS endpoint the
+     operator controls, such as a reverse proxy in front of
+     `webhook_listen` (spec 027 rules 1 and 12). This also removes the
+     Channel 2 trust, because no third party terminates the forge's TLS.
+- *Documentation* of the tunnel's exposure is **risk acceptance**. It tells
+  the user about the disclosure; it removes none of it.
+- *Part B* — any of: (a) delete or update the forge-side hook when an
+  enabled integration loses its public URL; (b) rotate `webhook_secret`
+  on every public-URL change, not only on an identity change; (c) use
+  GitLab's HMAC `signing_token` in place of the legacy plaintext `token`.
+  Option (c) stops the GitLab secret itself from crossing Channel 3. The
+  private body still crosses it.
+
+**Regression criteria (each independently verifiable):**
+- *Transmission confidentiality, option 1:* extend the stand-in in
+  `tests/it/tunnel.rs` so that a delivery carries a synthetic GitLab token
+  and a synthetic private body, and record the bytes on the daemon's data
+  connection at the socket. Assert that neither synthetic value appears in
+  those bytes, and that the first bytes are not a plaintext HTTP request
+  line. By the Channel 3 evidence, this assertion would fail against the
+  examined commit (not run here: this audit adds no failing test), so it
+  can tell a fixed transport from the current one. It belongs in the
+  remediation task, not in this audit.
+- *Transmission confidentiality, option 2:* with the tunnel switch on, an
+  enabled integration and no `webhook_public_url`, assert that the daemon
+  opens no plaintext data connection and registers no hook at a tunnel
+  URL.
+- *Part B:* a `webhooks.rs` test asserting that a tunnel-down transition on
+  an enabled integration either deletes the forge-side hook or issues a
+  fresh secret, and that a delivery signed with the earlier secret is then
+  rejected.
 
 ### FORGE-003 — An attacker's own comment can be mislabeled "by the Ariadne review" in the agent's own news feed, with no author check (Confirmed defect, reproduced; retracted behavioral-impact claim; Low)
 
@@ -475,21 +631,15 @@ itself (the false attribution text) is confirmed.
   };
   ```
 
-**Reproduction** (preserved as `repro/forge-003-review-mark-spoof.patch`;
-re-verified this revision inside a disposable local clone of the examined
-commit — see "Reproduction workflow" below): a `NewPullRequestComment`
-with `author_login: "attacker"` and a body ending in the review mark,
-run through the real `live::comments()` then `news::of()`:
+**Reproduction** (patch `repro/forge-003-review-mark-spoof.patch`, run by
+the published workflow `repro/run-patches.sh`; see "Reproduction
+workflow"): a `NewPullRequestComment` with `author_login: "attacker"` and a
+body ending in the review mark, run through the real `live::comments()`
+then `news::of()`:
 ```
-cargo nextest run -p ariadne-daemon \
-  -E 'test(forge_003_an_attackers_own_comment_is_attributed_to_the_ariadne_review)'
+PASS [0.011s] (1/2) ariadne-daemon forge::news::tests::forge_003_an_attackers_own_comment_is_attributed_to_the_ariadne_review
 ```
-```
-PASS [0.026s] ariadne-daemon forge::news::tests::forge_003_an_attackers_own_comment_is_attributed_to_the_ariadne_review
-Summary [0.159s] 2 tests run: 2 passed, 965 skipped
-```
-(run together with FORGE-004's test in the same disposable clone, hence
-"2 tests run"). The test confirmed `from_review` became `true` for the
+The test confirmed `from_review` became `true` for the
 attacker-authored comment, the resulting news line contained "by the
 Ariadne review," and did not contain the string "attacker" anywhere.
 
@@ -567,38 +717,43 @@ comment and assert differing treatment.
 - `crates/ariadne-daemon/src/launcher.rs::review_worktree`, lines 1449-1492
   (specifically 1456-1471): fetches directly from `pull.head_repo` with no
   call to `Remote::parse` or any host check at all.
-- Contrast `launcher.rs::keeper_remote`, lines 1546-1576 — **corrected
-  description, per this review**: on a successful `Remote::parse` that
-  matches the configured forge's own repository exactly, it reuses the
-  configured remote (safe); on a genuine cross-repository match it
-  rewrites the configured remote's authority onto the fork's path via
-  `Remote::rewrite` (also safe, preserves the trusted host); but **on a
-  parse *failure*, `launcher.rs:1556-1558` returns the raw, unvalidated
-  `head_repo` string directly — not the configured remote.** The prior
-  revision incorrectly described this fallback as returning to the safe
-  configured remote; it does not. There is no host-mismatch *refusal*
-  anywhere in `keeper_remote` either — only a parse-failure fallback that
-  happens to be unsafe, and a successful-parse path that happens to be
-  safe. `keeper_remote` is on balance safer than `review_worktree` (which
-  has no validated path at all), but it does not "already perform" the
-  guard this finding recommends adding.
+- Contrast `launcher.rs::keeper_remote`, lines 1546-1574 — **corrected
+  again this revision; the prior text still called every successful-parse
+  path safe, which is wrong.** It has one path that never uses
+  `head_repo` and four that return it raw:
+  - `head_repo` absent (1551-1553): the configured remote. Safe.
+  - No forge row (1554-1556): **raw `head_repo`**.
+  - `Remote::parse` fails (1557-1559): **raw `head_repo`**.
+  - Parse succeeds and host, owner and name all match the configured forge
+    (1560-1565): the configured remote. Safe.
+  - Parse succeeds with any other repository (1566-1573): `keeper_remote`
+    reads the configured remote's push URL and rewrites the fork's owner
+    and name onto its authority with `Remote::rewrite`. That keeps the
+    configured host only when both steps succeed. **If `remote_push_url`
+    fails (1571), or `Remote::rewrite` returns `None` (1569-1570), it returns
+    raw `head_repo`.**
+
+  So a successful parse is not enough to reach a safe result. There is no
+  host-mismatch *refusal* anywhere in `keeper_remote`: a host that differs
+  from the forge's is either silently replaced by the configured authority
+  (when both steps succeed) or passed through raw (when either fails).
+  The result feeds both the keeper's fetch (`keeper_worktree`, 1513-1515)
+  and its push command (`keeper_push_command`, 1579-1585). `keeper_remote`
+  has more safe paths than `review_worktree`, which has none, but it does
+  not already perform the guard this finding recommends.
 - `head_repo` itself is populated verbatim from the forge API's own field
   with no host check anywhere upstream: `github/pulls.rs::normalized`
   (GraphQL `headRepository.url`) and `gitlab/pulls.rs::normalized`
   (`source_project.http_url_to_repo`).
 
-**Reproduction** (preserved as `repro/forge-004-head-repo-no-validation.patch`;
-re-verified this revision inside the same disposable clone as FORGE-003,
-see "Reproduction workflow" below): two local, throwaway git repositories
-stood in for a victim checkout and a fork at an unrelated filesystem path.
+**Reproduction** (patch `repro/forge-004-head-repo-no-validation.patch`,
+run by the published workflow `repro/run-patches.sh`; see "Reproduction
+workflow"): two local, throwaway git repositories stood in for a victim
+checkout and a fork at an unrelated filesystem path.
 `GitManager::fetch_head_of` accepted the fork's bare filesystem path — not
 a URL, not even a URL scheme — as `from`, and fetched its commit:
 ```
-cargo nextest run -p ariadne-daemon \
-  -E 'test(fetch_head_of_accepts_any_string_as_from_with_no_host_or_scheme_check)'
-```
-```
-PASS [0.158s] ariadne-daemon gitwt::forge_004_reproduction::fetch_head_of_accepts_any_string_as_from_with_no_host_or_scheme_check
+PASS [0.157s] (2/2) ariadne-daemon gitwt::forge_004_reproduction::fetch_head_of_accepts_any_string_as_from_with_no_host_or_scheme_check
 ```
 This establishes the absence of a guard conclusively; it does not
 establish that a real forge response can ever actually carry a cross-host
@@ -608,13 +763,30 @@ question of whether `head_repo` can differ in *ownership* — not
 necessarily *host* — from what the request's author controls, which this
 revision answered for GitHub and GitLab specifically).
 
-**Recommendation (smallest remediation, corrected):** validate
-`head_repo`'s host against the integration's own `forge.host` **before**
-`review_worktree` ever calls `fetch_head_of` with it, with a clear
-refusal on mismatch — framed here as a **new** guard, not as reusing one
-`keeper_remote` already has (it does not). **Regression criterion:** a
-`launcher.rs` test asserting `review_worktree` refuses a `pull.head_repo`
-whose host does not match the integration's configured host.
+**Prerequisites and human actions (path not proved):**
+1. The user asks Ariadne to review a request (`PUT .../ariadne-review`;
+   spec 029 rule 10 — a review never starts on its own), or to babysit
+   one of their own (spec 032).
+2. The registered checkout lacks the request's head commit, so a fetch is
+   needed (`launcher.rs:1456`, `1510`).
+3. The forge's response gives a `head_repo` on a host other than the
+   integration's — not shown to be possible on either forge (see above) —
+   or one that fails `Remote::parse`, on the keeper path.
+4. The daemon then fetches from that value with no human step between. Any
+   effect beyond reaching that host (credentials, agent probing) is
+   unresolved, as stated above.
+
+**Recommendation (smallest remediation):** add a **new** guard that
+validates `head_repo`'s host against the integration's own `forge.host`
+before `review_worktree` calls `fetch_head_of`, and at each of
+`keeper_remote`'s four raw-`head_repo` returns (1555, 1558, 1570, 1571).
+`keeper_remote` has no such guard today. What the guard does on a mismatch
+— refuse, or fall back to the configured remote — is the user's decision
+(compatibility question 4). **Regression criteria:** a `launcher.rs` test
+asserting that `review_worktree` does not fetch from a `pull.head_repo`
+whose host differs from the integration's configured host; and a test
+asserting that `keeper_remote` never returns a `head_repo` with a foreign
+host, with `remote_push_url` failing and with an unparseable `head_repo`.
 
 ### FORGE-007 — The keeper's briefing hands the agent a literal, unescaped shell command built from a forge-sourced branch name; whether that branch name is exclusively the authenticated user's own choice is an open question, not a settled one (Confirmed code hazard; reachability is an unresolved prerequisite, corrected from "not reachable"; Medium-High)
 
@@ -676,31 +848,55 @@ for both forges:**
   run (the keeper's local branch name differs from the request's own
   head branch, so a bare `git push` would not work without it).
 
-**Confirmed, by reproduction (this report's own, redone correctly this
-revision — see the fixed command sequence below): git's own ref-name
-rules permit shell metacharacters**, so nothing about git itself, or
-about the documented permission model that lets a non-author push the
-branch a PR cites, would stop such a name from existing on a real forge.
+**Confirmed, by local reproduction: git's own ref-name rules accept the
+name `fix$(touch,pwned)`** (transcript below). Git stores the name; it runs
+nothing.
 
-**What remains genuinely unresolved, stated as the review asked:**
-1. Whether, in practice, a keeper-eligible request (the user's own,
-   `role == "author"`) commonly or ever actually has a `head_repo` the
-   user does not themselves exclusively control. This requires a
-   collaboration arrangement (shared fork access, a team repository, a
-   maintainer relationship) that this audit cannot establish is common,
-   rare, or absent in real deployments — only that the system explicitly
-   models and tests it as a supported scenario.
-2. Whether a collaborator with write access to a shared fork, who is not
-   the keeper-eligible request's "author," would realistically be in a
-   position to choose a hostile branch name without the request's actual
-   author noticing before asking Ariadne to babysit it. This is a human-
-   process question this audit cannot settle from code alone.
-3. Required human actions, for both forges: opening the pull/merge
-   request itself is always an explicit, authenticated action by the
-   trusted user (not automatic, not webhook-triggered) — but, per the
-   permission-model citations above, the *branch's content and name*
-   need not be that same action, or even reviewed by that user, before
-   the PR/MR cites it.
+**What the forges document about such names, and what is not
+established.** Local git acceptance does not prove forge acceptance, so
+this is stated separately:
+- GitHub's documentation, "Dealing with special characters in branch and
+  tag names" (`docs.github.com/en/get-started/using-git/dealing-with-special-characters-in-branch-and-tag-names`),
+  names two restrictions beyond git's own: no 40-hex names, and no names
+  beginning with `refs/`. It addresses branch names that hold characters
+  special to a shell, gives `'hello-$USER'` as its example, and warns that
+  unless such a name is quoted or escaped in a command, "the command may
+  have unintended effects."
+- GitLab's branch documentation (`docs.gitlab.com/user/project/repository/branches/`)
+  enforces no spaces and no 40-hex names. It lists characters to avoid,
+  among them `'`, `"`, and a leading `-`. It does not list `$`, `(`, `)`,
+  `;`, `|`, or `&`. It recommends alphanumerics, hyphens and underscores.
+- **Not established:** that either forge accepts a push of the exact name
+  used here. No push to a real forge was made, per the task's constraints.
+
+**Prerequisites and human actions, for each forge.** This attack path is
+not proved. Each step below is a precondition, with who must act:
+
+| Step | GitHub | GitLab | Who acts | Evidence |
+|---|---|---|---|---|
+| 1. A branch with a shell-special name exists in the head repository | Any account with write access to that repository pushes it | Any account with push access to the source project pushes it | A collaborator, possibly not the request's author | Git accepts the name (transcript); forge acceptance documented in part, not tested |
+| 2. A request cites that branch, authored by the integration's login | The user opens the PR; needs write access to the head branch (GitHub REST docs, "Create a pull request") | The user opens the MR; needs Developer, Maintainer or Owner, or permission to create MRs (GitLab docs) | **The user** (human, authenticated) | Forge docs; `forge/pulls.rs::role` |
+| 3. Ariadne is asked to babysit that request | `PUT .../ariadne-babysit` (CLI `pr babysit`, or the panel's Start babysit) | Same | **The user** (human) | spec 032 rule 7; `http/pull_requests.rs::ask_babysit` |
+| 4. The keeper's briefing carries the name inside `Push with: git push <remote> HEAD:<branch>` | Built unescaped | Same | Daemon, automatically | `launcher.rs:1579-1585`, `defaults.rs:412-423` |
+| 5. The keeper runs that text through a shell that interprets it | — | — | **The agent**, by its own decision | Not demonstrated; capability evidence only (EXEC, attributed) |
+| 6. The permission gate lets the shell call run | `auto` runs it with no prompt; `ask` needs a human click; `learn`/`ai` may allow or ask | Same | PERM's policy; a human in `ask` mode | spec 021 rule 9; FORGE-008 |
+
+Steps 2 and 3 always need the user. Step 1 can be another party's action.
+Steps 5 and 6 are where capability (shown) and causation (not shown)
+separate: EXEC's evidence shows an agent session *can* run shell commands
+in its worktree, and nothing here shows that an agent *would* run this
+text unquoted.
+
+**What remains unresolved:**
+1. How often a keeper-eligible request (the user's own,
+   `role == "author"`) has a head repository the user does not control
+   alone. The system models and tests this as supported
+   (`a_keeper_on_a_fork_is_told_to_push_to_the_forks_own_repository`);
+   how common it is in real use is unknown.
+2. Whether a collaborator who is not the request's author would choose a
+   hostile branch name without the author noticing before step 3. This is
+   a human-process question the code cannot settle.
+3. Whether the forges accept the exact name (see above).
 
 **What is not claimed:** that this scenario is presently exploited or
 easily exploitable; that a real coding agent would copy-paste and execute
@@ -770,23 +966,42 @@ UX change, not a daemon change.
 
 ## Reproduction workflow (applies to FORGE-003 and FORGE-004)
 
-Both patches were re-verified this revision inside a disposable local
-clone, never against the task's own worktree, per the task's requirement
-to use temporary copies for source instrumentation:
+The one published workflow is the executable script
+**`repro/run-patches.sh`**. It replaces the sequence the previous revision
+printed here, which checked out the examined commit and then applied
+`repro/*.patch` paths that commit does not hold, and which deleted a fixed
+`/tmp` path. What the script does:
+- It resolves the patch paths from its own directory before any clone or
+  checkout, so the patches are read from the report directory.
+- It creates its work directory and its log directory with `mktemp -d`, so
+  each run's names are its own.
+- It clones the repository into the work directory, checks out
+  `a17283486d5fe89591edfff08832712936d73030`, verifies `HEAD`, and applies
+  both patches there. It never touches a tracked worktree.
+- It runs the two tests with a nextest configuration that ends any test
+  after five minutes (`slow-timeout = { period = "60s", terminate-after = 5 }`).
+  The whole script is meant to run under a limit of ten minutes or less;
+  it was replayed under the runner's 600-second limit.
+- It writes the test log to the log directory, outside the worktree, and
+  keeps it.
+- Its `EXIT` trap removes the work directory, and only that directory, on
+  success, failure and interruption.
+
+Replay of the script as committed, from the task worktree:
 ```
-rm -rf /tmp/forge-repro-a1728348
-git clone -q <this worktree> /tmp/forge-repro-a1728348
-cd /tmp/forge-repro-a1728348
-git checkout -q a17283486d5fe89591edfff08832712936d73030
-git apply repro/forge-003-review-mark-spoof.patch
-git apply repro/forge-004-head-repo-no-validation.patch
-cargo nextest run -p ariadne-daemon \
-  -E 'test(forge_003_an_attackers_own_comment_is_attributed_to_the_ariadne_review) | test(fetch_head_of_accepts_any_string_as_from_with_no_host_or_scheme_check)'
-# -> PASS, PASS; Summary: 2 tests run: 2 passed, 965 skipped
-rm -rf /tmp/forge-repro-a1728348
+logs: /var/folders/.../T//forge-repro-logs.UbW09e
+        PASS [   0.011s] (1/2) ariadne-daemon forge::news::tests::forge_003_an_attackers_own_comment_is_attributed_to_the_ariadne_review
+        PASS [   0.157s] (2/2) ariadne-daemon gitwt::forge_004_reproduction::fetch_head_of_accepts_any_string_as_from_with_no_host_or_scheme_check
+     Summary [   0.157s] 2 tests run: 2 passed, 965 skipped
+exit=0 elapsed=48s
 ```
-The clone was deleted immediately after. See `repro/README.md` for the
-exact, copy-pasteable version of this sequence.
+After the run no `forge-repro.*` work directory remained, and
+`git status --short` in the task worktree showed only the new script
+itself, not yet committed at that moment. The run was done twice, with
+the same result both times.
+
+Not covered by the script: a time limit on the clone and build steps
+themselves. Those rely on the outer limit under which the script is run.
 
 ## Rejected hypotheses (with reasoning)
 
@@ -802,9 +1017,9 @@ exact, copy-pasteable version of this sequence.
   `check-ref-format` forbids a colon in any ref name. **Rejected.**
 - **SSRF via the tunnel relay reaching anywhere but the fixed webhook
   listener, or the main API port.** Confirmed by sub-review with file:line
-  citations. **Rejected.** (Distinct from FORGE-005's Part A, which is
-  about the forwarded connection's *confidentiality*, not its
-  *destination*.)
+  citations. **Rejected.** (Distinct from FORGE-005's Channel 3, which is
+  about the provider-to-daemon connection's *confidentiality*, not where
+  the loopback relay forwards to.)
 - **CLI argument injection via a forge-controlled string starting with
   `-`.** Confirmed by sub-review across all 14 forge-client files: every
   such value sits in a fixed argv slot, and `Cli::run` never goes through
@@ -812,12 +1027,14 @@ exact, copy-pasteable version of this sequence.
 - **GraphQL/JSON injection via forge-controlled comment bodies or paths.**
   GraphQL variables are passed structurally; review bodies are built with
   `serde_json::json!`. **Rejected.**
-- **SSRF via the fork `head_repo` rewritten for the keeper's *push*
-  target.** Narrowed, not fully rejected: `keeper_remote`'s successful-parse
-  path is reasonably protected (see FORGE-004's corrected description
-  above for exactly what it does and does not guarantee); its
-  parse-failure fallback is unsafe and is covered within FORGE-004, not
-  here.
+- **"The keeper's push target is protected by `Remote::rewrite`."** No
+  longer rejected as a hypothesis, and not a separate finding either: it
+  is folded into FORGE-004. Only two of `keeper_remote`'s paths avoid
+  `head_repo` entirely (no `head_repo`, or an exact match with the
+  configured forge). One more path keeps the configured host (a successful
+  parse where `remote_push_url` and `Remote::rewrite` both succeed). The
+  other four return raw `head_repo`, two of them after a successful parse.
+  See FORGE-004 for the line-by-line account.
 
 ## Dependency advisories
 
@@ -825,10 +1042,10 @@ Unchanged: `cargo audit` against the full workspace `Cargo.lock` (557
 crates, 1307 advisories) reports **0 vulnerabilities**; two unrelated
 maintenance warnings (`bincode` via `syntect`, `chacha20` via
 `rand`→`ulid`), neither reachable through the webhook/forge/tunnel
-dependency subtree. This includes `localtunnel-client` 0.1.8 itself —
-FORGE-005's Part A is a design property this audit found by reading the
-crate's source, not a flagged advisory; `cargo audit` would not surface
-it, since it is not a known CVE, just an unencrypted-by-design relay.
+dependency subtree. This includes `localtunnel-client` 0.1.8 itself.
+FORGE-005's Channel 3 is a design property of that crate, found by
+reading its source and confirmed by the project's own tunnel test. It is
+not a known advisory, so `cargo audit` would not report it.
 
 ## Confidence and recommendation
 
@@ -843,30 +1060,45 @@ changing across revisions) is also fixed, with FORGE-002 restored to its
 original meaning and the permission-mode finding moved to the unused
 FORGE-008.
 
+**What the fourth round changes:** FORGE-005's prerequisite was too narrow
+and its remediation too soft. The plaintext socket is the daemon's own
+outbound connection, so an on-path network observer reads it without any
+position inside the provider. Documentation was presented as a fix when
+it is only risk acceptance. Both are corrected, and the three tunnel
+channels are now analyzed separately. FORGE-004's account of
+`keeper_remote` now covers all four raw-`head_repo` returns. The
+reproduction workflow is a single published script, replayed as
+committed. See the correction matrix for every item.
+
 **High confidence**, by direct code citation and EXEC's independent
-corroboration: FORGE-008. **High confidence**, by this revision's own
-primary-source reading of the vendored `localtunnel-client` crate (zero
-TLS symbols outside the registration call): FORGE-005's Part A. **High
-confidence**, by code reading: FORGE-005's Part B. **High confidence**, by
-reproduction re-verified in a disposable clone: FORGE-003 (narrowed) and
-FORGE-004. **High confidence**, by reproduction against the project's own
-committed test: FORGE-001. **High confidence that the hazard is real, and
-now explicitly unresolved rather than falsely dismissed, that its
-reachability is**: FORGE-007 — the existing fork-push test and both
-forges' own documentation establish the mechanism exists by design; what
-is *not* established, and is named as such, is how often real deployments
-actually exercise it with a hostile branch name.
+corroboration: FORGE-008's capability facts. (Causation by forge content
+is not shown.) **High confidence**, by source reading plus the project's
+own committed tunnel test run unchanged against the real daemon
+components: FORGE-005 Channel 3. **Medium confidence**, by inference from
+the protocol, not measured against the real provider: FORGE-005 Channel 2.
+**High confidence**, by code reading and GitLab's documentation: FORGE-005
+Part B's stale hook and unrotated secret. Reassignment of a stale
+destination to another party is **unresolved**. **High confidence**, by
+the published workflow's replay: FORGE-003 (narrowed) and FORGE-004's
+missing guard. **High confidence**, by an existing committed test:
+FORGE-001's structural gap. **High confidence that the hazard is real,
+with reachability unresolved**: FORGE-007. The existing fork test and both
+forges' documentation show that authorship and branch provenance are
+separate. How often real deployments meet the prerequisites is not
+established.
 
 **Lower confidence, named explicitly:**
 - FORGE-008's practical severity depends entirely on what permission mode
   real deployments actually run. **What would change this:** evidence of
   the actual distribution of `auto` vs. `ask`/`learn`/`ai` across
   forge-integrated repositories.
-- FORGE-005 Part A's severity depends on whether `localtunnel.me`'s own
-  server-side implementation adds protection this client-side code does
-  not. **What would change this:** the provider's own architecture
-  documentation, or a primary source on how `loca.lt`-style tunnels secure
-  (or do not secure) their internal relay hop.
+- FORGE-005 Channel 2 (provider termination) is inferred from the
+  protocol. **What would change this:** the provider's own architecture
+  documentation. Note that no provider-side fact can change Channel 3: the
+  plaintext socket is the daemon's own.
+- FORGE-005 Part B's reassignment risk depends on the provider's
+  subdomain-reuse behavior. **What would change this:** the provider's
+  published reuse policy.
 - FORGE-007's severity depends on how common the fork-collaboration
   prerequisite actually is in real usage. **What would change this:**
   usage data, or the user's own account of whether they babysit requests
@@ -913,17 +1145,24 @@ policy.**
 2. **For FORGE-001/FORGE-003**: should an untrusted or spoofing-marked
    comment still reach the agent as visible news with an annotation, or be
    withheld entirely until a human re-surfaces it?
-3. **For FORGE-005**: Part B — is rotating the webhook secret on every
-   public-URL change an acceptable operational cost, or is deleting the
-   stale hook on URL loss preferred? Part A — is the tunnel's
-   trust-the-provider-with-plaintext property acceptable as a documented
-   trade-off for the convenience of not running a reverse proxy, or should
-   the reverse-proxy alternative (spec 027 rule 1) be promoted as the
-   recommended path for anyone handling sensitive repository content?
-4. **For FORGE-004**: should an unresolvable or cross-host `head_repo` be
-   a hard refusal, or fall back to the configured remote (a genuinely new
-   guard, now that this revision has corrected what `keeper_remote`
-   actually does on a parse failure)?
+3. **For FORGE-005**:
+   - Channel 3: should the data connection get authenticated encryption,
+     which needs a tunnel client and provider that support it, or should
+     the plaintext tunnel transport be disabled in favor of a secured
+     ingress (an operator-controlled HTTPS `webhook_public_url`)? Or does
+     the user accept the disclosure as documented risk, knowing that
+     documentation removes none of it?
+   - Channel 2: is trusting a third-party relay that terminates the forge's
+     HTTPS acceptable at all?
+   - Part B: is rotating the webhook secret on every public-URL change an
+     acceptable operational cost, or is deleting the stale hook on URL loss
+     preferred, or both? Should GitLab integrations move to the HMAC
+     `signing_token`, which needs GitLab 19.0 or later?
+4. **For FORGE-004**: when the new host guard finds a `head_repo` that is
+   unparseable or on a foreign host, should it refuse — so no worktree is
+   made and the session does not start — or fall back to the configured
+   remote? Today `keeper_remote` does neither: it returns raw `head_repo`
+   at four places (1555, 1558, 1570, 1571).
 5. **For FORGE-007**: given that a keeper-eligible request's head branch
    is not guaranteed to be the trusted user's own choice, should Ariadne
    refuse to babysit a request whose `head_repo` differs from the
@@ -934,19 +1173,48 @@ policy.**
 
 ## Proposed follow-up tasks
 
-- A remediation task scoped to the ACP permission-policy subsystem,
-  **owned by PERM**, addressing FORGE-008, per compatibility question 1.
-- A remediation task scoped to `forge/live.rs`/`forge/news.rs` addressing
-  FORGE-003 and FORGE-001 together, per compatibility question 2.
-- A remediation task scoped to `forge/hooks.rs`, `forge/gitlab/hooks.rs`,
-  and (for Part A) either `forge/tunnel.rs`'s own documentation or a
-  reverse-proxy-path promotion, addressing FORGE-005, per compatibility
-  question 3.
-- A remediation task scoped to `forge/pulls.rs`/`launcher.rs::review_worktree`
-  addressing FORGE-004, per compatibility question 4.
-- A remediation task addressing FORGE-007, scoped per compatibility
-  question 5 and split along the FORGE/EXEC/PERM line within the finding.
-- (Optional, low priority) A CLI/VIEW-scoped task addressing FORGE-002.
+Each policy choice below stays open until the user answers the matching
+compatibility question. No task here assumes an answer.
+
+- A remediation task for FORGE-008, **owned by PERM**, per compatibility
+  question 1.
+  - Scope: the ACP permission-policy decision for pull-request seats
+    (specs 021/022).
+  - Excluded: Ariadne's own pull-request routes, which already refuse
+    approve and merge; EXEC's execution-capability boundary.
+  - Acceptance: the FORGE-008 regression criterion for the option chosen.
+- A remediation task for FORGE-001 and FORGE-003 together (shared files),
+  per compatibility question 2.
+  - Scope: `forge/live.rs`, `forge/news.rs`, the GitHub and GitLab comment
+    readers, and the `pr-babysit` skill text.
+  - Excluded: displayed forge content (VIEW).
+  - Acceptance: the FORGE-003 attribution test promoted into the suite, and
+    the extended `asking_keeps_a_request_of_mine_by_hand_until_the_merge`
+    test asserting different treatment of an untrusted author.
+- A remediation task for FORGE-005, per compatibility question 3.
+  - Scope: `forge/tunnel.rs` (the transport choice for Channel 3),
+    `forge/hooks.rs` and `forge/gitlab/hooks.rs` (Part B).
+  - Excluded: the tunnel provider's own server, and the daemon's loopback
+    relay, which is already loopback-only.
+  - Acceptance: the Channel 3 regression criterion for the option chosen,
+    and the Part B `webhooks.rs` criterion, both as stated in FORGE-005.
+- A remediation task for FORGE-004, per compatibility question 4.
+  - Scope: the new host guard before `review_worktree`'s fetch and at
+    `keeper_remote`'s four raw returns.
+  - Excluded: the git-command layer in `gitwt.rs` (EXEC).
+  - Acceptance: the two regression criteria in FORGE-004.
+- A remediation task for FORGE-007, per compatibility question 5.
+  - Scope, FORGE's part: validate `head_branch` at ingestion
+    (`forge/pulls.rs`).
+  - Excluded: safer command construction in `keeper_push_command` (EXEC),
+    and any gating of shell calls (PERM). Each is its owner's choice.
+  - Acceptance: the FORGE-007 regression criteria, including the
+    fork-fixture test with a hazardous branch name.
+- (Optional, low priority) A task for FORGE-002.
+  - Scope: the CLI `goal create --from-issue` path.
+  - Excluded: the desktop dialog (VIEW) and the orchestrator seat.
+  - Acceptance: a CLI test asserting that the fetched title and body are
+    shown and confirmed before the goal is created.
 - (Optional) A short verification task to install `glab` and confirm its
   documented behavior against the real binary.
 - No application fix is included in this change; this report is evidence
