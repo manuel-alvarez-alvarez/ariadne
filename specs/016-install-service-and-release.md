@@ -1,8 +1,8 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-10-11
-areas: [daemon, install, scripts, store]
+updated: 2026-10-12
+areas: [daemon, install, scripts, store, workflows]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
   - crates/ariadne-daemon/src/resource.rs
@@ -13,6 +13,7 @@ tests:
   - scripts/tests/install-sign-macos.sh
   - scripts/tests/install-service-macos.sh
   - scripts/tests/make-signing-cert-scenarios.sh
+  - scripts/tests/release-notes.sh
   - .github/workflows/release-please.yml
 ---
 
@@ -117,7 +118,25 @@ Out: what the daemon does once running (009, 012).
     `ariadne`, `ariadned` and the Ariadne Desktop app with that identity when
     it is in the login keychain, and still produces a complete, unsigned
     build when it is not.
-14. `ui_stop_daemon` waits for launchd to drop a label it just told to
+15. The Release page release-please publishes carries only the changelog
+    entry, with no install steps and no asset list. Once every target in
+    `release.yml`'s `build` job has staged and uploaded its
+    `checksums-<target>.txt`, a `notes` job downloads every one of them,
+    reads the release's current body, and runs `scripts/release-notes.sh
+    TAG BODY_FILE CHECKSUMS_FILE...` to print a new body: an install section
+    naming `scripts/install.sh --version <tag>`, a table with one row per
+    line of every checksums file (the asset name as a download link, its
+    target, and its SHA-256 digest), and a compare link to the previous tag
+    when one is known from `BODY_FILE` or from `git`, in that order, all
+    wrapped in a pair of HTML comment markers, followed by the
+    release-please notes `BODY_FILE` already held, unchanged. The job writes
+    the result back with `gh release edit --notes-file`. A re-run - by hand,
+    or because a tag already carries the markers - replaces only what is
+    between them, so the header and the table never stack a second time; the
+    script is idempotent, giving the same body when run twice on its own
+    output. Runs under both `release: published` and `workflow_dispatch`,
+    same as the `build` job it depends on.
+16. `ui_stop_daemon` waits for launchd to drop a label it just told to
     bootout, and for a pid-file daemon it just killed to exit — each up to
     ~30s, going on regardless so a wait that times out never fails the
     install: `launchctl bootout` and a plain `kill` both return before the
@@ -169,6 +188,12 @@ Out: what the daemon does once running (009, 012).
   service registered: `ui_stop_daemon` waits out the slow `print`, and
   `install.sh` retries the failed `bootstrap`, rather than either one
   calling `ui_die` (`scripts/tests/install-service-macos.sh`).
+- `scripts/release-notes.sh` turns a plain changelog body into one with an
+  install section and an asset table ahead of it, and a re-run on a body
+  that already carries the markers replaces the generated part without
+  stacking a second header; an asset table built from checksums files of two
+  different targets lists every line of both under their own target
+  (`scripts/tests/release-notes.sh`: `first`, `rerun`, `two-targets`).
 
 ## Known gap
 
@@ -187,7 +212,8 @@ fails the service step`).
 ## Sources
 
 `scripts/install.sh`, `scripts/lib.sh`, `scripts/uninstall.sh`,
-`scripts/make-signing-cert.sh`, `.github/RELEASING.md`,
+`scripts/make-signing-cert.sh`, `scripts/release-notes.sh`,
+`.github/workflows/release.yml`, `.github/RELEASING.md`,
 `crates/ariadne-store/src/lib.rs`,
 `crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-daemon/src/resource.rs`, `crates/ariadne-daemon/src/main.rs`.

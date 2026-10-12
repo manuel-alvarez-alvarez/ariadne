@@ -284,3 +284,36 @@ jobs:
             security delete-keychain "$SIGNING_KEYCHAIN"
           fi
           rm -f "$RUNNER_TEMP/ariadne-signing-cert.p12"
+
+  # Rewrites the Release page itself: the changelog text alone, which is all
+  # release-please ever writes there, leaves a reader with no install steps
+  # and no asset list. Runs once, after every target has staged and uploaded
+  # its checksums file, so the asset table is complete.
+  notes:
+    name: Write the release notes
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # read and rewrite the release body
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the checksums files
+        run: gh release download "$TAG" --pattern 'checksums-*.txt' --dir dist
+
+      - name: Read the current release body
+        run: gh release view "$TAG" --json body --jq .body > dist/body.md
+
+      - name: Write the new release body
+        run: |
+          scripts/release-notes.sh "$TAG" dist/body.md dist/checksums-*.txt > dist/new-body.md
+          gh release edit "$TAG" --notes-file dist/new-body.md
