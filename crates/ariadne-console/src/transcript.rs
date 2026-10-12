@@ -393,8 +393,8 @@ impl From<&AgentEventDto> for TranscriptItem {
                 text: "context compacted".into(),
             },
             // The agent flagged that it waits for the user (031). The
-            // question is the agent's text above this line; the hint is the
-            // one the Needs attention list shows, so the two read as one.
+            // question is the agent's text that follows this line; the hint
+            // is the one the Needs attention list shows, so the two read as one.
             "agent_request" => Self::SystemNote {
                 meta,
                 text: match string_at(&event.payload, "/hint") {
@@ -934,8 +934,8 @@ mod tests {
     }
 
     /// The daemon's own line for a wait the agent flagged (031): the hint
-    /// under the agent's text, as one note, so the question and the line the
-    /// Needs attention list shows read together.
+    /// as one note above the question the agent then writes, so the line the
+    /// Needs attention list shows and the question read together.
     #[test]
     fn an_agent_request_reads_as_a_waiting_note_with_its_hint() {
         let events = [event(

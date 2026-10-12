@@ -42,8 +42,9 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    Resuming an outside session starts no planning (020).
 2. The orchestrator never writes code. Its whole output is the plan.
 3. It asks the user about every unclear point, until nothing about the goal is
-   open: one question in plain turn text, then `wait_for_user` with a
-   one-line hint for the Needs attention list (031 rule 11), then it waits.
+   open: `wait_for_user` with a one-line hint for the Needs attention list
+   (031 rule 11), then one question in plain turn text — a numbered list of
+   the open points, each with its options — then it waits.
    The user answers in the session's terminal (`ariadne goal attach`). An
    orchestrator waiting on an answer is not nudged.
 4. It writes one task per unit of work: small, finishable alone, one
