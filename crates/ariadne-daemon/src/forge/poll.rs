@@ -415,13 +415,14 @@ async fn worker(
     }
 }
 
-/// Wait out `window` of quiet after a wake, folding every wake inside it
-/// into the one fetch that follows: a burst of webhook deliveries for one
-/// push costs one fetch, not one per delivery.
+/// Wait out one `window` after a wake, folding every wake inside it into the
+/// one fetch that follows: a burst of webhook deliveries for one push costs
+/// one fetch, not one per delivery.
 async fn debounce(wake: &Notify, window: Duration) {
+    let deadline = Instant::now() + window;
     loop {
         tokio::select! {
-            _ = tokio::time::sleep(window) => break,
+            _ = sleep_until(deadline) => break,
             _ = wake.notified() => continue,
         }
     }
@@ -482,10 +483,7 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
         // sign in when the real cause is, say, the CLI not being
         // installed at all (which `configuration` already names).
         Err(error) => {
-            let failure = match client
-                .confirmed_signed_out_after(&integration.host, &error)
-                .await
-            {
+            let failure = match client.confirmed_signed_out(&integration.host).await {
                 true => format!("{FORGE_SIGNED_OUT}: {error}"),
                 false => error,
             };

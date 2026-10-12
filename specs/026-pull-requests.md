@@ -78,7 +78,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
 6. `ForgePoll::wake(repository_id)` schedules one fetch.
    Each repository has one worker, so fetches of that repository never overlap.
    Wakes during a fetch coalesce into one following fetch.
-   A wake outside a fetch waits out `Timeouts::forge_wake_debounce` of quiet before it fetches, folding every further wake inside that window into the same one fetch: a burst of webhook deliveries for one push costs one fetch, not one per delivery.
+   A wake outside a fetch starts one `Timeouts::forge_wake_debounce` window before it fetches, folding every further wake that arrives before that fixed deadline into the same one fetch: a burst of webhook deliveries for one push costs one fetch, not one per delivery, even if the deliveries continue through the window.
    `set_mode(repository_id, Mode::Timer)` enables the fallback timer.
    `Timeouts::forge_poll` defaults to 5 minutes.
    A fetch that fails for a reason other than a rate limit, in `Mode::Timer`, doubles the wait before the next timer fetch, up to `Timeouts::forge_poll_backoff_cap` (1 hour by default); a fetch that works resets it to `Timeouts::forge_poll`.
@@ -249,18 +249,21 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `pull_requests.rs::timer_wake_only_and_disable_control_repository_fetches`.
 - Wakes coalesce without concurrent fetches:
   `pull_requests.rs::wakes_during_a_fetch_coalesce_into_one_following_fetch`.
-- A rate-limited fetch pauses the worker until the forge's reset time in
-  either mode, a wake inside the pause fetches nothing, one fetch runs at
-  the end, `fetch_error` reads the pause and then clears, and it does not
-  run a signed-out confirmation after a rate-limit refusal:
-  `forge_rate_limit.rs::a_rate_limited_fetch_pauses_the_worker_and_fetches_once_after_wakes_inside_it`.
+- Rate-limited Timer and WakeOnly fetches each pause the worker until the
+  forge's reset time; a wake inside either pause fetches nothing, one fetch
+  runs at the end, `fetch_error` reads the pause and then clears, and neither
+  runs a signed-out confirmation after a rate-limit refusal:
+  `forge_rate_limit.rs::a_rate_limited_timer_fetch_pauses_and_fetches_once_after_wakes_inside_it`,
+  `forge_rate_limit.rs::a_rate_limited_wake_only_fetch_pauses_and_fetches_once_after_wakes_inside_it`.
   The later of GitHub's REST and GraphQL reset times is recorded:
   `forge_rate_limit.rs::a_rate_limited_fetch_reads_the_forges_own_later_reset_time`.
   A failed fetch that is not a rate limit doubles the timer wait up to the
   cap, resets on success, and a wake still fetches at once:
   `forge_rate_limit.rs::a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once`.
-  Wakes inside the debounce window fold into one fetch:
-  `forge_rate_limit.rs::three_wakes_inside_the_debounce_window_cause_one_fetch`.
+  Wakes inside the debounce window fold into one fetch, and continued wakes
+  do not move its first deadline:
+  `forge_rate_limit.rs::three_wakes_inside_the_debounce_window_cause_one_fetch`,
+  `forge_rate_limit.rs::continued_wakes_do_not_extend_the_debounce_window`.
   `forge/mod.rs::tests::a_refusal_is_rate_limited_on_either_forges_own_words`.
 - GitLab reads fork clone URLs, checks, approvals, and reviewer roles; search matches number, author, or title:
   `pull_requests.rs::gitlab_requests_keep_fork_checks_review_and_search_by_author_or_number`.

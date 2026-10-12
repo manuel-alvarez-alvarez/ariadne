@@ -17,6 +17,8 @@ pub mod tunnel;
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ariadne_api::issues::IssueDto;
@@ -357,10 +359,13 @@ impl ForgeClient {
         repository: &str,
         login: &str,
     ) -> Result<pulls::Listed, String> {
-        match self {
+        let listed = match self {
             Self::Github(cli) => cli.list_open_pull_requests(repository, login).await,
             Self::Gitlab(cli) => cli.list_open_pull_requests(repository, login).await,
-        }
+        };
+        self.cli()
+            .remember_list_rate_limit(listed.as_ref().err().map(String::as_str));
+        listed
     }
     pub async fn pull_request(
         &self,
@@ -544,21 +549,14 @@ impl ForgeClient {
     /// already failed (`forge/poll.rs`), so this can tell the two apart
     /// before naming either as the fetch's cause.
     pub(crate) async fn confirmed_signed_out(&self, host: &str) -> bool {
-        let cli = match self {
-            ForgeClient::Github(cli) => &cli.cli,
-            ForgeClient::Gitlab(cli) => &cli.cli,
-        };
+        let cli = self.cli();
+        if cli.takes_list_rate_limit() {
+            return false;
+        }
         cli.call(&["api", "user", "--hostname", host])
             .await
             .err()
             .is_some_and(|refusal| refusal.ran() && refusal.is_unauthorized())
-    }
-
-    /// Whether the forge confirmed the CLI is signed out after this fetch
-    /// failure. A rate-limit answer is already conclusive and must pause the
-    /// poll rather than spending another forge call on a sign-in check.
-    pub(crate) async fn confirmed_signed_out_after(&self, host: &str, failure: &str) -> bool {
-        !Refusal::of(failure).is_rate_limited() && self.confirmed_signed_out(host).await
     }
 
     /// When the forge's rate limit resets, read with no quota of its own
@@ -599,6 +597,13 @@ impl ForgeClient {
             ForgeClient::Gitlab(cli) => cli.open(repo, head, base, title, body, draft).await,
         }
     }
+
+    fn cli(&self) -> &Cli {
+        match self {
+            Self::Github(client) => &client.cli,
+            Self::Gitlab(client) => &client.cli,
+        }
+    }
 }
 
 /// One forge CLI: the program the config names, found the way `python_bin`
@@ -610,6 +615,11 @@ pub struct Cli {
     /// How long one call may take, its input written and its output read:
     /// [`CLI_TIMEOUT`].
     timeout: Duration,
+    /// Whether the just-failed request-list read already established that
+    /// the forge is rate limited. The reactive sign-out check reads and
+    /// clears this so the protected fetch path can keep calling
+    /// `confirmed_signed_out` unchanged.
+    list_rate_limited: Arc<AtomicBool>,
 }
 
 impl Cli {
@@ -618,7 +628,19 @@ impl Cli {
             configured: configured.map(str::to_string),
             program,
             timeout: CLI_TIMEOUT,
+            list_rate_limited: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    fn remember_list_rate_limit(&self, failure: Option<&str>) {
+        self.list_rate_limited.store(
+            failure.is_some_and(|failure| Refusal::of(failure).is_rate_limited()),
+            Ordering::Release,
+        );
+    }
+
+    fn takes_list_rate_limit(&self) -> bool {
+        self.list_rate_limited.swap(false, Ordering::AcqRel)
     }
 
     /// Where the program is, or why it is not there.
@@ -855,9 +877,8 @@ mod tests {
     #[tokio::test]
     async fn a_cli_that_reads_no_input_is_stopped_by_the_deadline() {
         let cli = Cli {
-            configured: Some("/bin/sleep".into()),
-            program: "gh",
             timeout: Duration::from_millis(500),
+            ..Cli::new(Some("/bin/sleep"), "gh")
         };
         let input = "x".repeat(1024 * 1024);
         let started = std::time::Instant::now();
@@ -954,9 +975,8 @@ exit \"$(cat \"$dir/exit\")\"\n";
 
     fn github_client(binary: &str) -> ForgeClient {
         ForgeClient::Github(github::Github::new(Cli {
-            configured: Some(binary.to_string()),
-            program: "gh",
             timeout: Duration::from_secs(5),
+            ..Cli::new(Some(binary), "gh")
         }))
     }
 
@@ -1045,9 +1065,8 @@ exit \"$(cat \"$dir/exit\")\"\n";
     async fn confirmed_signed_out_is_false_on_a_timeout() {
         let dir = tempfile::tempdir().unwrap();
         let client = ForgeClient::Github(github::Github::new(Cli {
-            configured: Some(fake_gh_held(dir.path())),
-            program: "gh",
             timeout: Duration::from_millis(200),
+            ..Cli::new(Some(&fake_gh_held(dir.path())), "gh")
         }));
         assert!(!client.confirmed_signed_out("github.com").await);
     }

@@ -29,8 +29,8 @@ pub struct Timeouts {
     /// doubles the wait from `forge_poll`, up to this cap; the first fetch
     /// that works resets it.
     pub forge_poll_backoff_cap: Duration,
-    /// How long a repository's poll worker waits, quiet, after a wake
-    /// before it fetches: a further wake inside that window folds into the
+    /// How long a repository's poll worker waits after its first wake before
+    /// it fetches: a further wake inside that fixed window folds into the
     /// same fetch, so a burst of webhook deliveries for one push costs one
     /// fetch rather than one per delivery.
     pub forge_wake_debounce: Duration,

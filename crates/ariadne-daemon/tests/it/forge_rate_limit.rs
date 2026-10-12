@@ -3,12 +3,14 @@
 use crate::common::forge::stub_forge_cli;
 use crate::common::{QUIET, RUNS_OUT, TIMEOUT, eventually, harness, next_event, with_forge};
 use ariadne_api::stream::DomainEvent;
-use ariadne_daemon::bus::BusEvent;
-use ariadne_daemon::forge::poll::{FORGE_RATE_LIMITED, Mode};
+use ariadne_core::ForgeKind;
+use ariadne_daemon::bus::{BusEvent, EventBus};
+use ariadne_daemon::forge::poll::{FORGE_RATE_LIMITED, ForgePoll, Mode};
 use ariadne_daemon::timeouts::Timeouts;
+use ariadne_store::{NewRepository, SetForgeIntegration, Store};
 use serde_json::json;
-use std::time::Duration;
-use tokio::sync::broadcast::Receiver;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::{broadcast::Receiver, oneshot};
 
 async fn enabled_repository(h: &crate::common::Harness) -> ariadne_store::Repository {
     let path = h.git_repo("repo");
@@ -88,12 +90,67 @@ async fn wait_for_fetches(stub: &crate::common::forge::StubForgeCli, expected: u
     .await;
 }
 
+/// Start one poll over a stored, live hook. It chooses `WakeOnly` before its
+/// worker exists, which proves the rate-limit path there without racing a
+/// runtime mode change against the first fetch.
+async fn wake_only_poll(
+    h: &crate::common::Harness,
+    timeouts: Timeouts,
+) -> (Store, EventBus, ForgePoll, String) {
+    let store = Store::open(&h.dir.path().join("wake-only.db"))
+        .await
+        .unwrap();
+    let repository = store
+        .create_repository_with_forge(
+            NewRepository {
+                default_workflow: None,
+                path: "/test/widgets".into(),
+                base_branch: "main".into(),
+                description: None,
+                permission_mode: None,
+            },
+            Some(SetForgeIntegration {
+                repository_id: String::new(),
+                kind: ForgeKind::Github,
+                host: "github.com".into(),
+                owner: "acme".into(),
+                name: "widgets".into(),
+                remote: "origin".into(),
+                enabled: true,
+                login: Some("me".into()),
+            }),
+        )
+        .await
+        .unwrap();
+    let mut integration = repository.forge.unwrap();
+    integration.webhook_id = Some(17);
+    integration.webhook_secret = Some("ab".repeat(32));
+    integration.webhook_url = Some(format!(
+        "https://hooks.example/webhooks/github/{}",
+        repository.id
+    ));
+    integration.webhook_state = "live".into();
+    store.set_webhook(&integration).await.unwrap();
+
+    let bus = ariadne_daemon::bus::start(store.clone());
+    let mut cfg = (*h.launcher.cfg).clone();
+    cfg.webhook_public_url = Some("https://hooks.example".into());
+    let poll = ariadne_daemon::forge::poll::start(
+        store.clone(),
+        Arc::new(cfg),
+        &bus,
+        ariadne_daemon::forge::live::LivePulls::default(),
+        timeouts,
+    );
+    (store, bus, poll, repository.id)
+}
+
 /// A `pr list` rate-limit refusal pauses the worker. Wakes inside the pause
 /// are held until its end, when exactly one successful fetch clears the
 /// stored, user-visible error. A rate limit does not spend another forge
 /// call on the reactive signed-out check.
 #[tokio::test]
-async fn a_rate_limited_fetch_pauses_the_worker_and_fetches_once_after_wakes_inside_it() {
+async fn a_rate_limited_timer_fetch_pauses_and_fetches_once_after_wakes_inside_it() {
     let stub = stub_forge_cli(json!([
         {"args": ["api", "rate_limit"], "exit": 1, "stderr": "gh: Not Found (HTTP 404)"},
         {"args": ["pr", "list"], "exit": 1,
@@ -103,6 +160,7 @@ async fn a_rate_limited_fetch_pauses_the_worker_and_fetches_once_after_wakes_ins
         .forge_cli(&stub)
         .timeouts(Timeouts {
             forge_rate_limit_pause: RUNS_OUT * 3,
+            forge_wake_debounce: Duration::from_millis(1),
             ..Default::default()
         })
         .await;
@@ -129,6 +187,50 @@ async fn a_rate_limited_fetch_pauses_the_worker_and_fetches_once_after_wakes_ins
 
     wait_for_fetches(&stub, 1).await;
     next_fetch_error_clear(&mut events, &repo.id).await;
+    quiet_fetches(&stub, 1, QUIET).await;
+}
+
+/// A stored live hook starts in WakeOnly mode. Its rate-limit pause holds
+/// wakes exactly as the timer worker does, and recovery clears the visible
+/// error without trying a sign-out confirmation.
+#[tokio::test]
+async fn a_rate_limited_wake_only_fetch_pauses_and_fetches_once_after_wakes_inside_it() {
+    let stub = stub_forge_cli(json!([
+        {"args": ["api", "rate_limit"], "exit": 1, "stderr": "gh: Not Found (HTTP 404)"},
+        {"args": ["pr", "list"], "exit": 1,
+         "stderr": "gh: API rate limit exceeded for user ID 1. (HTTP 403)"},
+        {"args": ["api", "repos/acme/widgets/hooks/17"], "exit": 0, "stdout": "{}"},
+    ]));
+    let h = harness().forge_cli(&stub).await;
+    let (_store, bus, poll, id) = wake_only_poll(
+        &h,
+        Timeouts {
+            forge_rate_limit_pause: RUNS_OUT * 3,
+            forge_wake_debounce: Duration::from_millis(1),
+            ..Default::default()
+        },
+    )
+    .await;
+    let mut events = bus.subscribe();
+
+    next_fetch_error(&mut events, &id, FORGE_RATE_LIMITED).await;
+    assert!(called(&stub, &["api", "rate_limit"]));
+    assert!(
+        !called(&stub, &["api", "user"]),
+        "a rate limit is already classified; do not check whether the CLI is signed out"
+    );
+
+    stub.reprogram(json!([
+        {"args": ["pr", "list"], "exit": 0, "stdout": "[]"},
+        {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+         "exit": 0, "stdout": "[]"},
+    ]));
+    poll.wake(&id);
+    poll.wake(&id);
+    quiet_fetches(&stub, 0, QUIET).await;
+
+    wait_for_fetches(&stub, 1).await;
+    next_fetch_error_clear(&mut events, &id).await;
     quiet_fetches(&stub, 1, QUIET).await;
 }
 
@@ -237,9 +339,11 @@ async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once
          "exit": 0, "stdout": "[]"},
     ]));
     h.state.forge_poll.wake(&repo.id);
-    tokio::time::timeout(QUIET, wait_for_fetches(&stub, 3))
-        .await
-        .expect("a wake must fetch before the timer runs out");
+    // Manager commands preserve order. Switching to WakeOnly after the
+    // wake removes the timer as a possible source of the next fetch, so the
+    // completed success below can only be the queued wake bypassing backoff.
+    h.state.forge_poll.set_mode(&repo.id, Mode::WakeOnly);
+    wait_for_fetches(&stub, 3).await;
     next_fetch_error_clear(&mut events, &repo.id).await;
 }
 
@@ -268,4 +372,51 @@ async fn three_wakes_inside_the_debounce_window_cause_one_fetch() {
     quiet_fetches(&stub, 1, QUIET).await;
     wait_for_fetches(&stub, 2).await;
     quiet_fetches(&stub, 2, QUIET).await;
+}
+
+/// Continued webhook-like wakes do not move the debounce deadline: one
+/// fetch starts while deliveries still arrive, rather than only after they
+/// stop. The driver is stopped with the test before it can leave work behind.
+#[tokio::test]
+async fn continued_wakes_do_not_extend_the_debounce_window() {
+    let stub = stub_forge_cli(json!([
+        {"args": ["pr", "list"], "exit": 0, "stdout": "[]"},
+        {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+         "exit": 0, "stdout": "[]"},
+    ]));
+    let window = RUNS_OUT * 4;
+    let h = harness()
+        .forge_cli(&stub)
+        .timeouts(Timeouts {
+            forge_wake_debounce: window,
+            ..Default::default()
+        })
+        .await;
+    let repo = enabled_repository(&h).await;
+    h.state.forge_poll.set_mode(&repo.id, Mode::WakeOnly);
+    wait_for_fetches(&stub, 1).await;
+
+    h.state.forge_poll.wake(&repo.id);
+    let poll = h.state.forge_poll.clone();
+    let id = repo.id.clone();
+    let (sent_continued, continued) = oneshot::channel();
+    let deliveries = tokio::spawn(async move {
+        let mut every = tokio::time::interval(window / 4);
+        let mut sent_continued = Some(sent_continued);
+        every.tick().await;
+        for number in 0.. {
+            every.tick().await;
+            poll.wake(&id);
+            if number == 1 {
+                let _ = sent_continued.take().unwrap().send(());
+            }
+        }
+    });
+    continued
+        .await
+        .expect("the test's continued delivery driver stopped");
+    let fetched = tokio::time::timeout(window + QUIET, wait_for_fetches(&stub, 2)).await;
+    deliveries.abort();
+    let _ = deliveries.await;
+    fetched.expect("continued wakes must not postpone the first debounce deadline");
 }

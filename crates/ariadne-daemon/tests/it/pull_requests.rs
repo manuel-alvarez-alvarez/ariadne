@@ -266,6 +266,7 @@ async fn timer_wake_only_and_disable_control_repository_fetches() {
         .forge_cli(&stub)
         .timeouts(Timeouts {
             forge_poll: RUNS_OUT,
+            forge_wake_debounce: RUNS_OUT / 10,
             ..Default::default()
         })
         .await;

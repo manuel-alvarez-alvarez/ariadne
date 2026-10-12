@@ -64,7 +64,7 @@ The session task's tests prove that rule for a prompt.
    The delivery triggers one fetch instead of applying its payload.
    This keeps one fetch shape for both forges.
    A missed delivery costs nothing more than the next one.
-   Concurrent wakes follow the coalescing rule in 026; a burst of deliveries for one push — `check_run`, `check_suite` and `status` events alike — follows that same rule's debounce, so it costs one fetch rather than one per delivery.
+   Concurrent wakes follow the coalescing rule in 026; a burst of deliveries for one push — `check_run`, `check_suite` and `status` events alike — folds into that rule's one fixed debounce window, so it costs one fetch rather than one per delivery.
 5. `forge_integrations` holds `webhook_id`, `webhook_secret`, `webhook_url`, `webhook_state`,
    `webhook_error`, and `webhook_last_delivery_at`. `webhook_state` defaults to `polling`; the rest are nullable.
    Each integration receives 32 cryptographically random bytes, encoded as 64 hexadecimal characters.
@@ -186,10 +186,13 @@ A disabled integration has no worker, regardless of its retained hook status.
 - GitLab checks tokens, event selection, escaped project paths, timestamps, and the body cap:
   `webhooks.rs::gitlab_tokens_wake_once_and_bad_tokens_ping_and_large_bodies_do_not`.
   Both delivery tests prove one initial fetch and no timer fetch while live.
-- A burst of wakes folds into one debounce fetch, and a rate-limited fetch
-  remains visible as `fetch_error` until its recovery fetch works:
+- A burst of wakes folds into one debounce fetch without continued deliveries
+  moving its deadline, and a rate-limited fetch remains visible as
+  `fetch_error` until its Timer or WakeOnly recovery fetch works:
   `forge_rate_limit.rs::three_wakes_inside_the_debounce_window_cause_one_fetch`,
-  `forge_rate_limit.rs::a_rate_limited_fetch_pauses_the_worker_and_fetches_once_after_wakes_inside_it`.
+  `forge_rate_limit.rs::continued_wakes_do_not_extend_the_debounce_window`,
+  `forge_rate_limit.rs::a_rate_limited_timer_fetch_pauses_and_fetches_once_after_wakes_inside_it`,
+  `forge_rate_limit.rs::a_rate_limited_wake_only_fetch_pauses_and_fetches_once_after_wakes_inside_it`.
 - Changed URLs update hooks, withdrawal wakes a fetch, and disable deletes:
   `webhooks.rs::url_changes_update_hooks_withdrawal_restores_timer_and_disable_deletes`.
 - GitLab URL updates preserve the token and withdrawal restores timer fetching:
