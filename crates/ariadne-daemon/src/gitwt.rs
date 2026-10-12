@@ -151,18 +151,12 @@ impl GitManager {
         Ok(())
     }
 
-    /// The URL a configured remote is fetched from, `git remote get-url`
-    /// reads it: a fork's own remote is built from this one's scheme and
-    /// host (032).
-    pub(crate) async fn remote_url(&self, repo: &Path, remote: &str) -> Result<String> {
-        self.git(repo, &["remote", "get-url", remote]).await
-    }
-
     /// The URL a configured remote is pushed to, which a separate
     /// `pushurl` may set away from the one it is fetched from: a fork's
-    /// own push and safety check are built from this one rather than
-    /// [`Self::remote_url`], since that is where the keeper's own commit
-    /// lands (032).
+    /// own remote is built from this one, whether it is fetched or
+    /// pushed — the keeper needs authenticated transport for either, and
+    /// this is the URL the user's credentials are actually set up for
+    /// (032).
     pub(crate) async fn remote_push_url(&self, repo: &Path, remote: &str) -> Result<String> {
         self.git(repo, &["remote", "get-url", "--push", remote])
             .await

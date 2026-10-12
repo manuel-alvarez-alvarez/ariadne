@@ -27,6 +27,13 @@ const PIN: &str = "stub:babysit-model";
 /// the daemon's ordinary five seconds.
 const SWEEPS_SOON: Duration = Duration::from_millis(100);
 
+/// How long one dead launch of the budget below may take to be noticed
+/// and retried under the full suite's own load: a real subprocess spawn
+/// and exit, under every core at once, rather than merely a scheduler
+/// tick — longer than [`TIMEOUT`] gives everything else, since this is
+/// the one test that drives that churn on purpose (032).
+const DEAD_LAUNCH_PATIENCE: Duration = Duration::from_secs(120);
+
 /// How the stub forge shows one request of mine: its state, the head
 /// repository it lives in, and the comments on its conversation, oldest
 /// first.
@@ -858,6 +865,83 @@ async fn a_keeper_on_a_fork_pushes_through_the_configured_remotes_own_push_url()
     );
 }
 
+/// A keeper fetches a fork's head through the configured remote's own
+/// push URL too, where the head is not already on disk: a private fork
+/// needs authenticated transport to be read as surely as to be written,
+/// and the push URL is the one the user's credentials are actually set
+/// up for — the fetch URL is often plain HTTPS even where the push one is
+/// SSH, since fetching never used to need to authenticate (032).
+#[tokio::test]
+async fn a_keeper_fetches_a_forks_head_through_the_configured_remotes_own_push_url() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, _head) = checkout(&h);
+    let repo = repository(&h, &path).await;
+    sh(
+        &path,
+        "git remote set-url origin https://github.com/acme/widgets.git && \
+         git remote set-url --push origin git@github.com:acme/widgets.git",
+    );
+
+    // The fork holds a commit of its own, never fetched into the base
+    // checkout: a scratch clone pushes it to the fork's own bare remote,
+    // which the push URL's rewrite — `git@github.com:alice/widgets.git`
+    // — is mapped to, standing in for the fork the forge would otherwise
+    // name.
+    let fork_remote = h.at("fork.git");
+    let scratch = h.at("fork-scratch");
+    sh(
+        &path,
+        &format!(
+            "git init -q --bare '{}' && \
+             git clone -q '{}' '{}'",
+            fork_remote.display(),
+            path.display(),
+            scratch.display(),
+        ),
+    );
+    sh(
+        &scratch,
+        &format!(
+            "git checkout -q fix && echo c > c.txt && git add c.txt && \
+             git -c user.email=t@t -c user.name=t commit -qm c && \
+             git remote add fork '{}' && git push -q fork fix",
+            fork_remote.display(),
+        ),
+    );
+    let fork_head = sh(&scratch, "git rev-parse fix");
+    sh(
+        &path,
+        &format!(
+            "git config 'url.{}.insteadOf' git@github.com:alice/widgets.git",
+            fork_remote.display(),
+        ),
+    );
+
+    stub.reprogram(script(&Shown {
+        head_repo: "https://github.com/alice/widgets",
+        ..Shown::open(&fork_head)
+    }));
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
+
+    assert_eq!(
+        sh(&worktree, "git rev-parse HEAD"),
+        fork_head,
+        "the fork's head, fetched through the push URL's own transport"
+    );
+}
+
 /// A keeper's agent that comes up and exits at once — a broken binary, a
 /// pin that will not run — spends the same spawn-retry budget a dead
 /// reviewer launch does (`start_pull_request_session`), on a budget key of
@@ -898,11 +982,15 @@ async fn a_keeper_whose_agent_dies_the_moment_it_starts_gives_up_after_the_budge
     // wait: a host under load may take a while to notice any one of them
     // dead, but this still holds once it does, whatever that takes.
     for attempt in 1..=SPAWN_RETRY_BUDGET as usize {
-        eventually(TIMEOUT, "the next dead launch to be counted", async || {
-            h.state.forge_poll.wake(&repo);
-            let rows = sessions(&h, &id).await;
-            rows.len() >= attempt && rows.iter().all(|s| !s.status().is_live())
-        })
+        eventually(
+            DEAD_LAUNCH_PATIENCE,
+            "the next dead launch to be counted",
+            async || {
+                h.state.forge_poll.wake(&repo);
+                let rows = sessions(&h, &id).await;
+                rows.len() >= attempt && rows.iter().all(|s| !s.status().is_live())
+            },
+        )
         .await;
     }
 

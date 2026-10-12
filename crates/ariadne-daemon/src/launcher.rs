@@ -1510,7 +1510,7 @@ impl Launcher {
         let at = match self.git.has_commit(&repo_path, &pull.head_sha).await? {
             true => pull.head_sha.clone(),
             false => {
-                let from = self.keeper_remote(pull, repo, false).await?;
+                let from = self.keeper_remote(pull, repo).await?;
                 self.git
                     .fetch_head_of(&repo_path, &from, &pull.head_branch)
                     .await
@@ -1535,24 +1535,15 @@ impl Launcher {
     /// (032): the repository's own configured remote, whatever protocol it
     /// uses, for a head on the same repository — the forge always reports
     /// that one over HTTPS, which an SSH-only remote cannot push to — or,
-    /// for a genuine fork, that remote's own scheme and host with the
-    /// fork's owner and name swapped in, so a private fork is reached
-    /// with whatever credentials the base repository already has rather
-    /// than the plain HTTPS URL the forge reports, which nobody signed in
-    /// on. Falls back to that URL where the configured remote's own
-    /// cannot be read or rewritten.
-    ///
-    /// `for_push` picks which of the configured remote's own URLs a
-    /// fork's is built from: its push URL for the keeper's own push and
-    /// the safety check reading where that push landed, its fetch URL for
-    /// [`Self::keeper_worktree`]'s own fetch — the two differ wherever a
-    /// remote is read over one protocol and written over another.
-    async fn keeper_remote(
-        &self,
-        pull: &PullRequest,
-        repo: &Repository,
-        for_push: bool,
-    ) -> Result<String> {
+    /// for a genuine fork, that remote's own push URL, with the fork's
+    /// owner and name swapped in for the one it is configured with. A
+    /// fork needs authenticated transport to fetch a private one, same as
+    /// to push to it, and the push URL is the one the user's credentials
+    /// are actually set up for — the fetch URL is often plain HTTPS even
+    /// where the push one is SSH, exactly because fetching never used to
+    /// need to authenticate. Falls back to the forge's own URL where the
+    /// configured remote's own cannot be read or rewritten.
+    async fn keeper_remote(&self, pull: &PullRequest, repo: &Repository) -> Result<String> {
         let configured = repo
             .forge
             .as_ref()
@@ -1573,15 +1564,13 @@ impl Launcher {
             return Ok(configured);
         }
         let repo_path = Path::new(&repo.path);
-        let url = match for_push {
-            true => self.git.remote_push_url(repo_path, &configured).await,
-            false => self.git.remote_url(repo_path, &configured).await,
-        };
-        Ok(match url.ok() {
-            Some(url) => crate::forge::Remote::rewrite(&url, &parsed)
-                .unwrap_or_else(|| head_repo.to_string()),
-            None => head_repo.to_string(),
-        })
+        Ok(
+            match self.git.remote_push_url(repo_path, &configured).await.ok() {
+                Some(url) => crate::forge::Remote::rewrite(&url, &parsed)
+                    .unwrap_or_else(|| head_repo.to_string()),
+                None => head_repo.to_string(),
+            },
+        )
     }
 
     /// The command a keeper session pushes a fix with (032): its local
@@ -1590,7 +1579,7 @@ impl Launcher {
     async fn keeper_push_command(&self, pull: &PullRequest, repo: &Repository) -> Result<String> {
         Ok(format!(
             "git push {} HEAD:{}",
-            self.keeper_remote(pull, repo, true).await?,
+            self.keeper_remote(pull, repo).await?,
             pull.head_branch
         ))
     }
@@ -1613,7 +1602,7 @@ impl Launcher {
         branch: &str,
     ) -> Result<bool> {
         let local = self.git.branch_tip(repo_path, branch).await?;
-        let remote = self.keeper_remote(pull, repo, true).await?;
+        let remote = self.keeper_remote(pull, repo).await?;
         Ok(
             match self
                 .git
