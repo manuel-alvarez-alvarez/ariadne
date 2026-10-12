@@ -787,6 +787,7 @@ mod tests {
             babysit_model: None,
             babysit_effort: None,
             babysit_skills_json: "[]".into(),
+            asks_revision: 0,
         }
     }
 

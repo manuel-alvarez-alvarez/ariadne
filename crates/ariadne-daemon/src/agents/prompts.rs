@@ -627,6 +627,7 @@ mod tests {
             babysit_model: None,
             babysit_effort: None,
             babysit_skills_json: "[]".into(),
+            asks_revision: 0,
         };
         for template in [pull_request_briefing_prompt(), pull_request_news_prompt()] {
             let mut rest = template;
@@ -738,6 +739,7 @@ mod tests {
             babysit_model: Some("stub:fast".into()),
             babysit_effort: None,
             babysit_skills_json: "[]".into(),
+            asks_revision: 0,
         };
         let briefing = pull_request_keeper_briefing(
             template,

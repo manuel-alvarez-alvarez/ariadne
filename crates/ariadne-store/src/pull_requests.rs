@@ -63,6 +63,9 @@ impl Store {
                  url = excluded.url,
                  role = excluded.role,
                  origin_task_id = COALESCE(pull_requests.origin_task_id, excluded.origin_task_id),
+                 asks_revision = pull_requests.asks_revision
+                     + (pull_requests.origin_task_id IS NULL
+                        AND excluded.origin_task_id IS NOT NULL),
                  updated_at = excluded.updated_at
              RETURNING *",
         )
@@ -144,7 +147,10 @@ impl Store {
     /// would read the request back with nothing asked of it. Refused, the
     /// row stays as it is, its sessions still on it, and the pass the ask
     /// itself woke acts on it. None where the row is gone already or asked
-    /// for since — the caller leaves it alone either way.
+    /// for since — the caller leaves it alone either way. The guard is the
+    /// row's ask revision, not the asks themselves: an ask taken back and
+    /// made again, or made again on another pin, leaves them as they were
+    /// read, and is an ask the read never saw all the same.
     pub async fn delete_pull_request_unless_asked_since(
         &self,
         id: &str,
@@ -170,16 +176,11 @@ impl Store {
                     .await?
             }
             Some(asked) => {
-                sqlx::query_as(
-                    "SELECT * FROM pull_requests WHERE id = ? AND origin_task_id IS ?
-                       AND review_asked = ? AND babysit_asked = ?",
-                )
-                .bind(id)
-                .bind(asked.origin_task_id.as_deref())
-                .bind(asked.review_asked)
-                .bind(asked.babysit_asked)
-                .fetch_optional(&mut *tx)
-                .await?
+                sqlx::query_as("SELECT * FROM pull_requests WHERE id = ? AND asks_revision = ?")
+                    .bind(id)
+                    .bind(asked.revision)
+                    .fetch_optional(&mut *tx)
+                    .await?
             }
         };
         let Some(row) = row else {
@@ -297,7 +298,8 @@ impl Store {
         let skills = asked.map_or_else(Vec::new, |(_, skills)| skills.to_vec());
         let row: PullRequestRow = sqlx::query_as(
             "UPDATE pull_requests SET review_asked = ?, review_model = ?, review_effort = ?,
-              review_skills = ?, updated_at = ? WHERE id = ? RETURNING *",
+              review_skills = ?, asks_revision = asks_revision + 1, updated_at = ?
+              WHERE id = ? RETURNING *",
         )
         .bind(asked.is_some())
         .bind(asked.map(|(p, _)| p.model.clone()))
@@ -322,7 +324,8 @@ impl Store {
         let skills = asked.map_or_else(Vec::new, |(_, skills)| skills.to_vec());
         let row: PullRequestRow = sqlx::query_as(
             "UPDATE pull_requests SET babysit_asked = ?, babysit_model = ?, babysit_effort = ?,
-              babysit_skills = ?, updated_at = ? WHERE id = ? RETURNING *",
+              babysit_skills = ?, asks_revision = asks_revision + 1, updated_at = ?
+              WHERE id = ? RETURNING *",
         )
         .bind(asked.is_some())
         .bind(asked.map(|(p, _)| p.model.clone()))

@@ -731,6 +731,9 @@ pub struct PullRequestRow {
     /// list.
     #[sqlx(rename = "babysit_skills")]
     pub babysit_skills_json: String,
+    /// How many times who wants the request was written (026): every ask
+    /// or withdrawal of a review or a keeper, and a task adopting it.
+    pub asks_revision: i64,
 }
 
 impl PullRequestRow {
@@ -788,6 +791,8 @@ pub struct PullRequestAsks {
     pub origin_task_id: Option<String>,
     pub review_asked: bool,
     pub babysit_asked: bool,
+    /// The row's ask revision at the read: what the delete is guarded on.
+    pub revision: i64,
 }
 
 impl From<&PullRequestRow> for PullRequestAsks {
@@ -796,6 +801,7 @@ impl From<&PullRequestRow> for PullRequestAsks {
             origin_task_id: row.origin_task_id.clone(),
             review_asked: row.review_asked,
             babysit_asked: row.babysit_asked,
+            revision: row.asks_revision,
         }
     }
 }
@@ -806,6 +812,7 @@ impl From<&PullRequest> for PullRequestAsks {
             origin_task_id: pull.origin_task_id.clone(),
             review_asked: pull.review_asked,
             babysit_asked: pull.babysit_asked,
+            revision: pull.asks_revision,
         }
     }
 }
@@ -863,6 +870,7 @@ pub struct PullRequest {
     pub babysit_model: Option<String>,
     pub babysit_effort: Option<String>,
     pub babysit_skills_json: String,
+    pub asks_revision: i64,
 }
 
 impl PullRequest {
@@ -918,6 +926,7 @@ impl PullRequest {
             babysit_model: row.babysit_model,
             babysit_effort: row.babysit_effort,
             babysit_skills_json: row.babysit_skills_json,
+            asks_revision: row.asks_revision,
         }
     }
 

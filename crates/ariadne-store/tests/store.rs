@@ -5265,8 +5265,9 @@ async fn a_pull_request_row_keeps_its_identity_and_origin_and_its_sessions_outli
 /// store calls earlier (026). An ask that lands in between — a review, a
 /// keeper, a task adopting it — is one that read never saw, and the row
 /// it would be lost with stays whole, its sessions still on it: the
-/// delete is refused where the asks moved since the read, and goes
-/// through where they did not.
+/// delete is refused where an ask was written since the read, even one
+/// that leaves the asks as they were read, and goes through where none
+/// was.
 #[tokio::test]
 async fn deleting_a_request_is_refused_where_an_ask_landed_since_the_read() {
     let (store, _dir, row) = store_with_my_pull_request().await;
@@ -5290,6 +5291,7 @@ async fn deleting_a_request_is_refused_where_an_ask_landed_since_the_read() {
             origin_task_id: None,
             review_asked: false,
             babysit_asked: false,
+            revision: 0,
         }
     );
     let pin = AgentPin {
@@ -5318,6 +5320,45 @@ async fn deleting_a_request_is_refused_where_an_ask_landed_since_the_read() {
             .pull_request_id,
         Some(row.id.clone()),
         "and its sessions still on it"
+    );
+    // Asked again since a read that already saw an ask — taken back and
+    // made again on another pin — leaves the asks as they were read: the
+    // revision still tells the ask the read never saw.
+    let read = PullRequestAsks::from(&kept);
+    store
+        .set_pull_request_babysit_asked(&row.id, None)
+        .await
+        .unwrap();
+    let other = AgentPin {
+        model: "stub:other".into(),
+        effort: None,
+    };
+    let kept = store
+        .set_pull_request_babysit_asked(&row.id, Some((&other, &[])))
+        .await
+        .unwrap();
+    assert_eq!(
+        (kept.review_asked, kept.babysit_asked),
+        (read.review_asked, read.babysit_asked),
+        "the asks read the same"
+    );
+    assert!(
+        store
+            .delete_pull_request_unless_asked_since(&row.id, &read)
+            .await
+            .unwrap()
+            .is_none(),
+        "a row asked for again since the read stays"
+    );
+    assert_eq!(
+        store
+            .get_pull_request(&row.id)
+            .await
+            .unwrap()
+            .babysit_model
+            .as_deref(),
+        Some("stub:other"),
+        "with the ask made again"
     );
     let gone = store
         .delete_pull_request_unless_asked_since(&row.id, &PullRequestAsks::from(&kept))
