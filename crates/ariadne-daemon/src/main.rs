@@ -223,6 +223,7 @@ async fn main() -> Result<()> {
         outside_sessions,
         ai_permissions,
         tunnel: tunnel.clone(),
+        reply_locks: Default::default(),
     };
     let ai_permissions_shutdown = state.ai_permissions.clone();
     let app = http::router(state);

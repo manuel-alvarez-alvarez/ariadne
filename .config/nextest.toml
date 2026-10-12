@@ -10,19 +10,10 @@
 # poll the thing it needs instead.
 slow-timeout = { period = "10s" }
 
-[test-groups]
-# Daemon integration tests start Python stubs and real git worktrees, so cap
-# them at two to keep tick-driven assertions from starving on four-core CI.
-daemon-integration = { max-threads = 2 }
-
 [profile.ci]
 # A run that stops at the first failure hides every other failure behind it,
 # so the report step sees one flaky test where twenty may have failed.
 fail-fast = false
-
-[[profile.ci.overrides]]
-filter = 'package(ariadne-daemon) & kind(test)'
-test-group = 'daemon-integration'
 
 [profile.ci.junit]
 path = "junit.xml"

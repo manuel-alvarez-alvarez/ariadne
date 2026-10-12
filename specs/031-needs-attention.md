@@ -142,7 +142,14 @@ semantics remain with 009.
      only once that one prompt's own `session/prompt` call returns — the
      turn that actually carried it, confirmed from the delivery that
      completed, not inferred from any session reaching `stop`
-     (`acp::serve_with_input`). An unrelated turn landing on the same
+     (`acp::prompt_once`). The pair is written before that turn's own
+     `stop` event, which is what marks the session idle and wakes the
+     scheduler: a pass woken by the stop reads the session idle and the
+     failure confirmed together, so it has nothing to tell again. Written
+     after the `stop`, the gap between the two was a window in which such
+     a pass told the orchestrator the same failure twice
+     (`scheduler_attention.rs::a_failed_task_wakes_the_orchestrator_once`).
+     An unrelated turn landing on the same
      session first, whatever it carried, writes nothing here, since only
      a completed `GoalAttention` delivery ever does; and a task retried
      off `failed` and failed again stamps a fresh transition row its old
@@ -925,7 +932,7 @@ semantics remain with 009.
 `review_start_item`, `readiness_item`),
 `crates/ariadne-daemon/src/http/attention.rs`, `crates/ariadne-daemon/src/acp.rs`
 (`Delivery::GoalAttention`, `send_goal_attention`, `claim_message`,
-`serve_with_input`'s confirmation of a completed `GoalAttention` turn),
+`prompt_once`'s confirmation of a completed `GoalAttention` turn),
 `crates/ariadne-daemon/src/scheduler/auto_switch.rs` (`recovery_block`,
 `switch_chain`, `switch_target`), `crates/ariadne-daemon/src/scheduler/goals.rs`
 (`tell_orchestrator`, `hand_goal_attention`, `keep_orchestrator`,

@@ -618,7 +618,7 @@ async fn disabling_during_a_fetch_cancels_it_without_starting_work() {
 /// nothing.
 #[tokio::test]
 async fn a_fetch_publishes_issues_changed_only_when_the_open_issues_moved() {
-    use crate::common::{QUIET, next_event};
+    use crate::common::{QUIET, TIMEOUT, eventually, next_event};
     use ariadne_api::stream::DomainEvent;
     use ariadne_daemon::forge::poll::Mode;
     let issue = |number: i64, title: &str| {
@@ -653,6 +653,11 @@ async fn a_fetch_publishes_issues_changed_only_when_the_open_issues_moved() {
             .is_err(),
         "the same issues are no news"
     );
+    // The wake's fetch is over before the stub answers differently.
+    eventually(TIMEOUT, "the wake's fetch to end", async || {
+        stub.fetches() >= 2
+    })
+    .await;
 
     stub.reprogram(with_issues(vec![
         issue(7, "Fix widgets"),
@@ -711,6 +716,11 @@ async fn a_fetch_publishes_pull_requests_changed_only_when_the_requests_moved() 
             .is_err(),
         "the same requests are no news"
     );
+    // The wake's fetch is over before the stub answers differently.
+    eventually(TIMEOUT, "the wake's fetch to end", async || {
+        stub.fetches() >= 2
+    })
+    .await;
     let mut renamed = github_pull(1, "other");
     renamed["title"] = json!("Fix widgets again");
     stub.reprogram(script(vec![renamed.clone()], renamed));
@@ -751,6 +761,14 @@ async fn a_mergeability_only_transition_publishes_pull_requests_changed() {
     })
     .await;
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
+    // Each fetch is over before the stub is reprogrammed and woken again:
+    // one still under way would answer the rest of its calls from the new
+    // script, publish a situation that is neither, and publish the new one
+    // on the fetch after — the event a later wait would read as its own.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
     while tokio::time::timeout(QUIET, next_event(&mut events, moved))
         .await
         .is_ok()
@@ -762,6 +780,10 @@ async fn a_mergeability_only_transition_publishes_pull_requests_changed() {
             .is_err(),
         "the same requests are no news"
     );
+    eventually(TIMEOUT, "the unchanged fetch to end", async || {
+        stub.fetches() >= 2
+    })
+    .await;
 
     // Mergeability alone moves, UNKNOWN to CLEAN: every other hashed field
     // — number, state, draft, title, head, checks, review decision,
@@ -771,7 +793,10 @@ async fn a_mergeability_only_transition_publishes_pull_requests_changed() {
     stub.reprogram(script(vec![clean.clone()], clean.clone()));
     h.state.forge_poll.wake(&id);
     next_event(&mut events, moved).await;
-    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    eventually(TIMEOUT, "the clean fetch to end", async || {
+        stub.fetches() >= 3
+    })
+    .await;
 
     // And the other direction, CLEAN to BLOCKED.
     let mut blocked = clean.clone();
@@ -779,6 +804,10 @@ async fn a_mergeability_only_transition_publishes_pull_requests_changed() {
     stub.reprogram(script(vec![blocked.clone()], blocked.clone()));
     h.state.forge_poll.wake(&id);
     next_event(&mut events, moved).await;
+    eventually(TIMEOUT, "the blocked fetch to end", async || {
+        stub.fetches() >= 4
+    })
+    .await;
 
     // An unchanged fetch after that is no news either.
     h.state.forge_poll.wake(&id);
@@ -800,7 +829,7 @@ async fn a_mergeability_only_transition_publishes_pull_requests_changed() {
 /// no news either.
 #[tokio::test]
 async fn an_evidence_refresh_failure_and_recovery_at_the_same_head_publish_pull_requests_changed() {
-    use crate::common::{QUIET, next_event};
+    use crate::common::{QUIET, TIMEOUT, drain_events, eventually, next_event};
     use ariadne_api::stream::DomainEvent;
     use ariadne_daemon::forge::poll::Mode;
     let full = script(vec![github_pull(1, "other")], github_pull(1, "other"));
@@ -810,7 +839,18 @@ async fn an_evidence_refresh_failure_and_recovery_at_the_same_head_publish_pull_
     let id = enabled_repository(&h).await;
     let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, DomainEvent::PullRequestsChanged(p) if p.repository_id == id);
     next_event(&mut events, moved).await;
-    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    // The fetch that published is over before the stub is reprogrammed:
+    // one still under way would answer its detail reads from the failing
+    // script and publish the failure itself, and the wake's own fetch,
+    // finding the evidence already failed, would then publish nothing.
+    // Over, its second event — the row it inserted is one, the latched
+    // read another — is already published, and is taken here rather than
+    // read later as the failing fetch's.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
+    drain_events(&mut events);
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
 
     // The next fetch finds the request's own read unchanged, but its
@@ -833,13 +873,20 @@ async fn an_evidence_refresh_failure_and_recovery_at_the_same_head_publish_pull_
     stub.reprogram(failed);
     h.state.forge_poll.wake(&id);
     next_event(&mut events, moved).await;
+    eventually(TIMEOUT, "the failing fetch to end", async || {
+        stub.fetches() >= 2
+    })
+    .await;
 
     // The fetch after that succeeds again, on the same head: the
     // recovery is published too.
     stub.reprogram(full);
     h.state.forge_poll.wake(&id);
     next_event(&mut events, moved).await;
-    let _ = tokio::time::timeout(QUIET, next_event(&mut events, moved)).await;
+    eventually(TIMEOUT, "the recovering fetch to end", async || {
+        stub.fetches() >= 3
+    })
+    .await;
 
     // An unchanged fetch after that is no news either.
     h.state.forge_poll.wake(&id);

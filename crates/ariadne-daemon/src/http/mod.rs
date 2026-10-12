@@ -83,6 +83,10 @@ pub struct AppState {
     pub ai_permissions: AiPermissions,
     /// The webhook tunnel and its switch (027).
     pub tunnel: crate::forge::tunnel::Tunnel,
+    /// One lock per pull request a reply posts to (026): held from before
+    /// the once check through the forge call, so two replies racing for the
+    /// same comment cannot both read it unanswered before either is stored.
+    pub reply_locks: pull_requests::ReplyLocks,
 }
 
 impl AppState {

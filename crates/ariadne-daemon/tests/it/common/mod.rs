@@ -459,6 +459,7 @@ impl HarnessBuilder {
                 &transcript_homes(dir.path()),
             ),
             ai_permissions,
+            reply_locks: Default::default(),
         };
         // Lazy: most tests never write behind the store's back, and a
         // connection opened for every harness in every binary is a hundred
@@ -1949,6 +1950,13 @@ pub(crate) async fn next_event(
     })
     .await
     .expect("expected a matching event within the timeout")
+}
+
+/// Take every event already published, without waiting for one: what a
+/// test does once it knows the work that publishes is over — a forge fetch
+/// past its last call, say — so the next wait reads only what comes after.
+pub(crate) fn drain_events(rx: &mut Receiver<BusEvent>) {
+    while rx.try_recv().is_ok() {}
 }
 
 /// What came out of an SSE body next. The three are worth telling apart: a

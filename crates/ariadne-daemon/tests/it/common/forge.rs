@@ -58,11 +58,36 @@ impl StubForgeCli {
             .collect()
     }
 
-    /// Number of calls whose scripted answer has been written.
+    /// Number of calls the stub has finished: answered from the script, or
+    /// refused for want of an entry. A refused call ends the same way an
+    /// answered one does, so a count of calls still running is exact
+    /// whatever the script holds.
     pub(crate) fn completed(&self) -> usize {
         std::fs::read_to_string(&self.finished)
             .map(|s| s.lines().count())
             .unwrap_or(0)
+    }
+
+    /// How many of the poll's fetches have made their last call. The
+    /// listing of the open issues is the call a fetch ends on, so a fetch
+    /// counts once that listing has been answered, and one still on an
+    /// earlier call does not. Wait for this before reprogramming the stub
+    /// after a wake: a fetch still under way answers the rest of its calls
+    /// from the new script, and what it then publishes is neither the old
+    /// situation nor the new one. The listing is told from a request's
+    /// issue comments, read earlier in the fetch, by its query string. The
+    /// poll runs its calls one after another, so a listing that is the
+    /// last call logged, and not yet answered, is the one fetch still
+    /// under way.
+    pub(crate) fn fetches(&self) -> usize {
+        let calls = self.invocations();
+        let issues_read = |call: &Invocation| {
+            call.args.first().is_some_and(|arg| arg == "api")
+                && call.args.get(1).is_some_and(|arg| arg.contains("/issues?"))
+        };
+        let reads = calls.iter().filter(|call| issues_read(call)).count();
+        let last_pending = calls.last().is_some_and(issues_read) && self.completed() < calls.len();
+        reads - usize::from(last_pending)
     }
 
     /// Answer from `script` from now on.
@@ -175,6 +200,8 @@ for entry in script:
             f.write(json.dumps({"program": program, "args": args}) + "\n")
         sys.exit(entry.get("exit", 0))
 sys.stderr.write("stub %s: no entry for %s\n" % (program, " ".join(args)))
+with open(os.path.join(dir, "forge-finished.jsonl"), "a") as f:
+    f.write(json.dumps({"program": program, "args": args, "refused": True}) + "\n")
 sys.exit(1)
 "#;
 
@@ -192,8 +219,8 @@ pub(crate) fn seed_live(
 ) {
     h.launcher.live.set(
         &row.id,
-        ariadne_daemon::forge::live::Live {
-            pull: ariadne_daemon::forge::pulls::ForgePullRequest {
+        ariadne_daemon::forge::live::Live::new(
+            ariadne_daemon::forge::pulls::ForgePullRequest {
                 number: row.number,
                 url: row.url.clone(),
                 title: format!("Fix widgets {}", row.number),
@@ -213,9 +240,9 @@ pub(crate) fn seed_live(
                 merge_sha: None,
             },
             review_requested,
-            details: Some(ariadne_daemon::forge::live::Details::default()),
-            evidence_ok: true,
-        },
+            Some(ariadne_daemon::forge::live::Details::default()),
+            true,
+        ),
     );
 }
 
@@ -399,8 +426,8 @@ pub(crate) fn seed_review_evidence(
 ) {
     h.launcher.live.set(
         &row.id,
-        ariadne_daemon::forge::live::Live {
-            pull: ariadne_daemon::forge::pulls::ForgePullRequest {
+        ariadne_daemon::forge::live::Live::new(
+            ariadne_daemon::forge::pulls::ForgePullRequest {
                 number: row.number,
                 url: row.url.clone(),
                 title: format!("Fix widgets {}", row.number),
@@ -419,8 +446,8 @@ pub(crate) fn seed_review_evidence(
                 updated_at: "2026-10-01T00:00:00Z".into(),
                 merge_sha: None,
             },
-            review_requested: false,
-            details: Some(ariadne_daemon::forge::live::Details {
+            false,
+            Some(ariadne_daemon::forge::live::Details {
                 comments: evidence.comments,
                 head_sha: evidence
                     .details_head_sha
@@ -428,7 +455,7 @@ pub(crate) fn seed_review_evidence(
                     .into(),
                 ..Default::default()
             }),
-            evidence_ok: evidence.evidence_ok,
-        },
+            evidence.evidence_ok,
+        ),
     );
 }

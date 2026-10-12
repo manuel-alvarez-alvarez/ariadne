@@ -25,8 +25,8 @@ turn.
    - A follow-up ask in a thread you answered: a new ask. Act on it.
    - A reviewer reply that keeps a finding open: no second try. The
      user decides.
-   A comment on the conversation: leave it. The tool reaches no thread
-   there yet.
+   - A comment on the conversation: answer it the same way, once per
+     comment.
 4. A suggestion block you accept: apply it. Write your own code only
    where it does not compile or pass. Else reply `Not changed: <why>.`
 5. Fix each failed check in a new commit. Read its log at its URL. Where
@@ -50,7 +50,8 @@ turn.
 - Never merge the request. Never amend, rebase or force a push.
 - Commit only what a comment or a failed check asks for.
 - Leave every thread open.
-- Post no new thread, summary or top-level comment.
+- Post no new thread, summary or top-level comment, except step 3's
+  reply.
 - Read and write the request only with your session's tools. When a tool
   fails, report it and post nothing another way.
 

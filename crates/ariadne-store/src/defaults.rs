@@ -1312,11 +1312,10 @@ mod tests {
     /// reason, or a short answer to a question. A thanks gets none, a
     /// follow-up in an answered thread gets a new answer, and a reviewer
     /// reply that keeps a finding open gets no second try — the user
-    /// decides. A comment on the conversation is left: `reply_comment`
-    /// reaches no thread there (026 Known gap). A suggestion block the
-    /// agent accepts is applied rather than rewritten; one it does not
-    /// accept gets a kept line instead. No unrelated forge discussion or
-    /// code change is added.
+    /// decides. A comment on the conversation gets the same answer, once
+    /// per comment. A suggestion block the agent accepts is applied
+    /// rather than rewritten; one it does not accept gets a kept line
+    /// instead. No unrelated forge discussion or code change is added.
     #[test]
     fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
         let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
@@ -1327,12 +1326,12 @@ mod tests {
             "Thanks or an acknowledgement: reply nothing.",
             "A follow-up ask in a thread you answered: a new ask. Act on it.",
             "A reviewer reply that keeps a finding open: no second try. The user decides.",
-            "A comment on the conversation: leave it. The tool reaches no thread there yet.",
+            "A comment on the conversation: answer it the same way, once per comment.",
             "A suggestion block you accept: apply it.",
             "Else reply `Not changed: <why>.`",
             "Commit only what a comment or a failed check asks for.",
             "Leave every thread open.",
-            "Post no new thread, summary or top-level comment.",
+            "Post no new thread, summary or top-level comment, except step 3's reply.",
         ] {
             assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
         }

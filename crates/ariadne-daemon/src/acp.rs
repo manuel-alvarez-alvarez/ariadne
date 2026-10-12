@@ -242,10 +242,12 @@ pub(crate) enum Delivery {
     /// `updated_at` each failure carried at the moment this was queued —
     /// a later retry of the same task stamps a new one, so an old
     /// confirmation never answers for a new failure of it. Confirmed only
-    /// once this exact prompt's own turn ends (`serve_with_input`), never
-    /// by an unrelated turn landing on the same session: nothing here is
-    /// written to the store until this delivery's own `session/prompt`
-    /// call returns.
+    /// once this exact prompt's own turn ends (`prompt_once`), never by an
+    /// unrelated turn landing on the same session: nothing here is written
+    /// to the store until this delivery's own `session/prompt` call
+    /// returns. Held on the launch's queue ledger until then
+    /// (`claim_message`), so a pass that finds the session still idle
+    /// before the turn's first event lands cannot queue it a second time.
     GoalAttention {
         goal_id: String,
         failed_tasks: Vec<(String, String)>,
@@ -2493,25 +2495,6 @@ async fn serve_with_input(
                         // gives it back where the prompt was never written.
                         prompt_once(rpc, session_id, &prompt).await?;
                         rpc.in_flight.settle();
-                        // This exact delivery's own turn just ended — not
-                        // merely some turn on this session, which could be
-                        // an unrelated one that landed first. Confirmed
-                        // here, directly from what this prompt carried,
-                        // rather than from any side record a later pass
-                        // could race against.
-                        if let Some(Delivery::GoalAttention {
-                            goal_id,
-                            failed_tasks,
-                        }) = &prompt.delivery
-                        {
-                            let _ = rpc
-                                .sink
-                                .runtime
-                                .inner
-                                .store
-                                .confirm_goal_orchestrator_answered(goal_id, failed_tasks)
-                                .await;
-                        }
                     }
                     None => console_open = false,
                 }
@@ -2531,8 +2514,20 @@ async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
         return true;
     };
     let sink = &rpc.sink;
-    sink.runtime
-        .dequeue_message(&sink.session_id, &sink.launch_id, &delivery.key());
+    // A goal's attention stays on the queue's ledger for the whole of its
+    // turn, and comes off it in `prompt_once` once the turn has confirmed
+    // it: what keeps a pass from queuing the same situation again is that
+    // ledger, since the store says nothing about it until the turn ends,
+    // and the session row still reads idle until the turn's first event
+    // lands. Taken off here, a pass in that gap queued it a second time,
+    // behind this turn, and the orchestrator heard the same failure twice.
+    // Every other delivery is claimed in the store right here, so a second
+    // hand-over of it is refused there, and its key comes off now so a
+    // later hand-over may queue it again.
+    if !matches!(delivery, Delivery::GoalAttention { .. }) {
+        sink.runtime
+            .dequeue_message(&sink.session_id, &sink.launch_id, &delivery.key());
+    }
     let store = &sink.runtime.inner.store;
     let claimed = match delivery {
         Delivery::Step(id) => store.claim_step_briefing(id).await,
@@ -2547,10 +2542,10 @@ async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
                 )
                 .await
         }
-        // Nothing to claim ahead of the send: `tell_orchestrator`'s own
-        // `goal_told` map already keeps this situation from being queued
-        // twice, and what this delivery confirms is written only once its
-        // own turn ends (`serve_with_input`), never before.
+        // Nothing to claim ahead of the send: the queue's ledger above keeps
+        // this situation from being queued twice, and what this delivery
+        // confirms is written only once its own turn ends (`prompt_once`),
+        // never before.
         Delivery::GoalAttention { .. } => Ok(true),
     };
     match claimed {
@@ -3005,6 +3000,35 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
             "cached_input_tokens": usage.cached_input_tokens,
             "output_tokens": usage.output_tokens,
         });
+    }
+    // This exact delivery's own turn just ended — not merely some turn on
+    // this session, which could be an unrelated one that landed first.
+    // Confirmed here, directly from what this prompt carried, rather than
+    // from any side record a later pass could race against — and before the
+    // `stop` below, which marks the session idle and wakes the scheduler:
+    // a pass woken by the stop reads the session idle and the failure
+    // confirmed together, so it has nothing to say again. Written after the
+    // `stop`, the gap between the two was a window in which that pass told
+    // the orchestrator the same thing twice.
+    if let Some(
+        delivery @ Delivery::GoalAttention {
+            goal_id,
+            failed_tasks,
+        },
+    ) = &prompt.delivery
+    {
+        let sink = &rpc.sink;
+        let _ = sink
+            .runtime
+            .inner
+            .store
+            .confirm_goal_orchestrator_answered(goal_id, failed_tasks)
+            .await;
+        // Confirmed, so off the queue's ledger (`claim_message`): a pass
+        // from here on finds the failure confirmed, and a new situation
+        // for the goal is a new key.
+        sink.runtime
+            .dequeue_message(&sink.session_id, &sink.launch_id, &delivery.key());
     }
     rpc.sink.emit("stop", stop).await;
     rpc.turn_ended.notify_waiters();

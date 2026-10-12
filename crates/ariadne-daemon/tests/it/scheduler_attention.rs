@@ -72,6 +72,10 @@ const LONG_WINDOW: Duration = Duration::from_secs(2);
 /// test about a pass that outlives its own window: launching an agent starts
 /// a process, which no machine does in ten milliseconds.
 const BRIEF_WINDOW: Duration = Duration::from_millis(10);
+/// How many thousand-wake batches a stream hands the scheduler before it
+/// gives up on seeing a window end under it: a bound on the test rather
+/// than a wait, since the stream stops the moment the window is seen to end.
+const STREAM_BATCHES: usize = 1_000;
 /// A tick for a test about what the liveness sweep concludes, which runs on
 /// the tick and on nothing else. Short so that the sweep comes round while
 /// the test watches, rather than five seconds into it; nothing the test waits
@@ -2741,6 +2745,75 @@ async fn a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles(
         2,
         "the burst costs the pass it arrived during and one more, whatever \
          the pass cost"
+    );
+}
+
+/// A window has to end while the wakes keep coming: the load the folding is
+/// for is a stream of agent events that never pauses, and a loop that took
+/// its channel first, until the channel was empty, would never find it so —
+/// a session that kept reporting would be reconciled on its first wake and
+/// never again while the stream lasted. So a window ends between one batch
+/// of what the channel held and the next. The stream here runs on the test's
+/// own thread, alongside the scheduler: it hands the loop a thousand wakes
+/// at a time and yields, so the channel is never empty when the loop looks,
+/// and it stops the moment the test sees the window end — or after
+/// `STREAM_BATCHES`, which is the failure.
+#[tokio::test]
+async fn a_window_still_ends_under_a_stream_of_wakes_that_never_pauses() {
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: NO_TICK,
+            session_wake: BRIEF_WINDOW,
+            ..Timeouts::default()
+        })
+        .await;
+    let cast = h.cast().await;
+    let goal = h.activate(&cast.goal).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let author = h
+        .session(&goal, Some(&cast.task), Seat::Agent, &cast.develop().id)
+        .await;
+
+    let _capture = capture(&h);
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
+    eventually(TIMEOUT, "the goal's own pass to be over", async || {
+        h.sessions_of_goal(&goal.id).await.len() > 1
+    })
+    .await;
+    sched.flush().await;
+
+    let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stream = tokio::spawn({
+        let tx = sched.0.clone();
+        let ended = ended.clone();
+        let session_id = author.id.clone();
+        async move {
+            let mut batches = 0;
+            while !ended.load(std::sync::atomic::Ordering::SeqCst) && batches < STREAM_BATCHES {
+                for _ in 0..1_000 {
+                    tx.send(SchedEvent::SessionEvent(session_id.clone()))
+                        .unwrap();
+                }
+                batches += 1;
+                tokio::task::yield_now().await;
+            }
+            ended.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    });
+    // The first wake's own pass, and the one the window ends with.
+    eventually(TIMEOUT, "the window to end under the stream", async || {
+        reconciles_of(&h, &author) >= 2
+    })
+    .await;
+    ended.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        stream.await.unwrap(),
+        "the window ended only once the stream had stopped, {STREAM_BATCHES} batches in"
     );
 }
 

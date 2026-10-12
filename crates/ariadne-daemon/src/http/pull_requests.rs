@@ -24,7 +24,30 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use utoipa::IntoParams;
+
+/// One lock per pull request a reply posts to, lazily made on first use and
+/// kept for the daemon's life.
+#[derive(Clone, Default)]
+pub struct ReplyLocks(Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>);
+
+impl ReplyLocks {
+    /// Hold this pull request's reply lock until the guard drops: the once
+    /// check a reply makes, and the forge call and the store write that
+    /// follow it, run under it as one step.
+    async fn hold(&self, pull_request_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = self
+            .0
+            .lock()
+            .expect("reply locks")
+            .entry(pull_request_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        lock.lock_owned().await
+    }
+}
 
 fn forge_error(error: String) -> ApiError {
     ApiError::new(StatusCode::BAD_GATEWAY, "forge_error", error)
@@ -84,6 +107,10 @@ fn publish_evidence_transition(
 /// where the fetch leaves its own (026): what a session asks for is never an
 /// earlier read.
 async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
+    // Captured before this read's own, slower network calls, so the
+    // merge below knows which local addition, if any, is newer than this
+    // read's own snapshot (`forge::live::LivePulls::generation`).
+    let since = state.launcher.live.generation(&row.id);
     let forge = integration(state, &row.repository_id).await?;
     let details = match client(state, &forge)
         .details(
@@ -130,18 +157,16 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
         .get(&row.id)
         .map_or(row.role == "reviewer", |l| l.review_requested);
     let head_sha = details.pull.head_sha.clone();
-    let (before, after) = state.launcher.live.set_fingerprinted(
+    let (before, after) = state.launcher.live.set_details_fingerprinted(
         &row.id,
-        Live {
-            pull: details.pull,
-            review_requested,
-            details: Some(Details {
-                comments: details.comments,
-                failed_checks: details.failed_checks,
-                behind_base: details.behind_base,
-                head_sha,
-            }),
-            evidence_ok: true,
+        details.pull,
+        review_requested,
+        since,
+        Details {
+            comments: details.comments,
+            failed_checks: details.failed_checks,
+            behind_base: details.behind_base,
+            head_sha,
         },
     );
     publish_evidence_transition(state, &row, before, after);
@@ -220,12 +245,7 @@ pub(super) async fn list(
                     let cached = state.launcher.live.get(&row.id);
                     let details = cached.as_ref().and_then(|l| l.details.clone());
                     let evidence_ok = cached.is_none_or(|l| l.evidence_ok);
-                    let read = Live {
-                        pull,
-                        review_requested: asks,
-                        details,
-                        evidence_ok,
-                    };
+                    let read = Live::new(pull, asks, details, evidence_ok);
                     let marks = state.store.pull_request_comment_marks(&row.id).await?;
                     let view = live::view(row, &read, &marks, &login);
                     pull_request_dto_of(&state.store, view).await?
@@ -500,19 +520,36 @@ pub(super) async fn reply(
     if body.is_empty() {
         return Err(ApiError::bad_request("a reply needs a body"));
     }
+    // Held through the once check below, the forge call and the store
+    // write, so a second reply racing this one for the same comment waits
+    // here and then reads this reply's answer, not the state before it.
+    let _reply_lock = state.reply_locks.hold(&row.id).await;
     let pull = read_held(&state, row).await?;
     let comment = find_comment(&state, &pull, &comment_id).await?;
-    // The keeping agent answers a defect in its own thread, an inline
-    // review comment, never the conversation: a review session alone
-    // replies there, under its own name (029).
-    if !from_review && comment.kind != "review_comment" {
-        return Err(ApiError::bad_request(
-            "reply only in the thread of the defect: an inline review comment, not the \
-             conversation",
-        ));
-    }
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
+    // The keeping agent answers a defect in its own thread, an inline
+    // review comment. In the conversation it answers once per comment of
+    // the other side. It never answers its own side's comment. A
+    // `from_review` comment, the review's own summary, counts as its own
+    // side's. It never answers a comment the login's own side already
+    // answered there. The seat check is the same one `report`'s `ready`
+    // claim requires (`Seat::Agent`, never a reviewer session, per 031). A
+    // review session alone keeps its wider reach, under its own name
+    // (029).
+    if !from_review && comment.kind != "review_comment" {
+        let keeping_agent =
+            pull.origin_task_id.is_some() && session.seat() == Some(ariadne_core::Seat::Agent);
+        let unanswered_other_side = !comment.author_login.eq_ignore_ascii_case(&login)
+            && !comment.from_review
+            && !comment.answered;
+        if !keeping_agent || !unanswered_other_side {
+            return Err(ApiError::bad_request(
+                "a conversation reply answers, once, a comment of the other side, from the \
+                 task's own column agent",
+            ));
+        }
+    }
     // A review's reply is signed as the review's (029).
     let sent = match from_review {
         true => pulls::signed(&body, false),

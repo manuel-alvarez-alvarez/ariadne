@@ -428,7 +428,7 @@ async fn failed_task_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
 ///
 /// That list is written only once, by the ACP driver itself, the moment
 /// the one `session/prompt` turn that actually carried this task's
-/// failure returns (`acp::serve_with_input`, confirming exactly the
+/// failure returns (`acp::prompt_once`, confirming exactly the
 /// `Delivery::GoalAttention` it was handed) — never by an ambient session
 /// status, which an unrelated turn landing on the same session first
 /// could satisfy without ever having carried this task's news. Matching

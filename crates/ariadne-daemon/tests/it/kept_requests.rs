@@ -579,39 +579,105 @@ async fn open_pull_request_strips_a_trailing_trailer_from_the_body() {
 }
 
 /// A review body posted on the conversation, with no path and no line, is
-/// no defect's own thread: the `pr` agent's reply to it through
-/// `reply_comment` is refused, and no gh call follows it.
+/// the other side's: the `pr` agent's reply to it through `reply_comment`
+/// goes through the forge's `gh pr comment`, once. A second reply to the
+/// same body, and a reply to a body of the agent's own side, are refused,
+/// and no gh call follows either refusal.
 #[tokio::test]
-async fn the_pr_agent_may_not_reply_to_a_top_level_comment() {
+async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side() {
     let threads =
         json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
-    let reviews = json!([{"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
-        "submitted_at": "2026-10-02T00:00:00Z"}]);
-    let Kept {
-        h, stub, agent, id, ..
-    } = kept_request(script_of(
+    let reviews = json!([
+        {"id": 502, "user": {"login": "me"}, "body": "Thanks for the look.",
+         "submitted_at": "2026-10-02T00:00:00Z"},
+        {"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
+         "submitted_at": "2026-10-02T00:01:00Z"},
+    ]);
+    let mut script = script_of(
         pull("OPEN", "abc"),
         &[],
         &[],
         &json!({"check_runs": []}).to_string(),
         &reviews.to_string(),
         &threads.to_string(),
-    ))
-    .await;
+    );
+    let Kept {
+        h, stub, agent, id, ..
+    } = kept_request(script.clone()).await;
     let mut stored: Vec<Value> = Vec::new();
-    eventually(TIMEOUT, "the review body to be stored", async || {
+    eventually(TIMEOUT, "both review bodies to be stored", async || {
         stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
-        stored.iter().any(|c| c["kind"] == "review")
+        stored.iter().filter(|c| c["kind"] == "review").count() == 2
     })
     .await;
-    let top_level = stored.iter().find(|c| c["kind"] == "review").unwrap()["id"]
+    let other_side = stored
+        .iter()
+        .find(|c| c["author_login"] == "alice")
+        .unwrap()["id"]
         .as_str()
         .unwrap()
         .to_string();
+    let own_side = stored.iter().find(|c| c["author_login"] == "me").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let replies = |stub: &StubForgeCli| {
+        stub.invocations()
+            .into_iter()
+            .filter(|i| {
+                i.args.first().map(String::as_str) == Some("pr")
+                    && i.args.get(1).map(String::as_str) == Some("comment")
+            })
+            .count()
+    };
+    let before = replies(&stub);
+    let reply: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+                &agent.id,
+                json!({"body": "Thanks!"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(reply["author_login"], "me");
+    assert_eq!(reply["thread_id"], "conversation");
+    assert_eq!(replies(&stub), before + 1, "one gh call replies");
+
+    // The forge holds the reply now, too: a background poll that reads
+    // the stub again, between this reply and the next call, must find the
+    // same answer `add_comments` already gave the live cache, not fall
+    // back to a read that never heard of it.
+    let posted = json!([{"id": 301, "user": {"login": "me", "type": "User"},
+        "body": "Thanks!", "created_at": "2026-10-03T00:00:00Z"}]);
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["api", "repos/acme/widgets/issues/1/comments"]) {
+            entry["stdout"] = json!(posted.to_string());
+        }
+    }
+    stub.reprogram(script.clone());
+
     let before = stub.invocations().len();
     h.error(
         as_session(
-            &format!("/v1/pull-requests/{id}/comments/{top_level}/reply"),
+            &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+            &agent.id,
+            json!({"body": "Again."}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert_eq!(
+        stub.invocations().len(),
+        before,
+        "a second reply to the same body calls the forge CLI no further"
+    );
+
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/{own_side}/reply"),
             &agent.id,
             json!({"body": "Thanks!"}),
         ),
@@ -621,8 +687,276 @@ async fn the_pr_agent_may_not_reply_to_a_top_level_comment() {
     assert_eq!(
         stub.invocations().len(),
         before,
-        "a refused reply calls the forge CLI no further"
+        "a reply to the agent's own side's body calls the forge CLI no further"
     );
+}
+
+/// Two replies racing for the same conversation body: both pass the once
+/// check before either reaches the forge, but the pull request's reply
+/// lock serializes them, so the second rereads the first's answer instead
+/// of racing it. One `gh pr comment` call posts; the other is refused.
+#[tokio::test]
+async fn two_replies_racing_for_one_comment_post_it_once() {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let reviews = json!([
+        {"id": 502, "user": {"login": "me"}, "body": "Thanks for the look.",
+         "submitted_at": "2026-10-02T00:00:00Z"},
+        {"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
+         "submitted_at": "2026-10-02T00:01:00Z"},
+    ]);
+    let gate_dir = tempfile::tempdir().unwrap();
+    let gate = gate_dir.path().join("go");
+    let mut script = script_of(
+        pull("OPEN", "abc"),
+        &[],
+        &[],
+        &json!({"check_runs": []}).to_string(),
+        &reviews.to_string(),
+        &threads.to_string(),
+    );
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "comment"]) {
+            entry["wait_for"] = json!(gate.display().to_string());
+        }
+    }
+    let Kept {
+        h, stub, agent, id, ..
+    } = kept_request(script.clone()).await;
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "both review bodies to be stored", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.iter().filter(|c| c["kind"] == "review").count() == 2
+    })
+    .await;
+    let other_side = stored
+        .iter()
+        .find(|c| c["author_login"] == "alice")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let replies = || {
+        stub.invocations()
+            .into_iter()
+            .filter(|i| {
+                i.args.first().map(String::as_str) == Some("pr")
+                    && i.args.get(1).map(String::as_str) == Some("comment")
+            })
+            .count()
+    };
+    let reply = |body: &str| {
+        h.send(as_session(
+            &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+            &agent.id,
+            json!({"body": body}),
+        ))
+    };
+    let release_when_called = async {
+        eventually(TIMEOUT, "the first reply to reach the forge", async || {
+            replies() >= 1
+        })
+        .await;
+        std::fs::write(&gate, "go").unwrap();
+    };
+    let ((a, _), (b, _), ()) = tokio::join!(reply("First."), reply("Second."), release_when_called);
+    let mut statuses = [a, b];
+    statuses.sort();
+    assert_eq!(
+        statuses,
+        [StatusCode::CREATED, StatusCode::BAD_REQUEST],
+        "the lock serializes the two, so only one is answered"
+    );
+    assert_eq!(replies(), 1, "only the winner calls the forge CLI");
+}
+
+/// Counts of a detail fetch's own `issues/1/comments` read: the
+/// conversation side of a request, the one the reply below answers on.
+fn conversation_reads(stub: &StubForgeCli) -> usize {
+    stub.invocations()
+        .iter()
+        .filter(|i| {
+            i.args.get(1).map(String::as_str) == Some("repos/acme/widgets/issues/1/comments")
+                && !i.args.contains(&"POST".to_string())
+        })
+        .count()
+}
+
+/// A poll's detail read that began before a reply posted, and so reads
+/// the conversation with no word of it, does not erase it once that read
+/// finishes after the reply: `LivePulls::set_details` carries forward
+/// only a local addition newer than the generation the read itself
+/// captured, and the reply is exactly that. The once check still refuses
+/// a second reply to the same comment once the poll's stale read lands.
+#[tokio::test]
+async fn a_poll_that_began_before_a_reply_does_not_erase_it() {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let reviews = json!([
+        {"id": 502, "user": {"login": "me"}, "body": "Thanks for the look.",
+         "submitted_at": "2026-10-02T00:00:00Z"},
+        {"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
+         "submitted_at": "2026-10-02T00:01:00Z"},
+    ]);
+    let gate_dir = tempfile::tempdir().unwrap();
+    let gate = gate_dir.path().join("go");
+    let mut script = script_of(
+        pull("OPEN", "abc"),
+        &[],
+        &[],
+        &json!({"check_runs": []}).to_string(),
+        &reviews.to_string(),
+        &threads.to_string(),
+    );
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(script.clone()).await;
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "both review bodies to be stored", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.iter().filter(|c| c["kind"] == "review").count() == 2
+    })
+    .await;
+    let other_side = stored
+        .iter()
+        .find(|c| c["author_login"] == "alice")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Only now does a detail read's own conversation call wait on the
+    // gate: the setup fetch above, before this, ran free of it.
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["api", "repos/acme/widgets/issues/1/comments"]) {
+            entry["wait_for"] = json!(gate.display().to_string());
+        }
+    }
+    stub.reprogram(script.clone());
+
+    // The poll's own detail read reaches, and is held on, its
+    // conversation read before the reply below posts: its own snapshot
+    // of "since" is taken before the reply exists.
+    let before = conversation_reads(&stub);
+    h.state.forge_poll.wake(&repo);
+    eventually(
+        TIMEOUT,
+        "the poll's conversation read to reach the forge",
+        async || conversation_reads(&stub) > before,
+    )
+    .await;
+
+    let reply: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+                &agent.id,
+                json!({"body": "Thanks!"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    // Let the poll's held, stale read land now that the reply exists.
+    // The cache is read directly, not through the comments route: that
+    // route always reads the forge again, which would race this same
+    // generation check a second time, on a since this call captures only
+    // after the reply, rather than prove what the poll's own read did
+    // with it.
+    std::fs::write(&gate, "go").unwrap();
+    let reply_forge_id = reply["id"].as_str().unwrap().to_string();
+    eventually(
+        TIMEOUT,
+        "the poll's stale read to leave the reply standing",
+        async || {
+            h.launcher
+                .live
+                .get(&id)
+                .and_then(|live| live.details)
+                .is_some_and(|details| {
+                    details
+                        .comments
+                        .iter()
+                        .any(|c| c.forge_id == reply_forge_id)
+                })
+        },
+    )
+    .await;
+
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+            &agent.id,
+            json!({"body": "Again."}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+}
+
+/// A comment a read once found, gone from a later read that started no
+/// earlier than that first one, is dropped rather than carried forward:
+/// the forge no longer holds it, and `LivePulls::set_details` only
+/// protects a local addition newer than a read's own starting
+/// generation, never a comment the forge itself once reported and now
+/// does not.
+#[tokio::test]
+async fn a_comment_gone_from_a_later_read_is_dropped() {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let reviews = json!([
+        {"id": 502, "user": {"login": "me"}, "body": "Thanks for the look.",
+         "submitted_at": "2026-10-02T00:00:00Z"},
+        {"id": 501, "user": {"login": "alice"}, "body": "Looks fine overall.",
+         "submitted_at": "2026-10-02T00:01:00Z"},
+    ]);
+    let mut script = script_of(
+        pull("OPEN", "abc"),
+        &[],
+        &[],
+        &json!({"check_runs": []}).to_string(),
+        &reviews.to_string(),
+        &threads.to_string(),
+    );
+    let Kept {
+        h, stub, id, repo, ..
+    } = kept_request(script.clone()).await;
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "both review bodies to be stored", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.iter().filter(|c| c["kind"] == "review").count() == 2
+    })
+    .await;
+    assert!(stored.iter().any(|c| c["author_login"] == "alice"));
+
+    // Alice deleted her review body: the forge no longer answers with it.
+    let reviews_without_alice = json!([
+        {"id": 502, "user": {"login": "me"}, "body": "Thanks for the look.",
+         "submitted_at": "2026-10-02T00:00:00Z"},
+    ]);
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["api", "repos/acme/widgets/pulls/1/reviews"]) {
+            entry["stdout"] = json!(reviews_without_alice.to_string());
+        }
+    }
+    stub.reprogram(script.clone());
+    fetch_again(&h, &stub, &repo).await;
+
+    eventually(
+        TIMEOUT,
+        "alice's deleted review to leave the comments",
+        async || {
+            let after: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+            !after.iter().any(|c| c["author_login"] == "alice")
+        },
+    )
+    .await;
 }
 
 /// A whole script, every detail entry keyed on `head`: what the initial

@@ -228,41 +228,76 @@ pub fn start(
         let mut wakes = Coalesced::new(timeouts.session_wake);
         loop {
             tokio::select! {
-                event = rx.recv() => match event {
-                    Some(SchedEvent::TaskChanged(id)) => scheduler.reconcile(Target::Task(&id)).await,
-                    Some(SchedEvent::GoalChanged(id)) => scheduler.reconcile(Target::Goal(&id)).await,
-                    Some(SchedEvent::PullRequestChanged(id)) => scheduler.reconcile_pull_request(&id).await,
-                    Some(SchedEvent::SessionEvent(id)) => {
-                        if wakes.wake(&id, tokio::time::Instant::now()) {
-                            scheduler.reconcile_session(&id).await;
-                            wakes.reconciled(&id, tokio::time::Instant::now());
+                event = rx.recv() => {
+                    let Some(event) = event else { break }; // daemon shutting down
+                    scheduler.handle(event, &mut wakes).await;
+                    // Then what the channel already holds, and no more. A
+                    // burst that queued behind a slow pass is folded whole
+                    // into the window that pass opened, before that window
+                    // may end: taken one event per turn of this loop, the
+                    // window could end with the rest of the burst still in
+                    // the channel — a loop held off the CPU for longer than
+                    // the window, under exactly the load the folding is
+                    // for — and the wakes behind it would cost a pass of
+                    // their own. Bounded by what was queued when the batch
+                    // began, so a stream of wakes that never pauses still
+                    // lets every window end, right below, and the tick
+                    // come round, at the select above.
+                    for _ in 0..rx.len() {
+                        match rx.try_recv() {
+                            Ok(event) => scheduler.handle(event, &mut wakes).await,
+                            Err(_) => break,
                         }
                     }
-                    Some(SchedEvent::SessionEnded { session_id, launch_id }) => {
-                        scheduler.retire_ended(&session_id, &launch_id).await;
-                        scheduler.reconcile_session(&session_id).await;
-                        wakes.reconciled(&session_id, tokio::time::Instant::now());
-                    }
-                    Some(SchedEvent::Flush(done)) => {
-                        for id in wakes.take_all() {
-                            scheduler.reconcile_session(&id).await;
-                            wakes.reconciled(&id, tokio::time::Instant::now());
-                        }
-                        let _ = done.send(());
-                    }
-                    None => break, // daemon shutting down
-                },
-                _ = window_end(wakes.next_window_end()) => {
-                    for id in wakes.due(tokio::time::Instant::now()) {
-                        scheduler.reconcile_session(&id).await;
-                        wakes.reconciled(&id, tokio::time::Instant::now());
-                    }
+                    scheduler.settle_due(&mut wakes).await;
                 }
+                _ = window_end(wakes.next_window_end()) => scheduler.settle_due(&mut wakes).await,
                 _ = tick.tick() => scheduler.reconcile_all().await,
             }
         }
     });
     tx
+}
+
+impl Scheduler {
+    /// One event off the channel, acted on.
+    async fn handle(&mut self, event: SchedEvent, wakes: &mut Coalesced) {
+        match event {
+            SchedEvent::TaskChanged(id) => self.reconcile(Target::Task(&id)).await,
+            SchedEvent::GoalChanged(id) => self.reconcile(Target::Goal(&id)).await,
+            SchedEvent::PullRequestChanged(id) => self.reconcile_pull_request(&id).await,
+            SchedEvent::SessionEvent(id) => {
+                if wakes.wake(&id, tokio::time::Instant::now()) {
+                    self.reconcile_session(&id).await;
+                    wakes.reconciled(&id, tokio::time::Instant::now());
+                }
+            }
+            SchedEvent::SessionEnded {
+                session_id,
+                launch_id,
+            } => {
+                self.retire_ended(&session_id, &launch_id).await;
+                self.reconcile_session(&session_id).await;
+                wakes.reconciled(&session_id, tokio::time::Instant::now());
+            }
+            SchedEvent::Flush(done) => {
+                for id in wakes.take_all() {
+                    self.reconcile_session(&id).await;
+                    wakes.reconciled(&id, tokio::time::Instant::now());
+                }
+                let _ = done.send(());
+            }
+        }
+    }
+
+    /// The pass each window that has ended is owed, for the wakes folded
+    /// into it.
+    async fn settle_due(&mut self, wakes: &mut Coalesced) {
+        for id in wakes.due(tokio::time::Instant::now()) {
+            self.reconcile_session(&id).await;
+            wakes.reconciled(&id, tokio::time::Instant::now());
+        }
+    }
 }
 
 /// Wait for the earliest open window to end, or for ever where no session is
