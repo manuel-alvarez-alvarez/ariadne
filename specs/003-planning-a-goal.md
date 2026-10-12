@@ -43,9 +43,13 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 2. The orchestrator never writes code. Its whole output is the plan.
 3. It asks the user about every unclear point, until nothing about the goal is
    open: `wait_for_user` with a one-line hint for the Needs attention list
-   (031 rule 11), then one question in plain turn text — a numbered list of
-   the open points, each with its options. How to ask is the session rules'
-   (013); the numbered list is the playbook's.
+   (031 rule 11), then one question in plain turn text. It asks one question
+   at a time, and waits for the answer before it asks the next one. Each
+   question names its position, such as "Question 2 of 3"; gives the context
+   the user needs, with no earlier turn required; lists two or more labeled
+   options and what each one causes; gives a recommendation with one reason;
+   and ends with one direct question. How to ask is the session rules' (013);
+   asking one question at a time, with these parts, is the playbook's.
    The user answers in the session's terminal (`ariadne goal attach`). An
    orchestrator waiting on an answer is not nudged.
 4. It writes one task per unit of work: small, finishable alone, one
@@ -114,7 +118,9 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 
 - The playbook asks before it plans and plans before it starts
   (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
-  staffs one agent on every column and asks no reviewer question
+  asks one question at a time and names the parts of a question
+  (`::the_orchestration_skill_asks_one_question_at_a_time_with_its_parts`), staffs
+  one agent on every column and asks no reviewer question
   (`::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`).
 - The playbook takes each column's rank, and states a reason for each step
   up (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`).

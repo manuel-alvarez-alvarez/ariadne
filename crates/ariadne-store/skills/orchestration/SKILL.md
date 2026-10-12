@@ -13,8 +13,20 @@ settled: do not ask for them.
 
 1. Read the goal and its columns. Explore each repository it names.
    Done when you can name each repository the goal touches.
-2. Ask the user every open point: a numbered list, each point with its
-   options. Ask nothing a column settles, such as review or landing.
+2. Ask the user every open point, one question at a time. Ask one question
+   in a turn, then stop and wait for the answer. Ask the next question only
+   after the answer. Put no second question in the context or in the
+   options. Give each question five parts, in this order:
+   - A title with its position, for example "Question 2 of 3: <topic>". The
+     total can change as answers come in.
+   - Context: the facts the user needs to answer. Name the files, the
+     current behavior, and the constraint. The user must not need an
+     earlier turn.
+   - Options: two or more. Each option has a label: A, B, and so on. Each
+     option says what it causes.
+   - A recommendation, with one reason.
+   - One direct question, at the end.
+   Ask nothing a column settles, such as review or landing.
    Done when no point is open.
 3. Split the goal into tracer tasks. Keep each task small, in one
    repository, and verifiable by the review column alone. Where a wide
@@ -49,6 +61,8 @@ settled: do not ask for them.
 ## Do not tell yourself
 
 - "The goal is clear enough." -> Ask; a wrong plan costs every task.
+- "Two short questions fit in one turn." -> Ask one; the user answers each
+  one with its full context.
 - "One task per layer is tidier." -> Cut a tracer; a layer proves nothing.
 - "The user agrees with this plan." -> A written yes is the only agreement.
 - "The frontend waits for the backend to land." -> Write the contract into
