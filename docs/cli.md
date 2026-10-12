@@ -356,10 +356,11 @@ permission request, the console shows the call it asks about — its head line,
 the rest of the command or the diff under it — and then its choices; pick one
 with the arrow keys or its number key. The rest of the command draws in your
 terminal's own foreground, not dimmed. See [Permission modes](permissions.md).
-When an agent asks you a question, it writes the whole question in its
-reply in the console, as any other turn, then calls `wait_for_user` with a
-one-line hint. The hint is what the Needs attention list shows, and the
-console draws it under the question as `waiting for you · <hint>`. The daemon
+When an agent asks you a question, it calls `wait_for_user` with a one-line
+hint, then writes the whole question in its reply in the console, as any other
+turn: a numbered list of the open points and their options. The hint is what
+the Needs attention list shows, and the console draws it above the question as
+`waiting for you · <hint>`. The daemon
 refuses a hint over 100 characters or over more than one line, so the question
 is never hidden inside the call. Answer by typing in the console.
 

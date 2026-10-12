@@ -410,11 +410,15 @@ semantics remain with 009.
     changes to add one. `agent_requests` and `pull_requests` are complete
     producers, below.
 
-11. An agent asks the user in its reply — plain turn text, which the console
-    draws as the conversation it is — and creates a request only with
-    `wait_for_user` (013); punctuation, idle turns, and agent messages create
-    none. The tool carries a `hint`, not the question: one line for this
-    list, at most 100 characters (`http::agent_requests::HINT_MAX_CHARS`).
+11. An agent creates a request only with `wait_for_user` (013), and then
+    asks the user in its reply — plain turn text, which the console draws as
+    the conversation it is, under the note the call left (rule 12);
+    punctuation, idle turns, and agent messages create none. The call comes
+    first: the text an agent writes after its last tool call is the text it
+    writes to the user, and one that asked before the call left its
+    questions in its thinking. The tool carries a `hint`, not the question:
+    one line for this list, at most 100 characters
+    (`http::agent_requests::HINT_MAX_CHARS`).
     `POST /v1/sessions/{id}/agent-requests` refuses a longer or a multi-line
     summary with `400`, in words that send the question back to the reply,
     and opens nothing — a hint that could carry the question would move the
@@ -433,7 +437,7 @@ semantics remain with 009.
     human permission is an item; an automatic decision is not. Each request
     change publishes `session_updated`.
     The CLI console draws the `agent_request` event as a dim note,
-    `waiting for you · <hint>`, under the agent's text. A permission the
+    `waiting for you · <hint>`, above the question the agent then writes. A permission the
     daemon raised on one of Ariadne's own MCP tools and *allowed* by itself —
     by its mode, the AI permission model or a learned rule, never at the
     console — leaves no permission block in the console: the call's own
