@@ -6,10 +6,11 @@
 use std::time::Duration;
 
 use serde_json::{Value, json};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::common::forge::{StubForgeCli, answer, enable_integration, seed_live, stub_forge_cli};
-use crate::common::{Harness, QUIET, TIMEOUT, eventually, harness};
-use ariadne_daemon::scheduler::SchedEvent;
+use crate::common::{Harness, harness};
+use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::{NewPullRequest, PullRequestRow};
 
@@ -60,71 +61,62 @@ async fn asked_row(h: &Harness, repository_id: &str) -> PullRequestRow {
 /// retry map starts empty.
 async fn kept_request(
     pr_view_exit: i32,
-    full_reconcile: Duration,
-) -> (Harness, StubForgeCli, PullRequestRow) {
+) -> (
+    Harness,
+    StubForgeCli,
+    PullRequestRow,
+    UnboundedSender<SchedEvent>,
+) {
     let stub = stub_forge_cli(script(pr_view_exit)).pull_request_views_as_fetches();
-    let h = harness()
-        .scheduler()
-        .timeouts(Timeouts {
-            full_reconcile,
-            ..Timeouts::default()
-        })
-        .forge_cli(&stub)
-        .await;
+    let timeouts = Timeouts {
+        full_reconcile: Duration::from_secs(60),
+        ..Timeouts::default()
+    };
+    let h = harness().timeouts(timeouts).forge_cli(&stub).await;
     let repo = h.repository(&h.at("widgets")).await;
     enable_integration(&h, &repo.id, "me").await;
     let row = asked_row(&h, &repo.id).await;
-    (h, stub, row)
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, timeouts);
+    (h, stub, row, sched)
 }
 
 /// Wake the scheduler about one request and wait for that pass to end.
-async fn pass_over(h: &Harness, pull_request_id: &str) {
-    h.sched
-        .as_ref()
-        .expect("this harness has a scheduler")
+async fn pass_over(sched: &UnboundedSender<SchedEvent>, pull_request_id: &str) {
+    sched
         .send(SchedEvent::PullRequestChanged(pull_request_id.into()))
         .unwrap();
-    h.flush_scheduler().await;
+    scheduler::flush_for_test(sched).await;
 }
 
-/// Listen for a fetch that must not happen. `full_reconcile` runs every 100
-/// milliseconds in the tick tests, so this watches several scheduler ticks.
-async fn fetches_stay_quiet(stub: &StubForgeCli, count: usize) {
-    assert!(
-        tokio::time::timeout(QUIET, async {
-            loop {
-                assert_eq!(stub.fetches(), count, "the scheduler read the forge again");
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .is_err(),
-        "the scheduler read the forge again"
-    );
+/// Run the scheduler's full reconcile pass and wait for it to finish.
+async fn tick_over(sched: &UnboundedSender<SchedEvent>) {
+    sched.send(SchedEvent::FullReconcile).unwrap();
+    scheduler::flush_for_test(sched).await;
 }
 
 /// An open read waits before later scheduler ticks read the request again.
 #[tokio::test]
 async fn an_open_kept_request_is_read_once_per_wait() {
-    let (_h, stub, _row) = kept_request(0, Duration::from_millis(100)).await;
+    let (_h, stub, _row, sched) = kept_request(0).await;
 
-    eventually(TIMEOUT, "the first tick reads the request", async || {
-        stub.fetches() == 1
-    })
-    .await;
+    tick_over(&sched).await;
+    assert_eq!(stub.fetches(), 1, "the first tick reads the request once");
 
-    fetches_stay_quiet(&stub, 1).await;
+    for _ in 0..3 {
+        tick_over(&sched).await;
+    }
+    assert_eq!(stub.fetches(), 1, "later ticks do not read inside the wait");
 }
 
 /// A request change bypasses the tick-only retry wait.
 #[tokio::test]
 async fn a_changed_open_kept_request_is_read_inside_the_wait() {
-    let (h, stub, row) = kept_request(0, Duration::from_secs(60)).await;
+    let (_h, stub, row, sched) = kept_request(0).await;
 
-    pass_over(&h, &row.id).await;
-    assert_eq!(stub.fetches(), 1, "the first pass reads the request once");
+    tick_over(&sched).await;
+    assert_eq!(stub.fetches(), 1, "the first tick reads the request once");
 
-    pass_over(&h, &row.id).await;
+    pass_over(&sched, &row.id).await;
     assert_eq!(
         stub.fetches(),
         2,
@@ -135,14 +127,17 @@ async fn a_changed_open_kept_request_is_read_inside_the_wait() {
 /// A failed read starts its own retry wait before later scheduler ticks run.
 #[tokio::test]
 async fn a_failed_kept_request_read_waits_before_its_retry() {
-    let (_h, stub, _row) = kept_request(1, Duration::from_millis(100)).await;
+    let (_h, stub, _row, sched) = kept_request(1).await;
 
-    eventually(
-        TIMEOUT,
-        "the first tick fails to read the request",
-        async || stub.fetches() == 1,
-    )
-    .await;
+    tick_over(&sched).await;
+    assert_eq!(stub.fetches(), 1, "the first tick fails to read once");
 
-    fetches_stay_quiet(&stub, 1).await;
+    for _ in 0..3 {
+        tick_over(&sched).await;
+    }
+    assert_eq!(
+        stub.fetches(),
+        1,
+        "later ticks do not retry inside the wait"
+    );
 }

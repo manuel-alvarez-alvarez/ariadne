@@ -39,7 +39,7 @@ use auto_switch::ExhaustedNotice;
 use coalesce::Coalesced;
 use quiet::Quiet;
 
-/// Events that wake the scheduler for a scoped reconciliation.
+/// Events that wake the scheduler for reconciliation.
 pub enum SchedEvent {
     /// A task's status, reviews or deps changed.
     TaskChanged(String),
@@ -59,6 +59,8 @@ pub enum SchedEvent {
     /// A pull request of the ledger changed: a fetch read it, a session
     /// reported on it, or it was closed with its integration (026).
     PullRequestChanged(String),
+    /// Test support: reconcile every row, as the periodic tick does.
+    FullReconcile,
     /// Test support: answered the moment this event is dequeued, which is
     /// only once every event sent before it has been reconciled to
     /// completion — the loop below awaits each one fully before it asks the
@@ -266,6 +268,7 @@ impl Scheduler {
             SchedEvent::TaskChanged(id) => self.reconcile(Target::Task(&id)).await,
             SchedEvent::GoalChanged(id) => self.reconcile(Target::Goal(&id)).await,
             SchedEvent::PullRequestChanged(id) => self.reconcile_pull_request(&id).await,
+            SchedEvent::FullReconcile => self.reconcile_all().await,
             SchedEvent::SessionEvent(id) => {
                 if wakes.wake(&id, tokio::time::Instant::now()) {
                     self.reconcile_session(&id).await;
