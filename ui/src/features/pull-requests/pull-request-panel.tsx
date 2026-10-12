@@ -6,17 +6,18 @@
  * that work on it.
  *
  * Everything that can be done to a request is here rather than on its row:
- * ask Ariadne to review a request of the user's own and stop asking (029).
- * Nothing adds or removes a request: Ariadne works on one while it reviews
- * it or a task keeps it, and lets go of it once it merged or closed.
+ * ask Ariadne to review a request of the user's own and stop asking (029),
+ * or to babysit one by hand and stop that too (032). Nothing adds or
+ * removes a request: Ariadne works on one while it reviews it, babysits it
+ * or a task keeps it, and lets go of it once it merged or closed.
  *
  * The request is read off the forge each time the panel opens, by its
  * repository and number, and read again on every `pull_requests_changed`.
  *
- * The sessions are the task panel's: a review session Ariadne runs on the
- * request, and the author of the task that keeps it (005). Picking one drills
- * into it, as `?session=` beside `?pr=`, and the panel becomes that session's
- * with a way back to the request.
+ * The sessions are the task panel's: a review or a keeper session Ariadne
+ * runs on the request, and the author of the task that keeps it (005).
+ * Picking one drills into it, as `?session=` beside `?pr=`, and the panel
+ * becomes that session's with a way back to the request.
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -24,7 +25,7 @@ import { BotIcon, BotOffIcon, ExternalLinkIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
-import type { PullRequestDto } from "@/api"
+import type { PullRequestDto, Seat } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -49,9 +50,10 @@ import { useFocusReturn } from "@/hooks/use-focus-return"
 import { shortId, shortSha } from "@/lib/format"
 import { usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
 
-import { pullRequestByKeyQueryOptions, useAskReview } from "./queries"
+import { pullRequestByKeyQueryOptions, useAskBabysit, useAskReview } from "./queries"
+import { StartBabysitDialog } from "./start-babysit-dialog"
 import { StartReviewDialog } from "./start-review-dialog"
-import { ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
+import { ARIADNE_BABYSITTING, ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
 
 const TABS = ["description", "sessions"] as const
 type Tab = (typeof TABS)[number]
@@ -67,7 +69,7 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
   const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
   const panel = useRef<HTMLDivElement>(null)
   useFocusReturn(session ?? null, panel)
-  const opened = useReviewOpening(workedId, (sessionId) => {
+  const opened = useSessionOpening(workedId, (sessionId) => {
     const params = new URLSearchParams(search)
     params.set("tab", "sessions")
     params.set("session", sessionId)
@@ -117,8 +119,8 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
         <>
           <PullRequestHeader
             pull={query.data}
-            onReviewStarted={() => {
-              opened.await()
+            onSessionStarted={(seat) => {
+              opened.await(seat)
               setTab("sessions")
             }}
           />
@@ -139,7 +141,7 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
               <TabsContent value="sessions" className="flex flex-col gap-4 pt-3">
                 {opened.waiting ? (
                   <p className="text-sm text-muted-foreground" role="status">
-                    Starting the review… its console opens here once the agent is up.
+                    Starting the session… its console opens here once the agent is up.
                   </p>
                 ) : null}
                 <PullRequestSessions pull={query.data} onSelect={selectSession} />
@@ -153,27 +155,32 @@ export function PullRequestPanel({ id, onClose }: { id: string; onClose: () => v
 }
 
 /**
- * The review session a Start review asked for, opened once it exists: the
- * daemon starts it a moment after the ask (029), so the review sessions live
- * then are noted, and the first one live besides them is handed to `open` —
- * a new session, or the last one resumed. The list follows `session_created` on its own; the interval is
- * what holds while the stream is down.
+ * The session a Start review or Start babysit asked for, opened once it
+ * exists: the daemon starts it a moment after the ask (029, 032), so the
+ * live sessions of the request on that seat, then, are noted, and the
+ * first one live besides them is handed to `open` — a new session, or the
+ * last one resumed. The seat kept apart is what stops a review that resumes
+ * mid-wait from being handed over in place of a keeper, and the reverse.
+ * The list follows `session_created` on its own; the interval is what holds
+ * while the stream is down.
  */
-function useReviewOpening(pullRequestId: string | null, open: (sessionId: string) => void) {
+function useSessionOpening(pullRequestId: string | null, open: (sessionId: string) => void) {
   const [before, setBefore] = useState<string[] | null>(null)
   // Taken the moment a session is handed over, ahead of any render: a later
   // pass of the effect, on a list read again meanwhile, must not hand the
   // same session over a second time and pull the panel back into it.
   const pending = useRef(false)
+  const seat = useRef<Seat | null>(null)
   const reviews = useQuery({
     ...sessionsQueryOptions({ pull_request: pullRequestId ?? "" }),
     enabled: pullRequestId !== null,
     refetchInterval: before ? 2000 : false,
   })
-  // A review comes up as a new session, or as the last one resumed on the
-  // same pin: either way it is a session live now that was not at the ask.
+  // A review or a keeper comes up as a new session, or as the last one
+  // resumed on the same pin: either way it is a session live now, on the
+  // seat asked for, that was not at the ask.
   const live = (reviews.data ?? [])
-    .filter((session) => isLiveStatus(session.status))
+    .filter((session) => isLiveStatus(session.status) && session.seat === seat.current)
     .map((session) => session.id)
   const ids = live.join(" ")
   useEffect(() => {
@@ -186,65 +193,100 @@ function useReviewOpening(pullRequestId: string | null, open: (sessionId: string
   }, [before, ids, open])
   return {
     waiting: before !== null,
-    await: () => {
+    await: (expected: Seat) => {
+      seat.current = expected
       pending.current = true
-      setBefore(live)
+      setBefore(
+        (reviews.data ?? [])
+          .filter((session) => isLiveStatus(session.status) && session.seat === expected)
+          .map((session) => session.id),
+      )
     },
   }
 }
 
 /**
  * The title, the actions on the request, and its state in pills: open,
- * merged or closed, the checks, the review decision, and an Ariadne review
- * while one is asked.
+ * merged or closed, the checks, the review decision, an Ariadne review
+ * while one is asked, and Ariadne babysitting while a keeper session is.
  *
- * Every review starts manually now (029): a request of the user's own
- * starts and stops an Ariadne review freely, and so does one that asks for
- * the user's review — nothing starts one on its own.
+ * Every review and every babysit start manually (029, 032): a request of
+ * the user's own starts and stops either freely, and one that asks for the
+ * user's review starts and stops a review the same way — nothing starts
+ * either on its own.
  */
 function PullRequestHeader({
   pull,
-  onReviewStarted,
+  onSessionStarted,
 }: {
   pull: PullRequestDto
-  /** A review was asked for in the dialog, which closed itself. */
-  onReviewStarted: () => void
+  /** A review or a babysit was asked for in its dialog, which closed itself. */
+  onSessionStarted: (seat: Seat) => void
 }) {
   const ask = useAskReview()
+  const babysit = useAskBabysit()
   const [starting, setStarting] = useState(false)
+  const [babysitting, setBabysitting] = useState(false)
   const checks = CHECKS[pull.checks]
   const review = REVIEW[pull.review_decision]
   const mine = pull.role === "author"
   const manualStart = pull.role === "reviewer" && pull.review_requested
+  const babysittable = mine && pull.origin_task_id == null
   return (
     <>
       <PanelHeader
         title={`#${pull.number} ${pull.title}`}
         actions={
-          (mine || manualStart) && pull.state === "open" ? (
-            pull.review_asked ? (
-              <Button
-                variant="outline"
-                size="sm"
-                pending={ask.isPending}
-                onClick={() =>
-                  ask.mutate({
-                    repository_id: pull.repository_id,
-                    number: pull.number,
-                    asked: false,
-                  })
-                }
-              >
-                <BotOffIcon />
-                Stop review
-              </Button>
-            ) : (
-              <Button size="sm" onClick={() => setStarting(true)}>
-                <BotIcon />
-                Start review
-              </Button>
-            )
-          ) : null
+          <div className="flex items-center gap-2">
+            {(mine || manualStart) && pull.state === "open" ? (
+              pull.review_asked ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  pending={ask.isPending}
+                  onClick={() =>
+                    ask.mutate({
+                      repository_id: pull.repository_id,
+                      number: pull.number,
+                      asked: false,
+                    })
+                  }
+                >
+                  <BotOffIcon />
+                  Stop review
+                </Button>
+              ) : (
+                <Button size="sm" onClick={() => setStarting(true)}>
+                  <BotIcon />
+                  Start review
+                </Button>
+              )
+            ) : null}
+            {babysittable && pull.state === "open" ? (
+              pull.babysit_asked ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  pending={babysit.isPending}
+                  onClick={() =>
+                    babysit.mutate({
+                      repository_id: pull.repository_id,
+                      number: pull.number,
+                      asked: false,
+                    })
+                  }
+                >
+                  <BotOffIcon />
+                  Stop babysit
+                </Button>
+              ) : (
+                <Button size="sm" onClick={() => setBabysitting(true)}>
+                  <BotIcon />
+                  Start babysit
+                </Button>
+              )
+            ) : null}
+          </div>
         }
         status={
           <>
@@ -260,6 +302,9 @@ function PullRequestHeader({
             {review ? <StatusBadge label={review.label} tone={review.tone} /> : null}
             {pull.review_asked ? (
               <StatusBadge label={ARIADNE_REVIEWING.label} tone={ARIADNE_REVIEWING.tone} />
+            ) : null}
+            {pull.babysit_asked ? (
+              <StatusBadge label={ARIADNE_BABYSITTING.label} tone={ARIADNE_BABYSITTING.tone} />
             ) : null}
           </>
         }
@@ -278,11 +323,22 @@ function PullRequestHeader({
         pull={pull}
         open={starting}
         onOpenChange={setStarting}
-        onStarted={onReviewStarted}
+        onStarted={() => onSessionStarted("reviewer")}
+      />
+      <StartBabysitDialog
+        pull={pull}
+        open={babysitting}
+        onOpenChange={setBabysitting}
+        onStarted={() => onSessionStarted("keeper")}
       />
       {ask.error ? (
         <div className="px-4">
           <ErrorState title="Could not change Ariadne's review" error={ask.error} />
+        </div>
+      ) : null}
+      {babysit.error ? (
+        <div className="px-4">
+          <ErrorState title="Could not change Ariadne's babysitting" error={babysit.error} />
         </div>
       ) : null}
     </>
@@ -371,8 +427,9 @@ function TaskLink({ taskId }: { taskId: string }) {
 }
 
 /**
- * The sessions that work on the request: the review sessions Ariadne runs
- * on it, and the author of the task that keeps it.
+ * The sessions that work on the request: the review and the keeper
+ * sessions Ariadne runs on it (029, 032), and the author of the task that
+ * keeps it.
  */
 function PullRequestSessions({
   pull,
@@ -384,14 +441,14 @@ function PullRequestSessions({
   return (
     <>
       <section className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium">Ariadne review</h3>
+        <h3 className="text-sm font-medium">Ariadne sessions</h3>
         {pull.id ? (
           <SessionsList
             filters={{ pull_request: pull.id }}
             onSelect={(session) => onSelect(session.id)}
           />
         ) : (
-          <EmptyState emphasis="quiet" title="No Ariadne review of this request yet" />
+          <EmptyState emphasis="quiet" title="No Ariadne session on this request yet" />
         )}
       </section>
       {pull.origin_task_id ? (

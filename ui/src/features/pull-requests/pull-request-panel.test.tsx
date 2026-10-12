@@ -17,17 +17,23 @@ import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { pull } from "@/test/pull-request"
 import { PullRequestPanel } from "./pull-request-panel"
 
-const SKILLS = ["code-review", "debugging", "pr-reviewer", "orchestration"].map((name) => ({
-  name,
-  seat:
-    name === "orchestration" ? "orchestrator" : name === "pr-reviewer" ? "pull_request" : "task",
-  summary: `${name} summary`,
-  builtin: true,
-  document: "",
-  document_is_default: true,
-  created_at: "2026-10-01T00:00:00Z",
-  updated_at: "2026-10-01T00:00:00Z",
-}))
+const SKILLS = ["code-review", "debugging", "pr-reviewer", "pr-babysit", "orchestration"].map(
+  (name) => ({
+    name,
+    seat:
+      name === "orchestration"
+        ? "orchestrator"
+        : name === "pr-reviewer" || name === "pr-babysit"
+          ? "pull_request"
+          : "task",
+    summary: `${name} summary`,
+    builtin: true,
+    document: "",
+    document_is_default: true,
+    created_at: "2026-10-01T00:00:00Z",
+    updated_at: "2026-10-01T00:00:00Z",
+  }),
+)
 
 /** A daemon answering the request as `row`, and recording every write. */
 function daemon(
@@ -106,7 +112,7 @@ it("links each failed check to its run, and lists the request's review sessions"
   expect(screen.getByText("Ahead of the head")).toBeTruthy()
 
   await userEvent.click(screen.getByRole("tab", { name: "Sessions" }))
-  expect(await screen.findByText("No Ariadne review of this request yet")).toBeTruthy()
+  expect(await screen.findByText("No Ariadne session on this request yet")).toBeTruthy()
   expect(asked.some((url) => new URL(url).searchParams.get("pull_request") === "pull-42")).toBe(
     true,
   )
@@ -238,4 +244,98 @@ it("opens the console of a review resumed on the same session", async () => {
   const dialog = await screen.findByRole("dialog", { name: "Start an Ariadne review" })
   await user.click(within(dialog).getByRole("button", { name: "Start review" }))
   await waitFor(() => expect(location.url).toContain(`session=${ended.id}`), { timeout: 4000 })
+})
+
+it("starts Ariadne babysitting of a request of mine on the model and skills picked, opens its console, and stops it", async () => {
+  const user = userEvent.setup()
+  let row: PullRequestDto = { ...pull, role: "author", author_login: "me" }
+  const keeper = aSession({
+    id: "01JSESS0000000000000KEEPER",
+    seat: "keeper",
+    goal_id: null,
+    task_id: null,
+    pull_request_id: "pull-42",
+  })
+  const writes: Request[] = []
+  daemon(() => row, writes)
+  const update = daemonFetch.getMockImplementation()
+  daemonFetch.mockImplementation(async (input) => {
+    const request = input as Request
+    const path = new URL(request.url).pathname
+    if (request.method === "PUT") {
+      const body = (await request.clone().json()) as { asked: boolean; skills?: string[] }
+      row = { ...row, babysit_asked: body.asked, babysit_skills: body.skills ?? [] }
+    }
+    // The daemon starts the keeper session a moment after the ask.
+    if (path === "/v1/sessions" && row.babysit_asked) return jsonResponse(aSessionPage([keeper]))
+    if (path === `/v1/sessions/${keeper.id}`) return jsonResponse(keeper)
+    return update?.(input)
+  })
+  const { location } = renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />, {
+    route: "/forge/pull-requests?pr=repo%3A42",
+  })
+
+  await user.click(await screen.findByRole("button", { name: "Start babysit" }))
+  const dialog = await screen.findByRole("dialog", { name: "Start Ariadne babysitting" })
+  const start = within(dialog).getByRole("button", { name: "Start babysit" })
+  expect(start.hasAttribute("disabled")).toBe(true)
+
+  await user.click(within(dialog).getByRole("button", { name: "Model" }))
+  const models = await screen.findByRole("listbox", { name: "Models" })
+  await user.click(within(models).getByText("stub:review-model"))
+  await user.keyboard("{Escape}")
+  const skills = within(dialog).getByRole("group", { name: "Skills" })
+  const playbook = within(skills).getByRole("button", { name: "pr-babysit" })
+  expect(playbook.getAttribute("aria-pressed")).toBe("true")
+  expect(playbook.hasAttribute("disabled")).toBe(true)
+  // Nothing beside the playbook is picked to start with.
+  expect(
+    within(skills).getByRole("button", { name: "code-review" }).getAttribute("aria-pressed"),
+  ).toBe("false")
+  expect(within(skills).queryByRole("button", { name: "orchestration" })).toBeNull()
+  await user.click(within(skills).getByRole("button", { name: "code-review" }))
+  await user.click(within(dialog).getByRole("button", { name: "Start babysit" }))
+
+  await waitFor(() => expect(writes).toHaveLength(1))
+  expect(await writes[0]?.json()).toEqual({
+    asked: true,
+    model: "stub:review-model",
+    skills: ["code-review"],
+  })
+  // The dialog closes, and the panel opens the keeper session once it is up.
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Start Ariadne babysitting" })).toBeNull(),
+  )
+  await waitFor(() => expect(location.url).toContain(`session=${keeper.id}`), { timeout: 4000 })
+  expect(location.url).toContain("tab=sessions")
+
+  // Back on the request, babysitting can be stopped (see the comment on the
+  // review test above for why the "started" stamp is waited on first).
+  await screen.findByText("started")
+  await user.click(screen.getByRole("button", { name: /#42 Fix widgets/ }))
+  await waitFor(() => expect(location.url).not.toContain("session="))
+  await user.click(await screen.findByRole("button", { name: "Stop babysit" }, { timeout: 4000 }))
+  await waitFor(() => expect(writes).toHaveLength(2))
+  expect(await writes[1]?.json()).toEqual({ asked: false })
+})
+
+it("offers Start babysit on a request of mine that no task keeps, and on no other request", async () => {
+  daemon(() => ({ ...pull, role: "author", author_login: "me" }))
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  await screen.findByText("#42 Fix widgets")
+  expect(screen.getByRole("button", { name: "Start babysit" })).toBeTruthy()
+})
+
+it("offers no Start babysit on a request that asks for my review", async () => {
+  daemon(() => pull)
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  await screen.findByText("#42 Fix widgets")
+  expect(screen.queryByRole("button", { name: "Start babysit" })).toBeNull()
+})
+
+it("offers no Start babysit on a request of mine a task already keeps", async () => {
+  daemon(() => ({ ...pull, role: "author", author_login: "me", origin_task_id: "task-1" }))
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  await screen.findByText("#42 Fix widgets")
+  expect(screen.queryByRole("button", { name: "Start babysit" })).toBeNull()
 })

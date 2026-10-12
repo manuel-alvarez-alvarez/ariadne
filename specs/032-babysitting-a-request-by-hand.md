@@ -2,7 +2,7 @@
 id: babysitting-a-request-by-hand
 status: current
 updated: 2026-10-12
-areas: [store, api, daemon, cli, mcp, prompts]
+areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/pull_request_babysit.rs
@@ -17,6 +17,8 @@ tests:
   - crates/ariadne-core/src/lib.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/pr.rs
+  - ui/src/features/pull-requests/pull-request-panel.test.tsx
+  - ui/src/features/pull-requests/pull-requests-page.test.tsx
 ---
 
 # Babysitting a request by hand
@@ -130,6 +132,18 @@ reads behind them ([026](026-pull-requests.md)).
     row kept by hand the same way it covers a task-kept one: the same forge
     evidence, confirmed against the head the keeper's report named.
 
+## Desktop
+
+16. The Pull requests panel offers Start babysit and Stop babysit beside
+    Start review and Stop review, on a request of the user's own that no
+    task keeps. The dialog asks the model, the effort and the skills beside
+    `pr-babysit`, which is always loaded and cannot be turned off. Starting
+    closes the dialog and, once the daemon has the keeper session up, opens
+    its console in the panel, the same way starting a review does (029); an
+    "Ariadne babysitting" pill marks the row and the panel header while one
+    is asked, beside "Ariadne reviewing". The panel's Sessions tab lists the
+    keeper session beside a review's, since both carry the request's id.
+
 ## Acceptance criteria
 
 - Asking on a request of mine starts one keeper session, seat `keeper`,
@@ -160,6 +174,16 @@ reads behind them ([026](026-pull-requests.md)).
   `prompts.rs::tests::the_keeper_briefing_fills_every_placeholder_it_names`.
 - The four seats answer to the word the wire spells each with:
   `lib.rs::tests::the_seats_are_the_orchestrator_the_agent_the_pull_request_reviewer_and_the_keeper`.
+- The panel starts a keeper session on the model and skills picked, opens
+  its console, stops it, and offers the buttons on a request of mine that
+  no task keeps alone:
+  `pull-request-panel.test.tsx::starts Ariadne babysitting of a request of mine on the model and skills picked, opens its console, and stops it`,
+  `::offers Start babysit on a request of mine that no task keeps, and on no other request`,
+  `::offers no Start babysit on a request that asks for my review`,
+  `::offers no Start babysit on a request of mine a task already keeps`.
+- A row shows the Ariadne babysitting pill while a keeper session babysits
+  it by hand:
+  `pull-requests-page.test.tsx::shows the Ariadne babysitting pill on a row a keeper session babysits by hand`.
 
 ## Sources
 
@@ -171,4 +195,5 @@ reads behind them ([026](026-pull-requests.md)).
 `crates/ariadne-daemon/src/agents/prompts.rs`,
 `crates/ariadne-daemon/src/http/pull_requests.rs`,
 `crates/ariadne-daemon/src/attention/pull_requests.rs`,
-`crates/ariadne-cli/src/commands/mcp.rs`, `crates/ariadne-cli/src/commands/pr.rs`.
+`crates/ariadne-cli/src/commands/mcp.rs`, `crates/ariadne-cli/src/commands/pr.rs`,
+`ui/src/features/pull-requests/`.

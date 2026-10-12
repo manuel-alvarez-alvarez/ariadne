@@ -21,6 +21,7 @@ export const pull: PullRequestDto = {
   behind_base: false,
   review_asked: false,
   review_requested: true,
+  babysit_asked: false,
   body: "Fixes the widgets that break on an empty list.",
   session_id: null,
   ready: false,

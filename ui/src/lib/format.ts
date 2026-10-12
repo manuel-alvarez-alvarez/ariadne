@@ -209,6 +209,7 @@ export const SEAT_LABELS: Record<Seat, string> = {
   agent: "Agent",
   orchestrator: "Orchestrator",
   reviewer: "Reviewer",
+  keeper: "Keeper",
 }
 
 // ── Failures ──────────────────────────────────────────────────────────────

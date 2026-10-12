@@ -10,8 +10,9 @@
  * the table reads at a glance without a column for each. The row holds no
  * button: a click opens the request's panel, which is where everything that
  * can be done to it is — an Ariadne review of a request of the user's among
- * it. The list is read live off the forge, and read again on every
- * `pull_requests_changed`; nothing adds or removes a request.
+ * it, and babysitting one by hand (032). The list is read live off the
+ * forge, and read again on every `pull_requests_changed`; nothing adds or
+ * removes a request.
  */
 
 import { useMutation, useQuery } from "@tanstack/react-query"
@@ -39,7 +40,7 @@ import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { paths, sessionPanelFrom } from "@/routes/paths"
 
 import { pullRequestKey, pullRequestsQueryOptions } from "./queries"
-import { ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
+import { ARIADNE_BABYSITTING, ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
 
 /**
  * Whose requests the list holds: every open one of the repositories, the
@@ -202,6 +203,13 @@ function PullRequestRow({
                 size="sm"
                 label={ARIADNE_REVIEWING.label}
                 tone={ARIADNE_REVIEWING.tone}
+              />
+            ) : null}
+            {row.babysit_asked ? (
+              <StatusBadge
+                size="sm"
+                label={ARIADNE_BABYSITTING.label}
+                tone={ARIADNE_BABYSITTING.tone}
               />
             ) : null}
           </span>
