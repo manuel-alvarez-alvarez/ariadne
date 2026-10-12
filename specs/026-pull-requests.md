@@ -111,7 +111,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     GitLab reads `glab api` discussions, the jobs of the latest pipeline, and the diverged commit count.
     The reads go to the forge together; only GitHub's check runs and compare wait, on the request's own read, for its head and base.
     One detail read is bounded by `Timeouts::forge_details`, 30 seconds by default. One that fails keeps the details the last read found.
-    A fetch skips the detail read of a request whose list read moves nothing a detail read would also show: the held read has details and `evidence_ok`, its `updated_at`, `head_sha`, `checks`, `review_decision`, `mergeable`, `draft`, `title` and `state` all equal the list's own read, and no comment Ariadne posted since is still unconfirmed by a detail read (`forge::live::Live::unmoved`). The held details stand in place of a fresh read.
+    A fetch skips the detail read of a request whose list read moves nothing a detail read would also show: the held read has details and `evidence_ok`, its `updated_at`, `head_sha`, `checks`, `review_decision`, `mergeable`, `draft`, `title` and `state` all equal the list's own read, its `LivePulls::generation` still equals the read's snapshot, and no comment Ariadne posted is still unconfirmed by a detail read (`forge::live::Live::unmoved`). The held details stand in place of a fresh read.
     A thread a human resolves on the forge does not move `updated_at`; its resolved state is read only at the next move of the request that does.
 10. A comment is the forge's, and its id is the forge's: `rc-<n>`, `ic-<n>`, `rv-<n>` or `note-<n>`.
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
@@ -238,9 +238,10 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - A request whose list read moves nothing skips the detail read; any one field moving, a posted comment awaiting confirmation, or a failed last detail read runs it again:
   `forge/live.rs::tests::unmoved_holds_where_the_list_read_repeats_the_held_fields`,
   `::unmoved_fails_where_any_one_field_moved`, `::unmoved_fails_with_no_details_or_failed_evidence`,
-  `::unmoved_fails_while_a_local_addition_awaits_confirmation`;
+  `::unmoved_fails_while_a_local_addition_awaits_confirmation`,
+  `::unmoved_fails_where_a_local_addition_landed_during_this_read`;
   `pull_request_detail_skip.rs::two_fetches_of_an_unmoved_request_run_one_detail_read`,
-  `::a_fetch_whose_head_moved_runs_the_detail_read`,
+  `::a_fetch_whose_list_read_field_moved_runs_the_detail_read`,
   `::a_fetch_after_ariadne_posts_a_comment_runs_the_detail_read`,
   `::a_fetch_after_a_failed_detail_read_runs_the_detail_read_again`.
 - A review request has a row while it is reviewed and none once it merged:

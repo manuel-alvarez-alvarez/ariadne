@@ -547,7 +547,7 @@ async fn read_row(
     if handoff
         .live
         .get(&row.id)
-        .is_some_and(|held| held.unmoved(&read))
+        .is_some_and(|held| held.unmoved(&read, since))
     {
         handoff.live.set_pull(&row.id, read, requested);
         return Ok(());

@@ -18,6 +18,13 @@ fn github_pull(head_sha: &str, updated_at: &str) -> Value {
         "createdAt": "2026-10-01T00:00:00Z", "updatedAt": updated_at})
 }
 
+/// `pull`, with the list's own check state changed: GitHub returns the
+/// same check rollup from the list and a single-request read.
+fn with_checks(mut pull: Value, checks: Value) -> Value {
+    pull["statusCheckRollup"] = checks;
+    pull
+}
+
 /// What the stub answers for a detail read of request #1, every part
 /// empty, so a comparison before and after a skip has nothing else to
 /// explain a difference.
@@ -131,11 +138,10 @@ async fn two_fetches_of_an_unmoved_request_run_one_detail_read() {
     );
 }
 
-/// A fetch whose list read shows a new head runs the detail read again,
-/// since `head_sha` moving is exactly what `Live::unmoved` reads as the
-/// request having moved.
+/// A fetch whose list read moves its head, update time, or check state runs
+/// the detail read again. Each field is changed on its own between fetches.
 #[tokio::test]
-async fn a_fetch_whose_head_moved_runs_the_detail_read() {
+async fn a_fetch_whose_list_read_field_moved_runs_the_detail_read() {
     let pull = github_pull("abc", "2026-10-01T00:00:00Z");
     let stub = stub_forge_cli(script(pull, 0));
     let h = harness().forge_cli(&stub).await;
@@ -155,6 +161,33 @@ async fn a_fetch_whose_head_moved_runs_the_detail_read() {
     h.state.forge_poll.wake(&id);
     eventually(TIMEOUT, "the second detail read", async || {
         detail_reads(&stub) == 2
+    })
+    .await;
+    eventually(TIMEOUT, "the second fetch to finish", async || {
+        stub.fetches() >= 2
+    })
+    .await;
+
+    let moved = github_pull("def", "2026-10-02T00:00:00Z");
+    stub.reprogram(script(moved, 0));
+    h.state.forge_poll.wake(&id);
+    eventually(TIMEOUT, "the third detail read", async || {
+        detail_reads(&stub) == 3
+    })
+    .await;
+    eventually(TIMEOUT, "the third fetch to finish", async || {
+        stub.fetches() >= 3
+    })
+    .await;
+
+    let moved = with_checks(
+        github_pull("def", "2026-10-02T00:00:00Z"),
+        json!([{"status": "COMPLETED", "conclusion": "FAILURE"}]),
+    );
+    stub.reprogram(script(moved, 0));
+    h.state.forge_poll.wake(&id);
+    eventually(TIMEOUT, "the fourth detail read", async || {
+        detail_reads(&stub) == 4
     })
     .await;
 }

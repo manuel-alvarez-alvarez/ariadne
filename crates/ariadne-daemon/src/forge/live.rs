@@ -93,12 +93,14 @@ impl Live {
     /// where the held `details` are missing, where the last attempt to
     /// read them failed (`evidence_ok` false), or where a comment Ariadne
     /// itself posted has not yet been read back by a detail read
-    /// (`local_additions`): each of those leaves `details` behind a state
-    /// the list's own read never shows.
-    pub fn unmoved(&self, listed: &ForgePullRequest) -> bool {
+    /// (`local_additions`), or where `generation` changed after `since`,
+    /// the generation `read_row` captured before it began this read: each
+    /// leaves `details` behind a state the list's own read never shows.
+    pub fn unmoved(&self, listed: &ForgePullRequest, since: u64) -> bool {
         self.details.is_some()
             && self.evidence_ok
             && self.local_additions.is_empty()
+            && self.generation == since
             && self.pull.updated_at == listed.updated_at
             && self.pull.head_sha == listed.head_sha
             && self.pull.checks == listed.checks
@@ -957,7 +959,7 @@ mod tests {
     #[test]
     fn unmoved_holds_where_the_list_read_repeats_the_held_fields() {
         let live = sample_live(true);
-        assert!(live.unmoved(&live.pull.clone()));
+        assert!(live.unmoved(&live.pull.clone(), live.generation));
     }
 
     /// Each field a detail read could also catch, moved on its own, turns
@@ -981,7 +983,7 @@ mod tests {
         for mutate in mutations {
             let mut listed = live.pull.clone();
             mutate(&mut listed);
-            assert!(!live.unmoved(&listed), "{listed:?}");
+            assert!(!live.unmoved(&listed, live.generation), "{listed:?}");
         }
     }
 
@@ -992,10 +994,10 @@ mod tests {
     fn unmoved_fails_with_no_details_or_failed_evidence() {
         let mut no_details = sample_live(true);
         no_details.details = None;
-        assert!(!no_details.unmoved(&no_details.pull.clone()));
+        assert!(!no_details.unmoved(&no_details.pull.clone(), no_details.generation));
 
         let failed = sample_live(false);
-        assert!(!failed.unmoved(&failed.pull.clone()));
+        assert!(!failed.unmoved(&failed.pull.clone(), failed.generation));
     }
 
     /// A comment Ariadne itself posted, not yet read back by a detail
@@ -1007,6 +1009,17 @@ mod tests {
         let mut live = sample_live(true);
         live.generation = 1;
         live.local_additions.insert("ic-1".into(), 1);
-        assert!(!live.unmoved(&live.pull.clone()));
+        assert!(!live.unmoved(&live.pull.clone(), live.generation));
+    }
+
+    /// A local addition that lands after this read starts also turns
+    /// `unmoved` false. Its generation is later than the read's snapshot,
+    /// so a detail read must confirm the addition before the cache trusts
+    /// its held details.
+    #[test]
+    fn unmoved_fails_where_a_local_addition_landed_during_this_read() {
+        let mut live = sample_live(true);
+        live.generation = 1;
+        assert!(!live.unmoved(&live.pull.clone(), 0));
     }
 }
