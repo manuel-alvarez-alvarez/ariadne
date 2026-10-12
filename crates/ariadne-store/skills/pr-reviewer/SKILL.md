@@ -36,9 +36,7 @@ answer in a thread you opened. Do one round, then end your turn.
 8. Write the review `body`: the whole summary as it is now. Ariadne keeps
    one summary comment and puts this text in it, so write all four parts,
    in order:
-   - Title: "## Review summary: all changes from `<base>` to `<head>`",
-     with the request's own base and head branch names in place of
-     `<base>` and `<head>`.
+   - Title: "## Review summary".
    - Header: one line per commit the round reviewed, read with `git log`
      in your worktree. Give each commit its short sha and subject. Use
      `git log <base>..HEAD` on the first round, and `git log

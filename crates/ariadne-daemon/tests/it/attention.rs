@@ -115,6 +115,88 @@ async fn a_repeated_question_is_one_attention_item() {
     assert_eq!(list.items.len(), 1);
 }
 
+/// The hint is one line of at most a hundred characters, and the question is
+/// not it: a hint that runs longer, or over a second line, is refused with the
+/// words that send the question to the agent's reply, and nothing is opened.
+/// One of exactly a hundred characters is accepted.
+#[tokio::test]
+async fn a_hint_that_tries_to_carry_the_question_is_refused() {
+    let h = harness().await;
+    let session = h.lone_session("long-hint").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    let question = "Four decisions before I write the tasks:\n1. Design: a committed hooks folder?";
+    let (status, body) = h
+        .send(as_session(
+            &path,
+            &session.id,
+            serde_json::json!({"summary": question}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    let text = String::from_utf8_lossy(&body).to_string();
+    assert!(
+        text.contains("write the question in your reply"),
+        "the refusal tells the agent where the question goes: {text}"
+    );
+    let (status, _) = h
+        .send(as_session(
+            &path,
+            &session.id,
+            serde_json::json!({"summary": "x".repeat(101)}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.items.is_empty(), "{list:?}");
+
+    let _: serde_json::Value = h
+        .json(
+            as_session(
+                &path,
+                &session.id,
+                serde_json::json!({"summary": "y".repeat(100)}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
+}
+
+/// The wait is shown where the question was asked: opening a request records
+/// one `agent_request` event in the session's own stream, carrying the hint,
+/// and repeating a pending hint — the same request — records no second one.
+#[tokio::test]
+async fn a_request_records_its_hint_in_the_sessions_console_once() {
+    let h = harness().await;
+    let session = h.lone_session("console-hint").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    for _ in 0..2 {
+        let _: serde_json::Value = h
+            .json(
+                as_session(
+                    &path,
+                    &session.id,
+                    serde_json::json!({"summary": "Approve the plan?"}),
+                ),
+                axum::http::StatusCode::OK,
+            )
+            .await;
+    }
+    let events: Vec<ariadne_api::events::AgentEventDto> =
+        h.get(&format!("/v1/sessions/{}/console", session.id)).await;
+    let waits: Vec<_> = events
+        .iter()
+        .filter(|event| event.kind == "agent_request")
+        .collect();
+    assert_eq!(waits.len(), 1, "{events:?}");
+    assert_eq!(
+        waits[0].payload.get("hint").and_then(|hint| hint.as_str()),
+        Some("Approve the plan?")
+    );
+    assert_eq!(waits[0].summary, "waiting for you · Approve the plan?");
+}
+
 #[tokio::test]
 async fn agent_messages_and_idle_turns_raise_no_agent_request() {
     let h = harness().await;

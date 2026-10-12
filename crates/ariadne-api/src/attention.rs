@@ -126,9 +126,11 @@ pub struct AttentionListDto {
     pub complete: bool,
 }
 
-/// An explicit request from an agent for a human answer.
+/// An agent's flag that it waits for the user (`wait_for_user`, 013).
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct CreateAgentRequest {
-    /// The question or decision the human must answer.
+    /// One line for the Needs attention list, at most 100 characters. The
+    /// question itself is in the agent's reply; a summary that runs longer,
+    /// or over more than one line, is refused.
     pub summary: String,
 }

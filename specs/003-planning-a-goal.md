@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-10-10
+updated: 2026-10-12
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -42,9 +42,10 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    Resuming an outside session starts no planning (020).
 2. The orchestrator never writes code. Its whole output is the plan.
 3. It asks the user about every unclear point, until nothing about the goal is
-   open: one question in plain turn text, then it waits. The user answers in
-   the session's terminal (`ariadne goal attach`). An orchestrator waiting on
-   an answer is not nudged and does not raise attention.
+   open: one question in plain turn text, then `wait_for_user` with a
+   one-line hint for the Needs attention list (031 rule 11), then it waits.
+   The user answers in the session's terminal (`ariadne goal attach`). An
+   orchestrator waiting on an answer is not nudged.
 4. It writes one task per unit of work: small, finishable alone, one
    repository. Each ticket carries context, what to do, what not to touch and
    acceptance criteria, in Simplified Technical English (006).

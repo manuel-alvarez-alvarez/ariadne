@@ -46,6 +46,7 @@ function eventLabel(kind: string): string {
     permission_request: "Permission asked",
     "permission.replied": "Permission answered",
     agent_message: "Agent said",
+    agent_request: "Waiting for you",
     agent_thought: "Agent thought",
     agent_message_chunk: "Agent message",
     agent_thought_chunk: "Thinking",

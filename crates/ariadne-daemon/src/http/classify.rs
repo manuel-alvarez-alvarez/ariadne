@@ -139,6 +139,13 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
     if kind == "session.pin_fallback" {
         return finish(&pin_fallback_summary(payload));
     }
+    // An agent's flag that it waits for the user (031): the hint it gave,
+    // the one line the Needs attention list shows for it.
+    if kind == super::agent_requests::AGENT_REQUEST_EVENT
+        && let Some(hint) = non_empty_str(payload.get("hint"))
+    {
+        return finish(&format!("waiting for you · {hint}"));
+    }
     let text = tool_call_summary(payload)
         .or_else(|| {
             (kind == "post_tool_use")
@@ -373,6 +380,21 @@ mod tests {
         let payload = json!({"error_event_id": "01EV", "category": "exhausted"});
         assert_eq!(status_for_event("session.diagnosis"), None);
         assert_eq!(attention_for_event("session.diagnosis", &payload), None);
+    }
+
+    /// An `agent_request` is the daemon's own line in the session's stream,
+    /// written when the agent flagged a wait (031): it moves neither the
+    /// status nor the attention flag — the pending request itself is what
+    /// the Needs attention list reads — and its summary is the hint.
+    #[test]
+    fn an_agent_request_event_reads_as_its_hint_and_moves_nothing() {
+        let payload = json!({"request_id": "01RQ", "hint": "Approve the plan?"});
+        assert_eq!(status_for_event("agent_request"), None);
+        assert_eq!(attention_for_event("agent_request", &payload), None);
+        assert_eq!(
+            summarize("agent_request", &payload),
+            "waiting for you · Approve the plan?"
+        );
     }
 
     /// The summary a `session.diagnosis` event reads as is the same advisory

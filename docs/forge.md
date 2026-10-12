@@ -142,8 +142,8 @@ API call carrying every inline comment; on GitLab, which has no review
 verdict of its own, one discussion per comment.
 
 The review keeps **one summary comment** on the request, and every round
-rewrites it rather than adding another: a title, "## Review summary: all
-changes from `<base>` to `<head>`", the commit range it has reviewed, a
+rewrites it rather than adding another: a title, "## Review summary", the
+commit range it has reviewed, a
 prose paragraph on where it stands, and a recommendation — **Request
 changes** while a P0 is open, **Changes recommended** while a P1 or P2 is,
 or **No findings: this PR is ready to be merged.** — naming each open

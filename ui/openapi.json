@@ -5057,14 +5057,14 @@
       },
       "CreateAgentRequest": {
         "type": "object",
-        "description": "An explicit request from an agent for a human answer.",
+        "description": "An agent's flag that it waits for the user (`wait_for_user`, 013).",
         "required": [
           "summary"
         ],
         "properties": {
           "summary": {
             "type": "string",
-            "description": "The question or decision the human must answer."
+            "description": "One line for the Needs attention list, at most 100 characters. The\nquestion itself is in the agent's reply; a summary that runs longer,\nor over more than one line, is refused."
           }
         }
       },

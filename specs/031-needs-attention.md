@@ -1,7 +1,7 @@
 ---
 id: needs-attention
 status: current
-updated: 2026-10-11
+updated: 2026-10-12
 areas: [api, daemon, cli, ui]
 commits: []
 tests:
@@ -15,6 +15,9 @@ tests:
   - crates/ariadne-daemon/src/attention/pull_requests.rs
   - crates/ariadne-daemon/src/attention/mod.rs
   - crates/ariadne-daemon/src/acp.rs
+  - crates/ariadne-daemon/src/http/classify.rs
+  - crates/ariadne-console/src/transcript.rs
+  - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-daemon/src/scheduler/auto_switch.rs
   - crates/ariadne-daemon/src/scheduler/goals.rs
   - crates/ariadne-daemon/src/scheduler/pull_requests.rs
@@ -44,7 +47,8 @@ In: the shared item shape, `GET /v1/attention`, the producer registry
 (`crate::attention` in `ariadne-daemon`), the first complete producer —
 recovery — which covers a model's quota, every task the daemon will never
 retry on its own, a forge CLI missing from the daemon's PATH, explicit agent
-questions, pending human permission requests, and the second complete producer —
+questions (the `wait_for_user` flag, its one-line hint and the console note
+it leaves, rules 11-12), pending human permission requests, and the second complete producer —
 `pull_requests` — which covers a review request nobody is assigned to and a
 request a babysitting task has confirmed ready to merge (rules 13-16),
 migrating the "ready to merge" / "review posted" session surface onto it and
@@ -406,13 +410,40 @@ semantics remain with 009.
     changes to add one. `agent_requests` and `pull_requests` are complete
     producers, below.
 
-11. An agent creates a question only with `request_user_input`; punctuation,
-    idle turns, and agent messages create none. A repeated pending summary is
-    one request, and each request targets its session console.
+11. An agent asks the user in its reply — plain turn text, which the console
+    draws as the conversation it is — and creates a request only with
+    `wait_for_user` (013); punctuation, idle turns, and agent messages create
+    none. The tool carries a `hint`, not the question: one line for this
+    list, at most 100 characters (`http::agent_requests::HINT_MAX_CHARS`).
+    `POST /v1/sessions/{id}/agent-requests` refuses a longer or a multi-line
+    summary with `400`, in words that send the question back to the reply,
+    and opens nothing — a hint that could carry the question would move the
+    question out of the console, which is exactly what the recorded
+    requests of the first days did. A repeated pending hint is one request,
+    and each request targets its session console.
+    Opening a request also records one `agent_request` event in the
+    session's own stream, with the `request_id` and the `hint`, so a console
+    shows the wait under the question it stands for; the daemon's one-line
+    summary of it is `waiting for you · <hint>`, and the event moves neither
+    the session's status nor its attention flag (012 rule 9) — the pending
+    row is what this list reads. A repeat of a pending hint records no
+    second event.
 12. Console input answers the oldest request of that session. Withdrawal
-    answers only its named request. A pending human permission is an item;
-    an automatic decision is not. Each request change publishes
-    `session_updated`.
+    (`withdraw_wait_for_user`) answers only its named request. A pending
+    human permission is an item; an automatic decision is not. Each request
+    change publishes `session_updated`.
+    The CLI console draws the `agent_request` event as a dim note,
+    `waiting for you · <hint>`, under the agent's text. A permission the
+    daemon raised on one of Ariadne's own MCP tools and *allowed* by itself —
+    by its mode, the AI permission model or a learned rule, never at the
+    console — leaves no permission block in the console: the call's own
+    block already says what the agent did, and a frame around every
+    `wait_for_user` would read as a question the person never got. One a
+    person answered at the console keeps its block and their choice; so
+    does one the daemon denied (an AI `deny`, or a learned rule's reject
+    option) or cancelled (`option_id` null), since the call then fails and
+    the answer is the one line that says why — the AI's reason under the
+    question, which 022 promises.
 
 ## The pull-request producer
 
@@ -564,6 +595,24 @@ semantics remain with 009.
   (`attention.rs::agent_messages_and_idle_turns_raise_no_agent_request`), and
   repeating a pending question remains one item
   (`attention.rs::a_repeated_question_is_one_attention_item`).
+- A hint over one line or over 100 characters is refused with the words that
+  send the question to the reply, opens nothing, and one of exactly 100 is
+  accepted (`attention.rs::a_hint_that_tries_to_carry_the_question_is_refused`).
+- Opening a request records one `agent_request` event with its hint in the
+  session's console, once however often the pending hint is repeated
+  (`attention.rs::a_request_records_its_hint_in_the_sessions_console_once`);
+  the event reads as `waiting for you · <hint>` and moves neither status nor
+  attention (`classify.rs::an_agent_request_event_reads_as_its_hint_and_moves_nothing`).
+- The console draws the event as a waiting note under the agent's text
+  (`ariadne-console::transcript::tests::an_agent_request_reads_as_a_waiting_note_with_its_hint`),
+  and a permission on an Ariadne tool allowed by the daemon itself leaves no
+  block while one a person answered, one the daemon denied or cancelled, or
+  one on any other tool, keeps its
+  (`::an_automatic_permission_on_an_ariadne_tool_leaves_no_block`).
+- The tool is `wait_for_user` with a `hint`, listed to every seat, and every
+  seat's session rules say to ask in the reply first
+  (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`,
+  `mcp.rs::only_the_orchestrator_is_told_to_ask`).
 - Answering or withdrawing one request preserves independent requests,
   including one in another session
   (`attention.rs::answering_or_withdrawing_one_request_keeps_the_others`),

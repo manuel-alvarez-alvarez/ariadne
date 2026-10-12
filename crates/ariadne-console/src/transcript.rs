@@ -139,6 +139,9 @@ pub struct PlanEntry {
 pub struct PermissionOption {
     pub id: String,
     pub name: String,
+    /// The ACP kind of the option — `allow_once`, `allow_always`,
+    /// `reject_once`, `reject_always` — where the request named one.
+    pub kind: Option<String>,
 }
 
 /// A file a tool call touches, as the ACP call names it.
@@ -389,6 +392,16 @@ impl From<&AgentEventDto> for TranscriptItem {
                 meta,
                 text: "context compacted".into(),
             },
+            // The agent flagged that it waits for the user (031). The
+            // question is the agent's text above this line; the hint is the
+            // one the Needs attention list shows, so the two read as one.
+            "agent_request" => Self::SystemNote {
+                meta,
+                text: match string_at(&event.payload, "/hint") {
+                    Some(hint) => format!("waiting for you · {hint}"),
+                    None => "waiting for you".into(),
+                },
+            },
             "session_end" => Self::SystemNote {
                 meta,
                 text: "session ended".into(),
@@ -443,20 +456,38 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
         return;
     }
     if event.kind == "permission.replied"
-        && let Some(TranscriptItem::PermissionQuestion {
-            meta,
-            options,
-            answer,
-            ..
-        }) = items.iter_mut().rev().find(|item| {
+        && let Some(at) = items.iter().rposition(|item| {
             matches!(
                 item,
                 TranscriptItem::PermissionQuestion { answer: None, .. }
             )
         })
     {
-        *answer = Some(permission_answer(&event.payload, options));
-        meta.kinds.push(event.kind.clone());
+        // A permission on one of Ariadne's own tools that the daemon allowed
+        // by itself — its mode, the AI model or a learned rule, nobody at the
+        // console — asked the person nothing: the call's own block already
+        // says what the agent did, and a frame saying "permission · Allow"
+        // around it is noise in the conversation. One a person did answer
+        // stays, as the record of what they chose; and so does one the
+        // daemon denied or cancelled, since the call's block then reads as a
+        // failure with no cause, and the answer here is the cause.
+        if let TranscriptItem::PermissionQuestion { tool, options, .. } = &items[at]
+            && is_ariadne_tool(&tool.name)
+            && daemon_allowed(&event.payload, options)
+        {
+            items.remove(at);
+            return;
+        }
+        if let TranscriptItem::PermissionQuestion {
+            meta,
+            options,
+            answer,
+            ..
+        } = &mut items[at]
+        {
+            *answer = Some(permission_answer(&event.payload, options));
+            meta.kinds.push(event.kind.clone());
+        }
         return;
     }
     // An advisory diagnosis (024) carries no block of its own: it reads
@@ -506,6 +537,36 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
         };
     }
     items.push(item);
+}
+
+/// Whether a reply is the daemon's own allow: an option chosen without a
+/// person at the console, that is not a denial. A cancel (no option), a
+/// console answer, an AI `deny`, and a chosen option whose kind is a reject
+/// are each something a reader needs to see.
+fn daemon_allowed(payload: &Value, options: &[PermissionOption]) -> bool {
+    let Some(id) = string_at(payload, "/option_id") else {
+        return false;
+    };
+    if string_at(payload, "/decided_by").as_deref() == Some("console")
+        || string_at(payload, "/label").as_deref() == Some("deny")
+    {
+        return false;
+    }
+    match options
+        .iter()
+        .find(|option| option.id == id)
+        .and_then(|option| option.kind.as_deref())
+    {
+        Some(kind) => kind.starts_with("allow"),
+        None => true,
+    }
+}
+
+/// Whether a call is one of Ariadne's own MCP tools, by the name the agent's
+/// client gives it: `mcp__ariadne__wait_for_user` from Claude Code, and the
+/// server's name in some other spelling from another client.
+fn is_ariadne_tool(name: &str) -> bool {
+    name.to_ascii_lowercase().contains("ariadne")
 }
 
 pub fn tool_is_terminal(status: Option<&str>) -> bool {
@@ -607,7 +668,8 @@ pub fn permission_options(payload: &Value) -> Vec<PermissionOption> {
         .filter_map(|option| {
             let id = string_at(option, "/optionId")?;
             let name = string_at(option, "/name").unwrap_or_else(|| id.clone());
-            Some(PermissionOption { id, name })
+            let kind = string_at(option, "/kind");
+            Some(PermissionOption { id, name, kind })
         })
         .collect()
 }
@@ -869,6 +931,127 @@ mod tests {
 
         assert_eq!(tool.input, json!({"command": "make"}));
         assert_eq!(tool.output.as_deref(), Some("built"));
+    }
+
+    /// The daemon's own line for a wait the agent flagged (031): the hint
+    /// under the agent's text, as one note, so the question and the line the
+    /// Needs attention list shows read together.
+    #[test]
+    fn an_agent_request_reads_as_a_waiting_note_with_its_hint() {
+        let events = [event(
+            "request",
+            "agent_request",
+            json!({"request_id": "01RQ", "hint": "Approve the plan?"}),
+        )];
+        let items = fold(&events);
+        assert!(
+            matches!(&items[0], TranscriptItem::SystemNote { text, .. }
+                if text == "waiting for you · Approve the plan?"),
+            "{items:?}"
+        );
+    }
+
+    /// A permission on one of Ariadne's own tools that the daemon allowed
+    /// by itself leaves no block: the call's block says what happened. One
+    /// a person answered at the console keeps its frame and their choice;
+    /// so does one the daemon denied — the AI model's `deny`, or a learned
+    /// rule's reject option — or cancelled, since that answer is the cause
+    /// the call's failure otherwise lacks; and a permission on any other
+    /// tool is untouched either way.
+    #[test]
+    fn an_automatic_permission_on_an_ariadne_tool_leaves_no_block() {
+        let asked = |id: &str, tool: &str| {
+            event(
+                id,
+                "permission_request",
+                json!({"tool_name": tool, "waiting": true,
+                       "options": [{"optionId": "allow-once", "name": "Allow", "kind": "allow_once"},
+                                   {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}],
+                       "acp": {"toolCallId": id, "title": tool, "kind": "other"}}),
+            )
+        };
+        let replied = |id: &str, decided_by: &str| {
+            event(
+                id,
+                "permission.replied",
+                json!({"option_id": "allow-once", "decided_by": decided_by}),
+            )
+        };
+
+        let auto = fold(&[
+            asked("ask-1", "mcp__ariadne__wait_for_user"),
+            replied("reply-1", "auto"),
+        ]);
+        assert!(auto.is_empty(), "{auto:?}");
+
+        let by_hand = fold(&[
+            asked("ask-2", "mcp__ariadne__wait_for_user"),
+            replied("reply-2", "console"),
+        ]);
+        assert!(
+            matches!(
+                &by_hand[0],
+                TranscriptItem::PermissionQuestion {
+                    answer: Some(_),
+                    ..
+                }
+            ),
+            "{by_hand:?}"
+        );
+
+        let other = fold(&[asked("ask-3", "Bash"), replied("reply-3", "auto")]);
+        assert!(
+            matches!(
+                &other[0],
+                TranscriptItem::PermissionQuestion {
+                    answer: Some(_),
+                    ..
+                }
+            ),
+            "{other:?}"
+        );
+
+        let kept_answer = |items: &[TranscriptItem]| match &items[0] {
+            TranscriptItem::PermissionQuestion {
+                answer: Some(answer),
+                ..
+            } => answer.clone(),
+            other => panic!("{other:?}"),
+        };
+        let ai_denied = fold(&[
+            asked("ask-4", "mcp__ariadne__fail_task"),
+            event(
+                "reply-4",
+                "permission.replied",
+                json!({"option_id": "reject-once", "decided_by": "ai", "label": "deny",
+                       "allow_threshold": 0.05, "deny_threshold": 0.65,
+                       "probabilities": {"0": 0.02, "1": 0.9}, "danger": 0.7}),
+            ),
+        ]);
+        assert!(
+            kept_answer(&ai_denied).starts_with("AI denied"),
+            "{ai_denied:?}"
+        );
+
+        let learned_reject = fold(&[
+            asked("ask-5", "mcp__ariadne__fail_task"),
+            event(
+                "reply-5",
+                "permission.replied",
+                json!({"option_id": "reject-once", "decided_by": "learned"}),
+            ),
+        ]);
+        assert_eq!(kept_answer(&learned_reject), "Reject");
+
+        let cancelled = fold(&[
+            asked("ask-6", "mcp__ariadne__wait_for_user"),
+            event(
+                "reply-6",
+                "permission.replied",
+                json!({"option_id": null, "decided_by": "auto"}),
+            ),
+        ]);
+        assert_eq!(kept_answer(&cancelled), "cancelled");
     }
 
     #[test]

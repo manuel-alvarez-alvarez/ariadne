@@ -182,15 +182,16 @@ pub(super) struct SendMessageReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub(super) struct UserRequestReq {
-    /// One line for the Needs attention list. Write the whole question in
-    /// your reply before this call.
-    pub summary: String,
+pub(super) struct WaitForUserReq {
+    /// One short line for the Needs attention list, under 100 characters.
+    /// Not the question: the question is in your reply already.
+    pub hint: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub(super) struct WithdrawUserRequestReq {
+pub(super) struct WithdrawWaitForUserReq {
+    /// The `id` that `wait_for_user` answered with.
     pub request_id: String,
 }
 
@@ -414,25 +415,27 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Ask the user a question that blocks your work. First write the whole question in your reply: the user reads it in your console. Give `summary` one line for the Needs attention list, which opens your console. End your turn after this call."
+        description = "Flag that you wait for the user. This tool asks nothing: write the whole question in your reply first, where the user reads it in your console. `hint` is one short line for the Needs attention list, which opens your console. End your turn after this call."
     )]
-    async fn request_user_input(
+    async fn wait_for_user(
         &self,
-        Parameters(req): Parameters<UserRequestReq>,
+        Parameters(req): Parameters<WaitForUserReq>,
     ) -> Result<CallToolResult, McpError> {
         json_result(
             self.post(
                 &format!("/v1/sessions/{}/agent-requests", self.session_id),
-                &serde_json::json!({"summary": req.summary}),
+                &serde_json::json!({"summary": req.hint}),
             )
             .await?,
         )
     }
 
-    #[tool(description = "Withdraw one unanswered user request when it no longer applies.")]
-    async fn withdraw_user_request(
+    #[tool(
+        description = "Withdraw one `wait_for_user` flag when the user no longer needs to answer."
+    )]
+    async fn withdraw_wait_for_user(
         &self,
-        Parameters(req): Parameters<WithdrawUserRequestReq>,
+        Parameters(req): Parameters<WithdrawWaitForUserReq>,
     ) -> Result<CallToolResult, McpError> {
         json_result(
             self.post(

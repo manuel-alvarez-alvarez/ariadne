@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-10-11
+updated: 2026-10-12
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -253,8 +253,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     is worth fixing. It writes the review body as the whole summary of the
     review as it stands, in four parts, with no file, no line, no trailer
     and nothing of what it did:
-    - a title, "## Review summary: all changes from `<base>` to `<head>`",
-      naming the request's own base and head branches;
+    - a title, "## Review summary" — the range it covers is the header's,
+      not the title's, so the title stays one short line;
     - a header, one line per commit the round reviewed, each a short sha
       and its subject, read with `git log <base>..HEAD` in the worktree on
       the first round, or `git log <reviewed_sha>..HEAD` later, and the

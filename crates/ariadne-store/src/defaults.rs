@@ -311,8 +311,11 @@ pub const PULL_REQUEST_PLACEHOLDERS: [&str; 10] = [
 /// What is owed is what no skill edit is allowed to take away: the plan is
 /// made *with* the user — the orchestrator is the one seat that talks to
 /// them — it writes no code, and a point it cannot settle goes to the user
-/// rather than being decided alone.
-const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Never write code. Call `request_user_input` when blocked. Never use it for agent questions. End the turn after a question. Do not poll `read_messages`; Ariadne sends the answer."#;
+/// rather than being decided alone. The question is asked in the reply,
+/// where the console shows it as the conversation it is; `wait_for_user`
+/// only flags the wait with a one-line hint for the Needs attention list
+/// (031), and a hint that tries to carry the question is refused.
+const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Never write code. Ask the user in your reply. Then call `wait_for_user` with a one-line hint and end the turn. Never ask an agent that way. Do not poll `read_messages`; Ariadne sends the answer."#;
 
 /// The one task seat text: what the agent of a column owes, whatever the
 /// column is. The work of the column is its skills'; the two step calls
@@ -323,7 +326,7 @@ const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's shared worktree, on
 3. Return work with `fail_step` and a reason that tells the previous agent what to fix.
 4. Call `fail_task` if the task cannot be done.
 5. Never pass `--no-verify` or `-n` to `git commit` or `git push`. A hook that refuses a commit or a push names the fix. Make it and commit again.
-6. Call `request_user_input` only where the task cannot continue without a user answer. Do not use it for agent questions.
+6. Ask the user only where the task cannot continue without the answer. Ask in your reply. Then call `wait_for_user` with a one-line hint.
 7. End your turn after a step call or a question. Do not poll."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
@@ -1191,7 +1194,7 @@ mod tests {
             // the change and its risk, and a recommendation; it is nothing
             // of the work, and each finding sits on its own line of code.
             "Ariadne keeps one summary comment",
-            "## Review summary: all changes from `<base>` to `<head>`",
+            "## Review summary",
             "Header: one line per commit the round reviewed",
             "Summary: one short paragraph of prose, not bullets",
             "Recommendation: one line",
@@ -1226,7 +1229,7 @@ mod tests {
         let doc =
             unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
         let title_at = doc
-            .find("## Review summary: all changes from")
+            .find("## Review summary")
             .expect("the skill has no summary title");
         let header_at = doc.find("Header:").expect("the skill has no Header:");
         let summary_at = doc.find("Summary:").expect("the skill has no Summary:");
