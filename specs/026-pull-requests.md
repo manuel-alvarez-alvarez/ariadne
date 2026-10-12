@@ -267,8 +267,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `live.rs::tests::a_thread_waits_on_the_login_until_it_answers_and_a_comment_is_told_once`,
   `::a_reviewer_hears_of_the_replies_in_its_own_threads`,
   `::an_ariadne_finding_on_my_request_is_the_authors_and_its_answer_the_reviews`.
-- CLI actions use the live routes and preserve search text, `pr ls` asks every open request, mine, or the review requests, and no command adds or removes one:
-  `pr.rs::tests::pr_commands_use_the_live_routes_and_preserve_search_text`;
+- CLI actions use the pull request routes and preserve search text, `pr ls` asks every open request, mine, or the review requests, and no command adds or removes one:
+  `pr.rs::tests::pr_commands_use_the_pull_request_routes_and_preserve_search_text`;
   `--mine` and `--review-requests` do not combine: `::mine_and_review_requests_do_not_combine`.
   `pr ls` carries the branches and the session, and `pr inspect` prints a
   fixed reading order with the body last: `::pr_ls_shows_the_branches_and_session_columns`,

@@ -108,12 +108,9 @@ async fn the_fetch_holds_the_list_and_tracks_only_a_request_that_asks_for_my_rev
     ));
     let h = harness().forge_cli(&stub).await;
     let id = enabled_repository(&h).await;
-    let mut rows: Vec<Value> = Vec::new();
-    eventually(TIMEOUT, "the first fetch's held list", async || {
-        rows = h.get("/v1/pull-requests").await;
-        rows.len() == 2
-    })
-    .await;
+    eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
+    let rows: Vec<Value> = h.get("/v1/pull-requests").await;
+    assert_eq!(rows.len(), 2);
     let mine_row = rows.iter().find(|r| r["number"] == 1).unwrap();
     assert!(mine_row["id"].is_null(), "{mine_row:?}");
     let asked_row = rows.iter().find(|r| r["number"] == 2).unwrap();
