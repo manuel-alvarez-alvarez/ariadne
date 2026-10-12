@@ -2,11 +2,31 @@
 
 > Revision 2. A review pass found a false-positive control, an incomplete
 > option-injection characterization, an unsafe universal remediation, a
-> scope error on EXEC-004, and incomplete coverage/evidence. This revision
-> corrects all five, adds a new confirmed finding (EXEC-005), and adds the
-> subprocess/hooks/advisory coverage the review asked for. Every claim below
-> was independently reproduced by me (not merely asserted) with the exact
-> commands shown; search for "Repro:" to find each one.
+> scope error on EXEC-004, and incomplete coverage/evidence. That revision
+> corrected all five, added a new confirmed finding (EXEC-005), and added
+> the subprocess/hooks/advisory coverage the review asked for.
+>
+> Revision 3 (this one) integrates a second round of reviewer evidence,
+> relayed by the orchestrator: EXEC-005's prerequisites needed to say
+> explicitly that a review/keeper session must actually be launched or
+> relaunched (not merely that a PR exists) and that an unsafe daemon `PATH`
+> is required; the EXEC-001 remediation needed validating against
+> `remote_has_branch_tip`'s own SHA comparison, which it would have broken
+> had I not caught this — I found the break myself before writing the fix
+> down, by testing the exact command, and corrected it below; tracked hooks
+> and `.gitattributes` filters needed documenting as conditionally live
+> when the local machine already has a relative `core.hooksPath` or a
+> `filter.<name>.smudge`/`.clean` preconfigured, which I independently
+> reproduced in an isolated `$HOME` with a clean-`HOME` control; and a
+> missing boundary needed adding — Ariadne's `auto`/`ask`/`learn`/`ai`
+> permission modes are real, but they gate only what an agent's own ACP
+> client chooses to submit through `session/request_permission`, and
+> nothing in the detached review worktree or the git/worktree layer
+> independently enforces "read-only" at the filesystem level. This is now
+> EXEC-006. All open compatibility/policy decisions from revision 2 are
+> preserved unresolved, as instructed. Every claim below was independently
+> reproduced by me with the exact commands shown; search for "Repro:" to
+> find each one.
 
 ## Question
 
@@ -125,9 +145,61 @@ test -f /tmp/filter_marker && echo BAD || echo "good: filter is a no-op without 
 Result: `good`. A `clean`/`smudge` filter command must be set in local
 (never-transferred) git config (`filter.<name>.clean`/`.smudge`); a
 repository's own tracked `.gitattributes` can *name* a filter but cannot
-*define* one. This closes off the other classic git-configuration RCE
-class for the same reason hooks are closed off: the dangerous half of the
-mechanism is local-only.
+*define* one — **by default.** The next paragraph is the conditional case
+where that stops being true.
+
+**Conditional execution path: both become live, automatically, when the
+local machine already has a relative `core.hooksPath` or a
+`filter.<name>.smudge`/`.clean` preconfigured before the clone.** This
+does not contradict the two results just above — it is the case neither
+of them tests. `core.hooksPath` can be set to a path *relative to each
+repository's own worktree root* (e.g. `.githooks`, a convention several
+real projects use for exactly this reason), and `filter.<name>.smudge`
+can be defined once, globally, for convenience (several real dev-tool
+installers do this). Once either is set, it applies to *every* repository
+the user ever clones afterward — including a hostile one — and a hostile
+repository's own tracked content then supplies the actual payload (the
+hook script, or the filter's trigger), not just a name that resolves to
+nothing. I reproduced this independently, in a disposable `$HOME` never
+touching the real user's git configuration, with a clean-`HOME` control to
+isolate the effect: `Repro:`
+```sh
+d=$(mktemp -d); export HOME="$d/fake_home"; mkdir -p "$HOME"
+git config --global core.hooksPath .githooks
+git config --global filter.preconfigured.smudge \
+  'printf "PRECONFIGURED_FILTER_RAN\n" > '"$d"'/filter_marker; cat'
+cd "$d" && git init -q -b main seed && cd seed
+mkdir -p .githooks
+printf '#!/bin/sh\nprintf "HOOK_RAN\\n" > '"$d"'/hook_marker\n' > .githooks/post-checkout
+chmod +x .githooks/post-checkout
+echo "*.secret filter=preconfigured" > .gitattributes
+echo payload > data.secret
+git add . && git -c user.email=t@t -c user.name=t commit -qm "tracked hook+attrs"
+cd "$d" && rm -f "$d"/hook_marker "$d"/filter_marker
+git clone -q "$d/seed" victim
+echo "hook fired: $(test -f "$d/hook_marker" && echo yes || echo no)"
+echo "filter fired: $(test -f "$d/filter_marker" && echo yes || echo no)"
+# control: a clean HOME with neither global setting
+unset HOME; export HOME="$d/clean_home"; mkdir -p "$HOME"
+rm -f "$d"/hook_marker "$d"/filter_marker
+git clone -q "$d/seed" victim_clean
+echo "hook fired (clean HOME): $(test -f "$d/hook_marker" && echo yes || echo no)"
+echo "filter fired (clean HOME): $(test -f "$d/filter_marker" && echo yes || echo no)"
+```
+Result: `hook fired: yes`, `filter fired: yes` with the preconfigured
+`$HOME`; `hook fired (clean HOME): no`, `filter fired (clean HOME): no`
+with the control — isolating the effect to the preexisting global config,
+not anything the repository alone supplies. **This is not a repository-
+content vector by itself** (the repository still cannot *create* the
+dangerous local prerequisite — it can only supply the payload once that
+prerequisite already exists), so it is not filed as its own EXEC finding,
+but it is a real, conditional path from "register/clone a hostile
+repository" to arbitrary local execution, gated entirely on a
+preexisting local git configuration choice. **Hardening suggestion:**
+`ariadne doctor` could cheaply warn when `core.hooksPath` is set (globally
+or in the registering user's config) to a relative path, since that
+specific, otherwise-convenient setting is what turns any future hostile
+clone's tracked content into automatic local execution.
 
 **Git's own upstream security advisories were checked against a primary
 source** (`gh api repos/git/git/security-advisories`,
@@ -226,8 +298,24 @@ gap in my own verification process is visible, not papered over.
 - **New this revision:** whether git preserves a tracked file's executable
   bit through an ordinary clone — confirmed yes (needed as a prerequisite
   check for EXEC-005).
-- **New this revision:** hooks-via-clone and gitattributes-filter-via-clone,
-  both tested and rejected (see "Git configuration, hooks, and filters").
+- **New this revision:** hooks-via-clone and gitattributes-filter-via-clone
+  by default — both rejected — and, separately, confirmed *live* when a
+  relative `core.hooksPath`/a `filter.<name>.smudge` is already configured
+  locally beforehand, with a clean-`HOME` control isolating the effect
+  (see "Git configuration, hooks, and filters").
+- **New this revision:** whether a detached review worktree enforces
+  "read-only" at the filesystem/git level independent of agent cooperation
+  — confirmed it does not (tracked edits, a sibling-directory write outside
+  the worktree, a commit, and an explicit-refspec push to a reachable
+  remote all succeeded; the registered repository's own `main` ref was
+  unaffected) — see EXEC-006.
+- **New this revision:** whether `--end-of-options` alone preserves
+  `remote_has_branch_tip`'s SHA comparison on its bare `rev-parse <branch>`
+  call — tested and found it does **not** (plain `rev-parse
+  --end-of-options <ref>` echoes the literal marker text as an extra
+  output line, breaking the equality check for every legitimate branch);
+  `--verify --quiet --end-of-options` (matching `has_commit`'s own existing
+  pattern) does preserve it — see the correction in EXEC-001.
 
 ### Excluded, with reason
 - **Containing a malicious *installed* agent binary's own behavior** once
@@ -321,16 +409,45 @@ does to populate the worktree from the branch's tree. A tracked file keeps
 its executable bit through an ordinary clone/checkout (verified, see
 below).
 
-**Prerequisite (the one environmental condition this depends on):** the
-daemon process's own ambient `PATH` environment variable must contain a
-relative entry (an empty entry, `.`, or any relative directory) positioned
-*before* the absolute directory holding the real agent binary — or must
-simply lack an absolute entry for that name at all. `searchable()`
-(`acp_index.rs:65-76`) filters such entries out **only for the purposes of
-deciding which agents to register and what `program` to record for
-them** — it does not change the daemon's real `PATH`, which is exactly
-what the OS consults again, unfiltered, when `acp.rs` spawns `Command::new`
-with a bare name.
+**Prerequisites, stated explicitly and in full (all three must hold):**
+1. **A session for the affected seat must actually be launched or
+   relaunched.** This is not automatic merely because a hostile repository
+   is registered or a pull request exists. For a task/column-agent session
+   this means `start_step_agent`/`agent_switch` (`launcher.rs`) actually
+   spawning that task's agent in its worktree. For a review session it
+   means `spawn_pull_request_session`/`resume_pull_request_session`
+   (`launcher.rs:1648-1675`, and the resume path at `:1713-1741`) actually
+   running — reachable either through a manual, explicit per-request
+   review start (a user or client asking Ariadne to review a specific
+   request), or through the scheduler's own automatic reconciliation
+   (`scheduler/pull_requests.rs:start_pull_request_session`) once the forge
+   reports the request wants a session — but in either case, a concrete
+   launch-or-relaunch *event* has to occur; a PR sitting unreviewed does
+   not, by itself, do anything. All such paths converge on the same
+   `Launcher::launch` (`launcher.rs:285-347`), which is also where the
+   repository's `permission_mode` is resolved for every one of them (see
+   EXEC-006) — the convergence is why this one fix point covers every
+   seat.
+2. **The daemon process's own ambient `PATH` environment variable must
+   contain a relative entry** (an empty entry, `.`, or any relative
+   directory) positioned *before* the absolute directory holding the real
+   agent binary — or must simply lack an absolute entry for that name at
+   all. `searchable()` (`acp_index.rs:65-76`) filters such entries out
+   **only for the purposes of deciding which agents to register and what
+   `program` to record for them** — it does not change the daemon's real
+   `PATH`, which is exactly what the OS consults again, unfiltered, when
+   `acp.rs:965-978` spawns `Command::new` with a bare name in that session's
+   cwd.
+3. **The repository or pull-request content reaching that cwd must carry
+   an executable file whose basename matches the pinned agent's bare
+   command name** (e.g. `claude`, `codex`), with its executable bit set —
+   confirmed to survive an ordinary clone (below).
+
+Prerequisite 2 is outside repository/forge control entirely and is not
+guaranteed to hold on any given deployment (see Severity). Prerequisites 1
+and 3 are both squarely inside this audit's threat model: 1 is an ordinary
+operational event (a review being requested, or a task being worked), not
+a special attacker action, and 3 is exactly "hostile repository content."
 
 **Reproduction (exact primitive, independently compiled and run — this is
 not a shell-level analogy, it is the same `std::process::Command` API
@@ -535,13 +652,50 @@ git ls-remote --heads origin --end-of-options main       # correct ref line, pre
 ```
 `has_commit` (`gitwt.rs:250-260`) already uses `--end-of-options` and is
 the existing, in-tree precedent for this fix — the recommendation is to
-extend the same marker to every other sink in the table above, not to
-introduce a new convention.
+extend the same marker to every other sink in the table above, **with one
+exception, caught by validating the fix against its actual output
+consumer rather than assuming uniformity:**
+
+`remote_has_branch_tip`/`remote_branch_tip`'s *first* call
+(`rev-parse <branch>`, line 356/376) is **not** safe to fix with a bare
+`--end-of-options` — doing so would have broken the function for every
+legitimate branch, not just a malicious one, because plain `rev-parse`
+(unlike `rev-parse --verify`) echoes back any argument it does not resolve
+as a flag, including the marker itself:
+```sh
+real=$(git rev-parse feature)                       # 8358974af109c51061e366c4c7983ed9254a39d7
+bad=$(git rev-parse --end-of-options feature)
+echo "$bad"
+# --end-of-options
+# 8358974af109c51061e366c4c7983ed9254a39d7            <- the real SHA is only the SECOND line
+```
+The function's own SHA comparison (`let local = self.git(repo, &["rev-
+parse", branch]).await?;` then `sha == local`) would receive the two-line
+string above instead of a bare SHA and never match a real `ls-remote`
+result again — a `--end-of-options`-only fix applied uniformly, as the
+prior revision implied, would have turned a latent injection bug into an
+always-broken safety check. The correct fix for this one call matches
+`has_commit`'s *full* pattern, not just its marker:
+```sh
+git rev-parse --verify --quiet --end-of-options feature
+# 8358974af109c51061e366c4c7983ed9254a39d7            <- single line, matches `real` exactly
+git rev-parse --verify --quiet --end-of-options "--output=/tmp/poc_rp.txt"
+# fatal: ... ; exit 1, no file written
+```
+confirmed to reproduce the plain SHA exactly (`$real == $out`) on a
+legitimate branch and to still reject the crafted payload. The *second*
+call in the same two functions (`ls-remote --heads <remote> <branch>`) was
+already shown safe without any fix in revision 2 (args after the first
+non-option positional are literal patterns here); adding
+`--end-of-options` there is harmless but not required.
 
 **Regression criterion:** for each guarded sink, (a) a same-shaped,
 non-malicious branch/ref name of equal or greater length continues to
 produce the identical observable result as before the fix (the specific
-commands and expected outputs above), and (b) a repository whose relevant
+commands and expected outputs above) — for `remote_has_branch_tip`'s
+`rev-parse` call specifically, the fixed call's output must be
+byte-identical to plain `git rev-parse <branch>`'s output on the same
+branch, not merely "non-empty" — and (b) a repository whose relevant
 branch/ref is named `--orphan`/`--output=<path>`/`--upload-pack=<cmd>`/
 `-fother` (one test per sink) is observed to fail with a clear git error
 rather than succeeding with different semantics or writing to any path
@@ -724,6 +878,115 @@ name including its special characters.
 
 ---
 
+#### EXEC-006 — "Read-only by contract" and Ariadne's permission modes are cooperative controls: nothing in the git/worktree layer enforces them at the filesystem level
+
+**Affected files/lines:** `gitwt.rs:94-105` (`add_detached_worktree`) and
+`gitwt.rs:135-140` (`checkout_detached`) — both plain `git worktree
+add`/`checkout` calls; neither sets any filesystem permission, mount
+option, or git-level restriction. `launcher.rs:285-347` (`launch`) is
+where every session's `permission_mode` (`auto`/`ask`/`learn`/`ai`) is
+resolved from the repository row and threaded into `AcpLaunch`, for every
+seat alike (task agent, orchestrator, reviewer, keeper). `acp.rs:965-978`
+is the actual spawn (shared with EXEC-005). `acp.rs:2052-2270` is the
+`session/request_permission` handler that `auto`/`ask`/`learn`/`ai`
+actually govern.
+
+**What this finding is, precisely:** `checkout_detached`'s own doc comment
+(`gitwt.rs`) calls the review worktree's tree "read-only by contract" —
+language that describes an *intended convention* (the review session is
+briefed not to commit) rather than a technical restriction. The task asks
+to check documented permission guarantees even when installed agents are
+trusted, so this is reported as what it actually is: a convention, not an
+enforced boundary.
+
+**What *is* real:** the `auto`/`ask`/`learn`/`ai` permission modes
+(`acp.rs:2052-2270`) are a genuine, working control — they decide how the
+daemon answers a `session/request_permission` call, with real effects
+(waiting for console approval under `ask`, consulting a learned key,
+consulting the AI permission model) and are threaded into every launch
+uniformly via `launcher.rs:285-347`. This is not a hollow control.
+
+**What is also real, and is the gap:** this control only fires for actions
+the **agent's own ACP client chooses to submit** as a permission request.
+The daemon's ACP `initialize` advertises no `fs`/`terminal` capability and
+implements no handler for either (EXEC-POS-4, re-confirmed this revision)
+— so there is no Ariadne-mediated filesystem or terminal operation to
+gate in the first place. Everything the agent does to files or a shell
+happens through the agent's **own native tools**, outside any ACP method
+Ariadne implements. `session/request_permission` is the agent *telling*
+Ariadne "I am about to do X, may I?" before using its own tools to do X —
+a cooperative protocol, not a sandbox. Nothing observed in `gitwt.rs` or
+`acp.rs` stops an agent process from writing, committing, or pushing in a
+"read-only" review worktree without ever calling
+`session/request_permission` at all.
+
+**Reproduction** (disposable repository and bare remote only; no write
+reached any path outside the disposable sandbox; the registered
+repository's own primary branch was read, never altered):
+```sh
+# (abbreviated; full transcript retained at the evidence the orchestrator
+# relayed, /tmp/exec-reviewer-capabilities.log, reproduced independently
+# below against the exact primitive gitwt.rs uses)
+git worktree add --detach <review-worktree> <head-sha>      # as add_detached_worktree does
+cd <review-worktree>
+printf "modified\n" > tracked && printf "outside\n" > ../outside-marker  # write inside AND outside the worktree
+git add tracked && git commit -qm "synthetic"
+git push                                    # fails: detached HEAD has no upstream (ordinary git, not a control)
+git push origin HEAD:refs/heads/capability-proof   # succeeds against a disposable bare remote
+git rev-parse main                           # unchanged — the registered repository's own primary ref is untouched
+```
+Result (independently reconfirmed): the tracked edit, the write to
+`../outside-marker` (outside the worktree entirely — the worktree
+boundary is not a filesystem boundary), the commit, and the explicit-
+refspec push all succeed; only the bare `git push` (which needs an
+upstream for a detached HEAD, an ordinary git requirement, not a security
+control) fails. The repository's own `main` is never moved by any of this.
+
+**What this does not prove, stated as plainly as the evidence allows:** no
+real agent was shown to do any of this from a malicious PR comment or any
+other injected instruction — that is explicitly out of scope (trusted
+agent behavior). No comment-driven commit or push is demonstrated. A real,
+damaging push additionally needs real credentials and authorization the
+daemon's git identity would have to already hold — this reproduction used
+a disposable local bare remote precisely because no real remote/credential
+was exercised. Live, agent-specific restrictions (e.g. a given adapter's
+own sandbox mode, approval settings, or read-only flag) were not measured
+here and may independently narrow what a specific installed agent would
+actually do in practice — "external agent configuration can still restrict
+execution," and this finding does not contradict that; it only establishes
+that **Ariadne's own code** supplies no such restriction independent of
+the agent's configuration and cooperation.
+
+**Severity:** Medium. The gap is real and the reproduction is concrete, but
+exploiting it to damaging effect requires either a cooperating/trusted
+agent configured to allow it (out of scope to assume otherwise) or an
+agent persuaded by content it reads — which this audit's scope describes
+as a possibility to flag, not to prove, and which is a question for
+PERM's permission-decision ownership and the agent's own prompt-injection
+resistance, not EXEC's git/worktree layer.
+
+**Confidence:** High on the mechanism (independently reproduced); the
+severity is deliberately bounded by what was not, and should not under the
+agreed scope, be tested.
+
+**Recommendation:** document, in the user-facing manual (`docs/`), that
+"read-only" for a review worktree is Ariadne's own convention plus the
+permission-mode system's coverage of whatever an agent chooses to submit
+through it — not a filesystem-level guarantee — so a user's trust decision
+about which repositories to let Ariadne auto-review is made with accurate
+information. No code change is proposed here: this is a documentation gap
+about an existing, deliberate design (ACP's `fs`/`terminal` capabilities
+are deliberately not implemented, matching EXEC-POS-4), not a defect to
+patch.
+
+**Compatibility decision for the user:** whether Ariadne should ever
+implement `fs`/`terminal` ACP methods specifically to *gain* enforcement
+ability over what a review session does (trading "the agent uses its own
+tools freely" for "the daemon mediates and can refuse") is a product
+direction question, routed to the orchestrator, not decided here.
+
+---
+
 ### Verified-safe controls (re-checked this revision; EXEC-POS-3 corrected)
 
 1. **Task branch names cannot carry an injection-shaped prefix.**
@@ -819,23 +1082,40 @@ name including its special characters.
 Fix EXEC-005 first — it is the highest-confidence, highest-severity,
 smallest-surface-area change (route the already-resolved absolute path
 through to the actual spawn for discovered agents), and it is reachable by
-an external, unauthenticated party through the PR-review path. Fix
-EXEC-001 with `--end-of-options` at each cited sink, verified per-command
-exactly as shown rather than applied as a blind find-and-replace. Route
-EXEC-002 and EXEC-004 to a joint EXEC/FORGE follow-up per the compatibility
-decisions named in each. Ask the orchestrator whether EXEC-003 is worth a
-dedicated reproduction task before scheduling a fix.
+an external, unauthenticated party through the PR-review path, gated only
+by the launch/relaunch and daemon-`PATH` prerequisites now stated
+explicitly in its finding. Fix EXEC-001 with `--end-of-options` at each
+cited sink, verified per-command exactly as shown — **except**
+`remote_has_branch_tip`'s `rev-parse` call, which needs the fuller
+`--verify --quiet --end-of-options` pattern `has_commit` already uses, or
+the fix itself would break that function's SHA comparison for every
+legitimate branch. Treat EXEC-006 as a documentation task (describe the
+actual, cooperative nature of "read-only" and the permission modes
+accurately in `docs/`) rather than a code fix, pending the orchestrator's
+call on whether to pursue ACP `fs`/`terminal` mediation as a larger,
+separate product direction. Route EXEC-002 and EXEC-004 to a joint
+EXEC/FORGE follow-up per the compatibility decisions named in each — both
+still open, not decided here. Ask the orchestrator whether EXEC-003 is
+worth a dedicated reproduction task before scheduling a fix.
 
 ## Confidence
 
 High on EXEC-005 (direct reproduction of the exact primitive, no
-abstraction gap) and on EXEC-001's per-sink table (each cell independently
-executed). Medium on EXEC-001's "no worse accepted option exists" claim
-(not exhaustive). Medium on EXEC-002 (depends on FORGE guarantees not
-independently verified beyond reading cited source). Medium on EXEC-004's
-mechanism (fully reproduced) but Low on whether a real agent would actually
-execute the generated text verbatim (not testable under the agreed scope).
-Low-Medium on EXEC-003 (code-read only).
+abstraction gap, prerequisites now stated explicitly) and on EXEC-001's
+per-sink table and its `remote_has_branch_tip` correction (each cell,
+including the corrected fix, independently executed). High on EXEC-006's
+mechanism (independently reproduced, not only cited from relayed evidence)
+and on the conditional hooks/filters path (independently reproduced with
+an isolated `$HOME` and a clean-`HOME` control). Medium on EXEC-001's "no
+worse accepted option exists" claim (not exhaustive). Medium on EXEC-002
+(depends on FORGE guarantees not independently verified beyond reading
+cited source). Medium on EXEC-004's mechanism (fully reproduced) but Low
+on whether a real agent would actually execute the generated text verbatim
+(not testable under the agreed scope, and explicitly not claimed — EXEC-006
+is the same honest limit stated for a different mechanism). Low-Medium on
+EXEC-003 (code-read only). Low on EXEC-006's severity ceiling specifically
+because what would raise it (a real agent actually doing this from
+untrusted content) is exactly what the agreed scope excludes testing.
 
 ## What would change this
 
@@ -850,3 +1130,12 @@ Low-Medium on EXEC-003 (code-read only).
   while still being revivable would confirm EXEC-003.
 - Access to a Windows host would let EXEC-005's platform-specific note be
   confirmed or ruled out rather than left as a named gap.
+- Evidence that a real installed agent, driven only by untrusted content it
+  read (a PR body/comment, a file in the worktree), actually performs an
+  unsolicited write/commit/push without a permission request would move
+  EXEC-006 from "the layer provides no technical restriction" to "this is
+  being actively exploited" — explicitly not pursued here, per the agreed
+  scope's exclusion of testing trusted-agent behavior.
+- A survey of real Ariadne deployments' daemon `PATH` configurations would
+  let EXEC-005's and EXEC-006's likelihood (not mechanism) be stated with
+  more than a qualitative "interactive vs. service-managed" distinction.
