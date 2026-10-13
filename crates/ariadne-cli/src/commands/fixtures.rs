@@ -152,6 +152,7 @@ pub(crate) fn repository(id: &str, path: &str, base_branch: &str) -> RepositoryD
         base_branch: base_branch.into(),
         description: None,
         permission_mode: PermissionMode::Auto,
+        supervise_posts: true,
         forge: None,
         created_at: NOW.into(),
         updated_at: NOW.into(),

@@ -76,6 +76,11 @@ pub(crate) enum RepoCommand {
         /// approvals, ai lets the AI permission model decide (default: auto)
         #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
         permission_mode: Option<PermissionMode>,
+        /// Hold what this repository's agents post to the forge for your
+        /// approval, every pull request opened as a draft included
+        /// (default: on)
+        #[arg(long = "supervise-posts", value_enum)]
+        supervise_posts: Option<Switch>,
         /// Run new goals through this workflow by default, where their own
         /// `goal create` line leaves `--workflow` out (default:
         /// develop-review-merge)
@@ -109,6 +114,10 @@ pub(crate) enum RepoCommand {
         /// New permission mode: auto, ask, learn, or ai (the AI permission model decides)
         #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
         permission_mode: Option<PermissionMode>,
+        /// Hold what this repository's agents post to the forge for your
+        /// approval, every pull request opened as a draft included
+        #[arg(long = "supervise-posts", value_enum)]
+        supervise_posts: Option<Switch>,
         /// New default workflow for the goals created in it from now on
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::workflow_names))]
         workflow: Option<String>,
@@ -133,6 +142,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
             branch,
             description,
             permission_mode,
+            supervise_posts,
             workflow,
             forge,
         } => {
@@ -145,6 +155,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                         base_branch: branch,
                         description,
                         permission_mode,
+                        supervise_posts: supervise_posts.map(|switch| switch == Switch::On),
                         forge: forge.update(),
                     },
                 )
@@ -183,6 +194,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
             branch,
             description,
             permission_mode,
+            supervise_posts,
             workflow,
             forge,
         } => {
@@ -196,6 +208,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                         base_branch: branch,
                         description,
                         permission_mode,
+                        supervise_posts: supervise_posts.map(|switch| switch == Switch::On),
                         forge: forge.update(),
                     },
                 )
@@ -241,16 +254,21 @@ fn ls_row(r: &RepositoryDto, now: chrono::DateTime<chrono::Utc>) -> Vec<String> 
 
 /// The forge in a few words: `github acme/widgets on`.
 fn forge_label(forge: &ForgeDto) -> String {
-    let switch = match forge.enabled {
-        true => "on",
-        false => "off",
-    };
     format!(
-        "{} {}/{} {switch}",
+        "{} {}/{} {}",
         forge.kind.as_str(),
         forge.owner,
-        forge.name
+        forge.name,
+        switch_label(forge.enabled)
     )
+}
+
+/// A boolean switch, in the words a flag spells it: `on` or `off`.
+fn switch_label(on: bool) -> &'static str {
+    match on {
+        true => "on",
+        false => "off",
+    }
 }
 
 /// What `repo inspect` prints, the forge block included.
@@ -260,6 +278,7 @@ fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'st
         ("path", r.path.clone().into()),
         ("branch", r.base_branch.clone().into()),
         ("permissions", r.permission_mode.as_str().into()),
+        ("supervise posts", switch_label(r.supervise_posts).into()),
         ("default workflow", r.default_workflow.clone().into()),
         (
             "description",
@@ -429,6 +448,73 @@ mod tests {
                 "{argv:?} should be an unknown flag"
             );
         }
+    }
+
+    /// `--supervise-posts` reaches `add` and `update` as a switch, and the
+    /// repository's own value shows in `repo inspect`.
+    #[test]
+    fn repo_add_and_update_take_the_supervise_posts_flag() {
+        #[derive(clap::Parser)]
+        struct Repo {
+            #[command(subcommand)]
+            command: RepoCommand,
+        }
+        let Repo {
+            command: RepoCommand::Add {
+                supervise_posts, ..
+            },
+        } = <Repo as clap::Parser>::try_parse_from([
+            "repo",
+            "add",
+            "/r",
+            "--supervise-posts",
+            "off",
+        ])
+        .expect("parses")
+        else {
+            panic!("repo add")
+        };
+        assert_eq!(supervise_posts, Some(Switch::Off));
+
+        let Repo {
+            command: RepoCommand::Update {
+                supervise_posts, ..
+            },
+        } = <Repo as clap::Parser>::try_parse_from([
+            "repo",
+            "update",
+            "01R",
+            "--supervise-posts",
+            "on",
+        ])
+        .expect("parses")
+        else {
+            panic!("repo update")
+        };
+        assert_eq!(supervise_posts, Some(Switch::On));
+
+        let supervised = fixtures::repository("01A", "/r", "main");
+        assert!(
+            crate::output::kv_block(
+                &inspect_rows(&supervised, None),
+                &crate::output::View::plain()
+            )
+            .contains("supervise posts")
+        );
+        let unsupervised = RepositoryDto {
+            supervise_posts: false,
+            ..fixtures::repository("01A", "/r", "main")
+        };
+        let block = crate::output::kv_block(
+            &inspect_rows(&unsupervised, None),
+            &crate::output::View::plain(),
+        );
+        assert!(
+            block
+                .lines()
+                .any(|l| l.starts_with("supervise posts") && l.trim_end().ends_with("off")),
+            "{block}"
+        );
     }
 
     /// `--workflow` reaches `add` and `update` the way every other flag of

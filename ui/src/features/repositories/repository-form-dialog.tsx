@@ -62,6 +62,7 @@ const formSchema = z.object({
   base_branch: z.string().trim(),
   description: z.string(),
   permission_mode: z.enum(["auto", "ask", "learn", "ai"]),
+  supervise_posts: z.boolean(),
   default_workflow: z.string().min(1, "Pick a workflow."),
   forge_enabled: z.boolean(),
 })
@@ -73,6 +74,7 @@ const EMPTY_VALUES: RepositoryFormValues = {
   base_branch: "",
   description: "",
   permission_mode: "auto",
+  supervise_posts: true,
   default_workflow: "",
   forge_enabled: false,
 }
@@ -110,6 +112,7 @@ export function RepositoryFormDialog({
         base_branch: repository.base_branch,
         description: repository.description ?? "",
         permission_mode: repository.permission_mode,
+        supervise_posts: repository.supervise_posts,
         default_workflow: repository.default_workflow ?? "",
         forge_enabled: repository.forge?.enabled ?? false,
       })
@@ -136,6 +139,7 @@ export function RepositoryFormDialog({
             // Empty is how the daemon spells "clear the description".
             description,
             permission_mode: values.permission_mode,
+            supervise_posts: values.supervise_posts,
             default_workflow: workflow,
             ...(forgeMoved ? { forge: { enabled: values.forge_enabled } } : {}),
           },
@@ -148,6 +152,7 @@ export function RepositoryFormDialog({
           base_branch: branch || null,
           description: description || null,
           permission_mode: values.permission_mode,
+          supervise_posts: values.supervise_posts,
           default_workflow: workflow,
         })
         toast.success("Repository registered", { description: created.path })
@@ -310,6 +315,28 @@ export function RepositoryFormDialog({
                 How every agent working in this checkout has its tool permission requests answered.
               </FieldDescription>
             )}
+          </Field>
+
+          <Field>
+            <div className="flex items-center gap-3">
+              <Controller
+                control={control}
+                name="supervise_posts"
+                render={({ field }) => (
+                  <Switch
+                    id="repository-supervise-posts"
+                    aria-label="Supervise posts"
+                    checked={field.value}
+                    onCheckedChange={(checked) => field.onChange(checked)}
+                  />
+                )}
+              />
+              <FieldLabel htmlFor="repository-supervise-posts">Supervise posts</FieldLabel>
+            </div>
+            <FieldDescription>
+              Hold agent replies, reviews and resolves as drafts for your approval, and open pull
+              requests as drafts.
+            </FieldDescription>
           </Field>
 
           <Field data-invalid={formState.errors.default_workflow ? true : undefined}>

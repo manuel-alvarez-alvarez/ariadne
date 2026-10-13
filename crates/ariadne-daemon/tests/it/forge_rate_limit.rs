@@ -108,6 +108,7 @@ async fn wake_only_poll(
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
+                supervise_posts: None,
             },
             Some(SetForgeIntegration {
                 repository_id: String::new(),

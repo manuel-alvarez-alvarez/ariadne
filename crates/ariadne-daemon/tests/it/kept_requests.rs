@@ -623,6 +623,84 @@ async fn open_pull_request_strips_a_trailing_trailer_from_the_body() {
     assert_eq!(sent, "Fixes widgets.");
 }
 
+/// A repository that supervises its posts (002) opens every request as a
+/// draft, whatever the agent's own `draft` asked (026 rule 23).
+#[tokio::test]
+async fn open_pull_request_forces_a_draft_when_the_repository_supervises_posts() {
+    let ReadyToOpen {
+        h,
+        stub,
+        task,
+        agent,
+        ..
+    } = ready_to_open(quiet_script()).await;
+    let opened: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &agent.id,
+                json!({"title": "Fix widgets", "body": "Fixes widgets.", "draft": false}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(opened.pr_url.as_deref(), Some(URL));
+    let call = stub
+        .invocations()
+        .into_iter()
+        .find(|i| {
+            i.args
+                .starts_with(&["pr".to_string(), "create".to_string()])
+        })
+        .expect("the open call");
+    assert!(
+        call.args.iter().any(|a| a == "--draft"),
+        "the repository supervises its posts, so the request opens as a draft \
+         whatever the agent asked: {:?}",
+        call.args
+    );
+}
+
+/// A repository that does not supervise its posts leaves the agent's own
+/// `draft` value through unchanged (026 rule 23).
+#[tokio::test]
+async fn open_pull_request_leaves_the_agents_draft_value_unchanged_when_supervision_is_off() {
+    let ReadyToOpen {
+        h,
+        stub,
+        task,
+        agent,
+        repo,
+        ..
+    } = ready_to_open(quiet_script()).await;
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, false).await;
+    let opened: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &agent.id,
+                json!({"title": "Fix widgets", "body": "Fixes widgets.", "draft": false}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(opened.pr_url.as_deref(), Some(URL));
+    let call = stub
+        .invocations()
+        .into_iter()
+        .find(|i| {
+            i.args
+                .starts_with(&["pr".to_string(), "create".to_string()])
+        })
+        .expect("the open call");
+    assert!(
+        !call.args.iter().any(|a| a == "--draft"),
+        "supervision is off, so the agent's own draft: false goes through: {:?}",
+        call.args
+    );
+}
+
 /// A review body posted on the conversation, with no path and no line, is
 /// the other side's: the `pr` agent's reply to it through `reply_comment`
 /// goes through the forge's `gh pr comment`, once. A second reply to the

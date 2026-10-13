@@ -75,6 +75,7 @@ dto! {
 
     pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         permission_mode: r.permission_mode(),
+        supervise_posts: r.supervise_posts(),
         forge: r.forge.map(forge_dto),
         .. id, path, base_branch, description, default_workflow, created_at, updated_at
     }

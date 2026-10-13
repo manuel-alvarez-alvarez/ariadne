@@ -191,6 +191,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     A task's row stays, and the next fetch with the integration on reads it again.
 21. Nothing adds or removes a request by hand, from the desktop or the CLI: Ariadne starts and stops working on requests on its own.
 22. `open_pull_request`'s body fills the repository's own pull request template where the repository has one. Where it has none, the body carries three sections, Why, What changed and How to test, each written from the task and its diff rather than one line. The title still follows the repository's commit conventions (030 rule 10).
+23. A repository that supervises its posts ([002](002-repositories-branches-and-worktrees.md) rule 13) opens every pull request a task's `pr` column requests as a draft, whatever the agent's own `draft` asked: a person reviews it before it is real to anyone else. A repository that does not leaves the agent's own value through unchanged.
 
 ## HTTP
 
@@ -371,6 +372,11 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `kept_requests.rs::the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side`.
 - A trailer is stripped from the body of `open_pull_request`:
   `kept_requests.rs::open_pull_request_strips_a_trailing_trailer_from_the_body`.
+- A repository that supervises its posts forces every opened request to a
+  draft, whatever the agent asked, and one that does not leaves the agent's
+  own value through unchanged:
+  `kept_requests.rs::open_pull_request_forces_a_draft_when_the_repository_supervises_posts`,
+  `::open_pull_request_leaves_the_agents_draft_value_unchanged_when_supervision_is_off`.
 - A trailing trailer and the blank line before it are stripped, and text with no trailer is left whole:
   `forge/pulls.rs::tests::strip_trailers_takes_off_a_trailing_trailer_and_the_blank_line_before_it`,
   `::strip_trailers_leaves_text_with_no_trailer_whole`.

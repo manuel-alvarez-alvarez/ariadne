@@ -441,3 +441,62 @@ async fn a_repository_carries_its_permission_mode() {
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+/// A repository holds its agents' posts for a person's approval until
+/// someone turns it off, a repository registered without the flag starts
+/// supervised, and an update that names only the flag moves only the flag
+/// (002).
+#[tokio::test]
+async fn a_repository_carries_its_supervise_posts_flag() {
+    let h = harness().await;
+    let repo = h.git_repo("repo");
+
+    let created: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string()}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert!(created.supervise_posts);
+
+    let unsupervised: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string(), "base_branch": "next",
+                                   "supervise_posts": false}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert!(!unsupervised.supervise_posts);
+
+    let edited: RepositoryDto = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{}", created.id),
+                serde_json::json!({"supervise_posts": false}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(!edited.supervise_posts);
+    assert_eq!(edited.base_branch, created.base_branch);
+
+    let unmoved: RepositoryDto = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{}", created.id),
+                serde_json::json!({"description": "renamed"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(
+        !unmoved.supervise_posts,
+        "an edit that does not name the flag keeps it"
+    );
+}
