@@ -15,6 +15,7 @@ fn github_pull(head_sha: &str, updated_at: &str) -> Value {
         "state": "OPEN", "isDraft": false, "headRefName": "fix", "headRefOid": head_sha,
         "headRepository": {"url": "https://github.com/acme/widgets"},
         "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
+        "reviewRequests": [{"login": "me"}],
         "createdAt": "2026-10-01T00:00:00Z", "updatedAt": updated_at})
 }
 
