@@ -159,7 +159,7 @@ case "$test_case" in
         rm -f "$TEST_ROOT/commands"
         printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$base" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
-        for cmd in 'cargo machete .' 'cargo build --workspace --all-targets' \
+        for cmd in 'cargo machete .' \
             'cargo nextest run --workspace --profile ci' 'cargo test --doc --workspace' \
             'cargo clippy --workspace --all-targets -- -D warnings' 'cargo fmt --all -- --check' \
             'check-unused-rust'; do
@@ -205,7 +205,6 @@ case "$test_case" in
         rm -f "$TEST_ROOT/commands"
         printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$unreachable_sha" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
-        grep -Fx 'cargo build --workspace --all-targets' "$TEST_ROOT/commands"
         grep -Fx 'npm run check' "$TEST_ROOT/commands"
         grep -Fx 'cargo check' "$TEST_ROOT/commands"
         ;;
@@ -235,7 +234,6 @@ case "$test_case" in
         grep -Fx 'cargo machete .' "$TEST_ROOT/commands"
         grep -Fx 'cargo fmt --all -- --check' "$TEST_ROOT/commands"
         grep -Fx 'cargo check' "$TEST_ROOT/commands"
-        ! grep -Fx 'cargo build --workspace --all-targets' "$TEST_ROOT/commands"
         ;;
     unicode-push)
         setup_repo
@@ -254,7 +252,7 @@ case "$test_case" in
         setup_repo
         rm -f "$TEST_ROOT/commands"
         "$TEST_ROOT/repo/.githooks/pre-push" --all > "$TEST_ROOT/output" 2>&1
-        grep -Fx 'cargo build --workspace --all-targets' "$TEST_ROOT/commands"
+        grep -Fx 'cargo nextest run --workspace --profile ci' "$TEST_ROOT/commands"
         grep -Fx 'npm run check' "$TEST_ROOT/commands"
         grep -Fx 'cargo check' "$TEST_ROOT/commands"
         ;;

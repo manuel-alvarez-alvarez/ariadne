@@ -117,7 +117,6 @@ that touches `crates/`:
 
 ```sh
 cargo machete .
-cargo build --workspace --all-targets
 cargo nextest run --workspace --profile ci
 cargo test --doc --workspace
 cargo clippy --workspace --all-targets -- -D warnings

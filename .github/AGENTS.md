@@ -7,7 +7,7 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
 
 - [`workflows/ci.yml`](workflows/ci.yml) — runs on every push to `main` and
   every pull request: `fmt` checks `cargo fmt` on the workspace and on
-  `ui/src-tauri`; `rust` builds the workspace and runs `cargo nextest run
+  `ui/src-tauri`; `rust` runs `cargo nextest run
   --workspace`, `cargo test --doc --workspace`, `cargo clippy --workspace
   --all-targets -- -D warnings`, `scripts/check-unused-rust` and `cargo
   machete .`, on Ubuntu and macOS; `ui` runs `npm run lint`, `npm run
