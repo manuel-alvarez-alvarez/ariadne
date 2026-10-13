@@ -1391,9 +1391,19 @@ impl Launcher {
             if wt.exists() {
                 tracing::info!(task = %task.id, worktree = %wt.display(), "cleanup: removing worktree");
                 self.git.remove_worktree(&repo_path, &wt).await.ok();
-                removed_a_worktree = true;
+                if wt.exists() {
+                    tracing::warn!(task = %task.id, worktree = %wt.display(), "cleanup: worktree removal failed, will retry");
+                } else {
+                    removed_a_worktree = true;
+                }
             }
-            self.store.set_task_worktree(&task.id, None).await?;
+            // Cleared only once the directory is actually gone: a goal
+            // settled long ago is reconciled again every tick for as long
+            // as this stays set, which is also what gets a failed removal
+            // retried rather than forgotten.
+            if !wt.exists() {
+                self.store.set_task_worktree(&task.id, None).await?;
+            }
         }
         if removed_a_worktree {
             self.git.prune_worktrees(&repo_path).await.ok();
