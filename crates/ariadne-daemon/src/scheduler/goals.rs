@@ -91,7 +91,7 @@ impl super::Scheduler {
                             )
                             .await;
                     }
-                    let _ = self.launcher.cleanup_task(&task.id, false, false).await;
+                    self.remove_tasks_worktree(&task.id).await;
                 }
                 self.kill_goal_sessions(&goal.id).await;
             }
@@ -103,9 +103,43 @@ impl super::Scheduler {
             // machine awake with it. Every other arm converges on each tick;
             // so does this one. Sessions are killed at most once in practice,
             // because a killed one is no longer live.
-            GoalStatus::Completed => self.kill_goal_sessions(&goal.id).await,
+            //
+            // A task's own worktree is removed the same way a cancelled
+            // goal's is: a task failed or cancelled on its own while this
+            // goal was still active kept its worktree for a retry that is no
+            // longer coming, now the goal it belonged to is over (rule 10).
+            // A finished task has usually lost its worktree already, to the
+            // per-task cleanup `reconcile_steps` ran on it (030); the call
+            // here is what catches one a daemon restart raced past that.
+            GoalStatus::Completed => {
+                for task in self
+                    .store
+                    .list_tasks(TaskFilter {
+                        goal_id: Some(goal.id.clone()),
+                        status: None,
+                    })
+                    .await?
+                {
+                    self.remove_tasks_worktree(&task.id).await;
+                }
+                self.kill_goal_sessions(&goal.id).await;
+            }
         }
         Ok(())
+    }
+
+    /// Take a task's worktree down now the goal that owns it is over,
+    /// whatever the task's own status is — never its branch, which
+    /// `delete_merged_branches` only ever reaches through a merge (rule 10
+    /// of `002-repositories-branches-and-worktrees.md`). Idempotent, like
+    /// [`crate::launcher::Launcher::cleanup_task`] itself, so a goal that
+    /// stays `cancelled` or `completed` across ticks calls it on an already
+    /// cleaned-up task for nothing worse than another no-op.
+    async fn remove_tasks_worktree(&self, task_id: &str) {
+        let _ = self
+            .launcher
+            .cleanup_task(task_id, self.launcher.cfg.delete_merged_worktrees, false)
+            .await;
     }
 
     /// Whether to have another go at starting this goal's orchestrator.
