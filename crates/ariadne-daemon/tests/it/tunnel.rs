@@ -313,6 +313,15 @@ async fn daemon(home: &Path, stub: &StubForgeCli, timeouts: Timeouts) -> (Harnes
     (h, listener)
 }
 
+/// Poll and debounce timings that tests do not mean to exercise. A test that
+/// does names its shorter timeout at the call site instead.
+fn ordinary_timeouts() -> Timeouts {
+    Timeouts {
+        forge_wake_debounce: RUNS_OUT / 10,
+        ..Timeouts::default()
+    }
+}
+
 async fn enable(h: &Harness) -> String {
     let path = h.git_repo("tunnel");
     sh(
@@ -550,7 +559,7 @@ async fn a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_f
     let home = home(&format!("tunnel_host = \"{}\"\n", server.host()));
     let gates = Gates::shut();
     let stub = stub_forge_cli(script(&[], &gates));
-    let (h, listener) = daemon(home.path(), &stub, Timeouts::default()).await;
+    let (h, listener) = daemon(home.path(), &stub, ordinary_timeouts()).await;
     server.hold();
     let id = enable(&h).await;
     call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
@@ -605,6 +614,7 @@ async fn a_server_that_goes_away_restores_the_timer_and_one_that_returns_goes_li
     let stub = stub_forge_cli(script(&[], &gates));
     let timeouts = Timeouts {
         forge_poll: RUNS_OUT,
+        forge_wake_debounce: RUNS_OUT / 10,
         tunnel_connect: RUNS_OUT,
         tunnel_retry: Duration::from_millis(100),
         ..Timeouts::default()
@@ -666,6 +676,7 @@ async fn the_switch_moves_the_fetch_without_touching_the_hooks_and_survives_a_re
     let stub = stub_forge_cli(script(&[], &gates));
     let timeouts = Timeouts {
         forge_poll: RUNS_OUT,
+        forge_wake_debounce: RUNS_OUT / 10,
         ..Timeouts::default()
     };
     let (h, _listener) = daemon(home.path(), &stub, timeouts).await;
@@ -759,7 +770,7 @@ async fn the_configured_subdomain_is_asked_for_and_the_stored_one_again_after_a_
     ));
     let gates = Gates::shut();
     let stub = stub_forge_cli(script(&[], &gates));
-    let (h, _listener) = daemon(configured.path(), &stub, Timeouts::default()).await;
+    let (h, _listener) = daemon(configured.path(), &stub, ordinary_timeouts()).await;
     server.hold();
     let id = enable(&h).await;
     call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
@@ -778,7 +789,7 @@ async fn the_configured_subdomain_is_asked_for_and_the_stored_one_again_after_a_
     let gates = Gates::shut();
     let stored = home(&format!("tunnel_host = \"{}\"\n", server.host()));
     let stub = stub_forge_cli(script(&[], &gates));
-    let (h, _listener) = daemon(stored.path(), &stub, Timeouts::default()).await;
+    let (h, _listener) = daemon(stored.path(), &stub, ordinary_timeouts()).await;
     server.hold();
     let id = enable(&h).await;
     call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
@@ -800,7 +811,7 @@ async fn the_configured_subdomain_is_asked_for_and_the_stored_one_again_after_a_
         h.launcher.cfg.clone(),
         h.bus.clone(),
         &h.state.forge_poll,
-        Timeouts::default(),
+        ordinary_timeouts(),
     );
     let listener =
         WebhookListen::bind(&h.launcher.cfg, h.store.clone(), h.state.forge_poll.clone())
@@ -826,7 +837,7 @@ async fn a_public_url_or_no_enabled_integration_opens_no_tunnel() {
     ));
     let gates = Gates::opened();
     let stub = stub_forge_cli(script(&[], &gates));
-    let (h, _listener) = daemon(public.path(), &stub, Timeouts::default()).await;
+    let (h, _listener) = daemon(public.path(), &stub, ordinary_timeouts()).await;
     let id = enable(&h).await;
     // The hook goes live before the fetch worker starts, so its first fetch
     // is the only one.
@@ -849,7 +860,7 @@ async fn a_public_url_or_no_enabled_integration_opens_no_tunnel() {
 
     let none = home(&format!("tunnel_host = \"{}\"\n", server.host()));
     let stub = stub_forge_cli(script(&[], &gates));
-    let (h, _listener) = daemon(none.path(), &stub, Timeouts::default()).await;
+    let (h, _listener) = daemon(none.path(), &stub, ordinary_timeouts()).await;
     let path = h.git_repo("plain");
     let _: Value = h
         .json(
@@ -894,7 +905,7 @@ async fn a_delivery_and_a_timer_fetch_record_the_same_pull_request_rows() {
     let tunnelled = home(&format!("tunnel_host = \"{}\"\n", server.host()));
     let gates = Gates::shut();
     let stub = stub_forge_cli(script(&before, &gates));
-    let (h, _listener) = daemon(tunnelled.path(), &stub, Timeouts::default()).await;
+    let (h, _listener) = daemon(tunnelled.path(), &stub, ordinary_timeouts()).await;
     server.hold();
     let id = enable(&h).await;
     call_after(&stub, 0, "the first fetch at the lists gate", is_list_call).await;
@@ -926,6 +937,7 @@ async fn a_delivery_and_a_timer_fetch_record_the_same_pull_request_rows() {
         &stub,
         Timeouts {
             forge_poll: RUNS_OUT,
+            forge_wake_debounce: RUNS_OUT / 10,
             ..Timeouts::default()
         },
     )
@@ -954,7 +966,7 @@ async fn a_switch_off_during_registration_cancels_it_and_publishes_no_url() {
     let home = home(&format!("tunnel_host = \"{}\"\n", server.host()));
     let gates = Gates::opened();
     let stub = stub_forge_cli(script(&[], &gates));
-    let (h, _listener) = daemon(home.path(), &stub, Timeouts::default()).await;
+    let (h, _listener) = daemon(home.path(), &stub, ordinary_timeouts()).await;
     server.hold();
     let id = enable(&h).await;
     eventually(TIMEOUT, "the registration to be held", async || {

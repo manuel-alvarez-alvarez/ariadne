@@ -182,8 +182,7 @@ async fn main() -> Result<()> {
         config.clone(),
         &events,
         launcher.live.clone(),
-        ariadne_daemon::timeouts::Timeouts::default().forge_poll,
-        ariadne_daemon::timeouts::Timeouts::default().forge_details,
+        ariadne_daemon::timeouts::Timeouts::default(),
     );
     let webhook_listen =
         ariadne_daemon::webhooks::WebhookListen::bind(&config, store.clone(), forge_poll.clone())

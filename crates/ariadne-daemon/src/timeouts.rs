@@ -20,6 +20,20 @@ pub struct Timeouts {
     /// How long one detail fetch of a pull request may take: its comments,
     /// checks and base, read off the forge after a repository fetch (026).
     pub forge_details: Duration,
+    /// How long a repository's poll worker pauses once a fetch answers that
+    /// the forge's rate limit was hit, where the forge's own reset time
+    /// could not be read (`ForgeClient::rate_limit_reset`).
+    pub forge_rate_limit_pause: Duration,
+    /// The longest wait between two timer fetches of a repository whose
+    /// last fetch failed for a reason other than a rate limit. Each failure
+    /// doubles the wait from `forge_poll`, up to this cap; the first fetch
+    /// that works resets it.
+    pub forge_poll_backoff_cap: Duration,
+    /// How long a repository's poll worker waits after its first wake before
+    /// it fetches: a further wake inside that fixed window folds into the
+    /// same fetch, so a burst of webhook deliveries for one push costs one
+    /// fetch rather than one per delivery.
+    pub forge_wake_debounce: Duration,
     /// How long a killed agent's running turn has to end once it is
     /// cancelled.
     ///
@@ -110,6 +124,9 @@ impl Default for Timeouts {
             tunnel_connect: Duration::from_secs(15),
             tunnel_retry: Duration::from_secs(1),
             forge_details: Duration::from_secs(30),
+            forge_rate_limit_pause: Duration::from_secs(900),
+            forge_poll_backoff_cap: Duration::from_secs(3600),
+            forge_wake_debounce: Duration::from_secs(5),
             checkpoint: Duration::from_secs(30),
             dead_launch_patience: Duration::from_secs(30),
         }
