@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-10-12
+updated: 2026-10-13
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-daemon/tests/it/attention.rs
   - crates/ariadne-daemon/src/forge/news.rs
   - crates/ariadne-daemon/src/forge/github/reviews.rs
+  - crates/ariadne-daemon/src/forge/github/pulls.rs
   - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-store/tests/store.rs
@@ -61,17 +62,20 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    starts the session. A request that goes back to draft ends it.
 3. Whether the request still asks for the user's review is read on every
    fetch and held with the live read, never stored (026 rule 4). The fetch's
-   list of review requests that holds it says yes (026 rule 5). For an open
-   row that asked on the last read and the list no longer holds, the fetch
-   asks the forge
+   open list says yes where it names the login among the request's own
+   requested reviewers (026 rule 5). For an open row that asked on the last
+   read and the list no longer names the login, the fetch asks the forge
    (`ForgeClient::review_still_requested`). A detail read with no fetch
-   before it says the request still asks: only a fetch withdraws it. GitHub stops listing a request
-   once the user reviewed it, and writes no removal event for that. So it
-   reads the request's timeline: the last review request or removed request
-   for the login decides. A review decides nothing, so a review posted after a
-   withdrawal does not ask again. GitLab keeps a reviewer listed after a review,
-   so a request it does not list asks for nothing. A review of the user's own
-   keeps nothing alive. Where the forge cannot answer, the last read stands.
+   before it says the request still asks: only a fetch withdraws it. GitHub
+   drops the login from `reviewRequests` once the user reviewed it, and
+   writes no removal event for that. So it reads the request's timeline: the
+   last review request or removed request for the login decides. A review
+   decides nothing, so a review posted after a withdrawal does not ask
+   again. GitLab keeps a reviewer listed after a review, so a request it
+   does not list asks for nothing. A review of the user's own keeps nothing
+   alive. Where the forge cannot answer, the last read stands. A review
+   asked of a team the user belongs to is never found this way, since
+   GitHub names a team by a slug or a name, never a login (026 Known gap).
 4. The worktree is `worktree_root/pr-<id>`, detached at `head_sha`
    (`Launcher::review_worktree`), as a task reviewer's is at its branch tip
    (004). A head the checkout lacks is fetched into `FETCH_HEAD` from
@@ -300,6 +304,11 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 - An open request out of draft gets one live session on the review pin, seat
   `reviewer`, detached at `head_sha`, with `pr-reviewer` indexed:
   `pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`.
+- GitHub's open list names the login among a request's own `reviewRequests`
+  to say the request still asks for the user's review; a team named there,
+  by a slug rather than a login, never does:
+  `forge/github/pulls.rs::tests::a_user_review_request_names_its_login`,
+  `::a_team_review_request_matches_no_login`.
 - The review session resolves the thread of its own fixed finding through
   `resolveReviewThread`, and a thread someone else opened, or a resolve from
   another session, is refused:
