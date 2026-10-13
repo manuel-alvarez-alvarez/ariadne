@@ -11,6 +11,10 @@ fn github_pull(number: i64, author: &str) -> Value {
         "state": "OPEN", "isDraft": false, "headRefName": "fix", "headRefOid": "abc",
         "headRepository": {"url": "https://github.com/acme/widgets"},
         "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
+        // Named here whether `author` is `me` or not: `forge::pulls::role`
+        // already keeps a request of mine out of the reviewer path, so
+        // this never asks me to review my own request in effect.
+        "reviewRequests": [{"login": "me"}],
         "createdAt": "2026-10-01T00:00:00Z", "updatedAt": "2026-10-02T00:00:00Z"})
 }
 
@@ -277,7 +281,7 @@ async fn timer_wake_only_and_disable_control_repository_fetches() {
             .filter(|i| i.args.starts_with(&["pr".into(), "list".into()]))
             .count()
     };
-    eventually(TIMEOUT, "enable and timer fetch", async || lists() >= 4).await;
+    eventually(TIMEOUT, "enable and timer fetch", async || lists() >= 2).await;
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
     let idle = || stub.completed() == stub.invocations().len();
     eventually(TIMEOUT, "the fetches to settle", async || idle()).await;
@@ -287,14 +291,10 @@ async fn timer_wake_only_and_disable_control_repository_fetches() {
     assert_eq!(lists(), count, "WakeOnly must not use the timer");
     h.state.forge_poll.wake(&id);
     eventually(TIMEOUT, "the wake's fetch", async || {
-        lists() == count + 2 && idle()
+        lists() == count + 1 && idle()
     })
     .await;
-    assert_eq!(
-        lists(),
-        count + 2,
-        "one wake lists authored and review requests once"
-    );
+    assert_eq!(lists(), count + 1, "one wake lists the open requests once");
     let _: Value = h
         .json(
             put_json(
@@ -334,20 +334,20 @@ async fn wakes_during_a_fetch_coalesce_into_one_following_fetch() {
             .filter(|i| i.args.starts_with(&["pr".into(), "list".into()]))
             .count()
     };
-    // A fetch reads its open list and its review requests together.
-    eventually(TIMEOUT, "blocked first fetch", async || lists() == 2).await;
+    // A fetch reads its open list, with its review requests, once.
+    eventually(TIMEOUT, "blocked first fetch", async || lists() == 1).await;
     h.state.forge_poll.set_mode(&id, Mode::WakeOnly);
     for _ in 0..5 {
         h.state.forge_poll.wake(&id);
     }
     // Prove that no second fetch starts before the gate opens.
     tokio::time::sleep(QUIET).await;
-    assert_eq!(lists(), 2, "a second fetch must wait for the first");
+    assert_eq!(lists(), 1, "a second fetch must wait for the first");
     std::fs::write(gate, "").unwrap();
-    eventually(TIMEOUT, "the one following fetch", async || lists() == 4).await;
+    eventually(TIMEOUT, "the one following fetch", async || lists() == 2).await;
     // Prove that the coalesced wakes start no later fetch.
     tokio::time::sleep(QUIET).await;
-    assert_eq!(lists(), 4, "the five wakes must coalesce");
+    assert_eq!(lists(), 2, "the five wakes must coalesce");
 }
 
 /// A request of mine is Ariadne's to work on once a task opened it (005,
@@ -579,7 +579,7 @@ async fn disabling_during_a_fetch_cancels_it_without_starting_work() {
             .count()
     };
     eventually(TIMEOUT, "the first fetch", async || {
-        lists() >= 2 && stub.completed() == stub.invocations().len()
+        lists() >= 1 && stub.completed() == stub.invocations().len()
     })
     .await;
     let gate = h.dir.path().join("release-disabled");
@@ -587,8 +587,8 @@ async fn disabling_during_a_fetch_cancels_it_without_starting_work() {
     blocked[2]["wait_for"] = json!(gate);
     stub.reprogram(blocked);
     h.state.forge_poll.wake(&repo);
-    // A fetch reads its open list and its review requests together.
-    eventually(TIMEOUT, "blocked fetch", async || lists() == 4).await;
+    // A fetch reads its open list, with its review requests, once.
+    eventually(TIMEOUT, "blocked fetch", async || lists() == 2).await;
     let _: Value = h
         .json(
             put_json(
@@ -609,7 +609,7 @@ async fn disabling_during_a_fetch_cancels_it_without_starting_work() {
             .unwrap()
             .is_empty()
     );
-    assert_eq!(lists(), 4);
+    assert_eq!(lists(), 2);
 }
 
 /// Each fetch reads the repository's open issues too, and publishes

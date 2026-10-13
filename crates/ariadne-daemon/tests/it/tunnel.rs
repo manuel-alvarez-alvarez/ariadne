@@ -214,7 +214,7 @@ impl StandIn {
 /// The last call of each fetch: it reads the open issues.
 const ISSUES: [&str; 2] = ["api", "repos/acme/widgets/issues?state=open&per_page=100"];
 
-/// Two gates each fetch passes: one in front of its lists of requests,
+/// Two gates each fetch passes: one in front of its list of requests,
 /// one in front of its read of issues. A call that meets a shut gate stands
 /// there until the gate opens.
 ///
@@ -352,12 +352,11 @@ async fn other_repository(h: &Harness) -> String {
     repo["id"].as_str().unwrap().into()
 }
 
-/// Fetches so far: each one lists the review requests once.
+/// Fetches so far: each one lists the open requests once.
 fn fetches(stub: &StubForgeCli) -> usize {
     stub.invocations()
         .iter()
         .filter(|call| call.args.starts_with(&["pr".into(), "list".into()]))
-        .filter(|call| call.args.iter().any(|a| a.starts_with("review-requested:")))
         .count()
 }
 
@@ -385,7 +384,6 @@ fn fetches_after_the_last_hook_call(stub: &StubForgeCli) -> usize {
     calls[last..]
         .iter()
         .filter(|call| call.args.starts_with(&["pr".into(), "list".into()]))
-        .filter(|call| call.args.iter().any(|a| a.starts_with("review-requested:")))
         .count()
 }
 
@@ -448,9 +446,9 @@ async fn timer_fetch(stub: &StubForgeCli, gates: &Gates) {
 /// Wait for the hook to go live at `url`, and for the one fetch after it.
 ///
 /// A fetch stands at the shut lists gate from before the hook can go live,
-/// with both of its lists (open and review-requested) under way at once.
-/// The catch-up wake therefore finds it running, and coalesces into exactly
-/// one fetch after it (026). Answers the fetches so far.
+/// under way on its one list of open requests. The catch-up wake therefore
+/// finds it running, and coalesces into exactly one fetch after it (026).
+/// Answers the fetches so far.
 async fn live_at(h: &Harness, stub: &StubForgeCli, gates: &Gates, id: &str, url: &str) -> usize {
     let hook = format!("{url}/webhooks/github/{id}");
     eventually(TIMEOUT, "the hook to go live at the tunnel", async || {
@@ -465,11 +463,11 @@ async fn live_at(h: &Harness, stub: &StubForgeCli, gates: &Gates, id: &str, url:
             .iter()
             .filter(|c| is_list_call(c))
             .count()
-            == 2
-            && stub.completed() == calls.len() - 2,
+            == 1
+            && stub.completed() == calls.len() - 1,
         "a fetch stands at the lists gate while the hook goes live"
     );
-    // The held fetch has listed its review requests, so it counts already.
+    // The held fetch has listed its open requests, so it counts already.
     let done = fetches(stub);
     let answered = calls.iter().filter(|c| is_issues_call(c)).count();
     gates.open();
