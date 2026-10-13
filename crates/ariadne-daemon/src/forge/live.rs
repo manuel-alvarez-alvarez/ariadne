@@ -520,17 +520,23 @@ impl LivePulls {
 }
 
 /// A fresh detail read's comments, merged with whatever `previous` already
-/// held: one missing from the fresh read is carried forward only where
+/// held: one missing from the fresh read is carried forward where
 /// `previous` marks it added after `since`, the generation the read's own
 /// snapshot started at — `add_comments` wrote it after this read could
 /// have seen it, so its absence here says nothing of the forge deleting
-/// it. One missing and not so marked, or confirmed by the fresh read on
-/// its own terms, is a local addition this cache no longer has to carry:
-/// dropped from what is kept, and from what is tracked after the merge
-/// too, the way the review a forge user actually deleted would be.
-/// Answers the merged comments, and the generation and the
-/// still-unconfirmed local additions to carry into the entry this read
-/// writes.
+/// it — or where it is a review's own finding or verdict and this same
+/// fresh read still finds a pending review or draft note of the viewer's
+/// own (`pending_drafts`): GitHub never lists a pending review's own
+/// comments among a request's, and GitLab never lists a draft note among
+/// a discussion's, until the user publishes it, so a missing read says
+/// nothing of the forge dropping it either, for as long as the pending
+/// set it belongs to is still there. One missing and neither, or
+/// confirmed by the fresh read on its own terms, is a local addition this
+/// cache no longer has to carry: dropped from what is kept, and from what
+/// is tracked after the merge too, the way the review a forge user
+/// actually deleted would be. Answers the merged comments, and the
+/// generation and the still-unconfirmed local additions to carry into the
+/// entry this read writes.
 fn merge_fresh_details(
     previous: Option<&Live>,
     since: u64,
@@ -540,6 +546,7 @@ fn merge_fresh_details(
         return (details, 0, HashMap::new());
     };
     let mut local_additions = previous.local_additions.clone();
+    let pending_set_still_open = details.pending_drafts.is_some();
     if let Some(prev_details) = previous.details.as_ref() {
         for comment in &prev_details.comments {
             let in_fresh_read = details
@@ -553,7 +560,8 @@ fn merge_fresh_details(
             let added_after_since = local_additions
                 .get(&comment.forge_id)
                 .is_some_and(|&generation| generation > since);
-            match added_after_since {
+            let held_by_a_pending_set = comment.from_review && pending_set_still_open;
+            match added_after_since || held_by_a_pending_set {
                 true => details.comments.push(comment.clone()),
                 false => {
                     local_additions.remove(&comment.forge_id);
@@ -1227,5 +1235,95 @@ mod tests {
         let mut live = sample_live(true);
         live.generation = 1;
         assert!(!live.unmoved(&live.pull.clone(), 0, Instant::now()));
+    }
+
+    fn pending_finding() -> NewPullRequestComment {
+        NewPullRequestComment {
+            forge_id: "rc-1".into(),
+            thread_id: "rc-1".into(),
+            kind: "review_comment".into(),
+            author_login: "me".into(),
+            author_is_bot: false,
+            body: "**[P0] Empty list**".into(),
+            path: Some("src/lib.rs".into()),
+            line: Some(3),
+            in_reply_to: None,
+            created_at: "2026-10-13T00:00:00Z".into(),
+            resolved: false,
+            from_review: true,
+        }
+    }
+
+    fn fresh_details(pending_drafts: Option<i64>) -> Details {
+        Details {
+            comments: Vec::new(),
+            failed_checks: Vec::new(),
+            behind_base: false,
+            head_sha: "abc".into(),
+            pending_drafts,
+        }
+    }
+
+    /// A pending review's own finding, held under `rc-1` where GitHub
+    /// never lists a pending review's comments among a request's own,
+    /// must not vanish the moment a poll runs after it, as long as that
+    /// same poll still finds the pending review itself (`pending_drafts`):
+    /// its absence from `comments` says nothing of the forge dropping it,
+    /// only that the forge never shows it there while it is still pending.
+    /// `submit_review`'s own validation reads this list for an open P0, so
+    /// losing the finding here would wrongly refuse a later round that
+    /// carries no new one (the bug a review caught: 029).
+    #[test]
+    fn a_pending_reviews_finding_survives_a_poll_while_the_review_is_still_pending() {
+        let live = LivePulls::default();
+        live.set("p", sample_live(true));
+        live.add_comments("p", &[pending_finding()]);
+        let since = live.generation("p");
+
+        live.set_details(
+            "p",
+            live.get("p").unwrap().pull,
+            false,
+            since,
+            fresh_details(Some(1)),
+        );
+        let after_one_poll = live.get("p").unwrap().details.unwrap().comments;
+        assert_eq!(after_one_poll.len(), 1, "{after_one_poll:?}");
+        assert_eq!(after_one_poll[0].forge_id, "rc-1");
+
+        // A second poll, started after the first already ran, must not
+        // lose it either: nothing about the pending review changed.
+        let since = live.generation("p");
+        live.set_details(
+            "p",
+            live.get("p").unwrap().pull,
+            false,
+            since,
+            fresh_details(Some(1)),
+        );
+        let after_two_polls = live.get("p").unwrap().details.unwrap().comments;
+        assert_eq!(after_two_polls.len(), 1, "{after_two_polls:?}");
+    }
+
+    /// Once a poll finds no pending review or draft note left of the
+    /// viewer's own, a finding this cache still held under it is gone for
+    /// real — published into a real comment the next fetch would find
+    /// instead, or discarded outright — so the cache stops carrying it.
+    #[test]
+    fn a_pending_reviews_finding_is_dropped_once_the_pending_review_is_gone() {
+        let live = LivePulls::default();
+        live.set("p", sample_live(true));
+        live.add_comments("p", &[pending_finding()]);
+        let since = live.generation("p");
+
+        live.set_details(
+            "p",
+            live.get("p").unwrap().pull,
+            false,
+            since,
+            fresh_details(None),
+        );
+        let after = live.get("p").unwrap().details.unwrap().comments;
+        assert!(after.is_empty(), "{after:?}");
     }
 }
