@@ -686,7 +686,7 @@ pub(super) async fn reply(
 /// person who wrote them. A repository that holds posts back lists it
 /// under a "Threads to resolve" heading of the user's own pending review
 /// (GitHub) or sets `resolve_discussion` on a draft note of its discussion
-/// (GitLab) instead, answering `{pending: true, id}` (026 rule 24a).
+/// (GitLab) instead, answering `{pending: true, id}` (026 rule 24).
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/resolve", tag = "pull-requests",
     params(("id" = String, Path), ("comment_id" = String, Path)),
     responses((status = 200, body = ReplyAnswerDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
@@ -721,6 +721,11 @@ pub(super) async fn resolve(
     if !comment.resolved {
         let repository = state.store.get_repository(&pull.repository_id).await?;
         if repository.supervise_posts() {
+            // Held under the same lock a reply and a review hold: all
+            // three read, change and write the one pending review body,
+            // and a pair of them racing each other must not lose one's
+            // change to the other's (026 rule 24).
+            let _reply_lock = state.reply_locks.hold(&pull.id).await;
             let id = client(&state, &forge)
                 .resolve_pending(&slug(&forge), pull.number, &login, &comment)
                 .await
@@ -994,10 +999,14 @@ pub(super) async fn submit_review(
     let forge_client = client(&state, &forge);
     let repository = state.store.get_repository(&pull.repository_id).await?;
     if repository.supervise_posts() {
-        // Held unposted in the user's own forge drafts (026 rule 24a): the
+        // Held unposted in the user's own forge drafts (026 rule 24): the
         // verdict and the round's summary lead the pending review's own
         // body, or one more draft note of its own, rather than the sticky
-        // summary comment `write_summary` otherwise posts.
+        // summary comment `write_summary` otherwise posts. The same lock
+        // a reply and a resolve hold on the one pending review body: a
+        // pair of them racing each other must not lose one's change to
+        // the other's.
+        let _reply_lock = state.reply_locks.hold(&pull.id).await;
         let verdict = if request_changes {
             "Request changes"
         } else {

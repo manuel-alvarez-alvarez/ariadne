@@ -1223,7 +1223,7 @@ mod tests {
 
     /// Where the repository holds posts back, the daemon answers
     /// `submit_review` with `pending: true` rather than the posted
-    /// comments (026 rule 24a / 029 rule 13a): the tool's own text says the
+    /// comments (026 rule 24 / 029 rule 13a): the tool's own text says the
     /// review waits in the user's forge drafts, rather than handing back
     /// the raw pending shape.
     #[tokio::test]
@@ -1250,7 +1250,7 @@ mod tests {
 
     /// Where the repository holds posts back, the daemon answers
     /// `resolve_thread` with `pending: true` rather than the resolved
-    /// comment (026 rule 24a / 029 rule 16a): the tool's own text says the
+    /// comment (026 rule 24 / 029 rule 16b): the tool's own text says the
     /// resolve waits in the user's forge drafts, rather than handing back
     /// the raw pending shape.
     #[tokio::test]

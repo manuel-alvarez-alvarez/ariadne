@@ -485,7 +485,7 @@ impl ForgeClient {
 
     /// Post one review of request `number` in the name of `login`, held
     /// unposted in the user's own forge drafts rather than submitted (026
-    /// rule 24a / 029 rule 13a, where the repository holds posts back):
+    /// rule 24 / 029 rule 13a, where the repository holds posts back):
     /// each inline comment is added to GitHub's one pending review, or
     /// GitLab's own draft note of it; `verdict` — the event and the
     /// round's summary — is set at the pending review's own top (GitHub),
@@ -513,7 +513,7 @@ impl ForgeClient {
     }
 
     /// Resolve the thread one stored comment of request `number` is in,
-    /// held back (026 rule 24a / 029 rule 16a, where the repository holds
+    /// held back (026 rule 24 / 029 rule 16b, where the repository holds
     /// posts back): GitHub lists it under a "Threads to resolve" heading
     /// of the pending review body; GitLab sets `resolve_discussion` on the
     /// viewer's own draft note of that discussion, made first where there

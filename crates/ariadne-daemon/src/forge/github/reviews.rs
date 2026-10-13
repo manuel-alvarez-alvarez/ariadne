@@ -4,8 +4,8 @@
 use serde::Deserialize;
 
 use super::Github;
-use super::details::{issue_comment_id, review_comment_id};
-use crate::forge::pulls::{REVIEW_MARK, ReviewDraft, split_slug};
+use super::details::{issue_comment_id, review_comment_id, review_id};
+use crate::forge::pulls::{CONVERSATION, REVIEW_MARK, ReviewDraft, split_slug};
 use ariadne_store::NewPullRequestComment;
 
 #[derive(Deserialize)]
@@ -207,6 +207,25 @@ impl Github {
             });
         }
         self.apply_pending_header(host, &pending, header).await?;
+        // Recorded as the review's the same way the posted summary is
+        // (`hold_review_comments`), under the pending review's own id: the
+        // verdict and summary have no comment of their own on GitHub, so
+        // this is what stands for it until the forge lets a fetch see the
+        // pending review itself.
+        stored.push(NewPullRequestComment {
+            forge_id: review_id(pending.id),
+            thread_id: CONVERSATION.into(),
+            kind: "issue_comment".into(),
+            author_login: login.to_string(),
+            author_is_bot: false,
+            body: header.to_string(),
+            path: None,
+            line: None,
+            in_reply_to: None,
+            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            resolved: false,
+            from_review: false,
+        });
         Ok(stored)
     }
 
@@ -437,10 +456,11 @@ sys.stdout.write(answers[count])
     }
 
     /// `submit_review`, with the repository holding posts back, adds each
-    /// finding to the viewer's own pending review as a new thread, and
-    /// sets the verdict and summary at the review body's own top, with no
-    /// event ever submitted: the pending review's listing is read once,
-    /// not once per finding.
+    /// finding to the viewer's own pending review as a new thread, sets
+    /// the verdict and summary at the review body's own top, and holds a
+    /// `from_review` conversation entry of the verdict too, under the
+    /// pending review's own id, with no event ever submitted: the pending
+    /// review's listing is read once, not once per finding.
     #[tokio::test]
     async fn submit_review_pending_adds_each_finding_and_sets_the_header() {
         let dir = tempfile::tempdir().unwrap();
@@ -492,9 +512,13 @@ sys.stdout.write(answers[count])
                 .iter()
                 .map(|c| c.forge_id.clone())
                 .collect::<Vec<_>>(),
-            ["rc-501", "rc-502"]
+            ["rc-501", "rc-502", "rv-9"]
         );
-        assert!(stored.iter().all(|c| c.kind == "review_comment"));
+        assert!(stored[..2].iter().all(|c| c.kind == "review_comment"));
+        let verdict = stored.last().unwrap();
+        assert_eq!(verdict.kind, "issue_comment");
+        assert_eq!(verdict.thread_id, "conversation");
+        assert_eq!(verdict.body, "**Verdict: Request changes**\n\nOne P0 open.");
         let pending_list = call_args(dir.path(), 0);
         assert!(
             !pending_list.contains(&"--method".to_string()),
@@ -516,5 +540,42 @@ sys.stdout.write(answers[count])
             body,
             "**Verdict: Request changes**\n\nOne P0 open.\n<!-- ariadne:pending-review-verdict -->"
         );
+    }
+
+    /// A round with no new finding still holds the verdict and summary,
+    /// under the pending review's own id, the same way a round with no
+    /// comments writes the posted summary.
+    #[tokio::test]
+    async fn submit_review_pending_holds_the_verdict_with_no_finding() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = fake_gh_scripted(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+            ],
+        );
+        let github = Github::new(Cli {
+            timeout: Duration::from_secs(5),
+            ..Cli::new(Some(&binary), "gh")
+        });
+        let review = ReviewDraft {
+            request_changes: false,
+            head_sha: "abc".into(),
+            comments: vec![],
+        };
+        let stored = github
+            .submit_review_pending(
+                "github.com/acme/widgets",
+                1,
+                &review,
+                "me",
+                "**Verdict: Comment**\n\nNothing new.",
+            )
+            .await
+            .unwrap();
+        assert_eq!(stored.len(), 1, "{stored:?}");
+        assert_eq!(stored[0].forge_id, "rv-9");
+        assert_eq!(stored[0].kind, "issue_comment");
     }
 }

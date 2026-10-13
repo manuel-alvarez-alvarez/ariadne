@@ -2008,7 +2008,7 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
     );
 }
 
-/// Where the repository supervises its posts (026 rule 24a / 029 rule
+/// Where the repository supervises its posts (026 rule 24 / 029 rule
 /// 13a), an Ariadne review holds its findings and its verdict in the
 /// viewer's own pending review rather than submitting one: no event is
 /// ever set, and no summary comment is posted.
@@ -2176,6 +2176,32 @@ async fn an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_
                 && a.contains("addPullRequestReviewThread"))),
         "the finding joins the pending review: {calls:?}"
     );
+    // Ariadne records the verdict and the finding as the review's, the
+    // same way a posted round's findings and summary are
+    // (`pull_request_comment_marks`), even though neither reached the
+    // forge as a comment of its own.
+    let marks = h.store.pull_request_comment_marks(&id).await.unwrap();
+    let marked = |forge_id: &str| marks.iter().find(|m| m.forge_id == forge_id);
+    assert!(
+        marked("rc-501").is_some_and(|m| m.from_review),
+        "the held finding is marked the review's: {marks:?}"
+    );
+    assert!(
+        marked("rv-9").is_some_and(|m| m.from_review),
+        "the held verdict is marked the review's: {marks:?}"
+    );
+    let held = h
+        .launcher
+        .live
+        .get(&id)
+        .and_then(|l| l.details)
+        .map(|d| d.comments);
+    let verdict = held
+        .as_ref()
+        .and_then(|comments| comments.iter().find(|c| c.forge_id == "rv-9"))
+        .expect("the verdict is held locally under the pending review's id");
+    assert_eq!(verdict.thread_id, "conversation");
+    assert_eq!(verdict.body, "**Verdict: Comment**\n\nOne P1.");
 
     let resolved: Value = h
         .json(

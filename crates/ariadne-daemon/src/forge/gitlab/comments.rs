@@ -119,7 +119,7 @@ impl Gitlab {
         Ok(())
     }
 
-    /// Resolve the discussion `comment` is in, held back (029 rule 16a,
+    /// Resolve the discussion `comment` is in, held back (029 rule 16b,
     /// where the repository holds posts back): the viewer's own draft note
     /// of that discussion takes `resolve_discussion: true`, made first,
     /// with a short body, where there is none. Answers the draft note's own
@@ -315,7 +315,7 @@ sys.stdout.write(answers[count])
         }
     }
 
-    /// `resolve_thread` (029 rule 16a), with the repository holding posts
+    /// `resolve_thread` (029 rule 16b), with the repository holding posts
     /// back, sets `resolve_discussion: true` on the viewer's own draft
     /// note already in that discussion, rather than publishing a note or
     /// resolving the discussion directly.

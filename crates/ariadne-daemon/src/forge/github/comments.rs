@@ -35,9 +35,9 @@ pub(super) struct ReviewSummary {
     user: ReviewAuthor,
 }
 
-/// What `submit_review` (029) and `resolve_thread` (029 rule 16a) write at
+/// What `submit_review` (029) and `resolve_thread` (029 rule 16b) write at
 /// the top of the viewer's pending review body where the repository holds
-/// posts back (026 rule 24a): the ending of the verdict and summary
+/// posts back (026 rule 24): the ending of the verdict and summary
 /// `set_pending_review_header` writes, so a later round replaces only the
 /// text above it, leaving any reply text `reply_pending` appended below it
 /// in place.
@@ -340,7 +340,7 @@ impl Github {
         self.update_pending_review_body(host, pending, &body).await
     }
 
-    /// Resolve the thread `comment` is in, held back (029 rule 16a, where
+    /// Resolve the thread `comment` is in, held back (029 rule 16b, where
     /// the repository holds posts back): a line naming it, under a
     /// "Threads to resolve" heading of the viewer's pending review body,
     /// created once rather than on every call. Creates the pending review
@@ -379,15 +379,24 @@ fn review_thread_url(
     format!("https://{host}/{owner}/{name}/pull/{number}#discussion_r{id}")
 }
 
-/// `line` under a markdown `## {heading}` section of `body`, which this is
-/// the only writer of and so is always the body's last section: an
-/// existing heading takes the line at the body's end, so a second call
-/// never writes the heading twice; with none, the heading and the line are
-/// appended there instead.
+/// `line` under a markdown `## {heading}` section of `body`: an existing
+/// heading takes the line at its own section's end, so a second call never
+/// writes the heading twice, and a reply `reply_pending` appends after it
+/// (a blank line away, the same way every append here separates one piece
+/// from the next) never pushes an earlier line out from under its
+/// heading. With no heading yet, it and the line are appended at the
+/// body's end instead.
 fn with_section_line(body: &str, heading: &str, line: &str) -> String {
     let marker = format!("## {heading}");
-    if body.contains(&marker) {
-        return format!("{}\n{line}\n", body.trim_end());
+    let mut blocks: Vec<String> = body.split("\n\n").map(str::to_string).collect();
+    if let Some(section) = blocks.iter().position(|block| block.starts_with(&marker)) {
+        let block = &mut blocks[section];
+        if !block.ends_with('\n') {
+            block.push('\n');
+        }
+        block.push_str(line);
+        block.push('\n');
+        return blocks.join("\n\n");
     }
     let section = format!("{marker}\n{line}\n");
     match body.trim().is_empty() {
@@ -726,7 +735,7 @@ sys.stdout.write(answers[count])
         );
     }
 
-    /// `resolve_thread` (029 rule 16a), with the repository holding posts
+    /// `resolve_thread` (029 rule 16b), with the repository holding posts
     /// back, lists the thread under a "Threads to resolve" heading of the
     /// pending review body rather than resolving it, creating the heading
     /// once.
@@ -761,6 +770,52 @@ sys.stdout.write(answers[count])
             "## Threads to resolve\n\
              - https://github.com/acme/widgets/pull/1#discussion_r101\n\
              - https://github.com/acme/widgets/pull/1#discussion_r202\n"
+        );
+    }
+
+    /// A reply `reply_pending` appended after the heading (per
+    /// `Github::append_to_pending_review`, a blank line away) does not push
+    /// an earlier thread's line out from under it: a later resolve still
+    /// lands its own line in the heading's own section, ahead of the reply.
+    #[tokio::test]
+    async fn resolve_pending_keeps_its_section_whole_around_a_reply_appended_after_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let body_after_a_reply = "## Threads to resolve\n\
+             - https://github.com/acme/widgets/pull/1#discussion_r101\n\n\
+             > Why not here?\n\n\
+             [alice](https://github.com/acme/widgets/pull/1#issuecomment-42)\n\n\
+             Fixed it.";
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                &format!(
+                    r#"[{{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":{},"user":{{"login":"me"}}}}]"#,
+                    serde_json::to_string(body_after_a_reply).unwrap()
+                ),
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+            ],
+        ));
+        let comment = PullRequestComment {
+            forge_id: "rc-202".into(),
+            ..review_comment("T2")
+        };
+        github
+            .resolve_pending("github.com/acme/widgets", 1, "me", &comment)
+            .await
+            .unwrap();
+        let mutate = call_args(dir.path(), 1);
+        let body = mutate
+            .iter()
+            .find_map(|a| a.strip_prefix("body="))
+            .expect("a body argument");
+        assert_eq!(
+            body,
+            "## Threads to resolve\n\
+             - https://github.com/acme/widgets/pull/1#discussion_r101\n\
+             - https://github.com/acme/widgets/pull/1#discussion_r202\n\n\n\
+             > Why not here?\n\n\
+             [alice](https://github.com/acme/widgets/pull/1#issuecomment-42)\n\n\
+             Fixed it."
         );
     }
 
