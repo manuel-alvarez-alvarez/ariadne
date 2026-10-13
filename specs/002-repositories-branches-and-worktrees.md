@@ -1,7 +1,7 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-10-13
+updated: 2026-10-14
 areas: [store, api, daemon, cli, ui]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
@@ -68,8 +68,13 @@ and the integration with it (025).
    retries it.
 9. An orchestrator works in the repository's primary checkout, not a worktree
    of its own: it is the first repository of its goal.
-10. Finished worktrees are removed when `delete_merged_worktrees` is set; failed
-    and cancelled worktrees remain for inspection.
+10. A task's worktree is removed when it lands, and a task's worktree is
+    removed when the goal it belongs to is cancelled or completed — whatever
+    that task's own status is by then — all when `delete_merged_worktrees`
+    is set. While its goal stays active, a task that fails or is cancelled
+    on its own keeps its worktree, for a retry that may still come or for
+    inspection. Neither ending of a goal ever deletes a branch:
+    `delete_merged_branches` only ever reaches one that landed.
 11. The daemon watches each task branch's head and announces a move on the
     event stream, so clients see a commit without polling. The watch is
     established for the worktrees found at startup and goes when the worktree
@@ -152,6 +157,13 @@ and the integration with it (025).
   (`::the_startup_sweep_follows_the_worktrees_it_finds`), a failed task stops
   being followed (`::a_failed_task_stops_being_followed`), and the watch goes
   with the worktree (`::the_watch_goes_with_the_worktree`).
+- A goal cancelled while its tasks are running, failed and cancelled loses
+  every one of their worktrees and keeps every one of their branches
+  (`task_branches.rs::a_cancelled_goal_removes_every_tasks_worktree_but_keeps_its_branches`),
+  a goal completed with a cancelled task loses that task's worktree too
+  (`::completing_a_goal_removes_a_cancelled_tasks_worktree`), and
+  `delete_merged_worktrees = false` keeps every worktree of a cancelled goal
+  (`::delete_merged_worktrees_false_keeps_a_cancelled_goals_worktrees`).
 - Twelve followed branches in a repository with 100 loose refs use a bounded
   number of descriptors
   (`branch.rs::twelve_followed_branches_share_one_repository_watch`), and
