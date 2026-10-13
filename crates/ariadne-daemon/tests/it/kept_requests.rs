@@ -42,18 +42,60 @@ fn review_comment(id: i64, login: &str, reply_to: Option<i64>, at: &str) -> Valu
 /// What the stub forge answers: the request in `state` on its own read, its
 /// review comments in one thread, and its check runs. No list holds it: a
 /// fetch's open list is empty, and reads the request on its own.
+/// The pull's own `statusCheckRollup` repeats `check_runs`' own conclusions
+/// (`rollup`): the request read and its detailed check read agree on a
+/// check's outcome, so a fetch comparing the two (`Live::unmoved`) sees the
+/// move a real forge read would too.
 fn script(state: &str, comments: &[Value], check_runs: Value) -> Value {
     let threads = json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
         {"id": "T1", "isResolved": false, "comments": {"nodes": [{"databaseId": 101}]}}
     ]}}}}});
+    let mut read = pull(state, "abc");
+    read["statusCheckRollup"] = rollup(&check_runs);
     script_of(
-        pull(state, "abc"),
+        read,
         &[],
         comments,
         &json!({"check_runs": check_runs}).to_string(),
         "[]",
         &threads.to_string(),
     )
+}
+
+/// `check_runs`' own REST conclusions, lowercase, as the forge's list read
+/// names the same outcome in its GraphQL enum, uppercase: what a pull's
+/// `statusCheckRollup` must repeat for `checks` to move the way a detail
+/// read of the same check runs also does.
+fn rollup(check_runs: &Value) -> Value {
+    json!(
+        check_runs
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mut run| {
+                if let Some(conclusion) = run["conclusion"].as_str() {
+                    run["conclusion"] = json!(conclusion.to_uppercase());
+                }
+                run
+            })
+            .collect::<Vec<_>>()
+    )
+}
+
+/// `script`, with the pull's own `updatedAt` moved to `at`: what a real
+/// forge push, comment or edit would also move, so a fetch whose only
+/// other change is to `comments` is read as having moved
+/// (`Live::unmoved`), not as repeating the held read.
+fn moved_at(mut script: Value, at: &str) -> Value {
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "view"]) {
+            let mut pull: Value = serde_json::from_str(entry["stdout"].as_str().unwrap()).unwrap();
+            pull["updatedAt"] = json!(at);
+            entry["stdout"] = json!(pull.to_string());
+        }
+    }
+    script
 }
 
 /// The same, for a request read as `read` and lists that hold `listed`, with
@@ -287,7 +329,10 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
     let briefed = h.prompts_to(&agent).len();
 
     let comments = [review_comment(101, "alice", None, "2026-10-02T00:00:00Z")];
-    stub.reprogram(script("OPEN", &comments, json!([])));
+    stub.reprogram(moved_at(
+        script("OPEN", &comments, json!([])),
+        "2026-10-02T00:00:00Z",
+    ));
     fetch_again(&h, &stub, &repo).await;
     let mut stored: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "the comment to be stored", async || {
@@ -313,7 +358,16 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
     assert!(news.contains(&comment_id), "{news}");
     assert!(news.contains("alice"), "{news}");
 
-    fetch_again(&h, &stub, &repo).await;
+    // Nothing moved since the held read, so this fetch skips the detail
+    // read outright (`Live::unmoved`); wait for the fetch itself to finish,
+    // not for a detail read that will not happen.
+    let before = stub.fetches();
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "the unmoved fetch to finish", async || {
+        stub.fetches() > before
+    })
+    .await;
+    h.flush_scheduler().await;
     // Prove that the completed fetch hands no later duplicate news.
     tokio::time::sleep(QUIET).await;
     assert_eq!(
@@ -650,7 +704,7 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
     }
     stub.reprogram(script.clone());
 
-    let before = stub.invocations().len();
+    let before = replies(&stub);
     h.error(
         as_session(
             &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
@@ -661,9 +715,9 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
     )
     .await;
     assert_eq!(
-        stub.invocations().len(),
+        replies(&stub),
         before,
-        "a second reply to the same body calls the forge CLI no further"
+        "a second reply to the same body posts no further reply"
     );
 
     h.error(
@@ -676,9 +730,9 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
     )
     .await;
     assert_eq!(
-        stub.invocations().len(),
+        replies(&stub),
         before,
-        "a reply to the agent's own side's body calls the forge CLI no further"
+        "a reply to the agent's own side's body posts no further reply"
     );
 }
 
@@ -823,12 +877,17 @@ async fn a_poll_that_began_before_a_reply_does_not_erase_it() {
         .to_string();
 
     // Only now does a detail read's own conversation call wait on the
-    // gate: the setup fetch above, before this, ran free of it.
+    // gate: the setup fetch above, before this, ran free of it. The pull
+    // itself also moves its own `updatedAt`, the way a real push or edit
+    // would: nothing else in this read repeats the held one, so this wake's
+    // fetch reads the detail read as due (`Live::unmoved`) rather than
+    // skipping it.
     for entry in script.as_array_mut().unwrap() {
         if entry["args"] == json!(["api", "repos/acme/widgets/issues/1/comments"]) {
             entry["wait_for"] = json!(gate.display().to_string());
         }
     }
+    script = moved_at(script, "2026-10-02T00:00:00Z");
     stub.reprogram(script.clone());
 
     // The poll's own detail read reaches, and is held on, its
@@ -936,6 +995,11 @@ async fn a_comment_gone_from_a_later_read_is_dropped() {
             entry["stdout"] = json!(reviews_without_alice.to_string());
         }
     }
+    // The deletion itself moves the pull's own `updatedAt`, the way a real
+    // forge edit would: otherwise nothing else in this read repeats the
+    // held one, and the next fetch would skip the detail read outright
+    // (`Live::unmoved`).
+    script = moved_at(script, "2026-10-03T00:00:00Z");
     stub.reprogram(script.clone());
     fetch_again(&h, &stub, &repo).await;
 
@@ -1557,7 +1621,25 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
         entries.insert(0, entry);
     }
     stub.reprogram(script.clone());
-    fetch_again(&h, &stub, &repo).await;
+    // The setup fetch can finish after the fixture changes but before this
+    // wake records its detail-call baseline. Wait for the state that either
+    // fetch must leave instead of missing that completed refresh.
+    h.state.forge_poll.wake(&repo);
+    eventually(
+        TIMEOUT,
+        "the detail fetch to read the new head",
+        async || {
+            h.launcher.live.get(&id).is_some_and(|live| {
+                live.pull.head_sha == tip
+                    && live
+                        .details
+                        .as_ref()
+                        .is_some_and(|details| details.head_sha == tip)
+            })
+        },
+    )
+    .await;
+    h.flush_scheduler().await;
 
     let ask = Request::builder()
         .method("PUT")
@@ -1625,6 +1707,11 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
     let mut posted = finding.clone();
     posted[0]["user"] = me.clone();
     holds(&mut script, posted.clone(), summary.clone());
+    // The review's own post moves the pull's own `updatedAt`, the way a
+    // real forge comment would: otherwise nothing else in this read
+    // repeats the held one, and the next fetch would skip the detail read
+    // outright (`Live::unmoved`).
+    script = moved_at(script, "2026-10-03T00:00:00Z");
     stub.reprogram(script.clone());
     fetch_again(&h, &stub, &repo).await;
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;

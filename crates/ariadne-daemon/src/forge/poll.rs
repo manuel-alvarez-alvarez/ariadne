@@ -10,7 +10,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, OnceLock},
-    time::Duration,
+    time::{Duration, Instant as StdInstant},
 };
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio::time::{Instant, sleep_until};
@@ -617,8 +617,10 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
 /// Read one request Ariadne works on, and leave the read in memory (026):
 /// the list's read where the list holds it, else a read of its own — a
 /// merged or closed request, or one the list misses — and, while it is
-/// open, its details: its comments, its failed checks and its base. A
-/// detail read that fails keeps the details an earlier read found.
+/// open, its details: its comments, its failed checks and its base. Where
+/// the list's own read moved nothing a detail read would also show
+/// (`Live::unmoved`), the detail read is skipped and the held details kept
+/// (perf). A detail read that fails keeps the details an earlier read found.
 async fn read_row(
     handoff: &Handoff,
     client: &ForgeClient,
@@ -651,6 +653,18 @@ async fn read_row(
     }
     let requested = review_requested(handoff, client, slug, login, row, &read, asks).await;
     if read.state != "open" {
+        handoff.live.set_pull(&row.id, read, requested);
+        return Ok(());
+    }
+    // The list's own read already repeats every field a detail read would
+    // also show (`Live::unmoved`): nothing moved since the last detail
+    // read, so this fetch keeps it rather than paying for a fresh one.
+    let now = StdInstant::now();
+    if handoff
+        .live
+        .get(&row.id)
+        .is_some_and(|held| held.unmoved(&read, since, now))
+    {
         handoff.live.set_pull(&row.id, read, requested);
         return Ok(());
     }

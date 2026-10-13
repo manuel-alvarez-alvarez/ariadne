@@ -12,6 +12,7 @@ tests:
   - crates/ariadne-daemon/src/forge/github/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/pull_requests.rs
+  - crates/ariadne-daemon/tests/it/pull_request_detail_skip.rs
   - crates/ariadne-daemon/tests/it/pull_request_lists.rs
   - crates/ariadne-daemon/tests/it/forge_rate_limit.rs
   - crates/ariadne-daemon/tests/it/tunnel.rs
@@ -121,13 +122,16 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 
 ## Comments, checks and the detail read
 
-9. Each fetch reads the details of every open request Ariadne works on.
+9. Each fetch reads the details of every open request Ariadne works on, except where the held details are still current under the skip rule below.
     `ForgeClient::details(number)` answers the request, every comment with its thread and author, the failed checks, and whether the head is behind the base.
     GitHub reads `gh api` review comments, issue comments and reviews, thread ids and resolution through `gh api graphql`, check runs of the head, and a base compare.
     Every list is read with `--paginate`, the review threads and the check runs included.
     GitLab reads `glab api` discussions, the jobs of the latest pipeline, and the diverged commit count.
     The reads go to the forge together; only GitHub's check runs and compare wait, on the request's own read, for its head and base.
     One detail read is bounded by `Timeouts::forge_details`, 30 seconds by default. One that fails keeps the details the last read found.
+    A fetch skips the detail read of a request whose list read moves nothing a detail read would also show: the held read has details and `evidence_ok`, its `updated_at`, `head_sha`, `checks`, `review_decision`, `mergeable`, `draft`, `title` and `state` all equal the list's own read, its `LivePulls::generation` still equals the read's snapshot, no comment Ariadne posted is still unconfirmed by a detail read, and the details are less than 15 minutes old (`forge::live::Live::unmoved`). The held details stand in place of a fresh read.
+    A skipped read also leaves `behind_base` as its held detail value, and does not see a changed set of failed check names where normalized `checks` remains `failure`; the corresponding rule 12 news waits for the next detail read. At 15 minutes, the next fetch reads the details even where every list field still matches. The five-minute fallback timer permits at most two unchanged skips before that refresh.
+    A thread a human resolves on the forge does not move `updated_at`; its resolved state is read by that forced refresh when no earlier request move reads it.
 10. A comment is the forge's, and its id is the forge's: `rc-<n>`, `ic-<n>`, `rv-<n>` or `note-<n>`.
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
     Comments on the conversation and review bodies share one thread, `conversation`.
@@ -258,6 +262,16 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   one fetch makes one `pr list` call: `tunnel.rs::a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_fetches_once`.
 - A detail read asks the forge for its parts together:
   `pull_requests.rs::a_detail_read_asks_the_forge_for_its_parts_together`.
+- A request whose list read moves nothing skips the detail read; any one field moving, a posted comment awaiting confirmation, or a failed last detail read runs it again:
+  `forge/live.rs::tests::unmoved_holds_where_the_list_read_repeats_the_held_fields`,
+  `::unmoved_fails_where_any_one_field_moved`, `::unmoved_fails_with_no_details_or_failed_evidence`,
+  `::unmoved_fails_when_held_details_expire`,
+  `::unmoved_fails_while_a_local_addition_awaits_confirmation`,
+  `::unmoved_fails_where_a_local_addition_landed_during_this_read`;
+  `pull_request_detail_skip.rs::two_fetches_of_an_unmoved_request_run_one_detail_read`,
+  `::a_fetch_whose_list_read_field_moved_runs_the_detail_read`,
+  `::a_fetch_after_ariadne_posts_a_comment_runs_the_detail_read`,
+  `::a_fetch_after_a_failed_detail_read_runs_the_detail_read_again`.
 - Two reads of the list and of the search after one fetch make no further `pr list` call, a repository with no fetch yet lists empty with 200 and a disabled one still answers 409, the single-request route answers the held read with no `details()` call, and the panel route still reads live:
   `pull_request_lists.rs::two_reads_after_one_fetch_run_no_further_pr_list_call`,
   `::a_repository_with_no_fetch_yet_lists_empty_and_a_disabled_one_is_refused`,
