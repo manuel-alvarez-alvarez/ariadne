@@ -607,11 +607,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The open requests of the enabled repositories, read live off the forge
-         *     (026): every one, or with `role` and `requested` the user's own or the
-         *     ones that ask for their review, each with what Ariadne keeps of it where
-         *     it works on it. With `task`, the request a task opened, which its author
-         *     keeps (005).
+         * The open requests of the enabled repositories, answered from the last
+         *     fetch of each (026): every one, or with `role` and `requested` the
+         *     user's own or the ones that ask for their review, each with what Ariadne
+         *     keeps of it where it works on it. A repository with no fetch yet answers
+         *     none of its requests. With `task`, the request a task opened, which its
+         *     author keeps (005).
          */
         get: operations["pull-requests_list"];
         put?: never;
@@ -645,7 +646,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** A request Ariadne works on, read off the forge now. */
+        /**
+         * A request Ariadne works on, as the last fetch found it, or read off the
+         *     forge now where nothing has read it yet (026).
+         */
         get: operations["pull-requests_get"];
         put?: never;
         post?: never;
@@ -5094,7 +5098,7 @@ export interface operations {
                     "application/json": components["schemas"]["PullRequestDto"][];
                 };
             };
-            502: {
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -167,24 +167,32 @@ export function useRowAction<T extends { id: string }, V = void>(
 /**
  * Whether a failed read is worth asking the daemon about again.
  *
- * Exported for the one screen-level property it decides: how long a screen
- * shimmers before it admits it has nothing. That has to be the *same* length
- * everywhere, because a daemon that went away takes every screen with it, and
- * a board that gave up at four seconds next to a table still shimmering at
- * fifteen reads as one of them being broken rather than the daemon being down.
+ * Every query client uses this one policy, so screens agree about how long to
+ * shimmer before admitting they have nothing. A daemon that went away takes
+ * every screen with it; a board that gave up at four seconds next to a table
+ * still shimmering at fifteen reads looks broken rather than disconnected.
  *
- * So the two hopeless cases are not retried at all:
+ * So the three hopeless cases are not retried at all:
  *
  * - a 4xx will not fix itself;
  * - a network failure means the request never reached a daemon, which the
  *   event stream has already noticed and the connection banner is already
  *   saying — retrying it only delays the same answer.
+ * - a `502 forge_error` is the forge itself refusing or rate-limiting the
+ *   daemon's own call, not a daemon hiccup: a retry hits the same forge
+ *   with the same answer, so the daemon's next scheduled fetch is the
+ *   useful retry.
  *
- * Everything else — a 5xx, a dropped response mid-flight — is transient and
- * still gets its two retries.
+ * Everything else — another 5xx, a dropped response mid-flight — is
+ * transient and still gets its two retries.
  */
 function shouldRetryQuery(failureCount: number, error: unknown): boolean {
-  if (ApiError.is(error) && (error.isNetworkError || (error.status >= 400 && error.status < 500))) {
+  if (
+    ApiError.is(error) &&
+    (error.isNetworkError ||
+      (error.status >= 400 && error.status < 500) ||
+      (error.status === 502 && error.code === "forge_error"))
+  ) {
     return false
   }
   return failureCount < 2

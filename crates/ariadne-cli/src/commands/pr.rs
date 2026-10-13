@@ -586,7 +586,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pr_commands_use_the_live_routes_and_preserve_search_text() {
+    async fn pr_commands_use_the_pull_request_routes_and_preserve_search_text() {
         let calls: Calls = Arc::default();
         let app = Router::new()
             .route("/v1/repositories", get(answer))

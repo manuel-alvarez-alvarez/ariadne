@@ -231,6 +231,7 @@ async fn kept_request(script: Value) -> Kept {
         async || h.session_status(&agent).await == SessionStatus::Idle,
     )
     .await;
+    eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
     Kept {
         h,
         stub,
@@ -243,22 +244,11 @@ async fn kept_request(script: Value) -> Kept {
     }
 }
 
-/// How many detail fetches the stub has answered: one compare per fetch.
-fn detail_fetches(stub: &StubForgeCli) -> usize {
-    stub.invocations()
-        .iter()
-        .filter(|i| i.args.get(1).is_some_and(|a| a.contains("/compare/")))
-        .count()
-}
-
 /// Fetch the repository once more and let the scheduler act on it.
 async fn fetch_again(h: &Harness, stub: &StubForgeCli, repo: &str) {
-    let before = detail_fetches(stub);
+    let before = stub.fetches();
     h.state.forge_poll.wake(repo);
-    eventually(TIMEOUT, "the detail fetch", async || {
-        detail_fetches(stub) > before
-    })
-    .await;
+    eventually(TIMEOUT, "the fetch", async || stub.fetches() > before).await;
     h.flush_scheduler().await;
 }
 
@@ -420,6 +410,7 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         review_comment(201, "me", Some(101), "2026-10-03T00:00:00Z"),
     ];
     stub.reprogram(script("OPEN", &answered, json!([])));
+    fetch_again(&h, &stub, &repo).await;
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert_eq!(dto["unanswered_comments"], 0);
     h.error(
@@ -1181,8 +1172,8 @@ fn script_ready_for_head_with(head: &str, failing: &[&str]) -> Value {
     Value::Array(entries)
 }
 
-/// A direct, route-level read through `GET /v1/pull-requests/{id}` moves
-/// the readiness item itself, not only `evidence_ok`: a failed read there
+/// A direct, route-level read through `GET /v1/pull-requests/{id}/comments`
+/// moves the readiness item itself, not only `evidence_ok`: a failed read there
 /// withdraws it from a fresh `attention::collect`, and publishes
 /// `pull_requests_changed`, the one thing that reaches an existing
 /// watcher — a `WakeOnly` poll worker, left untouched throughout, could
@@ -1229,7 +1220,7 @@ async fn a_route_level_read_failure_withdraws_the_readiness_item_and_its_recover
     stub.reprogram(script_ready_for_head_with(&head, &["pr", "view"]));
     let error = h
         .error(
-            crate::common::get(&format!("/v1/pull-requests/{id}")),
+            crate::common::get(&format!("/v1/pull-requests/{id}/comments")),
             StatusCode::BAD_GATEWAY,
         )
         .await;
@@ -1241,7 +1232,7 @@ async fn a_route_level_read_failure_withdraws_the_readiness_item_and_its_recover
     );
 
     stub.reprogram(script_ready_for_head(&head));
-    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
     next_event(&mut events, moved).await;
     assert!(!items().await.is_empty(), "the recovery restores it");
 }
@@ -1294,7 +1285,7 @@ async fn a_successful_route_level_read_withdraws_the_readiness_item_when_approva
     let mut dismissed = ready_pull(&head);
     dismissed["reviewDecision"] = json!("");
     stub.reprogram(script_with_read(&head, &dismissed));
-    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
     assert!(
         h.launcher.live.get(&id).unwrap().evidence_ok,
         "the read succeeded outright; evidence_ok never moved"
@@ -1635,13 +1626,12 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
     posted[0]["user"] = me.clone();
     holds(&mut script, posted.clone(), summary.clone());
     stub.reprogram(script.clone());
+    fetch_again(&h, &stub, &repo).await;
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert_eq!(
         dto["unanswered_comments"], 2,
         "the finding and the summary wait"
     );
-
-    fetch_again(&h, &stub, &repo).await;
     eventually(TIMEOUT, "the finding to reach the agent", async || {
         h.prompts_to(&agent)
             .iter()

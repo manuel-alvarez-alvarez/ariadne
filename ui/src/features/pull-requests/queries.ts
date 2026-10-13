@@ -46,8 +46,8 @@ export function pullRequestByKeyQueryOptions(key: string) {
 
 /**
  * `GET /v1/pull-requests` under `filters`: the open requests the Forge
- * screen's tab lists, read live off the forge, and read again on every
- * `pull_requests_changed`.
+ * screen's tab lists, from the repository's last fetch, and read again on
+ * every `pull_requests_changed`.
  */
 export function pullRequestsQueryOptions(filters: {
   repo?: string
