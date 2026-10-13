@@ -1028,8 +1028,10 @@ straight to the forge — the posting side `supervise_posts` gates — is
   `::a_fetch_reads_a_github_pending_review_with_no_comments_as_some_zero`),
   and GitLab's own `GET .../draft_notes` answers the signed-in viewer's
   own draft notes without failing the rest of the detail read where that
-  one call does
+  one call does, reading every paginated page rather than only the
+  first
   (`forge/gitlab/reviews.rs::tests::draft_posts_counts_the_draft_notes_glab_lists`,
+  `::draft_posts_counts_every_page_glab_lists`,
   proved the same way in
   `pull_requests.rs::a_fetch_reads_the_viewers_own_gitlab_draft_notes`).
 - The CLI board prints a drafts item's own forge link beside its summary
