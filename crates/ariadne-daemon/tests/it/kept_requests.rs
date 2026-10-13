@@ -892,7 +892,12 @@ async fn the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_pos
         ],
     );
     let Kept {
-        h, stub, agent, id, ..
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
     } = kept_request(script).await;
     let mut stored: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "alice's comment to be stored", async || {
@@ -909,6 +914,11 @@ async fn the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_pos
         .to_string();
 
     let before = stub.invocations().len();
+    // The mark lives in the store alone, on no field a forge fetch ever
+    // reads back, so the route announces the change itself: a watcher
+    // waiting on `pull_requests_changed` learns of it without a poll.
+    let mut events = h.bus.subscribe();
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, ariadne_api::stream::DomainEvent::PullRequestsChanged(p) if p.repository_id == repo);
     let reply: Value = h
         .json(
             as_session(
@@ -921,6 +931,7 @@ async fn the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_pos
         .await;
     assert_eq!(reply["pending"], true);
     assert_eq!(reply["id"], "rv-9");
+    next_event(&mut events, moved).await;
     assert!(
         !stub.invocations()[before..]
             .iter()

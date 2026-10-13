@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, TIMEOUT, as_session, eventually, harness, put_json, sh, with_forge,
+    Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, put_json, sh, with_forge,
 };
 use ariadne_core::{Seat, SessionStatus};
 use ariadne_daemon::forge::poll::Mode;
@@ -430,6 +430,11 @@ async fn a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts()
     stub.reprogram(pending_script);
 
     let before = stub.invocations().len();
+    // The mark lives in the store alone, on no field a forge fetch ever
+    // reads back, so the route announces the change itself: a watcher
+    // waiting on `pull_requests_changed` learns of it without a poll.
+    let mut events = h.bus.subscribe();
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, ariadne_api::stream::DomainEvent::PullRequestsChanged(p) if p.repository_id == repo);
     let reply: Value = h
         .json(
             as_session(
@@ -442,6 +447,7 @@ async fn a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts()
         .await;
     assert_eq!(reply["pending"], true);
     assert_eq!(reply["id"], "rv-9");
+    next_event(&mut events, moved).await;
     assert!(
         !stub.invocations()[before..]
             .iter()

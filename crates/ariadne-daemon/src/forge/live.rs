@@ -705,8 +705,11 @@ pub(crate) fn is_review_summary(comment: &PullRequestComment, login: &str) -> bo
 /// The comments with `answered` worked out (026): a later comment of the
 /// same thread on the login's own side answers it, or its own reply is held
 /// pending in the user's own forge drafts (026 rule 24), as [`comments`]
-/// already read onto it — kept rather than overwritten, since a pending
-/// reply adds no later comment of its own for this to find.
+/// already read onto it. A pending reply adds no later comment of its own
+/// for this to find, so it stands at its own comment's place instead: it
+/// answers every earlier comment of its thread, the same as a real reply
+/// there would, and leaves a later one open, since nothing says the agent
+/// has read that far yet.
 pub fn answered(
     mut comments: Vec<PullRequestComment>,
     role: &str,
@@ -714,7 +717,7 @@ pub fn answered(
 ) -> Vec<PullRequestComment> {
     let mine: Vec<(String, String, String)> = comments
         .iter()
-        .filter(|c| is_mine(c, role, login))
+        .filter(|c| is_mine(c, role, login) || c.answered)
         .map(|c| (c.thread_id.clone(), c.created_at.clone(), c.id.clone()))
         .collect();
     for comment in &mut comments {
@@ -958,6 +961,27 @@ mod tests {
         let all = answered(comments("p", &forge, &[pending_mark("1")]), "author", "me");
         assert!(waiting_threads(&all, "author", "me").is_empty());
         assert!(all[0].answered);
+    }
+
+    /// A pending reply to the second of two comments in one thread answers
+    /// the first too (026 rule 24): the agent read that far to answer the
+    /// second, the same as a real reply there would show. A third comment
+    /// after the pending one stays open, since the mark says nothing of it.
+    #[test]
+    fn a_pending_reply_answers_earlier_comments_of_its_thread_and_leaves_a_later_one_open() {
+        let forge = [
+            comment("1", "t1", "alice", "2026-10-02T00:00:00Z"),
+            comment("2", "t1", "alice", "2026-10-02T01:00:00Z"),
+            comment("3", "t1", "alice", "2026-10-02T02:00:00Z"),
+        ];
+        let all = answered(comments("p", &forge, &[pending_mark("2")]), "author", "me");
+        assert!(all.iter().find(|c| c.id == "1").unwrap().answered);
+        assert!(all.iter().find(|c| c.id == "2").unwrap().answered);
+        assert!(!all.iter().find(|c| c.id == "3").unwrap().answered);
+        // The thread still waits, on "3" alone: a real reply after "2"
+        // would leave it open the same way.
+        assert_eq!(waiting_threads(&all, "author", "me").len(), 1);
+        assert_eq!(ids(&untold(&all, "author", "me", false)), ["3"]);
     }
 
     /// A reviewer session hears of the replies in the threads its login

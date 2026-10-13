@@ -197,7 +197,8 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 24. A repository that supervises its posts holds every reply this way too: `POST .../reply` calls `ForgeClient::reply_pending` instead of `ForgeClient::reply`, posting nothing to the forge directly, and answers `{pending: true, id}` in place of a comment, `id` the pending item's own forge id.
     GitHub finds or creates the viewer's one pending review per request (`Github::pending_review`; GitHub allows only one, so it is reused). A reply to an inline review comment joins the pending review's own thread, `addPullRequestReviewThreadReply`, answering the new draft comment's id. A reply to a top-level conversation comment has no pending form of its own, so the pending review's body gains it instead, led by a quote of the comment it answers and a link to it (`Github::append_to_pending_review`), answering the pending review's own id.
     GitLab posts a draft note instead, `POST .../draft_notes`, `in_reply_to_discussion_id` naming the comment's own discussion; only its own author sees it until it is published.
-    The comment this answers is marked `pending_reply` (`pull_request_comment_marks`), a one-way local record never read back off the forge: it counts answered from here on (`forge::live::answered`), so it does not wake the keeping agent again, whatever becomes of the forge's own pending item — a draft deleted there before the user publishes it leaves the mark, and the comment, as they are. A repository that does not supervise its posts posts the reply as before, under rule 16.
+    The comment this answers is marked `pending_reply` (`pull_request_comment_marks`), a one-way local record never read back off the forge: it counts answered from here on (`forge::live::answered`), so it does not wake the keeping agent again, whatever becomes of the forge's own pending item — a draft deleted there before the user publishes it leaves the mark, and the comment, as they are. Since the mark adds no later comment of its own for `answered` to find, it stands at its own comment's place in the thread instead: every earlier comment of that thread reads answered too, the same as a real reply there would show, and a later one stays open. A repository that does not supervise its posts posts the reply as before, under rule 16.
+    The mark lives in the store alone, on no field a forge fetch ever reads back, so the route announces the request changed (`events.pull_requests_changed`) and wakes the scheduler itself: nothing else could tell a watcher the comment now reads answered.
     The agent's own `reply_comment` tool reads a `pending` answer and says, in its own words, that the reply waits in the user's forge drafts and that the agent goes on, rather than handing back the pending shape as though it were the posted comment rule 15 otherwise answers with.
 
 ## HTTP
@@ -405,6 +406,12 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - A comment marked pending reads answered with no later comment on the
   forge to find it by:
   `live.rs::tests::a_pending_reply_marks_its_comment_answered_with_no_later_comment_on_the_forge`.
+- A pending reply to one comment of a thread answers every earlier comment
+  there too, and leaves a later one open:
+  `live.rs::tests::a_pending_reply_answers_earlier_comments_of_its_thread_and_leaves_a_later_one_open`.
+- The reply route announces the pending mark itself, since no forge fetch
+  ever reads it back:
+  `kept_requests.rs::the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_posts`.
 - The pending mark is written once and kept beside a mark of another kind
   on the same row:
   `store.rs::a_pending_reply_mark_is_written_once_and_kept_beside_others`.

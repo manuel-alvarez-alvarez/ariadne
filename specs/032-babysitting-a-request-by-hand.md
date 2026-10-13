@@ -161,7 +161,8 @@ reads behind them ([026](026-pull-requests.md)).
   `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`.
 - Where the repository supervises its posts, the keeper's reply to a
   conversation comment answers `pending: true` with the pending review's
-  own id, posts no `gh pr comment`, leaves the comment answered with no
+  own id, posts no `gh pr comment`, announces the request changed so a
+  watcher learns of it without a poll, leaves the comment answered with no
   further reply taken, is refused a second reply to it, and a later poll
   hands the keeper no further news of it:
   `pull_request_babysit.rs::a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts`.

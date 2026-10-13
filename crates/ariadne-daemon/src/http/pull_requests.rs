@@ -596,6 +596,13 @@ pub(super) async fn reply(
             .store
             .mark_pending_reply(&pull.id, &comment.forge_id)
             .await?;
+        // The mark lives in the store alone, on no field a forge fetch
+        // ever reads back (`forge::poll::pulls_moved` hashes only what
+        // the forge itself answers), so nothing but this direct
+        // announcement could ever tell a watcher the comment now reads
+        // answered.
+        state.events.pull_requests_changed(&pull.repository_id);
+        state.notify_scheduler_pull_request(&pull.id);
         let pending = PendingReplyDto {
             pending: true,
             id: forge_id,
