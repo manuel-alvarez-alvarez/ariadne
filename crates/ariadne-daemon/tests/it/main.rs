@@ -28,6 +28,7 @@ mod doctor;
 mod events;
 mod failure_diagnosis;
 mod forge_integration;
+mod forge_rate_limit;
 mod goal_completion;
 mod goal_delete;
 mod goal_repositories;
@@ -68,6 +69,7 @@ mod workflows;
 
 mod kept_requests;
 mod pull_request_babysit;
+mod pull_request_keep_retry;
 mod pull_request_lists;
 mod pull_request_reviews;
 mod pull_requests;

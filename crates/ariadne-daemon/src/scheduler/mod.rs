@@ -23,7 +23,7 @@ mod tasks;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -39,7 +39,7 @@ use auto_switch::ExhaustedNotice;
 use coalesce::Coalesced;
 use quiet::Quiet;
 
-/// Events that wake the scheduler for a scoped reconciliation.
+/// Events that wake the scheduler for reconciliation.
 pub enum SchedEvent {
     /// A task's status, reviews or deps changed.
     TaskChanged(String),
@@ -59,6 +59,10 @@ pub enum SchedEvent {
     /// A pull request of the ledger changed: a fetch read it, a session
     /// reported on it, or it was closed with its integration (026).
     PullRequestChanged(String),
+    /// Test support: reconcile every row, as the periodic tick does.
+    FullReconcile,
+    /// Test support: reconcile every row with this retry clock.
+    FullReconcileAt(Instant),
     /// Test support: answered the moment this event is dequeued, which is
     /// only once every event sent before it has been reconciled to
     /// completion — the loop below awaits each one fully before it asks the
@@ -182,6 +186,8 @@ pub(crate) struct Scheduler {
     /// Exhausted switches the task's orchestrator has not received yet.
     exhausted_notices: HashMap<String, ExhaustedNotice>,
     pull_request_cleanup_retry: HashMap<String, std::time::Instant>,
+    /// Next permitted periodic forge read of an open kept request.
+    pull_request_read_retry: HashMap<String, Instant>,
     /// The skills a request's live keeper session last ran with, by pull
     /// request id: in memory, since nothing but a later ask ever moves
     /// them, and a session already running them needs no backfill but the
@@ -216,6 +222,7 @@ pub fn start(
         goal_told: HashMap::new(),
         exhausted_notices: HashMap::new(),
         pull_request_cleanup_retry: HashMap::new(),
+        pull_request_read_retry: HashMap::new(),
         keeper_skills_applied: HashMap::new(),
         sleep: SleepInhibitor::new(),
         prevent_sleep,
@@ -266,6 +273,8 @@ impl Scheduler {
             SchedEvent::TaskChanged(id) => self.reconcile(Target::Task(&id)).await,
             SchedEvent::GoalChanged(id) => self.reconcile(Target::Goal(&id)).await,
             SchedEvent::PullRequestChanged(id) => self.reconcile_pull_request(&id).await,
+            SchedEvent::FullReconcile => self.reconcile_all().await,
+            SchedEvent::FullReconcileAt(now) => self.reconcile_all_at(now).await,
             SchedEvent::SessionEvent(id) => {
                 if wakes.wake(&id, tokio::time::Instant::now()) {
                     self.reconcile_session(&id).await;
@@ -458,6 +467,11 @@ impl Scheduler {
     }
 
     async fn reconcile_all(&mut self) {
+        self.reconcile_all_at(Instant::now()).await;
+    }
+
+    /// Run every periodic pass, using `now` for pull-request retry waits.
+    async fn reconcile_all_at(&mut self, now: Instant) {
         // The sweep is the one place that sees every session, so its count
         // decides whether the machine stays awake. `None` means the store did
         // not answer: leave the inhibition as it is rather than guess.
@@ -467,7 +481,7 @@ impl Scheduler {
         self.exhausted_sweep().await;
         self.tell_exhausted_notices().await;
         self.reconcile_entities().await;
-        self.reconcile_pull_requests().await;
+        self.reconcile_pull_requests_at(now).await;
         self.stale_attention_sweep().await;
     }
 

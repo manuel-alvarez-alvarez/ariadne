@@ -32,8 +32,9 @@ use crate::forge::{
 
 use super::{QUIET_NUDGE_SECS, SPAWN_RETRY_BUDGET};
 
-/// How long the tick waits before it tries a failed cleanup again. A change
-/// of the request tries at once.
+/// How long the tick waits before it retries a failed cleanup or reads an
+/// open kept request's forge state again. A cleanup wait skips its full pass;
+/// a read wait skips only that read. A request change reads at once.
 const CLEANUP_RETRY: Duration = Duration::from_secs(60);
 
 /// The situation a review session's watchdog spends its steps in: there is
@@ -41,9 +42,8 @@ const CLEANUP_RETRY: Duration = Duration::from_secs(60);
 const SITUATION: &str = "pull_request";
 
 impl super::Scheduler {
-    /// Every request Ariadne works on: a row is one, until its work is
-    /// taken down and the row goes (026).
-    pub(super) async fn reconcile_pull_requests(&mut self) {
+    /// Reconcile every request from the periodic tick at `now`.
+    pub(super) async fn reconcile_pull_requests_at(&mut self, now: Instant) {
         let rows = match self
             .store
             .list_pull_requests(PullRequestFilter::default())
@@ -59,22 +59,36 @@ impl super::Scheduler {
             if self
                 .pull_request_cleanup_retry
                 .get(&row.id)
-                .is_some_and(|at| *at > Instant::now())
+                .is_some_and(|at| *at > now)
             {
                 continue;
             }
-            self.reconcile_pull_request(&row.id).await;
+            self.reconcile_pull_request_on_tick(&row.id, now).await;
         }
     }
 
     /// One request reconciled, with nowhere to hand an error but the log.
     pub(super) async fn reconcile_pull_request(&mut self, id: &str) {
-        if let Err(e) = self.pull_request_pass(id).await {
+        self.reconcile_pull_request_at(id, None).await;
+    }
+
+    /// One request reconciled from the periodic tick at `now`.
+    async fn reconcile_pull_request_on_tick(&mut self, id: &str, now: Instant) {
+        self.reconcile_pull_request_at(id, Some(now)).await;
+    }
+
+    /// One request reconciled, with nowhere to hand an error but the log.
+    async fn reconcile_pull_request_at(&mut self, id: &str, tick_now: Option<Instant>) {
+        if let Err(e) = self.pull_request_pass(id, tick_now).await {
             warn!(pull_request = %id, error = %format!("{e:#}"), "pull request reconciliation failed");
         }
     }
 
-    async fn pull_request_pass(&mut self, id: &str) -> anyhow::Result<()> {
+    async fn pull_request_pass(
+        &mut self,
+        id: &str,
+        tick_now: Option<Instant>,
+    ) -> anyhow::Result<()> {
         let row = match self.store.get_pull_request(id).await {
             Ok(row) => row,
             Err(StoreError::NotFound { .. }) => return Ok(()),
@@ -128,7 +142,7 @@ impl super::Scheduler {
             // nothing to work on.
             return self.stop_working(&pull.id, (&pull).into()).await;
         }
-        self.keep_pass(&pull).await
+        self.keep_pass(&pull, tick_now).await
     }
 
     /// The request `pull` as the forge reads it now, where that is merged
@@ -196,6 +210,7 @@ impl super::Scheduler {
         }
         self.launcher.live.remove(id);
         self.pull_request_cleanup_retry.remove(id);
+        self.pull_request_read_retry.remove(id);
         self.keeper_skills_applied.remove(id);
         Ok(())
     }
@@ -204,7 +219,11 @@ impl super::Scheduler {
     /// of the task that opened it, and what is left of it taken down once it
     /// ended and its task is over (030). One opened by hand has nobody to
     /// keep it.
-    async fn keep_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
+    async fn keep_pass(
+        &mut self,
+        pull: &PullRequest,
+        tick_now: Option<Instant>,
+    ) -> anyhow::Result<()> {
         let task = match &pull.origin_task_id {
             Some(task_id) => match self.store.get_task(task_id).await {
                 Ok(task) => Some(task),
@@ -222,14 +241,28 @@ impl super::Scheduler {
             // The last read may be older than the merge that ended the task:
             // a finish reads the forge at the call. The forge is asked again,
             // so a merged request still has its work taken down.
-            // A read that fails proves nothing: the row stays, and the pass
-            // after the retry wait asks again.
+            // Open or failed, the read proves nothing moved: the row stays.
+            // A tick skips only this read until the retry wait ends, so the
+            // review and keeper passes still recover each tick. A request
+            // change reads at once, and an open request with no task costs
+            // one forge read per wait, not one per tick.
+            if tick_now.is_some_and(|now| {
+                self.pull_request_read_retry
+                    .get(&pull.id)
+                    .is_some_and(|at| *at > now)
+            }) {
+                return Ok(());
+            }
+            let retry_at = tick_now.unwrap_or_else(Instant::now) + CLEANUP_RETRY;
             match Box::pin(self.read_ended(pull)).await {
                 Ok(Some(ended)) => return Box::pin(self.end_kept_request(&ended)).await,
-                Ok(None) => {}
+                Ok(None) => {
+                    self.pull_request_read_retry
+                        .insert(pull.id.clone(), retry_at);
+                }
                 Err(e) => {
-                    self.pull_request_cleanup_retry
-                        .insert(pull.id.clone(), Instant::now() + CLEANUP_RETRY);
+                    self.pull_request_read_retry
+                        .insert(pull.id.clone(), retry_at);
                     return Err(e);
                 }
             }

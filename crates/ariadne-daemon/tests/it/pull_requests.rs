@@ -264,6 +264,7 @@ async fn timer_wake_only_and_disable_control_repository_fetches() {
         .forge_cli(&stub)
         .timeouts(Timeouts {
             forge_poll: RUNS_OUT,
+            forge_wake_debounce: RUNS_OUT / 10,
             ..Default::default()
         })
         .await;
@@ -476,8 +477,7 @@ async fn startup_fetches_enabled_repositories_and_reads_a_missing_row_as_merged(
         h.launcher.cfg.clone(),
         &h.bus,
         live.clone(),
-        h.timeouts.forge_poll,
-        h.timeouts.forge_details,
+        h.timeouts,
     );
     // Replace the only public handle, which shuts down the old manager.
     // The router also holds a clone, so drop its state before replacement.
