@@ -709,7 +709,10 @@ export interface paths {
         /**
          * Reply to one comment. The daemon posts the reply through the forge CLI,
          *     marks it the review's where a review session posts it (029), and reads
-         *     the request again.
+         *     the request again. Where the repository holds posts back (002, 026 rule
+         *     24), nothing is posted: the reply waits in the user's own forge drafts,
+         *     and the answer carries `pending: true` with the forge id of the pending
+         *     item instead of the comment the forge would otherwise hold.
          */
         post: operations["pull-requests_reply"];
         delete?: never;
@@ -2958,6 +2961,24 @@ export interface components {
             writable: boolean;
         };
         /**
+         * @description What the reply route answers instead of a posted comment, where the
+         *     repository holds agent posts for the user's approval (002, 026 rule 24):
+         *     the reply waits, unposted, as a pending review (GitHub) or a draft note
+         *     (GitLab) in the user's own forge drafts, until the user publishes it
+         *     there.
+         */
+        PendingReplyDto: {
+            /**
+             * @description The forge id of the pending item: the pending review's own id for a
+             *     reply to a top-level conversation comment, the new draft comment's
+             *     for a reply inside a review thread (GitHub); the draft note's id
+             *     (GitLab).
+             */
+            id: string;
+            /** @description Always true: a posted reply never takes this shape. */
+            pending: boolean;
+        };
+        /**
          * @description What a finished task spends, on average: the tokens of every session of a
          *     task that finished, divided by how many tasks finished. 0 where none.
          */
@@ -3174,6 +3195,11 @@ export interface components {
              */
             version?: string | null;
         };
+        /**
+         * @description What `POST .../reply` answers: the posted comment, or, where the
+         *     repository holds posts back, [`PendingReplyDto`] in its place.
+         */
+        ReplyAnswerDto: components["schemas"]["PullRequestCommentDto"] | components["schemas"]["PendingReplyDto"];
         /** @description Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/reply`. */
         ReplyCommentRequest: {
             body: string;
@@ -5280,7 +5306,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PullRequestCommentDto"];
+                    "application/json": components["schemas"]["ReplyAnswerDto"];
                 };
             };
             403: {
