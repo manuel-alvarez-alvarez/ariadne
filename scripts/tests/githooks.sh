@@ -159,7 +159,7 @@ case "$test_case" in
         rm -f "$TEST_ROOT/commands"
         printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$base" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
-        for cmd in 'cargo machete .' \
+        for cmd in 'cargo machete .' 'cargo build --workspace --bins' \
             'cargo nextest run --workspace --profile ci' 'cargo test --doc --workspace' \
             'cargo clippy --workspace --all-targets -- -D warnings' 'cargo fmt --all -- --check' \
             'check-unused-rust'; do

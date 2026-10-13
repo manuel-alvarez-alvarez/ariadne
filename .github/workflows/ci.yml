@@ -86,6 +86,12 @@ jobs:
       - name: Check for unused dependencies
         run: cargo machete .
 
+      # `ariadne-daemon` sets `test = false` on its `[[bin]]`, so nextest
+      # never builds or links `ariadned`, and clippy below type-checks it
+      # without linking. This is the only step that links it.
+      - name: Build
+        run: cargo build --workspace --bins
+
       # Everything, git tests included — nothing is `#[ignore]`d. Every agent
       # a test starts is a stub ACP agent in python3, which both runner
       # images ship, so no coding-agent CLI is installed.
