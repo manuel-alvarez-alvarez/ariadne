@@ -16,6 +16,7 @@ fn github_pull(number: i64, author: &str) -> Value {
         "state": "OPEN", "isDraft": false, "headRefName": "fix", "headRefOid": "abc",
         "headRepository": {"url": "https://github.com/acme/widgets"},
         "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
+        "reviewRequests": [{"login": "me"}],
         "createdAt": "2026-10-01T00:00:00Z", "updatedAt": "2026-10-02T00:00:00Z"})
 }
 
