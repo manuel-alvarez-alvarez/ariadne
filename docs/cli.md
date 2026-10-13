@@ -426,6 +426,16 @@ permission requests are answered belongs to the repository, not the task:
 ariadne repo update <repo-id> --permission-mode ask
 ```
 
+A repository's `supervise_posts` flag is on by default: it holds what its
+agents post to the forge for your approval, and it opens every pull request
+a task's `pr` column requests as a draft. See [Repositories, branches and
+worktrees](../specs/002-repositories-branches-and-worktrees.md), rule 13, for
+the rule. Turn it off with:
+
+```sh
+ariadne repo update <repo-id> --supervise-posts off
+```
+
 ## Exhausted models and automatic switching
 
 When a model runs out of tokens, reaches a rate limit, or hits another quota
@@ -695,7 +705,7 @@ the built-in help screen.
 | `models` | `ls [--agent AGENT]`, `show MODEL`, `enable MODEL`, `disable MODEL`, `rank MODEL RANK\|--clear`. |
 | `skill` | `ls`, `get NAME`, `inspect NAME`, `create NAME [--file FILE]`, `set NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
 | `workflow` | `ls`, `show NAME`, `check [--file FILE]`, `create NAME [--file FILE]`, `update NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
-| `repo` | `ls`, `inspect ID`, `add PATH`, `update ID`, `rm ID [-y]`. Add and update use `--branch`, `--description`, `--permission-mode auto\|ask\|learn\|ai`, `--workflow`, and `--forge on\|off`; update also uses `--path`. |
+| `repo` | `ls`, `inspect ID`, `add PATH`, `update ID`, `rm ID [-y]`. Add and update use `--branch`, `--description`, `--permission-mode auto\|ask\|learn\|ai`, `--supervise-posts on\|off`, `--workflow`, and `--forge on\|off`; update also uses `--path`. |
 | `goal` | `create --model AGENT:MODEL [--title] [-d\|--description] [--from-issue] [--repo]... [--effort] [--workflow]`; `ls [--status STATUS,...] [-a] [--watch]`; `inspect`, `complete`, `cancel [-y]`, `rm [-y]`, and `attach` take an ID. |
 | `task` | `create GOAL --title TEXT --agent STEP[:SKILLS]=MODEL[@EFFORT] [--description] [--depends-on]... [--repo]`; `update ID` accepts `--title`, `--description`, repeatable `--agent` and `--depends-on`, or `--clear-depends-on`; `ls` accepts `--goal`, repeatable `--status`, `-a`, `--step`, and `--watch`; `inspect`, `messages [--full]`, `history`, `cancel [-y]`, `retry`, `diff`, `attach [--seat] [--step]`, and `logs [--seat] [-f] [--tail] [--since] [--kind]...` take an ID. |
 | `session` | `ls` accepts `--kind`, `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `--refresh`, `-a`, and `--watch`; `new --model AGENT:MODEL [--effort] [--dir] [--attach]`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
