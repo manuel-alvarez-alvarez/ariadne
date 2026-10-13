@@ -241,18 +241,13 @@ async fn sync(
     };
     let enabled = row.as_ref().is_some_and(|r| r.enabled);
     if !enabled {
-        let list_cleared = handoff.live.clear_list(id);
-        if list_cleared {
+        if stop_worker_then_clear_list(workers.remove(id), &handoff.live, id).await {
             handoff
                 .pulls_seen
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .remove(id);
             handoff.bus.pull_requests_changed(id);
-        }
-        if let Some(mut worker) = workers.remove(id) {
-            worker.task.abort();
-            let _ = (&mut worker.task).await;
         }
         if let Some(row) = row
             && row.webhook_id.is_some()
@@ -291,19 +286,15 @@ async fn sync(
     let integration_changed = workers
         .get(id)
         .is_some_and(|worker| worker.identity != identity);
-    if integration_changed {
-        if let Some(mut worker) = workers.remove(id) {
-            worker.task.abort();
-            let _ = (&mut worker.task).await;
-        }
-        if handoff.live.clear_list(id) {
-            handoff
-                .pulls_seen
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .remove(id);
-            handoff.bus.pull_requests_changed(id);
-        }
+    if integration_changed
+        && stop_worker_then_clear_list(workers.remove(id), &handoff.live, id).await
+    {
+        handoff
+            .pulls_seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(id);
+        handoff.bus.pull_requests_changed(id);
     }
     let before = (
         row.webhook_state.clone(),
@@ -356,6 +347,21 @@ async fn sync(
             },
         );
     }
+}
+
+/// End a repository's fetch worker before deleting its held list. A worker
+/// can complete a list read while shutdown begins, so clearing first would
+/// let that completing worker restore the list after its integration changed.
+async fn stop_worker_then_clear_list(
+    worker: Option<Worker>,
+    live: &LivePulls,
+    repository_id: &str,
+) -> bool {
+    if let Some(mut worker) = worker {
+        worker.task.abort();
+        let _ = (&mut worker.task).await;
+    }
+    live.clear_list(repository_id)
 }
 
 async fn worker(
@@ -838,6 +844,84 @@ mod tests {
             detected_at: String::new(),
             updated_at: String::new(),
         }
+    }
+
+    /// A pending fetch that finishes while its worker is stopped. Its drop
+    /// writes the list at the same point a cancelled fetch could complete
+    /// its list read, so the order under test is deterministic.
+    struct WritesListWhenStopped {
+        live: LivePulls,
+        integration: ForgeIntegration,
+    }
+
+    impl Drop for WritesListWhenStopped {
+        fn drop(&mut self) {
+            self.live.set_list(
+                &self.integration.repository_id,
+                &self.integration,
+                vec![pulls::ForgePullRequest {
+                    number: 1,
+                    url: "https://github.com/acme/widgets/pull/1".into(),
+                    title: "Fix widgets".into(),
+                    body: String::new(),
+                    author_login: "other".into(),
+                    state: "open".into(),
+                    draft: false,
+                    head_branch: "fix".into(),
+                    head_sha: "abc".into(),
+                    head_repo: None,
+                    base_branch: "main".into(),
+                    checks: "none".into(),
+                    review_decision: "none".into(),
+                    mergeable: "clean".into(),
+                    opened_at: String::new(),
+                    updated_at: String::new(),
+                    merge_sha: None,
+                }],
+                HashSet::new(),
+                String::new(),
+            );
+        }
+    }
+
+    /// A fetch that completes while a worker stops cannot restore a list
+    /// after the shutdown clears it. The worker is awaited before the clear,
+    /// so its final write happens first.
+    #[tokio::test]
+    async fn a_stopped_worker_cannot_restore_its_held_list() {
+        let live = LivePulls::default();
+        let integration = integration();
+        let (started, ready) = oneshot::channel();
+        let list_on_stop = WritesListWhenStopped {
+            live: live.clone(),
+            integration: integration.clone(),
+        };
+        let task = tokio::spawn(async move {
+            let _list_on_stop = list_on_stop;
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        });
+        ready.await.unwrap();
+        let (mode, _changes) = watch::channel(Mode::Timer);
+        let worker = Worker {
+            identity: (
+                integration.kind.clone(),
+                integration.host.clone(),
+                integration.owner.clone(),
+                integration.name.clone(),
+            ),
+            public_url: Public::default(),
+            wake: Arc::new(Notify::new()),
+            mode,
+            task,
+        };
+
+        assert!(stop_worker_then_clear_list(Some(worker), &live, &integration.repository_id).await);
+        assert!(
+            live.list(&integration.repository_id, &integration)
+                .is_none(),
+            "the stopped worker wrote before the list was cleared"
+        );
     }
 
     /// A reviewer row carrying a model, with no ask of its own, wants no

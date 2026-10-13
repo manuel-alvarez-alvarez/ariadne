@@ -254,6 +254,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `pull_request_lists.rs::two_reads_after_one_fetch_run_no_further_pr_list_call`,
   `::a_repository_with_no_fetch_yet_lists_empty_and_a_disabled_one_is_refused`,
   `::a_changed_forge_clears_the_held_list_before_its_fetch_succeeds`,
+  `poll.rs::tests::a_stopped_worker_cannot_restore_its_held_list`,
   `::the_single_request_route_answers_the_held_read_with_no_details_call`,
   `::the_panel_route_still_reads_live`.
 - A review request has a row while it is reviewed and none once it merged:
