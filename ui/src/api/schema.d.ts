@@ -2227,6 +2227,11 @@ export interface components {
              */
             path: string;
             permission_mode?: null | components["schemas"]["PermissionMode"];
+            /**
+             * @description Open every pull request this repository's agents post as a draft for
+             *     a person's approval. Omit for `true`.
+             */
+            supervise_posts?: boolean | null;
         };
         CreateSkillRequest: {
             /**
@@ -3212,6 +3217,12 @@ export interface components {
              *     answered.
              */
             permission_mode: components["schemas"]["PermissionMode"];
+            /**
+             * @description Whether this repository's agents hold what they post to the forge for
+             *     a person's approval: every pull request opened as a draft today, and
+             *     a later release holding replies, reviews and resolves the same way.
+             */
+            supervise_posts: boolean;
             updated_at: string;
         };
         /** @description Resume a stored conversation without a goal, task or seat. */
@@ -3862,6 +3873,8 @@ export interface components {
             forge?: null | components["schemas"]["ForgeUpdate"];
             path?: string | null;
             permission_mode?: null | components["schemas"]["PermissionMode"];
+            /** @description Absent = unchanged. */
+            supervise_posts?: boolean | null;
         };
         /** @description Partial update; absent fields stay unchanged. */
         UpdateSkillRequest: {

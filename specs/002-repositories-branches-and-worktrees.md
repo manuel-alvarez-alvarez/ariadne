@@ -1,8 +1,8 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-10-10
-areas: [store, daemon]
+updated: 2026-10-13
+areas: [store, api, daemon, cli, ui]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
   - crates/ariadne-daemon/src/branch.rs
@@ -12,6 +12,8 @@ tests:
   - crates/ariadne-daemon/tests/it/managers.rs
   - crates/ariadne-daemon/tests/it/task_branches.rs
   - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-cli/src/commands/repo.rs
+  - ui/src/features/repositories/repository-form-dialog.test.tsx
 ---
 
 # Repositories, branches and worktrees
@@ -85,6 +87,14 @@ and the integration with it (025).
     permission model is off, on registration and on an edit alike, with 409
     `ai_disabled` (022): the mode asks the model, and a model that is off
     answers nothing.
+13. `supervise_posts` says whether this repository's agents hold what they
+    post to the forge for a person's approval before the forge ever sees it:
+    every pull request a task opens is forced to a draft ([026](026-pull-requests.md)
+    rule 23), and a later task holds replies, reviews and resolves the same
+    way. It defaults to `true`, is set when the repository is registered and
+    changed by editing it, from the CLI and the desktop app alike, and an
+    edit that does not name it keeps it. A repository registered before the
+    flag existed reads it as `true`.
 
 ## Acceptance criteria
 
@@ -105,6 +115,17 @@ and the integration with it (025).
   is on
   (`ai_permissions.rs::a_repository_takes_the_ai_mode_only_once_the_model_is_on`,
   `store.rs::a_repository_takes_the_ai_permission_mode`).
+- A repository supervises its posts until told otherwise, a registration
+  that names no flag starts supervised, an edit that names only the flag
+  moves only the flag, and a repository registered before the flag existed
+  reads it as `true` once the migration backfills the column
+  (`repositories.rs::a_repository_carries_its_supervise_posts_flag`,
+  `store.rs::repository_crud_and_unique_path_branch`,
+  `store.rs::an_existing_repository_is_supervised_after_the_migration`).
+- The flag is set from the CLI, on `repo add` and `repo update` alike, and
+  from the desktop app's repository form
+  (`repo.rs::tests::repo_add_and_update_take_the_supervise_posts_flag`,
+  `ui/src/features/repositories/repository-form-dialog.test.tsx::saves the supervise posts switch`).
 - A repository defaults new goals to `develop-review-merge`, takes another default at
   registration or on an edit, and changes no existing goal
   (`repositories.rs::a_repository_defaults_new_goals_without_changing_existing_ones`,

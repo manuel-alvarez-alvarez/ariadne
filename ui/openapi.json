@@ -5266,6 +5266,13 @@
                 "description": "Omit for `auto`."
               }
             ]
+          },
+          "supervise_posts": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Open every pull request this repository's agents post as a draft for\na person's approval. Omit for `true`."
           }
         },
         "additionalProperties": false
@@ -7569,6 +7576,7 @@
           "path",
           "base_branch",
           "permission_mode",
+          "supervise_posts",
           "created_at",
           "updated_at"
         ],
@@ -7611,6 +7619,10 @@
           "permission_mode": {
             "$ref": "#/components/schemas/PermissionMode",
             "description": "How the ACP permission requests of every session in this checkout are\nanswered."
+          },
+          "supervise_posts": {
+            "type": "boolean",
+            "description": "Whether this repository's agents hold what they post to the forge for\na person's approval: every pull request opened as a draft today, and\na later release holding replies, reviews and resolves the same way."
           },
           "updated_at": {
             "type": "string"
@@ -9046,6 +9058,13 @@
                 "description": "Absent = unchanged."
               }
             ]
+          },
+          "supervise_posts": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Absent = unchanged."
           }
         },
         "additionalProperties": false

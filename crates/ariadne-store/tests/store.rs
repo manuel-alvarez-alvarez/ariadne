@@ -51,6 +51,7 @@ async fn learned_permissions_keep_one_row_per_repository_tool_level_and_key() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
+            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -200,6 +201,7 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
+            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -210,6 +212,7 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
+            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -220,6 +223,7 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
+            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -492,6 +496,7 @@ async fn seed_repository(store: &Store) -> Repository {
             base_branch: "main".into(),
             description: None,
             permission_mode: None,
+            supervise_posts: None,
         })
         .await
         .unwrap()
@@ -761,6 +766,7 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "main".into(),
             description: Some("the one repo".into()),
             permission_mode: None,
+            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -770,6 +776,8 @@ async fn repository_crud_and_unique_path_branch() {
     // registered without a workflow lands its goals on the base branch.
     assert_eq!(repo.permission_mode(), PermissionMode::Auto);
     assert_eq!(repo.default_workflow, DEFAULT_WORKFLOW);
+    // A repository registered without the flag starts supervised.
+    assert!(repo.supervise_posts());
 
     // The same checkout on another branch is a different repository.
     let other = store
@@ -779,6 +787,7 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "next".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
+            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -797,6 +806,7 @@ async fn repository_crud_and_unique_path_branch() {
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
+                supervise_posts: None,
             })
             .await,
         Err(StoreError::NotFound {
@@ -828,6 +838,7 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "main".into(),
             description: None,
             permission_mode: None,
+            supervise_posts: None,
         })
         .await;
     assert!(matches!(dup, Err(StoreError::Conflict(_))));
@@ -841,6 +852,7 @@ async fn repository_crud_and_unique_path_branch() {
                 base_branch: Some("trunk".into()),
                 description: Some(None),
                 permission_mode: Some(PermissionMode::Ask),
+                supervise_posts: Some(false),
                 default_workflow: Some(PULL_REQUEST_WORKFLOW.into()),
                 ..Default::default()
             },
@@ -852,8 +864,10 @@ async fn repository_crud_and_unique_path_branch() {
     assert!(edited.description.is_none());
     assert_eq!(edited.permission_mode(), PermissionMode::Ask);
     assert_eq!(edited.default_workflow, PULL_REQUEST_WORKFLOW);
+    assert!(!edited.supervise_posts());
 
-    // An update that names neither the mode nor the workflow keeps them.
+    // An update that names neither the mode, the flag, nor the workflow
+    // keeps them.
     let renamed = store
         .update_repository(
             &repo.id,
@@ -866,6 +880,7 @@ async fn repository_crud_and_unique_path_branch() {
         .unwrap();
     assert_eq!(renamed.permission_mode(), PermissionMode::Ask);
     assert_eq!(renamed.default_workflow, PULL_REQUEST_WORKFLOW);
+    assert!(!renamed.supervise_posts());
 
     // An update onto a taken (path, base_branch) conflicts like a create.
     assert!(matches!(
@@ -908,6 +923,7 @@ async fn a_goal_created_with_no_workflow_takes_its_first_repositorys_default() {
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
+                supervise_posts: None,
             })
             .await
             .unwrap()
@@ -3264,6 +3280,45 @@ async fn an_existing_database_drops_the_forge_review_pin_columns() {
     drop(Store::open(&path).await.unwrap());
 }
 
+/// A repository registered before `supervise_posts` existed reads it as
+/// `true` once the migration backfills the column: an upgrade holds every
+/// agent's posts rather than exposing them by surprise.
+#[tokio::test]
+async fn an_existing_repository_is_supervised_after_the_migration() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    let store = Store::open(&path).await.unwrap();
+    let repo = store
+        .create_repository(NewRepository {
+            default_workflow: None,
+            path: "/tmp/old-repo".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: None,
+            supervise_posts: None,
+        })
+        .await
+        .unwrap();
+    drop(store);
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE repositories DROP COLUMN supervise_posts")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 7")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    let repo = store.get_repository(&repo.id).await.unwrap();
+    assert!(repo.supervise_posts());
+}
+
 // -- token usage ------------------------------------------------------------
 
 fn usage(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> TokenUsage {
@@ -4504,6 +4559,7 @@ async fn a_checkpoint_folds_the_write_ahead_log_back_in() {
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
+                supervise_posts: None,
             })
             .await
             .unwrap();
@@ -4683,6 +4739,7 @@ async fn a_repository_takes_the_ai_permission_mode() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Ai),
+            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -5399,6 +5456,7 @@ async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequestR
             base_branch: "main".into(),
             description: None,
             permission_mode: None,
+            supervise_posts: None,
         })
         .await
         .unwrap();

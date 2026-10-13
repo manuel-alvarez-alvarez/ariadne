@@ -290,7 +290,10 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
             "--title",
             "feat: add widgets",
             "--body",
-            "## Summary\nAdd widgets."
+            "## Summary\nAdd widgets.",
+            // The repository supervises its posts by default (002, 026
+            // rule 23), so the request opens as a draft.
+            "--draft"
         ]
     );
     let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;

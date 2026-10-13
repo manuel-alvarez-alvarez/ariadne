@@ -260,6 +260,7 @@ export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryD
     base_branch: "main",
     description: "The orchestrator itself.",
     permission_mode: "auto",
+    supervise_posts: true,
     default_workflow: "build-test",
     forge: null,
     created_at: STAMP,

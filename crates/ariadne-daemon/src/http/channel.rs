@@ -115,6 +115,10 @@ pub(super) async fn open_pull_request(
     // `Generated with` footer or a `Co-Authored-By` is noise on a request a
     // human reads.
     let body = pulls::strip_trailers(&req.body);
+    // A repository that supervises its posts holds every request for a
+    // person's go-ahead: opened as a draft whatever the agent asked for
+    // (002, 026 rule 23).
+    let draft = repo.supervise_posts() || req.draft;
     let url = client
         .open(
             &slug,
@@ -122,7 +126,7 @@ pub(super) async fn open_pull_request(
             &repo.base_branch,
             &req.title,
             &body,
-            req.draft,
+            draft,
         )
         .await
         .map_err(unresolved)?;

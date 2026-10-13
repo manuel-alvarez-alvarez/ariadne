@@ -412,7 +412,7 @@ mod tests {
 
     async fn repository() -> Json<serde_json::Value> {
         Json(json!({
-            "id": "repo", "path": "/work/ariadne", "base_branch": "main", "description": null, "permission_mode": "auto", "default_workflow": "develop-review-merge",
+            "id": "repo", "path": "/work/ariadne", "base_branch": "main", "description": null, "permission_mode": "auto", "supervise_posts": true, "default_workflow": "develop-review-merge",
             "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"
         }))
     }

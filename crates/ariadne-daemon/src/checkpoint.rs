@@ -59,6 +59,7 @@ mod tests {
                     base_branch: "main".to_string(),
                     description: None,
                     permission_mode: None,
+                    supervise_posts: None,
                 })
                 .await
                 .unwrap();
