@@ -9,9 +9,11 @@ tests:
   - crates/ariadne-daemon/src/forge/news.rs
   - crates/ariadne-daemon/src/forge/live.rs
   - crates/ariadne-daemon/src/forge/pulls.rs
+  - crates/ariadne-daemon/src/forge/github/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/pull_requests.rs
   - crates/ariadne-daemon/tests/it/pull_request_lists.rs
+  - crates/ariadne-daemon/tests/it/tunnel.rs
   - crates/ariadne-daemon/tests/it/kept_requests.rs
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
@@ -77,11 +79,12 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    The scheduler and the routes join the row to that read (`PullRequest`, the view). A daemon that restarts holds nothing until its first fetch, which runs at once; until a request has been read, the scheduler does nothing for it.
    Each fetch also holds its repository's whole list the same way (`forge::live::LivePulls`, by repository id): every open request and which of them ask for the user's review, as the fetch itself read them, and when.
    `GET /v1/pull-requests` and its search answer from that held list alone, joined to the rows as the routes above do; neither calls the forge. A repository with no fetch yet holds no list, which both read as empty rather than live.
-   `GET /v1/pull-requests/{id}` answers the held read of the row the same way, falling back to a read now only where nothing has read it yet; `GET /v1/repositories/{id}/pull-requests/{number}` stays live, since that is the panel reading one request on demand.
+   `GET /v1/pull-requests/{id}` answers the held read of the row the same way; `GET /v1/repositories/{id}/pull-requests/{number}` stays live, since that is the panel reading one request on demand.
    `POST /v1/pull-requests/refresh` is still how a human asks the forge to be read again.
-5. A repository fetch lists every open request of the repository, and the ones that ask for the login's review; the two lists are read from the forge at the same time.
+5. A repository fetch lists every open request of the repository in one read; GitHub names each request's own requested reviewers on that same read (`reviewRequests`), so the login's own review requests need no second read. GitLab still reads its own list and its review requests apart.
    It starts the work on each review request rule 3 names, then reads each row of the repository: the list's read where the list holds it, else a read of its own — a merged or closed request, or one the list misses.
-   A row that asks for review keeps asking while the list of review requests holds it; one it no longer holds, and that asked on the last read, is asked of the forge's timeline (029 rule 3).
+   A row that asks for review keeps asking while the list names the login among its requested reviewers; one it no longer does, and that asked on the last read, is asked of the forge's timeline (029 rule 3).
+   GitHub names a team's own request by a slug or a name, never a login, so a review asked of a team the login belongs to is read as asking nobody (Known gap).
 6. `ForgePoll::wake(repository_id)` schedules one fetch immediately.
    Each repository has one worker, so fetches of that repository never overlap.
    Wakes during a fetch coalesce into one following fetch.
@@ -237,8 +240,13 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `store.rs::comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark`.
 - A row is deleted only as the pass read it: an ask that landed since the read, a repeated one included, keeps the row and its sessions, and the row goes once read as it is:
   `store.rs::deleting_a_request_is_refused_where_an_ask_landed_since_the_read`.
-- The list answers the fetch's own read, a request of the user's own nobody asked Ariadne to review has no row, a request that asks for the user's review is tracked the moment it is seen, and nothing adds or removes a row by hand:
+- The held list answers the fetch's own read, a request of the user's own nobody asked Ariadne to review has no row, a request that asks for the user's review is tracked the moment it is seen, and nothing adds or removes a row by hand:
   `pull_requests.rs::the_fetch_holds_the_list_and_tracks_only_a_request_that_asks_for_my_review`.
+- GitHub's repository fetch lists the open requests in one `pr list` call, a user named among a request's own `reviewRequests` asks for that user's review, a team named there asks for nobody's, and a read from before the field existed asks for nobody's:
+  `forge/github/pulls.rs::tests::a_user_review_request_names_its_login`,
+  `::a_team_review_request_matches_no_login`,
+  `::a_read_naming_no_review_requests_asks_for_nobody`;
+  one fetch makes one `pr list` call: `tunnel.rs::a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_fetches_once`.
 - A detail read asks the forge for its parts together:
   `pull_requests.rs::a_detail_read_asks_the_forge_for_its_parts_together`.
 - Two reads of the list and of the search after one fetch make no further `pr list` call, a repository with no fetch yet lists empty with 200 and a disabled one still answers 409, the single-request route answers the held read with no `details()` call, and the panel route still reads live:
@@ -364,6 +372,12 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - A `502 forge_error` is never retried, while another `502` still gets its retries:
   `queries.test.ts::createQueryClient's retry > never retries a 502 whose body error is forge_error`,
   `::still retries another 502`.
+
+## Known gap
+
+GitHub's `reviewRequests` names a team by a slug or a name, never a login.
+A review asked of a team the user belongs to is read as asking nobody, so it
+raises no row and starts no session (029).
 
 ## Sources
 

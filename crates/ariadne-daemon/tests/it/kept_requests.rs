@@ -41,7 +41,7 @@ fn review_comment(id: i64, login: &str, reply_to: Option<i64>, at: &str) -> Valu
 
 /// What the stub forge answers: the request in `state` on its own read, its
 /// review comments in one thread, and its check runs. No list holds it: a
-/// fetch lists the review requests alone, and reads the request on its own.
+/// fetch's open list is empty, and reads the request on its own.
 fn script(state: &str, comments: &[Value], check_runs: Value) -> Value {
     let threads = json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
         {"id": "T1", "isResolved": false, "comments": {"nodes": [{"databaseId": 101}]}}

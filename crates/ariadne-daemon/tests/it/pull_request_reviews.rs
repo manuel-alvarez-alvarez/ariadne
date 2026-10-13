@@ -46,11 +46,16 @@ impl Shown<'_> {
 /// What the stub forge answers for one request by `other` that asks for my
 /// review: the lists, its own read, its details, and the review it posts.
 fn script(shown: &Shown) -> Value {
+    let review_requests = match shown.listed {
+        true => json!([{"login": "me"}]),
+        false => json!([]),
+    };
     let read = json!({"number": 1, "url": "https://github.com/acme/widgets/pull/1",
         "title": "Add widgets", "author": {"login": shown.author}, "state": shown.state,
         "isDraft": shown.draft, "headRefName": "fix", "headRefOid": shown.head,
         "headRepository": {"url": "https://github.com/acme/widgets"},
         "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
+        "reviewRequests": review_requests,
         "createdAt": "2026-10-01T00:00:00Z"});
     let listed = match shown.listed && shown.state == "OPEN" {
         true => json!([read]),
