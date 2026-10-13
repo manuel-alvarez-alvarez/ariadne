@@ -111,17 +111,26 @@ impl Gitlab {
         serde_json::from_str(&output).map_err(|e| format!("cannot read `glab api {path}`: {e}"))
     }
 
-    pub(crate) async fn details(&self, repo: &str, number: i64) -> Result<ForgeDetails, String> {
+    /// `_login` is unread: GitLab's `draft_posts` answers only the signed-in
+    /// viewer's own draft notes (031), whoever that is, so there is nothing
+    /// here to filter by it the way GitHub's pending-review read must.
+    pub(crate) async fn details(
+        &self,
+        repo: &str,
+        number: i64,
+        _login: &str,
+    ) -> Result<ForgeDetails, String> {
         let (host, owner, name) = split_slug(repo)?;
         let base = format!("projects/{}/merge_requests/{number}", project(owner, name));
         let discussions = format!("{base}/discussions");
         let diverged = format!("{base}?include_diverged_commits_count=true");
         // Reads that wait on the forge, not on each other.
-        let (pull, discussions, failed_checks, diverged) = tokio::try_join!(
+        let (pull, discussions, failed_checks, diverged, pending_drafts) = tokio::try_join!(
             self.pull_request(repo, number),
             self.pages::<Discussion>(host, &discussions),
             self.failed_checks(host, owner, name, &base),
             self.object::<Diverged>(host, &diverged),
+            self.draft_posts(repo, number),
         )?;
         let mut comments = Vec::new();
         for discussion in discussions {
@@ -159,6 +168,7 @@ impl Gitlab {
             comments,
             failed_checks,
             behind_base: diverged.diverged_commits_count > 0,
+            pending_drafts,
         })
     }
 

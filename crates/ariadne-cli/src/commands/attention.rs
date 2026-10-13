@@ -149,8 +149,14 @@ fn recovery_items_section(
             age(&item.since, now)
         ));
         lines.push(format!("  action: {}", item.required_action));
-        if let ariadne_api::attention::AttentionTarget::Console { session_id } = &item.target {
-            lines.push(format!("  attach: ariadne attach {session_id}"));
+        match &item.target {
+            ariadne_api::attention::AttentionTarget::Console { session_id } => {
+                lines.push(format!("  attach: ariadne attach {session_id}"));
+            }
+            ariadne_api::attention::AttentionTarget::Forge { url } => {
+                lines.push(format!("  open: {url}"));
+            }
+            _ => {}
         }
         // The id leads so every affected entry stays reachable on its own —
         // `ariadne attach <id>` or `session switch <id>` — not only the
@@ -651,6 +657,39 @@ pub(crate) mod tests {
                 now
             ),
             None
+        );
+    }
+
+    /// A drafts item's `Forge` target prints the request's own forge URL,
+    /// the one place this board can send a person straight to it: there is
+    /// no `ariadne attach` for a blocker nothing in Ariadne can finish.
+    #[test]
+    fn a_forge_targeted_item_prints_its_url() {
+        use ariadne_api::attention::{AttentionProducer, AttentionSubjectDto, AttentionTarget};
+        let now = NOW.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
+        let recovery = AttentionListDto {
+            items: vec![ariadne_api::attention::AttentionItemDto {
+                id: "01I".into(),
+                producer: AttentionProducer::Drafts,
+                reason: AttentionCause::Unknown,
+                summary: "a draft waits".into(),
+                required_action: "finish it".into(),
+                since: NOW.into(),
+                affected: vec![AttentionSubjectDto {
+                    kind: AttentionSubjectKind::PullRequest,
+                    id: "01PR".into(),
+                    label: "acme/widgets#7".into(),
+                }],
+                target: AttentionTarget::Forge {
+                    url: "https://github.com/acme/widgets/pull/7".into(),
+                },
+            }],
+            complete: true,
+        };
+        let section = recovery_items_section(&recovery, now).expect("a drafts item has a section");
+        assert!(
+            section.contains("  open: https://github.com/acme/widgets/pull/7"),
+            "{section}"
         );
     }
 

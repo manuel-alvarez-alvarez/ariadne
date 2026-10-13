@@ -8,6 +8,7 @@
 //! it asks.
 
 pub(crate) mod agent_requests;
+pub(crate) mod drafts;
 pub(crate) mod pull_requests;
 pub(crate) mod recovery;
 
@@ -21,12 +22,12 @@ use crate::launcher::Launcher;
 /// every registered producer currently finds.
 ///
 /// Registering a producer is adding a call here and extending it, the one
-/// extension point this route gives a later task: [`recovery`] and
-/// [`pull_requests`] are complete; [`agent_requests`] is registered
-/// already but answers empty until a later task gives it its eligibility
-/// rules (009, 026). A producer whose read fails costs the list its
-/// `complete` flag rather than its other producers' items, so a partial
-/// read never answers as if nothing were wrong.
+/// extension point this route gives a later task: [`recovery`],
+/// [`pull_requests`] and [`drafts`] are complete; [`agent_requests`] is
+/// registered already but answers empty until a later task gives it its
+/// eligibility rules (009, 026). A producer whose read fails costs the
+/// list its `complete` flag rather than its other producers' items, so a
+/// partial read never answers as if nothing were wrong.
 pub async fn collect(store: &Store, launcher: &Launcher) -> AttentionListDto {
     let mut items = Vec::new();
     let mut complete = true;
@@ -48,6 +49,13 @@ pub async fn collect(store: &Store, launcher: &Launcher) -> AttentionListDto {
         Ok(found) => items.extend(found),
         Err(error) => {
             tracing::warn!(%error, "the pull-request attention producer could not read its evidence");
+            complete = false;
+        }
+    }
+    match drafts::items(store, launcher).await {
+        Ok(found) => items.extend(found),
+        Err(error) => {
+            tracing::warn!(%error, "the drafts attention producer could not read its evidence");
             complete = false;
         }
     }

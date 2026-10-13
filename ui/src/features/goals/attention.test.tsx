@@ -20,7 +20,7 @@ import type { AttentionItemDto, SessionDto } from "@/api"
 import { sessionTerminalFrom } from "@/routes/paths"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
-import { type AttentionItem, attentionAffectedLinks } from "./attention"
+import { type AttentionItem, attentionAffectedLinks, attentionTarget } from "./attention"
 import { AttentionAlerts } from "./attention-alerts"
 
 const GOAL = aGoal()
@@ -324,4 +324,24 @@ it("gives a single-session quota item no extra links of its own", () => {
     target: { kind: "console", session_id: "01SA" },
   })
   expect(attentionAffectedLinks(row, new URLSearchParams(), "/goals")).toBeNull()
+})
+
+// A `drafts` item's target is the request's own page on the forge, which
+// Ariadne has no panel of its own to open: `attentionTarget` answers an
+// external URL for it rather than a route, so the strip's row renders a
+// plain `<a href>` instead of a client-side `Link` that would go nowhere.
+it("sends a drafts item to its own page on the forge, not a route of Ariadne's", () => {
+  const row = aRecoveryRow({
+    id: "pull_request:drafts:pull-1",
+    producer: "drafts",
+    reason: "unknown",
+    summary: "acme/widgets#1 Fix widgets holds 2 unsubmitted draft comments waiting on the forge.",
+    required_action: "Finish and submit it yourself, directly on the forge.",
+    since: "2026-01-01T00:00:00Z",
+    affected: [{ kind: "pull_request", id: "pull-1", label: "acme/widgets#1 Fix widgets" }],
+    target: { kind: "forge", url: "https://github.com/acme/widgets/pull/1" },
+  })
+  expect(attentionTarget(row, new URLSearchParams(), "/goals")).toEqual({
+    external: "https://github.com/acme/widgets/pull/1",
+  })
 })

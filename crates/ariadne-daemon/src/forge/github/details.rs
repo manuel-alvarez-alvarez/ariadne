@@ -52,6 +52,10 @@ struct ReviewComment {
     line: Option<i64>,
     original_line: Option<i64>,
     created_at: String,
+    /// The review this comment belongs to, where a review posted it (031):
+    /// read, never written here, to count the comments of the viewer's own
+    /// still-pending one.
+    pull_request_review_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -109,6 +113,32 @@ fn is_bot(user: &User) -> bool {
     user.kind.eq_ignore_ascii_case("bot") || user.login.ends_with("[bot]")
 }
 
+/// The comment count of `login`'s own unsubmitted review among `reviews`
+/// (031): GitHub answers a pending review (`submitted_at: None`) only to
+/// the user who left it, so a user's own CLI session lists at most one —
+/// summed here across however many match regardless, rather than assumed.
+/// Its comments are the ones among `comments` whose own
+/// `pull_request_review_id` names it: the same REST field GitHub already
+/// answers on every review comment, pending or not.
+fn pending_review_comment_count(
+    reviews: &[Review],
+    comments: &[ReviewComment],
+    login: &str,
+) -> i64 {
+    let pending: Vec<i64> = reviews
+        .iter()
+        .filter(|r| r.submitted_at.is_none() && r.user.login.eq_ignore_ascii_case(login))
+        .map(|r| r.id)
+        .collect();
+    comments
+        .iter()
+        .filter(|c| {
+            c.pull_request_review_id
+                .is_some_and(|id| pending.contains(&id))
+        })
+        .count() as i64
+}
+
 impl Github {
     /// `gh api --hostname <host> --paginate <path>`, read as every page's
     /// items: `--paginate` writes one JSON value per page, back to back.
@@ -154,7 +184,15 @@ impl Github {
         serde_json::from_str(&output).map_err(|e| format!("cannot read `gh api {path}`: {e}"))
     }
 
-    pub(crate) async fn details(&self, repo: &str, number: i64) -> Result<ForgeDetails, String> {
+    /// `login` is read only for [`pending_review_comment_count`]: the
+    /// viewer's own pending review, among the reviews this same call
+    /// already lists (031), is told apart from everyone else's by it.
+    pub(crate) async fn details(
+        &self,
+        repo: &str,
+        number: i64,
+        login: &str,
+    ) -> Result<ForgeDetails, String> {
         let (host, owner, name) = split_slug(repo)?;
         let base = format!("repos/{owner}/{name}");
         let review_comments = format!("{base}/pulls/{number}/comments");
@@ -179,6 +217,12 @@ impl Github {
             self.pages::<IssueComment>(host, &issue_comments),
             self.pages::<Review>(host, &reviews),
         )?;
+        // Read off the same reviews and review comments this call already
+        // lists (031), before the loop below consumes them: no further
+        // forge call of its own, so the viewer's own unsubmitted drafts
+        // are skipped and left standing exactly where the rest of this
+        // detail read is (`Live::unmoved`).
+        let pending_drafts = pending_review_comment_count(&reviews, &review_comments, login);
         let mut comments = Vec::new();
         for c in review_comments {
             let root = c.in_reply_to_id.unwrap_or(c.id);
@@ -255,6 +299,7 @@ impl Github {
             comments,
             failed_checks,
             behind_base: compare.behind_by > 0,
+            pending_drafts,
         })
     }
 
@@ -307,5 +352,62 @@ impl Github {
             }
         }
         Ok(threads)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn review(id: i64, login: &str, submitted: bool) -> Review {
+        Review {
+            id,
+            user: User {
+                login: login.into(),
+                kind: String::new(),
+            },
+            body: "a finding".into(),
+            submitted_at: submitted.then(|| "2026-10-01T00:00:00Z".into()),
+        }
+    }
+
+    fn comment(id: i64, review_id: Option<i64>) -> ReviewComment {
+        ReviewComment {
+            id,
+            in_reply_to_id: None,
+            user: User {
+                login: "me".into(),
+                kind: String::new(),
+            },
+            body: "a comment".into(),
+            path: Some("src/lib.rs".into()),
+            line: Some(1),
+            original_line: None,
+            created_at: "2026-10-01T00:00:00Z".into(),
+            pull_request_review_id: review_id,
+        }
+    }
+
+    /// Only the comments of `login`'s own still-pending review count,
+    /// read by `pull_request_review_id` rather than assumed to be every
+    /// comment with no submitted review of its own: a submitted review's
+    /// comments, and another user's own pending one, are both excluded.
+    #[test]
+    fn pending_review_comment_count_reads_only_the_viewers_own_pending_review() {
+        let reviews = vec![
+            review(1, "me", false),
+            review(2, "me", true),
+            review(3, "someone-else", false),
+        ];
+        let comments = vec![
+            comment(10, Some(1)),
+            comment(11, Some(1)),
+            comment(12, Some(2)),
+            comment(13, Some(3)),
+            comment(14, None),
+        ];
+        assert_eq!(pending_review_comment_count(&reviews, &comments, "ME"), 2);
+        assert_eq!(pending_review_comment_count(&[], &comments, "me"), 0);
+        assert_eq!(pending_review_comment_count(&reviews, &[], "me"), 0);
     }
 }

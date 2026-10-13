@@ -112,11 +112,13 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
     // read's own snapshot (`forge::live::LivePulls::generation`).
     let since = state.launcher.live.generation(&row.id);
     let forge = integration(state, &row.repository_id).await?;
+    let login = forge.login.clone().unwrap_or_default();
     let details = match client(state, &forge)
         .details(
             &slug(&forge),
             row.number,
             crate::timeouts::Timeouts::default().forge_details,
+            &login,
         )
         .await
     {
@@ -167,6 +169,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
             failed_checks: details.failed_checks,
             behind_base: details.behind_base,
             head_sha,
+            pending_drafts: details.pending_drafts,
         },
     );
     publish_evidence_transition(state, &row, before, after);
@@ -299,6 +302,7 @@ pub(super) async fn get_by_number(
             &slug(&forge),
             number,
             crate::timeouts::Timeouts::default().forge_details,
+            &login,
         )
         .await
         .map_err(forge_error)?;

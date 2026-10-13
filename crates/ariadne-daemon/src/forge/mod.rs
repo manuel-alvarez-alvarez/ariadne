@@ -390,16 +390,20 @@ impl ForgeClient {
 
     /// Everything a request holds beyond the list fetch's fields (026),
     /// bounded by `within` ([`crate::timeouts::Timeouts::forge_details`]).
+    /// `login` is read only for the viewer's own unsubmitted drafts (031):
+    /// GitHub's own pending review, among the reviews this same call
+    /// already reads, is told apart from everyone else's by it.
     pub async fn details(
         &self,
         repository: &str,
         number: i64,
         within: Duration,
+        login: &str,
     ) -> Result<pulls::ForgeDetails, String> {
         let read = async {
             match self {
-                Self::Github(cli) => cli.details(repository, number).await,
-                Self::Gitlab(cli) => cli.details(repository, number).await,
+                Self::Github(cli) => cli.details(repository, number, login).await,
+                Self::Gitlab(cli) => cli.details(repository, number, login).await,
             }
         };
         tokio::time::timeout(within, read)

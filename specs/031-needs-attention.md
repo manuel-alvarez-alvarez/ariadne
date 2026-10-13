@@ -1,7 +1,7 @@
 ---
 id: needs-attention
 status: current
-updated: 2026-10-12
+updated: 2026-10-13
 areas: [api, daemon, cli, ui]
 commits: []
 tests:
@@ -13,11 +13,14 @@ tests:
   - crates/ariadne-daemon/tests/it/pull_requests.rs
   - crates/ariadne-daemon/src/attention/recovery.rs
   - crates/ariadne-daemon/src/attention/pull_requests.rs
+  - crates/ariadne-daemon/src/attention/drafts.rs
   - crates/ariadne-daemon/src/attention/mod.rs
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-console/src/transcript.rs
   - crates/ariadne-cli/src/commands/mcp.rs
+  - crates/ariadne-cli/src/commands/attention.rs
+  - crates/ariadne-cli/src/commands/attention/board.rs
   - crates/ariadne-daemon/src/scheduler/auto_switch.rs
   - crates/ariadne-daemon/src/scheduler/goals.rs
   - crates/ariadne-daemon/src/scheduler/pull_requests.rs
@@ -26,13 +29,15 @@ tests:
   - crates/ariadne-daemon/src/forge/mod.rs
   - crates/ariadne-daemon/src/forge/poll.rs
   - crates/ariadne-daemon/src/forge/github/pulls.rs
+  - crates/ariadne-daemon/src/forge/github/details.rs
   - crates/ariadne-daemon/src/forge/gitlab/pulls.rs
-  - crates/ariadne-cli/src/commands/attention.rs
-  - crates/ariadne-cli/src/commands/attention/board.rs
+  - crates/ariadne-daemon/src/forge/gitlab/reviews.rs
   - ui/src/features/goals/attention.test.tsx
+  - ui/src/features/goals/attention-strip.test.tsx
   - ui/src/features/goals/attention-alerts.test.tsx
   - ui/src/events/dispatch.test.ts
   - ui/src/features/pull-requests/pull-request-panel.test.tsx
+  - ui/src/lib/open-external.test.ts
 ---
 
 # Needs attention
@@ -48,17 +53,23 @@ In: the shared item shape, `GET /v1/attention`, the producer registry
 recovery — which covers a model's quota, every task the daemon will never
 retry on its own, a forge CLI missing from the daemon's PATH, explicit agent
 questions (the `wait_for_user` flag, its one-line hint and the console note
-it leaves, rules 11-12), pending human permission requests, and the second complete producer —
+it leaves, rules 11-12), pending human permission requests, the second complete producer —
 `pull_requests` — which covers a review request nobody is assigned to and a
 request a babysitting task has confirmed ready to merge (rules 13-16),
 migrating the "ready to merge" / "review posted" session surface onto it and
-removing it from 029's own `waiting_user` rule.
+removing it from 029's own `waiting_user` rule, and the third complete
+producer — `drafts` — which covers a tracked request of a repository
+holding agent posts for a person's approval (`Repository::supervise_posts`,
+002) whose last fetch still shows the viewer's own pending review (GitHub)
+or draft notes (GitLab) unsubmitted on the forge (rules 17-20).
 
 Out: the recovery semantics themselves — the auto-switch ladder, the
 spawn-retry budget, the watchdog thresholds — which are 009's; the review
 and readiness semantics themselves — which row wants a session, the verdict
 policy, and `report_pull_request` fields — which are 029's. Agent request
-semantics remain with 009.
+semantics remain with 009. What actually goes into a draft rather than
+straight to the forge — the posting side `supervise_posts` gates — is
+002's; this list only reads what a fetch already finds waiting there.
 
 ## Behavior
 
@@ -594,6 +605,53 @@ semantics remain with 009.
     `forge/gitlab/pulls.rs::tests::mergeable_reads_every_detailed_merge_status_by_its_documented_meaning`,
     `::a_read_naming_no_detailed_merge_status_is_unknown`).
 
+## The drafts producer
+
+17. `crate::attention::drafts` raises one item for every tracked request
+    of a repository with `supervise_posts` on (002 rule 13) whose last
+    fetch still shows the viewer's own unsubmitted drafts: a pending
+    review GitHub has not yet submitted, or a draft note GitLab has not
+    yet published. This list only reads that count; the posting side that
+    fills it — holding a reply, a review or a resolve back for approval
+    instead of sending it straight to the forge — is 002's and a later
+    task's, not this one's. A repository with the flag off raises
+    nothing: turning it off is itself the fix, the same way a disabled
+    forge integration is nobody's business elsewhere in this producer.
+    The item's `reason` is `unknown`, the same as a readiness item's: it
+    names no cause from the shared vocabulary, only a count read off the
+    forge.
+18. The count is read where the fetch is already reading everything else
+    about the request, never a call of its own: GitHub's is folded into
+    `ForgeClient::details`'s own `pulls/{number}/reviews` and
+    `pulls/{number}/comments` reads, which already list the viewer's
+    still-pending review (`submitted_at` absent) and every one of its
+    comments (`pull_request_review_id` naming it) for other reasons; a
+    standing call to `gh api graphql` here would break detail reads apart
+    from a thread read, both run through that same endpoint, which this
+    list and the perf regime behind `Live::unmoved` both read as one kind
+    of call and one kind alone. GitLab's own `GET
+    projects/:id/merge_requests/:iid/draft_notes` has no existing read to
+    fold into, so it is its own call, joined into the same
+    `tokio::try_join!` the rest of `Gitlab::details`'s reads already run
+    in (`forge/github/details.rs::pending_review_comment_count`,
+    `forge/gitlab/reviews.rs::draft_posts`). Both land in `Details`
+    (`forge/live.rs`) beside `comments` and `failed_checks`: skipped and
+    left standing the same way those are wherever the detail read itself
+    is (`Live::unmoved`), and carried forward unmoved on a failed detail
+    fetch (`LivePulls::set_pull_evidence_failed`) rather than read as zero
+    the moment one read fails.
+19. The item clears the moment a later fetch's own count reads zero —
+    the drafts submitted or published on the forge, or deleted there —
+    with nothing of its own to invalidate: this producer reads the live
+    count fresh on every call, the same as every other forge-driven item
+    in this list.
+20. The item's target is the request's own page on the forge
+    (`AttentionTarget::Forge`), never Ariadne's own pull request panel:
+    finishing or submitting a draft is done on the forge itself, which
+    Ariadne has no surface of its own for. Desktop renders it as a plain
+    external link (`ui/AGENTS.md`'s own rule for one), opened through the
+    app's existing external-link handler rather than a panel route.
+
 ## Acceptance criteria
 
 - The route answers an empty, complete list when nothing is stuck, and is
@@ -919,8 +977,49 @@ semantics remain with 009.
   `::titles a readiness item as ready to merge`,
   `::raises no notification or badge for a session with no recovery item behind it`,
   `::raises one toast per readiness transition, none for a repeat, and none for a withdrawal`).
+- A tracked request of a repository with `supervise_posts` on, whose last
+  fetch shows the viewer's own unsubmitted drafts, gives one `drafts` item
+  naming the count and targeting the request's own page on the forge; it
+  clears once a later fetch's own count reads zero
+  (`attention.rs::a_tracked_request_with_unsubmitted_drafts_raises_a_drafts_item`,
+  `::the_drafts_item_clears_once_the_forge_shows_none`), and a repository
+  with the flag off gives no item at all, whatever the forge shows
+  (`attention.rs::a_repository_with_supervise_posts_off_raises_no_drafts_item`).
+- The count itself is read correctly off each forge, through the existing
+  detail fetch rather than a call of its own: GitHub's own
+  `pulls/{number}/reviews` and `pulls/{number}/comments` already answer
+  the viewer's still-pending review and its own comments
+  (`forge/github/details.rs::tests::pending_review_comment_count_reads_only_the_viewers_own_pending_review`,
+  proved end to end through a real fetch in
+  `pull_requests.rs::a_fetch_reads_the_viewers_own_github_pending_review`),
+  and GitLab's own `GET .../draft_notes` answers the signed-in viewer's
+  own draft notes
+  (`forge/gitlab/reviews.rs::tests::draft_posts_counts_the_draft_notes_glab_lists`,
+  proved the same way in
+  `pull_requests.rs::a_fetch_reads_the_viewers_own_gitlab_draft_notes`).
+- The CLI board prints a drafts item's own forge link beside its summary
+  and action, the one target this board has no `ariadne attach` for
+  (`attention.rs::a_forge_targeted_item_prints_its_url`).
+- Desktop renders a drafts item's target as a plain external link rather
+  than a route of its own, and the strip's row is that link, not a
+  client-side one that would go nowhere
+  (`ui/src/features/goals/attention.test.tsx::sends a drafts item to its
+  own page on the forge, not a route of Ariadne's`,
+  `attention-strip.test.tsx::renders a drafts item's row as a plain link
+  to its own page on the forge`); the click itself reaches the forge
+  through the app's existing external-link handler
+  (`ui/src/lib/open-external.test.ts::reaches the forge through the app's
+  own external-link handler`).
 
 ## Known gap
+
+A drafts item's `since` is the request's own `forge_updated_at`, not a
+stamp of when the count itself first moved off zero: nothing here persists
+one, since this producer reads a live count fetched fresh each time rather
+than a column of its own, and adding one would be more than "only reads
+forge state" asks for. A request that moved for an unrelated reason while
+the drafts sat unsubmitted under-reports how long they have actually
+waited.
 
 
 ## Sources
@@ -952,9 +1051,17 @@ give-up branch), `crates/ariadne-store/src/goals.rs`
 `crates/ariadne-daemon/src/forge/github/pulls.rs`,
 `crates/ariadne-daemon/src/forge/gitlab/pulls.rs`,
 `crates/ariadne-daemon/src/http/pull_requests.rs` (`ask_review`, `report`),
+`crates/ariadne-daemon/src/attention/drafts.rs`,
+`crates/ariadne-daemon/src/forge/github/details.rs`
+(`pending_review_comment_count`), `crates/ariadne-daemon/src/forge/gitlab/reviews.rs`
+(`Gitlab::draft_posts`), `crates/ariadne-daemon/src/forge/live.rs`
+(`Details::pending_drafts`),
 `crates/ariadne-cli/src/commands/attention.rs` (including `relevant`),
 `crates/ariadne-cli/src/commands/attention/board.rs`,
 `ui/src/features/goals/attention.ts`, `ui/src/features/goals/attention-alerts.tsx`,
 `ui/src/features/goals/attention-strip.tsx`, `ui/src/events/dispatch.ts`,
 `ui/src/features/sessions/session-display.tsx`,
-`ui/src/features/pull-requests/pull-request-panel.tsx`.
+`ui/src/features/pull-requests/pull-request-panel.tsx`,
+`ui/src/lib/open-external.ts`,
+`ui/src/features/command-palette/entries.ts`,
+`ui/src/features/command-palette/command-palette.tsx`.

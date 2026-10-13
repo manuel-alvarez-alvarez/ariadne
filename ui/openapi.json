@@ -4882,7 +4882,8 @@
         "enum": [
           "recovery",
           "agent_request",
-          "pull_request"
+          "pull_request",
+          "drafts"
         ]
       },
       "AttentionReason": {
@@ -5061,6 +5062,25 @@
                 ]
               },
               "section": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The request's own page on the forge: where a client finishes and\nsubmits a pending review or a draft note, which Ariadne has no\nsurface of its own for (`crate::attention::drafts`).",
+            "required": [
+              "url",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "forge"
+                ]
+              },
+              "url": {
                 "type": "string"
               }
             }
