@@ -50,7 +50,8 @@ unknown key stops the daemon rather than being ignored):
   cli_bin                  the `ariadne` every session's MCP server is launched
                            with (default: the one beside this binary)
   delete_merged_branches   delete a task branch once it has landed (default: true)
-  delete_merged_worktrees  delete a task worktree once it has landed (default: true)
+  delete_merged_worktrees  delete a task worktree once it has landed, or once
+                           its goal is cancelled or completed (default: true)
   prevent_sleep            hold off system sleep while a session is live (default: true)
   auto_switch              switch exhausted sessions to another ranked model (default: true)
   exhausted_patterns       message fragments that identify exhausted models

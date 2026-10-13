@@ -16,10 +16,14 @@ log_filter = "info,ariadne_daemon=debug"
 cli_bin = "/usr/local/bin/ariadne" # runs the Ariadne MCP server for ACP sessions
                                    # (default: sibling of ariadned, else
                                    # `ariadne` on the daemon's own PATH)
-delete_merged_worktrees = true     # remove task worktrees after merge (default);
-                                   # false keeps them for inspecting finished work
-delete_merged_branches = true      # only applies when worktrees are deleted too:
-                                   # a kept task worktree pins its branch
+delete_merged_worktrees = true     # remove task worktrees after merge, and every
+                                   # task's worktree once its goal is cancelled or
+                                   # completed (default); false keeps them all for
+                                   # inspecting the work
+delete_merged_branches = true      # only applies to a merged task's branch, when
+                                   # worktrees are deleted too: a kept task worktree
+                                   # pins its branch, and cancelling or completing a
+                                   # goal never deletes a branch
 prevent_sleep = true               # hold a system sleep inhibition while any agent
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
