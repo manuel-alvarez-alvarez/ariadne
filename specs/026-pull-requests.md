@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-12
+updated: 2026-10-13
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -9,8 +9,10 @@ tests:
   - crates/ariadne-daemon/src/forge/news.rs
   - crates/ariadne-daemon/src/forge/live.rs
   - crates/ariadne-daemon/src/forge/pulls.rs
+  - crates/ariadne-daemon/src/forge/github/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/pull_requests.rs
+  - crates/ariadne-daemon/tests/it/tunnel.rs
   - crates/ariadne-daemon/tests/it/kept_requests.rs
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
@@ -71,9 +73,10 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    A request nobody works on, and nobody could start work on by asking, has no row, whatever the lists hold.
 4. What the forge says of a request Ariadne works on is read on every fetch and held in memory alone (`forge::live::LivePulls`, by row id): the request's own read, whether it asks for the user's review, and, while it is open, its details.
    The scheduler and the routes join the row to that read (`PullRequest`, the view). A daemon that restarts holds nothing until its first fetch, which runs at once; until a request has been read, the scheduler does nothing for it.
-5. A repository fetch lists every open request of the repository, and the ones that ask for the login's review; the two lists are read from the forge at the same time.
+5. A repository fetch lists every open request of the repository in one read; GitHub names each request's own requested reviewers on that same read (`reviewRequests`), so the login's own review requests need no second read. GitLab still reads its own list and its review requests apart.
    It starts the work on each review request rule 3 names, then reads each row of the repository: the list's read where the list holds it, else a read of its own — a merged or closed request, or one the list misses.
-   A row that asks for review keeps asking while the list of review requests holds it; one it no longer holds, and that asked on the last read, is asked of the forge's timeline (029 rule 3).
+   A row that asks for review keeps asking while the list names the login among its requested reviewers; one it no longer does, and that asked on the last read, is asked of the forge's timeline (029 rule 3).
+   GitHub names a team's own request by a slug or a name, never a login, so a review asked of a team the login belongs to is read as asking nobody (Known gap).
 6. `ForgePoll::wake(repository_id)` schedules one fetch immediately.
    Each repository has one worker, so fetches of that repository never overlap.
    Wakes during a fetch coalesce into one following fetch.
@@ -230,6 +233,11 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `store.rs::deleting_a_request_is_refused_where_an_ask_landed_since_the_read`.
 - The list is read live, a request of the user's own nobody asked Ariadne to review has no row, a request that asks for the user's review is tracked the moment it is seen, and nothing adds or removes a row by hand:
   `pull_requests.rs::the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review`.
+- GitHub's repository fetch lists the open requests in one `pr list` call, a user named among a request's own `reviewRequests` asks for that user's review, a team named there asks for nobody's, and a read from before the field existed asks for nobody's:
+  `forge/github/pulls.rs::tests::a_user_review_request_names_its_login`,
+  `::a_team_review_request_matches_no_login`,
+  `::a_read_naming_no_review_requests_asks_for_nobody`;
+  one fetch makes one `pr list` call: `tunnel.rs::a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_fetches_once`.
 - A detail read asks the forge for its parts together:
   `pull_requests.rs::a_detail_read_asks_the_forge_for_its_parts_together`.
 - A review request has a row while it is reviewed and none once it merged:
@@ -347,6 +355,12 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `dispatch.test.ts::reads every request again on pull_requests_changed, which carries none`.
 - The session listing takes `pull_request` in OpenAPI:
   `session_list.rs::the_query_and_the_page_are_in_the_openapi_document`.
+
+## Known gap
+
+GitHub's `reviewRequests` names a team by a slug or a name, never a login.
+A review asked of a team the user belongs to is read as asking nobody, so it
+raises no row and starts no session (029).
 
 ## Sources
 
