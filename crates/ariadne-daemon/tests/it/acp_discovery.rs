@@ -591,33 +591,44 @@ async fn a_volta_shim_naming_the_right_package_is_registered() {
 }
 
 /// A Volta file naming some other package proves nothing of this one: the
-/// entry falls to the ACP probe like any other unproven name, kept here
-/// because the probe's own `agentInfo.name` answers for the real package.
+/// entry falls to the ACP probe like any other unproven name. First, with
+/// no `agentInfo.name` of its own, the probe proves nothing either, and the
+/// entry is dropped outright — which a Volta check that wrongly accepted
+/// the wrong package never would, since a proven entry only drops for a
+/// refused protocol. Only once the probe itself answers the real package is
+/// the same entry kept.
 #[tokio::test]
 async fn a_volta_shim_naming_a_different_package_goes_to_the_probe() {
     let dir = tempfile::tempdir().unwrap();
-    let mut setup = script();
-    setup["agent_info"] =
-        json!({"name": "@agentclientprotocol/claude-agent-acp", "version": "1.0"});
-    let agent = stub_acp_agent(dir.path(), setup);
+    let agent = stub_acp_agent(dir.path(), script());
     let path = agent.path_with(&["claude-agent-acp"]);
     let homes = ManagerHomes {
         volta: volta_home(dir.path(), "claude-agent-acp", "@other-vendor/other-cli"),
         ..no_manager_homes(dir.path())
     };
-    let h = settled(
-        harness()
-            .home(empty_home(dir.path()))
-            .agents_on_path(path)
-            .manager_homes(homes),
-        "claude-acp",
-    )
-    .await;
+    let h = harness()
+        .home(empty_home(dir.path()))
+        .agents_on_path(path)
+        .manager_homes(homes)
+        .discover_agents()
+        .await;
 
     let agents: Vec<Value> = h.get("/v1/acp-agents").await;
-    let ids: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
-    assert_eq!(ids, ["claude-acp"], "{agents:#?}");
-    assert_eq!(agents[0]["status"], "ready", "{:#?}", agents[0]);
+    assert!(
+        !agents.iter().any(|a| a["id"] == "claude-acp"),
+        "a Volta file for another package must not prove this one: {agents:#?}"
+    );
+
+    let mut matching = script();
+    matching["agent_info"] =
+        json!({"name": "@agentclientprotocol/claude-agent-acp", "version": "1.0"});
+    agent.reprogram(matching);
+    let agents: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
+    let claude = agents
+        .iter()
+        .find(|a| a["id"] == "claude-acp")
+        .unwrap_or_else(|| panic!("the probe's own answer must register it: {agents:#?}"));
+    assert_eq!(claude["status"], "ready", "{claude}");
 }
 
 /// A pnpm global shim is a script, not a symlink, so the chain from it never
@@ -640,6 +651,29 @@ async fn a_pnpm_shim_naming_the_right_package_is_registered() {
     assert_eq!(ids, ["claude-acp"], "{agents:#?}");
     assert_eq!(agents[0]["status"], "ready", "{:#?}", agents[0]);
     assert_eq!(agents[0]["command"], json!(["claude-agent-acp"]));
+}
+
+/// A path is a whole component, not a substring: a shim naming
+/// `claude-agent-acp-legacy` — a package of its own that merely shares the
+/// real one's name as a prefix — must not prove the real package. With no
+/// `agentInfo.name` of its own, the entry is dropped outright; a substring
+/// check would have wrongly proven it and kept it listed instead.
+#[tokio::test]
+async fn a_pnpm_shim_naming_a_similarly_prefixed_package_does_not_pass_check_2() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_as_pnpm_shim_for_a_similarly_prefixed_package("claude-agent-acp");
+    let h = harness()
+        .home(empty_home(dir.path()))
+        .agents_on_path(path)
+        .discover_agents()
+        .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert!(
+        !agents.iter().any(|a| a["id"] == "claude-acp"),
+        "a shim naming a similarly prefixed package must not prove the real one: {agents:#?}"
+    );
 }
 
 /// asdf and mise both shim by plugin and version rather than by symlink, so

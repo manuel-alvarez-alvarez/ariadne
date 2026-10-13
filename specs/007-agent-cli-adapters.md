@@ -261,8 +261,12 @@ skill says (017).
   or dropping outright
   (`::a_volta_shim_naming_a_different_package_goes_to_the_probe`), a pnpm
   shim whose own text names the package is registered
-  (`::a_pnpm_shim_naming_the_right_package_is_registered`), and an asdf
-  shim and a mise shim each with a matching install are registered
+  (`::a_pnpm_shim_naming_the_right_package_is_registered`), a path is a
+  whole component rather than a substring, so a shim naming a package that
+  only shares a prefix with the real one does not pass
+  (`::a_pnpm_shim_naming_a_similarly_prefixed_package_does_not_pass_check_2`),
+  and an asdf shim and a mise shim each with a matching install are
+  registered
   (`::an_asdf_shim_and_a_mise_shim_with_a_matching_install_are_registered`).
 - A shim neither check proves is registered once its probe names the
   registry package exactly

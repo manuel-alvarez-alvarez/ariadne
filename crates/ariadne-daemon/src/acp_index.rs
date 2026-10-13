@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -201,9 +202,37 @@ struct VoltaBin {
 
 /// A pnpm global shim is a script, not a symlink, so the chain from it never
 /// reaches the package either: its own text names the path pnpm resolves it
-/// through, under the package's directories.
+/// through, and one of its path-like words has to stand under the
+/// package's own directories — the same test [`installs`] runs on a link,
+/// run here on a word of the text instead. A substring would answer yes to
+/// `@scope/name-legacy` for `@scope/name`; a whole path component does not.
 fn pnpm_installs(program: &Path, package: &[String]) -> bool {
-    std::fs::read_to_string(program).is_ok_and(|text| text.contains(&package.join("/")))
+    let Ok(file) = std::fs::File::open(program) else {
+        return false;
+    };
+    let mut text = String::new();
+    // A shim is a short script; bounding the read keeps a native binary
+    // found under the same name from being read whole first.
+    if file
+        .take(PNPM_SHIM_READ_LIMIT)
+        .read_to_string(&mut text)
+        .is_err()
+    {
+        return false;
+    }
+    pnpm_shim_words(&text).any(|word| under(Path::new(word), package))
+}
+
+/// How much of a program's text [`pnpm_installs`] reads before giving up:
+/// generous for a shim script, and not the whole of a native binary found
+/// under the same name.
+const PNPM_SHIM_READ_LIMIT: u64 = 64 * 1024;
+
+/// The path-like words of a shim script's text: split on whitespace and the
+/// characters a shell line quotes, assigns or separates arguments with.
+fn pnpm_shim_words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| c.is_whitespace() || "\"'=:;".contains(c))
+        .filter(|word| !word.is_empty())
 }
 
 /// asdf and mise both shim by plugin and version rather than by symlink, and
