@@ -192,7 +192,8 @@ A disabled integration has no worker, regardless of its retained hook status.
   `forge_rate_limit.rs::three_wakes_inside_the_debounce_window_cause_one_fetch`,
   `forge_rate_limit.rs::continued_wakes_do_not_extend_the_debounce_window`,
   `forge_rate_limit.rs::a_rate_limited_timer_fetch_pauses_and_fetches_once_after_wakes_inside_it`,
-  `forge_rate_limit.rs::a_rate_limited_wake_only_fetch_pauses_and_fetches_once_after_wakes_inside_it`.
+  `forge_rate_limit.rs::a_rate_limited_wake_only_fetch_pauses_and_fetches_once_after_wakes_inside_it`,
+  `forge_rate_limit.rs::a_past_rate_limit_reset_waits_for_the_poll_interval`.
 - Changed URLs update hooks, withdrawal wakes a fetch, and disable deletes:
   `webhooks.rs::url_changes_update_hooks_withdrawal_restores_timer_and_disable_deletes`.
 - GitLab URL updates preserve the token and withdrawal restores timer fetching:

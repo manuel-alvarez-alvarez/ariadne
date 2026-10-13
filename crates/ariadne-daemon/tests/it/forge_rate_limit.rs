@@ -159,6 +159,7 @@ async fn a_rate_limited_timer_fetch_pauses_and_fetches_once_after_wakes_inside_i
     let h = harness()
         .forge_cli(&stub)
         .timeouts(Timeouts {
+            forge_poll: RUNS_OUT * 3,
             forge_rate_limit_pause: RUNS_OUT * 3,
             forge_wake_debounce: Duration::from_millis(1),
             ..Default::default()
@@ -205,6 +206,7 @@ async fn a_rate_limited_wake_only_fetch_pauses_and_fetches_once_after_wakes_insi
     let (_store, bus, poll, id) = wake_only_poll(
         &h,
         Timeouts {
+            forge_poll: RUNS_OUT * 3,
             forge_rate_limit_pause: RUNS_OUT * 3,
             forge_wake_debounce: Duration::from_millis(1),
             ..Default::default()
@@ -234,17 +236,18 @@ async fn a_rate_limited_wake_only_fetch_pauses_and_fetches_once_after_wakes_insi
     quiet_fetches(&stub, 1, QUIET).await;
 }
 
-/// A successful GitHub rate-limit read records the later REST/GraphQL reset
-/// time, rather than falling back to a local duration or resuming at the
-/// first resource that happens to reset.
+/// A successful GitHub rate-limit read records the reset of the only
+/// exhausted resource, not the later reset of another resource with calls
+/// left.
 #[tokio::test]
-async fn a_rate_limited_fetch_reads_the_forges_own_later_reset_time() {
+async fn a_rate_limited_fetch_reads_the_only_spent_limit_reset() {
     let core = 4_102_444_800_i64;
     let graphql = core + 1800;
     let stub = stub_forge_cli(json!([
         {"args": ["api", "rate_limit"], "exit": 0,
          "stdout": json!({"resources": {
-             "core": {"reset": core}, "graphql": {"reset": graphql}
+             "core": {"remaining": 0, "reset": core},
+             "graphql": {"remaining": 4_000, "reset": graphql}
          }}).to_string()},
         {"args": ["pr", "list"], "exit": 1,
          "stderr": "gh: API rate limit exceeded for user ID 1. (HTTP 403)"},
@@ -254,7 +257,7 @@ async fn a_rate_limited_fetch_reads_the_forges_own_later_reset_time() {
     let repo = enabled_repository(&h).await;
     let expected = format!(
         "{FORGE_RATE_LIMITED} {}",
-        chrono::DateTime::from_timestamp(graphql, 0)
+        chrono::DateTime::from_timestamp(core, 0)
             .unwrap()
             .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
     );
@@ -262,6 +265,41 @@ async fn a_rate_limited_fetch_reads_the_forges_own_later_reset_time() {
     next_fetch_error(&mut events, &repo.id, &expected).await;
     assert!(called(&stub, &["api", "rate_limit"]));
     quiet_fetches(&stub, 0, QUIET).await;
+}
+
+/// A rate-limit reset which has passed still pauses for one ordinary poll
+/// interval, so an ahead local clock cannot make the worker loop at once.
+#[tokio::test]
+async fn a_past_rate_limit_reset_waits_for_the_poll_interval() {
+    let poll = RUNS_OUT * 3;
+    let stub = stub_forge_cli(json!([
+        {"args": ["api", "rate_limit"], "exit": 0,
+         "stdout": json!({"resources": {
+             "core": {"remaining": 0, "reset": 1},
+             "graphql": {"remaining": 4_000, "reset": 4_102_444_800_i64}
+         }}).to_string()},
+        {"args": ["pr", "list"], "exit": 1,
+         "stderr": "gh: API rate limit exceeded for user ID 1. (HTTP 403)"},
+    ]));
+    let h = harness()
+        .forge_cli(&stub)
+        .timeouts(Timeouts {
+            forge_poll: poll,
+            ..Default::default()
+        })
+        .await;
+    let mut events = h.bus.subscribe();
+    let repo = enabled_repository(&h).await;
+
+    next_fetch_error(&mut events, &repo.id, FORGE_RATE_LIMITED).await;
+    stub.reprogram(json!([
+        {"args": ["pr", "list"], "exit": 0, "stdout": "[]"},
+        {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+         "exit": 0, "stdout": "[]"},
+    ]));
+    quiet_fetches(&stub, 0, QUIET).await;
+    wait_for_fetches(&stub, 1).await;
+    next_fetch_error_clear(&mut events, &repo.id).await;
 }
 
 /// In timer mode a plain failure waits twice as long before trying again,

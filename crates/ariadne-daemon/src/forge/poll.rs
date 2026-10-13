@@ -375,7 +375,11 @@ async fn worker(
             // The timer and the mode are both beside the point while the
             // forge itself says to wait: every wake until `until` folds
             // into the one fetch that runs once it passes.
-            let deadline = Instant::now() + (until - Utc::now()).to_std().unwrap_or_default();
+            let pause = (until - Utc::now())
+                .to_std()
+                .unwrap_or_default()
+                .max(timeouts.forge_poll);
+            let deadline = Instant::now() + pause;
             loop {
                 tokio::select! {
                     _ = sleep_until(deadline) => break,

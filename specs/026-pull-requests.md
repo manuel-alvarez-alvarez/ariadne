@@ -86,7 +86,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    `Timeouts::forge_poll` defaults to 5 minutes.
    A fetch that fails for a reason other than a rate limit, in `Mode::Timer`, doubles the wait before the next timer fetch, up to `Timeouts::forge_poll_backoff_cap` (1 hour by default); a fetch that works resets it to `Timeouts::forge_poll`.
    A wake still fetches at once (after the debounce above), whatever the current wait.
-   A fetch that answers a forge rate limit pauses the worker in either mode until the forge's own reset time, read with no quota of its own (`ForgeClient::rate_limit_reset`), or `Timeouts::forge_rate_limit_pause` (15 minutes by default) from now where that read fails; every wake inside the pause folds into the one fetch that runs once it ends. `fetch_error` reads `rate limited until <RFC 3339 time>` while paused (`forge::poll::FORGE_RATE_LIMITED`), and null once a fetch works.
+   A fetch that answers a forge rate limit pauses the worker in either mode until the latest reset time of an exhausted forge resource, read with no quota of its own (`ForgeClient::rate_limit_reset`), or `Timeouts::forge_rate_limit_pause` (15 minutes by default) from now where that read fails or no primary resource is exhausted; the pause lasts at least `Timeouts::forge_poll`, so a reset already past cannot spin the worker. Every wake inside the pause folds into the one fetch that runs once it ends. `fetch_error` reads `rate limited until <RFC 3339 time>` while paused (`forge::poll::FORGE_RATE_LIMITED`), and null once a fetch works.
    Each fetch also reads the repository's open issues, and publishes `issues_changed` with the repository id where they moved since that worker's last read (028).
    `Mode::WakeOnly` has no timer fetches; only explicit wakes fetch.
    Enabled integrations start with one immediate fetch.
@@ -263,8 +263,13 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   runs a signed-out confirmation after a rate-limit refusal:
   `forge_rate_limit.rs::a_rate_limited_timer_fetch_pauses_and_fetches_once_after_wakes_inside_it`,
   `forge_rate_limit.rs::a_rate_limited_wake_only_fetch_pauses_and_fetches_once_after_wakes_inside_it`.
-  The later of GitHub's REST and GraphQL reset times is recorded:
-  `forge_rate_limit.rs::a_rate_limited_fetch_reads_the_forges_own_later_reset_time`.
+  GitHub records only an exhausted resource's reset, falls back where no
+  primary resource is exhausted, and pauses for one poll interval where that
+  reset has passed:
+  `github/mod.rs::tests::a_rate_limit_reset_uses_the_only_spent_resource`,
+  `github/mod.rs::tests::a_rate_limit_reset_is_none_when_no_resource_is_spent`,
+  `forge_rate_limit.rs::a_rate_limited_fetch_reads_the_only_spent_limit_reset`,
+  `forge_rate_limit.rs::a_past_rate_limit_reset_waits_for_the_poll_interval`.
   A failed fetch that is not a rate limit doubles the timer wait up to the
   cap, resets on success, and a wake still fetches at once:
   `forge_rate_limit.rs::a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once`.

@@ -560,10 +560,10 @@ impl ForgeClient {
     }
 
     /// When the forge's rate limit resets, read with no quota of its own
-    /// (GitHub's `gh api rate_limit`) — the later of the REST and GraphQL
-    /// reset times, since one repository fetch can draw on both. `None`
-    /// where the read itself failed, or the forge offers no such read
-    /// (GitLab): the caller falls back to
+    /// (GitHub's `gh api rate_limit`) — the latest reset of a resource with
+    /// no remaining calls. `None` where the read itself failed, every
+    /// resource has calls left, or the forge offers no such read (GitLab):
+    /// the caller falls back to
     /// [`crate::timeouts::Timeouts::forge_rate_limit_pause`] from now
     /// (`forge/poll.rs::worker`).
     pub(crate) async fn rate_limit_reset(&self, host: &str) -> Option<DateTime<Utc>> {
