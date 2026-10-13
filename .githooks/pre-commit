@@ -59,7 +59,17 @@ else
                 ;;
             ui)
                 run_ui=1
-                ui_files[${#ui_files[@]}]="${f#ui/}"
+                rel="${f#ui/}"
+                # `biome.json` ignores these two generated files; an
+                # explicit check of a path list biome ignores whole is
+                # itself an error ("No files were processed"), not a pass,
+                # so they are left for `npm run typecheck` alone, same as
+                # a commit that touches no other `ui/` file leaves biome
+                # uncalled entirely.
+                case "$rel" in
+                    openapi.json | src/api/schema.d.ts) ;;
+                    *) ui_files[${#ui_files[@]}]="$rel" ;;
+                esac
                 ;;
             tauri) run_tauri=1 ;;
         esac
@@ -95,7 +105,7 @@ if [ "$run_ui" = 1 ]; then
     fi
     if [ "$all" = 1 ]; then
         (cd ui && githooks_run npx biome check .)
-    else
+    elif [ "${#ui_files[@]}" -gt 0 ]; then
         (cd ui && githooks_run npx biome check "${ui_files[@]}")
     fi
     (cd ui && githooks_run npm run typecheck)

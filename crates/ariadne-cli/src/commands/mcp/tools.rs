@@ -779,7 +779,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge."
+        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge. A supervised repository holds it in your forge drafts instead."
     )]
     async fn reply_comment(
         &self,
@@ -792,15 +792,22 @@ impl AriadneMcp {
         let path = self
             .pull_request_path(&format!("/comments/{}/reply", req.comment_id))
             .await?;
-        json_result(
-            self.post(
+        let answer = self
+            .post(
                 &path,
                 &ReplyCommentRequest {
                     body: body.to_string(),
                 },
             )
-            .await?,
-        )
+            .await?;
+        if answer["pending"] == true {
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
+                "The reply is waiting in the user's forge drafts. The user must publish it \
+                 there. Continue your work."
+                    .to_string(),
+            )]));
+        }
+        json_result(answer)
     }
 
     #[tool(
@@ -1170,6 +1177,33 @@ mod tests {
         );
         let report: serde_json::Value = serde_json::from_str(&seen[2].body).expect("json");
         assert_eq!(report["reviewed_sha"], "abc");
+    }
+
+    /// Where the repository holds posts back, the daemon answers
+    /// `reply_comment` with `pending: true` rather than a posted comment
+    /// (026 rule 24): the tool's own text says the reply waits in the
+    /// user's forge drafts, and that the agent goes on, rather than
+    /// handing back the raw pending shape as though it were the comment.
+    #[tokio::test]
+    async fn a_pending_reply_tells_the_agent_to_continue_rather_than_the_raw_answer() {
+        let (endpoint, _seen) =
+            recording_daemon_answering(r#"{"pending": true, "id": "rv-9"}"#).await;
+        let mcp = server_at(
+            McpSeat::PullRequestKeeper,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answer = mcp
+            .reply_comment(Parameters(ReplyCommentReq {
+                comment_id: "01C".into(),
+                body: "Fixed it.".into(),
+            }))
+            .await
+            .expect("reply");
+        let ContentBlock::Text(text) = &answer.content[0] else {
+            panic!("the answer came back as something other than text");
+        };
+        assert!(text.text.contains("forge drafts"), "{}", text.text);
+        assert!(text.text.contains("Continue"), "{}", text.text);
     }
 
     /// The orchestrator is never offered a model it cannot staff an agent on.

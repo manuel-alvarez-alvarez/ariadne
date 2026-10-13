@@ -10,6 +10,8 @@ tests:
   - crates/ariadne-daemon/src/forge/live.rs
   - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/forge/github/pulls.rs
+  - crates/ariadne-daemon/src/forge/github/comments.rs
+  - crates/ariadne-daemon/src/forge/gitlab/comments.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/pull_requests.rs
   - crates/ariadne-daemon/tests/it/pull_request_detail_skip.rs
@@ -192,6 +194,12 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 21. Nothing adds or removes a request by hand, from the desktop or the CLI: Ariadne starts and stops working on requests on its own.
 22. `open_pull_request`'s body fills the repository's own pull request template where the repository has one. Where it has none, the body carries three sections, Why, What changed and How to test, each written from the task and its diff rather than one line. The title still follows the repository's commit conventions (030 rule 10).
 23. A repository that supervises its posts ([002](002-repositories-branches-and-worktrees.md) rule 13) opens every pull request a task's `pr` column requests as a draft, whatever the agent's own `draft` asked: a person reviews it before it is real to anyone else. A repository that does not leaves the agent's own value through unchanged.
+24. A repository that supervises its posts holds every reply this way too: `POST .../reply` calls `ForgeClient::reply_pending` instead of `ForgeClient::reply`, posting nothing to the forge directly, and answers `{pending: true, id}` in place of a comment, `id` the pending item's own forge id.
+    GitHub finds or creates the viewer's one pending review per request (`Github::pending_review`; GitHub allows only one, so it is reused). A reply to an inline review comment joins the pending review's own thread, `addPullRequestReviewThreadReply`, answering the new draft comment's id. A reply to a top-level conversation comment has no pending form of its own, so the pending review's body gains it instead, led by a quote of the comment it answers and a link to it (`Github::append_to_pending_review`), answering the pending review's own id.
+    GitLab posts a draft note instead, `POST .../draft_notes`, `in_reply_to_discussion_id` naming the comment's own discussion; only its own author sees it until it is published.
+    The comment this answers is marked `pending_reply` (`pull_request_comment_marks`), a one-way local record never read back off the forge: it counts answered from here on (`forge::live::answered`), so it does not wake the keeping agent again, whatever becomes of the forge's own pending item — a draft deleted there before the user publishes it leaves the mark, and the comment, as they are. Since the mark adds no later comment of its own for `answered` to find, it stands at its own comment's place in the thread instead: every earlier comment of that thread reads answered too, the same as a real reply there would show, and a later one stays open. A repository that does not supervise its posts posts the reply as before, under rule 16.
+    The mark lives in the store alone, on no field a forge fetch ever reads back, so the route announces the request changed (`events.pull_requests_changed`) and wakes the scheduler itself: nothing else could tell a watcher the comment now reads answered.
+    The agent's own `reply_comment` tool reads a `pending` answer and says, in its own words, that the reply waits in the user's forge drafts and that the agent goes on, rather than handing back the pending shape as though it were the posted comment rule 15 otherwise answers with.
 
 ## HTTP
 
@@ -209,7 +217,7 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `POST /v1/pull-requests/refresh?repo=` | Wake one repository or every enabled repository. Return 202. |
 | `GET /v1/pull-requests/{id}/comments?unanswered_only=` | The comments, read off the forge now, with their marks; or the threads that wait on the login. |
 | `GET /v1/pull-requests/{id}/comments/{comment_id}` | One comment, read off the forge now. |
-| `POST /v1/pull-requests/{id}/comments/{comment_id}/reply` | Post a reply through the forge CLI. Return 201. |
+| `POST /v1/pull-requests/{id}/comments/{comment_id}/reply` | Post a reply through the forge CLI. Return 201. A repository that supervises its posts holds it in the user's own forge drafts instead, answering `{pending: true, id}` (rule 24). |
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` | Resolve, from the review session, a thread it opened (029). Return 200. |
 | `POST /v1/pull-requests/{id}/report` | Take `ready`, `head_sha` (required with `ready: true`), and `reviewed_sha` (029), from the request's own session. |
 | `GET /v1/sessions?pull_request=` | List the sessions of one request (012). |
@@ -377,6 +385,39 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   own value through unchanged:
   `kept_requests.rs::open_pull_request_forces_a_draft_when_the_repository_supervises_posts`,
   `::open_pull_request_leaves_the_agents_draft_value_unchanged_when_supervision_is_off`.
+- A repository that supervises its posts holds a reply back: the route
+  answers `pending: true` with the pending item's forge id, posts nothing to
+  the forge, and the comment counts answered with no further reply taken;
+  a repository that does not posts the reply as before:
+  `kept_requests.rs::the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_posts`,
+  `::the_pr_agent_replies_and_reports_and_no_other_session_may`,
+  `::the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side`.
+- A reply to an inline review comment finds or creates the viewer's one
+  pending review and joins its thread, reusing the same review on a second
+  reply rather than creating another:
+  `github/comments.rs::tests::a_pending_review_comment_reply_creates_a_pending_review_and_joins_its_thread`,
+  `::a_second_pending_reply_reuses_the_same_pending_review`.
+- A reply to a top-level conversation comment quotes it, with a link to it,
+  into the pending review's own body:
+  `github/comments.rs::tests::a_pending_conversation_reply_quotes_the_comment_and_appends_to_the_pending_review`.
+- GitLab posts a draft note on the comment's own discussion, never a
+  published one:
+  `gitlab/comments.rs::tests::a_pending_reply_posts_a_draft_note_on_the_comments_discussion`.
+- A comment marked pending reads answered with no later comment on the
+  forge to find it by:
+  `live.rs::tests::a_pending_reply_marks_its_comment_answered_with_no_later_comment_on_the_forge`.
+- A pending reply to one comment of a thread answers every earlier comment
+  there too, and leaves a later one open:
+  `live.rs::tests::a_pending_reply_answers_earlier_comments_of_its_thread_and_leaves_a_later_one_open`.
+- The reply route announces the pending mark itself, since no forge fetch
+  ever reads it back:
+  `kept_requests.rs::the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_posts`.
+- The pending mark is written once and kept beside a mark of another kind
+  on the same row:
+  `store.rs::a_pending_reply_mark_is_written_once_and_kept_beside_others`.
+- `reply_comment` tells the agent a pending reply waits in the user's forge
+  drafts and to go on, rather than handing back the raw pending shape:
+  `tools.rs::tests::a_pending_reply_tells_the_agent_to_continue_rather_than_the_raw_answer`.
 - A trailing trailer and the blank line before it are stripped, and text with no trailer is left whole:
   `forge/pulls.rs::tests::strip_trailers_takes_off_a_trailing_trailer_and_the_blank_line_before_it`,
   `::strip_trailers_leaves_text_with_no_trailer_whole`.

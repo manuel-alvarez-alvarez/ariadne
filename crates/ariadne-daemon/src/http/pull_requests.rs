@@ -11,9 +11,10 @@ use crate::forge::live::{self, Details, Live};
 use crate::forge::pulls::{CONVERSATION, DraftComment, ReviewDraft};
 use crate::forge::{ForgeClient, PullRequestRef, pulls};
 use ariadne_api::pull_requests::{
-    AskBabysitRequest, AskReviewRequest, PullRequestCommentDto, PullRequestCommentQuery,
-    PullRequestDiffQuery, PullRequestDto, PullRequestListQuery, PullRequestMatchDto,
-    ReplyCommentRequest, ReportPullRequestRequest, SubmitReviewRequest,
+    AskBabysitRequest, AskReviewRequest, PendingReplyDto, PullRequestCommentDto,
+    PullRequestCommentQuery, PullRequestDiffQuery, PullRequestDto, PullRequestListQuery,
+    PullRequestMatchDto, ReplyAnswerDto, ReplyCommentRequest, ReportPullRequestRequest,
+    SubmitReviewRequest,
 };
 use ariadne_store::{
     AgentSession, ForgeIntegration, PullRequest, PullRequestComment, PullRequestFilter,
@@ -516,17 +517,20 @@ async fn find_comment(
 
 /// Reply to one comment. The daemon posts the reply through the forge CLI,
 /// marks it the review's where a review session posts it (029), and reads
-/// the request again.
+/// the request again. Where the repository holds posts back (002, 026 rule
+/// 24), nothing is posted: the reply waits in the user's own forge drafts,
+/// and the answer carries `pending: true` with the forge id of the pending
+/// item instead of the comment the forge would otherwise hold.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/reply", tag = "pull-requests",
     params(("id" = String, Path), ("comment_id" = String, Path)),
     request_body = ReplyCommentRequest,
-    responses((status = 201, body = PullRequestCommentDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
+    responses((status = 201, body = ReplyAnswerDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
 pub(super) async fn reply(
     State(state): State<AppState>,
     Path((id, comment_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(req): Json<ReplyCommentRequest>,
-) -> ApiResult<(StatusCode, Json<PullRequestCommentDto>)> {
+) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
     let row = state.store.get_pull_request(&id).await?;
     let session = own_session(&state, &headers, &row).await?;
     // A review session's reply is the review's, as its findings are. A
@@ -575,6 +579,39 @@ pub(super) async fn reply(
         true => pulls::signed(&body, false),
         false => body.clone(),
     };
+    // A repository that holds posts back takes no reply of this agent's
+    // onto the forge directly: it waits in the user's own forge drafts
+    // until they publish it there (002, 026 rule 24).
+    if state
+        .store
+        .get_repository(&pull.repository_id)
+        .await?
+        .supervise_posts()
+    {
+        let forge_id = client(&state, &forge)
+            .reply_pending(&slug(&forge), pull.number, &login, &comment, &sent)
+            .await
+            .map_err(forge_error)?;
+        state
+            .store
+            .mark_pending_reply(&pull.id, &comment.forge_id)
+            .await?;
+        // The mark lives in the store alone, on no field a forge fetch
+        // ever reads back (`forge::poll::pulls_moved` hashes only what
+        // the forge itself answers), so nothing but this direct
+        // announcement could ever tell a watcher the comment now reads
+        // answered.
+        state.events.pull_requests_changed(&pull.repository_id);
+        state.notify_scheduler_pull_request(&pull.id);
+        let pending = PendingReplyDto {
+            pending: true,
+            id: forge_id,
+        };
+        return Ok((
+            StatusCode::CREATED,
+            Json(serde_json::to_value(pending).expect("PendingReplyDto serializes")),
+        ));
+    }
     let forge_id = client(&state, &forge)
         .reply(&slug(&forge), pull.number, &comment, &sent)
         .await
@@ -633,7 +670,10 @@ pub(super) async fn reply(
     );
     state.forge_poll.wake(&pull.repository_id);
     state.notify_scheduler_pull_request(&pull.id);
-    Ok((StatusCode::CREATED, Json(pull_request_comment_dto(posted))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(pull_request_comment_dto(posted)).expect("dto serializes")),
+    ))
 }
 
 /// Resolve the thread of one comment, once a push fixed what it found

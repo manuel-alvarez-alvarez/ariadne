@@ -5580,6 +5580,26 @@ async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark(
     );
 }
 
+/// A comment whose reply is held pending in the user's own forge drafts
+/// (026 rule 24) carries the mark once written, beside a mark of another
+/// kind on the same row, and a second mark of the same comment leaves it
+/// as it is rather than erroring: a retried write is not a second row.
+#[tokio::test]
+async fn a_pending_reply_mark_is_written_once_and_kept_beside_others() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    store.mark_pending_reply(&row.id, "ic-1").await.unwrap();
+    store
+        .mark_review_comments(&row.id, &["rc-2".into()])
+        .await
+        .unwrap();
+    store.mark_pending_reply(&row.id, "ic-1").await.unwrap();
+    let mut marks = store.pull_request_comment_marks(&row.id).await.unwrap();
+    marks.sort_by(|a, b| a.forge_id.cmp(&b.forge_id));
+    assert_eq!(marks.len(), 2);
+    assert!(marks[0].pending_reply && !marks[0].from_review);
+    assert!(!marks[1].pending_reply && marks[1].from_review);
+}
+
 /// The ready flag a session reports moves the row, and a repeated ready
 /// report on the same head says nothing moved. A later report of `true` on
 /// a different head moves the row again, even though `ready` itself was

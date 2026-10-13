@@ -343,6 +343,10 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
     h.state.forge_poll.wake(&task.repo_id);
     h.flush_scheduler().await;
     assert_eq!(h.prompts_to(agent).len(), told);
+    // Not about the supervised path (026 rule 24 covers that separately):
+    // the reply below posts directly, as it did before that rule existed.
+    let repository = h.store.get_repository(&task.repo_id).await.unwrap();
+    h.set_supervise_posts(&repository, false).await;
     let reply: Value = h
         .json(
             as_session(

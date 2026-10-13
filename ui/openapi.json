@@ -1539,7 +1539,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Reply to one comment. The daemon posts the reply through the forge CLI,\nmarks it the review's where a review session posts it (029), and reads\nthe request again.",
+        "summary": "Reply to one comment. The daemon posts the reply through the forge CLI,\nmarks it the review's where a review session posts it (029), and reads\nthe request again. Where the repository holds posts back (002, 026 rule\n24), nothing is posted: the reply waits in the user's own forge drafts,\nand the answer carries `pending: true` with the forge id of the pending\nitem instead of the comment the forge would otherwise hold.",
         "operationId": "reply",
         "parameters": [
           {
@@ -1575,7 +1575,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PullRequestCommentDto"
+                  "$ref": "#/components/schemas/ReplyAnswerDto"
                 }
               }
             }
@@ -6966,6 +6966,24 @@
           }
         }
       },
+      "PendingReplyDto": {
+        "type": "object",
+        "description": "What the reply route answers instead of a posted comment, where the\nrepository holds agent posts for the user's approval (002, 026 rule 24):\nthe reply waits, unposted, as a pending review (GitHub) or a draft note\n(GitLab) in the user's own forge drafts, until the user publishes it\nthere.",
+        "required": [
+          "pending",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The forge id of the pending item: the pending review's own id for a\nreply to a top-level conversation comment, the new draft comment's\nfor a reply inside a review thread (GitHub); the draft note's id\n(GitLab)."
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "Always true: a posted reply never takes this shape."
+          }
+        }
+      },
       "PerFinishedTaskDto": {
         "type": "object",
         "description": "What a finished task spends, on average: the tokens of every session of a\ntask that finished, divided by how many tasks finished. 0 where none.",
@@ -7526,6 +7544,17 @@
             "example": "3.12.1"
           }
         }
+      },
+      "ReplyAnswerDto": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/PullRequestCommentDto"
+          },
+          {
+            "$ref": "#/components/schemas/PendingReplyDto"
+          }
+        ],
+        "description": "What `POST .../reply` answers: the posted comment, or, where the\nrepository holds posts back, [`PendingReplyDto`] in its place."
       },
       "ReplyCommentRequest": {
         "type": "object",

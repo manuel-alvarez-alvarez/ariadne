@@ -962,6 +962,10 @@ pub struct CommentMark {
     pub forge_id: String,
     pub told_at: Option<String>,
     pub from_review: bool,
+    /// The agent's reply to this comment is held, unposted, in the user's
+    /// own forge drafts (026 rule 24): a one-way local mark, never read
+    /// back off the forge.
+    pub pending_reply: bool,
 }
 
 /// One comment on a pull request, as the forge holds it and the daemon's

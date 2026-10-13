@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, TIMEOUT, as_session, eventually, harness, put_json, sh, with_forge,
+    Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, put_json, sh, with_forge,
 };
 use ariadne_core::{Seat, SessionStatus};
 use ariadne_daemon::forge::poll::Mode;
@@ -195,6 +195,10 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path).await;
+    // Not about the supervised path (026 rule 24 covers that separately):
+    // the reply below posts directly, as it did before that rule existed.
+    let repository_row = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository_row, false).await;
     // Nobody works on a request of mine until there is a reason to: no
     // task opened it, nobody asked for a review of it, and nobody has
     // asked to babysit it yet.
@@ -338,6 +342,145 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
         h.store.get_pull_request(&id).await.is_err()
     })
     .await;
+}
+
+/// Where the repository supervises its posts, the default (002 rule 13),
+/// the keeper's reply to a top-level conversation comment holds nothing on
+/// the forge directly, the same route and the same check the task's `pr`
+/// agent answers through (026 rule 24, 032 rule 13): it answers
+/// `pending: true` with the pending review's own id, posts no
+/// `gh pr comment`, and the comment counts answered with no further reply
+/// taken — so a later poll hands the keeper no further news of it.
+#[tokio::test]
+async fn a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+
+    // A comment by another login is the author's news, told once.
+    let shown_with_alice = Shown {
+        updated_at: "2026-10-02T00:00:00Z",
+        comments: json!([
+            {"id": 301, "user": {"login": "alice"}, "body": "Looks good but one nit.",
+             "created_at": "2026-10-02T00:00:00Z"}
+        ]),
+        ..Shown::open(&head)
+    };
+    stub.reprogram(script(&shown_with_alice));
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "the news to reach the keeper", async || {
+        h.prompts_to(&session)
+            .last()
+            .is_some_and(|news| news.contains("ic-301"))
+    })
+    .await;
+    let told = h.prompts_to(&session).len();
+
+    // The repository holds posts back: the reply finds no pending review
+    // of its own yet (the plain `pulls/1/reviews` entry below still
+    // answers `[]`), creates one with no body, then appends to it through
+    // GraphQL — each matched ahead of the generic entry it would
+    // otherwise fall through to.
+    let mut pending_script = script(&shown_with_alice);
+    pending_script.as_array_mut().unwrap().splice(
+        0..0,
+        [
+            answer(
+                &[
+                    "api",
+                    "repos/acme/widgets/pulls/1/reviews",
+                    "--hostname",
+                    "github.com",
+                    "--method",
+                    "POST",
+                ],
+                0,
+                r#"{"id": 9, "node_id": "PR_kwDOx", "state": "PENDING", "body": "",
+                    "user": {"login": "me"}}"#,
+            ),
+            answer(
+                &[
+                    "api",
+                    "graphql",
+                    "--hostname",
+                    "github.com",
+                    "-f",
+                    "query=mutation($id: ID!, $body: String!) { \
+                     updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
+                     pullRequestReview { id } } }",
+                ],
+                0,
+                r#"{"data": {"updatePullRequestReview": {"pullRequestReview": {"id": "PR_kwDOx"}}}}"#,
+            ),
+        ],
+    );
+    stub.reprogram(pending_script);
+
+    let before = stub.invocations().len();
+    // The mark lives in the store alone, on no field a forge fetch ever
+    // reads back, so the route announces the change itself: a watcher
+    // waiting on `pull_requests_changed` learns of it without a poll.
+    let mut events = h.bus.subscribe();
+    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, ariadne_api::stream::DomainEvent::PullRequestsChanged(p) if p.repository_id == repo);
+    let reply: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/ic-301/reply"),
+                &session.id,
+                json!({"body": "Thanks!"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(reply["pending"], true);
+    assert_eq!(reply["id"], "rv-9");
+    next_event(&mut events, moved).await;
+    assert!(
+        !stub.invocations()[before..]
+            .iter()
+            .any(|i| i.args.first().map(String::as_str) == Some("pr")
+                && i.args.get(1).map(String::as_str) == Some("comment")),
+        "no public comment is posted while the repository supervises its posts"
+    );
+
+    // The comment counts answered with no reply visible on the forge.
+    let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert_eq!(dto["unanswered_comments"], 0);
+
+    // A second reply is refused, the same way a comment the login's own
+    // side already answered always is: the pending mark alone settles it.
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/ic-301/reply"),
+            &session.id,
+            json!({"body": "Again."}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+
+    // No new prompt reaches the keeper: the pending mark already answers
+    // the comment, so a later poll hands it no news of it again.
+    fetch_again(&h, &stub, &repo).await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(
+        h.prompts_to(&session).len(),
+        told,
+        "the pending mark alone settles the comment: no further poll wakes the keeper"
+    );
 }
 
 /// Stopping before the keeper ever pushes leaves its worktree and its

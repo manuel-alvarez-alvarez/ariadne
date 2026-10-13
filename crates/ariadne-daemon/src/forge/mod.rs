@@ -427,6 +427,28 @@ impl ForgeClient {
         }
     }
 
+    /// Reply to one stored comment of request `number` with `body`, held
+    /// back, unposted, in the user's own forge drafts rather than posted
+    /// (026 rule 24): a pending review on GitHub, under `login`, which it
+    /// finds or creates; a draft note on GitLab. Answers the forge id of
+    /// the pending item.
+    pub async fn reply_pending(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+        comment: &ariadne_store::PullRequestComment,
+        body: &str,
+    ) -> Result<String, String> {
+        match self {
+            Self::Github(cli) => {
+                cli.reply_pending(repository, number, login, comment, body)
+                    .await
+            }
+            Self::Gitlab(cli) => cli.reply_pending(repository, number, comment, body).await,
+        }
+    }
+
     /// Resolve the thread one stored comment of request `number` is in: a
     /// thread a reviewer session opened, once a push fixed it (029).
     pub async fn resolve(
