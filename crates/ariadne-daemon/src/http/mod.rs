@@ -185,6 +185,7 @@ impl AppState {
         ariadne_api::attention::AttentionSubjectKind, ariadne_api::attention::AttentionTarget,
         ariadne_api::attention::CreateAgentRequest,
         ariadne_api::pull_requests::PendingReplyDto,
+        ariadne_api::pull_requests::PendingReviewDto,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),

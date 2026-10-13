@@ -24,16 +24,24 @@ struct ReviewAuthor {
 /// A review of a request, as `gh api .../pulls/<n>/reviews` lists it: a
 /// submitted one, or the viewer's own pending one.
 #[derive(Deserialize)]
-struct ReviewSummary {
-    id: i64,
+pub(super) struct ReviewSummary {
+    pub(super) id: i64,
     #[serde(default)]
-    node_id: String,
+    pub(super) node_id: String,
     #[serde(default)]
     state: String,
     #[serde(default)]
-    body: String,
+    pub(super) body: String,
     user: ReviewAuthor,
 }
+
+/// What `submit_review` (029) and `resolve_thread` (029 rule 16a) write at
+/// the top of the viewer's pending review body where the repository holds
+/// posts back (026 rule 24a): the ending of the verdict and summary
+/// `set_pending_review_header` writes, so a later round replaces only the
+/// text above it, leaving any reply text `reply_pending` appended below it
+/// in place.
+const PENDING_VERDICT_MARK: &str = "<!-- ariadne:pending-review-verdict -->";
 
 impl Github {
     /// Reply to `comment` with `body`, and answer the forge id the reply is
@@ -219,7 +227,7 @@ impl Github {
     /// created with no event and no body where there is none: creating one
     /// is itself silent, since a pending review shows nobody but its own
     /// author until it is submitted.
-    async fn pending_review(
+    pub(super) async fn pending_review(
         &self,
         repo: &str,
         number: i64,
@@ -264,7 +272,7 @@ impl Github {
 
     /// Append `text` to the viewer's pending review body, creating the
     /// review first where there is none. Answers the review's own id.
-    async fn append_to_pending_review(
+    pub(super) async fn append_to_pending_review(
         &self,
         repo: &str,
         number: i64,
@@ -277,6 +285,17 @@ impl Github {
             true => text.to_string(),
             false => format!("{}\n\n{text}", pending.body),
         };
+        self.update_pending_review_body(host, &pending, &body).await
+    }
+
+    /// Overwrite the viewer's pending review body outright, through
+    /// `updatePullRequestReview`. Answers the review's own id.
+    async fn update_pending_review_body(
+        &self,
+        host: &str,
+        pending: &ReviewSummary,
+        body: &str,
+    ) -> Result<String, String> {
         self.cli
             .answer(&[
                 "api",
@@ -294,6 +313,86 @@ impl Github {
             ])
             .await?;
         Ok(review_id(pending.id))
+    }
+
+    /// Merge `header` into `pending`'s own body, replacing only the text up
+    /// to [`PENDING_VERDICT_MARK`] and keeping any reply text
+    /// `reply_pending` appended below it in place, then overwrite the body
+    /// outright. Answers the review's own id.
+    pub(super) async fn apply_pending_header(
+        &self,
+        host: &str,
+        pending: &ReviewSummary,
+        header: &str,
+    ) -> Result<String, String> {
+        let rest = match pending.body.find(PENDING_VERDICT_MARK) {
+            Some(at) => pending.body[at + PENDING_VERDICT_MARK.len()..]
+                .trim_start_matches('\n')
+                .trim()
+                .to_string(),
+            None => pending.body.trim().to_string(),
+        };
+        let mut body = format!("{header}\n{PENDING_VERDICT_MARK}");
+        if !rest.is_empty() {
+            body.push_str("\n\n");
+            body.push_str(&rest);
+        }
+        self.update_pending_review_body(host, pending, &body).await
+    }
+
+    /// Resolve the thread `comment` is in, held back (029 rule 16a, where
+    /// the repository holds posts back): a line naming it, under a
+    /// "Threads to resolve" heading of the viewer's pending review body,
+    /// created once rather than on every call. Creates the pending review
+    /// first where there is none. Answers the review's own id.
+    pub(crate) async fn resolve_pending(
+        &self,
+        repo: &str,
+        number: i64,
+        login: &str,
+        comment: &PullRequestComment,
+    ) -> Result<String, String> {
+        if comment.kind != "review_comment" || comment.thread_id == CONVERSATION {
+            return Err("only a review thread on a line resolves".into());
+        }
+        let (host, owner, name) = split_slug(repo)?;
+        let pending = self.pending_review(repo, number, login).await?;
+        let line = format!(
+            "- {}",
+            review_thread_url(host, owner, name, number, comment)
+        );
+        let body = with_section_line(&pending.body, "Threads to resolve", &line);
+        self.update_pending_review_body(host, &pending, &body).await
+    }
+}
+
+/// The permalink of a review thread, anchored at its first comment, the
+/// way GitHub's own UI links to one.
+fn review_thread_url(
+    host: &str,
+    owner: &str,
+    name: &str,
+    number: i64,
+    comment: &PullRequestComment,
+) -> String {
+    let id = comment.forge_id.trim_start_matches("rc-");
+    format!("https://{host}/{owner}/{name}/pull/{number}#discussion_r{id}")
+}
+
+/// `line` under a markdown `## {heading}` section of `body`, which this is
+/// the only writer of and so is always the body's last section: an
+/// existing heading takes the line at the body's end, so a second call
+/// never writes the heading twice; with none, the heading and the line are
+/// appended there instead.
+fn with_section_line(body: &str, heading: &str, line: &str) -> String {
+    let marker = format!("## {heading}");
+    if body.contains(&marker) {
+        return format!("{}\n{line}\n", body.trim_end());
+    }
+    let section = format!("{marker}\n{line}\n");
+    match body.trim().is_empty() {
+        true => section,
+        false => format!("{}\n\n{section}", body.trim_end()),
     }
 }
 
@@ -322,7 +421,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
-    use super::{Github, conversation_comment_url};
+    use super::{Github, ReviewAuthor, ReviewSummary, conversation_comment_url};
     use crate::forge::Cli;
     use ariadne_store::PullRequestComment;
 
@@ -549,6 +648,138 @@ sys.stdout.write(answers[count])
         assert_eq!(
             conversation_comment_url("github.com", "acme", "widgets", 1, &review),
             "https://github.com/acme/widgets/pull/1#pullrequestreview-7"
+        );
+    }
+
+    fn pending(body: &str) -> ReviewSummary {
+        ReviewSummary {
+            id: 9,
+            node_id: "PR_kwDOx".into(),
+            state: "PENDING".into(),
+            body: body.into(),
+            user: ReviewAuthor { login: "me".into() },
+        }
+    }
+
+    /// `submit_review` (029), with the repository holding posts back, sets
+    /// the verdict and summary at the top of the viewer's pending review
+    /// body.
+    #[tokio::test]
+    async fn apply_pending_header_sets_the_top_with_no_existing_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#],
+        ));
+        let id = github
+            .apply_pending_header(
+                "github.com",
+                &pending(""),
+                "**Verdict: Request changes**\n\nOne P0 open.",
+            )
+            .await
+            .unwrap();
+        assert_eq!(id, "rv-9");
+        let mutate = call_args(dir.path(), 0);
+        let body = mutate
+            .iter()
+            .find_map(|a| a.strip_prefix("body="))
+            .expect("a body argument");
+        assert_eq!(
+            body,
+            "**Verdict: Request changes**\n\nOne P0 open.\n\
+             <!-- ariadne:pending-review-verdict -->"
+        );
+    }
+
+    /// A later round replaces only the header above
+    /// `PENDING_VERDICT_MARK`, leaving the reply text `reply_pending`
+    /// appended below it in place.
+    #[tokio::test]
+    async fn apply_pending_header_replaces_its_top_and_keeps_the_reply_text_below() {
+        let dir = tempfile::tempdir().unwrap();
+        let existing = "**Verdict: Comment**\n\nFirst look.\n\n\
+             <!-- ariadne:pending-review-verdict -->\n\n\
+             > Why not here?\n\n[alice](https://github.com/acme/widgets/pull/1#issuecomment-42)";
+        let github = github(&fake_gh(
+            dir.path(),
+            &[r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#],
+        ));
+        github
+            .apply_pending_header(
+                "github.com",
+                &pending(existing),
+                "**Verdict: Request changes**\n\nOne P0 open now.",
+            )
+            .await
+            .unwrap();
+        let mutate = call_args(dir.path(), 0);
+        let body = mutate
+            .iter()
+            .find_map(|a| a.strip_prefix("body="))
+            .expect("a body argument");
+        assert_eq!(
+            body,
+            "**Verdict: Request changes**\n\nOne P0 open now.\n\
+             <!-- ariadne:pending-review-verdict -->\n\n\
+             > Why not here?\n\n[alice](https://github.com/acme/widgets/pull/1#issuecomment-42)"
+        );
+    }
+
+    /// `resolve_thread` (029 rule 16a), with the repository holding posts
+    /// back, lists the thread under a "Threads to resolve" heading of the
+    /// pending review body rather than resolving it, creating the heading
+    /// once.
+    #[tokio::test]
+    async fn resolve_pending_lists_the_thread_under_a_heading_created_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r###"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING",
+                    "body":"## Threads to resolve\n- https://github.com/acme/widgets/pull/1#discussion_r101",
+                    "user":{"login":"me"}}]"###,
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+            ],
+        ));
+        let comment = PullRequestComment {
+            forge_id: "rc-202".into(),
+            ..review_comment("T2")
+        };
+        let id = github
+            .resolve_pending("github.com/acme/widgets", 1, "me", &comment)
+            .await
+            .unwrap();
+        assert_eq!(id, "rv-9");
+        let mutate = call_args(dir.path(), 1);
+        let body = mutate
+            .iter()
+            .find_map(|a| a.strip_prefix("body="))
+            .expect("a body argument");
+        assert_eq!(
+            body,
+            "## Threads to resolve\n\
+             - https://github.com/acme/widgets/pull/1#discussion_r101\n\
+             - https://github.com/acme/widgets/pull/1#discussion_r202\n"
+        );
+    }
+
+    /// A reply to a top-level conversation comment, and the conversation's
+    /// own thread, have no review thread of their own: only a comment on a
+    /// line resolves.
+    #[tokio::test]
+    async fn resolve_pending_refuses_the_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(dir.path(), &[]));
+        let comment = PullRequestComment {
+            kind: "issue_comment".into(),
+            ..review_comment("conversation")
+        };
+        assert!(
+            github
+                .resolve_pending("github.com/acme/widgets", 1, "me", &comment)
+                .await
+                .is_err()
         );
     }
 }

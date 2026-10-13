@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-10-13
+updated: 2026-10-14
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -11,6 +11,9 @@ tests:
   - crates/ariadne-daemon/tests/it/attention.rs
   - crates/ariadne-daemon/src/forge/news.rs
   - crates/ariadne-daemon/src/forge/github/reviews.rs
+  - crates/ariadne-daemon/src/forge/github/comments.rs
+  - crates/ariadne-daemon/src/forge/gitlab/reviews.rs
+  - crates/ariadne-daemon/src/forge/gitlab/comments.rs
   - crates/ariadne-daemon/src/forge/github/pulls.rs
   - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
@@ -214,6 +217,33 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     news, so the answer to a finding reaches its reviewer. On a request of the user's
     own the review is a comment whatever its `event`: no forge takes a
     change request from a request's own author.
+13a. A repository that supervises its posts (002 rule 13) holds a review
+    back the same way it holds a reply back (026 rule 24): nothing is
+    submitted and no summary comment is posted, and the route answers
+    `{pending: true}` in place of the posted comments. The verdict —
+    "Request changes" or "Comment" — and the round's summary lead the held
+    text, `**Verdict: <verdict>**`, a blank line, then `body`; the forge
+    never shows it to anyone but the viewer until they publish it.
+    - GitHub: each inline comment joins the viewer's one pending review
+      (`Github::pending_review`, 026 rule 24) as a new thread,
+      `addPullRequestReviewThread`, naming that review's id rather than
+      creating one of its own; the verdict and the summary are set at the
+      pending review's own top, replacing only the text above a hidden
+      mark, `<!-- ariadne:pending-review-verdict -->`, so a later round
+      keeps any reply text `reply_pending` appended below it. No event is
+      ever set, so the review stays pending.
+    - GitLab: each inline comment is a draft note of its own,
+      `POST .../draft_notes`, with the same position `submit_review`
+      gives a published discussion; one more draft note, tied to no line,
+      carries the verdict and the summary. Nothing here publishes a note.
+    The daemon marks every comment it held as the review's
+    (`pull_request_comment_marks`, 026 rule 10) the same way a posted one
+    is, so it answers and reads the same as a posted review's would once
+    the forge lets a fetch see it. The `submit_review` tool reads a
+    `pending` answer and says, in its own words, that the review waits in
+    the user's forge drafts and that the agent goes on, rather than
+    handing back the pending shape as though it were the posted comments
+    (026 rule 24).
 14. Every `event` but `request_changes` and `comment` answers 400 before the
     forge sees a call. An approval is refused above all: the user gives it.
     No route approves or merges.
@@ -249,6 +279,22 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     - GitLab: `PUT .../merge_requests/<n>/discussions/<id>` with
       `resolved=true`, through `glab api`.
     The conversation is no thread, and nothing resolves it.
+16b. A repository that supervises its posts (002 rule 13) holds a resolve
+    back too, unresolved, and the route answers `{pending: true, id}` in
+    place of the resolved comment, `id` the pending item's own forge id.
+    - GitHub: a line naming the thread, under a "Threads to resolve"
+      heading of the viewer's one pending review (026 rule 24), created
+      once rather than on every call; the heading always goes at the
+      body's end, after any text a reply or a verdict (rule 13a) put
+      there.
+    - GitLab: the viewer's own draft note of that discussion, where there
+      is one, takes `resolve_discussion: true`, `PUT
+      .../draft_notes/<id>`; with none, one is made first, `POST
+      .../draft_notes`, with a short body and `resolve_discussion: true`
+      set on it from the start.
+    The `resolve_thread` tool reads a `pending` answer the same way
+    `submit_review` does, and says the resolve waits in the user's forge
+    drafts rather than handing back the pending shape.
 
 ## Verdict and attention
 
@@ -382,6 +428,33 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 - A request the forge stops listing after my review keeps its session while
   its timeline ends on my review:
   `pull_request_reviews.rs::a_request_the_forge_stops_listing_after_my_review_keeps_its_review`.
+- A supervised repository holds a review's findings and verdict in the
+  viewer's own pending review rather than submitting one, marks them the
+  review's, and posts no summary comment:
+  `kept_requests.rs::an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_when_supervised`.
+  On GitHub, each finding joins the pending review as a new thread and the
+  verdict and summary lead its body, creating the review first where there
+  is none:
+  `github/reviews.rs::tests::submit_review_pending_adds_each_finding_and_sets_the_header`;
+  a later round replaces only that leading text, keeping any reply text
+  below it:
+  `github/comments.rs::tests::apply_pending_header_replaces_its_top_and_keeps_the_reply_text_below`.
+  On GitLab, each finding and the verdict are draft notes of their own,
+  and nothing is published:
+  `gitlab/reviews.rs::tests::submit_review_pending_drafts_each_finding_and_the_verdict`,
+  `::submit_review_pending_drafts_the_verdict_with_no_finding`.
+  A supervised resolve lists the thread under a "Threads to resolve"
+  heading of the pending review, created once, rather than resolving it:
+  `kept_requests.rs::an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_when_supervised`,
+  `github/comments.rs::tests::resolve_pending_lists_the_thread_under_a_heading_created_once`.
+  On GitLab it sets `resolve_discussion` on the viewer's own draft note of
+  the discussion, made first where there is none:
+  `gitlab/comments.rs::tests::resolve_pending_marks_its_own_draft_note_of_the_discussion`,
+  `::resolve_pending_creates_a_draft_note_with_no_draft_note_of_its_own_yet`.
+  `submit_review` and `resolve_thread` read a `pending` answer and tell
+  the agent, in their own words, to go on:
+  `tools.rs::tests::a_pending_review_tells_the_agent_to_continue_rather_than_the_raw_answer`,
+  `::a_pending_resolve_tells_the_agent_to_continue_rather_than_the_raw_answer`.
 - The reviewer briefing fills every placeholder it names:
   `prompts.rs::tests::the_pull_request_texts_fill_every_placeholder_they_name`.
 - The reviewer PR seat lists its eight tools and no task or message tool, and
@@ -451,7 +524,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
 `crates/ariadne-daemon/src/forge/news.rs`, `crates/ariadne-daemon/src/forge/poll.rs`,
 `crates/ariadne-daemon/src/forge/github/reviews.rs`,
+`crates/ariadne-daemon/src/forge/github/comments.rs`,
 `crates/ariadne-daemon/src/forge/gitlab/reviews.rs`,
+`crates/ariadne-daemon/src/forge/gitlab/comments.rs`,
 `crates/ariadne-daemon/src/http/pull_requests.rs`,
 `crates/ariadne-daemon/src/launcher.rs`, `crates/ariadne-daemon/src/attention/pull_requests.rs`
 (031), `crates/ariadne-cli/src/commands/mcp.rs`, `crates/ariadne-cli/src/commands/mcp/tools.rs`,

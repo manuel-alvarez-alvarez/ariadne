@@ -196,6 +196,26 @@ pub struct PullRequestDiffQuery {
     pub since: Option<String>,
 }
 
+/// What `POST .../reviews` answers where the repository holds posts back
+/// (026 rule 24a / 029 rule 13a): the review's findings and verdict wait,
+/// unposted, in the viewer's own pending review (GitHub) or draft notes
+/// (GitLab), in place of the posted comments the route otherwise answers
+/// with.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PendingReviewDto {
+    /// Always true: a posted review never takes this shape.
+    pub pending: bool,
+}
+
+/// What `POST .../reviews` answers: the posted comments, or, where the
+/// repository holds posts back, [`PendingReviewDto`] in their place.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(untagged)]
+pub enum SubmitReviewAnswerDto {
+    Posted(Vec<PullRequestCommentDto>),
+    Pending(PendingReviewDto),
+}
+
 /// Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted
 /// in the name of the integration login.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
