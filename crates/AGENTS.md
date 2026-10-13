@@ -117,13 +117,19 @@ that touches `crates/`:
 
 ```sh
 cargo machete .
-cargo build --workspace --all-targets
+cargo build --workspace --bins
 cargo nextest run --workspace --profile ci
 cargo test --doc --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 scripts/check-unused-rust
 ```
+
+`cargo build --workspace --bins` links every shipped binary.
+`ariadne-daemon` sets `test = false` on its `[[bin]]`, so nextest never
+builds or links `ariadned`, and `cargo clippy` type-checks it without
+linking. This is the only step that catches a link-only error in that
+binary before release.
 
 See the root [`AGENTS.md`](../AGENTS.md#checks) for installing the hooks and
 running one by hand.
