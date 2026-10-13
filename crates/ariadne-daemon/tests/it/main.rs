@@ -69,6 +69,7 @@ mod workflows;
 
 mod kept_requests;
 mod pull_request_babysit;
+mod pull_request_keep_retry;
 mod pull_request_reviews;
 mod pull_requests;
 
