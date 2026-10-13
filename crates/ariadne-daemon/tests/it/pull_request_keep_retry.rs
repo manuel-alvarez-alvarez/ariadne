@@ -3,7 +3,7 @@
 //! `CLEANUP_RETRY` between reads (026), while a request change bypasses that
 //! tick-only wait.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
@@ -94,18 +94,28 @@ async fn tick_over(sched: &UnboundedSender<SchedEvent>) {
     scheduler::flush_for_test(sched).await;
 }
 
+/// Run the scheduler's full reconcile pass at `now` and wait for it to end.
+async fn tick_over_at(sched: &UnboundedSender<SchedEvent>, now: Instant) {
+    sched.send(SchedEvent::FullReconcileAt(now)).unwrap();
+    scheduler::flush_for_test(sched).await;
+}
+
 /// An open read waits before later scheduler ticks read the request again.
 #[tokio::test]
 async fn an_open_kept_request_is_read_once_per_wait() {
     let (_h, stub, _row, sched) = kept_request(0).await;
+    let first_tick = Instant::now();
 
-    tick_over(&sched).await;
+    tick_over_at(&sched, first_tick).await;
     assert_eq!(stub.fetches(), 1, "the first tick reads the request once");
 
     for _ in 0..3 {
-        tick_over(&sched).await;
+        tick_over_at(&sched, first_tick + Duration::from_secs(1)).await;
     }
     assert_eq!(stub.fetches(), 1, "later ticks do not read inside the wait");
+
+    tick_over_at(&sched, first_tick + Duration::from_secs(61)).await;
+    assert_eq!(stub.fetches(), 2, "a tick reads again after the wait");
 }
 
 /// A request change bypasses the tick-only retry wait.
