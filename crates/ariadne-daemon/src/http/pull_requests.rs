@@ -13,7 +13,8 @@ use crate::forge::{ForgeClient, PullRequestRef, pulls};
 use ariadne_api::pull_requests::{
     AskBabysitRequest, AskReviewRequest, PendingReplyDto, PullRequestCommentDto,
     PullRequestCommentQuery, PullRequestDiffQuery, PullRequestDto, PullRequestListQuery,
-    PullRequestMatchDto, ReplyCommentRequest, ReportPullRequestRequest, SubmitReviewRequest,
+    PullRequestMatchDto, ReplyAnswerDto, ReplyCommentRequest, ReportPullRequestRequest,
+    SubmitReviewRequest,
 };
 use ariadne_store::{
     AgentSession, ForgeIntegration, PullRequest, PullRequestComment, PullRequestFilter,
@@ -523,7 +524,7 @@ async fn find_comment(
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/reply", tag = "pull-requests",
     params(("id" = String, Path), ("comment_id" = String, Path)),
     request_body = ReplyCommentRequest,
-    responses((status = 201, body = PullRequestCommentDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
+    responses((status = 201, body = ReplyAnswerDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
 pub(super) async fn reply(
     State(state): State<AppState>,
     Path((id, comment_id)): Path<(String, String)>,

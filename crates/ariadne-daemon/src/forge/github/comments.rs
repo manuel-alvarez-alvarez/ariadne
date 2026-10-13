@@ -225,6 +225,13 @@ impl Github {
         number: i64,
         login: &str,
     ) -> Result<ReviewSummary, String> {
+        if login.is_empty() {
+            // With no login to match an existing pending review against,
+            // every reply would create another: GitHub refuses a second
+            // pending review of the same user with a 422, rather than
+            // reusing the first the way a real login would.
+            return Err("no login to find or create a pending review under".into());
+        }
         let (host, owner, name) = split_slug(repo)?;
         let path = format!("repos/{owner}/{name}/pulls/{number}/reviews");
         let reviews: Vec<ReviewSummary> = self.pages(host, &path).await?;
@@ -233,9 +240,23 @@ impl Github {
         }) {
             return Ok(found);
         }
+        // An explicit empty `body` field, rather than no field at all: `gh
+        // api` sends no request body where there are no `-f`/`-F` fields
+        // and no `--input`, and GitHub's own review-creation endpoint is
+        // untested against that empty a request. No `event` field still
+        // leaves the review pending.
         let output = self
             .cli
-            .answer(&["api", &path, "--hostname", host, "--method", "POST"])
+            .answer(&[
+                "api",
+                &path,
+                "--hostname",
+                host,
+                "--method",
+                "POST",
+                "-f",
+                "body=",
+            ])
             .await?;
         serde_json::from_str(&output)
             .map_err(|e| format!("cannot read the pending review GitHub stored: {e}"))

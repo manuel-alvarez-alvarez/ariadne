@@ -146,6 +146,15 @@ pub struct PendingReplyDto {
     pub id: String,
 }
 
+/// What `POST .../reply` answers: the posted comment, or, where the
+/// repository holds posts back, [`PendingReplyDto`] in its place.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(untagged)]
+pub enum ReplyAnswerDto {
+    Posted(Box<PullRequestCommentDto>),
+    Pending(PendingReplyDto),
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
 pub struct PullRequestCommentQuery {
     /// Only the threads that wait on an answer from the integration login.

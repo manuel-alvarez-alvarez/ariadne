@@ -128,9 +128,7 @@ reads behind them ([026](026-pull-requests.md)).
     A repository that supervises its posts holds the keeper's reply back
     the same way (026 rule 24): nothing posts to the forge directly, the
     route answers `pending: true`, and the comment counts answered from
-    then on. This is one route and one seat check shared with the task's
-    column agent, so no test of its own repeats what 026's already prove
-    for it.
+    then on, so a later poll hands the keeper no further news of it.
 14. `report_pull_request` takes `ready` with `head_sha`, on a row this
     keeper answers for, by the same rule a task's column agent reports
     under (029 rule 15): a `ready: true` report with no `head_sha`, or one
@@ -161,6 +159,12 @@ reads behind them ([026](026-pull-requests.md)).
   by another login reaches it once; its `ready` report is accepted; and the
   merge ends it, with its worktree and its branch gone and the row gone:
   `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`.
+- Where the repository supervises its posts, the keeper's reply to a
+  conversation comment answers `pending: true` with the pending review's
+  own id, posts no `gh pr comment`, leaves the comment answered with no
+  further reply taken, is refused a second reply to it, and a later poll
+  hands the keeper no further news of it:
+  `pull_request_babysit.rs::a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts`.
 - Asking is refused with no model, an unknown one, a skill no task agent
   loads, a request that is not open, one by another login, or one a task
   already keeps — each starting no work:
