@@ -22,8 +22,8 @@ pub struct RepositoryDto {
     /// answered.
     pub permission_mode: PermissionMode,
     /// Whether this repository's agents hold what they post to the forge for
-    /// a person's approval — replies, reviews and resolves held as drafts,
-    /// and every pull request opened as a draft.
+    /// a person's approval: every pull request opened as a draft today, and
+    /// a later release holding replies, reviews and resolves the same way.
     pub supervise_posts: bool,
     /// The forge its remote is on, or null where the checkout has no usable
     /// remote (025).
@@ -124,8 +124,8 @@ pub struct CreateRepositoryRequest {
     /// Omit for `auto`.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
-    /// Hold what this repository's agents post to the forge for a person's
-    /// approval, pull requests opened as drafts included. Omit for `true`.
+    /// Open every pull request this repository's agents post as a draft for
+    /// a person's approval. Omit for `true`.
     #[serde(default)]
     pub supervise_posts: Option<bool>,
     /// The forge integration to set up once the remote is detected.

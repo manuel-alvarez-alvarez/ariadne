@@ -5272,7 +5272,7 @@
               "boolean",
               "null"
             ],
-            "description": "Hold what this repository's agents post to the forge for a person's\napproval, pull requests opened as drafts included. Omit for `true`."
+            "description": "Open every pull request this repository's agents post as a draft for\na person's approval. Omit for `true`."
           }
         },
         "additionalProperties": false
@@ -7622,7 +7622,7 @@
           },
           "supervise_posts": {
             "type": "boolean",
-            "description": "Whether this repository's agents hold what they post to the forge for\na person's approval — replies, reviews and resolves held as drafts,\nand every pull request opened as a draft."
+            "description": "Whether this repository's agents hold what they post to the forge for\na person's approval: every pull request opened as a draft today, and\na later release holding replies, reviews and resolves the same way."
           },
           "updated_at": {
             "type": "string"

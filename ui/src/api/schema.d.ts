@@ -2228,8 +2228,8 @@ export interface components {
             path: string;
             permission_mode?: null | components["schemas"]["PermissionMode"];
             /**
-             * @description Hold what this repository's agents post to the forge for a person's
-             *     approval, pull requests opened as drafts included. Omit for `true`.
+             * @description Open every pull request this repository's agents post as a draft for
+             *     a person's approval. Omit for `true`.
              */
             supervise_posts?: boolean | null;
         };
@@ -3219,8 +3219,8 @@ export interface components {
             permission_mode: components["schemas"]["PermissionMode"];
             /**
              * @description Whether this repository's agents hold what they post to the forge for
-             *     a person's approval — replies, reviews and resolves held as drafts,
-             *     and every pull request opened as a draft.
+             *     a person's approval: every pull request opened as a draft today, and
+             *     a later release holding replies, reviews and resolves the same way.
              */
             supervise_posts: boolean;
             updated_at: string;

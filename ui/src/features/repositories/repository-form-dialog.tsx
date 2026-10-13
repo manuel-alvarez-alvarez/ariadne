@@ -334,8 +334,8 @@ export function RepositoryFormDialog({
               <FieldLabel htmlFor="repository-supervise-posts">Supervise posts</FieldLabel>
             </div>
             <FieldDescription>
-              Hold agent replies, reviews and resolves as drafts for your approval, and open pull
-              requests as drafts.
+              Open every pull request an agent requests as a draft for your approval before it
+              reaches the forge.
             </FieldDescription>
           </Field>
 
