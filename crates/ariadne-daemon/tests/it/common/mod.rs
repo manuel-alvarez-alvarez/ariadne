@@ -39,6 +39,7 @@ use ariadne_core::{
     Actor, AttentionReason, ForgeKind, GoalStatus, PermissionMode, Seat, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::acp::AcpLaunch;
+use ariadne_daemon::acp_discovery::ManagerHomes;
 use ariadne_daemon::ai_permissions::hardware::HardwareOverride;
 use ariadne_daemon::branch::BranchWatchers;
 use ariadne_daemon::bus::{BusEvent, EventBus};
@@ -139,6 +140,7 @@ pub(crate) struct HarnessBuilder {
     timeouts: Timeouts,
     path: std::ffi::OsString,
     index: String,
+    manager_homes: Option<ManagerHomes>,
     ai_permissions_installer: Option<Vec<String>>,
     ai_permissions_serve_command: Option<Vec<String>>,
     ai_permissions_endpoint: Option<String>,
@@ -184,6 +186,7 @@ pub(crate) fn harness() -> HarnessBuilder {
         },
         path: std::ffi::OsString::new(),
         index: ariadne_daemon::acp_discovery::SHIPPED_INDEX.to_string(),
+        manager_homes: None,
         ai_permissions_installer: None,
         ai_permissions_serve_command: None,
         ai_permissions_endpoint: None,
@@ -271,6 +274,15 @@ impl HarnessBuilder {
     /// ships: for a test about what the mapping makes of an entry.
     pub(crate) fn acp_index(mut self, index: impl Into<String>) -> Self {
         self.index = index.into();
+        self
+    }
+
+    /// Fake homes for the package managers `acp_index` consults when a name
+    /// only a package gives passes neither the symlink chain nor the ACP
+    /// probe: none of the three exist by default, so the machine running the
+    /// tests never answers for a shim a test did not set up itself.
+    pub(crate) fn manager_homes(mut self, homes: ManagerHomes) -> Self {
+        self.manager_homes = Some(homes);
         self
     }
 
@@ -381,12 +393,18 @@ impl HarnessBuilder {
         if let Some(glab_bin) = self.glab_bin {
             config.glab_bin = Some(glab_bin);
         }
+        let manager_homes = self.manager_homes.unwrap_or_else(|| ManagerHomes {
+            volta: dir.path().join("no-volta-home"),
+            asdf: dir.path().join("no-asdf-home"),
+            mise: dir.path().join("no-mise-home"),
+        });
         let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::test_registry(
             &config.acp_agents,
             config.root.clone(),
             store.clone(),
             &self.path,
             &self.index,
+            manager_homes,
         )
         .with_timeouts(self.timeouts);
         // Installed before anything writes, exactly as the daemon does at

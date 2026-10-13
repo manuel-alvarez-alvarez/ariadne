@@ -207,7 +207,55 @@ impl StubAcpAgent {
         }
         dir.as_os_str().to_os_string()
     }
+
+    /// A `PATH` holding this stub under `name` as a pnpm global shim: a
+    /// script, not a symlink, whose own text names the path pnpm resolves it
+    /// through — [`PNPM_LAUNCHER`] names `@agentclientprotocol/claude-agent-acp`
+    /// — so the symlink chain never reaches the package, and only the
+    /// shim's text does.
+    pub(crate) fn path_as_pnpm_shim(&self, name: &str) -> OsString {
+        let dir = Path::new(&self.bin).parent().unwrap();
+        let link = dir.join(name);
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(super::shared_script(PNPM_LAUNCHER), &link).unwrap();
+        dir.as_os_str().to_os_string()
+    }
+
+    /// The same shim, except its text names a path under a package whose
+    /// name only shares a prefix with the real one —
+    /// [`PNPM_LAUNCHER_LEGACY_PREFIX`] names
+    /// `@agentclientprotocol/claude-agent-acp-legacy` — the way a substring
+    /// check would wrongly accept but a path-component check does not.
+    pub(crate) fn path_as_pnpm_shim_for_a_similarly_prefixed_package(
+        &self,
+        name: &str,
+    ) -> OsString {
+        let dir = Path::new(&self.bin).parent().unwrap();
+        let link = dir.join(name);
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(super::shared_script(PNPM_LAUNCHER_LEGACY_PREFIX), &link)
+            .unwrap();
+        dir.as_os_str().to_os_string()
+    }
 }
+
+/// Like [`LAUNCHER`], behind a name a pnpm global shim carries: a real pnpm
+/// shim is a script rather than a symlink, and its own text names the path
+/// pnpm resolves it through — here, a comment naming
+/// `@agentclientprotocol/claude-agent-acp`, the way the real path would.
+const PNPM_LAUNCHER: &str = "#!/bin/sh\n\
+# .pnpm/@agentclientprotocol+claude-agent-acp@0.79.0/node_modules/@agentclientprotocol/claude-agent-acp/bin/claude-agent-acp\n\
+dir=$(dirname \"$0\")\n\
+exec python3 \"$dir/acp-stub.py\" \"$(cat \"$dir/acp-parent-pid\")\" \"$dir/acp-script.json\" \"$@\"\n";
+
+/// Like [`PNPM_LAUNCHER`], except the path in its comment names
+/// `claude-agent-acp-legacy`, a package of its own that merely shares the
+/// real one's name as a prefix: a path a substring check would mistake for
+/// the real package, and a path-component check would not.
+const PNPM_LAUNCHER_LEGACY_PREFIX: &str = "#!/bin/sh\n\
+# .pnpm/@agentclientprotocol+claude-agent-acp-legacy@0.1.0/node_modules/@agentclientprotocol/claude-agent-acp-legacy/bin/claude-agent-acp\n\
+dir=$(dirname \"$0\")\n\
+exec python3 \"$dir/acp-stub.py\" \"$(cat \"$dir/acp-parent-pid\")\" \"$dir/acp-script.json\" \"$@\"\n";
 
 /// Install `name` on `dir` as a package manager does: `program` under the
 /// directories `package` is unpacked into, and `name` itself a link to it.

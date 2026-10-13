@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-10-11
+updated: 2026-10-13
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -59,20 +59,37 @@ skill says (017).
    command, and an entry that no name of it finds is registered as nothing at
    all.
 
-   A name only the package gives has to be the package's file as well: the
-   program found under it, or a link on the way to it, stands under the
-   directories the package is unpacked into — `@scope` and then the name,
-   or the name alone. That is what every package manager leaves behind, and
-   a program of another origin that carries the name has none of it:
-   `@minimax-ai/code` installs `code`, and so does an editor that speaks no
-   ACP. Such a program is passed over without being started, and the next
-   name is tried. A name the agent itself is known by — its registry id, or
-   the command of its own build — stands for the agent wherever it was
-   installed from, and is taken as it is found. Only the absolute entries of the `PATH` are searched, in their own
-   order: an empty entry — and an empty `PATH` is one — or a relative one
-   names the directory the daemon was started in, which is not where its
-   agents come from. Such an entry is dropped, and the entries behind it are
-   searched as they always were.
+   A name only the package gives has to be the package's file as well, and
+   three checks prove it, in order, the first to prove it stopping the rest.
+   First, the symlink chain: the program found under the name, or a link on
+   the way to it, stands under the directories the package is unpacked into
+   — `@scope` and then the name, or the name alone. That is what npm and uv
+   leave behind. Second, where the chain never reaches the package — a
+   Volta shim links every tool it manages to one binary and tells them
+   apart by name alone, never by a link into the package — a package
+   manager's own file: Volta's own record of what it linked
+   (`$VOLTA_HOME/tools/user/bins/<name>.json`, default `~/.volta`, whose
+   `package` field has to name the same package, unpinned); a pnpm global
+   shim, a script rather than a symlink, whose own text has to hold a path
+   under the package's directories; or an asdf or mise install
+   (`<data dir>/installs/*/*/bin/<name>`, asdf's `$ASDF_DATA_DIR` default
+   `~/.asdf`, mise's `$MISE_DATA_DIR` default `$XDG_DATA_HOME/mise` else
+   `~/.local/share/mise`) that itself passes the symlink check. Third, where
+   neither proves it and the name is not on the daemon's own short skip
+   list — `code` starts it, the collision `@minimax-ai/code` makes with an
+   editor that speaks no ACP at all — the ACP probe itself, which rule 4
+   says how it decides.
+
+   A program of another origin than the package carries none of this, and
+   one on the skip list is passed over without being started at all, either
+   way the next name is tried. A name the agent itself is known by — its
+   registry id, or the command of its own build — stands for the agent
+   wherever it was installed from, and is taken as it is found. Only the
+   absolute entries of the `PATH` are searched, in their own order: an empty
+   entry — and an empty `PATH` is one — or a relative one names the
+   directory the daemon was started in, which is not where its agents come
+   from. Such an entry is dropped, and the entries behind it are searched as
+   they always were.
 2. A registry id is any non-empty word without `:`, the delimiter that splits
    a pin into its agent and its model. A configured entry whose id an agent of
    the index already holds replaces that agent, where it stands: the
@@ -117,15 +134,25 @@ skill says (017).
    offers a model option with at least one choice. Anything short of that is
    `rejected`, with the reason on the entry.
 
-   An entry the `PATH` answered for under the name of its package alone is
-   the one exception: a probe that shows the program is no ACP agent at all
-   — it never negotiated the protocol, and it did not merely run out of time
-   — takes the entry off the registry, which then holds it no more than it
-   holds an agent the `PATH` never had. Only an answer does that. A probe
-   that ran out of time showed nothing either way and leaves the agent
-   listed with what it measured, so a loaded machine keeps the agents its
-   sessions are pinned to, and an agent that negotiated the protocol
+   An entry the `PATH` answered for under the name of its package alone,
+   proven by the symlink chain or a package manager's own file (rule 1),
+   is the one exception: a probe that shows the program is no ACP agent at
+   all — it never negotiated the protocol, and it did not merely run out of
+   time — takes the entry off the registry, which then holds it no more
+   than it holds an agent the `PATH` never had. Only an answer does that. A
+   probe that ran out of time showed nothing either way and leaves the
+   agent listed with what it measured, so a loaded machine keeps the agents
+   its sessions are pinned to, and an agent that negotiated the protocol
    answered for itself whatever it is rejected for afterwards.
+
+   An entry neither check proved is unproven, and its probe has the whole
+   answer rather than the last word: the entry is kept only where the probe
+   negotiates ACP version 1 and its `agentInfo.name` names the registry
+   package, unpinned, exactly. A wrong name, no `agentInfo` at all, a
+   failure to negotiate, or a probe that runs out of time all take the
+   entry off the registry the same way — timeout included, unlike the
+   proven entry above, since silence proves nothing of an identity nothing
+   else already vouched for.
 5. A ready agent that lacks an optional capability is degraded, one flag per
    gap: `no_efforts` for no effort option, `no_adoption` for no
    `session_list`, and `no_restart_resume` for no `session_load`.
@@ -227,6 +254,28 @@ skill says (017).
   (`::a_program_under_the_package_name_that_speaks_no_acp_is_registered_as_nothing`),
   and one whose probe runs out of time stays registered with what it showed
   (`::a_package_named_agent_whose_probe_times_out_is_still_registered`).
+- A Volta shim whose own file names the right package is registered under
+  the shim's command
+  (`acp_discovery.rs::a_volta_shim_naming_the_right_package_is_registered`),
+  one naming a different package falls to the probe instead of registering
+  or dropping outright
+  (`::a_volta_shim_naming_a_different_package_goes_to_the_probe`), a pnpm
+  shim whose own text names the package is registered
+  (`::a_pnpm_shim_naming_the_right_package_is_registered`), a path is a
+  whole component rather than a substring, so a shim naming a package that
+  only shares a prefix with the real one does not pass
+  (`::a_pnpm_shim_naming_a_similarly_prefixed_package_does_not_pass_check_2`),
+  and an asdf shim and a mise shim each with a matching install are
+  registered
+  (`::an_asdf_shim_and_a_mise_shim_with_a_matching_install_are_registered`).
+- A shim neither check proves is registered once its probe names the
+  registry package exactly
+  (`acp_discovery.rs::an_unproven_shim_is_registered_when_the_probe_names_the_package`),
+  and it is dropped outright for a wrong `agentInfo.name`, no `agentInfo`,
+  or a timeout — unlike a proven entry, which a timeout leaves listed
+  (`::an_unproven_shim_is_dropped_unless_the_probe_names_it_exactly`).
+- A program on the daemon's skip list is never started, even unproven
+  (`acp_discovery.rs::a_skip_listed_program_name_is_never_started`).
 - A configured entry replaces the discovered agent of its id, and a launch
   runs the configured command
   (`acp_discovery.rs::a_configured_agent_replaces_the_discovered_agent_of_its_id`).

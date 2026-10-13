@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -24,11 +25,53 @@ pub(crate) struct Installed {
     /// package's, and another package's command can carry it, so a probe has
     /// the last word on it.
     pub(crate) named_by_package: bool,
+    /// Set where a name only the package gives passed neither the symlink
+    /// check nor a package manager's own file, to the registry package,
+    /// unpinned: what the probe's `agentInfo.name` has to answer before the
+    /// entry is kept. `None` where the symlink or a manager file already
+    /// proved it, or where the name is not the package's alone.
+    pub(crate) unproven_package: Option<String>,
     /// What a probe starts. Discovery already chose one file out of the
     /// `PATH` it searched, and starting that file is what it decided —
     /// searching again by name would answer from whatever `PATH` the process
     /// carries, which is not always the one discovery read.
     pub(crate) program: PathBuf,
+}
+
+/// Where each package manager keeps its own record of what it installed.
+/// Every check here only reads a file: proving a package this way starts no
+/// process, unlike the ACP probe that decides what neither check reaches.
+#[derive(Clone)]
+pub struct ManagerHomes {
+    /// Volta's own directory: `$VOLTA_HOME`, or `~/.volta`.
+    pub volta: PathBuf,
+    /// asdf's data directory: `$ASDF_DATA_DIR`, or `~/.asdf`.
+    pub asdf: PathBuf,
+    /// mise's data directory: `$MISE_DATA_DIR`, else `$XDG_DATA_HOME/mise`,
+    /// else `~/.local/share/mise`.
+    pub mise: PathBuf,
+}
+
+impl ManagerHomes {
+    /// The homes the daemon's own environment names.
+    pub fn from_env() -> Self {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        let dir = |var: &str, default: PathBuf| {
+            std::env::var_os(var)
+                .filter(|value| !value.is_empty())
+                .map_or(default, PathBuf::from)
+        };
+        Self {
+            volta: dir("VOLTA_HOME", home.join(".volta")),
+            asdf: dir("ASDF_DATA_DIR", home.join(".asdf")),
+            mise: dir(
+                "MISE_DATA_DIR",
+                dir("XDG_DATA_HOME", home.join(".local/share")).join("mise"),
+            ),
+        }
+    }
 }
 
 /// Accept a downloaded document only when the discovery parser can read it.
@@ -41,7 +84,7 @@ pub(crate) fn validate(document: &str) -> Result<(), serde_json::Error> {
 /// An index that cannot be read leaves the registry with the configured
 /// agents alone: a snapshot Ariadne cannot parse is a defect in Ariadne, and
 /// stopping a daemon over it would take the user's own agents down with it.
-pub(crate) fn installed(index: &str, path: &OsStr) -> Vec<Installed> {
+pub(crate) fn installed(index: &str, path: &OsStr, homes: &ManagerHomes) -> Vec<Installed> {
     let index: Index = match serde_json::from_str(index) {
         Ok(index) => index,
         Err(error) => {
@@ -58,7 +101,7 @@ pub(crate) fn installed(index: &str, path: &OsStr) -> Vec<Installed> {
     index
         .agents
         .iter()
-        .filter_map(|agent| found(agent, &path))
+        .filter_map(|agent| found(agent, &path, homes))
         .collect()
 }
 
@@ -79,33 +122,139 @@ fn searchable(path: &OsStr) -> OsString {
 ///
 /// A name the package gives rather than the agent has to be the package's
 /// own file as well: `@minimax-ai/code` installs `code`, and so does an
-/// editor that has nothing to do with ACP. Such a name is passed over where
-/// the file behind it belongs to no such package, and the next name is
-/// tried.
-fn found(agent: &IndexAgent, path: &OsStr) -> Option<Installed> {
+/// editor that has nothing to do with ACP. Three checks prove it, in order,
+/// and the first to prove it stops the rest: the symlink chain
+/// ([`installs`]), a package manager's own file ([`package_files`]), and —
+/// unless the name is on [`SKIPPED_PROGRAMS`] — the ACP probe itself, which
+/// decides from the entry's [`Installed::unproven_package`].
+fn found(agent: &IndexAgent, path: &OsStr, homes: &ManagerHomes) -> Option<Installed> {
     candidates(agent).into_iter().find_map(|candidate| {
         let program = which(path, &candidate.name)?;
-        if let Some(package) = &candidate.package
-            && !installs(&program, package)
-        {
-            tracing::debug!(
-                agent = agent.id,
-                name = candidate.name,
-                program = %program.display(),
-                package = package.join("/"),
-                "a program of the name the package installs is not the package's own; passing it over"
-            );
-            return None;
-        }
+        let unproven_package = match &candidate.package {
+            None => None,
+            Some(package)
+                if installs(&program, package)
+                    || package_files(&program, &candidate.name, package, homes) =>
+            {
+                None
+            }
+            Some(_) if SKIPPED_PROGRAMS.contains(&candidate.name.as_str()) => {
+                tracing::debug!(
+                    agent = agent.id,
+                    name = candidate.name,
+                    program = %program.display(),
+                    "a program of a skipped name proved nothing of its package; passing it over"
+                );
+                return None;
+            }
+            Some(package) => Some(package.join("/")),
+        };
         Some(Installed {
             id: agent.id.clone(),
             named_by_package: candidate.package.is_some(),
+            unproven_package,
             command: std::iter::once(candidate.name)
                 .chain(candidate.args)
                 .collect(),
             program,
         })
     })
+}
+
+/// Program names that never reach the ACP probe on an unproven package name:
+/// another program of this name is common enough, and known enough by name,
+/// that starting it on a guess is not worth the ACP probe getting to say no.
+/// `code` is MiniMax Code's command, and also most editors'.
+const SKIPPED_PROGRAMS: &[&str] = &["code"];
+
+/// Whether a package manager's own file proves `program` — found under
+/// `name` — is `package`'s, without starting anything: Volta's record of
+/// what it linked, a pnpm shim naming the path it points into, or an asdf or
+/// mise install that itself passes the symlink check.
+fn package_files(program: &Path, name: &str, package: &[String], homes: &ManagerHomes) -> bool {
+    volta_installs(name, package, &homes.volta)
+        || pnpm_installs(program, package)
+        || plugin_installs(&homes.asdf, name, package)
+        || plugin_installs(&homes.mise, name, package)
+}
+
+/// Volta links every tool under one shim and tells them apart by name alone,
+/// so the chain from `name` never reaches the package: only Volta's own
+/// record of what it linked — `tools/user/bins/<name>.json`, whose
+/// `package` field names the package — says whether this one does.
+fn volta_installs(name: &str, package: &[String], volta_home: &Path) -> bool {
+    let file = volta_home
+        .join("tools/user/bins")
+        .join(format!("{name}.json"));
+    let Ok(contents) = std::fs::read_to_string(&file) else {
+        return false;
+    };
+    let Ok(recorded) = serde_json::from_str::<VoltaBin>(&contents) else {
+        return false;
+    };
+    package_dirs(&recorded.package).join("/") == package.join("/")
+}
+
+#[derive(Deserialize)]
+struct VoltaBin {
+    package: String,
+}
+
+/// A pnpm global shim is a script, not a symlink, so the chain from it never
+/// reaches the package either: its own text names the path pnpm resolves it
+/// through, and one of its path-like words has to stand under the
+/// package's own directories — the same test [`installs`] runs on a link,
+/// run here on a word of the text instead. A substring would answer yes to
+/// `@scope/name-legacy` for `@scope/name`; a whole path component does not.
+fn pnpm_installs(program: &Path, package: &[String]) -> bool {
+    let Ok(file) = std::fs::File::open(program) else {
+        return false;
+    };
+    let mut text = String::new();
+    // A shim is a short script; bounding the read keeps a native binary
+    // found under the same name from being read whole first.
+    if file
+        .take(PNPM_SHIM_READ_LIMIT)
+        .read_to_string(&mut text)
+        .is_err()
+    {
+        return false;
+    }
+    pnpm_shim_words(&text).any(|word| under(Path::new(word), package))
+}
+
+/// How much of a program's text [`pnpm_installs`] reads before giving up:
+/// generous for a shim script, and not the whole of a native binary found
+/// under the same name.
+const PNPM_SHIM_READ_LIMIT: u64 = 64 * 1024;
+
+/// The path-like words of a shim script's text: split on whitespace and the
+/// characters a shell line quotes, assigns or separates arguments with.
+fn pnpm_shim_words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| c.is_whitespace() || "\"'=:;".contains(c))
+        .filter(|word| !word.is_empty())
+}
+
+/// asdf and mise both shim by plugin and version rather than by symlink, and
+/// each keeps the real install at `<data dir>/installs/<plugin>/<version>/bin/<name>`
+/// — a file the symlink check ([`installs`]) still answers for, once it is
+/// found rather than chained to.
+fn plugin_installs(data_dir: &Path, name: &str, package: &[String]) -> bool {
+    let Ok(plugins) = std::fs::read_dir(data_dir.join("installs")) else {
+        return false;
+    };
+    for plugin in plugins.flatten() {
+        let Ok(versions) = std::fs::read_dir(plugin.path()) else {
+            continue;
+        };
+        for version in versions.flatten() {
+            let candidate = version.path().join("bin").join(name);
+            if installs(&candidate, package) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Whether `program` is a file `package` installs: it, or a link on the way
