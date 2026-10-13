@@ -1359,6 +1359,13 @@ impl Launcher {
             return Ok(());
         }
 
+        // Tracked so the prune below runs only over a repository this call
+        // actually changed: a settled task — its worktrees already gone —
+        // is reconciled again every tick for as long as its goal stays
+        // `cancelled` or `completed`, and a `git worktree prune` spawned on
+        // every one of those ticks forever is a process the repository has
+        // nothing new to tell it about.
+        let mut removed_a_worktree = false;
         for session in self
             .store
             .list_sessions(SessionFilter {
@@ -1375,6 +1382,7 @@ impl Launcher {
                 if wt.exists() {
                     tracing::info!(task = %task.id, worktree = %wt.display(), "cleanup: removing worktree");
                     self.git.remove_worktree(&repo_path, &wt).await.ok();
+                    removed_a_worktree = true;
                 }
             }
         }
@@ -1383,10 +1391,23 @@ impl Launcher {
             if wt.exists() {
                 tracing::info!(task = %task.id, worktree = %wt.display(), "cleanup: removing worktree");
                 self.git.remove_worktree(&repo_path, &wt).await.ok();
+                if wt.exists() {
+                    tracing::warn!(task = %task.id, worktree = %wt.display(), "cleanup: worktree removal failed, will retry");
+                } else {
+                    removed_a_worktree = true;
+                }
             }
-            self.store.set_task_worktree(&task.id, None).await?;
+            // Cleared only once the directory is actually gone: a goal
+            // settled long ago is reconciled again every tick for as long
+            // as this stays set, which is also what gets a failed removal
+            // retried rather than forgotten.
+            if !wt.exists() {
+                self.store.set_task_worktree(&task.id, None).await?;
+            }
         }
-        self.git.prune_worktrees(&repo_path).await.ok();
+        if removed_a_worktree {
+            self.git.prune_worktrees(&repo_path).await.ok();
+        }
         // The base branch is never the task's own to delete.
         if delete_branch
             && task.status() == TaskStatus::Finished
