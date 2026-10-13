@@ -107,14 +107,19 @@ async fn enable(h: &crate::common::Harness, gitlab: bool) -> String {
 }
 
 fn fetches(stub: &StubForgeCli) -> usize {
-    // Each repository fetch lists the open requests and the review
-    // requests; its read of the open issues is no request list.
-    stub.invocations()
-        .iter()
-        .filter(|call| call.args.first().is_some_and(|a| a == "pr" || a == "mr"))
-        .filter(|call| call.args.get(1).is_some_and(|a| a == "list"))
-        .count()
-        / 2
+    // GitHub's one repository fetch lists the open requests once, its
+    // review requests named on each of them. GitLab's still lists the
+    // open requests and the review requests apart, so one of its fetches
+    // is two `mr list` calls.
+    let calls = stub.invocations();
+    let lists = |program: &str| {
+        calls
+            .iter()
+            .filter(|call| call.args.first().is_some_and(|a| a == program))
+            .filter(|call| call.args.get(1).is_some_and(|a| a == "list"))
+            .count()
+    };
+    lists("pr") + lists("mr") / 2
 }
 
 async fn quiet(stub: &StubForgeCli, count: usize) {
