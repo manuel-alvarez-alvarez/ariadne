@@ -310,9 +310,8 @@ sys.stdout.write('{"id": 77, "submitted_at": "2026-10-02T00:00:00Z"}')
     async fn a_review_refused_for_its_body_is_retried_with_no_visible_text() {
         let dir = tempfile::tempdir().unwrap();
         let github = Github::new(Cli {
-            configured: Some(fake_gh(dir.path())),
-            program: "gh",
             timeout: Duration::from_secs(5),
+            ..Cli::new(Some(&fake_gh(dir.path())), "gh")
         });
         let posted = github
             .submit_review(

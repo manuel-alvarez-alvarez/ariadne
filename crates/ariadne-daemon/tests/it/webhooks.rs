@@ -148,6 +148,7 @@ async fn deliveries(gitlab: bool) {
         .forge_cli(&stub)
         .timeouts(ariadne_daemon::timeouts::Timeouts {
             forge_poll: crate::common::RUNS_OUT,
+            forge_wake_debounce: crate::common::RUNS_OUT / 10,
             ..Default::default()
         })
         .await;
@@ -379,6 +380,7 @@ async fn url_changes(gitlab: bool) {
         .forge_cli(&stub)
         .timeouts(ariadne_daemon::timeouts::Timeouts {
             forge_poll: crate::common::RUNS_OUT,
+            forge_wake_debounce: crate::common::RUNS_OUT / 10,
             ..Default::default()
         })
         .await;
@@ -514,6 +516,7 @@ async fn a_refused_hook_keeps_the_forge_message_and_timer_fetches() {
         .forge_cli(&stub)
         .timeouts(ariadne_daemon::timeouts::Timeouts {
             forge_poll: crate::common::RUNS_OUT,
+            forge_wake_debounce: crate::common::RUNS_OUT / 10,
             ..Default::default()
         })
         .await;
@@ -545,6 +548,7 @@ async fn a_missing_stored_hook_restores_timer_and_wakes_a_fetch() {
         .forge_cli(&stub)
         .timeouts(ariadne_daemon::timeouts::Timeouts {
             forge_poll: crate::common::RUNS_OUT,
+            forge_wake_debounce: crate::common::RUNS_OUT / 10,
             ..Default::default()
         })
         .await;
@@ -575,6 +579,7 @@ async fn a_failed_hook_update_keeps_its_id_and_reports_the_error_with_timer_fall
         .forge_cli(&stub)
         .timeouts(ariadne_daemon::timeouts::Timeouts {
             forge_poll: crate::common::RUNS_OUT,
+            forge_wake_debounce: crate::common::RUNS_OUT / 10,
             ..Default::default()
         })
         .await;
@@ -655,8 +660,11 @@ async fn startup_checks_a_stored_hook_without_creating_another_and_fetches_once(
         std::sync::Arc::new(cfg),
         &bus,
         ariadne_daemon::forge::live::LivePulls::default(),
-        crate::common::RUNS_OUT,
-        ariadne_daemon::timeouts::Timeouts::default().forge_details,
+        ariadne_daemon::timeouts::Timeouts {
+            forge_poll: crate::common::RUNS_OUT,
+            forge_wake_debounce: crate::common::RUNS_OUT / 10,
+            ..Default::default()
+        },
     );
     eventually(TIMEOUT, "startup fetch", async || fetches(&stub) == 1).await;
     quiet(&stub, 1).await;

@@ -175,7 +175,13 @@ pub(crate) fn harness() -> HarnessBuilder {
         logs: None,
         discover_agents: false,
         second_agent: None,
-        timeouts: Timeouts::default(),
+        // A test that does not name the debounce itself must not pay its
+        // production wait on every wake: only `forge_rate_limit.rs` sets
+        // this back to an observable window to prove the merging itself.
+        timeouts: Timeouts {
+            forge_wake_debounce: Duration::from_millis(1),
+            ..Timeouts::default()
+        },
         path: std::ffi::OsString::new(),
         index: ariadne_daemon::acp_discovery::SHIPPED_INDEX.to_string(),
         ai_permissions_installer: None,
@@ -430,8 +436,7 @@ impl HarnessBuilder {
             launcher.cfg.clone(),
             &bus,
             launcher.live.clone(),
-            self.timeouts.forge_poll,
-            self.timeouts.forge_details,
+            self.timeouts,
         );
         // Started by a test that binds a listener: a harness opens no tunnel.
         let tunnel = ariadne_daemon::forge::tunnel::Tunnel::new(
