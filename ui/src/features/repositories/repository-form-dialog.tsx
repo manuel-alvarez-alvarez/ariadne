@@ -334,8 +334,8 @@ export function RepositoryFormDialog({
               <FieldLabel htmlFor="repository-supervise-posts">Supervise posts</FieldLabel>
             </div>
             <FieldDescription>
-              Open every pull request an agent requests as a draft for your approval before it
-              reaches the forge.
+              Open every pull request an agent requests on the forge as a draft, for your approval
+              before it is ready to merge.
             </FieldDescription>
           </Field>
 

@@ -427,8 +427,8 @@ ariadne repo update <repo-id> --permission-mode ask
 ```
 
 A repository's `supervise_posts` flag is on by default: it opens every pull
-request a task's `pr` column requests as a draft, for your approval before it
-reaches the forge. See [Repositories, branches and
+request a task's `pr` column requests on the forge as a draft, for your
+approval before it is ready to merge. See [Repositories, branches and
 worktrees](../specs/002-repositories-branches-and-worktrees.md), rule 13, for
 the rule, including what a later release holds the same way. Turn it off
 with:
