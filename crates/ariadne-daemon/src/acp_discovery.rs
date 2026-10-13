@@ -26,6 +26,7 @@ use ariadne_store::Store;
 use crate::acp::{apply_agent_launch_environment, find_config_option};
 use crate::acp_calls::call;
 use crate::acp_index;
+pub use crate::acp_index::ManagerHomes;
 use crate::acp_transport::pipes;
 use crate::timeouts::Timeouts;
 
@@ -43,6 +44,7 @@ pub struct AgentRegistry {
     custom: Arc<Vec<AcpAgentConfig>>,
     path: Arc<OsString>,
     index: Arc<str>,
+    manager_homes: Arc<ManagerHomes>,
     discovery: Arc<tokio::sync::Mutex<()>>,
     results: Arc<RwLock<Vec<Discovery>>>,
     probe_cwd: Arc<PathBuf>,
@@ -64,6 +66,11 @@ struct RegistryEntry {
     /// nobody's in particular, so a probe that shows the program is not an
     /// ACP agent takes the entry off the registry rather than listing it.
     named_by_package: bool,
+    /// Set where `named_by_package` is true and neither the symlink chain
+    /// nor a package manager's own file proved it: the registry package,
+    /// unpinned, that the probe's `agentInfo.name` has to answer before this
+    /// entry is kept at all, timeout included.
+    unproven_package: Option<String>,
     /// Why this entry is refused outright, where it is: a configuration
     /// error, permanent until the config changes. A duplicate id is already
     /// another entry's, and only that one may answer for it. A refused entry
@@ -109,6 +116,26 @@ struct Discovery {
     /// probe that got that far answered for the agent, whatever it failed at
     /// afterwards.
     refuted: bool,
+    /// Whether the probe ran out of its time rather than answering, however
+    /// much it showed before then.
+    timed_out: bool,
+    /// The `agentInfo.name` the probe's `initialize` answered, once it
+    /// answered at all: what an unproven entry's package name is checked
+    /// against.
+    agent_info_name: Option<String>,
+}
+
+impl Discovery {
+    /// Whether this probe proved the program behind an unproven package name
+    /// is `expected`'s own: it negotiated the protocol, did not merely run
+    /// out of time doing so, and named itself as that package, unpinned. A
+    /// probe that reached this far but was rejected for some other gap — no
+    /// model option, say — still proved the identity; the rejection stands.
+    fn proves_package(&self, expected: &str) -> bool {
+        self.agent.capabilities.protocol_v1
+            && !self.timed_out
+            && self.agent_info_name.as_deref() == Some(expected)
+    }
 }
 
 /// What one `session/new` said about an agent's configuration.
@@ -142,7 +169,14 @@ impl AgentRegistry {
     /// holds, and the configured agents over them. Probes run in `probe_cwd`,
     /// and the catalogs they read are kept in `store`.
     pub fn new(custom: &[AcpAgentConfig], probe_cwd: PathBuf, store: Store, path: &OsStr) -> Self {
-        Self::build(custom, probe_cwd, store, path, SHIPPED_INDEX)
+        Self::build(
+            custom,
+            probe_cwd,
+            store,
+            path,
+            SHIPPED_INDEX,
+            ManagerHomes::from_env(),
+        )
     }
 
     /// The same registry over an index the caller writes, so a test says
@@ -155,8 +189,9 @@ impl AgentRegistry {
         store: Store,
         path: &OsStr,
         index: &str,
+        manager_homes: ManagerHomes,
     ) -> Self {
-        Self::build(custom, probe_cwd, store, path, index)
+        Self::build(custom, probe_cwd, store, path, index, manager_homes)
     }
 
     fn build(
@@ -165,14 +200,17 @@ impl AgentRegistry {
         store: Store,
         path: &OsStr,
         index: &str,
+        manager_homes: ManagerHomes,
     ) -> Self {
-        let entries = Self::entries(custom, path, index);
+        let manager_homes = Arc::new(manager_homes);
+        let entries = Self::entries(custom, path, index, &manager_homes);
         let results = entries.iter().map(not_probed).collect();
         Self {
             entries: Arc::new(std::sync::RwLock::new(entries)),
             custom: Arc::new(custom.to_vec()),
             path: Arc::new(path.to_os_string()),
             index: Arc::from(index),
+            manager_homes,
             discovery: Arc::default(),
             results: Arc::new(RwLock::new(results)),
             probe_cwd: Arc::new(probe_cwd),
@@ -181,9 +219,14 @@ impl AgentRegistry {
         }
     }
 
-    fn entries(custom: &[AcpAgentConfig], path: &OsStr, index: &str) -> Vec<RegistryEntry> {
+    fn entries(
+        custom: &[AcpAgentConfig],
+        path: &OsStr,
+        index: &str,
+        manager_homes: &ManagerHomes,
+    ) -> Vec<RegistryEntry> {
         let mut found_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut entries: Vec<RegistryEntry> = acp_index::installed(index, path)
+        let mut entries: Vec<RegistryEntry> = acp_index::installed(index, path, manager_homes)
             .into_iter()
             .map(|found| {
                 let refused = refusal(&found.id, &found_ids);
@@ -194,6 +237,7 @@ impl AgentRegistry {
                     program: found.program,
                     source: AcpAgentSource::Registry,
                     named_by_package: found.named_by_package,
+                    unproven_package: found.unproven_package,
                     refused,
                 }
             })
@@ -213,6 +257,7 @@ impl AgentRegistry {
                 program: agent.command.first().cloned().unwrap_or_default().into(),
                 source: AcpAgentSource::Config,
                 named_by_package: false,
+                unproven_package: None,
                 refused,
             };
             let discovered = entries
@@ -311,7 +356,7 @@ impl AgentRegistry {
             Some(index) => index.to_string(),
             None => self.selected_index().await,
         };
-        let entries = Self::entries(&self.custom, &self.path, &index);
+        let entries = Self::entries(&self.custom, &self.path, &index, &self.manager_homes);
         // Every kept catalog is on hand, a refresh included: a refresh reads
         // the catalogs again rather than trusting these, but a probe that
         // runs out of time still falls back on the one it did not replace.
@@ -332,14 +377,21 @@ impl AgentRegistry {
         });
         let discovered = join_all(probes).await;
         // A name only a package gives is another program's as easily as the
-        // agent's. One that answered for nothing is that other program, and
-        // the entry stands for nothing here: the registry holds it no more
-        // than it holds an agent the `PATH` never had.
+        // agent's. One proven by the symlink chain or a manager's own file
+        // stands unless the probe shows it is no ACP agent at all; one
+        // unproven stands only where the probe itself named it the package,
+        // unpinned — timeout included, since silence proves nothing here.
+        // Either way, what fails to stand is registered no more than an
+        // agent the `PATH` never had.
         let (entries, discovered): (Vec<RegistryEntry>, Vec<Discovery>) = entries
             .into_iter()
             .zip(discovered)
             .filter(|(entry, result)| {
-                let mistaken = entry.named_by_package && result.refuted;
+                let mistaken = entry.refused.is_none()
+                    && match &entry.unproven_package {
+                        Some(expected) => !result.proves_package(expected),
+                        None => entry.named_by_package && result.refuted,
+                    };
                 if mistaken {
                     tracing::info!(
                         agent = entry.id,
@@ -568,7 +620,14 @@ fn not_probed(entry: &RegistryEntry) -> Discovery {
 }
 
 fn rejected(entry: &RegistryEntry, reason: String) -> Discovery {
-    rejected_with(entry, AcpCapabilitiesDto::default(), reason, false)
+    rejected_with(
+        entry,
+        AcpCapabilitiesDto::default(),
+        reason,
+        false,
+        false,
+        None,
+    )
 }
 
 fn rejected_with(
@@ -576,6 +635,8 @@ fn rejected_with(
     capabilities: AcpCapabilitiesDto,
     reason: String,
     refuted: bool,
+    timed_out: bool,
+    agent_info_name: Option<String>,
 ) -> Discovery {
     Discovery {
         agent: AcpAgentDto {
@@ -590,6 +651,8 @@ fn rejected_with(
         catalog: Catalog::default(),
         version: None,
         refuted,
+        timed_out,
+        agent_info_name,
     }
 }
 
@@ -641,6 +704,7 @@ async fn probe(
     // with every capability it showed before it stopped answering.
     let mut discovered = None;
     let mut opened_session = None;
+    let mut agent_info_name = None;
     let result = tokio::time::timeout(
         timeout,
         Client
@@ -656,6 +720,7 @@ async fn probe(
                         shortcut,
                         &mut opened_session,
                         &mut capabilities,
+                        &mut agent_info_name,
                     )
                     .await,
                 );
@@ -685,7 +750,14 @@ async fn probe(
             // Nothing spoke ACP here, and time is not what it ran out of:
             // whatever this program is, it is not the agent.
             let refuted = !capabilities.protocol_v1 && !timed_out;
-            let mut rejection = rejected_with(&entry, capabilities, format!("{error:#}"), refuted);
+            let mut rejection = rejected_with(
+                &entry,
+                capabilities,
+                format!("{error:#}"),
+                refuted,
+                timed_out,
+                agent_info_name,
+            );
             // A probe out of time said nothing about the models. The catalog
             // the store kept for this very command is still the agent's last
             // word, and it stays on offer until an answer replaces it: a busy
@@ -706,11 +778,16 @@ async fn probe_protocol(
     cached: Option<CachedCatalog>,
     opened_session: &mut Option<String>,
     capabilities: &mut AcpCapabilitiesDto,
+    agent_info_name: &mut Option<String>,
 ) -> Result<Discovery> {
     let initialized = call(cx, "initialize", initialize())
         .await
         .context("initialize failed")?;
     capabilities.protocol_v1 = initialized.protocol_version == ProtocolVersion::V1;
+    *agent_info_name = initialized
+        .agent_info
+        .as_ref()
+        .map(|info| info.name.clone());
     if !capabilities.protocol_v1 {
         bail!("agent did not negotiate ACP version 1");
     }
@@ -766,6 +843,8 @@ async fn probe_protocol(
         catalog,
         version,
         refuted: false,
+        timed_out: false,
+        agent_info_name: agent_info_name.clone(),
     })
 }
 

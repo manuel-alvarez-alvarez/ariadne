@@ -4,6 +4,7 @@ use crate::common;
 
 use std::time::Duration;
 
+use ariadne_daemon::acp_discovery::ManagerHomes;
 use ariadne_daemon::timeouts::Timeouts;
 
 use ariadne_store::AgentPin;
@@ -11,7 +12,7 @@ use ariadne_store::AgentPin;
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use common::acp::{option, script, stub_acp_agent};
+use common::acp::{install_package, option, script, stub_acp_agent};
 use common::{Harness, HarnessBuilder, TIMEOUT, eventually, harness, post, post_json};
 
 fn home_with_agent(id: &str, bin: &str) -> std::path::PathBuf {
@@ -497,6 +498,353 @@ async fn an_npx_agent_is_found_under_the_name_of_its_package() {
     assert_eq!(
         h.launcher.registry.command_of("claude-acp"),
         Some(vec!["claude-agent-acp".to_string()])
+    );
+}
+
+/// A home for a fake Volta install: `tools/user/bins/<bin_name>.json`,
+/// naming `package` the way Volta's own record of what it linked would.
+fn volta_home(dir: &std::path::Path, bin_name: &str, package: &str) -> std::path::PathBuf {
+    let home = dir.join("volta-home");
+    let bins = home.join("tools/user/bins");
+    std::fs::create_dir_all(&bins).unwrap();
+    std::fs::write(
+        bins.join(format!("{bin_name}.json")),
+        json!({"package": package}).to_string(),
+    )
+    .unwrap();
+    home
+}
+
+/// A fake asdf or mise install: `<data_dir>/installs/<plugin>/<version>/bin/<name>`,
+/// a symlink reaching `program` by way of `package`'s own directories — the
+/// file the real tool's shim never is, but the one the manager itself keeps.
+fn plugin_install(
+    data_dir: &std::path::Path,
+    plugin: &str,
+    version: &str,
+    name: &str,
+    package: &str,
+    program: &std::path::Path,
+) {
+    install_package(data_dir, package, name, program);
+    let deep = data_dir
+        .join("packages")
+        .join(package)
+        .join("bin")
+        .join(name);
+    let bin_dir = data_dir
+        .join("installs")
+        .join(plugin)
+        .join(version)
+        .join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let link = bin_dir.join(name);
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&deep, &link).unwrap();
+}
+
+/// Three fake manager homes, none of which exist unless a test fills one in:
+/// what a volta/asdf/mise check reads when the test is not about it.
+fn no_manager_homes(dir: &std::path::Path) -> ManagerHomes {
+    ManagerHomes {
+        volta: dir.join("no-volta-home"),
+        asdf: dir.join("no-asdf-home"),
+        mise: dir.join("no-mise-home"),
+    }
+}
+
+/// A Volta shim never reaches the package by its symlink chain — Volta
+/// links every tool under one shim binary and tells them apart by name
+/// alone — so only Volta's own record of what it linked proves it: its
+/// `tools/user/bins/claude-agent-acp.json` naming the registry's package.
+#[tokio::test]
+async fn a_volta_shim_naming_the_right_package_is_registered() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with(&["claude-agent-acp"]);
+    let homes = ManagerHomes {
+        volta: volta_home(
+            dir.path(),
+            "claude-agent-acp",
+            "@agentclientprotocol/claude-agent-acp",
+        ),
+        ..no_manager_homes(dir.path())
+    };
+    let h = settled(
+        harness()
+            .home(empty_home(dir.path()))
+            .agents_on_path(path)
+            .manager_homes(homes),
+        "claude-acp",
+    )
+    .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let ids: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
+    assert_eq!(ids, ["claude-acp"], "{agents:#?}");
+    assert_eq!(agents[0]["status"], "ready", "{:#?}", agents[0]);
+    assert_eq!(agents[0]["command"], json!(["claude-agent-acp"]));
+    assert_eq!(
+        h.launcher.registry.command_of("claude-acp"),
+        Some(vec!["claude-agent-acp".to_string()])
+    );
+}
+
+/// A Volta file naming some other package proves nothing of this one: the
+/// entry falls to the ACP probe like any other unproven name. First, with
+/// no `agentInfo.name` of its own, the probe proves nothing either, and the
+/// entry is dropped outright — which a Volta check that wrongly accepted
+/// the wrong package never would, since a proven entry only drops for a
+/// refused protocol. Only once the probe itself answers the real package is
+/// the same entry kept.
+#[tokio::test]
+async fn a_volta_shim_naming_a_different_package_goes_to_the_probe() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with(&["claude-agent-acp"]);
+    let homes = ManagerHomes {
+        volta: volta_home(dir.path(), "claude-agent-acp", "@other-vendor/other-cli"),
+        ..no_manager_homes(dir.path())
+    };
+    let h = harness()
+        .home(empty_home(dir.path()))
+        .agents_on_path(path)
+        .manager_homes(homes)
+        .discover_agents()
+        .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert!(
+        !agents.iter().any(|a| a["id"] == "claude-acp"),
+        "a Volta file for another package must not prove this one: {agents:#?}"
+    );
+
+    let mut matching = script();
+    matching["agent_info"] =
+        json!({"name": "@agentclientprotocol/claude-agent-acp", "version": "1.0"});
+    agent.reprogram(matching);
+    let agents: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
+    let claude = agents
+        .iter()
+        .find(|a| a["id"] == "claude-acp")
+        .unwrap_or_else(|| panic!("the probe's own answer must register it: {agents:#?}"));
+    assert_eq!(claude["status"], "ready", "{claude}");
+}
+
+/// A pnpm global shim is a script, not a symlink, so the chain from it never
+/// reaches the package either: its own text names the package in a comment,
+/// the way a real shim's resolved path would, and that text is what proves
+/// it.
+#[tokio::test]
+async fn a_pnpm_shim_naming_the_right_package_is_registered() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_as_pnpm_shim("claude-agent-acp");
+    let h = settled(
+        harness().home(empty_home(dir.path())).agents_on_path(path),
+        "claude-acp",
+    )
+    .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let ids: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
+    assert_eq!(ids, ["claude-acp"], "{agents:#?}");
+    assert_eq!(agents[0]["status"], "ready", "{:#?}", agents[0]);
+    assert_eq!(agents[0]["command"], json!(["claude-agent-acp"]));
+}
+
+/// A path is a whole component, not a substring: a shim naming
+/// `claude-agent-acp-legacy` — a package of its own that merely shares the
+/// real one's name as a prefix — must not prove the real package. With no
+/// `agentInfo.name` of its own, the entry is dropped outright; a substring
+/// check would have wrongly proven it and kept it listed instead.
+#[tokio::test]
+async fn a_pnpm_shim_naming_a_similarly_prefixed_package_does_not_pass_check_2() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_as_pnpm_shim_for_a_similarly_prefixed_package("claude-agent-acp");
+    let h = harness()
+        .home(empty_home(dir.path()))
+        .agents_on_path(path)
+        .discover_agents()
+        .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert!(
+        !agents.iter().any(|a| a["id"] == "claude-acp"),
+        "a shim naming a similarly prefixed package must not prove the real one: {agents:#?}"
+    );
+}
+
+/// asdf and mise both shim by plugin and version rather than by symlink, so
+/// the chain from the shim on `PATH` never reaches the package either: only
+/// the install each manager keeps under its own data directory does, and
+/// that install is what the check reads.
+#[tokio::test]
+async fn an_asdf_shim_and_a_mise_shim_with_a_matching_install_are_registered() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = json!({
+        "agents": [
+            {"id": "asdf-agent", "distribution": {"npx": {"package": "@vendor/asdf-cli@1.0.0"}}},
+            {"id": "mise-agent", "distribution": {"npx": {"package": "@vendor/mise-cli@1.0.0"}}}
+        ]
+    });
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with(&["asdf-cli", "mise-cli"]);
+    let program = std::path::Path::new(&agent.bin);
+
+    let asdf_home = dir.path().join("asdf-home");
+    plugin_install(
+        &asdf_home,
+        "nodejs",
+        "20.1.0",
+        "asdf-cli",
+        "@vendor/asdf-cli",
+        program,
+    );
+    let mise_home = dir.path().join("mise-home");
+    plugin_install(
+        &mise_home,
+        "node",
+        "22.0.0",
+        "mise-cli",
+        "@vendor/mise-cli",
+        program,
+    );
+
+    let h = settled(
+        harness()
+            .home(empty_home(dir.path()))
+            .agents_on_path(path)
+            .acp_index(index.to_string())
+            .manager_homes(ManagerHomes {
+                asdf: asdf_home,
+                mise: mise_home,
+                ..no_manager_homes(dir.path())
+            }),
+        "asdf-agent",
+    )
+    .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let find = |id: &str| {
+        agents
+            .iter()
+            .find(|a| a["id"] == id)
+            .unwrap_or_else(|| panic!("no {id:?} in {agents:#?}"))
+    };
+    assert_eq!(find("asdf-agent")["status"], "ready", "{:#?}", agents);
+    assert_eq!(find("mise-agent")["status"], "ready", "{:#?}", agents);
+}
+
+/// Neither the symlink chain nor a manager's own file proves this shim, so
+/// discovery marks it unproven and lets the ACP probe decide — kept here
+/// because the probe's `agentInfo.name` answers exactly the registry
+/// package, unpinned.
+#[tokio::test]
+async fn an_unproven_shim_is_registered_when_the_probe_names_the_package() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["agent_info"] =
+        json!({"name": "@agentclientprotocol/claude-agent-acp", "version": "1.0"});
+    let agent = stub_acp_agent(dir.path(), setup);
+    let path = agent.path_with(&["claude-agent-acp"]);
+    let h = settled(
+        harness().home(empty_home(dir.path())).agents_on_path(path),
+        "claude-acp",
+    )
+    .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let ids: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
+    assert_eq!(ids, ["claude-acp"], "{agents:#?}");
+    assert_eq!(agents[0]["status"], "ready", "{:#?}", agents[0]);
+}
+
+/// An unproven entry's probe has to prove the identity itself, not merely
+/// negotiate the protocol: a wrong `agentInfo.name`, no `agentInfo` at all,
+/// or running out of time all drop the entry outright — unlike a proven
+/// entry, which a timeout leaves listed with what it measured.
+#[tokio::test]
+async fn an_unproven_shim_is_dropped_unless_the_probe_names_it_exactly() {
+    for agent_info in [
+        Some(json!({"name": "something-else", "version": "1.0"})),
+        None,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut setup = script();
+        if let Some(info) = agent_info {
+            setup["agent_info"] = info;
+        }
+        let agent = stub_acp_agent(dir.path(), setup);
+        let path = agent.path_with(&["claude-agent-acp"]);
+        let h = harness()
+            .home(empty_home(dir.path()))
+            .agents_on_path(path)
+            .discover_agents()
+            .await;
+
+        let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+        assert!(
+            !agents.iter().any(|a| a["id"] == "claude-acp"),
+            "{agents:#?}"
+        );
+    }
+
+    // A timeout drops an unproven entry outright, the one way its probe
+    // differs from a proven entry's: that one stays listed with the little
+    // it showed before time ran out.
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["silent_methods"] = json!(["initialize"]);
+    let agent = stub_acp_agent(dir.path(), setup);
+    let path = agent.path_with(&["claude-agent-acp"]);
+    let h = harness()
+        .home(empty_home(dir.path()))
+        .agents_on_path(path)
+        .discover_agents()
+        .timeouts(Timeouts {
+            probe: Duration::from_secs(1),
+            ..Timeouts::default()
+        })
+        .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert!(
+        !agents.iter().any(|a| a["id"] == "claude-acp"),
+        "{agents:#?}"
+    );
+}
+
+/// `code` is MiniMax Code's command, and also most editors': common enough
+/// that the daemon never starts a program of that name on the strength of a
+/// guess alone — it is dropped before the probe even gets to say no.
+#[tokio::test]
+async fn a_skip_listed_program_name_is_never_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with(&["code"]);
+    let index = json!({
+        "agents": [
+            {"id": "minimax-code", "distribution": {"npx": {"package": "@minimax-ai/code@0.2.7"}}}
+        ]
+    });
+    let h = harness()
+        .home(empty_home(dir.path()))
+        .agents_on_path(path)
+        .acp_index(index.to_string())
+        .discover_agents()
+        .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert!(
+        !agents.iter().any(|a| a["id"] == "minimax-code"),
+        "{agents:#?}"
+    );
+    assert_eq!(
+        agent.pid(),
+        None,
+        "a skip-listed program must never be started"
     );
 }
 
