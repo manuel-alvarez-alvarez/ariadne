@@ -241,6 +241,15 @@ async fn sync(
     };
     let enabled = row.as_ref().is_some_and(|r| r.enabled);
     if !enabled {
+        let list_cleared = handoff.live.clear_list(id);
+        if list_cleared {
+            handoff
+                .pulls_seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(id);
+            handoff.bus.pull_requests_changed(id);
+        }
         if let Some(mut worker) = workers.remove(id) {
             worker.task.abort();
             let _ = (&mut worker.task).await;
@@ -279,13 +288,22 @@ async fn sync(
         row.owner.clone(),
         row.name.clone(),
     );
-    if workers
+    let integration_changed = workers
         .get(id)
-        .is_some_and(|worker| worker.identity != identity)
-        && let Some(mut worker) = workers.remove(id)
-    {
-        worker.task.abort();
-        let _ = (&mut worker.task).await;
+        .is_some_and(|worker| worker.identity != identity);
+    if integration_changed {
+        if let Some(mut worker) = workers.remove(id) {
+            worker.task.abort();
+            let _ = (&mut worker.task).await;
+        }
+        if handoff.live.clear_list(id) {
+            handoff
+                .pulls_seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(id);
+            handoff.bus.pull_requests_changed(id);
+        }
     }
     let before = (
         row.webhook_state.clone(),
@@ -452,6 +470,7 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
     // fetch's own lists rather than an older round's (026).
     handoff.live.set_list(
         id,
+        &integration,
         listed.clone(),
         requested.clone(),
         chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),

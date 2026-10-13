@@ -228,7 +228,7 @@ pub(super) async fn list(
         let pulls::Listed { open, requested } = state
             .launcher
             .live
-            .list(&forge.repository_id)
+            .list(&forge.repository_id, &forge)
             .map(|listed| pulls::Listed {
                 open: listed.open,
                 requested: listed.requested,
@@ -366,7 +366,7 @@ pub(super) async fn search(
     let open = state
         .launcher
         .live
-        .list(&forge.repository_id)
+        .list(&forge.repository_id, &forge)
         .map(|listed| listed.open)
         .unwrap_or_default();
     let query = q.q.trim().trim_start_matches('#').to_lowercase();

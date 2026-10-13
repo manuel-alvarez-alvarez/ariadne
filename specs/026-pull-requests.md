@@ -77,7 +77,8 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    A request nobody works on, and nobody could start work on by asking, has no row, whatever the lists hold.
 4. What the forge says of a request Ariadne works on is read on every fetch and held in memory alone (`forge::live::LivePulls`, by row id): the request's own read, whether it asks for the user's review, and, while it is open, its details.
    The scheduler and the routes join the row to that read (`PullRequest`, the view). A daemon that restarts holds nothing until its first fetch, which runs at once; until a request has been read, the scheduler does nothing for it.
-   Each fetch also holds its repository's whole list the same way (`forge::live::LivePulls`, by repository id): every open request and which of them ask for the user's review, as the fetch itself read them, and when.
+   Each fetch also holds its repository's whole list the same way (`forge::live::LivePulls`, by repository id): every open request and which of them ask for the user's review, as the fetch itself read them, when, and the forge identity that supplied them.
+   Disabling an integration or changing that identity clears the held list; a route also rejects a list whose identity differs from its current integration.
    `GET /v1/pull-requests` and its search answer from that held list alone, joined to the rows as the routes above do; neither calls the forge. A repository with no fetch yet holds no list, which both read as empty rather than live.
    `GET /v1/pull-requests/{id}` answers the held read of the row the same way; `GET /v1/repositories/{id}/pull-requests/{number}` stays live, since that is the panel reading one request on demand.
    `POST /v1/pull-requests/refresh` is still how a human asks the forge to be read again.
@@ -252,6 +253,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - Two reads of the list and of the search after one fetch make no further `pr list` call, a repository with no fetch yet lists empty with 200 and a disabled one still answers 409, the single-request route answers the held read with no `details()` call, and the panel route still reads live:
   `pull_request_lists.rs::two_reads_after_one_fetch_run_no_further_pr_list_call`,
   `::a_repository_with_no_fetch_yet_lists_empty_and_a_disabled_one_is_refused`,
+  `::a_changed_forge_clears_the_held_list_before_its_fetch_succeeds`,
   `::the_single_request_route_answers_the_held_read_with_no_details_call`,
   `::the_panel_route_still_reads_live`.
 - A review request has a row while it is reviewed and none once it merged:

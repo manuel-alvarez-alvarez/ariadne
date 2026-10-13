@@ -116,7 +116,12 @@ async fn two_reads_after_one_fetch_run_no_further_pr_list_call() {
     let h = harness().forge_cli(&stub).await;
     let id = enabled_repository(&h).await;
     eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
-    let held = h.launcher.live.list(&id).expect("the fetch's held list");
+    let forge = h.store.forge_integration(&id).await.unwrap().unwrap();
+    let held = h
+        .launcher
+        .live
+        .list(&id, &forge)
+        .expect("the fetch's held list");
     assert!(
         chrono::DateTime::parse_from_rfc3339(&held.fetched_at).is_ok(),
         "the held list records when its fetch ran"
@@ -204,11 +209,69 @@ async fn a_repository_with_no_fetch_yet_lists_empty_and_a_disabled_one_is_refuse
             StatusCode::OK,
         )
         .await;
+    let disabled = h.store.forge_integration(&id).await.unwrap().unwrap();
+    assert!(
+        h.launcher.live.list(&id, &disabled).is_none(),
+        "disabling the integration drops its held list"
+    );
     h.error(
         get(&format!("/v1/pull-requests?repo={id}")),
         StatusCode::CONFLICT,
     )
     .await;
+}
+
+/// A list belongs to the forge a fetch read. When a checkout moves from one
+/// forge repository to another, the old list disappears before the new
+/// fetch succeeds, so neither route can return or validate the old forge's
+/// request as the new one's.
+#[tokio::test]
+async fn a_changed_forge_clears_the_held_list_before_its_fetch_succeeds() {
+    let pull = github_pull(1, "other");
+    let stub = stub_forge_cli(script(&pull));
+    let h = harness().forge_cli(&stub).await;
+    let id = enabled_repository(&h).await;
+    eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
+
+    let initial: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
+    assert_eq!(initial.len(), 1, "the first forge's list is held");
+
+    let repository = h.store.get_repository(&id).await.unwrap();
+    sh(
+        std::path::Path::new(&repository.path),
+        "git remote set-url origin https://github.com/acme/gadgets.git",
+    );
+    let mut failed = script(&pull);
+    for entry in failed.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "list"]) {
+            entry["exit"] = json!(1);
+            entry["stderr"] = json!("cannot list gadgets");
+        }
+    }
+    stub.reprogram(failed);
+    let _: Value = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{id}"),
+                json!({"forge": {"enabled": true}}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "the new forge fetch to fail", async || {
+        stub.invocations().iter().any(|call| {
+            call.args.starts_with(&["pr".into(), "list".into()])
+                && call.args.iter().any(|arg| arg == "github.com/acme/gadgets")
+        })
+    })
+    .await;
+
+    let rows: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
+    assert_eq!(rows, Vec::<Value>::new(), "the old list is not returned");
+    let matches: Vec<Value> = h
+        .get(&format!("/v1/repositories/{id}/pull-requests/search?q="))
+        .await;
+    assert_eq!(matches, Vec::<Value>::new(), "the old URL is not checked");
 }
 
 /// `GET /v1/pull-requests/{id}` answers the held read, not a fresh

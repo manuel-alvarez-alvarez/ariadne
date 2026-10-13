@@ -17,8 +17,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use ariadne_store::{
-    CommentMark, NewPullRequestComment, PullRequest, PullRequestComment, PullRequestLive,
-    PullRequestRow,
+    CommentMark, ForgeIntegration, NewPullRequestComment, PullRequest, PullRequestComment,
+    PullRequestLive, PullRequestRow,
 };
 
 use super::pulls::{CONVERSATION, FailedCheck, ForgePullRequest, signature, unsigned};
@@ -107,9 +107,32 @@ pub struct Details {
 /// none, which both read as empty rather than calling the forge themselves.
 #[derive(Debug, Clone, Default)]
 pub struct RepositoryList {
+    identity: RepositoryListIdentity,
     pub open: Vec<ForgePullRequest>,
     pub requested: HashSet<i64>,
     pub fetched_at: String,
+}
+
+/// The forge whose open list a repository fetch read. A checkout may move to
+/// another forge while the daemon stays up, so repository id alone cannot
+/// prove a held list still belongs to its current integration.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct RepositoryListIdentity {
+    kind: String,
+    host: String,
+    owner: String,
+    name: String,
+}
+
+impl From<&ForgeIntegration> for RepositoryListIdentity {
+    fn from(integration: &ForgeIntegration) -> Self {
+        Self {
+            kind: integration.kind.clone(),
+            host: integration.host.clone(),
+            owner: integration.owner.clone(),
+            name: integration.name.clone(),
+        }
+    }
 }
 
 /// The last read of every request Ariadne works on, by row id, and the
@@ -138,11 +161,16 @@ impl LivePulls {
 
     /// The last list `repository_id`'s fetch read, or None before its
     /// first fetch.
-    pub fn list(&self, repository_id: &str) -> Option<RepositoryList> {
+    pub fn list(
+        &self,
+        repository_id: &str,
+        integration: &ForgeIntegration,
+    ) -> Option<RepositoryList> {
         self.lists
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(repository_id)
+            .filter(|list| list.identity == RepositoryListIdentity::from(integration))
             .cloned()
     }
 
@@ -152,6 +180,7 @@ impl LivePulls {
     pub fn set_list(
         &self,
         repository_id: &str,
+        integration: &ForgeIntegration,
         open: Vec<ForgePullRequest>,
         requested: HashSet<i64>,
         fetched_at: String,
@@ -162,6 +191,7 @@ impl LivePulls {
             .insert(
                 repository_id.to_string(),
                 RepositoryList {
+                    identity: RepositoryListIdentity::from(integration),
                     open,
                     requested,
                     fetched_at,
@@ -232,6 +262,17 @@ impl LivePulls {
                 local_additions,
             },
         );
+    }
+
+    /// Drop the held open list when its integration is disabled or moves to
+    /// another forge. Rows keep their own reads, but a repository list has no
+    /// meaning without the forge that supplied it.
+    pub fn clear_list(&self, repository_id: &str) -> bool {
+        self.lists
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(repository_id)
+            .is_some()
     }
 
     /// The same as [`Self::set_pull`], but for the one case that does have
