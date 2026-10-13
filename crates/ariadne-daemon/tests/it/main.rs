@@ -71,6 +71,7 @@ mod kept_requests;
 mod pull_request_babysit;
 mod pull_request_detail_skip;
 mod pull_request_keep_retry;
+mod pull_request_lists;
 mod pull_request_reviews;
 mod pull_requests;
 

@@ -1285,7 +1285,11 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
         .to_string()
     );
     stub.reprogram(holds);
-    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    // A read off the forge now, through a route that still makes one
+    // (`get()` on the single request answers the held read instead): the
+    // ask already seeded the cache with no details, so only a live read
+    // here finds the summary's mark.
+    let _: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
     let _: Vec<Value> = h
         .json(
             as_session(

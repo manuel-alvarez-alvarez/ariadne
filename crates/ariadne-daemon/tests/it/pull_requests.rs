@@ -1,5 +1,6 @@
-//! Pull requests through HTTP and the forge CLI boundary (026): read live
-//! off the forge, and kept only while Ariadne works on them.
+//! Pull requests through HTTP and the forge CLI boundary (026): each fetch
+//! holds the forge's list, and requests are kept only while Ariadne works on
+//! them.
 use crate::common::forge::{answer, stub_forge_cli};
 use crate::common::{delete, get, harness, post_json, sh};
 use axum::http::StatusCode;
@@ -96,15 +97,14 @@ fn script(list: Vec<Value>, view: Value) -> Value {
     json!(answers)
 }
 
-/// The open requests are read live off the forge: every one, mine, or the
-/// ones that ask for my review, and one of them whole, its checks and
-/// comments read with it. A request of mine Ariadne was not asked to
-/// review stays untracked; a request that asks for my review gets a row
-/// (029), so a human still has something to start by hand — but nothing
-/// starts its session on its own, and nothing adds or removes a row here
-/// by hand.
+/// The fetch's held open requests include every one, mine, or the ones that
+/// ask for my review, and one of them whole, its checks and comments read
+/// with it. A request of mine Ariadne was not asked to review stays
+/// untracked; a request that asks for my review gets a row (029), so a human
+/// still has something to start by hand — but nothing starts its session on
+/// its own, and nothing adds or removes a row here by hand.
 #[tokio::test]
-async fn the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review() {
+async fn the_fetch_holds_the_list_and_tracks_only_a_request_that_asks_for_my_review() {
     use crate::common::{TIMEOUT, eventually};
     let stub = stub_forge_cli(script(
         vec![github_pull(1, "me"), github_pull(2, "other")],
@@ -112,13 +112,7 @@ async fn the_list_is_read_live_and_tracks_only_a_request_that_asks_for_my_review
     ));
     let h = harness().forge_cli(&stub).await;
     let id = enabled_repository(&h).await;
-    eventually(TIMEOUT, "the first fetch", async || {
-        stub.invocations()
-            .iter()
-            .any(|i| i.args.starts_with(&["pr".into(), "list".into()]))
-    })
-    .await;
-
+    eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
     let rows: Vec<Value> = h.get("/v1/pull-requests").await;
     assert_eq!(rows.len(), 2);
     let mine_row = rows.iter().find(|r| r["number"] == 1).unwrap();
@@ -531,6 +525,8 @@ async fn gitlab_requests_keep_fork_checks_review_and_search_by_author_or_number(
         )
         .await;
     let id = repo["id"].as_str().unwrap();
+    use crate::common::{TIMEOUT, eventually};
+    eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
     let listed: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
     let read = listed
         .iter()
@@ -1008,7 +1004,7 @@ async fn an_outer_list_failure_publishes_pull_requests_changed() {
 }
 
 /// A read, off the forge now, through the HTTP route itself
-/// (`GET /v1/pull-requests/{id}`) rather than the poll's own cycle: a
+/// (`GET /v1/pull-requests/{id}/comments`) rather than the poll's own cycle: a
 /// failed detail read there leaves the cache's evidence no less
 /// unconfirmed, through `read_now`'s own path, which the poll's worker
 /// never runs, and publishes `pull_requests_changed` on the transition —
@@ -1061,7 +1057,7 @@ async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
     stub.reprogram(failed);
     let error = h
         .error(
-            get(&format!("/v1/pull-requests/{id}")),
+            get(&format!("/v1/pull-requests/{id}/comments")),
             StatusCode::BAD_GATEWAY,
         )
         .await;
@@ -1075,7 +1071,7 @@ async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
     // The same failure again changes nothing: no second publish.
     let _ = h
         .error(
-            get(&format!("/v1/pull-requests/{id}")),
+            get(&format!("/v1/pull-requests/{id}/comments")),
             StatusCode::BAD_GATEWAY,
         )
         .await;
@@ -1090,7 +1086,7 @@ async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
         vec![github_pull(2, "other")],
         github_pull(2, "other"),
     ));
-    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
     assert!(
         h.launcher.live.get(&id).unwrap().evidence_ok,
         "a read that succeeds again restores it"
@@ -1098,7 +1094,7 @@ async fn a_route_level_read_failure_withdraws_the_rows_evidence() {
     next_event(&mut events, moved).await;
 
     // The same success again changes nothing: no second publish.
-    let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    let _: Value = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
     assert!(
         tokio::time::timeout(QUIET, next_event(&mut events, moved))
             .await

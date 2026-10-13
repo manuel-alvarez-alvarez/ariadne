@@ -30,8 +30,8 @@ import { type DomainEvent, qk } from "@/api"
 export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent): void {
   switch (event.event) {
     case "pull_requests_changed": {
-      // Requests are read live off the forge and carried by no event: every
-      // list and panel over them reads again.
+      // The event carries no request, so every list and detail reads the
+      // daemon's newest held fetch or row read again.
       void queryClient.invalidateQueries({ queryKey: qk.pullRequests.all() })
       // A reviewer session's own give-up, set or cleared, is a recovery
       // item's own evidence (`PullRequestRow::reviewer_given_up_at`).

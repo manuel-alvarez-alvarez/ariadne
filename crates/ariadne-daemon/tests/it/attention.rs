@@ -1134,6 +1134,16 @@ async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacem
     )
     .await;
 
+    // Running means the delivery entered the session queue. Wait until the
+    // stub has received its prompt and paused before killing it, or a fast
+    // kill can arrive before this delivery has a turn to interrupt.
+    eventually(
+        TIMEOUT,
+        "the failed task delivery to reach the held turn",
+        || async { gate.with_extension("reached").exists() },
+    )
+    .await;
+
     // Interrupted before that turn could ever return: the connection ends
     // mid-turn, the same as a crash. The confirmation hook in
     // `acp::serve_with_input` runs only once `prompt_once` returns `Ok`,

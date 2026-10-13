@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-10-10
+updated: 2026-10-13
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -297,7 +297,7 @@ and the ACP runtime that reports the agent events (021).
 | --- | --- |
 | `pull_requests_changed` | `{repository_id}`: the repository whose requests moved, on the forge since its fetch last read them, or in what Ariadne keeps of them. |
 
-Requests are read live off the forge and not stored, so the event carries no request: a client reads them again. It has no goal or task routing scope.
+Requests are held in daemon memory from the last fetch and not stored, so the event carries no request: a client reads them again. It has no goal or task routing scope.
 See [026](026-pull-requests.md) for identity, routes, and event tests.
 
 ## Forge settings events (027)

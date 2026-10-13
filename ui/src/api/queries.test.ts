@@ -1,7 +1,8 @@
 import { QueryClient } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
 
-import { cacheRow, dropRow, optimisticStatus, restoreCache } from "./queries"
+import { ApiError } from "./errors"
+import { cacheRow, createQueryClient, dropRow, optimisticStatus, restoreCache } from "./queries"
 import { qk } from "./query-keys"
 
 const RUNNING = { id: "s1", status: "running", model: "stub:s1" }
@@ -79,5 +80,26 @@ describe("dropRow", () => {
 
     expect(queryClient.getQueryData(qk.sessions.detail("s1"))).toBeUndefined()
     expect(queryClient.getQueryState(qk.sessions.list({}))?.isInvalidated).toBe(true)
+  })
+})
+
+describe("createQueryClient's retry", () => {
+  function retry(failureCount: number, error: Error): boolean {
+    const client = createQueryClient()
+    const fn = client.getDefaultOptions().queries?.retry
+    if (typeof fn !== "function") throw new Error("retry is not a function")
+    return fn(failureCount, error) as boolean
+  }
+
+  it("never retries a 502 whose body error is forge_error", () => {
+    const error = new ApiError({ status: 502, code: "forge_error", message: "rate limited" })
+
+    expect(retry(0, error)).toBe(false)
+  })
+
+  it("still retries another 502", () => {
+    const error = new ApiError({ status: 502, code: "http_error", message: "bad gateway" })
+
+    expect(retry(0, error)).toBe(true)
   })
 })

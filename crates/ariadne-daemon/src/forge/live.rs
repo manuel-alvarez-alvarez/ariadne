@@ -4,10 +4,10 @@
 //! The database keeps Ariadne's own bookkeeping of a request
 //! ([`PullRequestRow`]) and a mark per comment ([`CommentMark`]), never what
 //! the forge holds: a stored title, check or comment would go stale the
-//! moment somebody pushed. Each fetch reads the forge and leaves its read
-//! here, keyed by the row's id; the scheduler and the routes join it to the
-//! row. A daemon that restarts holds nothing until its first fetch, which
-//! runs at once.
+//! moment somebody pushed. Each fetch leaves its open list here, keyed by
+//! repository id, and the request reads of rows Ariadne works on, keyed by
+//! row id; the scheduler and the routes join the latter to the row. A daemon
+//! that restarts holds nothing until its first fetch, which runs at once.
 //!
 //! The rules that read the comments are here too, over the forge's comments
 //! and the marks: which comments a thread's answer settles, which threads
@@ -18,8 +18,8 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use ariadne_store::{
-    CommentMark, NewPullRequestComment, PullRequest, PullRequestComment, PullRequestLive,
-    PullRequestRow,
+    CommentMark, ForgeIntegration, NewPullRequestComment, PullRequest, PullRequestComment,
+    PullRequestLive, PullRequestRow,
 };
 
 use super::pulls::{CONVERSATION, FailedCheck, ForgePullRequest, signature, unsigned};
@@ -150,13 +150,52 @@ pub struct Details {
     pub head_sha: String,
 }
 
-/// The last read of every request Ariadne works on, by row id.
+/// The last list a fetch read of one repository (026): every open request
+/// and which of them ask for the user's review, as `forge::poll::fetch`
+/// read them off the forge, and when. `GET /v1/pull-requests` and its
+/// search answer from this alone: a repository with no fetch yet holds
+/// none, which both read as empty rather than calling the forge themselves.
 #[derive(Debug, Clone, Default)]
-pub struct LivePulls(Arc<RwLock<HashMap<String, Live>>>);
+pub struct RepositoryList {
+    identity: RepositoryListIdentity,
+    pub open: Vec<ForgePullRequest>,
+    pub requested: HashSet<i64>,
+    pub fetched_at: String,
+}
+
+/// The forge whose open list a repository fetch read. A checkout may move to
+/// another forge while the daemon stays up, so repository id alone cannot
+/// prove a held list still belongs to its current integration.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct RepositoryListIdentity {
+    kind: String,
+    host: String,
+    owner: String,
+    name: String,
+}
+
+impl From<&ForgeIntegration> for RepositoryListIdentity {
+    fn from(integration: &ForgeIntegration) -> Self {
+        Self {
+            kind: integration.kind.clone(),
+            host: integration.host.clone(),
+            owner: integration.owner.clone(),
+            name: integration.name.clone(),
+        }
+    }
+}
+
+/// The last read of every request Ariadne works on, by row id, and the
+/// last list read of every repository, by repository id.
+#[derive(Debug, Clone, Default)]
+pub struct LivePulls {
+    rows: Arc<RwLock<HashMap<String, Live>>>,
+    lists: Arc<RwLock<HashMap<String, RepositoryList>>>,
+}
 
 impl LivePulls {
     pub fn get(&self, id: &str) -> Option<Live> {
-        self.0
+        self.rows
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(id)
@@ -164,10 +203,50 @@ impl LivePulls {
     }
 
     pub fn set(&self, id: &str, live: Live) {
-        self.0
+        self.rows
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(id.to_string(), live);
+    }
+
+    /// The last list `repository_id`'s fetch read, or None before its
+    /// first fetch.
+    pub fn list(
+        &self,
+        repository_id: &str,
+        integration: &ForgeIntegration,
+    ) -> Option<RepositoryList> {
+        self.lists
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(repository_id)
+            .filter(|list| list.identity == RepositoryListIdentity::from(integration))
+            .cloned()
+    }
+
+    /// Keep what a fetch just read of `repository_id`'s open requests
+    /// (026): every fetch replaces the whole list, since the forge's own is
+    /// the only truth of what is open now.
+    pub fn set_list(
+        &self,
+        repository_id: &str,
+        integration: &ForgeIntegration,
+        open: Vec<ForgePullRequest>,
+        requested: HashSet<i64>,
+        fetched_at: String,
+    ) {
+        self.lists
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                repository_id.to_string(),
+                RepositoryList {
+                    identity: RepositoryListIdentity::from(integration),
+                    open,
+                    requested,
+                    fetched_at,
+                },
+            );
     }
 
     /// The generation this cache stands at for `id`, 0 where it holds
@@ -175,7 +254,7 @@ impl LivePulls {
     /// slower fetch, so the `set_details` it later calls knows which
     /// local addition, if any, is newer than this read's own snapshot.
     pub fn generation(&self, id: &str) -> u64 {
-        self.0
+        self.rows
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(id)
@@ -193,7 +272,7 @@ impl LivePulls {
     /// already have moved past by the time either one gets here.
     pub fn set_fingerprinted(&self, id: &str, new: Live) -> (Option<u64>, u64) {
         let mut held = self
-            .0
+            .rows
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let before = held.get(id).map(attention_fingerprint);
@@ -208,7 +287,7 @@ impl LivePulls {
     /// evidence is still good, so it leaves that exactly as it found it.
     pub fn set_pull(&self, id: &str, pull: ForgePullRequest, review_requested: bool) {
         let mut held = self
-            .0
+            .rows
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (details, details_read_at, evidence_ok, generation, local_additions) = held
@@ -237,6 +316,17 @@ impl LivePulls {
         );
     }
 
+    /// Drop the held open list when its integration is disabled or moves to
+    /// another forge. Rows keep their own reads, but a repository list has no
+    /// meaning without the forge that supplied it.
+    pub fn clear_list(&self, repository_id: &str) -> bool {
+        self.lists
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(repository_id)
+            .is_some()
+    }
+
     /// The same as [`Self::set_pull`], but for the one case that does have
     /// something to say about the comment evidence: a detail fetch that
     /// itself failed. The last good `details` is left standing — losing
@@ -251,7 +341,7 @@ impl LivePulls {
         review_requested: bool,
     ) {
         let mut held = self
-            .0
+            .rows
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (details, details_read_at, generation, local_additions) = held
@@ -287,7 +377,7 @@ impl LivePulls {
     /// forward rather than read its absence as the forge deleting it.
     pub fn add_comments(&self, id: &str, posted: &[NewPullRequestComment]) {
         let mut held = self
-            .0
+            .rows
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(live) = held.get_mut(id) {
@@ -320,7 +410,7 @@ impl LivePulls {
         details: Details,
     ) {
         let mut held = self
-            .0
+            .rows
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (details, generation, local_additions) =
@@ -350,7 +440,7 @@ impl LivePulls {
         details: Details,
     ) -> (Option<u64>, u64) {
         let mut held = self
-            .0
+            .rows
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let before = held.get(id).map(attention_fingerprint);
@@ -381,7 +471,7 @@ impl LivePulls {
     /// rows to invalidate at once knows which of them actually moved.
     pub fn mark_evidence_failed(&self, id: &str) -> bool {
         let mut held = self
-            .0
+            .rows
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         match held.get_mut(id) {
@@ -401,7 +491,7 @@ impl LivePulls {
     /// a concurrent read raced it past.
     pub fn mark_evidence_failed_fingerprinted(&self, id: &str) -> Option<(u64, u64)> {
         let mut held = self
-            .0
+            .rows
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let live = held.get_mut(id)?;
@@ -412,7 +502,7 @@ impl LivePulls {
     }
 
     pub fn remove(&self, id: &str) {
-        self.0
+        self.rows
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(id);
