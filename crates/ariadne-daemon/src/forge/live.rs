@@ -148,6 +148,16 @@ pub struct Details {
     /// attention producer must never read as "no open comment" for a head
     /// it was never actually read on.
     pub head_sha: String,
+    /// The viewer's own unsubmitted posts on this request, as this detail
+    /// read found them (031): `None` for no pending review and no draft
+    /// note, `Some` of the comment count otherwise — GitHub alone can
+    /// leave that at `Some(0)`, a pending review with a verdict and no
+    /// inline comment of its own, which still counts as a draft. Read
+    /// beside the rest of the detail fetch, so it is skipped and left
+    /// standing the same way `comments` and `failed_checks` are wherever
+    /// the fetch itself is (`Live::unmoved`), and dropped the same way
+    /// they are on a failed refresh (`LivePulls::set_pull_evidence_failed`).
+    pub pending_drafts: Option<i64>,
 }
 
 /// The last list a fetch read of one repository (026): every open request
@@ -586,6 +596,10 @@ fn attention_fingerprint(live: &Live) -> u64 {
     live.evidence_ok.hash(&mut hasher);
     if let Some(details) = &live.details {
         details.head_sha.hash(&mut hasher);
+        // The viewer's own unsubmitted drafts (031): hashed on its own,
+        // beside the comment list, since a `drafts` attention item
+        // appearing or clearing can be the only thing a detail read moved.
+        details.pending_drafts.hash(&mut hasher);
         for comment in &details.comments {
             (&comment.forge_id, comment.resolved).hash(&mut hasher);
         }
@@ -1067,6 +1081,7 @@ mod tests {
                 failed_checks: Vec::new(),
                 behind_base: false,
                 head_sha: "abc".into(),
+                pending_drafts: None,
             }),
             details_read_at: Some(Instant::now()),
             evidence_ok,

@@ -2700,3 +2700,141 @@ async fn a_ready_claim_on_a_request_no_task_keeps_raises_no_readiness_item() {
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items, Vec::new(), "{:?}", list.items);
 }
+
+/// A tracked request of a repository that holds agent posts for approval,
+/// whose last fetch still shows the viewer's own unsubmitted drafts, gives
+/// one `drafts` item naming the count and targeting the request's own page
+/// on the forge — never Ariadne's own pull request panel, which has no
+/// surface of its own to finish or submit either one (031).
+#[tokio::test]
+async fn a_tracked_request_with_unsubmitted_drafts_raises_a_drafts_item() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    assert!(repo.supervise_posts(), "registered with no flag starts on");
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", false);
+    crate::common::forge::seed_pending_drafts(&h, &pull, Some(2));
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    let item = &list.items[0];
+    assert_eq!(item.producer, AttentionProducer::Drafts);
+    assert!(item.summary.contains('2'), "{}", item.summary);
+    assert_eq!(
+        item.target,
+        AttentionTarget::Forge {
+            url: pull.url.clone()
+        }
+    );
+    assert_eq!(item.affected[0].kind, AttentionSubjectKind::PullRequest);
+    assert_eq!(item.affected[0].id, pull.id);
+}
+
+/// A pending GitHub review that carries a verdict and no inline comment of
+/// its own — `Some(0)`, never read the same as "no draft at all" — still
+/// raises the item: a review nobody has submitted yet is a draft waiting
+/// on the forge whatever its own comment count says.
+#[tokio::test]
+async fn a_pending_review_with_no_comments_of_its_own_still_raises_a_drafts_item() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", false);
+    crate::common::forge::seed_pending_drafts(&h, &pull, Some(0));
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(list.items[0].producer, AttentionProducer::Drafts);
+}
+
+/// The item clears the moment the forge shows no more draft notes or
+/// pending review for the viewer — this producer reads the live count
+/// fresh on every call, with nothing of its own to invalidate.
+#[tokio::test]
+async fn the_drafts_item_clears_once_the_forge_shows_none() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", false);
+    crate::common::forge::seed_pending_drafts(&h, &pull, Some(1));
+    assert_eq!(
+        ariadne_daemon::attention::collect(&h.store, &h.launcher)
+            .await
+            .items
+            .len(),
+        1
+    );
+
+    crate::common::forge::seed_pending_drafts(&h, &pull, None);
+    let cleared = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(cleared.items, Vec::new(), "{:?}", cleared.items);
+}
+
+/// A repository with `supervise_posts` off raises no item for it: turning
+/// the flag off is itself what tells Ariadne a person already watches
+/// every post this repository's agents make, drafts included.
+#[tokio::test]
+async fn a_repository_with_supervise_posts_off_raises_no_drafts_item() {
+    let h = harness().await;
+    let path = h.at("widgets-unsupervised");
+    std::fs::create_dir_all(&path).unwrap();
+    let repo = h
+        .store
+        .create_repository(ariadne_store::NewRepository {
+            default_workflow: None,
+            path: path.display().to_string(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: None,
+            supervise_posts: Some(false),
+        })
+        .await
+        .unwrap();
+    assert!(!repo.supervise_posts());
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix-1", "abc", false);
+    crate::common::forge::seed_pending_drafts(&h, &pull, Some(3));
+
+    let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}

@@ -183,41 +183,57 @@ function Row({ item }: { item: AttentionItem }) {
   // every one of them gets its own small link below, so none of them is
   // unreachable just because another one happened to be first.
   const affectedLinks = attentionAffectedLinks(item, search, pathname)
+  const className =
+    "flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-sm transition-colors hover:bg-muted/50"
+  const content = (
+    <>
+      {status ? (
+        <StatusBadge box="badge" label={status.label} tone={status.badge} hint={status.hint} />
+      ) : null}
+      {/* The status pill already names a failed task; a stall is a flag on
+          top of whatever status the task is sitting in. */}
+      {item.taskReason === "stalled" ? <StalledBadge /> : null}
+      {item.sessionReason ? <SessionAttentionBadge attention={item.sessionReason} /> : null}
+      <Subject
+        subject={attentionSubject(item)}
+        detail={attentionDetail(item)}
+        affected={attentionAffected(item)}
+      />
+      {/* Its own line while the strip is narrow, where the goal, the stamp
+          and the id together took half the row and left the subject twenty
+          characters. */}
+      <div className="flex w-full items-center gap-2 @2xl:w-auto">
+        {/* A pull request's session belongs to no goal to name. */}
+        {item.goalId ? <GoalRef goalId={item.goalId} goal={item.goal} /> : null}
+        {/* One label for every row: a task's row moves when the task is
+            updated, a session's when it started asking — "last moved" is the
+            one thing true of both, and the list is ordered by it. */}
+        <When at={item.at} label="last moved" className="text-xs text-muted-foreground" />
+        <RowId id={item.id} />
+      </div>
+    </>
+  )
 
   return (
     <li>
-      <Link
-        to={target}
-        // Set exactly when the target is a task panel replacing an open
-        // goal's, rather than stacking on it (`target.replace`).
-        replace={target.replace}
-        className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-sm transition-colors hover:bg-muted/50"
-      >
-        {status ? (
-          <StatusBadge box="badge" label={status.label} tone={status.badge} hint={status.hint} />
-        ) : null}
-        {/* The status pill already names a failed task; a stall is a flag on
-            top of whatever status the task is sitting in. */}
-        {item.taskReason === "stalled" ? <StalledBadge /> : null}
-        {item.sessionReason ? <SessionAttentionBadge attention={item.sessionReason} /> : null}
-        <Subject
-          subject={attentionSubject(item)}
-          detail={attentionDetail(item)}
-          affected={attentionAffected(item)}
-        />
-        {/* Its own line while the strip is narrow, where the goal, the stamp
-            and the id together took half the row and left the subject twenty
-            characters. */}
-        <div className="flex w-full items-center gap-2 @2xl:w-auto">
-          {/* A pull request's session belongs to no goal to name. */}
-          {item.goalId ? <GoalRef goalId={item.goalId} goal={item.goal} /> : null}
-          {/* One label for every row: a task's row moves when the task is
-              updated, a session's when it started asking — "last moved" is the
-              one thing true of both, and the list is ordered by it. */}
-          <When at={item.at} label="last moved" className="text-xs text-muted-foreground" />
-          <RowId id={item.id} />
-        </div>
-      </Link>
+      {/* A `drafts` item's own target has no panel of Ariadne's to open —
+          only the forge's — so it is a plain external link rather than the
+          router's `Link` (`ui/AGENTS.md`). */}
+      {"external" in target ? (
+        <a href={target.external} className={className}>
+          {content}
+        </a>
+      ) : (
+        <Link
+          to={target}
+          // Set exactly when the target is a task panel replacing an open
+          // goal's, rather than stacking on it (`target.replace`).
+          replace={target.replace}
+          className={className}
+        >
+          {content}
+        </Link>
+      )}
       {affectedLinks ? (
         <div className="flex flex-wrap gap-2 px-3 pb-2 pl-9 text-xs text-muted-foreground">
           <span>Open:</span>

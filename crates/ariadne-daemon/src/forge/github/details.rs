@@ -109,6 +109,17 @@ fn is_bot(user: &User) -> bool {
     user.kind.eq_ignore_ascii_case("bot") || user.login.ends_with("[bot]")
 }
 
+/// The id of `login`'s own unsubmitted review among `reviews` (031):
+/// GitHub answers a pending review (`submitted_at: None`) only to the
+/// user who left it, so a user's own CLI session lists at most one — the
+/// first that matches, since there is never a second to choose between.
+fn pending_review_id(reviews: &[Review], login: &str) -> Option<i64> {
+    reviews
+        .iter()
+        .find(|r| r.submitted_at.is_none() && r.user.login.eq_ignore_ascii_case(login))
+        .map(|r| r.id)
+}
+
 impl Github {
     /// `gh api --hostname <host> --paginate <path>`, read as every page's
     /// items: `--paginate` writes one JSON value per page, back to back.
@@ -154,7 +165,15 @@ impl Github {
         serde_json::from_str(&output).map_err(|e| format!("cannot read `gh api {path}`: {e}"))
     }
 
-    pub(crate) async fn details(&self, repo: &str, number: i64) -> Result<ForgeDetails, String> {
+    /// `login` is read only for [`pending_review_id`]: the viewer's own
+    /// pending review, among the reviews this same call already lists
+    /// (031), is told apart from everyone else's by it.
+    pub(crate) async fn details(
+        &self,
+        repo: &str,
+        number: i64,
+        login: &str,
+    ) -> Result<ForgeDetails, String> {
         let (host, owner, name) = split_slug(repo)?;
         let base = format!("repos/{owner}/{name}");
         let review_comments = format!("{base}/pulls/{number}/comments");
@@ -179,6 +198,26 @@ impl Github {
             self.pages::<IssueComment>(host, &issue_comments),
             self.pages::<Review>(host, &reviews),
         )?;
+        // The viewer's own unsubmitted review (031): `reviews`, already
+        // read above, already lists it (`submitted_at` absent) for no
+        // further cost. Its own comment count is not: GitHub's list of
+        // the request's comments is undocumented for whether it carries a
+        // pending review's own, so this reads the one call GitHub
+        // documents for exactly that review's comments instead
+        // (`GET .../pulls/{number}/reviews/{review_id}/comments`) —
+        // skipped entirely, and so costing nothing extra, the whole rest
+        // of the time there is no pending review to read it for. `None`
+        // is "no pending review", not "zero comments": a verdict-only
+        // review with no comment of its own still counts as a draft
+        // waiting to be submitted.
+        let pending_drafts = match pending_review_id(&reviews, login) {
+            Some(id) => {
+                let path = format!("{base}/pulls/{number}/reviews/{id}/comments");
+                let comments: Vec<ReviewComment> = self.pages(host, &path).await?;
+                Some(comments.len() as i64)
+            }
+            None => None,
+        };
         let mut comments = Vec::new();
         for c in review_comments {
             let root = c.in_reply_to_id.unwrap_or(c.id);
@@ -255,6 +294,7 @@ impl Github {
             comments,
             failed_checks,
             behind_base: compare.behind_by > 0,
+            pending_drafts,
         })
     }
 
@@ -307,5 +347,47 @@ impl Github {
             }
         }
         Ok(threads)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn review(id: i64, login: &str, submitted: bool) -> Review {
+        Review {
+            id,
+            user: User {
+                login: login.into(),
+                kind: String::new(),
+            },
+            body: "a finding".into(),
+            submitted_at: submitted.then(|| "2026-10-01T00:00:00Z".into()),
+        }
+    }
+
+    /// The viewer's own still-pending review is told apart from a
+    /// submitted review of theirs and from another user's own pending
+    /// one, case-insensitively; no pending review of the viewer's own is
+    /// `None`, never a guessed id.
+    #[test]
+    fn pending_review_id_reads_only_the_viewers_own_still_pending_review() {
+        let reviews = vec![
+            review(1, "me", false),
+            review(2, "me", true),
+            review(3, "someone-else", false),
+        ];
+        assert_eq!(pending_review_id(&reviews, "ME"), Some(1));
+        assert_eq!(pending_review_id(&[], "me"), None);
+        assert_eq!(
+            pending_review_id(&[review(2, "me", true)], "me"),
+            None,
+            "a submitted review of the viewer's own is not pending"
+        );
+        assert_eq!(
+            pending_review_id(&[review(3, "someone-else", false)], "me"),
+            None,
+            "another user's own pending review is not the viewer's"
+        );
     }
 }

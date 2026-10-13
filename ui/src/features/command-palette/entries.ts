@@ -15,6 +15,7 @@
 import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto, WorkflowDto } from "@/api"
 import {
   type AttentionItem,
+  type AttentionNavTarget,
   agentLabel,
   attentionSubject,
   attentionTarget,
@@ -198,7 +199,7 @@ export function paletteTargetTo(
   target: PaletteTarget,
   search: URLSearchParams,
   pathname: string,
-): string | { pathname?: string; search: string; replace?: boolean } {
+): string | AttentionNavTarget {
   switch (target.kind) {
     case "goal":
       return paths.goal(target.goalId)

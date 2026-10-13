@@ -278,6 +278,28 @@ pub(crate) fn seed_live(
     );
 }
 
+/// Overwrite the viewer's own unsubmitted drafts count on a row `seed_live`
+/// or `seed_review_evidence` already seeded, leaving everything else
+/// exactly as it stood: the same way a detail read updates it beside the
+/// rest of its own evidence (031), never on its own. `None` is no pending
+/// review and no draft note at all; `Some(0)` is still one, the way a
+/// verdict-only GitHub review with no inline comment of its own is.
+pub(crate) fn seed_pending_drafts(
+    h: &super::Harness,
+    row: &ariadne_store::PullRequestRow,
+    count: Option<i64>,
+) {
+    let mut live = h
+        .launcher
+        .live
+        .get(&row.id)
+        .expect("seed the row's live read first");
+    let mut details = live.details.clone().unwrap_or_default();
+    details.pending_drafts = count;
+    live.details = Some(details);
+    h.launcher.live.set(&row.id, live);
+}
+
 /// An enabled GitHub integration for `repository_id`: what a readiness
 /// item's own integration-enabled check needs to pass at all, and what a
 /// test proving the disabled case flips off afterwards.
