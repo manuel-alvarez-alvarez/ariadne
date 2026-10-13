@@ -11,6 +11,7 @@ pub(crate) mod classify;
 mod console;
 pub(crate) mod convert;
 mod doctor;
+mod drafts;
 mod error;
 pub(crate) mod events;
 mod forge;
@@ -150,6 +151,7 @@ impl AppState {
         pull_requests::report,
         pull_requests::diff, pull_requests::submit_review, pull_requests::ask_review,
         pull_requests::ask_babysit,
+        drafts::list, drafts::get, drafts::update, drafts::discard, drafts::publish,
         permissions::get, permissions::update, permissions::refresh,
         permissions::list_learned, permissions::get_learned, permissions::delete_learned,
         permissions::update_learned,
@@ -257,6 +259,12 @@ pub fn router(state: AppState) -> Router {
             "/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit",
             put(pull_requests::ask_babysit),
         )
+        .route("/v1/pull-requests/{id}/drafts", get(drafts::list))
+        .route(
+            "/v1/drafts/{id}",
+            get(drafts::get).put(drafts::update).delete(drafts::discard),
+        )
+        .route("/v1/drafts/{id}/publish", post(drafts::publish))
         .route("/v1/health", get(health))
         .route("/v1/version", get(version))
         .route("/v1/doctor", get(doctor::report))

@@ -700,7 +700,10 @@ pub(crate) fn is_review_summary(comment: &PullRequestComment, login: &str) -> bo
 }
 
 /// The comments with `answered` worked out (026): a later comment of the
-/// same thread on the login's own side answers it.
+/// same thread on the login's own side answers it. Already `true` going in
+/// stays `true`: `comments_of` overlays a comment a pending reply draft
+/// answers before `waiting_threads` and `waiting` run this again, and a
+/// second pass must not read that back out from under the first.
 pub fn answered(
     mut comments: Vec<PullRequestComment>,
     role: &str,
@@ -712,10 +715,12 @@ pub fn answered(
         .map(|c| (c.thread_id.clone(), c.created_at.clone(), c.id.clone()))
         .collect();
     for comment in &mut comments {
-        comment.answered = mine.iter().any(|(thread, at, id)| {
-            *thread == comment.thread_id
-                && (at.as_str(), id.as_str()) > (comment.created_at.as_str(), comment.id.as_str())
-        });
+        comment.answered = comment.answered
+            || mine.iter().any(|(thread, at, id)| {
+                *thread == comment.thread_id
+                    && (at.as_str(), id.as_str())
+                        > (comment.created_at.as_str(), comment.id.as_str())
+            });
     }
     comments
 }
@@ -837,6 +842,11 @@ pub async fn of_row(
 
 /// The comments of a request as the last read found them, with the marks
 /// beside them and `answered` worked out.
+///
+/// A comment a pending reply draft already answers counts as answered too
+/// (026): the forge has not seen the reply yet, but the user is holding it
+/// for their own publish, not leaving the comment unanswered. A discarded
+/// draft takes no part here, so the comment reads unanswered again.
 pub async fn comments_of(
     store: &ariadne_store::Store,
     live: &LivePulls,
@@ -849,11 +859,14 @@ pub async fn comments_of(
         .unwrap_or_default();
     let marks = store.pull_request_comment_marks(&pull.id).await?;
     let login = login_of(store, &pull.repository_id).await?;
-    Ok(answered(
-        comments(&pull.id, &forge, &marks),
-        &pull.role,
-        &login,
-    ))
+    let held = store.pending_reply_draft_comment_ids(&pull.id).await?;
+    let mut comments = answered(comments(&pull.id, &forge, &marks), &pull.role, &login);
+    for comment in &mut comments {
+        if held.contains(&comment.id) {
+            comment.answered = true;
+        }
+    }
+    Ok(comments)
 }
 
 #[cfg(test)]

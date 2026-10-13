@@ -143,6 +143,23 @@ pub struct ReplyCommentRequest {
     pub body: String,
 }
 
+/// What a repository that supervises its posts answers a reply with: a
+/// pending draft rather than a post to the forge (026).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct HeldDraftDto {
+    pub held: bool,
+    pub draft_id: String,
+}
+
+/// What `reply` answers: the posted comment, or, where the repository
+/// supervises its posts, the pending draft it held instead (026).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(untagged)]
+pub enum ReplyResultDto {
+    Held(HeldDraftDto),
+    Posted(Box<PullRequestCommentDto>),
+}
+
 /// Body of `POST /v1/pull-requests/{id}/report`: what the request's session
 /// says of it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
@@ -255,6 +272,57 @@ pub struct PullRequestListQuery {
     /// True for the requests that ask for the user's review (029), false
     /// for the ones that do not.
     pub requested: Option<bool>,
+}
+
+/// A reply, a review or a resolve an agent wrote, held for the user's own
+/// publish or discard where the repository supervises its posts (026).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DraftDto {
+    pub id: String,
+    pub pull_request_id: String,
+    /// The session that wrote it.
+    pub session_id: String,
+    /// `reply`, `review` or `resolve`.
+    pub kind: String,
+    /// `pending`, `published` or `discarded`.
+    pub state: String,
+    /// The forge call publish replays: for `reply`, [`ReplyDraftPayload`].
+    pub payload: serde_json::Value,
+    /// Why the user discarded it, where they said.
+    pub feedback: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// The payload of a `reply` draft (026): the comment it answers, and the
+/// body publish posts.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReplyDraftPayload {
+    pub comment_id: String,
+    pub body: String,
+}
+
+/// Query of `GET /v1/pull-requests/{id}/drafts`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
+pub struct DraftListQuery {
+    /// `pending`, `published` or `discarded`; every draft with none given.
+    pub state: Option<String>,
+}
+
+/// Body of `PUT /v1/drafts/{id}`: replace the payload of a pending draft.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateDraftRequest {
+    pub payload: serde_json::Value,
+}
+
+/// Body of `DELETE /v1/drafts/{id}`: why the user discarded it, where they
+/// said.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DiscardDraftRequest {
+    #[serde(default)]
+    pub feedback: Option<String>,
 }
 
 /// An open request a search found that is not the user's own.

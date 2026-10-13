@@ -667,3 +667,22 @@ pub(crate) fn pull_request_comment_dto(
         from_review: comment.from_review,
     }
 }
+
+/// A draft's payload is stored as JSON text; a draft the store holds is
+/// always one this daemon wrote, so a payload that fails to parse is a bug
+/// here rather than bad input to refuse.
+pub(crate) fn draft_dto(
+    draft: ariadne_store::PullRequestDraft,
+) -> ariadne_api::pull_requests::DraftDto {
+    ariadne_api::pull_requests::DraftDto {
+        id: draft.id,
+        pull_request_id: draft.pull_request_id,
+        session_id: draft.session_id,
+        kind: draft.kind,
+        state: draft.state,
+        payload: serde_json::from_str(&draft.payload).unwrap_or(serde_json::Value::Null),
+        feedback: draft.feedback,
+        created_at: draft.created_at,
+        updated_at: draft.updated_at,
+    }
+}

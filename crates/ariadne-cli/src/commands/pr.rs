@@ -15,7 +15,10 @@ use crate::output::{
     yes_no,
 };
 use anyhow::Result;
-use ariadne_api::pull_requests::{PullRequestDto, PullRequestListQuery, PullRequestMatchDto};
+use ariadne_api::pull_requests::{
+    DiscardDraftRequest, DraftDto, PullRequestDto, PullRequestListQuery, PullRequestMatchDto,
+    UpdateDraftRequest,
+};
 use ariadne_api::sessions::{SessionPageDto, SessionPageQuery};
 use ariadne_client::Client;
 use clap::Subcommand;
@@ -120,6 +123,52 @@ pub(crate) enum PrCommand {
         /// Stop Ariadne's keeper session on the request
         #[arg(long, conflicts_with_all = ["model", "effort", "skills", "attach"])]
         stop: bool,
+    },
+    /// Drafts a repository that supervises its posts holds for the user (026)
+    Drafts {
+        #[command(subcommand)]
+        command: DraftCommand,
+    },
+}
+
+/// The drafts of a request a repository that supervises its posts holds for
+/// the user: a reply, a review or a resolve an agent wrote, waiting as
+/// `pending` until the user publishes it to the forge or discards it (026).
+#[derive(Subcommand)]
+pub(crate) enum DraftCommand {
+    /// List the drafts of one request
+    List {
+        /// The request's own id
+        pr: String,
+        /// Only drafts in this state: pending, published or discarded
+        #[arg(long)]
+        state: Option<String>,
+    },
+    /// Show every field of one draft
+    Show {
+        /// The draft's id
+        id: String,
+    },
+    /// Edit the body of a pending reply draft
+    Edit {
+        /// The draft's id
+        id: String,
+        /// The new body; with none, opens $EDITOR on the current one
+        #[arg(long)]
+        body: Option<String>,
+    },
+    /// Publish a pending draft: run its forge call and mark it published
+    Publish {
+        /// The draft's id
+        id: String,
+    },
+    /// Discard a pending draft: the forge never sees it
+    Discard {
+        /// The draft's id
+        id: String,
+        /// Why, for the record
+        #[arg(long)]
+        feedback: Option<String>,
     },
 }
 
@@ -402,7 +451,141 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                 println!("{}", ok_id_line(view().color, view().quiet, verb, &id))
             })
         }
+        PrCommand::Drafts { command } => run_drafts(client, command, format).await,
     }
+}
+
+const DRAFT_COLUMNS: &[Column] = &[
+    col("id", UNCAPPED).id(),
+    col("kind", 10),
+    col("state", 12),
+    col("updated", 24),
+];
+
+/// One row of `pr drafts list`.
+fn draft_row(d: &DraftDto) -> Vec<String> {
+    vec![
+        d.id.clone(),
+        d.kind.clone(),
+        d.state.clone(),
+        d.updated_at.clone(),
+    ]
+}
+
+/// What `pr drafts show` prints: a hand-written block, the payload last
+/// after a `---` line, the way `pr inspect` prints a request's body.
+fn draft_inspect_rows(d: &DraftDto) -> Vec<(&'static str, Kv)> {
+    vec![
+        ("id", Kv::id(d.id.clone())),
+        ("pull request", Kv::id(d.pull_request_id.clone())),
+        ("session", Kv::id(d.session_id.clone())),
+        ("kind", d.kind.clone().into()),
+        ("state", d.state.clone().into()),
+        ("feedback", dash(d.feedback.as_deref()).into()),
+        ("created", Kv::meta(moment(&d.created_at))),
+        ("updated", Kv::meta(moment(&d.updated_at))),
+        (
+            "payload",
+            format!(
+                "\n---\n{}",
+                serde_json::to_string_pretty(&d.payload).unwrap_or_default()
+            )
+            .into(),
+        ),
+    ]
+}
+
+/// `pr drafts list`'s own `?state=`: left out entirely with none given,
+/// since a bare `None` fails `serde_urlencoded` where `json!` would send it.
+#[derive(serde::Serialize)]
+struct DraftListParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state: Option<String>,
+}
+
+async fn run_drafts(client: &Client, command: DraftCommand, format: Format) -> Result<()> {
+    match command {
+        DraftCommand::List { pr, state } => {
+            let path = query_path(
+                &format!("/v1/pull-requests/{pr}/drafts"),
+                &DraftListParams { state },
+            )?;
+            let rows: Vec<DraftDto> = client.get_json(&path).await?;
+            print_list(format, &rows, DRAFT_COLUMNS, draft_row, "No drafts")
+        }
+        DraftCommand::Show { id } => {
+            let draft: DraftDto = client.get_json(&format!("/v1/drafts/{id}")).await?;
+            print(format, &draft, || print_kv(&draft_inspect_rows(&draft)))
+        }
+        DraftCommand::Edit { id, body } => {
+            let draft: DraftDto = client.get_json(&format!("/v1/drafts/{id}")).await?;
+            let current = draft
+                .payload
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let body = match body {
+                Some(body) => body,
+                None => edit_in_editor(current)?,
+            };
+            let mut payload = draft.payload.clone();
+            payload["body"] = json!(body);
+            let updated: DraftDto = client
+                .put_json(&format!("/v1/drafts/{id}"), &UpdateDraftRequest { payload })
+                .await?;
+            print(format, &updated, || {
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "edited", &updated.id)
+                )
+            })
+        }
+        DraftCommand::Publish { id } => {
+            let updated: DraftDto = client
+                .post_empty(&format!("/v1/drafts/{id}/publish"))
+                .await?;
+            print(format, &updated, || {
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "published", &updated.id)
+                )
+            })
+        }
+        DraftCommand::Discard { id, feedback } => {
+            let updated: DraftDto = client
+                .request(
+                    http::Method::DELETE,
+                    &format!("/v1/drafts/{id}"),
+                    Some(&DiscardDraftRequest { feedback }),
+                )
+                .await?;
+            print(format, &updated, || {
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "discarded", &updated.id)
+                )
+            })
+        }
+    }
+}
+
+/// Edit `current` in `$EDITOR` (`vi` where none is set), and answer the
+/// trimmed text it leaves behind.
+fn edit_in_editor(current: &str) -> Result<String> {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".into());
+    let path =
+        std::env::temp_dir().join(format!("ariadne-draft-{}.md", ariadne_core::id::new_id()));
+    std::fs::write(&path, current)?;
+    let status = std::process::Command::new(&editor)
+        .arg(&path)
+        .status()
+        .map_err(|e| anyhow::anyhow!("could not start {editor}: {e}"))?;
+    let edited = std::fs::read_to_string(&path).unwrap_or_default();
+    let _ = std::fs::remove_file(&path);
+    if !status.success() {
+        anyhow::bail!("{editor} exited without saving");
+    }
+    Ok(edited.trim().to_string())
 }
 
 /// The body `pr review` sends: `{asked: false}` alone for `--stop` — no
@@ -583,6 +766,171 @@ mod tests {
         assert!(parse(&["pr", "ls", "--review-requests", "--all"]).is_err());
         assert!(parse(&["pr", "add", "https://github.com/acme/widgets/pull/1"]).is_err());
         assert!(parse(&["pr", "rm", "pull-42"]).is_err());
+    }
+
+    /// `pr drafts` parses its five subcommands, `list` taking an optional
+    /// `--state`, `edit` an optional `--body`, and `discard` an optional
+    /// `--feedback`.
+    #[test]
+    fn pr_drafts_subcommands_parse() {
+        #[derive(clap::Parser)]
+        struct Pr {
+            #[command(subcommand)]
+            command: PrCommand,
+        }
+        let parse = |argv: &[&str]| <Pr as clap::Parser>::try_parse_from(argv);
+        assert!(parse(&["pr", "drafts", "list", "pr-1"]).is_ok());
+        assert!(parse(&["pr", "drafts", "list", "pr-1", "--state", "pending"]).is_ok());
+        assert!(parse(&["pr", "drafts", "show", "draft-1"]).is_ok());
+        assert!(parse(&["pr", "drafts", "edit", "draft-1"]).is_ok());
+        assert!(parse(&["pr", "drafts", "edit", "draft-1", "--body", "Thanks!"]).is_ok());
+        assert!(parse(&["pr", "drafts", "publish", "draft-1"]).is_ok());
+        assert!(parse(&["pr", "drafts", "discard", "draft-1"]).is_ok());
+        assert!(
+            parse(&[
+                "pr",
+                "drafts",
+                "discard",
+                "draft-1",
+                "--feedback",
+                "wrong tone"
+            ])
+            .is_ok()
+        );
+        assert!(parse(&["pr", "drafts", "list"]).is_err(), "pr is required");
+        assert!(parse(&["pr", "drafts", "bogus"]).is_err());
+    }
+
+    /// Each `pr drafts` command calls its own route: `list` the request's
+    /// drafts, `show` and `edit` a draft by id — `edit` reading the current
+    /// payload first, then replacing its `body` alone — `publish` and
+    /// `discard` likewise, `discard` carrying `feedback` where given (026).
+    #[tokio::test]
+    async fn pr_drafts_calls_the_draft_routes() {
+        fn draft(state: &str) -> serde_json::Value {
+            json!({
+                "id": "draft-1",
+                "pull_request_id": "pr-1",
+                "session_id": "sess-1",
+                "kind": "reply",
+                "state": state,
+                "payload": {"comment_id": "ic-5", "body": "Thanks!"},
+                "feedback": null,
+                "created_at": "2026-10-01T00:00:00Z",
+                "updated_at": "2026-10-01T00:00:00Z",
+            })
+        }
+        async fn draft_answer(
+            State(calls): State<Calls>,
+            request: Request,
+        ) -> axum::response::Response {
+            let method = request.method().to_string();
+            let uri = request.uri().to_string();
+            let body = to_bytes(request.into_body(), 1024 * 1024).await.unwrap();
+            let body = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+            calls.lock().unwrap().push((method, uri.clone(), body));
+            let payload = match uri.contains("/drafts?") || uri.ends_with("/drafts") {
+                true => json!([draft("pending")]),
+                false => draft("pending"),
+            };
+            axum::Json(payload).into_response()
+        }
+        let calls: Calls = Arc::default();
+        let app = Router::new()
+            .route("/v1/pull-requests/{pr}/drafts", get(draft_answer))
+            .route(
+                "/v1/drafts/{id}",
+                get(draft_answer).put(draft_answer).delete(draft_answer),
+            )
+            .route("/v1/drafts/{id}/publish", post(draft_answer))
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = Client::tcp(format!("http://{}", listener.local_addr().unwrap()));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        run(
+            &client,
+            PrCommand::Drafts {
+                command: DraftCommand::List {
+                    pr: "pr-1".into(),
+                    state: Some("pending".into()),
+                },
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        run(
+            &client,
+            PrCommand::Drafts {
+                command: DraftCommand::Show {
+                    id: "draft-1".into(),
+                },
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        run(
+            &client,
+            PrCommand::Drafts {
+                command: DraftCommand::Edit {
+                    id: "draft-1".into(),
+                    body: Some("Fixed now.".into()),
+                },
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        run(
+            &client,
+            PrCommand::Drafts {
+                command: DraftCommand::Publish {
+                    id: "draft-1".into(),
+                },
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        run(
+            &client,
+            PrCommand::Drafts {
+                command: DraftCommand::Discard {
+                    id: "draft-1".into(),
+                    feedback: Some("wrong tone".into()),
+                },
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        let calls = calls.lock().unwrap().clone();
+        assert_eq!(
+            calls
+                .iter()
+                .map(|(m, p, _)| (m.as_str(), p.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("GET", "/v1/pull-requests/pr-1/drafts?state=pending"),
+                ("GET", "/v1/drafts/draft-1"),
+                ("GET", "/v1/drafts/draft-1"),
+                ("PUT", "/v1/drafts/draft-1"),
+                ("POST", "/v1/drafts/draft-1/publish"),
+                ("DELETE", "/v1/drafts/draft-1"),
+            ]
+        );
+        let edited = &calls[3].2;
+        assert_eq!(
+            edited["payload"],
+            json!({"comment_id": "ic-5", "body": "Fixed now."}),
+            "edit replaces the body alone, keeping the rest of the payload"
+        );
+        let discarded = &calls[5].2;
+        assert_eq!(discarded["feedback"], "wrong tone");
     }
 
     #[tokio::test]

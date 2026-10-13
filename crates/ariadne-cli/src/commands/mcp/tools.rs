@@ -779,7 +779,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge."
+        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge. A supervised repository holds it as a draft for the user to publish."
     )]
     async fn reply_comment(
         &self,
@@ -792,15 +792,22 @@ impl AriadneMcp {
         let path = self
             .pull_request_path(&format!("/comments/{}/reply", req.comment_id))
             .await?;
-        json_result(
-            self.post(
+        let result: serde_json::Value = self
+            .post(
                 &path,
                 &ReplyCommentRequest {
                     body: body.to_string(),
                 },
             )
-            .await?,
-        )
+            .await?;
+        if result["held"].as_bool() == Some(true) {
+            return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+                "The reply waits as draft {} for the user to publish or discard. Continue with \
+                 the task.",
+                result["draft_id"].as_str().unwrap_or_default()
+            ))]));
+        }
+        json_result(result)
     }
 
     #[tool(
@@ -1078,6 +1085,30 @@ mod tests {
             report,
             serde_json::json!({"ready": true, "head_sha": "abc", "reviewed_sha": null})
         );
+    }
+
+    /// A held reply (026) tells the agent in words that it waits for the
+    /// user, naming the draft, rather than echoing the route's own JSON.
+    #[tokio::test]
+    async fn a_held_reply_tells_the_agent_to_continue_naming_the_draft() {
+        let (endpoint, _seen) =
+            recording_daemon_answering(r#"{"held": true, "draft_id": "01DRAFT"}"#).await;
+        let mcp = server_at(
+            McpSeat::PullRequestKeeper,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let result = mcp
+            .reply_comment(Parameters(ReplyCommentReq {
+                comment_id: "01C".into(),
+                body: "Renamed it.".into(),
+            }))
+            .await
+            .expect("reply");
+        let ContentBlock::Text(text) = &result.content[0] else {
+            panic!("the held reply came back as something other than text");
+        };
+        assert!(text.text.contains("01DRAFT"), "{}", text.text);
+        assert!(text.text.contains("waits"), "{}", text.text);
     }
 
     /// An agent whose task opened no request yet is told to open one, and

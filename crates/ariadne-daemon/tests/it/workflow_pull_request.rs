@@ -343,6 +343,11 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
     h.state.forge_poll.wake(&task.repo_id);
     h.flush_scheduler().await;
     assert_eq!(h.prompts_to(agent).len(), told);
+    // This test is about the news and the merge, not the hold on a reply
+    // (026); turn it off so the reply posts straight to the forge as it
+    // did before that hold existed.
+    let repository = h.store.get_repository(&task.repo_id).await.unwrap();
+    h.set_supervise_posts(&repository, false).await;
     let reply: Value = h
         .json(
             as_session(

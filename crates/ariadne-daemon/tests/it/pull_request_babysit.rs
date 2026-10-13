@@ -291,6 +291,10 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
     // A reply from the keeper follows the keeping agent's own rule (026
     // rule 16): it answers an inline review comment, the thread of a
     // defect, and a comment of the other side in the conversation too.
+    // This test is about that rule, not the hold on a reply the repository's
+    // own supervision adds, so turn it off.
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, false).await;
     let reply: Value = h
         .json(
             as_session(

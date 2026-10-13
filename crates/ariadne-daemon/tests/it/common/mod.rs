@@ -1890,6 +1890,10 @@ pub(crate) fn patch_json(uri: &str, body: serde_json::Value) -> Request<Body> {
     json_request(Method::PATCH, uri, body)
 }
 
+pub(crate) fn delete_json(uri: &str, body: serde_json::Value) -> Request<Body> {
+    json_request(Method::DELETE, uri, body)
+}
+
 /// A request an agent makes as itself, carrying the session header the daemon
 /// identifies it by.
 pub(crate) fn as_session(uri: &str, session_id: &str, body: serde_json::Value) -> Request<Body> {

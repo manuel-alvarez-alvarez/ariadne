@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-10-12
+updated: 2026-10-13
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -124,7 +124,10 @@ reads behind them ([026](026-pull-requests.md)).
     answered there. The daemon accepts the keeper seat for this the same
     way it accepts a task's column agent: a request a task keeps is
     refused the ask (rule 1), so no row ever carries both, and the seat
-    alone tells the two apart.
+    alone tells the two apart. A repository that supervises its posts holds
+    the keeper's reply as a pending draft the same way (026 rules 24-28):
+    the route reads the seat off the session the draft names, not the one
+    that publishes it.
 14. `report_pull_request` takes `ready` with `head_sha`, on a row this
     keeper answers for, by the same rule a task's column agent reports
     under (029 rule 15): a `ready: true` report with no `head_sha`, or one

@@ -51,9 +51,11 @@ The agent of the task's `pr` column keeps its request until a human merges or cl
 
 In: request identity, the rows Ariadne keeps, forge reads, fetch modes, HTTP, events, CLI, and desktop views.
 Also in: the agent who keeps a request, its comments and checks, the detail read, the news, the tools, and the cleanup.
+Also in: drafts a repository that supervises its posts holds for a reply, until the user publishes or discards it.
 
 Out: webhook delivery, and review sessions, on a request that asks for the user's review or one of theirs they asked Ariadne to review ([029](029-reviewing-a-request.md)).
 Also out: the keeper session on a request of the user's own asked for by hand, and its worktree and branch ([032](032-babysitting-a-request-by-hand.md)).
+Also out: a `review` or a `resolve` draft's own payload and publish, and the Desktop panel over a draft, left to a later task.
 Forge detection and integration settings belong to [025](025-forge-integration.md).
 The `pr` column, its gate and how its task ends belong to [030](030-workflows.md).
 
@@ -193,6 +195,15 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 22. `open_pull_request`'s body fills the repository's own pull request template where the repository has one. Where it has none, the body carries three sections, Why, What changed and How to test, each written from the task and its diff rather than one line. The title still follows the repository's commit conventions (030 rule 10).
 23. A repository that supervises its posts ([002](002-repositories-branches-and-worktrees.md) rule 13) opens every pull request a task's `pr` column requests as a draft, whatever the agent's own `draft` asked: a person reviews it before it is real to anyone else. A repository that does not leaves the agent's own value through unchanged.
 
+## Drafts
+
+24. A repository that supervises its posts holds what `reply_comment` would post instead of posting it. The seat check, the once check (rule 16) and the trailer strip run first, on the session that called it; then a `pull_request_drafts` row is written — `id`, `pull_request_id`, `session_id` the session that wrote it, `kind` (`reply`, `review` or `resolve`), `payload` as JSON text — for `reply`, `{comment_id, body}` — `state` (`pending`, `published` or `discarded`), and `feedback` — and the route answers `{held: true, draft_id}` with no forge call. A repository that does not supervises posts as rule 16 already does.
+25. The MCP tool `reply_comment` reads a held answer and hands the agent text that says the reply waits for the user to publish, and tells it to continue; every other answer is the posted comment, as before.
+26. A comment a pending `reply` draft answers counts as answered (`forge/live.rs`): the once check (rule 16) refuses a second reply to it the same way an already-answered comment refuses one, it drops out of `unanswered_only`, and the news it would be (rule 12) is none of its own. Discarding the draft takes this back: the comment reads unanswered again, and the next news tells it as before.
+27. `POST /v1/drafts/{id}/publish` runs the draft's own forge call, dispatched by kind: a `reply` draft runs the same forge call and live-view update (`add_comments`) the direct path runs, under one function the two share, from the seat of the session that wrote the draft rather than the one publishing it; `review` and `resolve` answer 501, for a later task to fill in. On success the draft is marked `published` and the route answers its DTO; a forge error leaves it `pending`, so a later publish can try again.
+28. `GET /v1/pull-requests/{id}/drafts?state=` lists a request's drafts, every one or narrowed to one state; `GET /v1/drafts/{id}` reads one. `PUT /v1/drafts/{id}` replaces the payload of a pending draft with `{payload}`; `DELETE /v1/drafts/{id}` discards one, taking an optional `{feedback}`; either on a draft that is not pending answers 409.
+29. `ariadne pr drafts list <pr> [--state S]`, `show <id>`, `edit <id> [--body B]`, `publish <id>` and `discard <id> [--feedback F]` call these routes. `edit` with no `--body` opens `$EDITOR` on the draft's current body and sends back what it saves, trimmed.
+
 ## HTTP
 
 All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-usage.md).
@@ -213,6 +224,11 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` | Resolve, from the review session, a thread it opened (029). Return 200. |
 | `POST /v1/pull-requests/{id}/report` | Take `ready`, `head_sha` (required with `ready: true`), and `reviewed_sha` (029), from the request's own session. |
 | `GET /v1/sessions?pull_request=` | List the sessions of one request (012). |
+| `GET /v1/pull-requests/{id}/drafts?state=` | List a request's drafts, every one or narrowed to one state. |
+| `GET /v1/drafts/{id}` | Read one draft. |
+| `PUT /v1/drafts/{id}` | Take `{payload}`: replace the payload of a pending draft. Return 409 on one that is not pending. |
+| `DELETE /v1/drafts/{id}` | Take an optional `{feedback}`: discard a pending draft. Return 409 on one that is not pending. |
+| `POST /v1/drafts/{id}/publish` | Run the draft's forge call and mark it published. Return 501 on a `review` or a `resolve` draft, 502 on a forge error. |
 
 There is no route that adds or removes a request.
 
@@ -226,6 +242,7 @@ The command and screen follow [014](014-command-line-interface.md) and [015](015
 - `pr refresh [--repo <id|path>]` requests a fetch.
 - `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill S]... [--attach]` calls `PUT .../ariadne-review` with `{asked: true, model, effort, skills}` (029): `--model` is required, since there is no repository pin to fall back to any more, and a usage error names it when it is missing. `--attach` waits for the review session to start and opens its console, as `session new --attach` does. `pr review <repo> <number> --stop` sends `{asked: false}` alone, and conflicts with `--model`, `--effort`, `--skill` and `--attach`.
 - `pr babysit <repo> <number> --model AGENT:MODEL [--effort E] [--skill S]... [--attach]` and `pr babysit <repo> <number> --stop` call `PUT .../ariadne-babysit` the same way `pr review` calls its own route (032).
+- `pr drafts list <pr> [--state S]`, `show <id>`, `edit <id> [--body B]`, `publish <id>` and `discard <id> [--feedback F]` call the draft routes above; `edit` with no `--body` opens `$EDITOR` on the draft's current body.
 
 The sidebar's Forge entry opens the Forge screen, titled "Forge", whose two tabs are Pull requests (`#/forge/pull-requests`, where `#/forge` lands) and Issues (028).
 Pull requests lists the open requests, from the repository's last fetch. A three-way choice narrows them: All (every open request), Mine (`role=author`), and Review requests (`role=reviewer&requested=true`).
@@ -380,6 +397,30 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - A trailing trailer and the blank line before it are stripped, and text with no trailer is left whole:
   `forge/pulls.rs::tests::strip_trailers_takes_off_a_trailing_trailer_and_the_blank_line_before_it`,
   `::strip_trailers_leaves_text_with_no_trailer_whole`.
+- A held reply makes no forge call, stores a pending draft naming the
+  comment and the body, refuses a second reply to that comment the once
+  check already refuses an answered one, and drops the comment out of
+  `unanswered_only`; editing the draft changes the body publish posts;
+  publish runs the same forge call and live-view update the direct path
+  runs and marks the draft published:
+  `kept_requests.rs::a_supervised_reply_holds_as_a_pending_draft_until_edited_and_published`.
+- A forge error on publish leaves the draft pending:
+  `kept_requests.rs::a_forge_error_on_publish_leaves_the_draft_pending`.
+- Discarding a pending draft makes no forge call, and the comment it
+  answered is unanswered again:
+  `kept_requests.rs::discarding_a_draft_makes_no_forge_call_and_its_comment_news_again`.
+- A draft is created pending, listed whole and by state, its payload is
+  replaced only while pending, its feedback is recorded, and a pending
+  `reply` draft names the comment it answers until it is discarded:
+  `store.rs::drafts_are_listed_by_state_and_moved_through_pending_published_and_discarded`.
+- `pr drafts` parses its five subcommands and each calls its own route,
+  `edit` reading the current payload first and replacing its body alone,
+  `discard` carrying `feedback` where given:
+  `pr.rs::tests::pr_drafts_subcommands_parse`,
+  `::pr_drafts_calls_the_draft_routes`.
+- A held answer tells the agent in words that the reply waits for the
+  user, naming the draft, rather than echoing the route's JSON:
+  `mcp/tools.rs::tests::a_held_reply_tells_the_agent_to_continue_naming_the_draft`.
 - The step stays on the `pr` column and its completion is refused until a merge, which is told to the agent; a quiet agent is then finished by the daemon and the row goes:
   `workflow_pull_request.rs::a_quiet_pr_agent_is_finished_after_the_merge`.
 - A close is told to the agent and finishes nothing:
@@ -439,12 +480,14 @@ raises no row and starts no session (029).
 ## Sources
 
 `crates/ariadne-store/migrations/0001_init.sql`,
+`crates/ariadne-store/migrations/0008_pull_request_drafts.sql`,
 `crates/ariadne-store/src/pull_requests.rs`, `crates/ariadne-store/src/pull_request_comments.rs`,
+`crates/ariadne-store/src/pull_request_drafts.rs`,
 `crates/ariadne-store/skills/pr-babysit/SKILL.md`, `crates/ariadne-api/src/pull_requests.rs`,
 `crates/ariadne-daemon/src/launcher.rs`, `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
 `crates/ariadne-cli/src/commands/mcp.rs`, `crates/ariadne-cli/src/commands/mcp/tools.rs`,
 `crates/ariadne-daemon/src/forge/`, `crates/ariadne-daemon/src/forge/live.rs`,
-`crates/ariadne-daemon/src/http/pull_requests.rs`,
+`crates/ariadne-daemon/src/http/pull_requests.rs`, `crates/ariadne-daemon/src/http/drafts.rs`,
 `crates/ariadne-daemon/src/http/channel.rs`, `crates/ariadne-daemon/src/bus.rs`,
 `crates/ariadne-cli/src/commands/pr.rs`, `ui/src/features/pull-requests/`,
 `ui/src/api/queries.ts`, `.github/pull_request_template.md`.

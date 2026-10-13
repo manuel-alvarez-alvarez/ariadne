@@ -995,6 +995,28 @@ pub struct PullRequestComment {
     pub from_review: bool,
 }
 
+/// A reply, a review or a resolve an agent wrote, held for the user's own
+/// publish or discard where the repository supervises its posts (026): the
+/// forge sees none of it until the user publishes it.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PullRequestDraft {
+    pub id: String,
+    pub pull_request_id: String,
+    /// The session that wrote the draft.
+    pub session_id: String,
+    /// `reply`, `review` or `resolve`.
+    pub kind: String,
+    /// The forge call the draft replays on publish, as JSON text: for
+    /// `reply`, `{comment_id, body}`.
+    pub payload: String,
+    /// `pending`, `published` or `discarded`.
+    pub state: String,
+    /// Why the user discarded it, where they said.
+    pub feedback: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// A column captured when a goal starts.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct GoalStep {

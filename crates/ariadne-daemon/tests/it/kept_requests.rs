@@ -11,7 +11,8 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, post_json, sh, with_forge,
+    Harness, QUIET, TIMEOUT, as_session, delete_json, eventually, harness, next_event, post_json,
+    put_json, sh, with_forge,
 };
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::tasks::TaskDto;
@@ -266,6 +267,12 @@ async fn kept_request(script: Value) -> Kept {
         .unwrap()
         .expect("the ledger holds the task's request")
         .id;
+    // The request is already open; what is left to turn off is the hold
+    // on the agent's own replies (026), which every test of this file
+    // predates and assumes posts straight to the forge. The dedicated
+    // draft tests below turn supervision back on.
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, false).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     eventually(
         TIMEOUT,
@@ -812,6 +819,296 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
         before,
         "a reply to the agent's own side's body posts no further reply"
     );
+}
+
+/// Alice's one conversation-side review, no path and no line: the kind the
+/// once check restricts (026 rule 16) — unlike an inline review comment,
+/// which it does not, the way
+/// `the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side`
+/// reads its own.
+fn alice_wants_a_rename() -> Value {
+    json!([
+        {"id": 501, "user": {"login": "alice"}, "body": "Please rename it.",
+         "submitted_at": "2026-10-02T00:00:00Z"},
+    ])
+}
+
+/// A script whose conversation carries `reviews` alone: no inline comment,
+/// no thread to resolve.
+fn conversation_script(reviews: &Value) -> Value {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    script_of(
+        pull("OPEN", "abc"),
+        &[],
+        &[],
+        &json!({"check_runs": []}).to_string(),
+        &reviews.to_string(),
+        &threads.to_string(),
+    )
+}
+
+/// A `Kept` request whose only comment is [`alice_wants_a_rename`].
+async fn kept_request_with_conversation_comment() -> Kept {
+    kept_request(conversation_script(&alice_wants_a_rename())).await
+}
+
+/// `script`, with `pr comment` answered with a forge failure: what a
+/// publish's own forge call sees when the forge refuses it.
+fn failing_reply(mut script: Value) -> Value {
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "comment"]) {
+            *entry = answer(&["pr", "comment"], 1, "boom");
+        }
+    }
+    script
+}
+
+/// A repository that supervises its posts (026) holds a reply as a pending
+/// draft: no forge call, and the comment it answers counts as answered at
+/// once, so a second reply to it is refused the same way a direct answer
+/// refuses one, and it drops out of the unanswered list. Editing the draft
+/// changes the body publish posts, and publish runs the same forge call
+/// and live-view update the direct path runs, then marks the draft
+/// published.
+#[tokio::test]
+async fn a_supervised_reply_holds_as_a_pending_draft_until_edited_and_published() {
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request_with_conversation_comment().await;
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, true).await;
+
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the comment to be told", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.len() == 1 && stored[0]["told_at"].is_string()
+    })
+    .await;
+    let comment_id = stored[0]["id"].as_str().unwrap().to_string();
+
+    let held: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{comment_id}/reply"),
+                &agent.id,
+                json!({"body": "Renamed it."}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(held["held"], true);
+    let draft_id = held["draft_id"].as_str().unwrap().to_string();
+    let comment_replies = |stub: &StubForgeCli| {
+        stub.invocations()
+            .into_iter()
+            .filter(|i| {
+                i.args.first().map(String::as_str) == Some("pr")
+                    && i.args.get(1).map(String::as_str) == Some("comment")
+            })
+            .count()
+    };
+    assert_eq!(
+        comment_replies(&stub),
+        0,
+        "a held reply makes no forge call"
+    );
+
+    let drafts: Vec<Value> = h
+        .get(&format!("/v1/pull-requests/{id}/drafts?state=pending"))
+        .await;
+    assert_eq!(drafts.len(), 1);
+    assert_eq!(drafts[0]["id"], draft_id);
+    assert_eq!(drafts[0]["kind"], "reply");
+    assert_eq!(drafts[0]["payload"]["comment_id"], comment_id);
+    assert_eq!(drafts[0]["payload"]["body"], "Renamed it.");
+    let fetched: Value = h.get(&format!("/v1/drafts/{draft_id}")).await;
+    assert_eq!(fetched["id"], draft_id);
+
+    // The once check it shares with the direct path refuses a second
+    // reply to a comment a pending draft already answers.
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/{comment_id}/reply"),
+            &agent.id,
+            json!({"body": "Again."}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    let unanswered: Vec<Value> = h
+        .get(&format!(
+            "/v1/pull-requests/{id}/comments?unanswered_only=true"
+        ))
+        .await;
+    assert!(
+        unanswered.is_empty(),
+        "a pending draft answers the comment: {unanswered:?}"
+    );
+
+    // Editing it changes the body publish posts.
+    let edited: Value = h
+        .json(
+            put_json(
+                &format!("/v1/drafts/{draft_id}"),
+                json!({"payload": {"comment_id": comment_id, "body": "Fixed it."}}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(edited["payload"]["body"], "Fixed it.");
+
+    let published: Value = h
+        .json(
+            post_json(&format!("/v1/drafts/{draft_id}/publish"), json!({})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(published["state"], "published");
+    assert_eq!(comment_replies(&stub), 1);
+    let call = stub
+        .invocations()
+        .into_iter()
+        .find(|i| {
+            i.args.first().map(String::as_str) == Some("pr")
+                && i.args.get(1).map(String::as_str) == Some("comment")
+        })
+        .expect("the reply command");
+    assert!(
+        call.args.contains(&"--body".to_string()) && call.args.contains(&"Fixed it.".to_string()),
+        "{call:?}"
+    );
+    // The forge now holds the reply too, and the next read finds the
+    // live view already carrying it, the same as the direct path's own
+    // `add_comments` leaves it until that read confirms it (026).
+    let mut answered = alice_wants_a_rename().as_array().unwrap().clone();
+    answered.push(
+        json!({"id": 601, "user": {"login": "me"}, "body": "Fixed it.",
+        "submitted_at": "2026-10-02T00:01:00Z"}),
+    );
+    stub.reprogram(conversation_script(&json!(answered)));
+    fetch_again(&h, &stub, &repo).await;
+    let posted: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+    assert!(
+        posted
+            .iter()
+            .any(|c| c["author_login"] == "me" && c["body"] == "Fixed it."),
+        "the posted comment reaches the live view: {posted:?}"
+    );
+}
+
+/// A forge error on publish leaves the draft pending: the next publish can
+/// try again.
+#[tokio::test]
+async fn a_forge_error_on_publish_leaves_the_draft_pending() {
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request_with_conversation_comment().await;
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, true).await;
+    stub.reprogram(failing_reply(conversation_script(&alice_wants_a_rename())));
+
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the comment to be told", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.len() == 1 && stored[0]["told_at"].is_string()
+    })
+    .await;
+    let comment_id = stored[0]["id"].as_str().unwrap().to_string();
+    let held: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{comment_id}/reply"),
+                &agent.id,
+                json!({"body": "Renamed it."}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let draft_id = held["draft_id"].as_str().unwrap().to_string();
+
+    h.error(
+        post_json(&format!("/v1/drafts/{draft_id}/publish"), json!({})),
+        StatusCode::BAD_GATEWAY,
+    )
+    .await;
+    let draft: Value = h.get(&format!("/v1/drafts/{draft_id}")).await;
+    assert_eq!(draft["state"], "pending", "a forge error leaves it pending");
+}
+
+/// Discarding a pending draft makes no forge call, and the comment it
+/// answered reads unanswered again: the keeper is woken for it the next
+/// time the news is computed.
+#[tokio::test]
+async fn discarding_a_draft_makes_no_forge_call_and_its_comment_news_again() {
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request_with_conversation_comment().await;
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, true).await;
+
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the comment to be told", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.len() == 1 && stored[0]["told_at"].is_string()
+    })
+    .await;
+    let comment_id = stored[0]["id"].as_str().unwrap().to_string();
+    let held: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{comment_id}/reply"),
+                &agent.id,
+                json!({"body": "Renamed it."}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let draft_id = held["draft_id"].as_str().unwrap().to_string();
+    let before = stub.invocations().len();
+
+    let discarded: Value = h
+        .json(
+            delete_json(
+                &format!("/v1/drafts/{draft_id}"),
+                json!({"feedback": "wrong tone"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(discarded["state"], "discarded");
+    assert_eq!(discarded["feedback"], "wrong tone");
+    assert_eq!(
+        stub.invocations().len(),
+        before,
+        "a discard makes no forge call"
+    );
+    let unanswered: Vec<Value> = h
+        .get(&format!(
+            "/v1/pull-requests/{id}/comments?unanswered_only=true"
+        ))
+        .await;
+    assert_eq!(
+        unanswered.len(),
+        1,
+        "a discarded draft's comment is unanswered again: {unanswered:?}"
+    );
+    assert_eq!(unanswered[0]["id"], comment_id);
 }
 
 /// Two replies racing for the same conversation body: both pass the once

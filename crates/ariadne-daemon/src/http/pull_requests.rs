@@ -11,13 +11,14 @@ use crate::forge::live::{self, Details, Live};
 use crate::forge::pulls::{CONVERSATION, DraftComment, ReviewDraft};
 use crate::forge::{ForgeClient, PullRequestRef, pulls};
 use ariadne_api::pull_requests::{
-    AskBabysitRequest, AskReviewRequest, PullRequestCommentDto, PullRequestCommentQuery,
-    PullRequestDiffQuery, PullRequestDto, PullRequestListQuery, PullRequestMatchDto,
-    ReplyCommentRequest, ReportPullRequestRequest, SubmitReviewRequest,
+    AskBabysitRequest, AskReviewRequest, HeldDraftDto, PullRequestCommentDto,
+    PullRequestCommentQuery, PullRequestDiffQuery, PullRequestDto, PullRequestListQuery,
+    PullRequestMatchDto, ReplyCommentRequest, ReplyDraftPayload, ReplyResultDto,
+    ReportPullRequestRequest, SubmitReviewRequest,
 };
 use ariadne_store::{
-    AgentSession, ForgeIntegration, PullRequest, PullRequestComment, PullRequestFilter,
-    PullRequestRow,
+    AgentSession, ForgeIntegration, NewPullRequestDraft, PullRequest, PullRequestComment,
+    PullRequestFilter, PullRequestRow,
 };
 use axum::{
     extract::{Path, Query, State},
@@ -36,8 +37,9 @@ pub struct ReplyLocks(Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>);
 impl ReplyLocks {
     /// Hold this pull request's reply lock until the guard drops: the once
     /// check a reply makes, and the forge call and the store write that
-    /// follow it, run under it as one step.
-    async fn hold(&self, pull_request_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    /// follow it, run under it as one step. A draft's publish holds it the
+    /// same way (026).
+    pub(super) async fn hold(&self, pull_request_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
         let lock = self
             .0
             .lock()
@@ -49,10 +51,10 @@ impl ReplyLocks {
     }
 }
 
-fn forge_error(error: String) -> ApiError {
+pub(super) fn forge_error(error: String) -> ApiError {
     ApiError::new(StatusCode::BAD_GATEWAY, "forge_error", error)
 }
-async fn integration(state: &AppState, id: &str) -> ApiResult<ForgeIntegration> {
+pub(super) async fn integration(state: &AppState, id: &str) -> ApiResult<ForgeIntegration> {
     state
         .store
         .get_repository(id)
@@ -177,7 +179,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
 
 /// A request Ariadne works on, as the last read found it, or read now where
 /// nothing has read it yet.
-async fn read_held(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
+pub(super) async fn read_held(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
     match live::of_row(&state.store, &state.launcher.live, row.clone()).await? {
         Some(pull) => Ok(pull),
         None => read_now(state, row).await,
@@ -490,7 +492,7 @@ pub(super) async fn comment(
 
 /// A comment of `pull` by its forge id, as the last read found it, or as a
 /// read now finds it where the last one does not hold it yet.
-async fn find_comment(
+pub(super) async fn find_comment(
     state: &AppState,
     pull: &PullRequest,
     comment_id: &str,
@@ -514,19 +516,22 @@ async fn find_comment(
         })
 }
 
-/// Reply to one comment. The daemon posts the reply through the forge CLI,
+/// Reply to one comment. A repository that supervises its posts (026 rule
+/// 23) holds it as a pending draft instead: the daemon makes no forge call,
+/// and answers the draft's id for the user's own publish or discard.
+/// Otherwise the daemon posts the reply through the forge CLI at once,
 /// marks it the review's where a review session posts it (029), and reads
 /// the request again.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/reply", tag = "pull-requests",
     params(("id" = String, Path), ("comment_id" = String, Path)),
     request_body = ReplyCommentRequest,
-    responses((status = 201, body = PullRequestCommentDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
+    responses((status = 201, body = ReplyResultDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
 pub(super) async fn reply(
     State(state): State<AppState>,
     Path((id, comment_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(req): Json<ReplyCommentRequest>,
-) -> ApiResult<(StatusCode, Json<PullRequestCommentDto>)> {
+) -> ApiResult<(StatusCode, Json<ReplyResultDto>)> {
     let row = state.store.get_pull_request(&id).await?;
     let session = own_session(&state, &headers, &row).await?;
     // A review session's reply is the review's, as its findings are. A
@@ -540,9 +545,10 @@ pub(super) async fn reply(
     if body.is_empty() {
         return Err(ApiError::bad_request("a reply needs a body"));
     }
-    // Held through the once check below, the forge call and the store
-    // write, so a second reply racing this one for the same comment waits
-    // here and then reads this reply's answer, not the state before it.
+    // Held through the once check below, the forge call or the draft write
+    // that follows it, so a second reply racing this one for the same
+    // comment waits here and then reads this reply's answer, not the state
+    // before it.
     let _reply_lock = state.reply_locks.hold(&row.id).await;
     let pull = read_held(&state, row).await?;
     let comment = find_comment(&state, &pull, &comment_id).await?;
@@ -553,10 +559,11 @@ pub(super) async fn reply(
     // the other side. It never answers its own side's comment. A
     // `from_review` comment, the review's own summary, counts as its own
     // side's. It never answers a comment the login's own side already
-    // answered there. The seat check is the same one `report`'s `ready`
-    // claim requires (`Seat::Agent`, never a reviewer session, per 031), or
-    // the keeper a request opened by hand carries instead (032): a review
-    // session alone keeps its wider reach, under its own name (029).
+    // answered there, or one a pending draft already answers (026). The
+    // seat check is the same one `report`'s `ready` claim requires
+    // (`Seat::Agent`, never a reviewer session, per 031), or the keeper a
+    // request opened by hand carries instead (032): a review session alone
+    // keeps its wider reach, under its own name (029).
     if !from_review && comment.kind != "review_comment" {
         let keeping_agent = session.seat() == Some(ariadne_core::Seat::Keeper)
             || (pull.origin_task_id.is_some() && session.seat() == Some(ariadne_core::Seat::Agent));
@@ -570,13 +577,78 @@ pub(super) async fn reply(
             ));
         }
     }
+    // A repository that supervises its posts holds every reply for the
+    // user's own publish, whatever session wrote it (026): the forge makes
+    // no call, and what it would have posted waits in a pending draft.
+    if state
+        .store
+        .get_repository(&pull.repository_id)
+        .await?
+        .supervise_posts()
+    {
+        let payload = serde_json::to_string(&ReplyDraftPayload {
+            comment_id: comment.id.clone(),
+            body: body.clone(),
+        })
+        .expect("a reply draft payload always serializes");
+        let draft = state
+            .store
+            .create_pull_request_draft(NewPullRequestDraft {
+                pull_request_id: pull.id.clone(),
+                session_id: session.id.clone(),
+                kind: "reply".into(),
+                payload,
+            })
+            .await?;
+        return Ok((
+            StatusCode::CREATED,
+            Json(ReplyResultDto::Held(HeldDraftDto {
+                held: true,
+                draft_id: draft.id,
+            })),
+        ));
+    }
     // A review's reply is signed as the review's (029).
     let sent = match from_review {
         true => pulls::signed(&body, false),
         false => body.clone(),
     };
-    let forge_id = client(&state, &forge)
-        .reply(&slug(&forge), pull.number, &comment, &sent)
+    let posted = post_reply(
+        &state,
+        &pull,
+        &comment,
+        &body,
+        &sent,
+        from_review,
+        &login,
+        &forge,
+    )
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(ReplyResultDto::Posted(Box::new(pull_request_comment_dto(
+            posted,
+        )))),
+    ))
+}
+
+/// Post one reply through the forge, and hold what it posted beside the
+/// last read until the next fetch confirms it: the direct path above and a
+/// draft's publish share this one path to the forge (026), so the two can
+/// never disagree about what a successful post updates.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn post_reply(
+    state: &AppState,
+    pull: &PullRequest,
+    comment: &PullRequestComment,
+    body: &str,
+    sent: &str,
+    from_review: bool,
+    login: &str,
+    forge: &ForgeIntegration,
+) -> ApiResult<PullRequestComment> {
+    let forge_id = client(state, forge)
+        .reply(&slug(forge), pull.number, comment, sent)
         .await
         .map_err(forge_error)?;
     if from_review {
@@ -602,9 +674,9 @@ pub(super) async fn reply(
             _ => "issue_comment",
         }
         .into(),
-        author_login: login,
+        author_login: login.to_string(),
         author_is_bot: false,
-        body: body.clone(),
+        body: body.to_string(),
         path: comment.path.clone(),
         line: comment.line,
         in_reply_to,
@@ -633,7 +705,7 @@ pub(super) async fn reply(
     );
     state.forge_poll.wake(&pull.repository_id);
     state.notify_scheduler_pull_request(&pull.id);
-    Ok((StatusCode::CREATED, Json(pull_request_comment_dto(posted))))
+    Ok(posted)
 }
 
 /// Resolve the thread of one comment, once a push fixed what it found

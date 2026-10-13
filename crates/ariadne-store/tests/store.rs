@@ -5580,6 +5580,108 @@ async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark(
     );
 }
 
+/// A draft is a reply, a review or a resolve an agent wrote, held for the
+/// user's own publish or discard where the repository supervises its posts
+/// (026): it starts `pending`, lists by its request and by state, its
+/// payload is replaced only while it is pending, its feedback is recorded,
+/// and the pending `reply` drafts of a request name the comments they
+/// already answer.
+#[tokio::test]
+async fn drafts_are_listed_by_state_and_moved_through_pending_published_and_discarded() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(ariadne_core::Seat::Keeper),
+            task_agent_id: None,
+            model: "stub:m".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(row.id.clone()),
+        })
+        .await
+        .unwrap();
+    let draft = store
+        .create_pull_request_draft(NewPullRequestDraft {
+            pull_request_id: row.id.clone(),
+            session_id: session.id.clone(),
+            kind: "reply".into(),
+            payload: r#"{"comment_id":"ic-1","body":"Thanks!"}"#.into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(draft.state, "pending");
+    assert_eq!(draft.feedback, None);
+    assert_eq!(
+        store.get_pull_request_draft(&draft.id).await.unwrap().id,
+        draft.id
+    );
+
+    // Listed by its request, whole and narrowed to its state.
+    let all = store.list_pull_request_drafts(&row.id, None).await.unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(
+        store
+            .list_pull_request_drafts(&row.id, Some("pending"))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        store
+            .list_pull_request_drafts(&row.id, Some("published"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // A pending `reply` draft names the comment it already answers.
+    assert_eq!(
+        store
+            .pending_reply_draft_comment_ids(&row.id)
+            .await
+            .unwrap(),
+        std::collections::HashSet::from(["ic-1".to_string()])
+    );
+
+    // The payload is replaced only while it is pending.
+    let edited = store
+        .update_pull_request_draft_payload(&draft.id, r#"{"comment_id":"ic-1","body":"Fixed."}"#)
+        .await
+        .unwrap();
+    assert_eq!(edited.payload, r#"{"comment_id":"ic-1","body":"Fixed."}"#);
+
+    let discarded = store
+        .set_pull_request_draft_feedback(&draft.id, "wrong tone")
+        .await
+        .unwrap();
+    assert_eq!(discarded.feedback.as_deref(), Some("wrong tone"));
+    let discarded = store
+        .set_pull_request_draft_state(&draft.id, "discarded")
+        .await
+        .unwrap();
+    assert_eq!(discarded.state, "discarded");
+    assert!(
+        store
+            .pending_reply_draft_comment_ids(&row.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a discarded draft answers no comment any more"
+    );
+    assert!(
+        matches!(
+            store
+                .update_pull_request_draft_payload(&draft.id, "{}")
+                .await,
+            Err(StoreError::Conflict(_))
+        ),
+        "a draft that is not pending refuses a payload edit"
+    );
+}
+
 /// The ready flag a session reports moves the row, and a repeated ready
 /// report on the same head says nothing moved. A later report of `true` on
 /// a different head moves the row again, even though `ready` itself was
