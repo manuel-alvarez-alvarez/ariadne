@@ -5580,6 +5580,67 @@ async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark(
     );
 }
 
+/// Clearing one comment's told mark leaves every other comment's mark and
+/// the row's own told state whole: a discarded reply draft takes back
+/// having answered its own comment alone (026 rule 26).
+#[tokio::test]
+async fn clearing_one_comments_told_mark_leaves_the_row_and_other_marks_whole() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    let told = PullRequestTold {
+        checks: vec!["lint".into()],
+        behind_base: true,
+        review_decision: "approved".into(),
+        state: "open".into(),
+        check_state: "failure".into(),
+        head_sha: String::new(),
+    };
+    let before = PullRequestTold {
+        checks: Vec::new(),
+        behind_base: false,
+        review_decision: "none".into(),
+        state: "open".into(),
+        check_state: "none".into(),
+        head_sha: String::new(),
+    };
+    let comments = ["rc-1".to_string(), "rc-2".to_string()];
+    assert!(
+        store
+            .claim_pull_request_news(&row.id, &comments, &before, &told)
+            .await
+            .unwrap()
+    );
+
+    store
+        .clear_pull_request_comment_told(&row.id, "rc-1")
+        .await
+        .unwrap();
+    let marks = store.pull_request_comment_marks(&row.id).await.unwrap();
+    assert!(
+        marks
+            .iter()
+            .find(|m| m.forge_id == "rc-1")
+            .unwrap()
+            .told_at
+            .is_none(),
+        "the named comment's mark is cleared"
+    );
+    assert!(
+        marks
+            .iter()
+            .find(|m| m.forge_id == "rc-2")
+            .unwrap()
+            .told_at
+            .is_some(),
+        "the other comment's mark is untouched"
+    );
+    let after = store.get_pull_request(&row.id).await.unwrap();
+    assert_eq!(
+        after.told_checks, r#"["lint"]"#,
+        "the row's own told state is untouched"
+    );
+    assert!(after.told_behind_base);
+}
+
 /// A draft is a reply, a review or a resolve an agent wrote, held for the
 /// user's own publish or discard where the repository supervises its posts
 /// (026): it starts `pending`, lists by its request and by state, its

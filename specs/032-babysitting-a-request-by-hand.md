@@ -158,6 +158,10 @@ reads behind them ([026](026-pull-requests.md)).
   by another login reaches it once; its `ready` report is accepted; and the
   merge ends it, with its worktree and its branch gone and the row gone:
   `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`.
+- A repository that supervises its posts holds the keeper's own reply as a
+  pending draft too, naming the keeper session that wrote it, with no
+  forge call (026 rules 24-28):
+  `pull_request_babysit.rs::a_supervised_keepers_reply_holds_as_a_pending_draft`.
 - Asking is refused with no model, an unknown one, a skill no task agent
   loads, a request that is not open, one by another login, or one a task
   already keeps — each starting no work:

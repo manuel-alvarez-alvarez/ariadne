@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, TIMEOUT, as_session, delete_json, eventually, harness, next_event, post_json,
-    put_json, sh, with_forge,
+    Harness, QUIET, TIMEOUT, as_session, delete, delete_json, eventually, harness, next_event,
+    post_json, put_json, sh, with_forge,
 };
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::tasks::TaskDto;
@@ -20,7 +20,7 @@ use ariadne_core::{SessionStatus, TaskStatus};
 use ariadne_daemon::forge::poll::Mode;
 use ariadne_daemon::scheduler::SchedEvent;
 use ariadne_store::defaults::PULL_REQUEST_WORKFLOW;
-use ariadne_store::{AgentSession, SessionFilter, Task};
+use ariadne_store::{AgentSession, PullRequestTold, SessionFilter, Task};
 
 /// Where `pr create` says the task's request is.
 const URL: &str = "https://github.com/acme/widgets/pull/1";
@@ -951,6 +951,17 @@ async fn a_supervised_reply_holds_as_a_pending_draft_until_edited_and_published(
         "a pending draft answers the comment: {unanswered:?}"
     );
 
+    // A payload that does not fit the draft's own kind is refused, rather
+    // than stored broken for publish to find later.
+    h.error(
+        put_json(
+            &format!("/v1/drafts/{draft_id}"),
+            json!({"payload": {"comment_id": comment_id}}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+
     // Editing it changes the body publish posts.
     let edited: Value = h
         .json(
@@ -1046,6 +1057,126 @@ async fn a_forge_error_on_publish_leaves_the_draft_pending() {
     assert_eq!(draft["state"], "pending", "a forge error leaves it pending");
 }
 
+/// Two publish calls racing the same pending draft: the reply lock
+/// serializes them the way it serializes two direct replies, and the one
+/// that waited rereads the draft's own state under the lock, so it
+/// refuses with 409 rather than posting a second time.
+#[tokio::test]
+async fn two_publishes_racing_the_same_draft_post_it_once() {
+    let gate_dir = tempfile::tempdir().unwrap();
+    let gate = gate_dir.path().join("go");
+    let mut script = conversation_script(&alice_wants_a_rename());
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["pr", "comment"]) {
+            entry["wait_for"] = json!(gate.display().to_string());
+        }
+    }
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(script).await;
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, true).await;
+
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the comment to be told", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.len() == 1 && stored[0]["told_at"].is_string()
+    })
+    .await;
+    let comment_id = stored[0]["id"].as_str().unwrap().to_string();
+    let held: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{comment_id}/reply"),
+                &agent.id,
+                json!({"body": "Renamed it."}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let draft_id = held["draft_id"].as_str().unwrap().to_string();
+
+    let replies = || {
+        stub.invocations()
+            .into_iter()
+            .filter(|i| {
+                i.args.first().map(String::as_str) == Some("pr")
+                    && i.args.get(1).map(String::as_str) == Some("comment")
+            })
+            .count()
+    };
+    let publish = || {
+        h.send(post_json(
+            &format!("/v1/drafts/{draft_id}/publish"),
+            json!({}),
+        ))
+    };
+    let release_when_called = async {
+        eventually(
+            TIMEOUT,
+            "the first publish to reach the forge",
+            async || replies() >= 1,
+        )
+        .await;
+        std::fs::write(&gate, "go").unwrap();
+    };
+    let ((a, _), (b, _), ()) = tokio::join!(publish(), publish(), release_when_called);
+    let mut statuses = [a, b];
+    statuses.sort();
+    assert_eq!(
+        statuses,
+        [StatusCode::OK, StatusCode::CONFLICT],
+        "the lock serializes the two, so only one of them publishes"
+    );
+    assert_eq!(replies(), 1, "only the winner calls the forge CLI");
+}
+
+/// A plain `DELETE` with no body still discards a pending draft: a caller
+/// that sends no `{feedback}` carries no body and no `Content-Type`, which
+/// the usual `Json` extractor would refuse outright (026).
+#[tokio::test]
+async fn a_bodyless_delete_discards_a_pending_draft() {
+    let Kept {
+        h,
+        stub: _stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request_with_conversation_comment().await;
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, true).await;
+
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the comment to be told", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.len() == 1 && stored[0]["told_at"].is_string()
+    })
+    .await;
+    let comment_id = stored[0]["id"].as_str().unwrap().to_string();
+    let held: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{comment_id}/reply"),
+                &agent.id,
+                json!({"body": "Renamed it."}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let draft_id = held["draft_id"].as_str().unwrap().to_string();
+
+    let discarded: Value = h
+        .json(delete(&format!("/v1/drafts/{draft_id}")), StatusCode::OK)
+        .await;
+    assert_eq!(discarded["state"], "discarded");
+}
+
 /// Discarding a pending draft makes no forge call, and the comment it
 /// answered reads unanswered again: the keeper is woken for it the next
 /// time the news is computed.
@@ -1069,6 +1200,12 @@ async fn discarding_a_draft_makes_no_forge_call_and_its_comment_news_again() {
     })
     .await;
     let comment_id = stored[0]["id"].as_str().unwrap().to_string();
+    // Taken before the held reply and the discard that follows it, so a
+    // retelling either one wakes shows up as a line beyond this snapshot
+    // rather than racing a snapshot taken after the discard's own wake
+    // already landed.
+    let before_news = h.prompts_to(&agent).len();
+
     let held: Value = h
         .json(
             as_session(
@@ -1109,6 +1246,93 @@ async fn discarding_a_draft_makes_no_forge_call_and_its_comment_news_again() {
         "a discarded draft's comment is unanswered again: {unanswered:?}"
     );
     assert_eq!(unanswered[0]["id"], comment_id);
+
+    // The discard clears the comment's own told mark too (026 rule 26), so
+    // the next news actually tells it to the agent again — not merely
+    // answered in the comment listing, but raised again.
+    eventually(TIMEOUT, "the comment to be news again", async || {
+        h.prompts_to(&agent).len() > before_news
+    })
+    .await;
+    let news = h.prompts_to(&agent).pop().unwrap();
+    assert!(news.contains(&comment_id), "{news}");
+}
+
+/// A pending reply draft answers its comment even where the comment was
+/// never told: proves the overlay itself — not merely the comment's own
+/// told mark — is what keeps the news from waking the agent for it (026
+/// rule 26).
+#[tokio::test]
+async fn a_pending_draft_answers_its_comment_even_with_no_told_mark() {
+    let Kept {
+        h,
+        stub: _stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request_with_conversation_comment().await;
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, true).await;
+
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the comment to be told", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.len() == 1 && stored[0]["told_at"].is_string()
+    })
+    .await;
+    let comment_id = stored[0]["id"].as_str().unwrap().to_string();
+
+    let held: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{comment_id}/reply"),
+                &agent.id,
+                json!({"body": "Renamed it."}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(held["held"], true);
+
+    // Simulate the comment never having been told, with the draft still
+    // pending: the row's own told state is reset to the baseline nothing
+    // else here ever moved from, so only the one comment's own mark is
+    // actually undone.
+    h.store
+        .release_pull_request_news(
+            &id,
+            std::slice::from_ref(&comment_id),
+            &PullRequestTold {
+                checks: Vec::new(),
+                behind_base: false,
+                review_decision: "none".into(),
+                state: "open".into(),
+                check_state: "none".into(),
+                head_sha: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let marks = h.store.pull_request_comment_marks(&id).await.unwrap();
+    assert!(
+        marks
+            .iter()
+            .find(|m| m.forge_id == comment_id)
+            .expect("a mark for the comment")
+            .told_at
+            .is_none(),
+        "the comment carries no told mark"
+    );
+
+    let before = h.prompts_to(&agent).len();
+    pass_over(&h, &id).await;
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(
+        h.prompts_to(&agent).len(),
+        before,
+        "the pending draft answers the comment, so it raises no news even untold"
+    );
 }
 
 /// Two replies racing for the same conversation body: both pass the once

@@ -200,8 +200,8 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 24. A repository that supervises its posts holds what `reply_comment` would post instead of posting it. The seat check, the once check (rule 16) and the trailer strip run first, on the session that called it; then a `pull_request_drafts` row is written — `id`, `pull_request_id`, `session_id` the session that wrote it, `kind` (`reply`, `review` or `resolve`), `payload` as JSON text — for `reply`, `{comment_id, body}` — `state` (`pending`, `published` or `discarded`), and `feedback` — and the route answers `{held: true, draft_id}` with no forge call. A repository that does not supervises posts as rule 16 already does.
 25. The MCP tool `reply_comment` reads a held answer and hands the agent text that says the reply waits for the user to publish, and tells it to continue; every other answer is the posted comment, as before.
 26. A comment a pending `reply` draft answers counts as answered (`forge/live.rs`): the once check (rule 16) refuses a second reply to it the same way an already-answered comment refuses one, it drops out of `unanswered_only`, and the news it would be (rule 12) is none of its own. Discarding the draft takes this back: the comment reads unanswered again, and the next news tells it as before.
-27. `POST /v1/drafts/{id}/publish` runs the draft's own forge call, dispatched by kind: a `reply` draft runs the same forge call and live-view update (`add_comments`) the direct path runs, under one function the two share, from the seat of the session that wrote the draft rather than the one publishing it; `review` and `resolve` answer 501, for a later task to fill in. On success the draft is marked `published` and the route answers its DTO; a forge error leaves it `pending`, so a later publish can try again.
-28. `GET /v1/pull-requests/{id}/drafts?state=` lists a request's drafts, every one or narrowed to one state; `GET /v1/drafts/{id}` reads one. `PUT /v1/drafts/{id}` replaces the payload of a pending draft with `{payload}`; `DELETE /v1/drafts/{id}` discards one, taking an optional `{feedback}`; either on a draft that is not pending answers 409.
+27. `POST /v1/drafts/{id}/publish` runs the draft's own forge call, dispatched by kind: a `reply` draft runs the same forge call and live-view update (`add_comments`) the direct path runs, under one function the two share, from the seat of the session that wrote the draft rather than the one publishing it; `review` and `resolve` answer 501, for a later task to fill in. On success the draft is marked `published` and the route answers its DTO; a forge error leaves it `pending`, so a later publish can try again. The pending check is taken twice: once before the reply lock, to answer a plainly stale call without taking it, and once more under the lock, which is the one that holds — two publish calls racing the same draft serialize on it, and the one that waited rereads the draft fresh rather than trusting the copy it read before the lock, so only the one still pending when it is its turn runs the forge call.
+28. `GET /v1/pull-requests/{id}/drafts?state=` lists a request's drafts, every one or narrowed to one state; `GET /v1/drafts/{id}` reads one. `PUT /v1/drafts/{id}` replaces the payload of a pending draft with `{payload}`, refused with 400 where the payload does not fit the draft's own kind — for `reply`, `{comment_id, body}`. `DELETE /v1/drafts/{id}` discards one, taking an optional `{feedback}`; its body is optional, read as raw bytes rather than through the usual JSON extractor, since a caller that gives no `feedback` sends no body and no `Content-Type` for that extractor to find. Either route on a draft that is not pending answers 409. A discarded `reply` draft's comment has its told mark cleared, and only that mark: the next news tells it again, same as if nobody had ever answered it, and nothing else the row tracks moves with it.
 29. `ariadne pr drafts list <pr> [--state S]`, `show <id>`, `edit <id> [--body B]`, `publish <id>` and `discard <id> [--feedback F]` call these routes. `edit` with no `--body` opens `$EDITOR` on the draft's current body and sends back what it saves, trimmed.
 
 ## HTTP
@@ -402,13 +402,28 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   check already refuses an answered one, and drops the comment out of
   `unanswered_only`; editing the draft changes the body publish posts;
   publish runs the same forge call and live-view update the direct path
-  runs and marks the draft published:
+  runs and marks the draft published; a payload that does not fit the
+  reply shape is refused with 400:
   `kept_requests.rs::a_supervised_reply_holds_as_a_pending_draft_until_edited_and_published`.
 - A forge error on publish leaves the draft pending:
   `kept_requests.rs::a_forge_error_on_publish_leaves_the_draft_pending`.
-- Discarding a pending draft makes no forge call, and the comment it
-  answered is unanswered again:
+- Two publishes racing the same draft serialize on the reply lock, and the
+  one that waited rereads the draft fresh, so only one runs the forge call
+  and the other is refused with 409:
+  `kept_requests.rs::two_publishes_racing_the_same_draft_post_it_once`.
+- Discarding a pending draft makes no forge call, the comment it answered
+  is unanswered again, and its told mark cleared so the next news tells it
+  to the agent again:
   `kept_requests.rs::discarding_a_draft_makes_no_forge_call_and_its_comment_news_again`.
+- A plain `DELETE` with no body still discards a pending draft:
+  `kept_requests.rs::a_bodyless_delete_discards_a_pending_draft`.
+- A pending reply draft answers its comment even where the comment carries
+  no told mark of its own, proving the overlay itself, not merely the told
+  mark, keeps the news from waking the agent for it:
+  `kept_requests.rs::a_pending_draft_answers_its_comment_even_with_no_told_mark`.
+- Clearing one comment's told mark leaves every other comment's mark and
+  the row's own told state whole:
+  `store.rs::clearing_one_comments_told_mark_leaves_the_row_and_other_marks_whole`.
 - A draft is created pending, listed whole and by state, its payload is
   replaced only while pending, its feedback is recorded, and a pending
   `reply` draft names the comment it answers until it is discarded:

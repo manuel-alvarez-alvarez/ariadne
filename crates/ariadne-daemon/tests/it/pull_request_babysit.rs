@@ -344,6 +344,80 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
     .await;
 }
 
+/// A repository that supervises its posts holds the keeper's own reply as
+/// a pending draft too (032 rule 13; 026 rules 24-28): the daemon makes no
+/// forge call, and the route answers `{held, draft_id}` naming the
+/// session that wrote it.
+#[tokio::test]
+async fn a_supervised_keepers_reply_holds_as_a_pending_draft() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, true).await;
+
+    stub.reprogram(script(&Shown {
+        updated_at: "2026-10-02T00:00:00Z",
+        comments: json!([
+            {"id": 301, "user": {"login": "alice"}, "body": "Looks good but one nit.",
+             "created_at": "2026-10-02T00:00:00Z"}
+        ]),
+        ..Shown::open(&head)
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "the comment to be told", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.len() == 1 && stored[0]["told_at"].is_string()
+    })
+    .await;
+    let comment_id = stored[0]["id"].as_str().unwrap().to_string();
+
+    let held: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{comment_id}/reply"),
+                &session.id,
+                json!({"body": "Thanks!"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(held["held"], true);
+    let draft_id = held["draft_id"].as_str().unwrap().to_string();
+    assert!(
+        !stub.invocations().into_iter().any(|i| {
+            i.args.first().map(String::as_str) == Some("pr")
+                && i.args.get(1).map(String::as_str) == Some("comment")
+        }),
+        "a held reply makes no forge call"
+    );
+    let drafts: Vec<Value> = h
+        .get(&format!("/v1/pull-requests/{id}/drafts?state=pending"))
+        .await;
+    assert_eq!(drafts.len(), 1);
+    assert_eq!(drafts[0]["id"], draft_id);
+    assert_eq!(
+        drafts[0]["session_id"], session.id,
+        "the draft names the keeper session that wrote it"
+    );
+    assert_eq!(drafts[0]["payload"]["comment_id"], comment_id);
+}
+
 /// Stopping before the keeper ever pushes leaves its worktree and its
 /// branch on disk: teardown must not throw away the only copy of a commit
 /// nobody has (032).

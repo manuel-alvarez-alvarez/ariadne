@@ -40,6 +40,26 @@ impl Store {
         )
     }
 
+    /// Clear one comment's told mark alone, none of the row's own told marks
+    /// moved: a discarded reply draft takes back having answered the
+    /// comment, which makes it news again, while nothing else about the
+    /// request the row also tracks is undone with it (026 rule 26).
+    pub async fn clear_pull_request_comment_told(
+        &self,
+        pull_request_id: &str,
+        forge_id: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE pull_request_comment_marks SET told_at = NULL
+              WHERE pull_request_id = ? AND forge_id = ?",
+        )
+        .bind(pull_request_id)
+        .bind(forge_id)
+        .execute(self.w())
+        .await?;
+        Ok(())
+    }
+
     /// Mark comments an Ariadne review session posted (029): under the
     /// user's login, yet the review's, so on a request of the user's own
     /// the task's author answers them.
