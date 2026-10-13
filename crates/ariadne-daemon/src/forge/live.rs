@@ -15,6 +15,7 @@
 //! told of.
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use ariadne_store::{
     CommentMark, NewPullRequestComment, PullRequest, PullRequestComment, PullRequestLive,
@@ -22,6 +23,12 @@ use ariadne_store::{
 };
 
 use super::pulls::{CONVERSATION, FailedCheck, ForgePullRequest, signature, unsigned};
+
+/// The age at which a matching list read must refresh its held details.
+///
+/// The fallback forge poll runs every five minutes, so this retains the
+/// detail read for no more than three unchanged fetches.
+const DETAILS_MAX_AGE: Duration = Duration::from_secs(15 * 60);
 
 /// The last read of one request Ariadne works on.
 #[derive(Debug, Clone)]
@@ -31,6 +38,11 @@ pub struct Live {
     pub review_requested: bool,
     /// What a detail read found; None where the request was only listed.
     pub details: Option<Details>,
+    /// When `details` last came from a successful detail read. A matching
+    /// list read refreshes it at [`DETAILS_MAX_AGE`], because a base move,
+    /// thread resolution, or different failed check names can leave every
+    /// listed field unchanged.
+    details_read_at: Option<Instant>,
     /// Whether the last attempt to refresh `details` actually succeeded.
     /// `set` (a successful detail fetch) sets this `true`; the forge
     /// poll's own failure path sets it `false` explicitly
@@ -70,10 +82,12 @@ impl Live {
         details: Option<Details>,
         evidence_ok: bool,
     ) -> Self {
+        let details_read_at = details.as_ref().map(|_| Instant::now());
         Live {
             pull,
             review_requested,
             details,
+            details_read_at,
             evidence_ok,
             generation: 0,
             local_additions: HashMap::new(),
@@ -93,11 +107,16 @@ impl Live {
     /// where the held `details` are missing, where the last attempt to
     /// read them failed (`evidence_ok` false), or where a comment Ariadne
     /// itself posted has not yet been read back by a detail read
-    /// (`local_additions`), or where `generation` changed after `since`,
-    /// the generation `read_row` captured before it began this read: each
-    /// leaves `details` behind a state the list's own read never shows.
-    pub fn unmoved(&self, listed: &ForgePullRequest, since: u64) -> bool {
+    /// (`local_additions`), where `generation` changed after `since`, the
+    /// generation `read_row` captured before it began this read, or where
+    /// the held details reached [`DETAILS_MAX_AGE`]: each leaves `details`
+    /// behind a state the list's own read never shows.
+    pub fn unmoved(&self, listed: &ForgePullRequest, since: u64, now: Instant) -> bool {
         self.details.is_some()
+            && self.details_read_at.is_some_and(|read_at| {
+                now.checked_duration_since(read_at)
+                    .is_some_and(|age| age < DETAILS_MAX_AGE)
+            })
             && self.evidence_ok
             && self.local_additions.is_empty()
             && self.generation == since
@@ -192,23 +211,25 @@ impl LivePulls {
             .0
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let (details, evidence_ok, generation, local_additions) = held
+        let (details, details_read_at, evidence_ok, generation, local_additions) = held
             .get(id)
             .map(|live| {
                 (
                     live.details.clone(),
+                    live.details_read_at,
                     live.evidence_ok,
                     live.generation,
                     live.local_additions.clone(),
                 )
             })
-            .unwrap_or((None, true, 0, HashMap::new()));
+            .unwrap_or((None, None, true, 0, HashMap::new()));
         held.insert(
             id.to_string(),
             Live {
                 pull,
                 review_requested,
                 details,
+                details_read_at,
                 evidence_ok,
                 generation,
                 local_additions,
@@ -233,22 +254,24 @@ impl LivePulls {
             .0
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let (details, generation, local_additions) = held
+        let (details, details_read_at, generation, local_additions) = held
             .get(id)
             .map(|live| {
                 (
                     live.details.clone(),
+                    live.details_read_at,
                     live.generation,
                     live.local_additions.clone(),
                 )
             })
-            .unwrap_or((None, 0, HashMap::new()));
+            .unwrap_or((None, None, 0, HashMap::new()));
         held.insert(
             id.to_string(),
             Live {
                 pull,
                 review_requested,
                 details,
+                details_read_at,
                 evidence_ok: false,
                 generation,
                 local_additions,
@@ -308,6 +331,7 @@ impl LivePulls {
                 pull,
                 review_requested,
                 details: Some(details),
+                details_read_at: Some(Instant::now()),
                 evidence_ok: true,
                 generation,
                 local_additions,
@@ -336,6 +360,7 @@ impl LivePulls {
             pull,
             review_requested,
             details: Some(details),
+            details_read_at: Some(Instant::now()),
             generation,
             local_additions,
             evidence_ok: true,
@@ -895,6 +920,7 @@ mod tests {
                 behind_base: false,
                 head_sha: "abc".into(),
             }),
+            details_read_at: Some(Instant::now()),
             evidence_ok,
             generation: 0,
             local_additions: HashMap::new(),
@@ -959,7 +985,7 @@ mod tests {
     #[test]
     fn unmoved_holds_where_the_list_read_repeats_the_held_fields() {
         let live = sample_live(true);
-        assert!(live.unmoved(&live.pull.clone(), live.generation));
+        assert!(live.unmoved(&live.pull.clone(), live.generation, Instant::now()));
     }
 
     /// Each field a detail read could also catch, moved on its own, turns
@@ -983,7 +1009,10 @@ mod tests {
         for mutate in mutations {
             let mut listed = live.pull.clone();
             mutate(&mut listed);
-            assert!(!live.unmoved(&listed, live.generation), "{listed:?}");
+            assert!(
+                !live.unmoved(&listed, live.generation, Instant::now()),
+                "{listed:?}"
+            );
         }
     }
 
@@ -994,10 +1023,24 @@ mod tests {
     fn unmoved_fails_with_no_details_or_failed_evidence() {
         let mut no_details = sample_live(true);
         no_details.details = None;
-        assert!(!no_details.unmoved(&no_details.pull.clone(), no_details.generation));
+        assert!(!no_details.unmoved(
+            &no_details.pull.clone(),
+            no_details.generation,
+            Instant::now()
+        ));
 
         let failed = sample_live(false);
-        assert!(!failed.unmoved(&failed.pull.clone(), failed.generation));
+        assert!(!failed.unmoved(&failed.pull.clone(), failed.generation, Instant::now()));
+    }
+
+    /// A matching list read still refreshes details once the held detail
+    /// read reaches its maximum age: changes to the base, resolved threads,
+    /// and failed check names can otherwise stay invisible forever.
+    #[test]
+    fn unmoved_fails_when_held_details_expire() {
+        let live = sample_live(true);
+        let now = Instant::now();
+        assert!(!live.unmoved(&live.pull.clone(), live.generation, now + DETAILS_MAX_AGE));
     }
 
     /// A comment Ariadne itself posted, not yet read back by a detail
@@ -1009,7 +1052,7 @@ mod tests {
         let mut live = sample_live(true);
         live.generation = 1;
         live.local_additions.insert("ic-1".into(), 1);
-        assert!(!live.unmoved(&live.pull.clone(), live.generation));
+        assert!(!live.unmoved(&live.pull.clone(), live.generation, Instant::now()));
     }
 
     /// A local addition that lands after this read starts also turns
@@ -1020,6 +1063,6 @@ mod tests {
     fn unmoved_fails_where_a_local_addition_landed_during_this_read() {
         let mut live = sample_live(true);
         live.generation = 1;
-        assert!(!live.unmoved(&live.pull.clone(), 0));
+        assert!(!live.unmoved(&live.pull.clone(), 0, Instant::now()));
     }
 }

@@ -7,7 +7,7 @@ use ariadne_store::{ForgeIntegration, PullRequest, PullRequestFilter, PullReques
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, OnceLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tracing::warn;
@@ -544,10 +544,11 @@ async fn read_row(
     // The list's own read already repeats every field a detail read would
     // also show (`Live::unmoved`): nothing moved since the last detail
     // read, so this fetch keeps it rather than paying for a fresh one.
+    let now = Instant::now();
     if handoff
         .live
         .get(&row.id)
-        .is_some_and(|held| held.unmoved(&read, since))
+        .is_some_and(|held| held.unmoved(&read, since, now))
     {
         handoff.live.set_pull(&row.id, read, requested);
         return Ok(());
