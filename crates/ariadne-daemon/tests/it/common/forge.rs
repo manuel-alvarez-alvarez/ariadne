@@ -281,11 +281,13 @@ pub(crate) fn seed_live(
 /// Overwrite the viewer's own unsubmitted drafts count on a row `seed_live`
 /// or `seed_review_evidence` already seeded, leaving everything else
 /// exactly as it stood: the same way a detail read updates it beside the
-/// rest of its own evidence (031), never on its own.
+/// rest of its own evidence (031), never on its own. `None` is no pending
+/// review and no draft note at all; `Some(0)` is still one, the way a
+/// verdict-only GitHub review with no inline comment of its own is.
 pub(crate) fn seed_pending_drafts(
     h: &super::Harness,
     row: &ariadne_store::PullRequestRow,
-    count: i64,
+    count: Option<i64>,
 ) {
     let mut live = h
         .launcher

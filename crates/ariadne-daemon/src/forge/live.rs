@@ -149,13 +149,15 @@ pub struct Details {
     /// it was never actually read on.
     pub head_sha: String,
     /// The viewer's own unsubmitted posts on this request, as this detail
-    /// read found them (031): a pending review's comment count on GitHub,
-    /// or the draft notes count on GitLab. Read beside the rest of the
-    /// detail fetch, so it is skipped and left standing the same way
-    /// `comments` and `failed_checks` are wherever the fetch itself is
-    /// (`Live::unmoved`), and dropped the same way they are on a failed
-    /// refresh (`LivePulls::set_pull_evidence_failed`).
-    pub pending_drafts: i64,
+    /// read found them (031): `None` for no pending review and no draft
+    /// note, `Some` of the comment count otherwise — GitHub alone can
+    /// leave that at `Some(0)`, a pending review with a verdict and no
+    /// inline comment of its own, which still counts as a draft. Read
+    /// beside the rest of the detail fetch, so it is skipped and left
+    /// standing the same way `comments` and `failed_checks` are wherever
+    /// the fetch itself is (`Live::unmoved`), and dropped the same way
+    /// they are on a failed refresh (`LivePulls::set_pull_evidence_failed`).
+    pub pending_drafts: Option<i64>,
 }
 
 /// The last list a fetch read of one repository (026): every open request
@@ -1021,7 +1023,7 @@ mod tests {
                 failed_checks: Vec::new(),
                 behind_base: false,
                 head_sha: "abc".into(),
-                pending_drafts: 0,
+                pending_drafts: None,
             }),
             details_read_at: Some(Instant::now()),
             evidence_ok,

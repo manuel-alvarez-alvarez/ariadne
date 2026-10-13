@@ -619,32 +619,59 @@ straight to the forge — the posting side `supervise_posts` gates — is
     forge integration is nobody's business elsewhere in this producer.
     The item's `reason` is `unknown`, the same as a readiness item's: it
     names no cause from the shared vocabulary, only a count read off the
-    forge.
+    forge. `Details::pending_drafts` (`forge/live.rs`) is `Option<i64>`,
+    never a bare count: `None` is no pending review and no draft note at
+    all, and `Some` is a draft to raise the item for, its own comment
+    count included — `Some(0)` on its own still raises it, since a
+    pending GitHub review can carry only a verdict and no inline comment
+    of its own and is still a draft nobody has submitted
+    (`attention.rs::a_pending_review_with_no_comments_of_its_own_still_raises_a_drafts_item`).
 18. The count is read where the fetch is already reading everything else
-    about the request, never a call of its own: GitHub's is folded into
-    `ForgeClient::details`'s own `pulls/{number}/reviews` and
-    `pulls/{number}/comments` reads, which already list the viewer's
-    still-pending review (`submitted_at` absent) and every one of its
-    comments (`pull_request_review_id` naming it) for other reasons; a
-    standing call to `gh api graphql` here would break detail reads apart
-    from a thread read, both run through that same endpoint, which this
-    list and the perf regime behind `Live::unmoved` both read as one kind
-    of call and one kind alone. GitLab's own `GET
-    projects/:id/merge_requests/:iid/draft_notes` has no existing read to
-    fold into, so it is its own call, joined into the same
-    `tokio::try_join!` the rest of `Gitlab::details`'s reads already run
-    in (`forge/github/details.rs::pending_review_comment_count`,
-    `forge/gitlab/reviews.rs::draft_posts`). Both land in `Details`
-    (`forge/live.rs`) beside `comments` and `failed_checks`: skipped and
-    left standing the same way those are wherever the detail read itself
-    is (`Live::unmoved`), and carried forward unmoved on a failed detail
-    fetch (`LivePulls::set_pull_evidence_failed`) rather than read as zero
-    the moment one read fails.
-19. The item clears the moment a later fetch's own count reads zero —
+    about the request, each forge its own way. GitHub's own
+    `pulls/{number}/reviews` already lists the viewer's still-pending
+    review (`submitted_at` absent) for other reasons, so finding it costs
+    nothing further; its own comment count does take one more call, but
+    only once that review is found, and even then the one GitHub
+    documents for exactly that review's comments —
+    `pulls/{number}/reviews/{review_id}/comments` — never the general
+    `pulls/{number}/comments` list, which GitHub does not document as
+    carrying a pending review's own
+    (`forge/github/details.rs::pending_review_id`, proved end to end
+    through a real fetch in
+    `pull_requests.rs::a_fetch_reads_the_viewers_own_github_pending_review`,
+    `::a_fetch_reads_a_github_pending_review_with_no_comments_as_some_zero`).
+    A request with no pending review of the viewer's costs this call
+    nothing at all, and the standing thread read
+    (`forge/github/details.rs::THREADS`) stays the only call this fetch
+    ever makes to `gh api graphql` — the one call the perf regime behind
+    `Live::unmoved` reads as a whole detail read, so a second kind of
+    call there would read as a second detail read that never actually
+    happened. GitLab's own `GET projects/:id/merge_requests/:iid/draft_notes`
+    has no existing read to fold into, so it is its own call
+    (`forge/gitlab/reviews.rs::draft_posts`), read apart from the
+    `tokio::try_join!` the rest of `Gitlab::details`'s reads run in rather
+    than inside it: a GitLab host or token this one endpoint fails on —
+    an older instance, a scope it was never granted — must not fail the
+    whole detail read over a feature nothing else here depends on, so its
+    own error is read as `None` and warned about, never propagated.
+    GitLab's own note objects are each a draft in full, so `0` there is
+    read as `None` outright, unlike GitHub's own `Some(0)`. Both land in
+    `Details` (`forge/live.rs`) beside `comments` and `failed_checks`:
+    skipped and left standing the same way those are wherever the detail
+    read itself is (`Live::unmoved`), and carried forward unmoved on a
+    failed detail fetch (`LivePulls::set_pull_evidence_failed`) rather
+    than read as `None` the moment one read fails.
+19. The item clears the moment a later fetch's own read answers `None` —
     the drafts submitted or published on the forge, or deleted there —
     with nothing of its own to invalidate: this producer reads the live
     count fresh on every call, the same as every other forge-driven item
-    in this list.
+    in this list. The read itself still lags behind the forge by as much
+    as `DETAILS_MAX_AGE` (15 minutes): neither forge's draft count moves
+    `pull.updated_at`, the field `Live::unmoved` reads to decide whether a
+    list-only fetch may skip the detail read and keep the last one's own
+    count standing, so a draft that appeared or cleared with nothing else
+    about the request moving is caught only once that age is reached or
+    something else about the request changes first.
 20. The item's target is the request's own page on the forge
     (`AttentionTarget::Forge`), never Ariadne's own pull request panel:
     finishing or submitting a draft is done on the forge itself, which
@@ -979,21 +1006,29 @@ straight to the forge — the posting side `supervise_posts` gates — is
   `::raises one toast per readiness transition, none for a repeat, and none for a withdrawal`).
 - A tracked request of a repository with `supervise_posts` on, whose last
   fetch shows the viewer's own unsubmitted drafts, gives one `drafts` item
-  naming the count and targeting the request's own page on the forge; it
-  clears once a later fetch's own count reads zero
+  naming the count and targeting the request's own page on the forge,
+  even where that count is zero — a pending GitHub review with a verdict
+  and no inline comment of its own still raises it; it clears once a
+  later fetch's own read answers `None`
   (`attention.rs::a_tracked_request_with_unsubmitted_drafts_raises_a_drafts_item`,
+  `::a_pending_review_with_no_comments_of_its_own_still_raises_a_drafts_item`,
   `::the_drafts_item_clears_once_the_forge_shows_none`), and a repository
   with the flag off gives no item at all, whatever the forge shows
   (`attention.rs::a_repository_with_supervise_posts_off_raises_no_drafts_item`).
 - The count itself is read correctly off each forge, through the existing
-  detail fetch rather than a call of its own: GitHub's own
-  `pulls/{number}/reviews` and `pulls/{number}/comments` already answer
-  the viewer's still-pending review and its own comments
-  (`forge/github/details.rs::tests::pending_review_comment_count_reads_only_the_viewers_own_pending_review`,
+  detail fetch rather than a call of its own, except the one GitHub call
+  that only runs once a pending review is actually found: GitHub's own
+  `pulls/{number}/reviews` already answers the viewer's still-pending
+  review, and `pulls/{number}/reviews/{review_id}/comments` — the one
+  GitHub documents for exactly that review, read only once it is found —
+  answers its own comment count, `0` included
+  (`forge/github/details.rs::tests::pending_review_id_reads_only_the_viewers_own_still_pending_review`,
   proved end to end through a real fetch in
-  `pull_requests.rs::a_fetch_reads_the_viewers_own_github_pending_review`),
+  `pull_requests.rs::a_fetch_reads_the_viewers_own_github_pending_review`,
+  `::a_fetch_reads_a_github_pending_review_with_no_comments_as_some_zero`),
   and GitLab's own `GET .../draft_notes` answers the signed-in viewer's
-  own draft notes
+  own draft notes without failing the rest of the detail read where that
+  one call does
   (`forge/gitlab/reviews.rs::tests::draft_posts_counts_the_draft_notes_glab_lists`,
   proved the same way in
   `pull_requests.rs::a_fetch_reads_the_viewers_own_gitlab_draft_notes`).
@@ -1053,7 +1088,7 @@ give-up branch), `crates/ariadne-store/src/goals.rs`
 `crates/ariadne-daemon/src/http/pull_requests.rs` (`ask_review`, `report`),
 `crates/ariadne-daemon/src/attention/drafts.rs`,
 `crates/ariadne-daemon/src/forge/github/details.rs`
-(`pending_review_comment_count`), `crates/ariadne-daemon/src/forge/gitlab/reviews.rs`
+(`pending_review_id`), `crates/ariadne-daemon/src/forge/gitlab/reviews.rs`
 (`Gitlab::draft_posts`), `crates/ariadne-daemon/src/forge/live.rs`
 (`Details::pending_drafts`),
 `crates/ariadne-cli/src/commands/attention.rs` (including `relevant`),

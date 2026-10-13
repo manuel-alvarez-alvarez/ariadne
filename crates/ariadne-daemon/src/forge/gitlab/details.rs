@@ -3,6 +3,7 @@
 //! in its latest pipeline, and whether its head is behind its target.
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use tracing::warn;
 
 use super::Gitlab;
 use crate::forge::pulls::{FailedCheck, ForgeDetails, split_slug};
@@ -125,13 +126,27 @@ impl Gitlab {
         let discussions = format!("{base}/discussions");
         let diverged = format!("{base}?include_diverged_commits_count=true");
         // Reads that wait on the forge, not on each other.
-        let (pull, discussions, failed_checks, diverged, pending_drafts) = tokio::try_join!(
+        let (pull, discussions, failed_checks, diverged) = tokio::try_join!(
             self.pull_request(repo, number),
             self.pages::<Discussion>(host, &discussions),
             self.failed_checks(host, owner, name, &base),
             self.object::<Diverged>(host, &diverged),
-            self.draft_posts(repo, number),
         )?;
+        // The viewer's own draft notes (031), read apart from the rest of
+        // this detail read: an older GitLab, or one a token cannot reach
+        // this endpoint on, must never fail the whole detail read over a
+        // feature this list is the only one that needs. `0` is "no draft
+        // note", not "unread" — GitLab's own note objects are each a draft
+        // in full, so there is no verdict-only review to leave at `Some(0)`
+        // the way GitHub's own pending review can.
+        let pending_drafts = match self.draft_posts(repo, number).await {
+            Ok(0) => None,
+            Ok(count) => Some(count),
+            Err(error) => {
+                warn!(%error, %repo, number, "cannot read the viewer's own draft notes");
+                None
+            }
+        };
         let mut comments = Vec::new();
         for discussion in discussions {
             let notes: Vec<Note> = discussion.notes.into_iter().filter(|n| !n.system).collect();

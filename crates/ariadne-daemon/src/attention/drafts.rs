@@ -41,29 +41,34 @@ pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<Atte
         if pull.state != "open" {
             continue;
         }
-        let count = launcher
+        // `None` is no draft at all; `Some(0)` is still one — a pending
+        // GitHub review can carry a verdict and no inline comment of its
+        // own, and is still a draft waiting to be submitted.
+        let Some(count) = launcher
             .live
             .get(&pull.id)
             .and_then(|live| live.details)
-            .map(|details| details.pending_drafts)
-            .unwrap_or(0);
-        if count <= 0 {
+            .and_then(|details| details.pending_drafts)
+        else {
             continue;
-        }
+        };
         let repo = repository
             .forge
             .as_ref()
             .map(|integration| format!("{}/{}", integration.owner, integration.name))
             .unwrap_or_else(|| pull.repository_id.clone());
         let label = format!("{repo}#{} {}", pull.number, pull.title);
-        let noun = if count == 1 { "comment" } else { "comments" };
+        let summary = if count == 0 {
+            format!("{label} has an unsubmitted draft waiting on the forge.")
+        } else {
+            let noun = if count == 1 { "comment" } else { "comments" };
+            format!("{label} holds {count} unsubmitted draft {noun} waiting on the forge.")
+        };
         items.push(AttentionItemDto {
             id: format!("pull_request:drafts:{}", pull.id),
             producer: AttentionProducer::Drafts,
             reason: AttentionCause::Unknown,
-            summary: format!(
-                "{label} holds {count} unsubmitted draft {noun} waiting on the forge."
-            ),
+            summary,
             required_action: "Finish and submit it yourself, directly on the forge.".into(),
             // No stored mark of its own says when this count first moved
             // off zero — this producer reads the forge's live count alone,

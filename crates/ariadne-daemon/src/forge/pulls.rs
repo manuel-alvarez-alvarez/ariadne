@@ -61,10 +61,13 @@ pub struct ForgeDetails {
     pub comments: Vec<NewPullRequestComment>,
     pub failed_checks: Vec<FailedCheck>,
     pub behind_base: bool,
-    /// The viewer's own unsubmitted posts on the request (031): a pending
-    /// review's comment count on GitHub, or the draft notes count on
-    /// GitLab.
-    pub pending_drafts: i64,
+    /// The viewer's own unsubmitted posts on the request (031): `None`
+    /// where there is none at all — no pending review on GitHub, no draft
+    /// note on GitLab — and `Some` of its comment count otherwise, which
+    /// GitHub alone can leave at `Some(0)`: a pending review with a
+    /// verdict and no inline comment of its own is still a draft waiting
+    /// to be submitted, not nothing.
+    pub pending_drafts: Option<i64>,
 }
 
 /// One check that failed on a request's head, as `pull_requests.failed_checks`

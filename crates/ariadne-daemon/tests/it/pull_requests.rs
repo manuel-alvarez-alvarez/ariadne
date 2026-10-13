@@ -560,22 +560,22 @@ async fn gitlab_requests_keep_fork_checks_review_and_search_by_author_or_number(
 
 /// A fetch of a tracked GitHub request's detail read also reads the
 /// viewer's own pending review (031): `pulls/{number}/reviews` already
-/// answers it, `submitted_at` absent, and `pulls/{number}/comments`
-/// already answers each comment's own `pull_request_review_id` naming it
-/// — both reads this detail fetch already makes for every other reason,
-/// so the count of them lands on the row's live entry with no call of its
-/// own.
+/// answers it, `submitted_at` absent, and its own comment count is read
+/// off the one call GitHub documents for exactly that review's comments,
+/// `pulls/{number}/reviews/{review_id}/comments` — asked only because a
+/// pending review was found, never the general, undocumented-for-this
+/// `pulls/{number}/comments` list.
 #[tokio::test]
 async fn a_fetch_reads_the_viewers_own_github_pending_review() {
     use crate::common::{TIMEOUT, eventually};
     let pull = github_pull(1, "other");
     let threads =
         json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
-    let review_comments = json!([
+    let pending_review_comments = json!([
         {"id": 10, "user": {"login": "me"}, "body": "a finding", "path": "src/lib.rs",
-            "line": 1, "created_at": "2026-10-01T00:00:00Z", "pull_request_review_id": 55},
+            "line": 1, "created_at": "2026-10-01T00:00:00Z"},
         {"id": 11, "user": {"login": "me"}, "body": "another", "path": "src/lib.rs",
-            "line": 2, "created_at": "2026-10-01T00:00:00Z", "pull_request_review_id": 55},
+            "line": 2, "created_at": "2026-10-01T00:00:00Z"},
     ]);
     let reviews = json!([
         {"id": 55, "user": {"login": "me"}, "body": "", "submitted_at": null},
@@ -590,16 +590,17 @@ async fn a_fetch_reads_the_viewers_own_github_pending_review() {
             0,
             "[]"
         ),
-        answer(
-            &["api", "repos/acme/widgets/pulls/1/comments"],
-            0,
-            &review_comments.to_string()
-        ),
+        answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
         answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
         answer(
             &["api", "repos/acme/widgets/pulls/1/reviews"],
             0,
             &reviews.to_string()
+        ),
+        answer(
+            &["api", "repos/acme/widgets/pulls/1/reviews/55/comments"],
+            0,
+            &pending_review_comments.to_string()
         ),
         answer(&["api", "graphql"], 0, &threads.to_string()),
         answer(
@@ -627,7 +628,72 @@ async fn a_fetch_reads_the_viewers_own_github_pending_review() {
             .live
             .get(&row_id)
             .and_then(|live| live.details)
-            .is_some_and(|details| details.pending_drafts == 2)
+            .is_some_and(|details| details.pending_drafts == Some(2))
+    })
+    .await;
+}
+
+/// The same pending review, with a verdict and no inline comment of its
+/// own: `Some(0)`, never read the same as "no draft at all", so the item
+/// still has something to raise even though the count itself is zero.
+#[tokio::test]
+async fn a_fetch_reads_a_github_pending_review_with_no_comments_as_some_zero() {
+    use crate::common::{TIMEOUT, eventually};
+    let pull = github_pull(1, "other");
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let reviews = json!([
+        {"id": 55, "user": {"login": "me"}, "body": "Looks fine overall.", "submitted_at": null},
+    ]);
+    let stub = stub_forge_cli(json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["api", "user"], 0, "me"),
+        answer(&["pr", "list"], 0, &json!([pull]).to_string()),
+        answer(&["pr", "view"], 0, &pull.to_string()),
+        answer(
+            &["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+            0,
+            "[]"
+        ),
+        answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
+        answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
+        answer(
+            &["api", "repos/acme/widgets/pulls/1/reviews"],
+            0,
+            &reviews.to_string()
+        ),
+        answer(
+            &["api", "repos/acme/widgets/pulls/1/reviews/55/comments"],
+            0,
+            "[]"
+        ),
+        answer(&["api", "graphql"], 0, &threads.to_string()),
+        answer(
+            &["api", "repos/acme/widgets/commits/abc/check-runs"],
+            0,
+            r#"{"check_runs": []}"#
+        ),
+        answer(
+            &["api", "repos/acme/widgets/compare/main...abc"],
+            0,
+            r#"{"behind_by": 0}"#
+        ),
+    ]));
+    let h = harness().forge_cli(&stub).await;
+    let id = enabled_repository(&h).await;
+    eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
+    let listed: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
+    let read = listed
+        .iter()
+        .find(|r| r["number"] == 1)
+        .expect("the tracked request");
+    let row_id = read["id"].as_str().unwrap().to_string();
+    eventually(TIMEOUT, "the pending review read", async || {
+        h.launcher
+            .live
+            .get(&row_id)
+            .and_then(|live| live.details)
+            .is_some_and(|details| details.pending_drafts == Some(0))
     })
     .await;
 }
@@ -714,7 +780,7 @@ async fn a_fetch_reads_the_viewers_own_gitlab_draft_notes() {
             .live
             .get(&row_id)
             .and_then(|live| live.details)
-            .is_some_and(|details| details.pending_drafts == 2)
+            .is_some_and(|details| details.pending_drafts == Some(2))
     })
     .await;
 }
