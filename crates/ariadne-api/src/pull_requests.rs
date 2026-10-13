@@ -130,6 +130,22 @@ pub struct PullRequestCommentDto {
     pub from_review: bool,
 }
 
+/// What the reply route answers instead of a posted comment, where the
+/// repository holds agent posts for the user's approval (002, 026 rule 24):
+/// the reply waits, unposted, as a pending review (GitHub) or a draft note
+/// (GitLab) in the user's own forge drafts, until the user publishes it
+/// there.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PendingReplyDto {
+    /// Always true: a posted reply never takes this shape.
+    pub pending: bool,
+    /// The forge id of the pending item: the pending review's own id for a
+    /// reply to a top-level conversation comment, the new draft comment's
+    /// for a reply inside a review thread (GitHub); the draft note's id
+    /// (GitLab).
+    pub id: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
 pub struct PullRequestCommentQuery {
     /// Only the threads that wait on an answer from the integration login.

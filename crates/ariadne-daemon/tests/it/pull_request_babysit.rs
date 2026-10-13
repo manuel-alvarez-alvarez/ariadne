@@ -195,6 +195,10 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path).await;
+    // Not about the supervised path (026 rule 24 covers that separately):
+    // the reply below posts directly, as it did before that rule existed.
+    let repository_row = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository_row, false).await;
     // Nobody works on a request of mine until there is a reason to: no
     // task opened it, nobody asked for a review of it, and nobody has
     // asked to babysit it yet.

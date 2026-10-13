@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-10-12
+updated: 2026-10-13
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -125,6 +125,12 @@ reads behind them ([026](026-pull-requests.md)).
     way it accepts a task's column agent: a request a task keeps is
     refused the ask (rule 1), so no row ever carries both, and the seat
     alone tells the two apart.
+    A repository that supervises its posts holds the keeper's reply back
+    the same way (026 rule 24): nothing posts to the forge directly, the
+    route answers `pending: true`, and the comment counts answered from
+    then on. This is one route and one seat check shared with the task's
+    column agent, so no test of its own repeats what 026's already prove
+    for it.
 14. `report_pull_request` takes `ready` with `head_sha`, on a row this
     keeper answers for, by the same rule a task's column agent reports
     under (029 rule 15): a `ready: true` report with no `head_sha`, or one

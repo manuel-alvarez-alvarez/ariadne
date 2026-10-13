@@ -412,6 +412,10 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
 /// session (029): the `pull_request` attention producer reads the forge's
 /// own evidence against the claim instead. Any other session is refused,
 /// and so is a call that comes from no session.
+///
+/// The repository does not supervise its posts here, so the reply posts
+/// directly, as it always has (026 rule 24 covers the supervised case
+/// separately, below).
 #[tokio::test]
 async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
     let comments = [review_comment(101, "alice", None, "2026-10-02T00:00:00Z")];
@@ -423,6 +427,8 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         repo,
         ..
     } = kept_request(script("OPEN", &comments, json!([]))).await;
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, false).await;
     fetch_again(&h, &stub, &repo).await;
     let mut stored: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "the comment to be told", async || {
@@ -706,6 +712,9 @@ async fn open_pull_request_leaves_the_agents_draft_value_unchanged_when_supervis
 /// goes through the forge's `gh pr comment`, once. A second reply to the
 /// same body, and a reply to a body of the agent's own side, are refused,
 /// and no gh call follows either refusal.
+///
+/// The repository does not supervise its posts here, so the reply posts
+/// directly (026 rule 24 covers the supervised case separately, below).
 #[tokio::test]
 async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side() {
     let threads =
@@ -725,8 +734,15 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
         &threads.to_string(),
     );
     let Kept {
-        h, stub, agent, id, ..
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
     } = kept_request(script.clone()).await;
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, false).await;
     let mut stored: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "both review bodies to be stored", async || {
         stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
@@ -814,10 +830,128 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
     );
 }
 
+/// Where the repository supervises its posts (002 rule 13), the keeping
+/// agent's reply to a top-level conversation comment holds nothing on the
+/// forge directly: no `gh pr comment` call is made. Instead it quotes the
+/// comment it answers, with a link to it, and appends that to the
+/// viewer's own pending review, answering `pending: true` and the
+/// review's own id (026 rule 24). The comment counts answered from then
+/// on, so a second reply to it is refused the same way an already
+/// answered comment always is.
+#[tokio::test]
+async fn the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_posts() {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let reviews = json!([
+        {"id": 501, "user": {"login": "alice"}, "body": "Why not here?",
+         "submitted_at": "2026-10-02T00:01:00Z"},
+    ]);
+    let mut script = script_of(
+        pull("OPEN", "abc"),
+        &[],
+        &[],
+        &json!({"check_runs": []}).to_string(),
+        &reviews.to_string(),
+        &threads.to_string(),
+    );
+    // Ahead of the generic reads `script_of` already answers: finding no
+    // pending review of "me" among `reviews` above, the reply creates one
+    // with no body of its own, then appends to it through GraphQL. Each
+    // gets its own entry here, matched before the generic one it would
+    // otherwise fall through to.
+    script.as_array_mut().unwrap().splice(
+        0..0,
+        [
+            answer(
+                &[
+                    "api",
+                    "repos/acme/widgets/pulls/1/reviews",
+                    "--hostname",
+                    "github.com",
+                    "--method",
+                    "POST",
+                ],
+                0,
+                r#"{"id": 9, "node_id": "PR_kwDOx", "state": "PENDING", "body": "",
+                    "user": {"login": "me"}}"#,
+            ),
+            answer(
+                &[
+                    "api",
+                    "graphql",
+                    "--hostname",
+                    "github.com",
+                    "-f",
+                    "query=mutation($id: ID!, $body: String!) { \
+                     updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
+                     pullRequestReview { id } } }",
+                ],
+                0,
+                r#"{"data": {"updatePullRequestReview": {"pullRequestReview": {"id": "PR_kwDOx"}}}}"#,
+            ),
+        ],
+    );
+    let Kept {
+        h, stub, agent, id, ..
+    } = kept_request(script).await;
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "alice's comment to be stored", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.iter().any(|c| c["author_login"] == "alice")
+    })
+    .await;
+    let other_side = stored
+        .iter()
+        .find(|c| c["author_login"] == "alice")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let before = stub.invocations().len();
+    let reply: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+                &agent.id,
+                json!({"body": "Fixed it."}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(reply["pending"], true);
+    assert_eq!(reply["id"], "rv-9");
+    assert!(
+        !stub.invocations()[before..]
+            .iter()
+            .any(|i| i.args.first().map(String::as_str) == Some("pr")
+                && i.args.get(1).map(String::as_str) == Some("comment")),
+        "no public comment is posted while the repository supervises its posts"
+    );
+
+    // The comment counts answered with no reply visible on the forge.
+    let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert_eq!(dto["unanswered_comments"], 0);
+
+    // A second reply is refused, the same way a comment the login's own
+    // side already answered always is: the pending mark alone settles it.
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+            &agent.id,
+            json!({"body": "Again."}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+}
+
 /// Two replies racing for the same conversation body: both pass the once
 /// check before either reaches the forge, but the pull request's reply
 /// lock serializes them, so the second rereads the first's answer instead
 /// of racing it. One `gh pr comment` call posts; the other is refused.
+/// The repository does not supervise its posts: this is about the race,
+/// not about the supervised path (026 rule 24 covers that separately).
 #[tokio::test]
 async fn two_replies_racing_for_one_comment_post_it_once() {
     let threads =
@@ -844,8 +978,15 @@ async fn two_replies_racing_for_one_comment_post_it_once() {
         }
     }
     let Kept {
-        h, stub, agent, id, ..
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
     } = kept_request(script.clone()).await;
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, false).await;
     let mut stored: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "both review bodies to be stored", async || {
         stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
@@ -912,6 +1053,8 @@ fn conversation_reads(stub: &StubForgeCli) -> usize {
 /// only a local addition newer than the generation the read itself
 /// captured, and the reply is exactly that. The once check still refuses
 /// a second reply to the same comment once the poll's stale read lands.
+/// The repository does not supervise its posts: this is about the race,
+/// not about the supervised path (026 rule 24 covers that separately).
 #[tokio::test]
 async fn a_poll_that_began_before_a_reply_does_not_erase_it() {
     let threads =
@@ -940,6 +1083,8 @@ async fn a_poll_that_began_before_a_reply_does_not_erase_it() {
         repo,
         ..
     } = kept_request(script.clone()).await;
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, false).await;
     let mut stored: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "both review bodies to be stored", async || {
         stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
@@ -1656,6 +1801,10 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
         path,
         ..
     } = kept_request(quiet_script()).await;
+    // Not about the supervised path (026 rule 24 covers that separately):
+    // the reply below posts directly, as it did before that rule existed.
+    let repository = h.store.get_repository(&repo).await.unwrap();
+    h.set_supervise_posts(&repository, false).await;
     // The request's head is the task branch, so the review has a commit to
     // be detached at.
     let tip = sh(&path, &format!("git rev-parse {}", task.branch));

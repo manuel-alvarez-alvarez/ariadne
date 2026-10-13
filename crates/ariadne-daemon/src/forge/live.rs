@@ -634,7 +634,10 @@ pub fn view(row: PullRequestRow, live: &Live, marks: &[CommentMark], login: &str
 /// The forge's comments of `row`'s request, with the marks read beside
 /// them, oldest first. A thread is resolved or not as a whole, and a
 /// comment is answered once a later comment of its thread is the login's
-/// own.
+/// own, or once its own reply is held pending in the user's own forge
+/// drafts (026 rule 24): [`answered`] only ever turns this `true`, never
+/// back, so a comment marked pending here reads answered however the rest
+/// of its thread moves.
 pub fn comments(
     pull_request_id: &str,
     forge: &[NewPullRequestComment],
@@ -664,7 +667,7 @@ pub fn comments(
                 line: c.line,
                 in_reply_to: c.in_reply_to.clone(),
                 created_at: c.created_at.clone(),
-                answered: false,
+                answered: mark.is_some_and(|m| m.pending_reply),
                 resolved: resolved.contains(c.thread_id.as_str()),
                 told_at: mark.and_then(|m| m.told_at.clone()),
                 // The review's mark is on the forge with the comment, and
@@ -700,7 +703,10 @@ pub(crate) fn is_review_summary(comment: &PullRequestComment, login: &str) -> bo
 }
 
 /// The comments with `answered` worked out (026): a later comment of the
-/// same thread on the login's own side answers it.
+/// same thread on the login's own side answers it, or its own reply is held
+/// pending in the user's own forge drafts (026 rule 24), as [`comments`]
+/// already read onto it — kept rather than overwritten, since a pending
+/// reply adds no later comment of its own for this to find.
 pub fn answered(
     mut comments: Vec<PullRequestComment>,
     role: &str,
@@ -712,10 +718,12 @@ pub fn answered(
         .map(|c| (c.thread_id.clone(), c.created_at.clone(), c.id.clone()))
         .collect();
     for comment in &mut comments {
-        comment.answered = mine.iter().any(|(thread, at, id)| {
-            *thread == comment.thread_id
-                && (at.as_str(), id.as_str()) > (comment.created_at.as_str(), comment.id.as_str())
-        });
+        comment.answered = comment.answered
+            || mine.iter().any(|(thread, at, id)| {
+                *thread == comment.thread_id
+                    && (at.as_str(), id.as_str())
+                        > (comment.created_at.as_str(), comment.id.as_str())
+            });
     }
     comments
 }
@@ -883,6 +891,19 @@ mod tests {
             forge_id: forge_id.into(),
             told_at: told.then(|| "2026-10-03T00:00:00Z".into()),
             from_review,
+            pending_reply: false,
+        }
+    }
+
+    /// A mark of a comment whose reply the agent holds, unposted, in the
+    /// user's own forge drafts (026 rule 24).
+    fn pending_mark(forge_id: &str) -> CommentMark {
+        CommentMark {
+            pull_request_id: "p".into(),
+            forge_id: forge_id.into(),
+            told_at: None,
+            from_review: false,
+            pending_reply: true,
         }
     }
 
@@ -924,6 +945,19 @@ mod tests {
         forge.push(comment("1rr", "t1", "alice", "2026-10-05T00:00:00Z"));
         let reopened = answered(comments("p", &forge, &[]), "author", "me");
         assert_eq!(waiting_threads(&reopened, "author", "me").len(), 1);
+    }
+
+    /// A comment whose reply is held pending in the user's own forge
+    /// drafts (026 rule 24) reads answered, and its thread waits on nobody,
+    /// though the forge shows no later comment of the login's own: the
+    /// mark alone settles it, with no reply ever visible on the forge to
+    /// find.
+    #[test]
+    fn a_pending_reply_marks_its_comment_answered_with_no_later_comment_on_the_forge() {
+        let forge = [comment("1", "t1", "alice", "2026-10-02T00:00:00Z")];
+        let all = answered(comments("p", &forge, &[pending_mark("1")]), "author", "me");
+        assert!(waiting_threads(&all, "author", "me").is_empty());
+        assert!(all[0].answered);
     }
 
     /// A reviewer session hears of the replies in the threads its login

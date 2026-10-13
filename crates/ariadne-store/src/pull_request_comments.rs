@@ -64,6 +64,24 @@ impl Store {
         Ok(())
     }
 
+    /// Mark that the agent's reply to `forge_id` is held, unposted, in the
+    /// user's own forge drafts (026 rule 24): the comment counts answered
+    /// from here on. A one-way local record, never read back off the
+    /// forge — a draft deleted there before the user publishes it leaves
+    /// the mark, and the comment, as they are.
+    pub async fn mark_pending_reply(&self, pull_request_id: &str, forge_id: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO pull_request_comment_marks (pull_request_id, forge_id, pending_reply)
+             VALUES (?, ?, 1)
+             ON CONFLICT (pull_request_id, forge_id) DO UPDATE SET pending_reply = 1",
+        )
+        .bind(pull_request_id)
+        .bind(forge_id)
+        .execute(self.w())
+        .await?;
+        Ok(())
+    }
+
     /// Claim a pull request's news, right before the prompt that tells it
     /// goes out (026): its comments are marked told, and the row takes the
     /// told mark the news leaves and the time it was told.
