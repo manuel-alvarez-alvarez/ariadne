@@ -118,7 +118,25 @@
         ],
         "later_request_id": "msg_011CfuDEdYGirJVYgKMUNr5X",
         "result_summary": "Both native calls retained results; no stable file revision or semantic-operation link joins the two calls.",
-        "classification": "unresolved_repetition"
+        "classification": "reread_after_new_delivery_with_unchanged_result",
+        "operation": "read coding SKILL.md",
+        "result_chars_each": 4613,
+        "result_sha256": "0dd0eb2b9aea30d38132fb352f27a39821f3d0dd9ab418301b0d5950f5f595fb",
+        "transcript_lines": {
+          "first_call_result": [
+            21,
+            22
+          ],
+          "second_call_result": [
+            3991,
+            3992
+          ],
+          "new_delivery": 3988,
+          "prior_completion": 3985
+        },
+        "delivery_context": "new task delivery instructed the agent to read skills first",
+        "later_action": "msg_011CfuDEdYGirJVYgKMUNr5X inspected ACP prompt-handling code",
+        "counter_evidence": "The new delivery explicitly required skill reading; avoidable work and savings are unproven."
       }
     },
     "failure_evidence": "The selected major transcript has 17 native tool_result records with is_error. Two are traced in cases.error_followups. They are followed by later requests but do not establish the content of a retry, revision, or causal correction."
@@ -166,9 +184,10 @@
           }
         ],
         "delivered_context_comparison": {
-          "present": "rendered history and predecessor context",
-          "successor_checked_again": "open PR, checks, and pending comments",
-          "absent_or_uncertain": "no selected-entry list, deployed renderer revision, or field proving that the delivered text supplied those PR facts"
+          "present": "rendered history at character offset about 12460 states PR #44 ready, six checks passed, no review comments, readiness recorded, and open human-merge wait",
+          "successor_checked_again": "successor fresh-checked those facts, recorded PR readiness, and waited for human merge",
+          "absent_or_uncertain": "no selected-entry list, deployed renderer revision, or field proving that the delivered text supplied those PR facts",
+          "interpretation": "delivered prior status followed by a fresh external-state check; neither redundant work nor savings is established"
         }
       }
     ]
