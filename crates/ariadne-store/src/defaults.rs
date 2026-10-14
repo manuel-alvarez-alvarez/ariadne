@@ -1690,8 +1690,10 @@ mod tests {
     fn the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule() {
         let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
         for phrase in [
+            "Give each one cohesive outcome, one repository, and a complete path through every layer it touches.",
             "Write each contract between two tasks into both tickets: a route, a response shape, a function, a file.",
-            "Add `depends_on` only where the code cannot compile or run without the other task.",
+            "Add `depends_on` only for a genuine compilation, execution, or acceptance prerequisite.",
+            "Do not add one only because two tasks touch nearby files.",
             "Run no checks yourself: the last column proved the work.",
             "\"The frontend waits for the backend to land.\" -> Write the contract into both tickets. Both run now.",
         ] {

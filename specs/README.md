@@ -15,7 +15,7 @@ test that proves it. Conventions for writing and changing one are in
 | --- | --- | --- |
 | 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | the six statuses, the transition table, dependencies, failure and retry |
 | 002 | [Repositories, branches and worktrees](002-repositories-branches-and-worktrees.md) | checkouts, base branches, branch naming, the worktree per seat |
-| 003 | [Planning a goal](003-planning-a-goal.md) | the conversation, the plan, and the orchestrator's whole life |
+| 003 | [Planning a goal](003-planning-a-goal.md) | the conversation, cohesive tasks, and the orchestrator's whole life |
 | 004 | [Authoring and review](004-authoring-and-review.md) | superseded by 030: the author, the reviewers and the verdicts are the develop and review columns |
 | 005 | [How a task ends](005-how-a-task-ends.md) | superseded by 030: the landings are the gate of a workflow's last column |
 | 006 | [Prompts and Simplified Technical English](006-prompts-and-simplified-technical-english.md) | the layers of text, who owns each, the English all of it is in |
