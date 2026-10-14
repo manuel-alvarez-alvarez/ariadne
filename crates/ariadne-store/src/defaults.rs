@@ -982,21 +982,29 @@ mod tests {
         );
     }
 
-    /// The review column starts scoped checks before it reads the diff and
-    /// task, then ends on one of the two step calls: a must-fix finding
-    /// fails the step, and an optional one never does.
+    /// The review column reads available check evidence before it decides
+    /// which scoped checks to run. It can reuse only evidence for the
+    /// reviewed revision and required check. A must-fix finding fails the
+    /// step, and an optional one never does.
     #[test]
-    fn the_review_skill_starts_its_checks_before_the_read_and_ends_on_a_step_call() {
+    fn the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call() {
         let text = unwrapped(default_skill_document("code-review").unwrap());
+        let evidence = text
+            .find("Search the handoff reasons, accessible logs and CI evidence.")
+            .expect("the code-review skill does not inspect check evidence");
+        let scope = text
+            .find("Pin the scope.")
+            .expect("the code-review skill does not pin the scope");
         let checks = text
-            .find("Start the checks of what the diff changed, once for this verdict.")
-            .expect("the code-review skill does not start scoped checks once");
-        let read = text
-            .find("Read the task")
-            .expect("the code-review skill does not read the task");
+            .find("Run each required check with no reusable result, once for this verdict.")
+            .expect("the code-review skill does not run missing checks");
         assert!(
-            checks < read,
-            "the code-review skill reads before it starts the checks"
+            evidence < checks,
+            "the code-review skill chooses checks before it reads the evidence"
+        );
+        assert!(
+            scope < checks,
+            "the code-review skill chooses checks before it pins the scope"
         );
         assert_eq!(
             text.matches("once for this verdict").count(),
@@ -1005,7 +1013,11 @@ mod tests {
         );
         for rule in [
             "`git checkout --detach <branch>` in the task worktree",
-            "the SHA you judged, from `git rev-parse HEAD`",
+            "Search the handoff reasons, accessible logs and CI evidence.",
+            "its revision matches `git rev-parse HEAD`",
+            "Its command must be a check this diff requires",
+            "Run each required check with no reusable result, once for this verdict.",
+            "Include the SHA from `git rev-parse HEAD`",
             "On any must-fix finding, call `fail_step` with the verdict.",
             "Else call `complete_step` with the verdict, and list the optional findings in it.",
             "An optional finding never fails the step.",
@@ -1032,10 +1044,28 @@ mod tests {
     #[test]
     fn a_skill_scopes_its_own_checks_to_what_the_task_changed() {
         for (name, step) in [
-            ("coding", "Run the checks of what you changed."),
-            ("code-review", "Start the checks of what the diff changed"),
+            (
+                "coding",
+                "Run the checks of what you changed at the committed revision.",
+            ),
+            (
+                "code-review",
+                "Run each required check with no reusable result, once for this verdict.",
+            ),
             ("pr-babysit", "run the checks of what you changed"),
-            ("coding", "Run the one test, never the suite around it."),
+            (
+                "coding",
+                "For a code behavior change, write a failing test first",
+            ),
+            ("coding", "Run that test alone, never the suite around it."),
+            (
+                "coding",
+                "For prose or a behavior-preserving refactor, choose verification",
+            ),
+            (
+                "coding",
+                "the checked revision, each command and its result",
+            ),
             ("debugging", "The tests of the crate you changed are green."),
             ("debugging", "Run the checks of what you changed."),
             (

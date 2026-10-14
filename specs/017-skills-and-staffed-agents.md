@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-10-12
+updated: 2026-10-14
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -218,7 +218,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
   and never amends, and `refactoring` names one commit
   (`defaults.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
 - The review skill ends on a step call, and the merge skill lands in order
-  (`defaults.rs::the_review_skill_starts_its_checks_before_the_read_and_ends_on_a_step_call`,
+  (`defaults.rs::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
   `::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`).
 - An agent is written on the pin it was given, whole
   (`store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`), and no
