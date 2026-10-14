@@ -8,7 +8,7 @@ Saved Claude transcripts establish per-request usage for mapped sessions and nat
 
 ## Reproducible evidence
 
-Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15` at `/tmp/token-followup.db`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Source revision: `2b8a969eeb86d6d998e7aa837776fd9e095c6105`. Analyzer SHA-256: `1a1a752d7600fb329b9a2903a0cc73635ce7827b9d38ef6ef1ec97a44524b295`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
+Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15` at `/tmp/token-followup.db`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Source revision: `fe10bc18e13d9b9011bb34cdaba25bc0e97b3b90`. Analyzer SHA-256: `d2f7d70be867499b9188ad88172cc8c94885ac572005aa74278c32a142578d81`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
 
 The follow-up found 48,769 retained request records, all mapped through native session IDs. It discarded 81,531 repeated Claude blocks and excluded 6,782 ambiguous-usage request identities (6,782 identities including missing usage) in `excluded-requests.csv`. The CSV artifacts retain no raw transcript text.
 
@@ -30,7 +30,7 @@ Request input includes cached input. Uncached input equals input minus cached in
 
 ## Manual record inspection
 
-`manual-inspection.json` selects the three largest mapped-session input totals and one median mapped reviewer session. Each selected daemon event has a later native request and a finished task outcome; one major session has a correction-marker delivery among thirteen. Those are supported sequence facts, not evidence that the delivery caused the work. The first major transcript has 17 native error results. Two sampled error results have their later request IDs and observed four-millisecond record intervals. It also has 69 exact repeated-command groups across 1,030 Bash calls. These facts establish retry candidates, but not whether a command was necessary or a correction succeeded.
+`manual-inspection.json` selects the three largest mapped-session input totals and one median mapped reviewer session. Each selected daemon event has a later native request and a finished task outcome; one major session has a correction-marker delivery among thirteen. Those are supported sequence facts, not evidence that the delivery caused the work. The first major transcript has 17 native error results. Two sampled error results have later request IDs and observed 2,408 and 1,737 millisecond record intervals. The first rejected a ScheduleWakeup call for a missing prompt; its subsequent assistant content chose automatic notification. It also has 69 exact repeated-command groups across 1,030 Bash calls. These facts establish retry candidates, but not whether a command was necessary or a correction succeeded.
 
 The handoff sample includes the largest retained successor prompt (247,208 characters, cancelled) and a finished ordinary successor (50,949 characters). Both retain the history marker. Stored renderer source provides `handoff_text`, `render_entry`, and `apply_budget` rules. The historical deployed revision and selected entries are still absent, so the body cannot reconstruct the original selection.
 

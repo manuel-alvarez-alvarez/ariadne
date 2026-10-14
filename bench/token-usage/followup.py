@@ -432,9 +432,6 @@ def main() -> int:
         canonical = canonical_request_ids.get(key)
         if canonical:
             tool["request_id"] = canonical
-    tool_count_by_request = collections.Counter((tool["family"], tool["session_id"], tool["request_id"]) for tool in tool_rows)
-    for request in request_rows:
-        request["tool_calls"] = tool_count_by_request[(request["family"], request["session_id"], request["request_id"])]
     # Request histories use native request IDs.  No timeline is inferred for
     # unmapped records, and elapsed spans are per session rather than summed.
     timeline: list[dict[str, Any]] = []
@@ -487,6 +484,10 @@ def main() -> int:
         prior["result_chars"] = max(prior["result_chars"], row["result_chars"])
         if prior["tool_name"] == "unknown":
             prior["tool_name"] = row["tool_name"]
+    # Count native call identities after duplicate transcript blocks merge.
+    tool_count_by_request = collections.Counter((tool["family"], tool["session_id"], tool["request_id"]) for tool in merged_tools.values())
+    for request in request_rows:
+        request["tool_calls"] = tool_count_by_request[(request["family"], request["session_id"], request["request_id"])]
     mapped_request_keys = {(row["family"], row["session_id"], row["request_id"]) for row in request_rows}
     tool_values = sorted((row for row in merged_tools.values() if (row["family"], row["session_id"], row["request_id"]) in mapped_request_keys or row["request_association"] != "native_assistant_content"), key=lambda value: (value["family"], value["request_id"], value["tool_call_id"]))
 
@@ -551,8 +552,9 @@ def main() -> int:
             add(post_cutoff if row["timestamp"] > baseline_cutoff else historical, row)
         frozen_counter = baseline_usage_by_session.get(sid, usage())
         task_session_count = sessions_by_task.get(session_by_id.get(sid, {}).get("task_id"), 0)
-        state = "no_retained_historical_request" if not grouped.get(sid) else "matched_frozen_counter" if historical == frozen_counter else "excluded_ambiguous_request_usage" if excluded_by_session[sid] else "multiple_counter_sources" if source_count_by_session[sid] > 1 else "restarted_session" if starts_by_session[sid] > 1 else "multi_session_task_scope" if task_session_count > 1 else "unresolved_residual"
-        shared_reconciliation.append({"session_id": sid, "historical_request_input_tokens": historical["input_tokens"], "historical_request_cached_input_tokens": historical["cached_input_tokens"], "historical_request_output_tokens": historical["output_tokens"], "frozen_counter_input_tokens": frozen_counter["input_tokens"], "frozen_counter_cached_input_tokens": frozen_counter["cached_input_tokens"], "frozen_counter_output_tokens": frozen_counter["output_tokens"], "post_cutoff_request_input_tokens": post_cutoff["input_tokens"], "post_cutoff_request_cached_input_tokens": post_cutoff["cached_input_tokens"], "post_cutoff_request_output_tokens": post_cutoff["output_tokens"], "excluded_request_identities": excluded_by_session[sid], "counter_sources": source_count_by_session[sid], "session_starts": starts_by_session[sid], "task_session_count": task_session_count, "input_residual": frozen_counter["input_tokens"] - historical["input_tokens"], "cached_input_residual": frozen_counter["cached_input_tokens"] - historical["cached_input_tokens"], "output_residual": frozen_counter["output_tokens"] - historical["output_tokens"], "state": state})
+        state = "no_retained_historical_request" if not grouped.get(sid) else "matched_frozen_counter" if historical == frozen_counter else "unresolved_residual"
+        evidence_flags = "|".join(flag for flag, present in (("excluded_ambiguous_request_usage", bool(excluded_by_session[sid])), ("multiple_counter_sources", source_count_by_session[sid] > 1), ("restarted_session", starts_by_session[sid] > 1), ("multi_session_task_scope", task_session_count > 1)) if present) or "none"
+        shared_reconciliation.append({"session_id": sid, "historical_request_input_tokens": historical["input_tokens"], "historical_request_cached_input_tokens": historical["cached_input_tokens"], "historical_request_output_tokens": historical["output_tokens"], "frozen_counter_input_tokens": frozen_counter["input_tokens"], "frozen_counter_cached_input_tokens": frozen_counter["cached_input_tokens"], "frozen_counter_output_tokens": frozen_counter["output_tokens"], "post_cutoff_request_input_tokens": post_cutoff["input_tokens"], "post_cutoff_request_cached_input_tokens": post_cutoff["cached_input_tokens"], "post_cutoff_request_output_tokens": post_cutoff["output_tokens"], "excluded_request_identities": excluded_by_session[sid], "counter_sources": source_count_by_session[sid], "session_starts": starts_by_session[sid], "task_session_count": task_session_count, "evidence_flags": evidence_flags, "input_residual": frozen_counter["input_tokens"] - historical["input_tokens"], "cached_input_residual": frozen_counter["cached_input_tokens"] - historical["cached_input_tokens"], "output_residual": frozen_counter["output_tokens"] - historical["output_tokens"], "state": state})
     frozen = json.loads(Path(__file__).with_name("reconciliation.json").read_text())
     current_total = usage()
     for value in usage_by_session.values(): add(current_total, value)
@@ -569,7 +571,7 @@ def main() -> int:
     write_csv(out / "cohort-comparison.csv", cohort_rows, ["cohort", "requests", "sessions", "input_tokens", "cached_input_tokens", "output_tokens", "uncached_input_tokens"])
     write_csv(out / "handoff-analysis.csv", handoffs, ["predecessor_session_id", "successor_session_id", "goal_id", "task_id", "delivered_prompt_event_id", "delivered_prompt_chars", "handoff_marker", "renderer_revision", "candidate_selection", "supported_consequence", "reason"])
     write_csv(out / "request-reconciliation.csv", reconciliation_rows, ["session_id", "goal_id", "task_id", "launch_id", "session_counter_present", "state", "request_input_tokens", "request_cached_input_tokens", "request_output_tokens", "counter_input_tokens", "counter_cached_input_tokens", "counter_output_tokens", "input_residual", "cached_input_residual", "output_residual"])
-    write_csv(out / "shared-cohort-reconciliation.csv", shared_reconciliation, ["session_id", "historical_request_input_tokens", "historical_request_cached_input_tokens", "historical_request_output_tokens", "frozen_counter_input_tokens", "frozen_counter_cached_input_tokens", "frozen_counter_output_tokens", "post_cutoff_request_input_tokens", "post_cutoff_request_cached_input_tokens", "post_cutoff_request_output_tokens", "excluded_request_identities", "counter_sources", "session_starts", "task_session_count", "input_residual", "cached_input_residual", "output_residual", "state"])
+    write_csv(out / "shared-cohort-reconciliation.csv", shared_reconciliation, ["session_id", "historical_request_input_tokens", "historical_request_cached_input_tokens", "historical_request_output_tokens", "frozen_counter_input_tokens", "frozen_counter_cached_input_tokens", "frozen_counter_output_tokens", "post_cutoff_request_input_tokens", "post_cutoff_request_cached_input_tokens", "post_cutoff_request_output_tokens", "excluded_request_identities", "counter_sources", "session_starts", "task_session_count", "evidence_flags", "input_residual", "cached_input_residual", "output_residual", "state"])
     (out / "followup-snapshot.json").write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
     (out / "followup-reconciliation.json").write_text(json.dumps(reconciliation, indent=2, sort_keys=True) + "\n")
     (out / "FOLLOWUP-REPORT.md").write_text(f"""# Request-level transcript follow-up
@@ -604,7 +606,7 @@ Request input includes cached input. Uncached input equals input minus cached in
 
 ## Manual record inspection
 
-`manual-inspection.json` selects the three largest mapped-session input totals and one median mapped reviewer session. Each selected daemon event has a later native request and a finished task outcome; one major session has a correction-marker delivery among thirteen. Those are supported sequence facts, not evidence that the delivery caused the work. The first major transcript has 17 native error results. Two sampled error results have their later request IDs and observed four-millisecond record intervals. It also has 69 exact repeated-command groups across 1,030 Bash calls. These facts establish retry candidates, but not whether a command was necessary or a correction succeeded.
+`manual-inspection.json` selects the three largest mapped-session input totals and one median mapped reviewer session. Each selected daemon event has a later native request and a finished task outcome; one major session has a correction-marker delivery among thirteen. Those are supported sequence facts, not evidence that the delivery caused the work. The first major transcript has 17 native error results. Two sampled error results have later request IDs and observed 2,408 and 1,737 millisecond record intervals. The first rejected a ScheduleWakeup call for a missing prompt; its subsequent assistant content chose automatic notification. It also has 69 exact repeated-command groups across 1,030 Bash calls. These facts establish retry candidates, but not whether a command was necessary or a correction succeeded.
 
 The handoff sample includes the largest retained successor prompt (247,208 characters, cancelled) and a finished ordinary successor (50,949 characters). Both retain the history marker. Stored renderer source provides `handoff_text`, `render_entry`, and `apply_budget` rules. The historical deployed revision and selected entries are still absent, so the body cannot reconstruct the original selection.
 
