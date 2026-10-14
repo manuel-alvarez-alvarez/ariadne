@@ -10,21 +10,21 @@
     "deleted_session_fallbacks": 3,
     "history_files": [
       {
-        "bytes": 275984384,
+        "bytes": 276611072,
         "counts": {
-          "agent_events": 171794,
-          "agent_sessions": 618,
+          "agent_events": 171903,
+          "agent_sessions": 619,
           "goals": 54,
-          "session_usage": 1075,
-          "stat_facts": 31215,
+          "session_usage": 1076,
+          "stat_facts": 31218,
           "tasks": 181
         },
-        "mtime": "2026-10-14T20:45:54.518580Z",
+        "mtime": "2026-10-14T20:47:24.516486Z",
         "name": "ariadne.db",
         "overlap": {
           "agent_sessions": {
             "all_backup_records_in_primary": false,
-            "backup_only": 3,
+            "backup_only": 4,
             "shared": 615
           },
           "goals": {
@@ -34,12 +34,12 @@
           },
           "session_usage": {
             "all_backup_records_in_primary": false,
-            "backup_only": 3,
+            "backup_only": 4,
             "shared": 1072
           },
           "stat_facts": {
             "all_backup_records_in_primary": false,
-            "backup_only": 12,
+            "backup_only": 15,
             "shared": 31203
           },
           "tasks": {
@@ -292,11 +292,16 @@
     ],
     "retained_session_end_facts_without_session": 3,
     "sessions_without_usage": 26,
+    "transcript_inventory": {
+      "claude_jsonl_files": 1383,
+      "codex_rollout_files": 1523,
+      "reconciliation": "files are current local evidence; retired launch-to-file mapping is not retained"
+    },
     "unattributed_usage_sessions": 0,
     "zero_usage_sessions": 0
   },
   "cutoff": "2026-10-14T20:31:49.158Z",
-  "generated_at": "2026-10-14T20:45:58.217385Z",
+  "generated_at": "2026-10-14T20:47:40.384150Z",
   "inventory": {
     "events": 171122,
     "facts": 31203,
@@ -315,7 +320,7 @@
       "usage_through": "2026-10-14T20:31:42.956Z"
     },
     "label": "pinned snapshot /tmp/ariadne-token-usage-snapshot.XXXXXX.db",
-    "revision": "73401689948bcb1d7047ac58868cf5f8f7f5b6bd",
+    "revision": "31c536205c33703e3758e585efb5b1ead0d96cdf",
     "sha256": "b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47",
     "snapshot_acquired_at": "2026-10-14T20:31:52.696616Z",
     "sqlite_user_version": 0
