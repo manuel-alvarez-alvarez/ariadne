@@ -233,3 +233,56 @@ it("resets the switch once the path turns relative after a forge was detected", 
   await waitFor(() => expect(screen.queryByRole("switch", { name: /integration/i })).toBeNull())
   expect(screen.queryByRole("switch", { name: "Supervise posts" })).toBeNull()
 })
+
+/**
+ * Clicking the switch blurs the path field first, since it still holds
+ * focus from typing — a second probe of the same, unchanged path, right as
+ * the click turns the switch on. That redundant answer must not undo it.
+ */
+it("keeps the switch on through a redundant probe of the same path, and sends it enabled", async () => {
+  const user = userEvent.setup()
+  let detectCalls = 0
+  const post = vi.fn(async () =>
+    jsonResponse(aRepository({ forge: aForge({ enabled: true }) }), 201),
+  )
+  let sentBody: unknown
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init)
+    const { pathname } = new URL(request.url)
+    if (pathname === "/v1/workflows") return jsonResponse([aWorkflow({ name: "build-test" })])
+    if (pathname === "/v1/forge/detect" && request.method === "POST") {
+      detectCalls += 1
+      return jsonResponse({
+        kind: "github",
+        host: "github.com",
+        owner: "acme",
+        name: "widgets",
+        remote: "origin",
+      })
+    }
+    if (pathname === "/v1/repositories" && request.method === "POST") {
+      sentBody = await request.clone().json()
+      return post()
+    }
+    return new Response("not found", { status: 404 })
+  })
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={null} />)
+
+  const pathInput = await screen.findByLabelText("Path")
+  await user.type(pathInput, "/home/me/dev/widgets")
+  await user.tab()
+  const forgeSwitch = await screen.findByRole("switch", { name: "GitHub integration" })
+  expect(detectCalls).toBe(1)
+
+  await user.click(pathInput) // focus back on the path field, nothing typed
+  await user.click(forgeSwitch) // its own mousedown blurs the field first
+  await waitFor(() => expect(detectCalls).toBe(2))
+  expect(forgeSwitch.getAttribute("aria-checked")).toBe("true")
+
+  await user.click(screen.getByLabelText("Default workflow"))
+  await user.click(await screen.findByRole("option", { name: "build-test" }))
+  await user.click(screen.getByRole("button", { name: /register/i }))
+
+  expect(post).toHaveBeenCalled()
+  expect(sentBody).toMatchObject({ forge: { enabled: true } })
+})

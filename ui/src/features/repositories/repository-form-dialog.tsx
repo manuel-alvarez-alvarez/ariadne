@@ -59,6 +59,19 @@ const PERMISSION_ITEMS = PERMISSION_MODES.map(({ value, label }) => ({ value, la
 /** How long the path field sits still before a detection fires on its own. */
 const DETECT_SETTLES_MS = 400
 
+/** Whether two probes of `POST /v1/forge/detect` answer the same forge, or
+ * both answer none — a repeated probe of a path nothing changed about. */
+function sameDetection(a: ForgeDetectionDto | null, b: ForgeDetectionDto | null): boolean {
+  if (a === null || b === null) return a === b
+  return (
+    a.kind === b.kind &&
+    a.host === b.host &&
+    a.owner === b.owner &&
+    a.name === b.name &&
+    a.remote === b.remote
+  )
+}
+
 const formSchema = z.object({
   path: z
     .string()
@@ -112,6 +125,7 @@ export function RepositoryFormDialog({
   // until the daemon has opened the checkout. Editing skips this: the
   // repository already carries what the daemon detected, in `forge`.
   const [detected, setDetected] = useState<ForgeDetectionDto | null>(null)
+  const detectedRef = useRef<ForgeDetectionDto | null>(null)
   const detectRequest = useRef(0)
   const detectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -119,12 +133,18 @@ export function RepositoryFormDialog({
     (path: string) => {
       if (editing) return
       const request = ++detectRequest.current
-      // A changed path answers a changed detection — on, off, or none — so
-      // a switch left on for the checkout before it must not survive it.
+      // A changed detection — on, off, or none — answers a switch left on
+      // for the checkout before it, so that must not survive it. A probe
+      // that only repeats the one already settled — the blur a click on
+      // the switch itself fires, not a typed change — must leave the
+      // switch exactly as the person just set it.
       const settle = (result: ForgeDetectionDto | null) => {
         if (request !== detectRequest.current) return
+        if (!sameDetection(result, detectedRef.current)) {
+          setValue("forge_enabled", false)
+        }
+        detectedRef.current = result
         setDetected(result)
-        setValue("forge_enabled", false)
       }
       if (!path.startsWith("/")) {
         settle(null)
@@ -163,6 +183,7 @@ export function RepositoryFormDialog({
     detectRequest.current++
     clearTimeout(detectTimeout.current ?? undefined)
     setDetected(null)
+    detectedRef.current = null
     if (repository) {
       reset({
         path: repository.path,

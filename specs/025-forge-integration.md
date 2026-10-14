@@ -134,7 +134,11 @@ the desktop app as a whole (015).
     switch. The dialog sends `forge.enabled` on an edit only when the switch
     moved, and on a registration only when the probe found a forge; a
     refusal to enable lands on the switch in the daemon's words, either way.
-    "Supervise posts" ([002](002-repositories-branches-and-worktrees.md) rule
+    A later probe that answers differently than the one last settled — a
+    changed path, or one that turned relative or unreadable — resets a
+    switch the person left on; one that only repeats the same answer, the
+    way the switch's own click blurs the path field a second time, leaves
+    it exactly as they just set it. "Supervise posts" ([002](002-repositories-branches-and-worktrees.md) rule
     13) sits directly below the switch in both dialogs and shows only while
     it is on; turning the switch off hides the field at once without losing
     what it held, and turning it back on shows that same value again.
@@ -200,9 +204,12 @@ the desktop app as a whole (015).
   switch for a path with no forge`, `::sends forge enabled in the create
   request once the switch is turned on`). A re-probed path that answers
   differently, or turns relative, resets a switch left on rather than
-  keeping it (`::resets the switch and hides supervise posts once a
-  re-probed path has no forge`, `::resets the switch once the path turns
-  relative after a forge was detected`).
+  keeping it; a re-probed path that answers the same — the blur a click on
+  the switch itself fires — leaves it exactly as just set
+  (`::resets the switch and hides supervise posts once a re-probed path has
+  no forge`, `::resets the switch once the path turns relative after a
+  forge was detected`, `::keeps the switch on through a redundant probe of
+  the same path, and sends it enabled`).
 - Supervise posts sits below the switch and only while it is on, in both
   dialogs, and keeps its value across the switch going off and back on
   (`::saves the supervise posts switch`, `::hides supervise posts under an
