@@ -15,6 +15,20 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 61872,
+        "daemon_prompt_ids": [
+          "01m4kf335zwhtaz67rmz7mrr5q",
+          "01m4kj3kjn5cnbn79kct7716pj",
+          "01m4kkrgq5pts8zm3kz20qt5f2",
+          "01m4kkyc62c2mkx77rmsmxhaqe",
+          "01m4kn9rmbqdqd6bq2x4qzw1x8",
+          "01m4kpkycgqns3rxaexzep9a7h",
+          "01m4ks2s44y7g358rjcx1p88h8",
+          "01m4kva4yxg43ew6yqrmxsz4gd",
+          "01m4kvg06jf5bnrmr5g31mbeay",
+          "01m4kyhb71qwrdn85rbye844ke",
+          "01m4m0b5m83gf4nkaqrtzygj1g",
+          "01m4m0hz7j4gcqq3qxvzbfzdqv"
+        ],
         "daemon_prompts": 12,
         "events": 5782,
         "large_event_ids": [
@@ -209,6 +223,21 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 44018,
+        "daemon_prompt_ids": [
+          "01m4m373bjdnr411fnzqz2wef1",
+          "01m4m3j0zbvcdchpjtwd2q6d96",
+          "01m4m6yv8a4ryjdjrz56mxkhj6",
+          "01m4m9dsrfw3fjdmnbvk26me9k",
+          "01m4m9m9ghkavpbm6rxbmpvw3j",
+          "01m4mcv4mqrr9dvxp3atn02788",
+          "01m4mevs5xanjqgm3gfarr7neg",
+          "01m4mf207p897jx7m5cb0spg8h",
+          "01m4mg1s46gay624tztzm1eb5x",
+          "01m4mg81c0dtw9cafe465sa8wx",
+          "01m4mh6btaa3xd17x09th6ka2z",
+          "01m4mhcbb0n1pkctt9y049w3bg",
+          "01m4mhxtbwnjh051w8ep2e2anb"
+        ],
         "daemon_prompts": 13,
         "events": 3815,
         "large_event_ids": [
@@ -331,6 +360,16 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 19150,
+        "daemon_prompt_ids": [
+          "01m4myv8djxtpwms9n7vfrbfq9",
+          "01m4n1v1w9vapj6tg3yp2s95vf",
+          "01m4n4q35vcy26sp675mbpph8g",
+          "01m4n78gqss8nnytk676vw05wj",
+          "01m4na4kzw6xt2vnpxksfrpe2h",
+          "01m4nad6vw94v90a72vw4fhae1",
+          "01m4naw6e7rpnenj94d5kwb1g9",
+          "01m4nawwnc3cndnjf4c6sxcgz0"
+        ],
         "daemon_prompts": 8,
         "events": 2298,
         "large_event_ids": [
@@ -409,6 +448,27 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 11597,
+        "daemon_prompt_ids": [
+          "01m4h5zf8f644pjd5tx8qjszt0",
+          "01m4h82yx8yctceyftnj5xvgg6",
+          "01m4h86hj0brxk91knystjktb3",
+          "01m4h8s7t9b2rqbxe028yvwkwp",
+          "01m4h8w0d6q6qztg6kvpte3xx7",
+          "01m4h9dnfb1f6xyfmz5mvec4c8",
+          "01m4h9j14rv3ag0zvk3c635xaz",
+          "01m4h9jg3td29ff4q1ghg7k3y0",
+          "01m4ha4rfjvtbspffbed3ke6md",
+          "01m4ham22athzjm4bney99m40j",
+          "01m4hcqtt2pbqg2eh470wmxrny",
+          "01m4hcsavgs7j1wc0cfcejspds",
+          "01m4hd5h9ymnjqp52tf0vabcjj",
+          "01m4heqvymk3s2pep5yg65yz6v",
+          "01m4hf81mjdxppkvpnr17j9z78",
+          "01m4hg0kt43bkdnz3q9s565n4b",
+          "01m4hg8zzj3d2dhxjrma810e71",
+          "01m4hg9emffjvpzr8w0xacbebk",
+          "01m4hge95fwhwdthb5hvgw0qst"
+        ],
         "daemon_prompts": 19,
         "events": 2311,
         "large_event_ids": [
@@ -474,6 +534,13 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 14019,
+        "daemon_prompt_ids": [
+          "01m4r2fnakw86g6r6r1552xsfp",
+          "01m4r6gngcmyrpnxdavmphgfd3",
+          "01m4r7w886wwk9ww0crg2c55dx",
+          "01m4r8sqqhv0hgqmtzaht1naym",
+          "01m4rag5164n5qpvckxhmgn5t3"
+        ],
         "daemon_prompts": 5,
         "events": 1712,
         "large_event_ids": [
@@ -563,6 +630,17 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 30907,
+        "daemon_prompt_ids": [
+          "01m4rtkg5jzhnaxa2yssks9mf3",
+          "01m4rw3jkcayzw0gxrq96rwt8r",
+          "01m4rxkwzbjhzv27b9v6r3eyw0",
+          "01m4rxxa1qprdteqfdd54wg2kd",
+          "01m4rybmtvr2v62pdx4mh04qbx",
+          "01m4ryd15zj69b8hw9gwj2tfme",
+          "01m4ryn29f2srcg6vn24cmpgr2",
+          "01m4s0gpes690qs9qf034hr85n",
+          "01m4s0tkjvesxjv3scfdg378v5"
+        ],
         "daemon_prompts": 9,
         "events": 2236,
         "large_event_ids": [
@@ -687,6 +765,17 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 34146,
+        "daemon_prompt_ids": [
+          "01m4rtkfd31pgv4ht7mz908x2r",
+          "01m4rw90qephwa9pen58aatnac",
+          "01m4ryb0fhsfda4fc26sh6n77n",
+          "01m4rzgb7bx10f74195xf7xxn7",
+          "01m4rzq0v090xnt8680yjffrzf",
+          "01m4s04qx0nt3h9r6w0n1wsqth",
+          "01m4s0mtenzzqc2k9n7fqcazzx",
+          "01m4s0tkwjbdwdwmw5y54sg4pk",
+          "01m4s0zt37dbwvw8jm62nfaa1v"
+        ],
         "daemon_prompts": 9,
         "events": 1687,
         "large_event_ids": [
@@ -768,6 +857,14 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 14390,
+        "daemon_prompt_ids": [
+          "01m4gk0986s5j360j68cdfrhnc",
+          "01m4gzz2pcs497mdz1mzqkqkhe",
+          "01m4h0dda3t9qyrrfvqe130rxx",
+          "01m4h20wfdsmbkz4qrtf7t4wak",
+          "01m4h2h252e70gxmwtbdcgc2hj",
+          "01m4h2q2t6wmbsk6e90x9s3ryf"
+        ],
         "daemon_prompts": 6,
         "events": 3288,
         "large_event_ids": [
@@ -1112,6 +1209,11 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 11733,
+        "daemon_prompt_ids": [
+          "01m4xfwmm49y4d4c9dpg7t499g",
+          "01m4xjjrm1bamej138qdmw60x3",
+          "01m4xkmqbzt2n2f73g2nhrqvn9"
+        ],
         "daemon_prompts": 3,
         "events": 1448,
         "large_event_ids": [
@@ -1188,6 +1290,42 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 16549,
+        "daemon_prompt_ids": [
+          "01m4rahn5wx77skek3wjn2h897",
+          "01m4rar7qqn67my63y57zf3j23",
+          "01m4razw9cdtx3k99qv306jmnm",
+          "01m4rb17czfp1rwef1cj8c6swh",
+          "01m4rb5f5bwn3krjv834vy8y8z",
+          "01m4rcwrc3vckj5gwztr09h6jt",
+          "01m4rcwz0wgbp1aeft1qt3j63h",
+          "01m4rep9s3ja0jrdnpjxk5y9nw",
+          "01m4rh7jwsyebd4evdhbs1cc54",
+          "01m4rhxdgcv7y5vcpzz02ywvp4",
+          "01m4rhxge2jfk3m8cfas2dwjh2",
+          "01m4rk1tx5x8b8grgvedrhhtxz",
+          "01m4rk2aa6nhrj6ej5vkcc3kz1",
+          "01m4rk7xrxc65qydz1wrjhc7s7",
+          "01m4rk8zmr5pfvywz7wq7yqntk",
+          "01m4rk9azdt73jbgs1720tegfw",
+          "01m4rkcwyby6qtzk968w3ewjyf",
+          "01m4rkdmzg53b627mryc3nt39c",
+          "01m4rktkfm695fkge02m0gbypp",
+          "01m4rkty7ej0xr9v74zqw1m8fq",
+          "01m4rm4qqr9934av0w00f4g8zj",
+          "01m4rm6myq4v66457xm9ta5qp7",
+          "01m4rme3m2fk4k7yrn3cgphs5j",
+          "01m4rmrazvw86s9y81jxed2r9g",
+          "01m4rmrj5xj7r233vdwecnha9r",
+          "01m4rmtp1mfv51er70acmn16wb",
+          "01m4rncdjsxp4ggj9gk4k98g83",
+          "01m4rnctmv5mwv9w22d5kdj31b",
+          "01m4rnsvkskqd4tywxya2p1cq9",
+          "01m4rp3t32nbtawb0vxa89k9hb",
+          "01m4rp3y8f4xehj4y5vx5ybamq",
+          "01m4rpm7srk0zb53vp49yzavdj",
+          "01m4rq074err9s92111xqddg98",
+          "01m4rq0ak2gd4zb97h1smp53vg"
+        ],
         "daemon_prompts": 34,
         "events": 1637,
         "large_event_ids": [
@@ -1242,6 +1380,14 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 35165,
+        "daemon_prompt_ids": [
+          "01m4rtkf12s02bz8mzzgy6tmb1",
+          "01m4rvyabpjw30a6sdfhfq2x6t",
+          "01m4rww6pka3ngeafrpbqgct39",
+          "01m4rxak26c3d04c4ty11ve77j",
+          "01m4ryebsv8dd8at39v15yqmv9",
+          "01m4rzgnjgasbff9k4fe0bb4s8"
+        ],
         "daemon_prompts": 6,
         "events": 1470,
         "large_event_ids": [
@@ -1341,6 +1487,13 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 10205,
+        "daemon_prompt_ids": [
+          "01m4w1jp36x07agzfp9gazwwt6",
+          "01m4w2vgdhypnf3k4arajx5r8t",
+          "01m4w30xrsjk3g48pp438vwzk4",
+          "01m4w3jwjshs9vss7fecfa76vy",
+          "01m4w3vy6h0zvn47crm4ktqbpx"
+        ],
         "daemon_prompts": 5,
         "events": 1039,
         "large_event_ids": [
@@ -1415,6 +1568,16 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 6199,
+        "daemon_prompt_ids": [
+          "01m4n559fw9gwm4kaj6ydmjbcq",
+          "01m4n56t7m29hwrjk6w14pkjf4",
+          "01m4n5bdfgr0p58af99yc22hy7",
+          "01m4n5qacg1h8r1a5y6htrxk96",
+          "01m4n5qr2rssh80a5dfvgm1tpd",
+          "01m4n5rjav7zh3q42bemwrx1sk",
+          "01m4n5rv7mtv1eg8rqfgtqwa4m",
+          "01m4n5vtjzpn0eg8rfz5x9r21g"
+        ],
         "daemon_prompts": 8,
         "events": 194,
         "large_event_ids": [
@@ -1445,6 +1608,13 @@
     {
       "derived_event_metrics": {
         "daemon_prompt_chars": 1881,
+        "daemon_prompt_ids": [
+          "01m4regdwqkcqgxyf3pkgf2c1r",
+          "01m4rg1qs7tgz0ftwkn0h1v4r0",
+          "01m4rg721hnacd07tm4eyg04q1",
+          "01m4rjnnq6pe0852wf1tjh93dn",
+          "01m4rjssa3xetqg0t3ndx77ch2"
+        ],
         "daemon_prompts": 5,
         "events": 142,
         "large_event_ids": [

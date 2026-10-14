@@ -70,6 +70,8 @@ tasks because retries write another ending.
 - [goals.csv](goals.csv) and [tasks.csv](tasks.csv) — one aggregate per
   surviving entity, with distinct token categories and partial flags.
 - [dimensions.csv](dimensions.csv) — comparable dimensional totals.
+- [entity-attribution.csv](entity-attribution.csv) — retained per-session
+  goal/task role, column, model, effort, outcome, and usage-evidence rows.
 - [outcomes.csv](outcomes.csv), [timing.csv](timing.csv), and [reconciliation.json](reconciliation.json)
   — retained facts, gaps, and non-additive counter checks.
 - [trace-selection.json](trace-selection.json) — selected trace identifiers
@@ -87,9 +89,9 @@ permission prompt, tool execution, model inference, or active execution.
 - Ended-session lifetime observed: 3,910,876 s
   across 612 sessions. This is inclusive
   wall time, so it must not be called execution time.
-- Completed/cancelled task lead time comes from task rows and transitions;
-  it includes pending, ready, and in-progress time. The aggregate status
-  totals in `outcomes.csv` are the only supported queue/status split.
+- Goal and task CSV row lifetimes use their stored `updated_at`; they are not
+  completion measurements and can include later metadata changes or retries.
+  `timing.csv` is the supported aggregate of ending-fact status durations.
 - Running work is partial at the cutoff and excluded from completed-work
   elapsed comparisons. This review's own goal is separately labelled in the
   aggregates when present; its running session has no final usage at cutoff.

@@ -214,6 +214,8 @@ tasks because retries write another ending.
 - [goals.csv](goals.csv) and [tasks.csv](tasks.csv) — one aggregate per
   surviving entity, with distinct token categories and partial flags.
 - [dimensions.csv](dimensions.csv) — comparable dimensional totals.
+- [entity-attribution.csv](entity-attribution.csv) — retained per-session
+  goal/task role, column, model, effort, outcome, and usage-evidence rows.
 - [outcomes.csv](outcomes.csv), [timing.csv](timing.csv), and [reconciliation.json](reconciliation.json)
   — retained facts, gaps, and non-additive counter checks.
 - [trace-selection.json](trace-selection.json) — selected trace identifiers
@@ -231,9 +233,9 @@ permission prompt, tool execution, model inference, or active execution.
 - Ended-session lifetime observed: {timing['ended_session_lifetime_secs']:,} s
   across {timing['ended_sessions_with_lifetime']} sessions. This is inclusive
   wall time, so it must not be called execution time.
-- Completed/cancelled task lead time comes from task rows and transitions;
-  it includes pending, ready, and in-progress time. The aggregate status
-  totals in `outcomes.csv` are the only supported queue/status split.
+- Goal and task CSV row lifetimes use their stored `updated_at`; they are not
+  completion measurements and can include later metadata changes or retries.
+  `timing.csv` is the supported aggregate of ending-fact status durations.
 - Running work is partial at the cutoff and excluded from completed-work
   elapsed comparisons. This review's own goal is separately labelled in the
   aggregates when present; its running session has no final usage at cutoff.
@@ -423,7 +425,7 @@ def main() -> int:
 
     # Analyze only derived per-session event indicators. No payload text leaves
     # the process; hashes let a reviewer reproduce repeated-content counts.
-    trace_metrics: dict[str, dict[str, Any]] = collections.defaultdict(lambda: {"events": 0, "daemon_prompts": 0, "daemon_prompt_chars": 0, "large_tool_results": 0, "large_tool_result_chars": 0, "tool_prefixes": collections.Counter(), "large_event_ids": []})
+    trace_metrics: dict[str, dict[str, Any]] = collections.defaultdict(lambda: {"events": 0, "daemon_prompts": 0, "daemon_prompt_chars": 0, "daemon_prompt_ids": [], "large_tool_results": 0, "large_tool_result_chars": 0, "tool_prefixes": collections.Counter(), "large_event_ids": []})
     completed_calls: set[tuple[str, str]] = set()
     event_rows = list(conn.execute("SELECT id, session_id, kind, payload, payload_codec FROM agent_events"))
     opener_commands: dict[tuple[str, str], str] = {}
@@ -444,6 +446,7 @@ def main() -> int:
             text = text_at(body, ("text",), ("prompt",)) or ""
             metric["daemon_prompts"] += 1
             metric["daemon_prompt_chars"] += len(text)
+            metric["daemon_prompt_ids"].append(row["id"])
         if row["kind"] == "post_tool_use":
             key = tool_key(body)
             if key and (sid, key) in completed_calls:
@@ -498,9 +501,14 @@ def main() -> int:
         try:
             check = sqlite3.connect(f"file:{candidate}?mode=ro", uri=True)
             counts = {table: check.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in ("goals", "tasks", "agent_sessions", "agent_events", "session_usage", "stat_facts")}
-            shared_goals = check.execute("SELECT COUNT(*) FROM goals WHERE id IN (SELECT id FROM main.goals)").fetchone()[0] if candidate.resolve() == source else None
+            overlaps = {}
+            for table in ("goals", "tasks", "agent_sessions", "session_usage", "stat_facts"):
+                key = "id" if table not in {"session_usage"} else "source"
+                source_ids = {str(r[0]) for r in conn.execute(f"SELECT {key} FROM {table}")}
+                backup_ids = {str(r[0]) for r in check.execute(f"SELECT {key} FROM {table}")}
+                overlaps[table] = {"shared": len(source_ids & backup_ids), "backup_only": len(backup_ids - source_ids), "all_backup_records_in_primary": not (backup_ids - source_ids)}
             check.close()
-            history_files.append({"name": candidate.name, "bytes": candidate.stat().st_size, "mtime": dt.datetime.fromtimestamp(candidate.stat().st_mtime, dt.timezone.utc).isoformat().replace("+00:00", "Z"), "counts": counts, "overlap": "not compared: separate snapshot"})
+            history_files.append({"name": candidate.name, "bytes": candidate.stat().st_size, "mtime": dt.datetime.fromtimestamp(candidate.stat().st_mtime, dt.timezone.utc).isoformat().replace("+00:00", "Z"), "counts": counts, "overlap": overlaps})
         except sqlite3.Error:
             pass
 
@@ -539,6 +547,12 @@ def main() -> int:
         dim_rows.append(value)
     write_csv(out / "dimensions.csv", sorted(dim_rows, key=lambda x: (x["dimension"], -x["input_tokens"])), ["dimension", "value", "sessions", "partial_sessions", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens"])
     write_csv(out / "outcomes.csv", [{"kind": "surviving_task", "outcome": status, "count": count} for status, count in sorted(collections.Counter(t["status"] for t in tasks).items())] + [{"kind": "task_ended_fact", "outcome": status, "count": count} for status, count in sorted(outcome_facts.items())], ["kind", "outcome", "count"])
+    attribution_rows = []
+    for session in sessions:
+        role, column, model, effort, outcome = session_meta(session)
+        usage = usage_by_session.get(session["id"], usage_dict())
+        attribution_rows.append({"goal_id": session.get("goal_id") or "unknown", "task_id": session.get("task_id") or "unknown", "role": role, "workflow_column": column, "model": model, "effort": effort, "current_task_outcome": outcome, "session_status": session["status"], "usage_evidence": "reported" if session["id"] in usage_by_session else "missing", "partial": int(session["status"] not in {"exited", "failed"}), **usage, "uncached_input_tokens": uncached(usage)})
+    write_csv(out / "entity-attribution.csv", attribution_rows, ["goal_id", "task_id", "role", "workflow_column", "model", "effort", "current_task_outcome", "session_status", "usage_evidence", "partial", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens"])
     write_csv(out / "timing.csv", [{"category": f"task_status:{state}", "count": len(task_end_facts), "seconds": total, "note": "summed from task_ended facts; state is not an outcome"} for state, total in sorted(status_seconds.items())] + [{"category": "ended_session_lifetime", "count": ended_count, "seconds": ended_lifetime, "note": "inclusive wall time, not active execution"}, {"category": "console_permission_wait", "count": len(permission_waits), "seconds": sum(permission_waits) / 1000, "note": "only console-decided permission facts"}], ["category", "count", "seconds", "note"])
     audit_rows = []
     for goal in goals:
@@ -549,7 +563,7 @@ def main() -> int:
     finding_rows = []
     for trace in selected:
         metric = trace["derived_event_metrics"]
-        finding_rows.append({"session_id": trace["session_id"], "finding": "daemon_prompt_delivery", "event_references": "count=" + str(metric["daemon_prompts"]), "measured": "daemon prompt count and characters", "inference": "may repeat context", "benefit_status": "untested"})
+        finding_rows.append({"session_id": trace["session_id"], "finding": "daemon_prompt_delivery", "event_references": ";".join(metric.get("daemon_prompt_ids", [])[:20]), "measured": "daemon prompt count and characters", "inference": "prompt content was not classified as redundant", "benefit_status": "not measured waste"})
         finding_rows.append({"session_id": trace["session_id"], "finding": "large_tool_result", "event_references": ";".join(metric.get("large_event_ids", [])[:20]), "measured": "post-tool ACP content/rawOutput >= 4000 chars", "inference": "may widen later context", "benefit_status": "untested"})
     write_csv(out / "trace-findings.csv", finding_rows, ["session_id", "finding", "event_references", "measured", "inference", "benefit_status"])
     (out / "snapshot.json").write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")

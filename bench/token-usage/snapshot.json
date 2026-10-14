@@ -10,18 +10,44 @@
     "deleted_session_fallbacks": 3,
     "history_files": [
       {
-        "bytes": 275116032,
+        "bytes": 275984384,
         "counts": {
-          "agent_events": 171618,
-          "agent_sessions": 617,
+          "agent_events": 171794,
+          "agent_sessions": 618,
           "goals": 54,
-          "session_usage": 1074,
-          "stat_facts": 31210,
+          "session_usage": 1075,
+          "stat_facts": 31215,
           "tasks": 181
         },
-        "mtime": "2026-10-14T20:43:24.518572Z",
+        "mtime": "2026-10-14T20:45:54.518580Z",
         "name": "ariadne.db",
-        "overlap": "not compared: separate snapshot"
+        "overlap": {
+          "agent_sessions": {
+            "all_backup_records_in_primary": false,
+            "backup_only": 3,
+            "shared": 615
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 54
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": false,
+            "backup_only": 3,
+            "shared": 1072
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": false,
+            "backup_only": 12,
+            "shared": 31203
+          },
+          "tasks": {
+            "all_backup_records_in_primary": false,
+            "backup_only": 1,
+            "shared": 180
+          }
+        }
       },
       {
         "bytes": 81633280,
@@ -35,7 +61,33 @@
         },
         "mtime": "2026-10-09T23:40:45.388799Z",
         "name": "ariadne.db.backup-schema-20",
-        "overlap": "not compared: separate snapshot"
+        "overlap": {
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 153
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 15
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 297
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 11613
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 71
+          }
+        }
       },
       {
         "bytes": 48971776,
@@ -49,7 +101,33 @@
         },
         "mtime": "2026-10-08T18:28:27.397853Z",
         "name": "ariadne.db.bak-20261008-202827",
-        "overlap": "not compared: separate snapshot"
+        "overlap": {
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 107
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 13
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 205
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 7302
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 48
+          }
+        }
       },
       {
         "bytes": 49139712,
@@ -63,7 +141,33 @@
         },
         "mtime": "2026-10-08T20:08:55.555555Z",
         "name": "ariadne.db.bak-20261008-220855",
-        "overlap": "not compared: separate snapshot"
+        "overlap": {
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 108
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 13
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 206
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 7305
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 48
+          }
+        }
       },
       {
         "bytes": 80261120,
@@ -77,7 +181,33 @@
         },
         "mtime": "2026-10-09T21:08:38.146718Z",
         "name": "ariadne.db.bak-20261009-230838-pre-rollback",
-        "overlap": "not compared: separate snapshot"
+        "overlap": {
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 152
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 15
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 290
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 10997
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 71
+          }
+        }
       },
       {
         "bytes": 101449728,
@@ -91,7 +221,33 @@
         },
         "mtime": "2026-10-10T08:33:06.118545Z",
         "name": "ariadne.db.bak-20261010-presquash-fix",
-        "overlap": "not compared: separate snapshot"
+        "overlap": {
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 241
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 22
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 449
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 14275
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 94
+          }
+        }
       },
       {
         "bytes": 152326144,
@@ -105,7 +261,33 @@
         },
         "mtime": "2026-10-11T07:39:41.435738Z",
         "name": "ariadne.db.bak-20261011-093941-pre-0001-fix",
-        "overlap": "not compared: separate snapshot"
+        "overlap": {
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 375
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 30
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 758
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 22841
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 125
+          }
+        }
       }
     ],
     "retained_session_end_facts_without_session": 3,
@@ -114,7 +296,7 @@
     "zero_usage_sessions": 0
   },
   "cutoff": "2026-10-14T20:31:49.158Z",
-  "generated_at": "2026-10-14T20:43:46.365646Z",
+  "generated_at": "2026-10-14T20:45:58.217385Z",
   "inventory": {
     "events": 171122,
     "facts": 31203,
@@ -133,7 +315,7 @@
       "usage_through": "2026-10-14T20:31:42.956Z"
     },
     "label": "pinned snapshot /tmp/ariadne-token-usage-snapshot.XXXXXX.db",
-    "revision": "c81f5d5ef08819fdf3fda7b2e59ffe37486494ec",
+    "revision": "73401689948bcb1d7047ac58868cf5f8f7f5b6bd",
     "sha256": "b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47",
     "snapshot_acquired_at": "2026-10-14T20:31:52.696616Z",
     "sqlite_user_version": 0
