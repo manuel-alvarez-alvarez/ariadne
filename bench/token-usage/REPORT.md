@@ -147,6 +147,15 @@ changing policy.
 
 ## Ranked candidates
 
+Order is by evidence quality, implementation effort, and quality risk. TU-01
+comes first because it only records delivery attribution and cannot remove a
+required check or review. TU-02 is second because handoff measurement can
+change future context policy but needs fixture coverage. TU-04 is third: its
+large-result signal has possible input and latency benefit, but truncation can
+hide failure evidence. TU-03 is rejected for this baseline because exact
+command matching found no repetitions. No candidate has demonstrated token or
+time savings yet.
+
 ### TU-01 — Attribute scheduler deliveries before considering coalescing
 
 **Evidence.** Selected traces include review returns with distinct reviewed SHAs and short continuation prompts. They prove delivery volume, but not redundant work or per-delivery tokens.

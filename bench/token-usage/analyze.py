@@ -377,6 +377,15 @@ changing policy.
 
 ## Ranked candidates
 
+Order is by evidence quality, implementation effort, and quality risk. TU-01
+comes first because it only records delivery attribution and cannot remove a
+required check or review. TU-02 is second because handoff measurement can
+change future context policy but needs fixture coverage. TU-04 is third: its
+large-result signal has possible input and latency benefit, but truncation can
+hide failure evidence. TU-03 is rejected for this baseline because exact
+command matching found no repetitions. No candidate has demonstrated token or
+time savings yet.
+
 {candidate_lines}
 
 ## Limitations and what would change the ranking
@@ -737,6 +746,16 @@ def main() -> int:
         finding_rows.append({"session_id": trace["session_id"], "finding": "prompt_delivery_reviewed", "event_references": ";".join(metric.get("daemon_prompt_ids", [])[:20]), "measured": f"{classes.get('review_return', 0)} review returns with {metric.get('distinct_review_shas', 0)} distinct SHA(s); {classes.get('short_continuation', 0)} short continuations; {classes.get('initial_or_other', 0)} initial/other prompts", "inference": "Distinct review SHAs show review returns are not duplicate copies. Short continuations can only be evaluated with delivery outcome data.", "benefit_status": "no demonstrated wake-up waste"})
         finding_rows.append({"session_id": trace["session_id"], "finding": "large_tool_result_reviewed", "event_references": ";".join(metric.get("large_event_ids", [])[:20]), "measured": f"{metric.get('large_tool_results', 0)} post-tool results >=4000 chars; {metric.get('large_tool_result_chars', 0)} retained characters", "inference": "Payload size is measured. The retained ledger lacks later prompt inclusion, so no output is classified redundant.", "benefit_status": "candidate for diagnostic measurement only"})
         finding_rows.append({"session_id": trace["session_id"], "finding": "exact_command_repetition", "event_references": "", "measured": f"{metric.get('repeated_tool_prefixes', 0)} repeated completed exact commands", "inference": "Different edits with a shared tool title are excluded.", "benefit_status": "no command suppression recommendation from this metric"})
+    # Reviewed samples. These statements summarize inspected event sequences;
+    # they retain IDs, outcomes, and avoid exporting event bodies.
+    reviewed = {
+        "01m4kf30z3vs1n1y73d7t3bwnd": ("major_review_cycle", "01m4kj3kjn5cnbn79kct7716pj;01m4kkyc62c2mkx77rmsmxhaqe;01m4m0hz7j4gcqq3qxvzbfzdqv", "Task 01m4kf02expbtzgp6t7b9fv5ka alternated develop/review nine times and finished. Eight reviewed SHAs are distinct corrections.", "necessary correction and review evidence; no wake-up suppression case"),
+        "01m4n557dgkfpxpqxad9jnphht": ("ordinary_agent_run", "01m4n559fw9gwm4kaj6ydmjbcq;01m4n56t7m29hwrjk6w14pkjf4", "Task 01m4n3p0jp0h45z3w751pzv6nr moved develop to review to PR and finished. Its eight prompts and 45 completed tool calls accompany one review pass.", "necessary workflow sequence; broad-output and handoff causality remain unobserved"),
+        "01m4regcg3k443n3sd5e8dnr57": ("ordinary_reviewer_run", "01m4regdwqkcqgxyf3pkgf2c1r;01m4rg1qs7tgz0ftwkn0h1v4r0", "Loose reviewer session has no retained task link. Five prompts and 37 completed tool calls cannot be attributed to a task outcome.", "unresolved attribution; exclude from workflow-saving claims"),
+    }
+    for session_id, (finding, refs, measured, status) in reviewed.items():
+        if any(trace["session_id"] == session_id for trace in selected):
+            finding_rows.append({"session_id": session_id, "finding": finding, "event_references": refs, "measured": measured, "inference": "Inspected sequence and retained task transitions; raw bodies remain outside Git.", "benefit_status": status})
     write_csv(out / "trace-findings.csv", finding_rows, ["session_id", "finding", "event_references", "measured", "inference", "benefit_status"])
     (out / "snapshot.json").write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (out / "reconciliation.json").write_text(json.dumps(reconciliation, indent=2, sort_keys=True) + "\n", encoding="utf-8")
