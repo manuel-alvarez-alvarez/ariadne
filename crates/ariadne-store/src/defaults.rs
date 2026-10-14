@@ -1330,7 +1330,7 @@ mod tests {
             "Push the task branch. Call `open_pull_request`.",
             "repository's commit conventions",
             "Fill its pull request template, or write three full sections: Why, What changed, How to test.",
-            "Group related accepted changes and failed-check fixes in one coherent",
+            "Group related accepted changes and failed-check fixes in one coherent commit per batch; keep unrelated changes separate.",
             "Run the checks the batch affects, then update the branch and push it once.",
             "Never amend a pushed commit outside an approved rebase.",
             "Never use an unguarded force push or discard commits others added to the remote branch.",
@@ -1370,10 +1370,10 @@ mod tests {
             "A comment on the conversation: answer it the same way, once per comment.",
             "A suggestion block you accept: apply it.",
             "Else reply `Not changed: <why>.`",
-            "Group related accepted changes and failed-check fixes in one coherent",
+            "Group related accepted changes and failed-check fixes in one coherent commit per batch; keep unrelated changes separate.",
             "Commit only what a comment or a failed check asks for.",
             "Leave every thread open.",
-            "Post no new thread, summary or top-level comment, except steps 3 and 5's",
+            "Post no new thread, summary or top-level comment, except steps 3 and 5's replies.",
         ] {
             assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
         }

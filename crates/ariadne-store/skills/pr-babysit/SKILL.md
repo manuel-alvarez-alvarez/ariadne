@@ -30,15 +30,14 @@ later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.
    check's log at its URL. Run the checks the batch affects, then update
    the branch and push it once. Reply to every actionable comment after
    the final push: `Fixed in <sha>: <what changed>.`
-6. The repository's history rules choose the branch update. Fetch the base and
-   task branch first.
-   Where merges are allowed, run `git merge --no-edit
-   <remote>/<base>`. A linear-history rule requires `git rebase
-   <remote>/<base>` and `git push --force-with-lease`. Before that guarded
-   push, include commits others added to the remote branch and fetch again if
-   it moved. Never use an unguarded force push or discard commits others added
-   to the remote branch. Never amend a pushed commit outside an approved
-   rebase.
+6. The repository's history rules choose the branch update. Fetch the
+   base and task branch first. Where merges are allowed, run `git
+   merge --no-edit <remote>/<base>`. A linear-history rule requires `git
+   rebase <remote>/<base>` and `git push --force-with-lease`. Before that
+   guarded push, include commits others added to the remote branch and
+   fetch again if it moved. Never use an unguarded force push or discard
+   commits others added to the remote branch. Never amend a pushed
+   commit outside an approved rebase.
 7. Call `report_pull_request` only when readiness changes:
    - `ready: true` with the `head_sha` you read once every approval and
      check is green
