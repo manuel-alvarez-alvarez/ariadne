@@ -35,6 +35,10 @@ the snapshot's cutoff and SHA-256.
 The committed artifacts describe the pinned snapshot in `snapshot.json`. They
 reproduce only when that external snapshot is available. The command above
 refreshes the study from current data; it does not reproduce pinned evidence.
+For this baseline, the external snapshot was
+`/tmp/ariadne-token-usage-snapshot.XXXXXX.db`; its SHA-256 is in
+`snapshot.json`. Run the same command with that path, the pinned revision, and
+the `pinned snapshot` source label to reproduce the recorded evidence.
 
 ## Checks
 

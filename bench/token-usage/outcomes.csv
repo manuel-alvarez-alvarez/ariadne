@@ -1,7 +1,7 @@
-kind,outcome,count,status_seconds
-surviving_task,cancelled,22,
-surviving_task,finished,157,
-surviving_task,in_progress,1,1411917
-task_ended_fact,cancelled,24,
-task_ended_fact,failed,23,121691
-task_ended_fact,finished,157,
+kind,outcome,count
+surviving_task,cancelled,22
+surviving_task,finished,157
+surviving_task,in_progress,1
+task_ended_fact,cancelled,24
+task_ended_fact,failed,23
+task_ended_fact,finished,157

@@ -7,7 +7,7 @@
   },
   "max_daemon_prompt_chars": 61872,
   "max_daemon_prompts": 34,
-  "max_repeated_tool_prefixes": 590,
+  "max_repeated_tool_prefixes": 8,
   "method": "12 largest input-plus-output sessions plus median-usage exited agent and reviewer sessions",
   "selected_sessions": 14,
   "selected_usage_share": 0.34198708209383366,
@@ -191,7 +191,7 @@
         ],
         "large_tool_result_chars": 1435797,
         "large_tool_results": 170,
-        "repeated_tool_prefixes": 590
+        "repeated_tool_prefixes": 0
       },
       "effort": "medium",
       "goal_id": "01m4ke8jjjmrpq43smjy487nr8",
@@ -313,7 +313,7 @@
         ],
         "large_tool_result_chars": 852019,
         "large_tool_results": 98,
-        "repeated_tool_prefixes": 371
+        "repeated_tool_prefixes": 1
       },
       "effort": "medium",
       "goal_id": "01m4ke8jjjmrpq43smjy487nr8",
@@ -391,7 +391,7 @@
         ],
         "large_tool_result_chars": 404272,
         "large_tool_results": 54,
-        "repeated_tool_prefixes": 201
+        "repeated_tool_prefixes": 0
       },
       "effort": null,
       "goal_id": "01m4mym25rgh5n3tba1m94eh0r",
@@ -456,7 +456,7 @@
         ],
         "large_tool_result_chars": 302845,
         "large_tool_results": 41,
-        "repeated_tool_prefixes": 179
+        "repeated_tool_prefixes": 0
       },
       "effort": "high",
       "goal_id": "01m4g7w5p6zcbx38tb6zs4k2vy",
@@ -545,7 +545,7 @@
         ],
         "large_tool_result_chars": 677702,
         "large_tool_results": 65,
-        "repeated_tool_prefixes": 142
+        "repeated_tool_prefixes": 0
       },
       "effort": "high",
       "goal_id": "01m4r1514d2kvj1ven5659mbkh",
@@ -669,7 +669,7 @@
         ],
         "large_tool_result_chars": 1204139,
         "large_tool_results": 100,
-        "repeated_tool_prefixes": 147
+        "repeated_tool_prefixes": 8
       },
       "effort": "high",
       "goal_id": "01m4rsrz8pe4fwgyxmq4r9v3t3",
@@ -750,7 +750,7 @@
         ],
         "large_tool_result_chars": 592747,
         "large_tool_results": 57,
-        "repeated_tool_prefixes": 132
+        "repeated_tool_prefixes": 0
       },
       "effort": "high",
       "goal_id": "01m4rsrz8pe4fwgyxmq4r9v3t3",
@@ -1094,7 +1094,7 @@
         ],
         "large_tool_result_chars": 5177428,
         "large_tool_results": 320,
-        "repeated_tool_prefixes": 329
+        "repeated_tool_prefixes": 2
       },
       "effort": "high",
       "goal_id": "01m4g7w5p6zcbx38tb6zs4k2vy",
@@ -1170,7 +1170,7 @@
         ],
         "large_tool_result_chars": 571126,
         "large_tool_results": 52,
-        "repeated_tool_prefixes": 106
+        "repeated_tool_prefixes": 0
       },
       "effort": null,
       "goal_id": "01m4tprt6d1axyatezb2mz3n5v",
@@ -1224,7 +1224,7 @@
         ],
         "large_tool_result_chars": 267134,
         "large_tool_results": 30,
-        "repeated_tool_prefixes": 155
+        "repeated_tool_prefixes": 0
       },
       "effort": null,
       "goal_id": "01m4r1514d2kvj1ven5659mbkh",
@@ -1323,7 +1323,7 @@
         ],
         "large_tool_result_chars": 708691,
         "large_tool_results": 75,
-        "repeated_tool_prefixes": 164
+        "repeated_tool_prefixes": 2
       },
       "effort": "high",
       "goal_id": "01m4rsrz8pe4fwgyxmq4r9v3t3",
@@ -1397,7 +1397,7 @@
         ],
         "large_tool_result_chars": 522657,
         "large_tool_results": 50,
-        "repeated_tool_prefixes": 72
+        "repeated_tool_prefixes": 0
       },
       "effort": null,
       "goal_id": "01m4tprt6d1axyatezb2mz3n5v",
@@ -1427,7 +1427,7 @@
         ],
         "large_tool_result_chars": 37661,
         "large_tool_results": 6,
-        "repeated_tool_prefixes": 8
+        "repeated_tool_prefixes": 0
       },
       "effort": null,
       "goal_id": "01m4n3eqp2n8kc1zxtjbgwv89y",
@@ -1461,7 +1461,7 @@
         ],
         "large_tool_result_chars": 87137,
         "large_tool_results": 10,
-        "repeated_tool_prefixes": 9
+        "repeated_tool_prefixes": 0
       },
       "effort": null,
       "goal_id": null,

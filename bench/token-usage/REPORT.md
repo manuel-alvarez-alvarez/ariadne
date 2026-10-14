@@ -22,9 +22,9 @@ Required checks and review columns remain part of every comparison.
 
 - Cutoff: `2026-10-14T20:31:49.158Z`; analyzer version `1`; source SHA-256
   `b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47`. The raw database is deliberately not in Git.
-- Primary source: `pinned online SQLite backup of ~/.ariadne/ariadne.db`. The inventory also inspected
-  6 dated backups. They overlap the primary history;
-  they establish retained-history availability, not extra work to sum.
+- Primary source: `pinned snapshot /tmp/ariadne-token-usage-snapshot.XXXXXX.db`. The inventory also inspected
+  6 dated backups. Their overlap is not proven from
+  retained identifiers, so they establish availability only and are not summed.
 - The primary source holds 54 surviving goals, 180
   surviving tasks, 615 surviving sessions, 171122
   events, and 1072 cumulative transcript-source rows. It has
@@ -108,7 +108,7 @@ Within the selected traces, the largest observed daemon-prompt count is
 34 and the largest observed daemon-prompt text
 volume is 61,872 characters. The selected
 trace with the most repeated command prefixes has
-590. These indicators establish where to
+8. These indicators establish where to
 sample; they do not establish that every repetition is avoidable.
 
 The repository already limits several suspected sources: skills are indexed as
@@ -172,9 +172,9 @@ changing policy.
 
 ## Limitations and what would change the ranking
 
-The audit cannot reconstruct tokens per prompt, tool call, or launch, because
-the database stores cumulative transcript counters rather than per-turn
-usage. It cannot infer active execution time from wall-clock fields. A model
+The audit cannot reconstruct tokens per prompt or tool call, because the
+database stores cumulative launch counters rather than per-turn usage. It
+cannot infer active execution time from wall-clock fields. A model
 or effort comparison is observational and confounded by task size, role, and
 outcome; compare like role/column/outcome workloads before acting. The ranking
 would change if a controlled before/after run preserves the same required

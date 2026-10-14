@@ -10,16 +10,16 @@
     "deleted_session_fallbacks": 3,
     "history_files": [
       {
-        "bytes": 274386944,
+        "bytes": 275116032,
         "counts": {
-          "agent_events": 171448,
+          "agent_events": 171618,
           "agent_sessions": 617,
           "goals": 54,
           "session_usage": 1074,
-          "stat_facts": 31205,
+          "stat_facts": 31210,
           "tasks": 181
         },
-        "mtime": "2026-10-14T20:40:24.520194Z",
+        "mtime": "2026-10-14T20:43:24.518572Z",
         "name": "ariadne.db",
         "overlap": "not compared: separate snapshot"
       },
@@ -114,7 +114,7 @@
     "zero_usage_sessions": 0
   },
   "cutoff": "2026-10-14T20:31:49.158Z",
-  "generated_at": "2026-10-14T20:40:41.431544Z",
+  "generated_at": "2026-10-14T20:43:46.365646Z",
   "inventory": {
     "events": 171122,
     "facts": 31203,
@@ -132,8 +132,8 @@
       "facts_through": "2026-10-14T20:17:22.716Z",
       "usage_through": "2026-10-14T20:31:42.956Z"
     },
-    "label": "pinned online SQLite backup of ~/.ariadne/ariadne.db",
-    "revision": "9dd038b7e78bca2c5c6d1a63f883f653f50c37a9",
+    "label": "pinned snapshot /tmp/ariadne-token-usage-snapshot.XXXXXX.db",
+    "revision": "c81f5d5ef08819fdf3fda7b2e59ffe37486494ec",
     "sha256": "b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47",
     "snapshot_acquired_at": "2026-10-14T20:31:52.696616Z",
     "sqlite_user_version": 0
@@ -158,7 +158,7 @@
     },
     "max_daemon_prompt_chars": 61872,
     "max_daemon_prompts": 34,
-    "max_repeated_tool_prefixes": 590,
+    "max_repeated_tool_prefixes": 8,
     "method": "12 largest input-plus-output sessions plus median-usage exited agent and reviewer sessions",
     "selected_sessions": 14,
     "selected_usage_share": 0.34198708209383366

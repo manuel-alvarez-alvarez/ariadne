@@ -167,8 +167,8 @@ Required checks and review columns remain part of every comparison.
 - Cutoff: `{snapshot['cutoff']}`; analyzer version `{VERSION}`; source SHA-256
   `{snapshot['source']['sha256']}`. The raw database is deliberately not in Git.
 - Primary source: `{snapshot['source']['label']}`. The inventory also inspected
-  {coverage['backup_count']} dated backups. They overlap the primary history;
-  they establish retained-history availability, not extra work to sum.
+  {coverage['backup_count']} dated backups. Their overlap is not proven from
+  retained identifiers, so they establish availability only and are not summed.
 - The primary source holds {inv['goals']} surviving goals, {inv['tasks']}
   surviving tasks, {inv['sessions']} surviving sessions, {inv['events']}
   events, and {inv['usage_rows']} cumulative transcript-source rows. It has
@@ -269,9 +269,9 @@ changing policy.
 
 ## Limitations and what would change the ranking
 
-The audit cannot reconstruct tokens per prompt, tool call, or launch, because
-the database stores cumulative transcript counters rather than per-turn
-usage. It cannot infer active execution time from wall-clock fields. A model
+The audit cannot reconstruct tokens per prompt or tool call, because the
+database stores cumulative launch counters rather than per-turn usage. It
+cannot infer active execution time from wall-clock fields. A model
 or effort comparison is observational and confounded by task size, role, and
 outcome; compare like role/column/outcome workloads before acting. The ranking
 would change if a controlled before/after run preserves the same required
@@ -402,12 +402,14 @@ def main() -> int:
 
     task_rows: list[dict[str, Any]] = []
     for task in tasks:
-        row = {"task_id": task["id"], "goal_id": task["goal_id"], "title": task["title"], "status": task["status"], "step": task.get("step") or "", "created_at": task["created_at"], "updated_at": task["updated_at"], "sessions": task_sessions[task["id"]], "partial": int(task["status"] == "in_progress"), "lead_time_secs": seconds(task["created_at"], task["updated_at"]) or "", **task_usage[task["id"]]}
+        known = [s for s in sessions if s.get("task_id") == task["id"]]
+        row = {"task_id": task["id"], "goal_id": task["goal_id"], "title": task["title"], "status": task["status"], "step": task.get("step") or "", "created_at": task["created_at"], "updated_at": task["updated_at"], "sessions": task_sessions[task["id"]], "sessions_missing_usage": sum(s["id"] not in usage_by_session for s in known), "sessions_zero_usage": sum(s["id"] in usage_by_session and billable_total(usage_by_session[s["id"]]) == 0 for s in known), "partial": int(task["status"] == "in_progress"), "row_lifetime_secs": seconds(task["created_at"], task["updated_at"]) or "", **task_usage[task["id"]]}
         row["uncached_input_tokens"] = uncached(row)
         task_rows.append(row)
     goal_rows: list[dict[str, Any]] = []
     for goal in goals:
-        row = {"goal_id": goal["id"], "title": goal["title"], "status": goal["status"], "workflow": goal.get("workflow") or "", "created_at": goal["created_at"], "updated_at": goal["updated_at"], "sessions": goal_sessions[goal["id"]], "partial": int(goal["status"] in {"active", "planning"}), "lead_time_secs": seconds(goal["created_at"], goal["updated_at"]) or "", **goal_usage[goal["id"]]}
+        known = [s for s in sessions if s.get("goal_id") == goal["id"]]
+        row = {"goal_id": goal["id"], "title": goal["title"], "status": goal["status"], "workflow": goal.get("workflow") or "", "created_at": goal["created_at"], "updated_at": goal["updated_at"], "sessions": goal_sessions[goal["id"]], "sessions_missing_usage": sum(s["id"] not in usage_by_session for s in known), "sessions_zero_usage": sum(s["id"] in usage_by_session and billable_total(usage_by_session[s["id"]]) == 0 for s in known), "partial": int(goal["status"] in {"active", "planning"}), "row_lifetime_secs": seconds(goal["created_at"], goal["updated_at"]) or "", **goal_usage[goal["id"]]}
         row["uncached_input_tokens"] = uncached(row)
         goal_rows.append(row)
 
@@ -423,7 +425,15 @@ def main() -> int:
     # the process; hashes let a reviewer reproduce repeated-content counts.
     trace_metrics: dict[str, dict[str, Any]] = collections.defaultdict(lambda: {"events": 0, "daemon_prompts": 0, "daemon_prompt_chars": 0, "large_tool_results": 0, "large_tool_result_chars": 0, "tool_prefixes": collections.Counter(), "large_event_ids": []})
     completed_calls: set[tuple[str, str]] = set()
-    for row in conn.execute("SELECT id, session_id, kind, payload, payload_codec FROM agent_events"):
+    event_rows = list(conn.execute("SELECT id, session_id, kind, payload, payload_codec FROM agent_events"))
+    opener_commands: dict[tuple[str, str], str] = {}
+    for row in event_rows:
+        if row["kind"] != "pre_tool_use":
+            continue
+        body = payload(row["payload"], row["payload_codec"])
+        if body and (key := tool_key(body)) and (command := text_at(body, ("tool_input", "command"), ("acp", "rawInput", "command"), ("command",))):
+            opener_commands[(row["session_id"] or "unattributed", key)] = command
+    for row in event_rows:
         sid = row["session_id"] or "unattributed"
         metric = trace_metrics[sid]
         metric["events"] += 1
@@ -440,7 +450,7 @@ def main() -> int:
                 continue
             if key:
                 completed_calls.add((sid, key))
-            command = text_at(body, ("tool_input", "command"), ("tool", "input", "command"), ("command",), ("tool_name",))
+            command = opener_commands.get((sid, key or ""))
             if command:
                 metric["tool_prefixes"][command.splitlines()[0][:80]] += 1
             result = tool_text(body)
@@ -521,14 +531,14 @@ def main() -> int:
     usage_launches = {row["source"] for row in usages}
     reconciliation = {"canonical_rule": "sum session_usage once per (session_id, launch source), then use newest session_ended fact only for missing/deleted sessions", "canonical_usage": canonical, "uncached_input_tokens": uncached(canonical), "session_ended_fact_sum_non_additive": end_fact_sum, "session_ended_fact_count": len(end_facts), "session_ended_distinct_sessions": len(latest_end_fact), "session_ended_distinct_launches": len(fact_launches), "usage_rows": len(usages), "usage_sources_matching_retained_end_launch": len(usage_launches & fact_launches), "usage_sources_without_retained_end_launch": len(usage_launches - fact_launches), "session_ended_facts_missing_session": sum(sid not in sessions_by_id for sid in latest_end_fact), "fallback_usage": fallback_usage, "notes": ["Cached input is a subset of input and is never added to it.", "End facts contain cumulative session totals and can duplicate a session across launches.", "Usage source is the launch id written by ACP; old launch rows can be absent after a relaunch."]}
 
-    write_csv(out / "goals.csv", goal_rows, ["goal_id", "title", "status", "workflow", "created_at", "updated_at", "sessions", "partial", "lead_time_secs", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens"])
-    write_csv(out / "tasks.csv", task_rows, ["task_id", "goal_id", "title", "status", "step", "created_at", "updated_at", "sessions", "partial", "lead_time_secs", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens"])
+    write_csv(out / "goals.csv", goal_rows, ["goal_id", "title", "status", "workflow", "created_at", "updated_at", "sessions", "sessions_missing_usage", "sessions_zero_usage", "partial", "row_lifetime_secs", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens"])
+    write_csv(out / "tasks.csv", task_rows, ["task_id", "goal_id", "title", "status", "step", "created_at", "updated_at", "sessions", "sessions_missing_usage", "sessions_zero_usage", "partial", "row_lifetime_secs", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens"])
     dim_rows = []
     for value in dimensions.values():
         value["uncached_input_tokens"] = uncached(value)
         dim_rows.append(value)
     write_csv(out / "dimensions.csv", sorted(dim_rows, key=lambda x: (x["dimension"], -x["input_tokens"])), ["dimension", "value", "sessions", "partial_sessions", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens"])
-    write_csv(out / "outcomes.csv", [{"kind": "surviving_task", "outcome": status, "count": count, "status_seconds": status_seconds.get(status, "")} for status, count in sorted(collections.Counter(t["status"] for t in tasks).items())] + [{"kind": "task_ended_fact", "outcome": status, "count": count, "status_seconds": status_seconds.get(status, "")} for status, count in sorted(outcome_facts.items())], ["kind", "outcome", "count", "status_seconds"])
+    write_csv(out / "outcomes.csv", [{"kind": "surviving_task", "outcome": status, "count": count} for status, count in sorted(collections.Counter(t["status"] for t in tasks).items())] + [{"kind": "task_ended_fact", "outcome": status, "count": count} for status, count in sorted(outcome_facts.items())], ["kind", "outcome", "count"])
     write_csv(out / "timing.csv", [{"category": f"task_status:{state}", "count": len(task_end_facts), "seconds": total, "note": "summed from task_ended facts; state is not an outcome"} for state, total in sorted(status_seconds.items())] + [{"category": "ended_session_lifetime", "count": ended_count, "seconds": ended_lifetime, "note": "inclusive wall time, not active execution"}, {"category": "console_permission_wait", "count": len(permission_waits), "seconds": sum(permission_waits) / 1000, "note": "only console-decided permission facts"}], ["category", "count", "seconds", "note"])
     audit_rows = []
     for goal in goals:
