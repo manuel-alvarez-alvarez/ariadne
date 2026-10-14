@@ -188,9 +188,16 @@ impl Github {
                 .map_err(|e| format!("cannot read the pending finding GitHub stored: {e}"))?;
             let node =
                 &answered["data"]["addPullRequestReviewThread"]["thread"]["comments"]["nodes"][0];
-            let id = node["databaseId"]
-                .as_i64()
-                .ok_or_else(|| "GitHub answered no id for the pending finding".to_string())?;
+            // GitHub answers a thread on a line its diff does not show
+            // with no error and no thread at all, rather than the 422 a
+            // submitted review gets: named here, so a round that reaches
+            // this far still says which finding it stopped on.
+            let id = node["databaseId"].as_i64().ok_or_else(|| {
+                format!(
+                    "GitHub stored no pending finding on {}:{}: it shows no such line of the diff",
+                    comment.path, comment.line
+                )
+            })?;
             stored.push(NewPullRequestComment {
                 forge_id: review_comment_id(id),
                 thread_id: review_comment_id(id),

@@ -64,10 +64,10 @@ fn script(shown: &Shown) -> Value {
     let threads =
         json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
     let review_comments = json!([
-        {"id": 501, "body": "**[P0] Empty list**\n\nAn empty list panics.", "path": "src/lib.rs", "line": 3,
+        {"id": 501, "body": "**[P0] Empty list**\n\nAn empty list panics.", "path": "a.txt", "line": 1,
          "created_at": "2026-10-02T00:00:00Z"},
-        {"id": 502, "body": "**[P1] Untested**\n\nNo test covers the empty list.", "path": "tests/it.rs",
-         "line": 9, "created_at": "2026-10-02T00:00:00Z"}
+        {"id": 502, "body": "**[P1] Untested**\n\nNo test covers the empty list.", "path": "a.txt",
+         "line": 2, "created_at": "2026-10-02T00:00:00Z"}
     ]);
     let timeline: Vec<Value> = shown
         .timeline
@@ -146,13 +146,13 @@ fn script(shown: &Shown) -> Value {
 }
 
 /// A checkout of `acme/widgets` whose branch `fix` holds one commit on top
-/// of `main`, `a.txt`. Answers the checkout and that commit.
+/// of `main`, `a.txt` of two lines. Answers the checkout and that commit.
 fn checkout(h: &Harness) -> (PathBuf, String) {
     let path = h.git_repo("widgets");
     sh(
         &path,
         "git remote add origin https://github.com/acme/widgets.git && \
-         git checkout -q -b fix && echo a > a.txt && git add a.txt && \
+         git checkout -q -b fix && printf 'a\\nb\\n' > a.txt && git add a.txt && \
          git -c user.email=t@t -c user.name=t commit -qm a && git checkout -q main",
     );
     let head = sh(&path, "git rev-parse fix");
@@ -669,7 +669,7 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
         as_session(
             &reviews,
             &session.id,
-            json!({"event": "request_changes", "body": "P0 on src/lib.rs:3: it panics."}),
+            json!({"event": "request_changes", "body": "P0 on a.txt:1: it panics."}),
         ),
         StatusCode::BAD_REQUEST,
     )
@@ -679,12 +679,38 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
             &reviews,
             &session.id,
             json!({"event": "comment", "body": "One finding.", "comments": [
-                {"path": "src/lib.rs", "line": 3, "body": "No title.", "priority": "P2"}
+                {"path": "a.txt", "line": 1, "body": "No title.", "priority": "P2"}
             ]}),
         ),
         StatusCode::BAD_REQUEST,
     )
     .await;
+    // A finding on a line the diff does not show — past the one line
+    // `a.txt` has, or in a file the change never touched — is refused
+    // before the forge sees it: GitHub takes no such comment, and on a
+    // pending review answers it with no thread at all.
+    for (path, line) in [("a.txt", 7), ("src/lib.rs", 1)] {
+        let refused = h
+            .error(
+                as_session(
+                    &reviews,
+                    &session.id,
+                    json!({"event": "comment", "body": "One finding.", "comments": [
+                        {"path": path, "line": line, "title": "Off the diff",
+                         "body": "Nothing here.", "priority": "P2"}
+                    ]}),
+                ),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert!(
+            refused
+                .error
+                .message
+                .contains(&format!("no line {line} of {path}")),
+            "the refusal names the line: {refused:?}"
+        );
+    }
     h.error(
         as_session(
             &reviews,
@@ -706,9 +732,9 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
                 &reviews,
                 &session.id,
                 json!({"event": "request_changes", "body": summary, "comments": [
-                    {"path": "src/lib.rs", "line": 3, "title": "Empty list",
+                    {"path": "a.txt", "line": 1, "title": "Empty list",
                      "body": "An empty list panics.", "priority": "P0"},
-                    {"path": "tests/it.rs", "line": 9, "title": "Untested",
+                    {"path": "a.txt", "line": 2, "title": "Untested",
                      "body": "No test covers the empty list.", "priority": "P1"}
                 ]}),
             ),
@@ -727,9 +753,9 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
         review,
         json!({"event": "REQUEST_CHANGES", "commit_id": head, "comments": [
             // Each finding is signed the review's, invisibly (029).
-            {"path": "src/lib.rs", "line": 3, "side": "RIGHT",
+            {"path": "a.txt", "line": 1, "side": "RIGHT",
              "body": "**[P0] Empty list**\n\nAn empty list panics.\n\n<!-- ariadne:review -->"},
-            {"path": "tests/it.rs", "line": 9, "side": "RIGHT",
+            {"path": "a.txt", "line": 2, "side": "RIGHT",
              "body": "**[P1] Untested**\n\nNo test covers the empty list.\n\n<!-- ariadne:review -->"}
         ]}),
         "the review carries no summary of its own"
@@ -806,7 +832,7 @@ async fn a_review_strips_a_trailing_trailer_from_its_summary_and_its_findings() 
                 &reviews,
                 &session.id,
                 json!({"event": "request_changes", "body": format!("{summary}{footer}"), "comments": [
-                    {"path": "src/lib.rs", "line": 3, "title": "Empty list",
+                    {"path": "a.txt", "line": 1, "title": "Empty list",
                      "body": format!("An empty list panics.{footer}"), "priority": "P0"}
                 ]}),
             ),
@@ -865,7 +891,7 @@ async fn a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other() {
                 &format!("/v1/pull-requests/{id}/reviews"),
                 &session.id,
                 json!({"event": "request_changes", "body": "One P0.", "comments": [
-                    {"path": "src/lib.rs", "line": 3, "title": "Empty list",
+                    {"path": "a.txt", "line": 1, "title": "Empty list",
                      "body": "An empty list panics.", "priority": "P0"}
                 ]}),
             ),
@@ -1215,7 +1241,7 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
                 &format!("/v1/pull-requests/{id}/reviews"),
                 &session.id,
                 json!({"event": "request_changes", "body": "One finding.", "comments": [
-                    {"path": "src/lib.rs", "line": 3, "title": "Empty list",
+                    {"path": "a.txt", "line": 1, "title": "Empty list",
                      "body": "An empty list panics.", "priority": "P0"}
                 ]}),
             ),
@@ -1534,7 +1560,7 @@ async fn a_failed_summary_keeps_the_posted_findings_for_a_round_with_no_comments
                 &reviews,
                 &session.id,
                 json!({"event": "comment", "body": "One P1.", "comments": [
-                    {"path": "src/lib.rs", "line": 3, "title": "Empty list",
+                    {"path": "a.txt", "line": 1, "title": "Empty list",
                      "body": "An empty list panics.", "priority": "P1"}
                 ]}),
             ),
