@@ -276,7 +276,9 @@ impl Github {
     /// per user per request — found among the request's reviews, or
     /// created with no event, and the hidden verdict mark as its body,
     /// where there is none: creating one is itself silent, since a pending
-    /// review shows nobody but its own author until it is submitted.
+    /// review shows nobody but its own author until it is submitted. One
+    /// found with no body at all is recovered the same way
+    /// [`Self::replace_pending_review_body`]'s own find recovers it.
     pub(super) async fn pending_review(
         &self,
         repo: &str,
@@ -285,50 +287,69 @@ impl Github {
     ) -> Result<ReviewSummary, String> {
         let (host, owner, name) = split_slug(repo)?;
         let path = format!("repos/{owner}/{name}/pulls/{number}/reviews");
-        if let Some(found) = self.find_pending_review(repo, number, login).await? {
-            if !found.body.trim().is_empty() {
-                return Ok(found);
+        match self.find_pending_review(repo, number, login).await? {
+            Some(found) => {
+                self.recover_bodiless_review(host, &path, number, found)
+                    .await
             }
-            // A pending review with no body at all — one an earlier Ariadne
-            // created with `body=`, or one begun by hand on the forge — is
-            // one GitHub refuses to edit through either API ("Could not
-            // edit a review with a missing body"), and every pending post
-            // is an edit of it. Holding no draft comment, it is deleted and
-            // made again with a body, losing nothing; holding any, it is
-            // the user's to submit or discard first.
-            let held: Vec<serde_json::Value> = self
-                .pages(host, &format!("{path}/{}/comments", found.id))
-                .await?;
-            if !held.is_empty() {
-                return Err(format!(
-                    "GitHub holds a pending review of yours on #{number} with no body, which \
-                     it refuses to edit, and {} draft comment(s) in it: submit or discard that \
-                     review on the forge, and the next post makes one Ariadne can edit",
-                    held.len()
-                ));
-            }
-            self.cli
-                .answer(&[
-                    "api",
-                    &format!("{path}/{}", found.id),
-                    "--hostname",
-                    host,
-                    "--method",
-                    "DELETE",
-                ])
-                .await?;
+            None => self.create_pending_review(host, &path).await,
         }
-        // Created with a body that is the hidden verdict mark alone, which
-        // renders as nothing: GitHub refuses to edit a review it holds with
-        // no body at all ("Could not edit a review with a missing body"),
-        // and every later change of the pending review — a verdict, a
-        // reply, a resolve — is an edit of its body. No `event` field still
-        // leaves the review pending.
+    }
+
+    /// Recover `found`'s empty body (026 rule 25): one GitHub refuses to
+    /// edit through either API ("Could not edit a review with a missing
+    /// body") — an earlier Ariadne's own, made with `body=`, or one begun
+    /// by hand on the forge — is deleted and made again with the hidden
+    /// mark where it holds no draft comment of its own, losing nothing;
+    /// holding any makes it the user's to submit or discard first, named
+    /// in the error rather than touched. `found` itself, unchanged, where
+    /// its body already holds something.
+    async fn recover_bodiless_review(
+        &self,
+        host: &str,
+        path: &str,
+        number: i64,
+        found: ReviewSummary,
+    ) -> Result<ReviewSummary, String> {
+        if !found.body.trim().is_empty() {
+            return Ok(found);
+        }
+        let held: Vec<serde_json::Value> = self
+            .pages(host, &format!("{path}/{}/comments", found.id))
+            .await?;
+        if !held.is_empty() {
+            return Err(format!(
+                "GitHub holds a pending review of yours on #{number} with no body, which \
+                 it refuses to edit, and {} draft comment(s) in it: submit or discard that \
+                 review on the forge, and the next post makes one Ariadne can edit",
+                held.len()
+            ));
+        }
+        self.cli
+            .answer(&[
+                "api",
+                &format!("{path}/{}", found.id),
+                "--hostname",
+                host,
+                "--method",
+                "DELETE",
+            ])
+            .await?;
+        self.create_pending_review(host, path).await
+    }
+
+    /// Create the viewer's pending review fresh, the hidden verdict mark
+    /// alone as its body, which renders as nothing: GitHub refuses to
+    /// edit a review it holds with no body at all ("Could not edit a
+    /// review with a missing body"), and every later change of the
+    /// pending review — a verdict, a reply, a resolve — is an edit of its
+    /// body. No `event` field still leaves the review pending.
+    async fn create_pending_review(&self, host: &str, path: &str) -> Result<ReviewSummary, String> {
         let output = self
             .cli
             .answer(&[
                 "api",
-                &path,
+                path,
                 "--hostname",
                 host,
                 "--method",
@@ -519,11 +540,20 @@ impl Github {
         login: &str,
         body: &str,
     ) -> Result<String, PendingEditError> {
-        let (host, _, _) = split_slug(repo)?;
-        let pending = self
+        let (host, owner, name) = split_slug(repo)?;
+        let path = format!("repos/{owner}/{name}/pulls/{number}/reviews");
+        let found = self
             .find_pending_review(repo, number, login)
             .await?
             .ok_or(PendingEditError::NotPending)?;
+        // Recovered the same way `pending_review` recovers it (026 rule
+        // 25): an older review found with no body at all is still one
+        // GitHub refuses to edit, whatever this call's own new body is,
+        // since the refusal reads the review's current state, not the
+        // mutation's.
+        let pending = self
+            .recover_bodiless_review(host, &path, number, found)
+            .await?;
         Ok(self
             .update_pending_review_body(host, &pending, body)
             .await?)
@@ -1437,6 +1467,55 @@ sys.stdout.write(answers[count])
             .unwrap();
         assert_eq!(id, "rv-9");
         let mutate = call_args(dir.path(), 3);
+        assert!(mutate.contains(&"body=New body.".to_string()), "{mutate:?}");
+    }
+
+    /// An older pending review found with no body at all — one from
+    /// before the hidden-mark fix, or begun by hand on the forge — is
+    /// recovered the same way `pending_review` recovers it, holding no
+    /// draft comment of its own: deleted and made again, then replaced
+    /// with the caller's own new body outright, never left for GitHub to
+    /// refuse ("Could not edit a review with a missing body").
+    #[tokio::test]
+    async fn replace_pending_review_body_recovers_an_older_bodiless_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                "[]",
+                "",
+                r#"{"id":10,"node_id":"PR_kwDOy","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}"#,
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOy"}}}}"#,
+            ],
+        ));
+        let id = github
+            .replace_pending_review_body("github.com/acme/widgets", 1, "me", "New body.")
+            .await
+            .unwrap();
+        assert_eq!(id, "rv-10");
+        let drafts = call_args(dir.path(), 1);
+        assert!(
+            drafts
+                .iter()
+                .any(|a| a == "repos/acme/widgets/pulls/1/reviews/9/comments"),
+            "the bodiless review's draft comments are read first: {drafts:?}"
+        );
+        let delete = call_args(dir.path(), 2);
+        assert!(
+            delete
+                .iter()
+                .any(|a| a == "repos/acme/widgets/pulls/1/reviews/9")
+                && delete.contains(&"DELETE".to_string()),
+            "{delete:?}"
+        );
+        let create = call_args(dir.path(), 3);
+        assert!(
+            create.contains(&"POST".to_string())
+                && create.contains(&format!("body={}", super::PENDING_VERDICT_MARK)),
+            "{create:?}"
+        );
+        let mutate = call_args(dir.path(), 4);
         assert!(mutate.contains(&"body=New body.".to_string()), "{mutate:?}");
     }
 

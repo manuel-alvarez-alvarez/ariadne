@@ -414,6 +414,10 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   comment, and is otherwise left to the user, the post refused saying so:
   `github/comments.rs::tests::a_bodiless_pending_review_holding_no_draft_is_deleted_and_made_again`,
   `::a_bodiless_pending_review_holding_drafts_is_the_users_to_settle`.
+  `replace_pending_review_body` (rule 25) recovers the same bodiless
+  review the same way, before replacing it with the caller's own new
+  body outright, never left for GitHub to refuse the edit over:
+  `github/comments.rs::tests::replace_pending_review_body_recovers_an_older_bodiless_review`.
 - A reply to a top-level conversation comment quotes it, with a link to it,
   into the pending review's own body:
   `github/comments.rs::tests::a_pending_conversation_reply_quotes_the_comment_and_appends_to_the_pending_review`.
