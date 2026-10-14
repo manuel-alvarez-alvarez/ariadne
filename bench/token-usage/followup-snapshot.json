@@ -1,13 +1,17 @@
 {
-  "analyzer_sha256": "85b9e667a08b8aff602a5cb33f7b3ebe536d1603974b9b3b39dc38972737e327",
+  "analyzer_sha256": "c177f9d664328c6aa2c095ae5b5d17e1ea6aa018056162c05e28e592519a49a3",
   "analyzer_version": "2",
+  "baseline_database": {
+    "available": true,
+    "session_ids": 615
+  },
   "coverage": {
     "claude_parser": {
       "conflicting_usage_records": 6818,
       "duplicate_request_records": 81531
     },
     "codex_inventory": {
-      "after_cutoff": 960,
+      "after_cutoff": 1472,
       "cumulative_counter_records": 57834,
       "request_usage_records": 40282,
       "state_records_without_usage": 2294
@@ -22,7 +26,7 @@
       },
       {
         "family": "codex",
-        "files": 1532,
+        "files": 1534,
         "mapped_sessions": 232,
         "reason": "token_usage_record has a native response_id and non-overlapping usage field; turn and thread totals overlap",
         "request_history": "supported_with_field_semantics_limit"
@@ -46,16 +50,16 @@
     "partial_sessions": 2
   },
   "cutoff": "2026-10-14T22:17:05.521Z",
-  "revision": "641dbd11c396c575425d12be3163c8d193107100",
+  "revision": "12e120714ec73db2c5191e4ae4eef8be454d818c",
   "separation": {
     "baseline": "frozen artifacts under bench/token-usage excluding followup-*",
     "goal_overhead": "01m4y11d2c2q2zt30qgg5gjkj9",
-    "pre_cutoff": "pre-followup cutoff is not proof of shared frozen session identity because frozen public artifacts omit session IDs"
+    "shared_cohort": "native agent_sessions.id intersection with supplied frozen database"
   },
   "source": {
     "external_snapshot_location": "/tmp/token-followup.db",
     "label": "SQLite backup created 2026-10-15",
     "sha256": "adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a"
   },
-  "transcript_manifest_sha256": "bf446ec311607a235dcd0891fdd25b067ce952b352d042d57e820e07664134c1"
+  "transcript_manifest_sha256": "a7c418b15543efaa5c56e640f5ccad0f51485af9674c6f162c4cdd7b35aabc07"
 }

@@ -20,6 +20,7 @@ source.close()
 PY
 python3 bench/token-usage/analyze.py \
   --database /tmp/ariadne-token-usage-snapshot.db \
+  --baseline-database /tmp/ariadne-token-usage-snapshot.XXXXXX.db \
   --output /tmp/ariadne-token-usage-report \
   --revision "$(git rev-parse HEAD)" \
   --history-dir /Users/malvarez/.ariadne \

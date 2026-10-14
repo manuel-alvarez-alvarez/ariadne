@@ -101,6 +101,7 @@ def string_size(value: Any) -> tuple[int, str]:
 def claude_requests(path: Path, internal: dict[str, dict[str, Any]], cutoff: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     """Merge repeated Claude blocks by message ID and join tools by tool_use ID."""
     requests: dict[str, dict[str, Any]] = {}
+    aliases: dict[str, str] = {}
     tool_calls: dict[str, dict[str, Any]] = {}
     tool_results: list[dict[str, Any]] = []
     session_id: str | None = None
@@ -132,7 +133,8 @@ def claude_requests(path: Path, internal: dict[str, dict[str, Any]], cutoff: str
             message = record["message"]
             message_id = message.get("id")
             request_id = record.get("requestId")
-            vendor_id = message_id if isinstance(message_id, str) else request_id
+            supplied_aliases = [value for value in (request_id, message_id) if isinstance(value, str)]
+            vendor_id = next((aliases[value] for value in supplied_aliases if value in aliases), message_id if isinstance(message_id, str) else request_id)
             if not isinstance(vendor_id, str):
                 counts["assistant_without_request_id"] += 1
                 continue
@@ -148,15 +150,22 @@ def claude_requests(path: Path, internal: dict[str, dict[str, Any]], cutoff: str
                 cache_create = int(raw.get("cache_creation_input_tokens") or 0)
                 cached = int(raw.get("cache_read_input_tokens") or 0)
                 item = {"input_tokens": direct_input + cache_create + cached, "cached_input_tokens": cached, "output_tokens": int(raw.get("output_tokens") or 0)}
+            for alias in supplied_aliases:
+                aliases[alias] = vendor_id
             if vendor_id in requests:
                 counts["duplicate_request_records"] += 1
                 prior = requests[vendor_id]
-                if item is not None and prior["usage_record"] and any(prior[field] != item[field] for field in TOKENS):
-                    prior["usage_status"] = "ambiguous_conflict"
-                    counts["conflicting_usage_records"] += 1
+                if item is not None:
+                    if not prior["usage_record"]:
+                        prior.update(item)
+                        prior["usage_record"] = 1
+                        prior["usage_status"] = "present"
+                    elif any(prior[field] != item[field] for field in TOKENS):
+                        prior["usage_status"] = "ambiguous_conflict"
+                        counts["conflicting_usage_records"] += 1
             else:
                 initial = item or usage()
-                requests[vendor_id] = {"family": "claude", "session_id": session_id or "unmapped", "vendor_session_id": record.get("sessionId") or "missing", "request_id": vendor_id, "turn_id": "unknown_not_assumed_agent_turn", "response_id": message_id or "missing", "timestamp": record.get("timestamp") or "", "model": message.get("model") or "unknown", "effort": record.get("effort") or record.get("perTurnEffort") or "unknown", "tool_calls": 0, "usage_record": int(item is not None), "usage_status": "present" if item is not None else "missing", "deduplication": "message.id_then_requestId", **initial}
+                requests[vendor_id] = {"family": "claude", "session_id": session_id or "unmapped", "vendor_session_id": record.get("sessionId") or "missing", "request_id": vendor_id, "alias_ids": "|".join(sorted(supplied_aliases)), "turn_id": "unknown_not_assumed_agent_turn", "response_id": message_id or "missing", "timestamp": record.get("timestamp") or "", "model": message.get("model") or "unknown", "effort": record.get("effort") or record.get("perTurnEffort") or "unknown", "tool_calls": 0, "usage_record": int(item is not None), "usage_status": "present" if item is not None else "missing", "deduplication": "alias_union_message.id_requestId", **initial}
             for part in message.get("content") or []:
                 if isinstance(part, dict) and part.get("type") == "tool_use":
                     call_id = str(part.get("id") or "missing")
@@ -218,6 +227,7 @@ def codex_tools(path: Path, internal: dict[str, dict[str, Any]], cutoff: str) ->
     """Join Codex function calls/results by native call ID, not request order."""
     calls: dict[tuple[str, str], dict[str, Any]] = {}
     results: list[dict[str, Any]] = []
+    vendor_session: str | None = None
     counts = collections.Counter()
     try:
         file = path.open(encoding="utf-8", errors="replace")
@@ -233,13 +243,17 @@ def codex_tools(path: Path, internal: dict[str, dict[str, Any]], cutoff: str) ->
                 continue
             payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
             meta = payload.get("session_meta") if isinstance(payload.get("session_meta"), dict) else {}
-            vendor_session = payload.get("session_id") or meta.get("id")
+            discovered_session = payload.get("session_id") or meta.get("id") or (payload.get("id") if payload.get("type") == "session_meta" else None)
+            if isinstance(discovered_session, str):
+                vendor_session = discovered_session
             sid = internal.get(vendor_session, {}).get("id", "unmapped") if isinstance(vendor_session, str) else "unmapped"
             item = payload.get("item") if isinstance(payload.get("item"), dict) else payload
-            if item.get("type") == "function_call" and isinstance(item.get("call_id"), str):
+            passthrough = item.get("internal_chat_message_metadata_passthrough") if isinstance(item.get("internal_chat_message_metadata_passthrough"), dict) else {}
+            turn_id = passthrough.get("turn_id") or payload.get("turn_id") or ""
+            if item.get("type") in {"function_call", "custom_tool_call"} and isinstance(item.get("call_id"), str):
                 key = (sid, item["call_id"])
-                calls[key] = {"family": "codex", "session_id": sid, "request_id": "unavailable_no_native_response_link", "tool_call_id": item["call_id"], "tool_name": item.get("name") or "unknown", "result_chars": 0, "result_representation": "missing_result", "timestamp": record.get("timestamp") or "", "association": "native_call_id", "request_association": "unavailable_no_native_response_link"}
-            elif item.get("type") == "function_call_output" and isinstance(item.get("call_id"), str):
+                calls[key] = {"family": "codex", "session_id": sid, "request_id": "unavailable_no_native_response_link", "tool_call_id": item["call_id"], "tool_name": item.get("name") or "unknown", "result_chars": 0, "result_representation": "missing_result", "timestamp": record.get("timestamp") or "", "turn_id": turn_id, "association": "native_call_id", "request_association": "turn_retained_response_unresolved"}
+            elif item.get("type") in {"function_call_output", "custom_tool_call_output"} and isinstance(item.get("call_id"), str):
                 length, representation = string_size(item.get("output"))
                 results.append({"sid": sid, "call_id": item["call_id"], "length": length, "representation": representation, "timestamp": record.get("timestamp") or ""})
     for result in results:
@@ -248,7 +262,7 @@ def codex_tools(path: Path, internal: dict[str, dict[str, Any]], cutoff: str) ->
             target["result_chars"] = max(target["result_chars"], result["length"])
             target["result_representation"] = result["representation"]
         else:
-            calls[(result["sid"], result["call_id"])] = {"family": "codex", "session_id": result["sid"], "request_id": "unmapped", "tool_call_id": result["call_id"], "tool_name": "unknown", "result_chars": result["length"], "result_representation": result["representation"], "timestamp": result["timestamp"], "association": "unmatched_native_call_id", "request_association": "unavailable"}
+            calls[(result["sid"], result["call_id"])] = {"family": "codex", "session_id": result["sid"], "request_id": "unmapped", "tool_call_id": result["call_id"], "tool_name": "unknown", "result_chars": result["length"], "result_representation": result["representation"], "timestamp": result["timestamp"], "turn_id": "", "association": "unmatched_native_call_id", "request_association": "unavailable"}
             counts["unmatched_outputs"] += 1
     return list(calls.values()), counts
 
@@ -263,6 +277,7 @@ def main() -> int:
     parser.add_argument("--source-label", required=True)
     parser.add_argument("--audit-goal-id", default="01m4y11d2c2q2zt30qgg5gjkj9")
     parser.add_argument("--snapshot-location", default="external SQLite snapshot supplied to --database")
+    parser.add_argument("--baseline-database", type=Path, default=Path("/tmp/ariadne-token-usage-snapshot.XXXXXX.db"))
     args = parser.parse_args()
     source = args.database.resolve()
     out = args.output.resolve()
@@ -275,6 +290,11 @@ def main() -> int:
     agents = {row["id"]: row for row in rows(conn, "SELECT * FROM task_agents")}
     internal = {row["internal_session_id"]: row for row in sessions if row.get("internal_session_id")}
     cutoff = max(value for value in (conn.execute("SELECT MAX(created_at) FROM agent_events").fetchone()[0], conn.execute("SELECT MAX(updated_at) FROM session_usage").fetchone()[0], conn.execute("SELECT MAX(created_at) FROM stat_facts").fetchone()[0]) if value)
+    baseline_session_ids: set[str] = set()
+    if args.baseline_database.is_file():
+        baseline_conn = sqlite3.connect(f"file:{args.baseline_database.resolve()}?mode=ro", uri=True)
+        baseline_session_ids = {row[0] for row in baseline_conn.execute("SELECT id FROM agent_sessions")}
+        baseline_conn.close()
 
     formats: list[dict[str, Any]] = []
     request_rows: list[dict[str, Any]] = []
@@ -381,11 +401,11 @@ def main() -> int:
     baseline_cutoff = json.loads(baseline_snapshot.read_text())["cutoff"] if baseline_snapshot.exists() else ""
     audit_goal_ids = {args.audit_goal_id}
     cohorts: dict[str, dict[str, Any]] = {}
-    for cohort in ("pre_followup_cutoff_not_verified_shared", "newer_evidence", "this_goal_overhead"):
+    for cohort in ("shared_frozen_session_ids", "not_in_frozen_session_ids", "newer_evidence", "this_goal_overhead"):
         cohorts[cohort] = {"cohort": cohort, "requests": 0, "sessions": set(), **usage()}
     for row in request_rows:
         session = session_by_id[row["session_id"]]
-        cohort = "this_goal_overhead" if session.get("goal_id") in audit_goal_ids else "pre_followup_cutoff_not_verified_shared" if row["timestamp"] <= baseline_cutoff else "newer_evidence"
+        cohort = "this_goal_overhead" if session.get("goal_id") in audit_goal_ids else "shared_frozen_session_ids" if row["session_id"] in baseline_session_ids else "newer_evidence" if row["timestamp"] > baseline_cutoff else "not_in_frozen_session_ids"
         item = cohorts[cohort]
         item["requests"] += 1
         item["sessions"].add(row["session_id"])
@@ -405,21 +425,22 @@ def main() -> int:
         add(usage_by_session[row["session_id"]], row)
     reconciliation_rows = []
     for sid, session in session_by_id.items():
-        counter, observed = usage_by_session[sid], usage()
+        counter_present = sid in usage_by_session
+        counter, observed = usage_by_session.get(sid, usage()), usage()
         for row in grouped.get(sid, []): add(observed, row)
         state = "request_partial" if not grouped.get(sid) else "matched" if observed == counter else "reset_or_multi_launch_or_scope_difference"
-        reconciliation_rows.append({"session_id": sid, "goal_id": session.get("goal_id") or "", "task_id": session.get("task_id") or "", "launch_id": session.get("launch_id") or "", "session_counter_present": int(sid in usage_by_session), "state": state, "request_input_tokens": observed["input_tokens"], "request_cached_input_tokens": observed["cached_input_tokens"], "request_output_tokens": observed["output_tokens"], "counter_input_tokens": counter["input_tokens"], "counter_cached_input_tokens": counter["cached_input_tokens"], "counter_output_tokens": counter["output_tokens"], "input_residual": counter["input_tokens"] - observed["input_tokens"], "cached_input_residual": counter["cached_input_tokens"] - observed["cached_input_tokens"], "output_residual": counter["output_tokens"] - observed["output_tokens"]})
+        reconciliation_rows.append({"session_id": sid, "goal_id": session.get("goal_id") or "", "task_id": session.get("task_id") or "", "launch_id": session.get("launch_id") or "", "session_counter_present": int(counter_present), "state": "missing_counter" if not counter_present else state, "request_input_tokens": observed["input_tokens"], "request_cached_input_tokens": observed["cached_input_tokens"], "request_output_tokens": observed["output_tokens"], "counter_input_tokens": counter["input_tokens"], "counter_cached_input_tokens": counter["cached_input_tokens"], "counter_output_tokens": counter["output_tokens"], "input_residual": counter["input_tokens"] - observed["input_tokens"], "cached_input_residual": counter["cached_input_tokens"] - observed["cached_input_tokens"], "output_residual": counter["output_tokens"] - observed["output_tokens"]})
     frozen = json.loads(Path(__file__).with_name("reconciliation.json").read_text())
     current_total = usage()
     for value in usage_by_session.values(): add(current_total, value)
     reconciliation = {"request_usage_rule": "sum one mapped retained native response/message ID per format; exclude conflicts and missing usage", "request_usage": {**request_total, "uncached_input_tokens": uncached(request_total)}, "current_snapshot_session_usage_not_baseline": {**current_total, "uncached_input_tokens": uncached(current_total)}, "frozen_baseline_canonical_usage": frozen["canonical_usage"], "frozen_baseline_rule": frozen["canonical_rule"], "frozen_baseline_deleted_session_fallbacks": frozen["fallback_usage"], "per_session_comparison": "request-reconciliation.csv; residuals remain unexplained unless stated by its state", "deduplicated_claude_request_records": claude_counts["duplicate_request_records"], "conflicting_duplicate_request_ids_excluded": len(conflicts), "unmapped_request_records_excluded": unmapped_request_records}
-    snapshot = {"analyzer_version": VERSION, "analyzer_sha256": digest(Path(__file__)), "revision": args.revision, "source": {"label": args.source_label, "external_snapshot_location": args.snapshot_location, "sha256": digest(source)}, "cutoff": cutoff, "transcript_manifest_sha256": manifest.hexdigest(), "coverage": {"formats": formats, "claude_parser": dict(claude_counts), "codex_inventory": dict(codex_counts), "mapped_request_sessions": len(grouped), "partial_sessions": sum(session["status"] not in {"exited", "failed"} for session in sessions)}, "separation": {"baseline": "frozen artifacts under bench/token-usage excluding followup-*", "pre_cutoff": "pre-followup cutoff is not proof of shared frozen session identity because frozen public artifacts omit session IDs", "goal_overhead": args.audit_goal_id}}
+    snapshot = {"analyzer_version": VERSION, "analyzer_sha256": digest(Path(__file__)), "revision": args.revision, "source": {"label": args.source_label, "external_snapshot_location": args.snapshot_location, "sha256": digest(source)}, "cutoff": cutoff, "baseline_database": {"available": bool(baseline_session_ids), "session_ids": len(baseline_session_ids)}, "transcript_manifest_sha256": manifest.hexdigest(), "coverage": {"formats": formats, "claude_parser": dict(claude_counts), "codex_inventory": dict(codex_counts), "mapped_request_sessions": len(grouped), "partial_sessions": sum(session["status"] not in {"exited", "failed"} for session in sessions)}, "separation": {"baseline": "frozen artifacts under bench/token-usage excluding followup-*", "shared_cohort": "native agent_sessions.id intersection with supplied frozen database", "goal_overhead": args.audit_goal_id}}
 
     write_csv(out / "format-inventory.csv", formats, ["family", "files", "mapped_sessions", "request_history", "reason"])
     write_csv(out / "followup-transcript-manifest.csv", manifest_rows, ["family", "source_id", "retained_content_sha256", "parser", "mapped_requests", "unmapped_requests"])
     write_csv(out / "request-usage.csv", request_rows, ["family", "session_id", "vendor_session_id", "request_id", "turn_id", "response_id", "timestamp", "model", "effort", "tool_calls", "usage_record", "usage_status", "deduplication", "input_tokens", "cached_input_tokens", "output_tokens"])
     write_csv(out / "session-timeline.csv", timeline, ["session_id", "goal_id", "task_id", "seat", "workflow_column", "model", "effort", "launch_id", "task_outcome", "session_status", "partial", "requests", "first_request_at", "last_request_at", "observed_request_span_secs", "interval_definition", "input_tokens", "cached_input_tokens", "output_tokens", "uncached_input_tokens"])
-    write_csv(out / "tool-output.csv", tool_values, ["family", "session_id", "request_id", "tool_call_id", "tool_name", "result_chars", "result_representation", "timestamp", "association", "request_association"])
+    write_csv(out / "tool-output.csv", tool_values, ["family", "session_id", "request_id", "tool_call_id", "tool_name", "turn_id", "result_chars", "result_representation", "timestamp", "association", "request_association"])
     write_csv(out / "wakeup-analysis.csv", wakeups, ["event_id", "session_id", "delivered_at", "delivery_cause", "next_request_id", "next_request_delay_secs", "outcome_join", "limitation"])
     write_csv(out / "cohort-comparison.csv", cohort_rows, ["cohort", "requests", "sessions", "input_tokens", "cached_input_tokens", "output_tokens", "uncached_input_tokens"])
     write_csv(out / "handoff-analysis.csv", handoffs, ["predecessor_session_id", "successor_session_id", "goal_id", "task_id", "renderer_revision", "candidate_selection", "supported_consequence", "reason"])
@@ -442,7 +463,7 @@ The follow-up found {len(request_rows):,} unique request records, of which {sum(
 
 ## Cohorts, accounting, and timing
 
-`cohort-comparison.csv` separates this goal by its explicit goal ID, newer evidence, and records before the follow-up cutoff. The final category is not called shared baseline: frozen public artifacts omit session IDs, so a true identity intersection needs the external frozen SQLite snapshot. These are transcript cohorts, not a before/after experiment.
+`cohort-comparison.csv` uses the supplied frozen SQLite snapshot to intersect native `agent_sessions.id` values. It separates those shared identities, new sessions, and this goal by explicit goal ID. These transcript cohorts are not a before/after experiment.
 
 Request input includes cached input. Uncached input equals input minus cached input. `request-reconciliation.csv` compares each mapped session with its retained session counters and records residuals. `followup-reconciliation.json` names the frozen baseline canonical total and fallback rule separately from the current snapshot; neither total replaces the other.
 
