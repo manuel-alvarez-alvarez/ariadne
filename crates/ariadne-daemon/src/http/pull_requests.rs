@@ -839,36 +839,8 @@ pub(super) async fn resolve(
     if !comment.resolved {
         let repository = state.store.get_repository(&pull.repository_id).await?;
         if repository.supervise_posts() {
-            // Held under the same lock a reply and a review hold: all
-            // three read, change and write the one pending review body,
-            // and a pair of them racing each other must not lose one's
-            // change to the other's (026 rule 24).
-            let _reply_lock = state.reply_locks.hold(&pull.id).await;
-            let id = client(&state, &forge)
-                .resolve_pending(&slug(&forge), pull.number, &login, &comment)
-                .await
-                .map_err(forge_error)?;
-            // A resolve folds its line into the pending review's own body
-            // under its "Threads to resolve" heading, answering that
-            // review's id (026 rule 25): read fresh and held, the same as
-            // `edit_pending_review_body`'s own echo, so `list_comments`
-            // never answers the body a resolve has since changed.
-            echo_pending_review_body(
-                &state,
-                &forge,
-                &pull.repository_id,
-                &pull.id,
-                pull.number,
-                &login,
-                &id,
-            )
-            .await;
-            state.forge_poll.wake(&pull.repository_id);
-            state.notify_scheduler_pull_request(&pull.id);
-            let pending = PendingReplyDto { pending: true, id };
-            return Ok((
-                StatusCode::OK,
-                Json(serde_json::to_value(pending).expect("PendingReplyDto serializes")),
+            return Err(ApiError::conflict(
+                "this repository supervises posts: leave the fixed thread for the user to resolve",
             ));
         }
         client(&state, &forge)
@@ -1128,6 +1100,15 @@ pub(super) async fn diff(
         if !is_sha(since) || !git.has_commit(&worktree, since).await.map_err(failed)? {
             return Err(ApiError::bad_request(format!(
                 "{since} names no commit of the worktree"
+            )));
+        }
+        if !git
+            .is_ancestor(&worktree, since, "HEAD")
+            .await
+            .map_err(failed)?
+        {
+            return Err(ApiError::bad_request(format!(
+                "{since} is not an ancestor of the current head: review the full diff"
             )));
         }
         return git.diff_since(&worktree, since).await.map_err(failed);

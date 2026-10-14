@@ -292,7 +292,6 @@ fn get_as(uri: &str, session_id: &str) -> Request<Body> {
 }
 
 /// The review posts the stub has seen.
-#[allow(dead_code)]
 fn review_posts(stub: &StubForgeCli) -> Vec<Vec<String>> {
     review_bodies(stub)
         .into_iter()
@@ -301,7 +300,6 @@ fn review_posts(stub: &StubForgeCli) -> Vec<Vec<String>> {
 }
 
 /// The review posts the stub has seen, each with the JSON body it piped in.
-#[allow(dead_code)]
 fn review_bodies(stub: &StubForgeCli) -> Vec<(Vec<String>, Value)> {
     stub.invocations()
         .into_iter()
@@ -314,31 +312,6 @@ fn review_bodies(stub: &StubForgeCli) -> Vec<(Vec<String>, Value)> {
                 .map(|input| serde_json::from_str(input).unwrap())
                 .unwrap_or(Value::Null);
             (i.args, body)
-        })
-        .collect()
-}
-
-/// The writes of the review's summary comment the stub has seen: the
-/// method, `POST` or `PATCH`, and the body sent.
-#[allow(dead_code)]
-fn summary_writes(stub: &StubForgeCli) -> Vec<(String, String)> {
-    stub.invocations()
-        .into_iter()
-        .filter(|i| {
-            i.args.get(1).is_some_and(|path| {
-                path == "repos/acme/widgets/issues/1/comments"
-                    || path.starts_with("repos/acme/widgets/issues/comments/")
-            })
-        })
-        .filter_map(|i| {
-            let at = i.args.iter().position(|a| a == "--method")?;
-            let method = i.args.get(at + 1)?.clone();
-            let body = i
-                .args
-                .iter()
-                .find_map(|a| a.strip_prefix("body="))?
-                .to_string();
-            Some((method, body))
         })
         .collect()
 }
@@ -692,7 +665,6 @@ async fn the_diff_reads_the_worktree_against_its_base_and_since_narrows_it() {
 /// `REQUEST_CHANGES`, both comments led by their priorities, and is stored
 /// as my comments. An approval is refused with 400, and the forge sees no
 /// call.
-#[cfg(any())]
 #[tokio::test]
 async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
     let stub = stub_forge_cli(json!([]));
@@ -719,14 +691,9 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
         "an approval reaches no forge"
     );
 
-    // A change request with no P0 inline, and none open, is refused: the
-    // findings are the comments, not a list in the summary.
+    // A change request with no P0 or P1 inline, and none open, is refused.
     h.error(
-        as_session(
-            &reviews,
-            &session.id,
-            json!({"event": "request_changes", "body": "P0 on a.txt:1: it panics."}),
-        ),
+        as_session(&reviews, &session.id, json!({"event": "request_changes"})),
         StatusCode::BAD_REQUEST,
     )
     .await;
@@ -767,27 +734,17 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
             "the refusal names the line: {refused:?}"
         );
     }
-    h.error(
-        as_session(
-            &reviews,
-            &session.id,
-            json!({"event": "comment", "body": " "}),
-        ),
-        StatusCode::BAD_REQUEST,
-    )
-    .await;
     assert!(
-        review_posts(&stub).is_empty() && summary_writes(&stub).is_empty(),
+        review_posts(&stub).is_empty(),
         "a refused review reaches no forge"
     );
 
-    let summary = "Reviewed main..abc. Changes requested: P0 open.";
     let stored: Vec<Value> = h
         .json(
             as_session(
                 &reviews,
                 &session.id,
-                json!({"event": "request_changes", "body": summary, "comments": [
+                json!({"event": "request_changes", "comments": [
                     {"path": "a.txt", "line": 1, "title": "Empty list",
                      "body": "An empty list panics.", "priority": "P0"},
                     {"path": "a.txt", "line": 2, "title": "Untested",
@@ -816,61 +773,40 @@ async fn a_review_posts_its_findings_by_priority_and_an_approval_is_refused() {
         ]}),
         "the review carries no summary of its own"
     );
-    let signed =
-        |text: &str| format!("{text}\n\n<!-- ariadne:review-summary -->\n<!-- ariadne:review -->");
-    assert_eq!(
-        summary_writes(&stub),
-        [("POST".to_string(), signed(summary))],
-        "the summary is one comment of its own"
-    );
     let bodies: Vec<&str> = stored.iter().map(|c| c["body"].as_str().unwrap()).collect();
     assert_eq!(
         bodies,
         [
             "**[P0] Empty list**\n\nAn empty list panics.",
             "**[P1] Untested**\n\nNo test covers the empty list.",
-            summary,
         ]
     );
     assert!(stored.iter().all(|c| c["author_login"] == "me"));
     // What is kept of them is the mark that the review posted them; their
     // text is the forge's.
     let marks = h.store.pull_request_comment_marks(&id).await.unwrap();
-    assert_eq!(marks.len(), 3);
+    assert_eq!(marks.len(), 2);
     assert!(marks.iter().all(|m| m.from_review));
 
-    // A later round with no new finding posts no review: it edits the one
-    // summary, and the P0 still open keeps the change request standing.
-    let later = "Reviewed abc..def. Changes requested: P0 still open.";
-    let _: Vec<Value> = h
+    // A later round with no new finding posts no forge review or status.
+    let none: Vec<Value> = h
         .json(
-            as_session(
-                &reviews,
-                &session.id,
-                json!({"event": "request_changes", "body": later}),
-            ),
+            as_session(&reviews, &session.id, json!({"event": "request_changes"})),
             StatusCode::CREATED,
         )
         .await;
+    assert!(none.is_empty());
     assert_eq!(review_posts(&stub).len(), 1, "no second review");
     assert_eq!(
-        summary_writes(&stub).last(),
-        Some(&("PATCH".to_string(), signed(later)))
-    );
-    assert_eq!(
         h.store.pull_request_comment_marks(&id).await.unwrap().len(),
-        3,
-        "the summary is edited, not added"
+        2,
+        "the no-finding round writes no comment"
     );
-    let row = h.store.get_pull_request(&id).await.unwrap();
-    assert_eq!(row.summary_comment_id.as_deref(), Some("ic-301"));
 }
 
-/// A trailer an agent's skill appends to the round's summary or a finding's
-/// body never reaches the forge: the daemon strips it before signing either.
-#[cfg(any())]
+/// A trailer in a finding never reaches the forge.
 #[tokio::test]
-async fn a_review_strips_a_trailing_trailer_from_its_summary_and_its_findings() {
+async fn a_review_strips_a_trailing_trailer_from_its_findings() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
@@ -882,13 +818,12 @@ async fn a_review_strips_a_trailing_trailer_from_its_summary_and_its_findings() 
     let reviews = format!("/v1/pull-requests/{id}/reviews");
 
     let footer = "\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)";
-    let summary = "Reviewed main..abc. Changes requested: P0 open.";
     let _: Vec<Value> = h
         .json(
             as_session(
                 &reviews,
                 &session.id,
-                json!({"event": "request_changes", "body": format!("{summary}{footer}"), "comments": [
+                json!({"event": "request_changes", "comments": [
                     {"path": "a.txt", "line": 1, "title": "Empty list",
                      "body": format!("An empty list panics.{footer}"), "priority": "P0"}
                 ]}),
@@ -900,12 +835,6 @@ async fn a_review_strips_a_trailing_trailer_from_its_summary_and_its_findings() 
     assert_eq!(
         review["comments"][0]["body"],
         json!("**[P0] Empty list**\n\nAn empty list panics.\n\n<!-- ariadne:review -->")
-    );
-    let signed =
-        |text: &str| format!("{text}\n\n<!-- ariadne:review-summary -->\n<!-- ariadne:review -->");
-    assert_eq!(
-        summary_writes(&stub),
-        [("POST".to_string(), signed(summary))]
     );
 }
 
@@ -1231,7 +1160,6 @@ async fn a_request_withdrawn_after_my_review_ends_its_review() {
 /// repository's — detached at its head, whose review is posted as a comment
 /// whatever it found: no forge takes a change request from a request's own
 /// author. Asking no more takes the session down.
-#[cfg(any())]
 #[tokio::test]
 async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() {
     let stub = stub_forge_cli(json!([]));
@@ -1359,43 +1287,6 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
     .await;
     let fresh = fresh.unwrap();
     assert_ne!(fresh.id, session.id, "a fresh session");
-
-    // The row of the first review went, and the summary it posted is found
-    // again on the forge by its mark: the next round edits it rather than
-    // post a second.
-    let mut holds = script(&Shown {
-        author: "me",
-        ..Shown::open(&head)
-    });
-    entry(&mut holds, &["api", "repos/acme/widgets/issues/1/comments"])["stdout"] = json!(
-        json!([{"id": 301, "user": {"login": "me", "type": "User"},
-            "body": "One finding.\n\n<!-- ariadne:review-summary -->\n<!-- ariadne:review -->",
-            "created_at": "2026-10-02T00:00:00Z"}])
-        .to_string()
-    );
-    stub.reprogram(holds);
-    // A read off the forge now, through a route that still makes one
-    // (`get()` on the single request answers the held read instead): the
-    // ask already seeded the cache with no details, so only a live read
-    // here finds the summary's mark.
-    let _: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
-    let _: Vec<Value> = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/reviews"),
-                &fresh.id,
-                json!({"event": "comment", "body": "No findings."}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    assert_eq!(
-        summary_writes(&stub).last(),
-        Some(&(
-            "PATCH".to_string(),
-            "No findings.\n\n<!-- ariadne:review-summary -->\n<!-- ariadne:review -->".to_string()
-        ))
-    );
 }
 
 /// Asking needs a model the catalog holds. A request that asks for my
@@ -1546,150 +1437,6 @@ async fn a_gitlab_finding_on_a_renamed_file_names_its_old_path() {
             "{call:?}"
         );
     }
-}
-
-/// The answer of `script` for `args`, as the stub matches it.
-#[allow(dead_code)]
-fn entry<'a>(script: &'a mut Value, args: &[&str]) -> &'a mut Value {
-    script
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|e| e["args"] == json!(args))
-        .expect("the entry")
-}
-
-/// A round whose summary fails keeps the findings it posted (029): they are
-/// marked the review's before the summary is written, the error says so,
-/// and a round with no comments writes the summary without posting them
-/// again.
-#[cfg(any())]
-#[tokio::test]
-async fn a_failed_summary_keeps_the_posted_findings_for_a_round_with_no_comments() {
-    let stub = stub_forge_cli(json!([]));
-    let h = harness().scheduler().forge_cli(&stub).await;
-    let (path, head) = checkout(&h);
-    let summary_post = [
-        "api",
-        "repos/acme/widgets/issues/1/comments",
-        "--hostname",
-        "github.com",
-        "--method",
-        "POST",
-    ];
-    let mut failing = script(&Shown::open(&head));
-    entry(&mut failing, &summary_post)["exit"] = json!(1);
-    entry(&mut failing, &summary_post)["stderr"] = json!("gh: Server Error (HTTP 502)");
-    stub.reprogram(failing);
-    let repo = repository(&h, &path).await;
-    let id = the_request(&h).await;
-    ask_review(&h, &id, &repo, 1, PIN).await;
-    let session = idle_session(&h, &id).await;
-    let reviews = format!("/v1/pull-requests/{id}/reviews");
-    let refused = h
-        .error(
-            as_session(
-                &reviews,
-                &session.id,
-                json!({"event": "comment", "body": "One P1.", "comments": [
-                    {"path": "a.txt", "line": 1, "title": "Empty list",
-                     "body": "An empty list panics.", "priority": "P1"}
-                ]}),
-            ),
-            StatusCode::BAD_GATEWAY,
-        )
-        .await;
-    assert!(
-        refused.error.message.contains("findings are posted"),
-        "{}",
-        refused.error.message
-    );
-    let marks = h.store.pull_request_comment_marks(&id).await.unwrap();
-    assert!(
-        marks
-            .iter()
-            .any(|m| m.forge_id == "rc-501" && m.from_review),
-        "{marks:?}"
-    );
-    assert_eq!(review_posts(&stub).len(), 1);
-
-    stub.reprogram(script(&Shown::open(&head)));
-    let _: Vec<Value> = h
-        .json(
-            as_session(
-                &reviews,
-                &session.id,
-                json!({"event": "comment", "body": "One P1."}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    assert_eq!(
-        review_posts(&stub).len(),
-        1,
-        "the findings are not posted again"
-    );
-    assert_eq!(
-        summary_writes(&stub)
-            .last()
-            .map(|(method, _)| method.as_str()),
-        Some("POST")
-    );
-}
-
-/// A summary edit that fails is the error, and posts no second summary: only
-/// a summary GitHub answers 404 for is posted again (029).
-#[cfg(any())]
-#[tokio::test]
-async fn a_summary_is_posted_again_only_where_github_says_it_is_gone() {
-    use ariadne_core::ForgeKind;
-    use ariadne_daemon::forge::ForgeClient;
-    let edit = ["api", "repos/acme/widgets/issues/comments/301"];
-    let post = json!({"id": 302, "created_at": "2026-10-02T00:00:00Z"}).to_string();
-    let stub = stub_forge_cli(json!([
-        {"args": edit, "exit": 1, "stderr": "gh: Server Error (HTTP 502)"},
-        {"args": ["api", "repos/acme/widgets/issues/1/comments"], "stdout": post},
-    ]));
-    let h = harness().forge_cli(&stub).await;
-    let client = ForgeClient::new(&h.launcher.cfg, ForgeKind::Github);
-    let posts = || {
-        stub.invocations()
-            .iter()
-            .filter(|i| {
-                i.args
-                    .get(1)
-                    .is_some_and(|a| a == "repos/acme/widgets/issues/1/comments")
-            })
-            .count()
-    };
-    assert!(
-        client
-            .write_summary(
-                "github.com/acme/widgets",
-                1,
-                Some("ic-301"),
-                "- P1: Handle HTTP 404 responses (404 Not Found)"
-            )
-            .await
-            .is_err()
-    );
-    assert_eq!(posts(), 0, "a failed edit posts no second summary");
-
-    stub.reprogram(json!([
-        {"args": edit, "exit": 1, "stderr": "gh: Not Found (HTTP 404)"},
-        {"args": ["api", "repos/acme/widgets/issues/1/comments"], "stdout": post},
-    ]));
-    let (id, _) = client
-        .write_summary(
-            "github.com/acme/widgets",
-            1,
-            Some("ic-301"),
-            "Reviewed a..b.",
-        )
-        .await
-        .expect("the summary is posted again");
-    assert_eq!(id, "ic-302");
-    assert_eq!(posts(), 1);
 }
 
 /// A detail read before any fetch says nothing of whether the request still

@@ -7540,6 +7540,10 @@
             ],
             "description": "The newest session on this request, if any: its review or keeper\nsession (029, 032), or the author of the task that opened it (005)."
           },
+          "supervise_posts": {
+            "type": "boolean",
+            "description": "Whether this repository holds agent posts for human review."
+          },
           "state": {
             "type": "string",
             "description": "`open`, `merged` or `closed`."
@@ -8491,13 +8495,12 @@
         "type": "object",
         "description": "Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted\nin the name of the integration login.",
         "required": [
-          "event",
-          "body"
+          "event"
         ],
         "properties": {
           "body": {
             "type": "string",
-            "description": "The review's summary as it stands now: the daemon writes it into the\none summary comment the review keeps on the request."
+            "description": "Optional text from older clients. New reviews do not publish it."
           },
           "comments": {
             "type": "array",

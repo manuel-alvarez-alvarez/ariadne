@@ -3198,6 +3198,8 @@ export interface components {
              *     session (029, 032), or the author of the task that opened it (005).
              */
             session_id?: string | null;
+            /** @description Whether this repository holds agent posts for human review. */
+            supervise_posts?: boolean;
             /** @description `open`, `merged` or `closed`. */
             state: string;
             title: string;
@@ -3640,11 +3642,8 @@ export interface components {
          *     in the name of the integration login.
          */
         SubmitReviewRequest: {
-            /**
-             * @description The review's summary as it stands now: the daemon writes it into the
-             *     one summary comment the review keeps on the request.
-             */
-            body: string;
+            /** @description Optional text from older clients. New reviews do not publish it. */
+            body?: string;
             comments?: components["schemas"]["ReviewCommentRequest"][];
             /** @description `request_changes` or `comment`. Every other event is refused. */
             event: string;

@@ -1403,32 +1403,6 @@ mod tests {
         assert!(text.text.contains("Continue"), "{}", text.text);
     }
 
-    /// Where the repository holds posts back, the daemon answers
-    /// `resolve_thread` with `pending: true` rather than the resolved
-    /// comment (026 rule 24 / 029 rule 16b): the tool's own text says the
-    /// resolve waits in the user's forge drafts, rather than handing back
-    /// the raw pending shape.
-    #[tokio::test]
-    async fn a_pending_resolve_tells_the_agent_to_continue_rather_than_the_raw_answer() {
-        let (endpoint, _seen) =
-            recording_daemon_answering(r#"{"pending": true, "id": "rv-9"}"#).await;
-        let mcp = server_at(
-            McpSeat::PullRequestReviewer,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-        let answer = mcp
-            .resolve_thread(Parameters(ResolveThreadReq {
-                comment_id: "01C".into(),
-            }))
-            .await
-            .expect("resolve_thread");
-        let ContentBlock::Text(text) = &answer.content[0] else {
-            panic!("the answer came back as something other than text");
-        };
-        assert!(text.text.contains("forge drafts"), "{}", text.text);
-        assert!(text.text.contains("Continue"), "{}", text.text);
-    }
-
     /// The orchestrator is never offered a model it cannot staff an agent on.
     ///
     /// A disabled entry is dropped rather than shown as off: the catalog is

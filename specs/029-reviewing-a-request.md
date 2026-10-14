@@ -296,40 +296,6 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     turns `declined`, left open for the user; a thread nobody has
     answered gets nothing; it waits.
 
-<!-- historical summary contract follows; it no longer applies -->
-<!--
-    - a title, "## Review summary";
-    - a prose summary, not bullets, one paragraph of three to six
-      sentences, naming the behavior the change touches, who sees it,
-      what breaks if the change is wrong, and why the risk sits where it
-      does, closed by one sentence of what the verdict rests on — the
-      checks that pass, the cases tried — and naming no finding, no file
-      and no line otherwise;
-    - a table, `| Priority | Finding | Status |` — status `open`,
-      `declined` or `fixed` — one row per finding whose thread is still
-      open, plus one `fixed` row for each thread the round resolved,
-      written only where it holds at least one row: with no open finding
-      and no thread the round fixed, the table is left out, never a
-      header with no row;
-    - a recommendation of one line: "Request changes" and the blocking P0
-      findings while one is open — a declined P0 still counts as open —
-      "Changes recommended" and what to fix before it lands while a P1 or
-      P2 is open and no P0 is; else "No findings. Nothing blocks the
-      request on review."
-    Each new finding is one inline comment with a title, the failure and a
-    fix; where the fix replaces the commented line alone, a ```suggestion
-    block under the fix holds the new text of that one line, and a fix
-    across lines, across files, or one a test must prove stays prose. On a
-    later round it settles each thread it opened before it hunts, reading
-    the author's reply: where the defect is actually gone at the head it
-    gets one reply, `Fixed in <sha>.`, and is resolved; where the last
-    reply claims a fix (`Fixed in <sha>: ...`) and the defect survives, it
-    gets one reply, `Still there: <why>.`, never posted twice in the same
-    thread; any other answered reply that leaves the defect in place —
-    `Not changed: ...` or any other — gets nothing back, and its row
-    turns `declined`, left open for the user; a thread nobody has
-      answered gets nothing; it waits.
--->
 18. A review posted, or a request reported ready, notifies nobody by
     itself: the approval and the merge stay the user's to give in their own
     time, and only the `pull_request` attention producer's own readiness
