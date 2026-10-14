@@ -2397,7 +2397,8 @@ async fn editing_and_deleting_a_held_pending_finding_updates_list_comments_at_on
                 "github.com",
             ],
             0,
-            r#"[{"id": 9, "node_id": "PR_kwDOx", "state": "PENDING", "body": "",
+            r#"[{"id": 9, "node_id": "PR_kwDOx", "state": "PENDING",
+                "body": "<!-- ariadne:pending-review-verdict -->",
                 "user": {"login": "me"}}]"#,
         ),
         // Every detail read of a request with a pending review of "me"'s
