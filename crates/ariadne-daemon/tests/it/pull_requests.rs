@@ -558,24 +558,29 @@ async fn gitlab_requests_keep_fork_checks_review_and_search_by_author_or_number(
     }
 }
 
-/// A fetch of a tracked GitHub request's detail read also reads the
-/// viewer's own pending review (031): `pulls/{number}/reviews` already
-/// answers it, `submitted_at` absent, and its own comment count is read
-/// off the one call GitHub documents for exactly that review's comments,
-/// `pulls/{number}/reviews/{review_id}/comments` — asked only because a
-/// pending review was found, never the general, undocumented-for-this
-/// `pulls/{number}/comments` list.
+/// A fetch of a tracked GitHub request's detail read drops the viewer's
+/// own pending review outright (031): `pulls/{number}/reviews` already
+/// answers it, `submitted_at` absent, and GitHub's own
+/// `pulls/{number}/comments` is undocumented for whether it also answers
+/// that pending review's own inline comments and replies — it does, the
+/// shape pull request #110 showed waking the reviewer and keeper agents —
+/// so every comment naming the pending review's id is filtered the same
+/// way its own body already is, and the live comment list ends up empty.
 #[tokio::test]
-async fn a_fetch_reads_the_viewers_own_github_pending_review() {
+async fn a_fetch_drops_the_viewers_own_pending_review_and_its_comments() {
     use crate::common::{TIMEOUT, eventually};
     let pull = github_pull(1, "other");
     let threads =
         json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
-    let pending_review_comments = json!([
-        {"id": 10, "user": {"login": "me"}, "body": "a finding", "path": "src/lib.rs",
-            "line": 1, "created_at": "2026-10-01T00:00:00Z"},
-        {"id": 11, "user": {"login": "me"}, "body": "another", "path": "src/lib.rs",
-            "line": 2, "created_at": "2026-10-01T00:00:00Z"},
+    // Comment 10 is the pending review's own; comment 11 replies to it,
+    // under the same pending review id.
+    let comments = json!([
+        {"id": 10, "in_reply_to_id": null, "user": {"login": "me"}, "body": "a finding",
+            "path": "src/lib.rs", "line": 1, "created_at": "2026-10-01T00:00:00Z",
+            "pull_request_review_id": 55},
+        {"id": 11, "in_reply_to_id": 10, "user": {"login": "me"}, "body": "a reply",
+            "path": "src/lib.rs", "line": 1, "created_at": "2026-10-01T00:01:00Z",
+            "pull_request_review_id": 55},
     ]);
     let reviews = json!([
         {"id": 55, "user": {"login": "me"}, "body": "", "submitted_at": null},
@@ -590,17 +595,16 @@ async fn a_fetch_reads_the_viewers_own_github_pending_review() {
             0,
             "[]"
         ),
-        answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
+        answer(
+            &["api", "repos/acme/widgets/pulls/1/comments"],
+            0,
+            &comments.to_string()
+        ),
         answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
         answer(
             &["api", "repos/acme/widgets/pulls/1/reviews"],
             0,
             &reviews.to_string()
-        ),
-        answer(
-            &["api", "repos/acme/widgets/pulls/1/reviews/55/comments"],
-            0,
-            &pending_review_comments.to_string()
         ),
         answer(&["api", "graphql"], 0, &threads.to_string()),
         answer(
@@ -623,88 +627,31 @@ async fn a_fetch_reads_the_viewers_own_github_pending_review() {
         .find(|r| r["number"] == 1)
         .expect("the tracked request");
     let row_id = read["id"].as_str().unwrap().to_string();
-    eventually(TIMEOUT, "the pending review read", async || {
+    eventually(TIMEOUT, "the detail read", async || {
         h.launcher
             .live
             .get(&row_id)
             .and_then(|live| live.details)
-            .is_some_and(|details| details.pending_drafts == Some(2))
+            .is_some()
     })
     .await;
+    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{row_id}/comments")).await;
+    assert_eq!(
+        comments,
+        Vec::<Value>::new(),
+        "the pending review's own comment and its reply give no live-view comment"
+    );
 }
 
-/// The same pending review, with a verdict and no inline comment of its
-/// own: `Some(0)`, never read the same as "no draft at all", so the item
-/// still has something to raise even though the count itself is zero.
+/// A fetch of a tracked GitLab request's detail read counts the viewer's
+/// own draft notes (`GET .../draft_notes`) only to set `has_pending_posts`
+/// (026 rule 9): a draft note never enters `discussions` until the viewer
+/// publishes it, so there is nothing for this detail read to filter the
+/// way GitHub's pending review needs, but the count itself still has to
+/// reach `merge_fresh_details`, or a review's own finding held as a draft
+/// note loses its indefinite carry-forward after one poll (029).
 #[tokio::test]
-async fn a_fetch_reads_a_github_pending_review_with_no_comments_as_some_zero() {
-    use crate::common::{TIMEOUT, eventually};
-    let pull = github_pull(1, "other");
-    let threads =
-        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
-    let reviews = json!([
-        {"id": 55, "user": {"login": "me"}, "body": "Looks fine overall.", "submitted_at": null},
-    ]);
-    let stub = stub_forge_cli(json!([
-        answer(&["auth", "status"], 0, ""),
-        answer(&["api", "user"], 0, "me"),
-        answer(&["pr", "list"], 0, &json!([pull]).to_string()),
-        answer(&["pr", "view"], 0, &pull.to_string()),
-        answer(
-            &["api", "repos/acme/widgets/issues?state=open&per_page=100"],
-            0,
-            "[]"
-        ),
-        answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
-        answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
-        answer(
-            &["api", "repos/acme/widgets/pulls/1/reviews"],
-            0,
-            &reviews.to_string()
-        ),
-        answer(
-            &["api", "repos/acme/widgets/pulls/1/reviews/55/comments"],
-            0,
-            "[]"
-        ),
-        answer(&["api", "graphql"], 0, &threads.to_string()),
-        answer(
-            &["api", "repos/acme/widgets/commits/abc/check-runs"],
-            0,
-            r#"{"check_runs": []}"#
-        ),
-        answer(
-            &["api", "repos/acme/widgets/compare/main...abc"],
-            0,
-            r#"{"behind_by": 0}"#
-        ),
-    ]));
-    let h = harness().forge_cli(&stub).await;
-    let id = enabled_repository(&h).await;
-    eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
-    let listed: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
-    let read = listed
-        .iter()
-        .find(|r| r["number"] == 1)
-        .expect("the tracked request");
-    let row_id = read["id"].as_str().unwrap().to_string();
-    eventually(TIMEOUT, "the pending review read", async || {
-        h.launcher
-            .live
-            .get(&row_id)
-            .and_then(|live| live.details)
-            .is_some_and(|details| details.pending_drafts == Some(0))
-    })
-    .await;
-}
-
-/// A fetch of a tracked GitLab request's detail read also reads the
-/// viewer's own draft notes (031), beside the rest of its own evidence:
-/// `glab api .../draft_notes` is read in the same `tokio::try_join!` as
-/// the discussions, the pipeline and the diverged-commit count, and its
-/// count lands on the row's live entry alongside them.
-#[tokio::test]
-async fn a_fetch_reads_the_viewers_own_gitlab_draft_notes() {
+async fn a_gitlab_fetch_counts_draft_notes_only_for_has_pending_posts() {
     use crate::common::{TIMEOUT, eventually};
     let pull = json!({"iid":7,"project_id":1,"source_project_id":2,"web_url":"https://gitlab.com/acme/widgets/-/merge_requests/7","title":"Fix widgets","author":{"username":"other"},"state":"opened","draft":false,"source_branch":"fix","target_branch":"main","sha":"abc123","head_pipeline":{"status":"success"},"detailed_merge_status":"mergeable","created_at":"2026-10-01T00:00:00Z"});
     let stub = stub_forge_cli(json!([
@@ -749,7 +696,7 @@ async fn a_fetch_reads_the_viewers_own_gitlab_draft_notes() {
                 "projects/acme%2Fwidgets/merge_requests/7/draft_notes"
             ],
             0,
-            "[{\"id\":1},{\"id\":2}]"
+            r#"[{"id": 1}]"#
         ),
     ]));
     let h = harness().forge_cli(&stub).await;
@@ -775,14 +722,34 @@ async fn a_fetch_reads_the_viewers_own_gitlab_draft_notes() {
         .find(|r| r["number"] == 7)
         .expect("the tracked request");
     let row_id = read["id"].as_str().unwrap().to_string();
-    eventually(TIMEOUT, "the draft notes read", async || {
+    eventually(TIMEOUT, "the detail read to succeed", async || {
+        h.launcher
+            .live
+            .get(&row_id)
+            .is_some_and(|live| live.evidence_ok)
+    })
+    .await;
+    assert!(
+        stub.invocations()
+            .iter()
+            .any(|i| i.args.iter().any(|a| a.contains("draft_notes"))),
+        "the draft notes endpoint is called to count the viewer's own drafts: {:?}",
+        stub.invocations()
+    );
+    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{row_id}/comments")).await;
+    assert_eq!(
+        comments,
+        Vec::<Value>::new(),
+        "the draft note's own content never becomes a live-view comment"
+    );
+    assert!(
         h.launcher
             .live
             .get(&row_id)
             .and_then(|live| live.details)
-            .is_some_and(|details| details.pending_drafts == Some(2))
-    })
-    .await;
+            .is_some_and(|d| d.has_pending_posts),
+        "the open draft note keeps has_pending_posts true for merge_fresh_details to read"
+    );
 }
 
 /// A fetch the integration is turned off during starts no work: the

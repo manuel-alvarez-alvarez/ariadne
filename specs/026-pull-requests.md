@@ -12,8 +12,10 @@ tests:
   - crates/ariadne-daemon/src/forge/github/pulls.rs
   - crates/ariadne-daemon/src/forge/github/comments.rs
   - crates/ariadne-daemon/src/forge/github/reviews.rs
+  - crates/ariadne-daemon/src/forge/github/details.rs
   - crates/ariadne-daemon/src/forge/gitlab/comments.rs
   - crates/ariadne-daemon/src/forge/gitlab/reviews.rs
+  - crates/ariadne-daemon/src/forge/gitlab/details.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/pull_requests.rs
   - crates/ariadne-daemon/tests/it/pull_request_detail_skip.rs
@@ -136,6 +138,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     A fetch skips the detail read of a request whose list read moves nothing a detail read would also show: the held read has details and `evidence_ok`, its `updated_at`, `head_sha`, `checks`, `review_decision`, `mergeable`, `draft`, `title` and `state` all equal the list's own read, its `LivePulls::generation` still equals the read's snapshot, no comment Ariadne posted is still unconfirmed by a detail read, and the details are less than 15 minutes old (`forge::live::Live::unmoved`). The held details stand in place of a fresh read.
     A skipped read also leaves `behind_base` as its held detail value, and does not see a changed set of failed check names where normalized `checks` remains `failure`; the corresponding rule 12 news waits for the next detail read. At 15 minutes, the next fetch reads the details even where every list field still matches. The five-minute fallback timer permits at most two unchanged skips before that refresh.
     A thread a human resolves on the forge does not move `updated_at`; its resolved state is read by that forced refresh when no earlier request move reads it.
+    The detail read drops the viewer's own pending review from the conversation outright, its body, its inline comments and its replies alike, and never analyzes, tells or wakes a session for any of them: GitHub's `pulls/{number}/comments` is undocumented for whether it also answers a pending review's own inline comments and replies, and it does — the shape a pull request on this very repository once showed waking a reviewer and a keeping agent, both — so each is dropped by its own `pull_request_review_id` against the ids of every review `pulls/{number}/reviews` already lists with no `submitted_at`, or a `state` still `PENDING` (`forge/github/details.rs::pending_review_ids`). A review thread left with no comment once its only ones were pending has nothing in the list to carry it, so it never surfaces either. GitLab's own draft notes never enter `discussions` at all until the viewer publishes them, so GitLab's detail read needs no filter of its own to keep them out. Either way, a comment Ariadne itself posted into the pending review or the draft notes (rule 24) is tracked apart from this filter, in memory alone, and is never fed through it either (rule 10). A webhook delivery (027) wakes no agent over either kind of pending content on its own: it only calls `ForgePoll::wake`, which runs this same detail read, so the filter above is the whole of its proof too. The detail read also answers whether the viewer's own pending set is still open at all (`ForgeDetails::has_pending_posts`): on GitHub, whether `pulls/{number}/reviews` still lists one with no `submitted_at`, or a `state` still `PENDING`; on GitLab, a count-only `GET .../draft_notes` read, never fed through the filter above, answers whether there is still at least one. While it holds, `merge_fresh_details` carries a review's own finding posted into that pending set past every poll before the viewer publishes, not only the one poll of grace any other local addition gets (rule 25).
 10. A comment is the forge's, and its id is the forge's: `rc-<n>`, `ic-<n>`, `rv-<n>` or `note-<n>`.
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
     Comments on the conversation and review bodies share one thread, `conversation`.
@@ -207,7 +210,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     - GitHub: `edit_pending_comment` and `delete_pending_comment` read the viewer's still-pending review (rule 24's own finder, split from its create-if-missing form so a caller that means only to look never brings one into existence), then look up the comment's GraphQL node id among that review's own comments — `updatePullRequestReviewComment` and `deletePullRequestReviewComment` take a node id, never the database id `addPullRequestReviewThread` answers. A comment the lookup does not find, because its round was since submitted, answers 409 the same as no pending review at all. `edit_pending_review_body` overwrites the pending review's body through the same `updatePullRequestReview` mutation rule 24 already uses, refused with 409 where there is no pending review to find.
     - GitLab: `edit_pending_comment` and `delete_pending_comment` write straight to the draft note by its own id, `PUT` and `DELETE .../draft_notes/<id>`; a note GitLab has already consumed into a published note on the user's publish answers 404, read as the 409 above. GitLab holds no pending review body of its own, so `edit_pending_review_body` answers 400 on it.
     The three tools are `edit_pending_comment`, `delete_pending_comment` and `edit_pending_review_body` (013), on the agent, pull request reviewer and pull request keeper seats alike.
-    A successful edit or delete also writes Ariadne's own held comments at once (`live::LivePulls::edit_comment`, `::remove_comment`): rule 9 already holds that GitHub never lists a pending review's own comments among a request's, and GitLab never lists a draft note among a discussion's, until the user publishes it, so no detail fetch ever reads either change back on its own. Without this, `list_comments` would answer the body a finding was posted with forever, and a deleted finding would stay in `merge_fresh_details`'s own carry-forward for as long as the pending set it belonged to stayed open — read by `submit_review`'s own `open_p0` check as a P0 still open.
+    A successful edit or delete also writes Ariadne's own held comments at once (`live::LivePulls::edit_comment`, `::remove_comment`): rule 9 already drops GitHub's pending review from every detail read of its own, and GitLab's own draft notes never enter one at all, so no detail fetch ever reads either change back on its own while the post stays unpublished. Without this, `list_comments` would answer the body a finding was posted with forever, and a deleted finding would stay in `merge_fresh_details`'s own carry-forward for as long as it remained unconfirmed by a fresh read — read by `submit_review`'s own `open_p0` check as a P0 still open.
 
 ## HTTP
 
@@ -292,6 +295,30 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `::a_fetch_whose_list_read_field_moved_runs_the_detail_read`,
   `::a_fetch_after_ariadne_posts_a_comment_runs_the_detail_read`,
   `::a_fetch_after_a_failed_detail_read_runs_the_detail_read_again`.
+- A detail read drops the viewer's own pending review from the conversation
+  outright — its own inline comment and a reply to it, both naming it by
+  `pull_request_review_id`, give no entry of the list's own, so neither
+  ever reaches `list_comments` nor wakes the agent that owns the request —
+  while a submitted review's own comment stays:
+  `forge/github/details.rs::tests::a_pending_reviews_body_comments_and_replies_are_dropped`,
+  proved end to end through a real fetch in
+  `pull_requests.rs::a_fetch_drops_the_viewers_own_pending_review_and_its_comments`,
+  `kept_requests.rs::a_pending_reviews_comments_give_no_live_view_comment_and_no_news`.
+  GitLab's detail read makes no call at all for the viewer's own draft
+  notes to filter their content, since they never enter `discussions`
+  until published, but still counts them to answer `has_pending_posts`:
+  `pull_requests.rs::a_gitlab_fetch_counts_draft_notes_only_for_has_pending_posts`.
+- `has_pending_posts` says whether the viewer's own pending review (GitHub)
+  or draft notes (GitLab) are still open, so `merge_fresh_details` carries
+  a review's own finding posted into that pending set past every poll
+  until the viewer publishes, not only the one poll of grace any other
+  local addition gets:
+  `forge/github/details.rs::tests::a_pending_reviews_body_comments_and_replies_are_dropped`
+  (`has_pending_posts` true while the review stays pending),
+  `pull_requests.rs::a_gitlab_fetch_counts_draft_notes_only_for_has_pending_posts`
+  (true while a draft note stays open),
+  `forge/live.rs::tests::a_pending_reviews_finding_survives_a_poll_while_the_review_is_still_pending`,
+  `::a_pending_reviews_finding_is_dropped_once_the_pending_review_is_gone`.
 - Two reads of the list and of the search after one fetch make no further `pr list` call, a repository with no fetch yet lists empty with 200 and a disabled one still answers 409, the single-request route answers the held read with no `details()` call, and the panel route still reads live:
   `pull_request_lists.rs::two_reads_after_one_fetch_run_no_further_pr_list_call`,
   `::a_repository_with_no_fetch_yet_lists_empty_and_a_disabled_one_is_refused`,

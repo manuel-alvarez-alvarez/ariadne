@@ -406,6 +406,72 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
     );
 }
 
+/// A pending review of the viewer's own — the shape pull request #110
+/// showed waking the reviewer and keeper agents — gives no live-view
+/// comment and no news: GitHub's `pulls/{number}/comments` answers the
+/// pending review's own inline comment and its reply the same as a
+/// submitted review's, undocumented but real, so the detail read filters
+/// them by their `pull_request_review_id` rather than trusting the forge
+/// to withhold them. The `pr` agent that owns this request hears nothing
+/// of it.
+#[tokio::test]
+async fn a_pending_reviews_comments_give_no_live_view_comment_and_no_news() {
+    let Kept {
+        h,
+        stub,
+        agent,
+        id,
+        repo,
+        ..
+    } = kept_request(quiet_script()).await;
+    let briefed = h.prompts_to(&agent).len();
+
+    let pending_comments = [
+        json!({"id": 201, "in_reply_to_id": null, "user": {"login": "me", "type": "User"},
+            "body": "a pending finding", "path": "widget", "line": 1,
+            "created_at": "2026-10-02T00:00:00Z", "pull_request_review_id": 9}),
+        json!({"id": 202, "in_reply_to_id": 201, "user": {"login": "me", "type": "User"},
+            "body": "a pending reply", "path": "widget", "line": 1,
+            "created_at": "2026-10-02T00:01:00Z", "pull_request_review_id": 9}),
+    ];
+    let mut script = moved_at(
+        script("OPEN", &pending_comments, json!([])),
+        "2026-10-02T00:00:00Z",
+    );
+    let reviews = json!([{"id": 9, "user": {"login": "me"}, "body": "", "submitted_at": null}]);
+    for entry in script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["api", "repos/acme/widgets/pulls/1/reviews"]) {
+            entry["stdout"] = json!(reviews.to_string());
+        }
+    }
+    stub.reprogram(script);
+    fetch_again(&h, &stub, &repo).await;
+
+    eventually(
+        TIMEOUT,
+        "the detail fetch to read the pending review",
+        async || {
+            h.launcher.live.get(&id).is_some_and(|live| {
+                live.evidence_ok && live.pull.updated_at == "2026-10-02T00:00:00Z"
+            })
+        },
+    )
+    .await;
+    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+    assert_eq!(
+        comments,
+        Vec::<Value>::new(),
+        "the pending review's own comment and its reply give no live-view comment"
+    );
+    // Prove the quiet, not merely that nothing has arrived yet.
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(
+        h.prompts_to(&agent).len(),
+        briefed,
+        "a pending review wakes no agent"
+    );
+}
+
 /// The `pr` agent replies through the forge's reply command, stored as my
 /// comment in the thread, which answers it; the agent resolves no thread.
 /// Its `ready: true` is stored but raises nothing of its own on the
@@ -984,35 +1050,20 @@ async fn a_reply_holds_the_pending_reviews_body_even_with_no_review_post_of_its_
     );
     script.as_array_mut().unwrap().splice(
         0..0,
-        [
-            // The pending review's own comment count, for `pending_drafts`
-            // (031): none, since this task never posted a finding of its
-            // own into it.
-            answer(
-                &[
-                    "api",
-                    "repos/acme/widgets/pulls/1/reviews/9/comments",
-                    "--hostname",
-                    "github.com",
-                ],
-                0,
-                "[]",
-            ),
-            answer(
-                &[
-                    "api",
-                    "graphql",
-                    "--hostname",
-                    "github.com",
-                    "-f",
-                    "query=mutation($id: ID!, $body: String!) { \
-                     updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
-                     pullRequestReview { id } } }",
-                ],
-                0,
-                r#"{"data": {"updatePullRequestReview": {"pullRequestReview": {"id": "PR_kwDOx"}}}}"#,
-            ),
-        ],
+        [answer(
+            &[
+                "api",
+                "graphql",
+                "--hostname",
+                "github.com",
+                "-f",
+                "query=mutation($id: ID!, $body: String!) { \
+                 updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
+                 pullRequestReview { id } } }",
+            ],
+            0,
+            r#"{"data": {"updatePullRequestReview": {"pullRequestReview": {"id": "PR_kwDOx"}}}}"#,
+        )],
     );
     // The stub's own tempdir, which its `gh` binary lives under, must
     // outlive this test: dropping it via `..` deletes the binary mid-test.
@@ -2545,18 +2596,6 @@ async fn editing_and_deleting_a_held_pending_finding_updates_list_comments_at_on
             r#"[{"id": 9, "node_id": "PR_kwDOx", "state": "PENDING",
                 "body": "<!-- ariadne:pending-review-verdict -->",
                 "user": {"login": "me"}}]"#,
-        ),
-        // Every detail read of a request with a pending review of "me"'s
-        // own also counts its own comments, for `pending_drafts` (031).
-        answer(
-            &[
-                "api",
-                "repos/acme/widgets/pulls/1/reviews/9/comments",
-                "--hostname",
-                "github.com",
-            ],
-            0,
-            "[]",
         ),
         answer(
             &[

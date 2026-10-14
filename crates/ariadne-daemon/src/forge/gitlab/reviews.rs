@@ -312,6 +312,9 @@ impl Gitlab {
     /// publishes them themselves, directly on the forge. `GET
     /// .../draft_notes` answers only the signed-in viewer's own, so nothing
     /// here filters by login the way GitHub's pending-review read must.
+    /// Read only for [`ForgeDetails::has_pending_posts`] (026 rule 9): the
+    /// count itself never enters the conversation, the news or an
+    /// attention item.
     pub(crate) async fn draft_posts(&self, repo: &str, number: i64) -> Result<i64, String> {
         let (host, owner, name) = split_slug(repo)?;
         let path = format!(

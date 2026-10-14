@@ -148,16 +148,11 @@ pub struct Details {
     /// attention producer must never read as "no open comment" for a head
     /// it was never actually read on.
     pub head_sha: String,
-    /// The viewer's own unsubmitted posts on this request, as this detail
-    /// read found them (031): `None` for no pending review and no draft
-    /// note, `Some` of the comment count otherwise — GitHub alone can
-    /// leave that at `Some(0)`, a pending review with a verdict and no
-    /// inline comment of its own, which still counts as a draft. Read
-    /// beside the rest of the detail fetch, so it is skipped and left
-    /// standing the same way `comments` and `failed_checks` are wherever
-    /// the fetch itself is (`Live::unmoved`), and dropped the same way
-    /// they are on a failed refresh (`LivePulls::set_pull_evidence_failed`).
-    pub pending_drafts: Option<i64>,
+    /// Whether this same read still finds a pending review (GitHub) or a
+    /// draft note (GitLab) of the viewer's own (`ForgeDetails::has_pending_posts`):
+    /// internal bookkeeping for `merge_fresh_details` alone, never shown
+    /// to a user or exposed as an attention item.
+    pub has_pending_posts: bool,
 }
 
 /// The last list a fetch read of one repository (026): every open request
@@ -571,19 +566,19 @@ impl LivePulls {
 /// have seen it, so its absence here says nothing of the forge deleting
 /// it — or where `local_additions` still names it at all, it is a review's
 /// own finding or verdict, and this same fresh read still finds a pending
-/// review or draft note of the viewer's own (`pending_drafts`): GitHub
-/// never lists a pending review's own comments among a request's, and
-/// GitLab never lists a draft note among a discussion's, until the user
-/// publishes it, so a missing read says nothing of the forge dropping an
-/// unpublished one either, for as long as the pending set it belongs to is
-/// still there. `local_additions` is what tells such an unpublished one
-/// apart from a finding this route once added, long since confirmed and
-/// dropped from it, that a forge user later deleted for real: a pending
-/// set open for another, unrelated round must never resurrect that one.
-/// One missing and none of the above, or confirmed by the fresh read on
-/// its own terms, is a local addition this cache no longer has to carry:
-/// dropped from what is kept, and from what is tracked after the merge
-/// too, the way the review a forge user actually deleted would be.
+/// review or draft note of the viewer's own (`has_pending_posts`):
+/// GitHub's and GitLab's own detail reads both filter a pending review's
+/// or a draft note's own content out of the conversation on purpose (026
+/// rule 9), so a missing read says nothing of the forge dropping an
+/// unpublished one either, for as long as the pending set it belongs to
+/// is still there. `local_additions` is what tells such an unpublished
+/// one apart from a finding this route once added, long since confirmed
+/// and dropped from it, that a forge user later deleted for real: a
+/// pending set open for another, unrelated round must never resurrect
+/// that one. One missing and none of the above, or confirmed by the fresh
+/// read on its own terms, is a local addition this cache no longer has to
+/// carry: dropped from what is kept, and from what is tracked after the
+/// merge too, the way the review a forge user actually deleted would be.
 /// Answers the merged comments, and the generation and the
 /// still-unconfirmed local additions to carry into the entry this read
 /// writes.
@@ -596,7 +591,7 @@ fn merge_fresh_details(
         return (details, 0, HashMap::new());
     };
     let mut local_additions = previous.local_additions.clone();
-    let pending_set_still_open = details.pending_drafts.is_some();
+    let pending_set_still_open = details.has_pending_posts;
     if let Some(prev_details) = previous.details.as_ref() {
         for comment in &prev_details.comments {
             let in_fresh_read = details
@@ -656,10 +651,6 @@ fn attention_fingerprint(live: &Live) -> u64 {
     live.evidence_ok.hash(&mut hasher);
     if let Some(details) = &live.details {
         details.head_sha.hash(&mut hasher);
-        // The viewer's own unsubmitted drafts (031): hashed on its own,
-        // beside the comment list, since a `drafts` attention item
-        // appearing or clearing can be the only thing a detail read moved.
-        details.pending_drafts.hash(&mut hasher);
         for comment in &details.comments {
             (&comment.forge_id, comment.resolved).hash(&mut hasher);
         }
@@ -1141,7 +1132,7 @@ mod tests {
                 failed_checks: Vec::new(),
                 behind_base: false,
                 head_sha: "abc".into(),
-                pending_drafts: None,
+                has_pending_posts: false,
             }),
             details_read_at: Some(Instant::now()),
             evidence_ok,
@@ -1306,25 +1297,26 @@ mod tests {
         }
     }
 
-    fn fresh_details(pending_drafts: Option<i64>) -> Details {
+    fn fresh_details(has_pending_posts: bool) -> Details {
         Details {
             comments: Vec::new(),
             failed_checks: Vec::new(),
             behind_base: false,
             head_sha: "abc".into(),
-            pending_drafts,
+            has_pending_posts,
         }
     }
 
     /// A pending review's own finding, held under `rc-1` where GitHub
     /// never lists a pending review's comments among a request's own,
     /// must not vanish the moment a poll runs after it, as long as that
-    /// same poll still finds the pending review itself (`pending_drafts`):
-    /// its absence from `comments` says nothing of the forge dropping it,
-    /// only that the forge never shows it there while it is still pending.
-    /// `submit_review`'s own validation reads this list for an open P0, so
-    /// losing the finding here would wrongly refuse a later round that
-    /// carries no new one (the bug a review caught: 029).
+    /// same poll still finds the pending review itself
+    /// (`has_pending_posts`): its absence from `comments` says nothing of
+    /// the forge dropping it, only that the forge never shows it there
+    /// while it is still pending. `submit_review`'s own validation reads
+    /// this list for an open P0, so losing the finding here would wrongly
+    /// refuse a later round that carries no new one (the bug a review
+    /// caught: 029).
     #[test]
     fn a_pending_reviews_finding_survives_a_poll_while_the_review_is_still_pending() {
         let live = LivePulls::default();
@@ -1337,7 +1329,7 @@ mod tests {
             live.get("p").unwrap().pull,
             false,
             since,
-            fresh_details(Some(1)),
+            fresh_details(true),
         );
         let after_one_poll = live.get("p").unwrap().details.unwrap().comments;
         assert_eq!(after_one_poll.len(), 1, "{after_one_poll:?}");
@@ -1351,7 +1343,7 @@ mod tests {
             live.get("p").unwrap().pull,
             false,
             since,
-            fresh_details(Some(1)),
+            fresh_details(true),
         );
         let after_two_polls = live.get("p").unwrap().details.unwrap().comments;
         assert_eq!(after_two_polls.len(), 1, "{after_two_polls:?}");
@@ -1373,7 +1365,7 @@ mod tests {
             live.get("p").unwrap().pull,
             false,
             since,
-            fresh_details(None),
+            fresh_details(false),
         );
         let after = live.get("p").unwrap().details.unwrap().comments;
         assert!(after.is_empty(), "{after:?}");
@@ -1395,7 +1387,7 @@ mod tests {
 
         // Confirmed for real: the fresh read carries the finding on its
         // own terms, dropping it from `local_additions`.
-        let mut confirmed = fresh_details(None);
+        let mut confirmed = fresh_details(false);
         confirmed.comments.push(pending_finding());
         live.set_details("p", live.get("p").unwrap().pull, false, since, confirmed);
         assert!(live.get("p").unwrap().local_additions.is_empty());
@@ -1408,7 +1400,7 @@ mod tests {
             live.get("p").unwrap().pull,
             false,
             since,
-            fresh_details(Some(1)),
+            fresh_details(true),
         );
         let after = live.get("p").unwrap().details.unwrap().comments;
         assert!(after.is_empty(), "{after:?}");

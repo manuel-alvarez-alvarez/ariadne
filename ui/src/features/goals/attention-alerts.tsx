@@ -33,7 +33,6 @@ import { Badge } from "@/components/ui/badge"
 import { SESSION_ATTENTION_META } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
 import { plural } from "@/lib/format"
-import { openExternalUrl } from "@/lib/open-external"
 import { paths } from "@/routes/paths"
 
 import {
@@ -158,13 +157,7 @@ function useAttentionToasts(
         // goal's, same reasoning as the strip's own row.
         action: {
           label: "Open",
-          // A `drafts` item's own target has no panel of Ariadne's to
-          // navigate to — only the forge's own page, reached the same way
-          // a rendered `<a href>` would (`ui/AGENTS.md`).
-          onClick: () =>
-            "external" in target
-              ? openExternalUrl(target.external)
-              : void navigate(target, { replace: target.replace }),
+          onClick: () => void navigate(target, { replace: target.replace }),
         },
       })
     }

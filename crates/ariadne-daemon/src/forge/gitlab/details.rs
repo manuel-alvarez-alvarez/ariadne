@@ -112,9 +112,22 @@ impl Gitlab {
         serde_json::from_str(&output).map_err(|e| format!("cannot read `glab api {path}`: {e}"))
     }
 
-    /// `_login` is unread: GitLab's `draft_posts` answers only the signed-in
-    /// viewer's own draft notes (031), whoever that is, so there is nothing
-    /// here to filter by it the way GitHub's pending-review read must.
+    /// `_login` is unread: GitLab's drafts endpoints answer only the
+    /// signed-in viewer's own draft notes (031), whoever that is, so there
+    /// is nothing here to filter by it the way GitHub's pending-review
+    /// read must. Draft notes never enter `discussions` at all — GitLab
+    /// holds them apart until the viewer publishes them — so this detail
+    /// read leaves them out with no filter of its own to write, unlike the
+    /// one GitHub's pending review needs.
+    ///
+    /// `ForgeDetails::has_pending_posts` still costs the one extra call
+    /// (`GET .../draft_notes`, [`Gitlab::draft_posts`]) 026 rule 9 asks
+    /// for: without it, a review's own finding held as a draft note gets
+    /// only the one-poll grace `merge_fresh_details` gives any local
+    /// addition, and a round spanning more than one missed poll loses an
+    /// open P0 that `open_p0` can no longer find. A read error is read as
+    /// "no draft note" rather than failing the whole detail read over a
+    /// feature only this one signal needs.
     pub(crate) async fn details(
         &self,
         repo: &str,
@@ -132,19 +145,11 @@ impl Gitlab {
             self.failed_checks(host, owner, name, &base),
             self.object::<Diverged>(host, &diverged),
         )?;
-        // The viewer's own draft notes (031), read apart from the rest of
-        // this detail read: an older GitLab, or one a token cannot reach
-        // this endpoint on, must never fail the whole detail read over a
-        // feature this list is the only one that needs. `0` is "no draft
-        // note", not "unread" — GitLab's own note objects are each a draft
-        // in full, so there is no verdict-only review to leave at `Some(0)`
-        // the way GitHub's own pending review can.
-        let pending_drafts = match self.draft_posts(repo, number).await {
-            Ok(0) => None,
-            Ok(count) => Some(count),
+        let has_pending_posts = match self.draft_posts(repo, number).await {
+            Ok(count) => count > 0,
             Err(error) => {
                 warn!(%error, %repo, number, "cannot read the viewer's own draft notes");
-                None
+                false
             }
         };
         let mut comments = Vec::new();
@@ -183,7 +188,7 @@ impl Gitlab {
             comments,
             failed_checks,
             behind_base: diverged.diverged_commits_count > 0,
-            pending_drafts,
+            has_pending_posts,
         })
     }
 
