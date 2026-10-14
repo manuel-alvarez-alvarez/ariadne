@@ -105,7 +105,7 @@ export function RepositoryFormDialog({
     resolver: zodResolver(formSchema),
     defaultValues: EMPTY_VALUES,
   })
-  const { control, formState, handleSubmit, register, reset, setError } = form
+  const { control, formState, handleSubmit, register, reset, setError, setValue } = form
   const forgeEnabled = useWatch({ control, name: "forge_enabled" })
 
   // Registering probes the path itself — nothing is detected server-side
@@ -117,19 +117,22 @@ export function RepositoryFormDialog({
 
   const probe = useCallback(
     (path: string) => {
-      if (editing || !path.startsWith("/")) return
+      if (editing) return
       const request = ++detectRequest.current
-      detectForge.mutate(
-        { path },
-        {
-          onSuccess: (result) => {
-            // A slower, earlier probe must not overwrite a later one's answer.
-            if (request === detectRequest.current) setDetected(result)
-          },
-        },
-      )
+      // A changed path answers a changed detection — on, off, or none — so
+      // a switch left on for the checkout before it must not survive it.
+      const settle = (result: ForgeDetectionDto | null) => {
+        if (request !== detectRequest.current) return
+        setDetected(result)
+        setValue("forge_enabled", false)
+      }
+      if (!path.startsWith("/")) {
+        settle(null)
+        return
+      }
+      detectForge.mutate({ path }, { onSuccess: settle, onError: () => settle(null) })
     },
-    [editing, detectForge],
+    [editing, detectForge, setValue],
   )
 
   const onPathChange = useCallback(
@@ -396,7 +399,7 @@ export function RepositoryFormDialog({
             <ForgeSwitch forge={forge} control={control} error={formState.errors.forge_enabled} />
           ) : null}
 
-          {forgeEnabled ? (
+          {forge && forgeEnabled ? (
             <Field>
               <div className="flex items-center gap-3">
                 <Controller

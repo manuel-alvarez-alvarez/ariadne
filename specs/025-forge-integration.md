@@ -198,7 +198,11 @@ the desktop app as a whole (015).
   (`ui/src/features/repositories/repository-form-dialog.test.tsx::shows the
   forge switch, off, once a path with a forge is entered`, `::shows no forge
   switch for a path with no forge`, `::sends forge enabled in the create
-  request once the switch is turned on`).
+  request once the switch is turned on`). A re-probed path that answers
+  differently, or turns relative, resets a switch left on rather than
+  keeping it (`::resets the switch and hides supervise posts once a
+  re-probed path has no forge`, `::resets the switch once the path turns
+  relative after a forge was detected`).
 - Supervise posts sits below the switch and only while it is on, in both
   dialogs, and keeps its value across the switch going off and back on
   (`::saves the supervise posts switch`, `::hides supervise posts under an
