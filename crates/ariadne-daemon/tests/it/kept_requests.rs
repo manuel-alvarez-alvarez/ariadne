@@ -2008,6 +2008,241 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
     );
 }
 
+/// Where the repository supervises its posts (026 rule 24 / 029 rule
+/// 13a), an Ariadne review holds its findings and its verdict in the
+/// viewer's own pending review rather than submitting one: no event is
+/// ever set, and no summary comment is posted.
+#[tokio::test]
+async fn an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_when_supervised() {
+    let Kept {
+        h,
+        stub,
+        task,
+        id,
+        repo,
+        path,
+        ..
+    } = kept_request(quiet_script()).await;
+    let tip = sh(&path, &format!("git rev-parse {}", task.branch));
+    let headed = |script: Value| -> Value {
+        serde_json::from_str(
+            &script
+                .to_string()
+                .replace("abc", &tip)
+                .replace("\"fix\"", &format!("\"{}\"", task.branch)),
+        )
+        .unwrap()
+    };
+    let mut script = headed(quiet_script());
+    let entries = script.as_array_mut().unwrap();
+    for entry in [
+        answer(
+            &[
+                "api",
+                "repos/acme/widgets/pulls/1/reviews",
+                "--hostname",
+                "github.com",
+                "--method",
+                "POST",
+            ],
+            0,
+            r#"{"id": 9, "node_id": "PR_kwDOx", "state": "PENDING", "body": "",
+                "user": {"login": "me"}}"#,
+        ),
+        answer(
+            &[
+                "api",
+                "graphql",
+                "--hostname",
+                "github.com",
+                "-f",
+                "query=mutation($reviewId: ID!, $path: String!, $line: Int!, $body: String!) { \
+                 addPullRequestReviewThread(input: {pullRequestReviewId: $reviewId, path: \
+                 $path, line: $line, side: RIGHT, body: $body}) { thread { comments(first: 1) \
+                 { nodes { databaseId createdAt } } } } }",
+            ],
+            0,
+            r#"{"data":{"addPullRequestReviewThread":{"thread":{"comments":{"nodes":[
+                {"databaseId": 501, "createdAt": "2026-10-02T00:00:00Z"}]}}}}}"#,
+        ),
+        answer(
+            &[
+                "api",
+                "graphql",
+                "--hostname",
+                "github.com",
+                "-f",
+                "query=mutation($id: ID!, $body: String!) { \
+                 updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
+                 pullRequestReview { id } } }",
+            ],
+            0,
+            r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+        ),
+    ] {
+        entries.insert(0, entry);
+    }
+    stub.reprogram(script);
+    h.state.forge_poll.wake(&repo);
+    eventually(
+        TIMEOUT,
+        "the detail fetch to read the new head",
+        async || {
+            h.launcher.live.get(&id).is_some_and(|live| {
+                live.pull.head_sha == tip
+                    && live
+                        .details
+                        .as_ref()
+                        .is_some_and(|details| details.head_sha == tip)
+            })
+        },
+    )
+    .await;
+    h.flush_scheduler().await;
+
+    let ask = Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "/v1/repositories/{repo}/pull-requests/1/ariadne-review"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"asked": true, "model": "stub:review-model"}).to_string(),
+        ))
+        .unwrap();
+    let _: Value = h.json(ask, StatusCode::OK).await;
+    let mut review = None;
+    eventually(TIMEOUT, "the review session to be idle", async || {
+        review = h
+            .store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|s| s.status() == SessionStatus::Idle && s.launched_at.is_some());
+        review.is_some()
+    })
+    .await;
+    let review = review.unwrap();
+    let answer: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/reviews"),
+                &review.id,
+                json!({"event": "comment", "body": "One P1.", "comments": [
+                    {"path": "src/lib.rs", "line": 3, "title": "Untested",
+                     "body": "No test covers it.", "priority": "P1"}
+                ]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(answer, json!({"pending": true}));
+    let calls = stub.invocations();
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c.args.iter().any(|a| a.contains("reviews/77/comments"))),
+        "no submitted review is ever read back: {calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c
+            .args
+            .iter()
+            .any(|a| a.contains("issues/1/comments") && c.args.contains(&"POST".to_string()))),
+        "no summary comment is posted: {calls:?}"
+    );
+    let header = calls
+        .iter()
+        .find(|c| {
+            c.args
+                .iter()
+                .any(|a| a.starts_with("query=mutation($id: ID!"))
+        })
+        .and_then(|c| c.args.iter().find_map(|a| a.strip_prefix("body=")))
+        .expect("the header mutation carries a body argument");
+    assert_eq!(
+        header,
+        "**Verdict: Comment**\n\nOne P1.\n<!-- ariadne:pending-review-verdict -->"
+    );
+    assert!(
+        calls.iter().any(|c| c
+            .args
+            .iter()
+            .any(|a| a.starts_with("query=mutation($reviewId: ID!")
+                && a.contains("addPullRequestReviewThread"))),
+        "the finding joins the pending review: {calls:?}"
+    );
+    // Ariadne records the verdict and the finding as the review's, the
+    // same way a posted round's findings and summary are
+    // (`pull_request_comment_marks`), even though neither reached the
+    // forge as a comment of its own.
+    let marks = h.store.pull_request_comment_marks(&id).await.unwrap();
+    let marked = |forge_id: &str| marks.iter().find(|m| m.forge_id == forge_id);
+    assert!(
+        marked("rc-501").is_some_and(|m| m.from_review),
+        "the held finding is marked the review's: {marks:?}"
+    );
+    assert!(
+        marked("rv-9").is_some_and(|m| m.from_review),
+        "the held verdict is marked the review's: {marks:?}"
+    );
+    let held = h
+        .launcher
+        .live
+        .get(&id)
+        .and_then(|l| l.details)
+        .map(|d| d.comments);
+    let verdict = held
+        .as_ref()
+        .and_then(|comments| comments.iter().find(|c| c.forge_id == "rv-9"))
+        .expect("the verdict is held locally under the pending review's id");
+    assert_eq!(verdict.thread_id, "conversation");
+    assert_eq!(verdict.body, "**Verdict: Comment**\n\nOne P1.");
+
+    let resolved: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/rc-501/resolve"),
+                &review.id,
+                json!({}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(resolved["pending"], true);
+    assert_eq!(resolved["id"], "rv-9");
+    assert!(
+        !stub
+            .invocations()
+            .iter()
+            .any(|c| c.args.iter().any(|a| a.contains("resolveReviewThread"))),
+        "the thread is not resolved"
+    );
+    let heading = stub
+        .invocations()
+        .into_iter()
+        .rfind(|c| {
+            c.args
+                .iter()
+                .any(|a| a.starts_with("query=mutation($id: ID!"))
+        })
+        .and_then(|c| {
+            c.args
+                .into_iter()
+                .find_map(|a| a.strip_prefix("body=").map(str::to_string))
+        })
+        .expect("the heading mutation carries a body argument");
+    assert_eq!(
+        heading,
+        "## Threads to resolve\n\
+         - https://github.com/acme/widgets/pull/1#discussion_r501\n"
+    );
+}
+
 /// A task over while the last read of its request still says open asks the
 /// forge again before Ariadne lets go of it (026 rule 23). A read that
 /// fails proves nothing: the row stays. Once the forge says it merged, its

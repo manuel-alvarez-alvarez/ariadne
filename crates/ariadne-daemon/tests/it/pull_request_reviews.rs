@@ -171,13 +171,18 @@ fn push(path: &Path) -> String {
     sh(path, "git rev-parse fix")
 }
 
-/// The repository registered with its integration on.
+/// The repository registered with its integration on. `supervise_posts` is
+/// explicitly off: a repository defaults to holding its posts back (026
+/// rule 24), and this file's reviews and resolves are about the forge's
+/// own CLI calls, posted directly, rather than that held-back path
+/// (covered instead by
+/// `kept_requests.rs::an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_when_supervised`).
 async fn repository(h: &Harness, path: &Path) -> String {
     let repo: Value = h
         .json(
             post_json(
                 "/v1/repositories",
-                json!({"path": path, "forge": {"enabled": true}}),
+                json!({"path": path, "forge": {"enabled": true}, "supervise_posts": false}),
             ),
             StatusCode::CREATED,
         )

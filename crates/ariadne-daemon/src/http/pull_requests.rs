@@ -11,10 +11,10 @@ use crate::forge::live::{self, Details, Live};
 use crate::forge::pulls::{CONVERSATION, DraftComment, ReviewDraft};
 use crate::forge::{ForgeClient, PullRequestRef, pulls};
 use ariadne_api::pull_requests::{
-    AskBabysitRequest, AskReviewRequest, PendingReplyDto, PullRequestCommentDto,
+    AskBabysitRequest, AskReviewRequest, PendingReplyDto, PendingReviewDto, PullRequestCommentDto,
     PullRequestCommentQuery, PullRequestDiffQuery, PullRequestDto, PullRequestListQuery,
     PullRequestMatchDto, ReplyAnswerDto, ReplyCommentRequest, ReportPullRequestRequest,
-    SubmitReviewRequest,
+    SubmitReviewAnswerDto, SubmitReviewRequest,
 };
 use ariadne_store::{
     AgentSession, ForgeIntegration, PullRequest, PullRequestComment, PullRequestFilter,
@@ -683,15 +683,18 @@ pub(super) async fn reply(
 /// Resolve the thread of one comment, once a push fixed what it found
 /// (029). Only a review session resolves, and only a thread it opened under
 /// the integration login: the threads of anyone else stay open for the
-/// person who wrote them.
+/// person who wrote them. A repository that holds posts back lists it
+/// under a "Threads to resolve" heading of the user's own pending review
+/// (GitHub) or sets `resolve_discussion` on a draft note of its discussion
+/// (GitLab) instead, answering `{pending: true, id}` (026 rule 24).
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/resolve", tag = "pull-requests",
     params(("id" = String, Path), ("comment_id" = String, Path)),
-    responses((status = 200, body = PullRequestCommentDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
+    responses((status = 200, body = ReplyAnswerDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
 pub(super) async fn resolve(
     State(state): State<AppState>,
     Path((id, comment_id)): Path<(String, String)>,
     headers: HeaderMap,
-) -> ApiResult<Json<PullRequestCommentDto>> {
+) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
     let row = state.store.get_pull_request(&id).await?;
     let session = own_session(&state, &headers, &row).await?;
     if session.seat() != Some(ariadne_core::Seat::Reviewer) {
@@ -716,6 +719,25 @@ pub(super) async fn resolve(
         )));
     }
     if !comment.resolved {
+        let repository = state.store.get_repository(&pull.repository_id).await?;
+        if repository.supervise_posts() {
+            // Held under the same lock a reply and a review hold: all
+            // three read, change and write the one pending review body,
+            // and a pair of them racing each other must not lose one's
+            // change to the other's (026 rule 24).
+            let _reply_lock = state.reply_locks.hold(&pull.id).await;
+            let id = client(&state, &forge)
+                .resolve_pending(&slug(&forge), pull.number, &login, &comment)
+                .await
+                .map_err(forge_error)?;
+            state.forge_poll.wake(&pull.repository_id);
+            state.notify_scheduler_pull_request(&pull.id);
+            let pending = PendingReplyDto { pending: true, id };
+            return Ok((
+                StatusCode::OK,
+                Json(serde_json::to_value(pending).expect("PendingReplyDto serializes")),
+            ));
+        }
         client(&state, &forge)
             .resolve(&slug(&forge), pull.number, &comment)
             .await
@@ -724,7 +746,13 @@ pub(super) async fn resolve(
     }
     state.forge_poll.wake(&pull.repository_id);
     state.notify_scheduler_pull_request(&pull.id);
-    Ok(Json(pull_request_comment_dto(comment)))
+    Ok((
+        StatusCode::OK,
+        Json(
+            serde_json::to_value(pull_request_comment_dto(comment))
+                .expect("PullRequestCommentDto serializes"),
+        ),
+    ))
 }
 
 /// What the request's session says of it: `ready` once the babysitting task
@@ -880,13 +908,13 @@ pub(super) async fn diff(
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/reviews", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = SubmitReviewRequest,
-    responses((status = 201, body = [PullRequestCommentDto]), (status = 400), (status = 403), (status = 404), (status = 409), (status = 502)))]
+    responses((status = 201, body = SubmitReviewAnswerDto), (status = 400), (status = 403), (status = 404), (status = 409), (status = 502)))]
 pub(super) async fn submit_review(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
     Json(req): Json<SubmitReviewRequest>,
-) -> ApiResult<(StatusCode, Json<Vec<PullRequestCommentDto>>)> {
+) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
     let row = state.store.get_pull_request(&id).await?;
     own_session(&state, &headers, &row).await?;
     let asked = match req.event.as_str() {
@@ -969,6 +997,45 @@ pub(super) async fn submit_review(
         ));
     }
     let forge_client = client(&state, &forge);
+    let repository = state.store.get_repository(&pull.repository_id).await?;
+    if repository.supervise_posts() {
+        // Held unposted in the user's own forge drafts (026 rule 24): the
+        // verdict and the round's summary lead the pending review's own
+        // body, or one more draft note of its own, rather than the sticky
+        // summary comment `write_summary` otherwise posts. The same lock
+        // a reply and a resolve hold on the one pending review body: a
+        // pair of them racing each other must not lose one's change to
+        // the other's.
+        let _reply_lock = state.reply_locks.hold(&pull.id).await;
+        let verdict = if request_changes {
+            "Request changes"
+        } else {
+            "Comment"
+        };
+        let header = format!("**Verdict: {verdict}**\n\n{body}");
+        let mut posted = forge_client
+            .submit_review_pending(
+                &slug(&forge),
+                pull.number,
+                &ReviewDraft {
+                    request_changes,
+                    head_sha: pull.head_sha.clone(),
+                    comments,
+                },
+                &login,
+                &header,
+            )
+            .await
+            .map_err(forge_error)?;
+        hold_review_comments(&state, &pull.id, &mut posted).await?;
+        state.forge_poll.wake(&pull.repository_id);
+        state.notify_scheduler_pull_request(&pull.id);
+        let pending = PendingReviewDto { pending: true };
+        return Ok((
+            StatusCode::CREATED,
+            Json(serde_json::to_value(pending).expect("PendingReviewDto serializes")),
+        ));
+    }
     // A round with no new finding posts no review: its summary says where
     // the review stands.
     let mut posted = match comments.is_empty() {
@@ -1062,7 +1129,10 @@ pub(super) async fn submit_review(
         .collect();
     state.forge_poll.wake(&pull.repository_id);
     state.notify_scheduler_pull_request(&pull.id);
-    Ok((StatusCode::CREATED, Json(answered)))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(answered).expect("comments serialize")),
+    ))
 }
 
 /// Mark what a review posted as the review's, and hold it beside the last

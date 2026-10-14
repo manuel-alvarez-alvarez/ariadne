@@ -811,7 +811,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Resolve the thread of one of your own review comments once a push fixed it. Ariadne resolves it on the forge. A thread somebody else opened is refused: its author resolves it."
+        description = "Resolve the thread of one of your own review comments once a push fixed it. Ariadne resolves it on the forge. A thread somebody else opened is refused: its author resolves it. A supervised repository lists it to resolve in your forge drafts instead."
     )]
     async fn resolve_thread(
         &self,
@@ -820,7 +820,15 @@ impl AriadneMcp {
         let path = self
             .pull_request_path(&format!("/comments/{}/resolve", req.comment_id))
             .await?;
-        json_result(self.post(&path, &serde_json::json!({})).await?)
+        let answer = self.post(&path, &serde_json::json!({})).await?;
+        if answer["pending"] == true {
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
+                "The resolve is waiting in the user's forge drafts. The user must publish it \
+                 there. Continue your work."
+                    .to_string(),
+            )]));
+        }
+        json_result(answer)
     }
 
     #[tool(
@@ -858,7 +866,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post one round of your review in the name of the user. Give each new finding its file, line and priority. The body replaces the text of your one summary comment. Set `event` to `request_changes` while a P0 is open, else to `comment`."
+        description = "Post one round of your review in the name of the user. Give each new finding its file, line and priority. The body replaces the text of your one summary comment. Set `event` to `request_changes` while a P0 is open, else to `comment`. A supervised repository holds it in the forge drafts instead."
     )]
     async fn submit_review(
         &self,
@@ -875,8 +883,8 @@ impl AriadneMcp {
                 priority: format!("{:?}", c.priority),
             })
             .collect();
-        json_result(
-            self.post(
+        let answer = self
+            .post(
                 &self.pull_request_path("/reviews").await?,
                 &SubmitReviewRequest {
                     event: req.event.as_str().to_string(),
@@ -884,8 +892,15 @@ impl AriadneMcp {
                     comments,
                 },
             )
-            .await?,
-        )
+            .await?;
+        if answer["pending"] == true {
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
+                "The review is waiting in the user's forge drafts. The user must publish it \
+                 there. Continue your work."
+                    .to_string(),
+            )]));
+        }
+        json_result(answer)
     }
 
     // ---- everyone ----
@@ -1199,6 +1214,59 @@ mod tests {
             }))
             .await
             .expect("reply");
+        let ContentBlock::Text(text) = &answer.content[0] else {
+            panic!("the answer came back as something other than text");
+        };
+        assert!(text.text.contains("forge drafts"), "{}", text.text);
+        assert!(text.text.contains("Continue"), "{}", text.text);
+    }
+
+    /// Where the repository holds posts back, the daemon answers
+    /// `submit_review` with `pending: true` rather than the posted
+    /// comments (026 rule 24 / 029 rule 13a): the tool's own text says the
+    /// review waits in the user's forge drafts, rather than handing back
+    /// the raw pending shape.
+    #[tokio::test]
+    async fn a_pending_review_tells_the_agent_to_continue_rather_than_the_raw_answer() {
+        let (endpoint, _seen) = recording_daemon_answering(r#"{"pending": true}"#).await;
+        let mcp = server_at(
+            McpSeat::PullRequestReviewer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answer = mcp
+            .submit_review(Parameters(SubmitReviewReq {
+                event: ReviewEvent::Comment,
+                body: "One P1.".into(),
+                comments: vec![],
+            }))
+            .await
+            .expect("submit_review");
+        let ContentBlock::Text(text) = &answer.content[0] else {
+            panic!("the answer came back as something other than text");
+        };
+        assert!(text.text.contains("forge drafts"), "{}", text.text);
+        assert!(text.text.contains("Continue"), "{}", text.text);
+    }
+
+    /// Where the repository holds posts back, the daemon answers
+    /// `resolve_thread` with `pending: true` rather than the resolved
+    /// comment (026 rule 24 / 029 rule 16b): the tool's own text says the
+    /// resolve waits in the user's forge drafts, rather than handing back
+    /// the raw pending shape.
+    #[tokio::test]
+    async fn a_pending_resolve_tells_the_agent_to_continue_rather_than_the_raw_answer() {
+        let (endpoint, _seen) =
+            recording_daemon_answering(r#"{"pending": true, "id": "rv-9"}"#).await;
+        let mcp = server_at(
+            McpSeat::PullRequestReviewer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answer = mcp
+            .resolve_thread(Parameters(ResolveThreadReq {
+                comment_id: "01C".into(),
+            }))
+            .await
+            .expect("resolve_thread");
         let ContentBlock::Text(text) = &answer.content[0] else {
             panic!("the answer came back as something other than text");
         };

@@ -4,8 +4,8 @@
 use serde::Deserialize;
 
 use super::Github;
-use super::details::{issue_comment_id, review_comment_id};
-use crate::forge::pulls::{REVIEW_MARK, ReviewDraft, split_slug};
+use super::details::{issue_comment_id, review_comment_id, review_id};
+use crate::forge::pulls::{CONVERSATION, REVIEW_MARK, ReviewDraft, split_slug};
 use ariadne_store::NewPullRequestComment;
 
 #[derive(Deserialize)]
@@ -139,6 +139,93 @@ impl Github {
                 from_review: false,
             });
         }
+        Ok(stored)
+    }
+
+    /// Post `review`'s findings into the viewer's own pending review (029
+    /// rule 13a), held back rather than submitted, where the repository
+    /// holds posts back: each inline comment joins it as a new thread,
+    /// `addPullRequestReviewThread`, and `header` — the verdict and the
+    /// round's summary — is set at the review body's own top
+    /// (`set_pending_review_header`), creating the pending review first
+    /// where there is none. No event is set, and nothing here submits it.
+    /// Answers what it held, as comments of `login`.
+    pub(crate) async fn submit_review_pending(
+        &self,
+        repo: &str,
+        number: i64,
+        review: &ReviewDraft,
+        login: &str,
+        header: &str,
+    ) -> Result<Vec<NewPullRequestComment>, String> {
+        let (host, _, _) = split_slug(repo)?;
+        let pending = self.pending_review(repo, number, login).await?;
+        let mut stored = Vec::new();
+        for comment in &review.comments {
+            let output = self
+                .cli
+                .answer(&[
+                    "api",
+                    "graphql",
+                    "--hostname",
+                    host,
+                    "-f",
+                    "query=mutation($reviewId: ID!, $path: String!, $line: Int!, $body: String!) { \
+                     addPullRequestReviewThread(input: {pullRequestReviewId: $reviewId, path: \
+                     $path, line: $line, side: RIGHT, body: $body}) { thread { comments(first: 1) \
+                     { nodes { databaseId createdAt } } } } }",
+                    "-f",
+                    &format!("reviewId={}", pending.node_id),
+                    "-f",
+                    &format!("path={}", comment.path),
+                    "-F",
+                    &format!("line={}", comment.line),
+                    "-f",
+                    &format!("body={}", comment.body),
+                ])
+                .await?;
+            let answered: serde_json::Value = serde_json::from_str(&output)
+                .map_err(|e| format!("cannot read the pending finding GitHub stored: {e}"))?;
+            let node =
+                &answered["data"]["addPullRequestReviewThread"]["thread"]["comments"]["nodes"][0];
+            let id = node["databaseId"]
+                .as_i64()
+                .ok_or_else(|| "GitHub answered no id for the pending finding".to_string())?;
+            stored.push(NewPullRequestComment {
+                forge_id: review_comment_id(id),
+                thread_id: review_comment_id(id),
+                kind: "review_comment".into(),
+                author_login: login.to_string(),
+                author_is_bot: false,
+                body: comment.body.clone(),
+                path: Some(comment.path.clone()),
+                line: Some(comment.line),
+                in_reply_to: None,
+                created_at: node["createdAt"].as_str().unwrap_or_default().to_string(),
+                resolved: false,
+                from_review: false,
+            });
+        }
+        self.apply_pending_header(host, &pending, header).await?;
+        // Recorded as the review's the same way the posted summary is
+        // (`hold_review_comments`), under the pending review's own id: the
+        // verdict and summary have no comment of their own on GitHub, so
+        // this is what stands for it until the forge lets a fetch see the
+        // pending review itself.
+        stored.push(NewPullRequestComment {
+            forge_id: review_id(pending.id),
+            thread_id: CONVERSATION.into(),
+            kind: "issue_comment".into(),
+            author_login: login.to_string(),
+            author_is_bot: false,
+            body: header.to_string(),
+            path: None,
+            line: None,
+            in_reply_to: None,
+            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            resolved: false,
+            from_review: false,
+        });
         Ok(stored)
     }
 
@@ -335,5 +422,160 @@ sys.stdout.write('{"id": 77, "submitted_at": "2026-10-02T00:00:00Z"}')
         };
         assert_eq!(input(0).get("body"), None, "the first try carries no body");
         assert_eq!(input(1)["body"], REVIEW_MARK);
+    }
+
+    /// A `gh` stub that answers, in order, one scripted `stdout` per call,
+    /// numbering each call's own arguments beside it, for tests that read
+    /// exactly what a later step sent.
+    const SCRIPTED_STUB: &str = r#"#!/usr/bin/env python3
+import json, os, sys
+here = os.path.dirname(os.path.abspath(sys.argv[0]))
+count_file = os.path.join(here, "count")
+count = int(open(count_file).read()) if os.path.exists(count_file) else 0
+open(count_file, "w").write(str(count + 1))
+open(os.path.join(here, f"call-{count}.json"), "w").write(json.dumps(sys.argv[1:]))
+answers = json.load(open(os.path.join(here, "answers.json")))
+sys.stdout.write(answers[count])
+"#;
+
+    fn fake_gh_scripted(dir: &std::path::Path, answers: &[&str]) -> String {
+        let path = dir.join("gh");
+        std::fs::write(&path, SCRIPTED_STUB).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(
+            dir.join("answers.json"),
+            serde_json::to_string(answers).unwrap(),
+        )
+        .unwrap();
+        path.display().to_string()
+    }
+
+    fn call_args(dir: &std::path::Path, n: usize) -> Vec<String> {
+        serde_json::from_str(&std::fs::read_to_string(dir.join(format!("call-{n}.json"))).unwrap())
+            .unwrap()
+    }
+
+    /// `submit_review`, with the repository holding posts back, adds each
+    /// finding to the viewer's own pending review as a new thread, sets
+    /// the verdict and summary at the review body's own top, and holds a
+    /// `from_review` conversation entry of the verdict too, under the
+    /// pending review's own id, with no event ever submitted: the pending
+    /// review's listing is read once, not once per finding.
+    #[tokio::test]
+    async fn submit_review_pending_adds_each_finding_and_sets_the_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = fake_gh_scripted(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"{"data":{"addPullRequestReviewThread":{"thread":{"comments":{"nodes":[
+                    {"databaseId": 501, "createdAt": "2026-10-02T00:00:00Z"}]}}}}}"#,
+                r#"{"data":{"addPullRequestReviewThread":{"thread":{"comments":{"nodes":[
+                    {"databaseId": 502, "createdAt": "2026-10-02T00:01:00Z"}]}}}}}"#,
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+            ],
+        );
+        let github = Github::new(Cli {
+            timeout: Duration::from_secs(5),
+            ..Cli::new(Some(&binary), "gh")
+        });
+        let review = ReviewDraft {
+            request_changes: true,
+            head_sha: "abc".into(),
+            comments: vec![
+                crate::forge::pulls::DraftComment {
+                    path: "src/lib.rs".into(),
+                    line: 3,
+                    body: "**[P0] Empty list**\n\nAn empty list panics.\n\n<!-- ariadne:review -->"
+                        .into(),
+                },
+                crate::forge::pulls::DraftComment {
+                    path: "tests/it.rs".into(),
+                    line: 9,
+                    body: "**[P1] Untested**\n\nNo test covers it.\n\n<!-- ariadne:review -->"
+                        .into(),
+                },
+            ],
+        };
+        let stored = github
+            .submit_review_pending(
+                "github.com/acme/widgets",
+                1,
+                &review,
+                "me",
+                "**Verdict: Request changes**\n\nOne P0 open.",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            stored
+                .iter()
+                .map(|c| c.forge_id.clone())
+                .collect::<Vec<_>>(),
+            ["rc-501", "rc-502", "rv-9"]
+        );
+        assert!(stored[..2].iter().all(|c| c.kind == "review_comment"));
+        let verdict = stored.last().unwrap();
+        assert_eq!(verdict.kind, "issue_comment");
+        assert_eq!(verdict.thread_id, "conversation");
+        assert_eq!(verdict.body, "**Verdict: Request changes**\n\nOne P0 open.");
+        let pending_list = call_args(dir.path(), 0);
+        assert!(
+            !pending_list.contains(&"--method".to_string()),
+            "the pending review is read, not created again: {pending_list:?}"
+        );
+        let first = call_args(dir.path(), 1);
+        assert!(
+            first.contains(&"reviewId=PR_kwDOx".to_string()),
+            "{first:?}"
+        );
+        assert!(first.contains(&"path=src/lib.rs".to_string()), "{first:?}");
+        assert!(first.contains(&"line=3".to_string()), "{first:?}");
+        let header_call = call_args(dir.path(), 3);
+        let body = header_call
+            .iter()
+            .find_map(|a| a.strip_prefix("body="))
+            .expect("a body argument");
+        assert_eq!(
+            body,
+            "**Verdict: Request changes**\n\nOne P0 open.\n<!-- ariadne:pending-review-verdict -->"
+        );
+    }
+
+    /// A round with no new finding still holds the verdict and summary,
+    /// under the pending review's own id, the same way a round with no
+    /// comments writes the posted summary.
+    #[tokio::test]
+    async fn submit_review_pending_holds_the_verdict_with_no_finding() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = fake_gh_scripted(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+            ],
+        );
+        let github = Github::new(Cli {
+            timeout: Duration::from_secs(5),
+            ..Cli::new(Some(&binary), "gh")
+        });
+        let review = ReviewDraft {
+            request_changes: false,
+            head_sha: "abc".into(),
+            comments: vec![],
+        };
+        let stored = github
+            .submit_review_pending(
+                "github.com/acme/widgets",
+                1,
+                &review,
+                "me",
+                "**Verdict: Comment**\n\nNothing new.",
+            )
+            .await
+            .unwrap();
+        assert_eq!(stored.len(), 1, "{stored:?}");
+        assert_eq!(stored[0].forge_id, "rv-9");
+        assert_eq!(stored[0].kind, "issue_comment");
     }
 }
