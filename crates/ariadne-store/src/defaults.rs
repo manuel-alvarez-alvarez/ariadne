@@ -1052,7 +1052,7 @@ mod tests {
                 "code-review",
                 "Run each required check with no reusable result, once for this verdict.",
             ),
-            ("pr-babysit", "run the checks of what you changed"),
+            ("pr-babysit", "Run the checks affected by the batch."),
             (
                 "coding",
                 "For a code behavior change, write a failing test first",
@@ -1126,7 +1126,10 @@ mod tests {
                 "refactoring",
                 "Commit the whole refactor once, after every move is green.",
             ),
-            ("pr-babysit", "Never amend, rebase or force a push."),
+            (
+                "pr-babysit",
+                "Never amend a pushed commit outside an approved rebase.",
+            ),
         ] {
             let document = unwrapped(default_skill_document(name).unwrap());
             assert!(
@@ -1317,12 +1320,16 @@ mod tests {
             "On each later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.",
             "`get_pull_request`",
             "`list_comments` with `unanswered_only`",
-            "`git merge --no-edit <remote>/<base>`",
+            "The repository's history rules choose the branch update.",
+            "A linear-history rule requires `git rebase <remote>/<base>` and `git push --force-with-lease`.",
+            "Where merges are allowed, run `git merge --no-edit <remote>/<base>`.",
             "Push the task branch. Call `open_pull_request`.",
             "repository's commit conventions",
             "Fill its pull request template, or write three full sections: Why, What changed, How to test.",
-            "then run the checks of what you changed. Push it.",
-            "Never amend, rebase or force a push.",
+            "Group related accepted changes in one coherent commit; keep unrelated changes separate.",
+            "Run the checks affected by the batch. Update the branch, then push the batch once.",
+            "Never amend a pushed commit outside an approved rebase.",
+            "Never use an unguarded force push or discard commits others added to the remote branch.",
             "Call `report_pull_request` only when readiness changes:",
             "`ready: true` with the `head_sha`",
             "`ready: false` when one goes back",
@@ -1351,7 +1358,7 @@ mod tests {
         let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
         for rule in [
             "Answer each inline review comment of the other side, once per comment:",
-            "Reply `Fixed in <sha>: <what changed>.` Or reply `Not changed: <why>.`",
+            "after the final push: `Fixed in <sha>: <what changed>.`",
             "A question: give one short answer.",
             "Thanks or an acknowledgement: reply nothing.",
             "A follow-up ask in a thread you answered: a new ask. Act on it.",
@@ -1359,6 +1366,7 @@ mod tests {
             "A comment on the conversation: answer it the same way, once per comment.",
             "A suggestion block you accept: apply it.",
             "Else reply `Not changed: <why>.`",
+            "Group related accepted changes in one coherent commit; keep unrelated changes separate.",
             "Commit only what a comment or a failed check asks for.",
             "Leave every thread open.",
             "Post no new thread, summary or top-level comment, except step 3's reply.",

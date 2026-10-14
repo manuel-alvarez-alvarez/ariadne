@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-10-13
+updated: 2026-10-14
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -64,8 +64,9 @@ reads behind them ([026](026-pull-requests.md)).
    Ariadne wakes it with the news and ends it on the merge or the close,
    then to end its turn.
 6. The session loads `pr-babysit` — the same skill the `pr` column of a
-   task stages (030) — and the skills the user picked when asking, each one
-   a task agent is staffed on.
+   task stages — and the skills the user picked when asking, each one a task
+   agent is staffed on. Its comment batching, branch-update and review-scope
+   rules are 030 rule 10.
 
 ## Asking on a request, by hand
 

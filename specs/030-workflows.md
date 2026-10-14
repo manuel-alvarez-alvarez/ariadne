@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-10-12
+updated: 2026-10-14
 areas: [core, store, api, daemon, prompts]
 commits: []
 tests:
@@ -265,20 +265,30 @@ every other wire enum (011).
     (006 rule 5). A ready report is stored but raises nothing of its own
     on that session: the `pull_request` attention producer reads the
     forge's own evidence against the claim instead (031). The agent
-    answers each inline review comment of the other side once: a
-    requested change as a new commit, with the changed tests and lint run
-    again before the push, named by its commit, or a reason for keeping
-    the code; a question with one short answer; a thanks with no reply; a
-    follow-up in an answered thread with a new answer; and a reviewer
-    reply that keeps a finding open with no second try, since the user
-    decides next. It leaves a comment on the conversation, since
-    `reply_comment` refuses one there with 400 (026 Known gap). A finding
-    carrying a suggestion block the agent accepts is applied rather than
-    rewritten, except where it fails to compile or pass; one it does not
-    accept keeps the code, with a reason. On merge, it brings the
-    remote base into the checkout before completing the step. An open
-    request fails the `request_merged` gate with 409 at `complete_step`;
-    a fresh forge read that says merged lets the step finish. A close is
+    answers each inline review comment of the other side once: it groups
+    related accepted changes in one coherent commit and verification run,
+    keeps unrelated fixes separate, pushes each completed batch once, and
+    replies separately to its comments with the final pushed commit; it
+    gives a reason for keeping the code, one short answer to a question,
+    no reply to a thanks, a new answer to a follow-up, and no second try
+    on a finding the reviewer keeps open, since the user decides next. It
+    leaves a comment on the conversation, since `reply_comment` refuses
+    one there with 400 (026 Known gap). A finding carrying a suggestion
+    block the agent accepts is applied rather than rewritten, except where
+    it fails to compile or pass; one it does not accept keeps the code,
+    with a reason. Repository history rules choose its branch update:
+    where they require linear history it rebases and makes a guarded
+    `--force-with-lease` push, otherwise it uses a merge only where those
+    rules allow one. Before a guarded push it retains commits others added
+    to the remote branch; it never makes an unguarded force push or amends
+    a pushed commit outside that rebase. A rebase can replace commit ids,
+    so a reviewer uses incremental scope only while its previous reviewed
+    commit remains an ancestor; otherwise it reviews the full current
+    diff and does not reuse check evidence that no longer covers it. On
+    merge, it brings the remote base into the checkout before completing
+    the step. An open request fails the `request_merged` gate with 409
+    at `complete_step`; a fresh forge read that says merged lets the
+    step finish. A close is
     news and finishes nothing: the agent fails the task. The daemon
     advances a merged request column itself if its agent falls quiet for
     the quiet nudge, and finishes the task when that column is last; a
