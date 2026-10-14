@@ -554,7 +554,11 @@ pub(crate) async fn pull_request_dto_of(
             _ => true,
         })
         .map(|session| session.id);
-    Ok(pull_request_dto(row, session_id))
+    let supervise_posts = store
+        .get_repository(&row.repository_id)
+        .await?
+        .supervise_posts();
+    Ok(pull_request_dto(row, session_id, supervise_posts))
 }
 
 /// A request Ariadne works on as the API answers it: its live read and
@@ -562,6 +566,7 @@ pub(crate) async fn pull_request_dto_of(
 pub(crate) fn pull_request_dto(
     pull: ariadne_store::PullRequest,
     session_id: Option<String>,
+    supervise_posts: bool,
 ) -> ariadne_api::pull_requests::PullRequestDto {
     ariadne_api::pull_requests::PullRequestDto {
         failed_checks: serde_json::from_str(&pull.failed_checks).unwrap_or_default(),
@@ -598,6 +603,7 @@ pub(crate) fn pull_request_dto(
         updated_at: pull.forge_updated_at,
         role: pull.role,
         ready: pull.ready,
+        supervise_posts,
     }
 }
 
@@ -643,6 +649,7 @@ pub(crate) fn forge_pull_dto(
         babysit_effort: None,
         babysit_skills: Vec::new(),
         session_id: None,
+        supervise_posts: false,
     }
 }
 

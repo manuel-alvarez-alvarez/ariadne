@@ -700,6 +700,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/pull-requests/{id}/comments/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete one of the viewer's own pending forge posts, by its own forge id
+         *     (026 rule 25). Refused with 409 once the user submits or publishes it.
+         */
+        post: operations["pull-requests_delete_pending_comment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/comments/edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Edit the body of one of the viewer's own pending forge posts: a pending
+         *     review comment (GitHub) or a draft note (GitLab), by its own forge id
+         *     (026 rule 25). Refused with 409 once the user submits or publishes it.
+         */
+        post: operations["pull-requests_edit_pending_comment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/pull-requests/{id}/comments/{comment_id}": {
         parameters: {
             query?: never;
@@ -754,7 +795,8 @@ export interface paths {
          * Resolve the thread of one comment, once a push fixed what it found
          *     (029). Only a review session resolves, and only a thread it opened under
          *     the integration login: the threads of anyone else stay open for the
-         *     person who wrote them.
+         *     person who wrote them. A repository that supervises its posts refuses
+         *     the resolve with 409: the fixed thread stays open for the human author.
          */
         post: operations["pull-requests_resolve"];
         delete?: never;
@@ -779,6 +821,28 @@ export interface paths {
         get: operations["pull-requests_diff"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/pending-review/body": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace the body of the viewer's own pending review outright (026 rule 25):
+         *     GitHub only, since GitLab holds no pending review body apart from its
+         *     draft notes. Refused with 409 once the user submits it, or where there
+         *     is none.
+         */
+        post: operations["pull-requests_edit_pending_review_body"];
         delete?: never;
         options?: never;
         head?: never;
@@ -823,14 +887,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Post one round of a review of a request, in the user's name (029): its
-         *     new findings as one review of inline comments, each led by its priority,
-         *     and its summary, written into the one summary comment the review keeps
-         *     on the request — posted on the first round, edited on every later one. A
-         *     round with no new finding posts no review. `request_changes` stands only
-         *     on a P0 finding, new or still open. Any other event is refused, an
-         *     approval above all: the user gives every approval. What it posted is
-         *     marked as the review's.
+         * Post one round of a review of a request, in the user's name (029): only
+         *     its new findings, as one review of inline comments, each led by its
+         *     priority. There is no summary of any kind. A round with no new finding
+         *     posts no review. `request_changes` stands on a P0 or P1 finding, new or
+         *     still open. Any other event is refused, an approval above all: the user
+         *     gives every approval. What it posted is marked as the review's.
          */
         post: operations["pull-requests_submit_review"];
         delete?: never;
@@ -2326,6 +2388,10 @@ export interface components {
             version: string;
             worktree_root: components["schemas"]["PathStateDto"];
         };
+        /** @description Body of `POST /v1/pull-requests/{id}/comments/delete` (026 rule 25). */
+        DeletePendingCommentRequest: {
+            forge_id: string;
+        };
         /** @description Payload of the deletion events: the id of the gone entity. */
         DeletedDto: {
             id: string;
@@ -2484,6 +2550,28 @@ export interface components {
             data: components["schemas"]["PullRequestsChangedDto"];
             /** @enum {string} */
             event: "pull_requests_changed";
+        };
+        /**
+         * @description Body of `POST /v1/pull-requests/{id}/comments/edit` (026 rule 25): change the
+         *     body of one of the viewer's own pending forge posts — a pending review
+         *     comment (GitHub) or a draft note (GitLab) — while it still waits in the
+         *     user's forge drafts.
+         */
+        EditPendingCommentRequest: {
+            body: string;
+            /**
+             * @description The forge id of the pending comment, as `reply_comment` or
+             *     `submit_review` answered it.
+             */
+            forge_id: string;
+        };
+        /**
+         * @description Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25): GitHub
+         *     only, since GitLab holds no pending review body apart from its draft
+         *     notes.
+         */
+        EditPendingReviewBodyRequest: {
+            body: string;
         };
         /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
@@ -3007,6 +3095,19 @@ export interface components {
             writable: boolean;
         };
         /**
+         * @description What editing, deleting or replacing a pending forge post answers (026 rule 25):
+         *     which forge item changed, in words that name the forge.
+         */
+        PendingEditDto: {
+            /**
+             * @description What changed: "the pending GitHub review comment", "the GitHub
+             *     pending review body" or "the GitLab draft note".
+             */
+            changed: string;
+            /** @description The forge id of the item that changed. */
+            id: string;
+        };
+        /**
          * @description What the reply route answers instead of a posted comment, where the
          *     repository holds agent posts for the user's approval (002, 026 rule 24):
          *     the reply waits, unposted, as a pending review (GitHub) or a draft note
@@ -3022,6 +3123,16 @@ export interface components {
              */
             id: string;
             /** @description Always true: a posted reply never takes this shape. */
+            pending: boolean;
+        };
+        /**
+         * @description What `POST .../reviews` answers where the repository holds posts back
+         *     (026 rule 24 / 029 rule 13a): the review's findings wait, unposted, in
+         *     the viewer's own pending review (GitHub) or draft notes (GitLab), in
+         *     place of the posted comments the route otherwise answers with.
+         */
+        PendingReviewDto: {
+            /** @description Always true: a posted review never takes this shape. */
             pending: boolean;
         };
         /**
@@ -3200,6 +3311,8 @@ export interface components {
             session_id?: string | null;
             /** @description `open`, `merged` or `closed`. */
             state: string;
+            /** @description Whether this repository holds agent posts for human review. */
+            supervise_posts?: boolean;
             title: string;
             /**
              * Format: int64
@@ -3636,15 +3749,17 @@ export interface components {
          */
         StepGate: "committed" | "pushed" | "merged" | "request_merged";
         /**
+         * @description What `POST .../reviews` answers: the posted comments, or, where the
+         *     repository holds posts back, [`PendingReviewDto`] in their place.
+         */
+        SubmitReviewAnswerDto: components["schemas"]["PullRequestCommentDto"][] | components["schemas"]["PendingReviewDto"];
+        /**
          * @description Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted
          *     in the name of the integration login.
          */
         SubmitReviewRequest: {
-            /**
-             * @description The review's summary as it stands now: the daemon writes it into the
-             *     one summary comment the review keeps on the request.
-             */
-            body: string;
+            /** @description Optional text from older clients. New reviews do not publish it. */
+            body?: string;
             comments?: components["schemas"]["ReviewCommentRequest"][];
             /** @description `request_changes` or `comment`. Every other event is refused. */
             event: string;
@@ -5324,6 +5439,110 @@ export interface operations {
             };
         };
     };
+    "pull-requests_delete_pending_comment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeletePendingCommentRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingEditDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_edit_pending_comment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditPendingCommentRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingEditDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     "pull-requests_comment": {
         parameters: {
             query?: never;
@@ -5431,7 +5650,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PullRequestCommentDto"];
+                    "application/json": components["schemas"]["ReplyAnswerDto"];
                 };
             };
             403: {
@@ -5508,6 +5727,61 @@ export interface operations {
             };
         };
     };
+    "pull-requests_edit_pending_review_body": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditPendingReviewBodyRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingEditDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     "pull-requests_report": {
         parameters: {
             query?: never;
@@ -5571,7 +5845,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PullRequestCommentDto"][];
+                    "application/json": components["schemas"]["SubmitReviewAnswerDto"];
                 };
             };
             400: {

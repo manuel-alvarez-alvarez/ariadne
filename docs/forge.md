@@ -145,47 +145,34 @@ It posts its findings at one of three priorities:
 | Priority | Meaning |
 | --- | --- |
 | P0 | breaks behavior, data or security; must change before the request lands |
-| P1 | a defect, or a missing proof that will bite later |
+| P1 | a proven defect, unmet requirement, or written repository-rule violation |
 | P2 | worth fixing |
 
 Each round posts its new findings as one review — `request_changes` while
-a P0 finding is open, `comment` otherwise — never an approval. Each finding
+a P0 or P1 finding is open, `comment` otherwise — never an approval. Each finding
 is an inline comment of its own on the line of the defect, opening on
 **[P0] Title**, then what goes wrong and how to fix it. Where the fix
 replaces the commented line alone, the comment carries a `suggestion`
 block, holding the new text of that one line, the author can apply
 directly; a fix across lines, across files, or one that needs a test,
-stays prose. A change request whose P0 findings are not on their lines is
+stays prose. A change request whose P0 or P1 findings are not on their lines is
 refused. On GitHub that is one API call carrying every inline comment; on
 GitLab, which has no review verdict of its own, one discussion per
 comment.
 
-The review keeps **one summary comment** on the request, and every round
-rewrites it rather than adding another: a title, "## Review summary", a
-prose paragraph of three to six sentences naming the behavior the change
-touches, who sees it, what breaks if the change is wrong, why the risk
-sits where it does, and closing on one sentence of what the verdict
-rests on — such as the checks that pass and the cases tried — naming no
-finding, file or line otherwise; a table, `| Priority | Finding |
-Status |` with status `open`, `declined` or `fixed`, one row per finding
-whose thread is still open, plus one `fixed` row for each thread the
-round resolved, written only where it holds a row — with no open finding
-and no thread fixed this round, there is no table; and a recommendation
-— **Request changes** while a P0 is open (a declined P0 still counts),
-**Changes recommended** while a P1 or P2 is, or **No findings. Nothing
-blocks the request on review.** — naming nothing of the reviewer's work
-beyond that one sentence of evidence. It carries no trailer.
+The review posts no generated summary, status table, summary comment, or
+summary draft. A round with no new finding publishes nothing.
 
 On a later round the reviewer settles each thread it opened before it
 hunts for more. The author answers in one of three ways: `Fixed in <sha>:
 ...`, `Not changed: <why>.`, or a plain answer to a question. Once the
-defect is actually gone at the head, the reviewer replies `Fixed in
-<sha>.` and resolves the thread, whatever the author wrote. Where the
+defect is actually gone at the head, the reviewer resolves the thread without
+a reply. In a supervised repository, the reviewer leaves it for the human.
+Where the
 last reply claims a fix (`Fixed in <sha>: ...`) but the defect is still
 there, the reviewer replies once, `Still there: <why>.`, and never says it
 again in that thread. Any other answered reply that leaves the defect in
-place — a `Not changed:` reply, or any other — gets no reply back; its row
-turns `declined` and the thread stays open, for the user to settle. A
+place — a `Not changed:` reply, or any other — gets no reply back and the thread stays open for the user to settle. A
 thread nobody has answered gets nothing: it waits. On a request a task's
 agent keeps, the review's findings go to that agent like anyone else's
 comments, though they are posted under your login: it answers each one,
@@ -384,8 +371,7 @@ It keeps a small record of a request only while it works on it: the
 request a task opened, a request that asks for your review, and one of
 yours you asked it to review. The record is
 its own bookkeeping — which task keeps the request, what each agent was
-told, the head last reviewed, the review's summary comment — and a mark per
-comment it told or its review posted. Once the request merges or closes
+told, the head last reviewed and a mark per comment it told or its review posted. Once the request merges or closes
 and its work is taken down, the record goes, so an ended request takes no
 room. The sessions that ran on it stay, with their history and spend.
 

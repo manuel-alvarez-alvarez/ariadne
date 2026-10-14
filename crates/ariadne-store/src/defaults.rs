@@ -1387,7 +1387,7 @@ mod tests {
     /// The reviewer session is fed by the daemon too (029), and the user
     /// gives every approval and lands every request: the skill never
     /// approves on its own, and names no merge, sleep, poll or forge CLI.
-    /// It names the three priorities, asks for changes only where a P0
+    /// It names the three priorities, asks for changes only where a P0 or P1
     /// stands, resolves a thread of its own once a push fixed it, settles
     /// a declined or a still-open one without a second warning, and
     /// suggests a fix where the edit is small and local.
@@ -1420,8 +1420,8 @@ mod tests {
         for sentence in ste::sentences(&doc) {
             if sentence.contains("`request_changes`") {
                 assert!(
-                    sentence.contains("P0"),
-                    "`request_changes` without a P0: {sentence}"
+                    sentence.contains("P0") && sentence.contains("P1"),
+                    "`request_changes` without P0 and P1: {sentence}"
                 );
             }
         }
@@ -1429,49 +1429,25 @@ mod tests {
             "`get_pull_request`",
             "`get_diff`",
             "`since`",
-            "`submit_review` once",
-            "`comment`",
+            "`submit_review` once with only new findings",
+            "P0 or P1",
             "`report_pull_request` with `reviewed_sha`",
-            "`reply_comment` once",
-            "Run the checks once.",
+            "without a reply",
+            "Reuse evidence only when it covers the reviewed head",
             "On a later round, call `list_comments` first.",
-            "Settle each thread you opened before you hunt new defects",
-            // The summary is one comment, rewritten whole every round as a
-            // title, a prose verdict on the change, its risk and what it
-            // rests on, a table of the open findings when one has a row,
-            // and a recommendation; it reports none of the work beyond
-            // that one sentence, and each finding sits on its own line of
-            // code.
-            "Ariadne keeps one summary comment",
-            "## Review summary",
-            "Summary: one paragraph of prose, not bullets, three to six sentences",
-            "Name the behavior the change touches, who sees it, and what breaks",
-            "Say why the risk sits where it does",
-            "End with one sentence on what the verdict rests on",
-            "Table: `| Priority | Finding | Status |`.",
-            "Status is `open`, `declined` or `fixed`",
-            "Write the table only when it has at least one row",
-            "Never write a header with no row",
-            "Recommendation: one line",
-            "\"Request changes\"",
-            "\"Changes recommended\"",
-            "\"No findings. Nothing blocks the request on review.\"",
-            "Name no file or line. Report nothing of your work",
-            "summary's one sentence of evidence",
-            "only the new comments",
+            "For each thread you opened",
+            "supervise_posts",
+            "Run the required checks and record the command and result",
+            "P1: a proven defect, unmet requirement, or repository-rule violation",
             // An unanswered thread waits; a declined fix is marked so and
             // left open; a claimed fix that is not one is said once.
-            "Not answered: post nothing. Wait for an answer.",
-            "Any other answered reply, a `Not changed:` or any other, that",
-            "leaves the defect in place: post nothing. Mark its row",
             "Still there: <why>",
-            "Never post `Still there` twice in one thread",
+            "Do not reply again in that thread",
             "```suggestion block",
             "Never post a second comment for a defect",
-            "then `resolve_thread` on",
+            "call `resolve_thread` without a reply",
             "Resolve only a thread you opened",
             "one inline comment on the line of the defect",
-            "## Do not tell yourself",
             "## Done",
         ] {
             assert!(doc.contains(step), "the pr-reviewer skill has no {step}");
@@ -1481,90 +1457,6 @@ mod tests {
             "the pr-reviewer skill still reads a commit list"
         );
         assert_eq!(SkillSeat::of(PR_REVIEWER_SKILL), SkillSeat::PullRequest);
-    }
-
-    /// The four parts of the summary (029 rule 17) stand in order: a title,
-    /// a prose verdict naming no finding, a table of the open findings
-    /// written only where it has a row, and a recommendation.
-    /// `get_pull_request` and `get_diff` answer no commit list, and the
-    /// summary states no header of commits or sha range.
-    #[test]
-    fn the_pr_reviewer_skill_writes_its_summary_in_four_ordered_parts() {
-        let doc =
-            unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
-        let title_at = doc
-            .find("## Review summary")
-            .expect("the skill has no summary title");
-        let summary_at = doc.find("Summary:").expect("the skill has no Summary:");
-        let table_at = doc.find("Table:").expect("the skill has no Table:");
-        let recommendation_at = doc
-            .find("Recommendation:")
-            .expect("the skill has no Recommendation:");
-        assert!(
-            title_at < summary_at && summary_at < table_at && table_at < recommendation_at,
-            "the parts are not Title, then Summary, then Table, then Recommendation"
-        );
-        let table = &doc[table_at..recommendation_at];
-        for phrase in [
-            "`| Priority | Finding | Status |`",
-            "One row per open thread",
-            "plus one `fixed` row for each thread this round resolved",
-            "Status is `open`, `declined` or `fixed`",
-            "only when it has at least one row",
-            "write no table",
-        ] {
-            assert!(table.contains(phrase), "the table lacks {phrase}");
-        }
-    }
-
-    /// The prose summary names the behavior the change touches, who sees
-    /// it, what breaks if the change is wrong, why the risk sits where it
-    /// does, and what the verdict rests on, naming no finding, file or
-    /// line: a finding is named in the table that follows it instead (029
-    /// rule 17).
-    #[test]
-    fn the_pr_reviewer_skill_summarizes_the_change_and_its_risk_in_prose() {
-        let doc =
-            unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
-        let summary_at = doc.find("Summary:").expect("the skill has no Summary:");
-        let table_at = doc.find("Table:").expect("the skill has no Table:");
-        let summary = &doc[summary_at..table_at];
-        for phrase in [
-            "one paragraph of prose, not bullets, three to six sentences",
-            "Name the behavior the change touches, who sees it",
-            "what breaks if the change is wrong",
-            "Say why the risk sits where it does",
-            "what the verdict rests on",
-            "the checks that pass, the cases you tried",
-            "Name no finding, file or line in it",
-        ] {
-            assert!(summary.contains(phrase), "the summary lacks {phrase}");
-        }
-    }
-
-    /// Each recommendation line is tied to the priority that earns it (029
-    /// rule 17): a P0 blocks the request, a P1 or P2 with no P0 open asks
-    /// for a fix before it lands, and nothing open says the request is
-    /// ready to merge.
-    #[test]
-    fn the_pr_reviewer_skill_recommends_by_the_open_findings_priority() {
-        let doc =
-            unwrapped(default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill"));
-        let recommendation_at = doc
-            .find("Recommendation:")
-            .expect("the skill has no Recommendation:");
-        let recommendation = &doc[recommendation_at..];
-        for phrase in [
-            "A P0 is open: say \"Request changes\", and name the P0 findings that block it",
-            "A declined P0 still counts as open",
-            "A P1 or P2 is open, with no P0: say \"Changes recommended\". Name what to fix before it lands",
-            "Nothing is open: say \"No findings. Nothing blocks the request on review.\"",
-        ] {
-            assert!(
-                recommendation.contains(phrase),
-                "the recommendation lacks {phrase}"
-            );
-        }
     }
 
     /// Every rule an agent is briefed with is written down once.

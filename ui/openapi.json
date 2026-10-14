@@ -1527,6 +1527,115 @@
         }
       }
     },
+    "/v1/pull-requests/{id}/comments/delete": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Delete one of the viewer's own pending forge posts, by its own forge id\n(026 rule 25). Refused with 409 once the user submits or publishes it.",
+        "operationId": "delete_pending_comment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeletePendingCommentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingEditDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/comments/edit": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Edit the body of one of the viewer's own pending forge posts: a pending\nreview comment (GitHub) or a draft note (GitLab), by its own forge id\n(026 rule 25). Refused with 409 once the user submits or publishes it.",
+        "operationId": "edit_pending_comment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditPendingCommentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingEditDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/pull-requests/{id}/comments/{comment_id}": {
       "get": {
         "tags": [
@@ -1641,7 +1750,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Resolve the thread of one comment, once a push fixed what it found\n(029). Only a review session resolves, and only a thread it opened under\nthe integration login: the threads of anyone else stay open for the\nperson who wrote them.",
+        "summary": "Resolve the thread of one comment, once a push fixed what it found\n(029). Only a review session resolves, and only a thread it opened under\nthe integration login: the threads of anyone else stay open for the\nperson who wrote them. A repository that supervises its posts refuses\nthe resolve with 409: the fixed thread stays open for the human author.",
         "operationId": "resolve",
         "parameters": [
           {
@@ -1667,7 +1776,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PullRequestCommentDto"
+                  "$ref": "#/components/schemas/ReplyAnswerDto"
                 }
               }
             }
@@ -1742,6 +1851,62 @@
         }
       }
     },
+    "/v1/pull-requests/{id}/pending-review/body": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Replace the body of the viewer's own pending review outright (026 rule 25):\nGitHub only, since GitLab holds no pending review body apart from its\ndraft notes. Refused with 409 once the user submits it, or where there\nis none.",
+        "operationId": "edit_pending_review_body",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditPendingReviewBodyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingEditDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "502": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/pull-requests/{id}/report": {
       "post": {
         "tags": [
@@ -1797,7 +1962,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Post one round of a review of a request, in the user's name (029): its\nnew findings as one review of inline comments, each led by its priority,\nand its summary, written into the one summary comment the review keeps\non the request — posted on the first round, edited on every later one. A\nround with no new finding posts no review. `request_changes` stands only\non a P0 finding, new or still open. Any other event is refused, an\napproval above all: the user gives every approval. What it posted is\nmarked as the review's.",
+        "summary": "Post one round of a review of a request, in the user's name (029): only\nits new findings, as one review of inline comments, each led by its\npriority. There is no summary of any kind. A round with no new finding\nposts no review. `request_changes` stands on a P0 or P1 finding, new or\nstill open. Any other event is refused, an approval above all: the user\ngives every approval. What it posted is marked as the review's.",
         "operationId": "submit_review",
         "parameters": [
           {
@@ -1825,10 +1990,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/PullRequestCommentDto"
-                  }
+                  "$ref": "#/components/schemas/SubmitReviewAnswerDto"
                 }
               }
             }
@@ -5450,6 +5612,19 @@
           }
         }
       },
+      "DeletePendingCommentRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/pull-requests/{id}/comments/delete` (026 rule 25).",
+        "required": [
+          "forge_id"
+        ],
+        "properties": {
+          "forge_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "DeletedDto": {
         "type": "object",
         "description": "Payload of the deletion events: the id of the gone entity.",
@@ -6008,6 +6183,37 @@
           }
         ],
         "description": "One domain event. Serialized as `{\"event\": \"<kind>\", \"data\": <payload>}`;\non the SSE wire the kind becomes the `event:` field and the payload alone\nthe `data:` field."
+      },
+      "EditPendingCommentRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/pull-requests/{id}/comments/edit` (026 rule 25): change the\nbody of one of the viewer's own pending forge posts — a pending review\ncomment (GitHub) or a draft note (GitLab) — while it still waits in the\nuser's forge drafts.",
+        "required": [
+          "forge_id",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "forge_id": {
+            "type": "string",
+            "description": "The forge id of the pending comment, as `reply_comment` or\n`submit_review` answered it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EditPendingReviewBodyRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25): GitHub\nonly, since GitLab holds no pending review body apart from its draft\nnotes.",
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "EffortDto": {
         "type": "object",
@@ -7053,6 +7259,24 @@
           }
         }
       },
+      "PendingEditDto": {
+        "type": "object",
+        "description": "What editing, deleting or replacing a pending forge post answers (026 rule 25):\nwhich forge item changed, in words that name the forge.",
+        "required": [
+          "id",
+          "changed"
+        ],
+        "properties": {
+          "changed": {
+            "type": "string",
+            "description": "What changed: \"the pending GitHub review comment\", \"the GitHub\npending review body\" or \"the GitLab draft note\"."
+          },
+          "id": {
+            "type": "string",
+            "description": "The forge id of the item that changed."
+          }
+        }
+      },
       "PendingReplyDto": {
         "type": "object",
         "description": "What the reply route answers instead of a posted comment, where the\nrepository holds agent posts for the user's approval (002, 026 rule 24):\nthe reply waits, unposted, as a pending review (GitHub) or a draft note\n(GitLab) in the user's own forge drafts, until the user publishes it\nthere.",
@@ -7068,6 +7292,19 @@
           "pending": {
             "type": "boolean",
             "description": "Always true: a posted reply never takes this shape."
+          }
+        }
+      },
+      "PendingReviewDto": {
+        "type": "object",
+        "description": "What `POST .../reviews` answers where the repository holds posts back\n(026 rule 24 / 029 rule 13a): the review's findings wait, unposted, in\nthe viewer's own pending review (GitHub) or draft notes (GitLab), in\nplace of the posted comments the route otherwise answers with.",
+        "required": [
+          "pending"
+        ],
+        "properties": {
+          "pending": {
+            "type": "boolean",
+            "description": "Always true: a posted review never takes this shape."
           }
         }
       },
@@ -7543,6 +7780,10 @@
           "state": {
             "type": "string",
             "description": "`open`, `merged` or `closed`."
+          },
+          "supervise_posts": {
+            "type": "boolean",
+            "description": "Whether this repository holds agent posts for human review."
           },
           "title": {
             "type": "string"
@@ -8487,17 +8728,30 @@
           "request_merged"
         ]
       },
+      "SubmitReviewAnswerDto": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PullRequestCommentDto"
+            }
+          },
+          {
+            "$ref": "#/components/schemas/PendingReviewDto"
+          }
+        ],
+        "description": "What `POST .../reviews` answers: the posted comments, or, where the\nrepository holds posts back, [`PendingReviewDto`] in their place."
+      },
       "SubmitReviewRequest": {
         "type": "object",
         "description": "Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted\nin the name of the integration login.",
         "required": [
-          "event",
-          "body"
+          "event"
         ],
         "properties": {
           "body": {
             "type": "string",
-            "description": "The review's summary as it stands now: the daemon writes it into the\none summary comment the review keeps on the request."
+            "description": "Optional text from older clients. New reviews do not publish it."
           },
           "comments": {
             "type": "array",

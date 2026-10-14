@@ -801,10 +801,8 @@ pub(super) async fn reply(
 /// Resolve the thread of one comment, once a push fixed what it found
 /// (029). Only a review session resolves, and only a thread it opened under
 /// the integration login: the threads of anyone else stay open for the
-/// person who wrote them. A repository that holds posts back lists it
-/// under a "Threads to resolve" heading of the user's own pending review
-/// (GitHub) or sets `resolve_discussion` on a draft note of its discussion
-/// (GitLab) instead, answering `{pending: true, id}` (026 rule 24).
+/// person who wrote them. A repository that supervises its posts refuses
+/// the resolve with 409: the fixed thread stays open for the human author.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/resolve", tag = "pull-requests",
     params(("id" = String, Path), ("comment_id" = String, Path)),
     responses((status = 200, body = ReplyAnswerDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
@@ -839,36 +837,8 @@ pub(super) async fn resolve(
     if !comment.resolved {
         let repository = state.store.get_repository(&pull.repository_id).await?;
         if repository.supervise_posts() {
-            // Held under the same lock a reply and a review hold: all
-            // three read, change and write the one pending review body,
-            // and a pair of them racing each other must not lose one's
-            // change to the other's (026 rule 24).
-            let _reply_lock = state.reply_locks.hold(&pull.id).await;
-            let id = client(&state, &forge)
-                .resolve_pending(&slug(&forge), pull.number, &login, &comment)
-                .await
-                .map_err(forge_error)?;
-            // A resolve folds its line into the pending review's own body
-            // under its "Threads to resolve" heading, answering that
-            // review's id (026 rule 25): read fresh and held, the same as
-            // `edit_pending_review_body`'s own echo, so `list_comments`
-            // never answers the body a resolve has since changed.
-            echo_pending_review_body(
-                &state,
-                &forge,
-                &pull.repository_id,
-                &pull.id,
-                pull.number,
-                &login,
-                &id,
-            )
-            .await;
-            state.forge_poll.wake(&pull.repository_id);
-            state.notify_scheduler_pull_request(&pull.id);
-            let pending = PendingReplyDto { pending: true, id };
-            return Ok((
-                StatusCode::OK,
-                Json(serde_json::to_value(pending).expect("PendingReplyDto serializes")),
+            return Err(ApiError::conflict(
+                "this repository supervises posts: leave the fixed thread for the user to resolve",
             ));
         }
         client(&state, &forge)
@@ -1130,6 +1100,15 @@ pub(super) async fn diff(
                 "{since} names no commit of the worktree"
             )));
         }
+        if !git
+            .is_ancestor(&worktree, since, "HEAD")
+            .await
+            .map_err(failed)?
+        {
+            return Err(ApiError::bad_request(format!(
+                "{since} is not an ancestor of the current head: review the full diff"
+            )));
+        }
         return git.diff_since(&worktree, since).await.map_err(failed);
     }
     let pull = read_held(&state, row).await?;
@@ -1172,14 +1151,12 @@ async fn change_diff(
     git.diff(worktree, &base, "HEAD").await.map_err(failed)
 }
 
-/// Post one round of a review of a request, in the user's name (029): its
-/// new findings as one review of inline comments, each led by its priority,
-/// and its summary, written into the one summary comment the review keeps
-/// on the request — posted on the first round, edited on every later one. A
-/// round with no new finding posts no review. `request_changes` stands only
-/// on a P0 finding, new or still open. Any other event is refused, an
-/// approval above all: the user gives every approval. What it posted is
-/// marked as the review's.
+/// Post one round of a review of a request, in the user's name (029): only
+/// its new findings, as one review of inline comments, each led by its
+/// priority. There is no summary of any kind. A round with no new finding
+/// posts no review. `request_changes` stands on a P0 or P1 finding, new or
+/// still open. Any other event is refused, an approval above all: the user
+/// gives every approval. What it posted is marked as the review's.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/reviews", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = SubmitReviewRequest,
@@ -1209,17 +1186,10 @@ pub(super) async fn submit_review(
     // A forge takes no change request on a request of its own author's: the
     // review of a request of mine is a comment, whatever it found (029).
     let request_changes = asked && row.role == "reviewer";
-    // The body is the review's one summary: where the review stands, kept
-    // on the request in a comment of its own and edited every round. The
-    // forge never sees a trailer an agent's skill appends; a body of
-    // nothing else is empty, same as a body given empty.
-    let body = pulls::strip_trailers(req.body.trim());
-    if body.is_empty() {
-        return Err(ApiError::bad_request(
-            "a review needs a body: the summary of where it stands",
-        ));
-    }
-    let req_has_p0 = req.comments.iter().any(|c| c.priority == "P0");
+    let req_has_blocker = req
+        .comments
+        .iter()
+        .any(|c| matches!(c.priority.as_str(), "P0" | "P1"));
     let mut comments = Vec::with_capacity(req.comments.len());
     for comment in req.comments {
         if !matches!(comment.priority.as_str(), "P0" | "P1" | "P2") {
@@ -1276,35 +1246,36 @@ pub(super) async fn submit_review(
     }
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
-    // A change request is its P0 findings, each on its own line of code: a
-    // new one in this round, or an earlier one still open. One with neither
-    // is a summary that asks for changes it never shows.
-    let open_p0 = live::comments_of(&state.store, &state.launcher.live, &pull)
+    // A change request has a P0 or P1 finding on a changed line, either
+    // from this round or still active from an earlier round.
+    let open_blocker = live::comments_of(&state.store, &state.launcher.live, &pull)
         .await?
         .iter()
-        .any(|c| c.from_review && !c.resolved && c.body.starts_with("**[P0]"));
-    if asked && !req_has_p0 && !open_p0 {
+        .any(|c| {
+            c.from_review
+                && !c.resolved
+                && (c.body.starts_with("**[P0]") || c.body.starts_with("**[P1]"))
+        });
+    if asked && !req_has_blocker && !open_blocker {
         return Err(ApiError::bad_request(
-            "a change request carries each P0 finding as an inline comment on its line",
+            "a change request carries each P0 or P1 finding as an inline comment on its line",
+        ));
+    }
+    if comments.is_empty() {
+        return Ok((
+            StatusCode::CREATED,
+            Json(
+                serde_json::to_value(Vec::<PullRequestCommentDto>::new())
+                    .expect("comments serialize"),
+            ),
         ));
     }
     let forge_client = client(&state, &forge);
     let repository = state.store.get_repository(&pull.repository_id).await?;
     if repository.supervise_posts() {
-        // Held unposted in the user's own forge drafts (026 rule 24): the
-        // verdict and the round's summary lead the pending review's own
-        // body, or one more draft note of its own, rather than the sticky
-        // summary comment `write_summary` otherwise posts. The same lock
-        // a reply and a resolve hold on the one pending review body: a
-        // pair of them racing each other must not lose one's change to
-        // the other's.
+        // Held unposted in the user's own forge drafts. The reply lock
+        // serializes changes to GitHub's one pending review.
         let _reply_lock = state.reply_locks.hold(&pull.id).await;
-        let verdict = if request_changes {
-            "Request changes"
-        } else {
-            "Comment"
-        };
-        let header = format!("**Verdict: {verdict}**\n\n{body}");
         let mut posted = forge_client
             .submit_review_pending(
                 &slug(&forge),
@@ -1315,7 +1286,6 @@ pub(super) async fn submit_review(
                     comments,
                 },
                 &login,
-                &header,
             )
             .await
             .map_err(forge_error)?;
@@ -1328,91 +1298,22 @@ pub(super) async fn submit_review(
             Json(serde_json::to_value(pending).expect("PendingReviewDto serializes")),
         ));
     }
-    // A round with no new finding posts no review: its summary says where
-    // the review stands.
-    let mut posted = match comments.is_empty() {
-        true => Vec::new(),
-        false => forge_client
-            .submit_review(
-                &slug(&forge),
-                pull.number,
-                &ReviewDraft {
-                    request_changes,
-                    head_sha: pull.head_sha.clone(),
-                    comments,
-                },
-                &login,
-            )
-            .await
-            .map_err(forge_error)?,
-    };
-    // The findings are the review's the moment the forge holds them: marked
-    // and held before the summary is written, so a summary that fails loses
-    // none of them, and the round is finished by a call with no comments.
-    hold_review_comments(&state, &pull.id, &mut posted).await?;
-    // The summary the row names, else the one the forge holds under its
-    // mark: a review stopped and asked again finds its own summary.
-    let existing = pull.summary_comment_id.clone().or_else(|| {
-        state
-            .launcher
-            .live
-            .get(&pull.id)
-            .and_then(|l| l.details)
-            .and_then(|d| {
-                d.comments
-                    .into_iter()
-                    .filter(|c| {
-                        c.thread_id == CONVERSATION
-                            && c.author_login.eq_ignore_ascii_case(&login)
-                            && pulls::signature(&c.body).summary
-                    })
-                    .map(|c| c.forge_id)
-                    .next_back()
-            })
-    });
-    let written = forge_client
-        .write_summary(
+    let mut posted = forge_client
+        .submit_review(
             &slug(&forge),
             pull.number,
-            existing.as_deref(),
-            &pulls::signed(&body, true),
+            &ReviewDraft {
+                request_changes,
+                head_sha: pull.head_sha.clone(),
+                comments,
+            },
+            &login,
         )
-        .await;
-    let (summary_id, written_at) = match written {
-        Ok(written) => written,
-        Err(error) if !posted.is_empty() => {
-            return Err(forge_error(format!(
-                "the {} new findings are posted; the summary was not written: {error}. \
-                 Call submit_review again with the summary and no comments",
-                posted.len()
-            )));
-        }
-        Err(error) => return Err(forge_error(error)),
-    };
-    if pull.summary_comment_id.as_deref() != Some(summary_id.as_str()) {
-        state
-            .store
-            .set_pull_request_summary(&pull.id, &summary_id)
-            .await?;
-    }
-    let mut summary = vec![ariadne_store::NewPullRequestComment {
-        forge_id: summary_id,
-        thread_id: CONVERSATION.into(),
-        kind: "issue_comment".into(),
-        author_login: login,
-        author_is_bot: false,
-        body,
-        path: None,
-        line: None,
-        in_reply_to: None,
-        created_at: written_at,
-        resolved: false,
-        from_review: true,
-    }];
-    hold_review_comments(&state, &pull.id, &mut summary).await?;
-    posted.extend(summary);
+        .await
+        .map_err(forge_error)?;
+    // The findings are the review's the moment the forge holds them.
+    hold_review_comments(&state, &pull.id, &mut posted).await?;
     let ids: Vec<String> = posted.iter().map(|c| c.forge_id.clone()).collect();
-    // In the order they were posted: the findings, then the summary.
     let views = live::comments(&pull.id, &posted, &[]);
     let answered: Vec<PullRequestCommentDto> = ids
         .iter()
