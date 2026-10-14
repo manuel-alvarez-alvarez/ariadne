@@ -992,12 +992,19 @@ mod tests {
         let evidence = text
             .find("Search the handoff reasons, accessible logs and CI evidence.")
             .expect("the code-review skill does not inspect check evidence");
+        let scope = text
+            .find("Pin the scope.")
+            .expect("the code-review skill does not pin the scope");
         let checks = text
             .find("Run each required check with no reusable result, once for this verdict.")
             .expect("the code-review skill does not run missing checks");
         assert!(
             evidence < checks,
             "the code-review skill chooses checks before it reads the evidence"
+        );
+        assert!(
+            scope < checks,
+            "the code-review skill chooses checks before it pins the scope"
         );
         assert_eq!(
             text.matches("once for this verdict").count(),
