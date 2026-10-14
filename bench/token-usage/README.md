@@ -21,7 +21,9 @@ PY
 python3 bench/token-usage/analyze.py \
   --database /tmp/ariadne-token-usage-snapshot.db \
   --output /tmp/ariadne-token-usage-report \
-  --revision "$(git rev-parse HEAD)"
+  --revision "$(git rev-parse HEAD)" \
+  --history-dir /Users/malvarez/.ariadne \
+  --source-label 'refreshed SQLite backup of ~/.ariadne/ariadne.db'
 ```
 
 The analyzer uses Python's standard library, opens the source database in
@@ -29,6 +31,37 @@ read-only mode, and exports aggregates only. Do not commit the database copy,
 raw event payloads, or raw transcript files. To update the checked-in study,
 inspect the `/tmp` output and copy only aggregate artifacts after confirming
 the snapshot's cutoff and SHA-256.
+
+The committed artifacts describe the pinned snapshot in `snapshot.json`. They
+reproduce only when that external snapshot is available. The command above
+refreshes the study from current data; it does not reproduce pinned evidence.
+
+## Checks
+
+Run these commands from the repository root. Use a fresh output directory.
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 bench/token-usage/analyze.py \
+  --database /tmp/ariadne-token-usage-snapshot.db \
+  --output /tmp/ariadne-token-usage-check \
+  --revision "$(git rev-parse HEAD)" \
+  --history-dir /Users/malvarez/.ariadne \
+  --source-label 'check snapshot'
+python3 - <<'PY'
+import csv, json
+from pathlib import Path
+root = Path('bench/token-usage')
+s = json.loads((root / 'snapshot.json').read_text())
+r = json.loads((root / 'reconciliation.json').read_text())
+assert s['canonical_usage'] == r['canonical_usage']
+assert r['uncached_input_tokens'] == r['canonical_usage']['input_tokens'] - r['canonical_usage']['cached_input_tokens']
+assert len(list(csv.DictReader((root / 'goals.csv').open()))) == s['inventory']['goals']
+assert len(list(csv.DictReader((root / 'tasks.csv').open()))) == s['inventory']['tasks']
+assert not list(root.rglob('*.db'))
+print('artifact checks: ok')
+PY
+git diff --check
+```
 
 ## Artifacts
 

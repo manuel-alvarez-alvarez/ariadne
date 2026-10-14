@@ -20,9 +20,9 @@ Required checks and review columns remain part of every comparison.
 
 ## Snapshot and coverage
 
-- Cutoff: `2026-10-14T20:27:17.371Z`; analyzer version `1`; source SHA-256
+- Cutoff: `2026-10-14T20:31:49.158Z`; analyzer version `1`; source SHA-256
   `b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47`. The raw database is deliberately not in Git.
-- Primary source: `online SQLite backup of ~/.ariadne/ariadne.db`. The inventory also inspected
+- Primary source: `pinned online SQLite backup of ~/.ariadne/ariadne.db`. The inventory also inspected
   6 dated backups. They overlap the primary history;
   they establish retained-history availability, not extra work to sum.
 - The primary source holds 54 surviving goals, 180
@@ -52,12 +52,10 @@ latest surviving end fact is a fallback only when there is no live usage row;
 that is **missing usage**, not demonstrated zero. Sessions with an actual
 usage row of zero are counted separately (0).
 
-`reconciliation.json` records the direct usage total, non-additive end-fact
-total, unmatched facts, and attribution gaps. The session source column is a
-transcript path, not a launch id; usage cannot be allocated reliably between
-relaunches. Existing rows provide task/goal/role/model/effort attribution;
-retained facts preserve some deleted-work attribution but no complete task
-or goal identity after deletion.
+`reconciliation.json` records direct usage, non-additive end facts, fact
+counts, and launch-source matching. ACP writes the launch id as `source`.
+Retired launch rows can be absent after a relaunch, so unmatched sources keep
+only the evidence retained in facts.
 
 ## Inventory and aggregates
 
@@ -72,7 +70,7 @@ tasks because retries write another ending.
 - [goals.csv](goals.csv) and [tasks.csv](tasks.csv) — one aggregate per
   surviving entity, with distinct token categories and partial flags.
 - [dimensions.csv](dimensions.csv) — comparable dimensional totals.
-- [outcomes.csv](outcomes.csv) and [reconciliation.json](reconciliation.json)
+- [outcomes.csv](outcomes.csv), [timing.csv](timing.csv), and [reconciliation.json](reconciliation.json)
   — retained facts, gaps, and non-additive counter checks.
 - [trace-selection.json](trace-selection.json) — selected trace identifiers
   and derived indicators only; raw payloads stay outside Git.
@@ -96,19 +94,19 @@ permission prompt, tool execution, model inference, or active execution.
 
 ## Trace method and findings
 
-The analyzer selects the largest canonical-usage sessions plus ordinary
-completed agent and reviewer sessions, without reading or exporting raw
-content. The selected traces cover 34.5% of
-canonical usage with usage and are listed in `trace-selection.json`. Derived
-event counts flag: repeated daemon prompts, repeated tool command prefixes,
-and large tool-result payloads. They are evidence of repeated context or
-wide tool responses, not direct token measurements.
+The analyzer selects the twelve largest input-plus-output sessions plus
+median-usage completed agent and reviewer sessions. The selected traces cover
+34.2% of input plus output; separate category
+coverage is in `trace-selection.json`. `trace-findings.csv` gives event IDs
+and separates observed signals from inference and untested benefits. Derived
+event counts flag repeated daemon prompts, repeated completed tool calls, and
+large ACP tool-result payloads; none alone proves avoidable work.
 
 Within the selected traces, the largest observed daemon-prompt count is
 34 and the largest observed daemon-prompt text
 volume is 61,872 characters. The selected
 trace with the most repeated command prefixes has
-8. These indicators establish where to
+590. These indicators establish where to
 sample; they do not establish that every repetition is avoidable.
 
 The repository already limits several suspected sources: skills are indexed as

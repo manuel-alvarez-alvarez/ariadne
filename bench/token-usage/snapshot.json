@@ -10,46 +10,102 @@
     "deleted_session_fallbacks": 3,
     "history_files": [
       {
-        "bytes": 273276928,
-        "goals": 54,
-        "mtime": "2026-10-14T20:32:54.522678Z",
-        "name": "ariadne.db"
+        "bytes": 274386944,
+        "counts": {
+          "agent_events": 171448,
+          "agent_sessions": 617,
+          "goals": 54,
+          "session_usage": 1074,
+          "stat_facts": 31205,
+          "tasks": 181
+        },
+        "mtime": "2026-10-14T20:40:24.520194Z",
+        "name": "ariadne.db",
+        "overlap": "not compared: separate snapshot"
       },
       {
         "bytes": 81633280,
-        "goals": 15,
+        "counts": {
+          "agent_events": 49439,
+          "agent_sessions": 153,
+          "goals": 15,
+          "session_usage": 297,
+          "stat_facts": 11613,
+          "tasks": 71
+        },
         "mtime": "2026-10-09T23:40:45.388799Z",
-        "name": "ariadne.db.backup-schema-20"
+        "name": "ariadne.db.backup-schema-20",
+        "overlap": "not compared: separate snapshot"
       },
       {
         "bytes": 48971776,
-        "goals": 13,
+        "counts": {
+          "agent_events": 30322,
+          "agent_sessions": 107,
+          "goals": 13,
+          "session_usage": 205,
+          "stat_facts": 7302,
+          "tasks": 48
+        },
         "mtime": "2026-10-08T18:28:27.397853Z",
-        "name": "ariadne.db.bak-20261008-202827"
+        "name": "ariadne.db.bak-20261008-202827",
+        "overlap": "not compared: separate snapshot"
       },
       {
         "bytes": 49139712,
-        "goals": 13,
+        "counts": {
+          "agent_events": 30414,
+          "agent_sessions": 108,
+          "goals": 13,
+          "session_usage": 206,
+          "stat_facts": 7305,
+          "tasks": 48
+        },
         "mtime": "2026-10-08T20:08:55.555555Z",
-        "name": "ariadne.db.bak-20261008-220855"
+        "name": "ariadne.db.bak-20261008-220855",
+        "overlap": "not compared: separate snapshot"
       },
       {
         "bytes": 80261120,
-        "goals": 15,
+        "counts": {
+          "agent_events": 47045,
+          "agent_sessions": 152,
+          "goals": 15,
+          "session_usage": 290,
+          "stat_facts": 10997,
+          "tasks": 71
+        },
         "mtime": "2026-10-09T21:08:38.146718Z",
-        "name": "ariadne.db.bak-20261009-230838-pre-rollback"
+        "name": "ariadne.db.bak-20261009-230838-pre-rollback",
+        "overlap": "not compared: separate snapshot"
       },
       {
         "bytes": 101449728,
-        "goals": 22,
+        "counts": {
+          "agent_events": 62222,
+          "agent_sessions": 241,
+          "goals": 22,
+          "session_usage": 449,
+          "stat_facts": 14275,
+          "tasks": 94
+        },
         "mtime": "2026-10-10T08:33:06.118545Z",
-        "name": "ariadne.db.bak-20261010-presquash-fix"
+        "name": "ariadne.db.bak-20261010-presquash-fix",
+        "overlap": "not compared: separate snapshot"
       },
       {
         "bytes": 152326144,
-        "goals": 30,
+        "counts": {
+          "agent_events": 98052,
+          "agent_sessions": 375,
+          "goals": 30,
+          "session_usage": 758,
+          "stat_facts": 22841,
+          "tasks": 125
+        },
         "mtime": "2026-10-11T07:39:41.435738Z",
-        "name": "ariadne.db.bak-20261011-093941-pre-0001-fix"
+        "name": "ariadne.db.bak-20261011-093941-pre-0001-fix",
+        "overlap": "not compared: separate snapshot"
       }
     ],
     "retained_session_end_facts_without_session": 3,
@@ -57,8 +113,8 @@
     "unattributed_usage_sessions": 0,
     "zero_usage_sessions": 0
   },
-  "cutoff": "2026-10-14T20:27:17.371Z",
-  "generated_at": "2026-10-14T20:33:12.735341Z",
+  "cutoff": "2026-10-14T20:31:49.158Z",
+  "generated_at": "2026-10-14T20:40:41.431544Z",
   "inventory": {
     "events": 171122,
     "facts": 31203,
@@ -71,9 +127,15 @@
   },
   "source": {
     "bytes": 273215488,
-    "label": "online SQLite backup of ~/.ariadne/ariadne.db",
-    "revision": "f4de5ba521f3d0edeeb207ce866ec0b9ea1f96b6",
+    "coverage": {
+      "events_through": "2026-10-14T20:31:49.158Z",
+      "facts_through": "2026-10-14T20:17:22.716Z",
+      "usage_through": "2026-10-14T20:31:42.956Z"
+    },
+    "label": "pinned online SQLite backup of ~/.ariadne/ariadne.db",
+    "revision": "9dd038b7e78bca2c5c6d1a63f883f653f50c37a9",
     "sha256": "b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47",
+    "snapshot_acquired_at": "2026-10-14T20:31:52.696616Z",
     "sqlite_user_version": 0
   },
   "timing": {
@@ -88,11 +150,17 @@
     ]
   },
   "trace_selection": {
+    "coverage": {
+      "cached_input": 0.34573023235280653,
+      "input": 0.34240024949483483,
+      "output": 0.19420732415666378,
+      "uncached_input": 0.11505938233535465
+    },
     "max_daemon_prompt_chars": 61872,
     "max_daemon_prompts": 34,
-    "max_repeated_tool_prefixes": 8,
-    "method": "12 largest canonical-usage sessions plus one ordinary exited agent and reviewer session when absent",
+    "max_repeated_tool_prefixes": 590,
+    "method": "12 largest input-plus-output sessions plus median-usage exited agent and reviewer sessions",
     "selected_sessions": 14,
-    "selected_usage_share": 0.34535310615555637
+    "selected_usage_share": 0.34198708209383366
   }
 }

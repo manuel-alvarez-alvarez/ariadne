@@ -1,5 +1,5 @@
 {
-  "canonical_rule": "sum session_usage once per (session_id, source), then use newest session_ended fact only for missing/deleted sessions",
+  "canonical_rule": "sum session_usage once per (session_id, launch source), then use newest session_ended fact only for missing/deleted sessions",
   "canonical_usage": {
     "cached_input_tokens": 10681322842,
     "input_tokens": 10837777871,
@@ -25,14 +25,19 @@
   "notes": [
     "Cached input is a subset of input and is never added to it.",
     "End facts contain cumulative session totals and can duplicate a session across launches.",
-    "Usage source is a transcript source, not a launch attribution key."
+    "Usage source is the launch id written by ACP; old launch rows can be absent after a relaunch."
   ],
+  "session_ended_distinct_launches": 1250,
+  "session_ended_distinct_sessions": 615,
+  "session_ended_fact_count": 1250,
   "session_ended_fact_sum_non_additive": {
     "cached_input_tokens": 15600067502,
     "input_tokens": 15869277330,
     "output_tokens": 51354989
   },
-  "session_ended_facts": 615,
   "session_ended_facts_missing_session": 3,
-  "uncached_input_tokens": 156455029
+  "uncached_input_tokens": 156455029,
+  "usage_rows": 1072,
+  "usage_sources_matching_retained_end_launch": 946,
+  "usage_sources_without_retained_end_launch": 126
 }
