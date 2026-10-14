@@ -1054,7 +1054,7 @@ mod tests {
             ),
             (
                 "pr-babysit",
-                "Run the checks the batch affects, then update the branch and push it once.",
+                "Run the checks the batch affects, then push once.",
             ),
             (
                 "coding",
@@ -1131,7 +1131,7 @@ mod tests {
             ),
             (
                 "pr-babysit",
-                "Never amend a pushed commit outside an approved rebase.",
+                "Never amend a pushed commit outside this rebase.",
             ),
         ] {
             let document = unwrapped(default_skill_document(name).unwrap());
@@ -1324,16 +1324,16 @@ mod tests {
             "`get_pull_request`",
             "`list_comments` with `unanswered_only`",
             "The repository's history rules choose the branch update.",
-            "Fetch the base and task branch first.",
-            "A linear-history rule requires `git rebase <remote>/<base>` and `git push --force-with-lease`.",
+            "Fetch the base and task branch, then integrate before the checks.",
+            "A linear-history rule requires `git rebase <remote>/<base>`.",
             "Where merges are allowed, run `git merge --no-edit <remote>/<base>`.",
             "Push the task branch. Call `open_pull_request`.",
             "repository's commit conventions",
             "Fill its pull request template, or write three full sections: Why, What changed, How to test.",
             "Group related accepted changes and failed-check fixes in one coherent commit per batch; keep unrelated changes separate.",
-            "Run the checks the batch affects, then update the branch and push it once.",
-            "Never amend a pushed commit outside an approved rebase.",
-            "Never use an unguarded force push or discard commits others added to the remote branch.",
+            "Run the checks the batch affects, then push once.",
+            "Never amend a pushed commit outside this rebase.",
+            "Never force an unguarded push or discard one.",
             "Call `report_pull_request` only when readiness changes:",
             "`ready: true` with the `head_sha`",
             "`ready: false` when one goes back",
@@ -1345,6 +1345,10 @@ mod tests {
         ] {
             assert!(doc.contains(step), "the pr-babysit skill has no {step}");
         }
+        assert!(
+            doc.find("integrate before the checks") < doc.find("Run the checks the batch affects"),
+            "the pr-babysit skill checks the batch before it integrates the base"
+        );
         assert_eq!(SkillSeat::of(PR_BABYSIT_SKILL), SkillSeat::PullRequest);
     }
 
@@ -1362,7 +1366,8 @@ mod tests {
         let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
         for rule in [
             "Answer each inline review comment of the other side, once per comment:",
-            "after the final push: `Fixed in <sha>: <what changed>.`",
+            "whose accepted change or suggestion the batch includes: `Fixed in <sha>: <what changed>.`",
+            "A rejected request or a question keeps its step 3 reply.",
             "A question: give one short answer.",
             "Thanks or an acknowledgement: reply nothing.",
             "A follow-up ask in a thread you answered: a new ask. Act on it.",
@@ -1373,7 +1378,7 @@ mod tests {
             "Group related accepted changes and failed-check fixes in one coherent commit per batch; keep unrelated changes separate.",
             "Commit only what a comment or a failed check asks for.",
             "Leave every thread open.",
-            "Post no new thread, summary or top-level comment, except steps 3 and 5's replies.",
+            "Post no new thread, summary or top-level comment, except steps 3 and 6's replies.",
         ] {
             assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
         }

@@ -25,19 +25,20 @@ later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.
    - A comment on the conversation: answer it the same way, once per comment.
 4. A suggestion block you accept: apply it. Write your own code only where it
    does not compile or pass. Else reply `Not changed: <why>.`
-5. Group related accepted changes and failed-check fixes in one coherent
-   commit per batch; keep unrelated changes separate. Read a failed
-   check's log at its URL. Run the checks the batch affects, then update
-   the branch and push it once. Reply to every actionable comment after
-   the final push: `Fixed in <sha>: <what changed>.`
+5. Group related accepted changes and failed-check fixes in one
+   coherent commit per batch; keep unrelated changes separate. Read a
+   failed check's log at its URL.
 6. The repository's history rules choose the branch update. Fetch the
-   base and task branch first. Where merges are allowed, run `git
-   merge --no-edit <remote>/<base>`. A linear-history rule requires `git
-   rebase <remote>/<base>` and `git push --force-with-lease`. Before that
-   guarded push, include commits others added to the remote branch and
-   fetch again if it moved. Never use an unguarded force push or discard
-   commits others added to the remote branch. Never amend a pushed
-   commit outside an approved rebase.
+   base and task branch, then integrate before the checks. Where
+   merges are allowed, run `git merge --no-edit <remote>/<base>`. A
+   linear-history rule requires `git rebase <remote>/<base>`. Run the
+   checks the batch affects, then push once. Push a merge plainly, or a
+   rebase with `git push --force-with-lease`, refetching first if it
+   moved. Keep every commit others added. Never force an
+   unguarded push or discard one. Never amend a pushed commit outside
+   this rebase. A rejected request or a question keeps its step 3
+   reply. Reply once to each comment whose accepted change or
+   suggestion the batch includes: `Fixed in <sha>: <what changed>.`
 7. Call `report_pull_request` only when readiness changes:
    - `ready: true` with the `head_sha` you read once every approval and
      check is green
@@ -55,7 +56,7 @@ later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.
 
 - Never merge the request. Leave every thread open.
 - Commit only what a comment or a failed check asks for.
-- Post no new thread, summary or top-level comment, except steps 3 and 5's
+- Post no new thread, summary or top-level comment, except steps 3 and 6's
   replies.
 - Use only your session's request tools. On failure, report it; post
   nothing another way.

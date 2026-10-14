@@ -268,20 +268,21 @@ every other wire enum (011).
     answers each inline review comment of the other side once: it groups
     related accepted changes in one coherent commit and verification run,
     keeps unrelated fixes separate, pushes each completed batch once, and
-    replies separately to its comments with the final pushed commit; it
-    gives a reason for keeping the code, one short answer to a question,
+    replies, once per comment, to the accepted changes and suggestions the
+    batch answers, naming the final pushed commit; it gives a reason for
+    keeping the code, one short answer to a question,
     no reply to a thanks, a new answer to a follow-up, and no second try
     on a finding the reviewer keeps open, since the user decides next. It
     leaves a comment on the conversation, since `reply_comment` refuses
     one there with 400 (026 Known gap). A finding carrying a suggestion
     block the agent accepts is applied rather than rewritten, except where
     it fails to compile or pass; one it does not accept keeps the code,
-    with a reason. Repository history rules choose its branch update:
-    where they require linear history it rebases and makes a guarded
-    `--force-with-lease` push, otherwise it uses a merge only where those
-    rules allow one. Before a guarded push it retains commits others added
-    to the remote branch; it never makes an unguarded force push or amends
-    a pushed commit outside that rebase. A rebase can replace commit ids,
+    with a reason. Repository history rules choose its branch update, done
+    before the batch's checks run: where they require linear history it
+    rebases and makes a guarded `--force-with-lease` push, otherwise it
+    uses a merge only where those rules allow one. Before a guarded push
+    it retains commits others added to the remote branch; it never makes
+    an unguarded force push or amends a pushed commit outside that rebase. A rebase can replace commit ids,
     so a reviewer uses incremental scope only while its previous reviewed
     commit remains an ancestor; otherwise it reviews the full current
     diff and does not reuse check evidence that no longer covers it. On
