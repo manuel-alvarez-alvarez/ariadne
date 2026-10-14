@@ -218,6 +218,8 @@ tasks because retries write another ending.
   — retained facts, gaps, and non-additive counter checks.
 - [trace-selection.json](trace-selection.json) — selected trace identifiers
   and derived indicators only; raw payloads stay outside Git.
+- [audit-overhead.csv](audit-overhead.csv) — this audit's partial goal usage,
+  kept separate from completed historical comparisons.
 
 ## Timing evidence
 
