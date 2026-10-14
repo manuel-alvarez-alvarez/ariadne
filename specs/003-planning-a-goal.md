@@ -72,6 +72,12 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    column's preferred rank (030), and it states a reason for each step up.
    Where a column names no rank, it takes the lowest rank and effort that
    finish the work. `local` is staffed only where the user names it.
+   A task's coding and review columns take models of different ACP agents
+   (011 rule 12) where an eligible one stands at the review column's rank.
+   With none eligible, the review column takes its normal rank-based choice
+   instead, even from the coding column's own agent, and the orchestrator
+   tells the user independent review was unavailable. No other column's
+   choice is narrowed by this rule.
 7. Two things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);
@@ -136,6 +142,11 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   `::the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule`).
 - The playbook takes each column's rank, and states a reason for each step
   up (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`).
+- The playbook gives a task's coding and review columns different ACP
+  agents where one is eligible, falls back to the review column's normal
+  choice with none eligible, and tells the user independent review was
+  unavailable
+  (`defaults.rs::the_orchestration_skill_requires_independent_providers_for_coding_and_review`).
 - The orchestrator is briefed to end planning with `finalize_plan` and with no
   other plan call
   (`defaults.rs::the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call`).
