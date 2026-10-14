@@ -9,3 +9,6 @@ Conventions for changing one are in [`AGENTS.md`](AGENTS.md).
 - [`ai-opportunities/`](ai-opportunities/README.md) — measured Kev pilots for
   failure diagnosis, stalled progress, and handoff history, with scoped
   candidates for further evidence and implementation.
+- [`token-usage/`](token-usage/README.md) — offline historical token and
+  elapsed-time audit, its reconciliation rules, aggregate artifacts, and
+  ranked candidates for separately approved work.

@@ -1,0 +1,188 @@
+# Historical token-use baseline and recommendations
+
+## Decision checkpoint
+
+This is a historical audit, not authorization to alter production prompts,
+skills, model assignments, or workflow gates. The user should select stable
+recommendation identifiers below before implementation work is created.
+
+## Question and answer
+
+**Question:** Where did this Ariadne installation spend avoidable tokens and
+elapsed time, and which bounded improvements should be tested first?
+
+The strongest measured opportunity is to reduce repeated wake-up prompts and
+their copied task context (`TU-01`), then make transcript-handoff selection
+observable and tighter (`TU-02`). Repeated full verification and broad tool
+output are visible candidates (`TU-03`, `TU-04`), but the stored events do not
+attribute their model-token effect, so their savings are estimates to test.
+Required checks and review columns remain part of every comparison.
+
+## Snapshot and coverage
+
+- Cutoff: `2026-10-14T20:27:17.371Z`; analyzer version `1`; source SHA-256
+  `b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47`. The raw database is deliberately not in Git.
+- Primary source: `online SQLite backup of ~/.ariadne/ariadne.db`. The inventory also inspected
+  6 dated backups. They overlap the primary history;
+  they establish retained-history availability, not extra work to sum.
+- The primary source holds 54 surviving goals, 180
+  surviving tasks, 615 surviving sessions, 171122
+  events, and 1072 cumulative transcript-source rows. It has
+  3 running sessions and 1
+  in-progress tasks, reported as partial.
+- The task listing supplied with this study said 48 goals and 179 tasks from
+  October 5–14. The database has a wider surviving inventory; neither source
+  proves that deleted rows before the retained ledger are complete.
+
+## Counting rules and reconciliation
+
+`input_tokens` includes cached input; `cached_input_tokens` is a subset, so
+uncached input is `input - cached`, never another additive total. Canonical
+usage is the sum of `session_usage` once per `(session_id, source)`, because
+those are cumulative transcript totals that replace earlier reports. It is
+10,837,777,871 input (156,455,029 uncached +
+10,681,322,842 cached) and 30,300,608 output tokens.
+
+The session-end ledger is not added to that total: an end fact stores the
+session's cumulative usage and a restarted session can produce more than one
+such fact. Summing it would duplicate tokens. For deleted sessions, the
+latest surviving end fact is a fallback only when there is no live usage row;
+3 such fallback(s) were needed here.
+26 surviving session(s) have no usage row:
+that is **missing usage**, not demonstrated zero. Sessions with an actual
+usage row of zero are counted separately (0).
+
+`reconciliation.json` records the direct usage total, non-additive end-fact
+total, unmatched facts, and attribution gaps. The session source column is a
+transcript path, not a launch id; usage cannot be allocated reliably between
+relaunches. Existing rows provide task/goal/role/model/effort attribution;
+retained facts preserve some deleted-work attribution but no complete task
+or goal identity after deletion.
+
+## Inventory and aggregates
+
+The files below cover every surviving goal and task, including cancelled and
+failed/retried work where its rows or facts remain. `goals.csv` and
+`tasks.csv` use canonical session usage; `dimensions.csv` groups the same
+canonical total by role, workflow column, model, effort, and current outcome.
+`outcomes.csv` also retains task-end facts, whose count can exceed surviving
+tasks because retries write another ending.
+
+- [snapshot.json](snapshot.json) — cutoff, revisions, coverage and counts.
+- [goals.csv](goals.csv) and [tasks.csv](tasks.csv) — one aggregate per
+  surviving entity, with distinct token categories and partial flags.
+- [dimensions.csv](dimensions.csv) — comparable dimensional totals.
+- [outcomes.csv](outcomes.csv) and [reconciliation.json](reconciliation.json)
+  — retained facts, gaps, and non-additive counter checks.
+- [trace-selection.json](trace-selection.json) — selected trace identifiers
+  and derived indicators only; raw payloads stay outside Git.
+
+## Timing evidence
+
+The database records session and task wall-clock lifetimes, not CPU time or
+model active time. It records console-permission waits in ledger facts where
+available, but it does not separate queue delay, human wait outside a
+permission prompt, tool execution, model inference, or active execution.
+
+- Ended-session lifetime observed: 3,910,876 s
+  across 612 sessions. This is inclusive
+  wall time, so it must not be called execution time.
+- Completed/cancelled task lead time comes from task rows and transitions;
+  it includes pending, ready, and in-progress time. The aggregate status
+  totals in `outcomes.csv` are the only supported queue/status split.
+- Running work is partial at the cutoff and excluded from completed-work
+  elapsed comparisons. This review's own goal is separately labelled in the
+  aggregates when present; its running session has no final usage at cutoff.
+
+## Trace method and findings
+
+The analyzer selects the largest canonical-usage sessions plus ordinary
+completed agent and reviewer sessions, without reading or exporting raw
+content. The selected traces cover 34.5% of
+canonical usage with usage and are listed in `trace-selection.json`. Derived
+event counts flag: repeated daemon prompts, repeated tool command prefixes,
+and large tool-result payloads. They are evidence of repeated context or
+wide tool responses, not direct token measurements.
+
+Within the selected traces, the largest observed daemon-prompt count is
+34 and the largest observed daemon-prompt text
+volume is 61,872 characters. The selected
+trace with the most repeated command prefixes has
+8. These indicators establish where to
+sample; they do not establish that every repetition is avoidable.
+
+The repository already limits several suspected sources: skills are indexed as
+one line and opened only when needed (`agents/prompts.rs`), handoff rendering
+folds entries and applies a character budget (`agents/handoff.rs`), and
+transcript counters are cumulative per source (`store/usage.rs`). These are
+implemented safeguards, not new recommendations. Their presence also means a
+larger handoff or prompt metric is a reason to inspect a selected trace before
+changing policy.
+
+## Ranked candidates
+
+### TU-01 — Coalesce scheduler wake-ups before sending a full daemon prompt
+
+**Evidence.** Trace indicators count daemon-originated prompt deliveries per session and their character volume; each delivery can repeat goal/task status and handoff context. The database has no per-prompt usage, so this is a measured repetition indicator rather than measured token waste.
+
+**Bounded scope.** Add a deduplicated pending-attention key at the scheduler/ACP delivery boundary. Preserve every distinct failure, user message, and explicit resume; do not change workflow columns, required checks, or prompt content for the first delivery.
+
+**Expected benefit.** Estimated reduction in repeated input context and avoidable wake-up latency; quantify only after instrumenting per-delivery counters. Confidence: medium.
+
+**Quality guard and measurement.** On matched tasks, compare daemon prompt count, prompt characters, canonical uncached input, output, task lead time, and finish/review outcomes. Keep the same workflow and required checks.
+
+**Counter-evidence.** A wake-up may carry newly relevant state. If coalescing delays recovery, increases retries, or changes outcome quality, retain the existing behavior.
+
+### TU-02 — Measure and tighten handoff selection at the existing character budget
+
+**Evidence.** The code already folds and ranks handoff history, but cumulative session usage cannot show which selected entries caused input. Long/restarted sessions are identifiable in the trace sample, making this a bounded observability-first candidate.
+
+**Bounded scope.** Add offline/diagnostic handoff selection metrics and a fixture corpus before changing the ranking policy. Do not shrink the configured budget or discard corrections, blockers, failed commands, edits, or decisive checks without an outcome comparison.
+
+**Expected benefit.** Estimated lower repeated input and faster resume turns where a handoff is much smaller than raw history. Confidence: low.
+
+**Quality guard and measurement.** For matched resumes, record candidate/selected character counts, continuation turns, canonical tokens, time to next useful state, and task outcome. Preserve existing handoff behavior as the control.
+
+**Counter-evidence.** The existing rules intentionally protect high-value evidence. A smaller handoff that causes re-reading, wrong changes, or review churn is a regression.
+
+### TU-03 — Classify repeated verification before suppressing any command
+
+**Evidence.** Selected traces expose repeated tool-command prefixes, while task end facts retain retries and review cycles. The record does not identify whether repetitions were required by changed code, flaky checks, or review findings.
+
+**Bounded scope.** Build an offline classifier/report for repeated commands keyed by commit/head and workflow column. Do not skip hooks, required checks, or reviewer-requested reruns.
+
+**Expected benefit.** Potentially lower tool wait and subsequent context tokens by avoiding proven duplicate checks; benefit is unquantified. Confidence: low.
+
+**Quality guard and measurement.** Sample repeated commands and label necessity. In a later controlled implementation, compare elapsed tool duration, retry rate, review findings, and task outcomes against the same check policy.
+
+**Counter-evidence.** Repeated checks often establish a flaky-test proof or validate a later change. The audit must not equate repetition with waste.
+
+### TU-04 — Bound broad tool-result retention with task-aware summaries
+
+**Evidence.** The trace indicators count large stored tool-result payloads. Tool outputs may be echoed into agent context or handoffs, but this database does not record prompt assembly per turn, so causal token savings are untested.
+
+**Bounded scope.** First add a report of large result payloads by tool, role, and outcome. Any later truncation must keep exit status, failing lines, paths, diffs, and an explicit way to retrieve full output.
+
+**Expected benefit.** Potentially lower input context and handoff size, plus faster model turns on noisy command output. Confidence: low.
+
+**Quality guard and measurement.** Compare prompt/handoff size, canonical token categories, diagnosis success, retry rate, and reviewer findings on matched command-heavy tasks.
+
+**Counter-evidence.** Full output can contain the only failure clue. Do not truncate before a representative trace review demonstrates redundant material.
+
+
+## Limitations and what would change the ranking
+
+The audit cannot reconstruct tokens per prompt, tool call, or launch, because
+the database stores cumulative transcript counters rather than per-turn
+usage. It cannot infer active execution time from wall-clock fields. A model
+or effort comparison is observational and confounded by task size, role, and
+outcome; compare like role/column/outcome workloads before acting. The ranking
+would change if a controlled before/after run preserves the same required
+checks and shows no reduction in tokens or lead time, or if trace review shows
+the flagged content is necessary to correct outcomes.
+
+## Reproduction
+
+See [README.md](README.md). The command reads a database in read-only mode;
+copy a live SQLite database with its WAL using SQLite's backup API first, and
+keep that copy outside the repository.

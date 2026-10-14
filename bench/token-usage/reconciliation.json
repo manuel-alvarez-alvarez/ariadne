@@ -1,0 +1,38 @@
+{
+  "canonical_rule": "sum session_usage once per (session_id, source), then use newest session_ended fact only for missing/deleted sessions",
+  "canonical_usage": {
+    "cached_input_tokens": 10681322842,
+    "input_tokens": 10837777871,
+    "output_tokens": 30300608
+  },
+  "fallback_usage": {
+    "01m4d97xrpkyhmqny98mxz11wx": {
+      "cached_input_tokens": 859930,
+      "input_tokens": 899644,
+      "output_tokens": 5001
+    },
+    "01m4d9tbr1v59109p567vnvg1q": {
+      "cached_input_tokens": 147375,
+      "input_tokens": 164961,
+      "output_tokens": 939
+    },
+    "01m4k9f105rvc6fm8krhj4078h": {
+      "cached_input_tokens": 14160,
+      "input_tokens": 27560,
+      "output_tokens": 143
+    }
+  },
+  "notes": [
+    "Cached input is a subset of input and is never added to it.",
+    "End facts contain cumulative session totals and can duplicate a session across launches.",
+    "Usage source is a transcript source, not a launch attribution key."
+  ],
+  "session_ended_fact_sum_non_additive": {
+    "cached_input_tokens": 15600067502,
+    "input_tokens": 15869277330,
+    "output_tokens": 51354989
+  },
+  "session_ended_facts": 615,
+  "session_ended_facts_missing_session": 3,
+  "uncached_input_tokens": 156455029
+}

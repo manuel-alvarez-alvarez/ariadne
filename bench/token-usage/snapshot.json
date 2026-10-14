@@ -1,0 +1,98 @@
+{
+  "analyzer_version": "1",
+  "canonical_usage": {
+    "cached_input_tokens": 10681322842,
+    "input_tokens": 10837777871,
+    "output_tokens": 30300608
+  },
+  "coverage": {
+    "backup_count": 6,
+    "deleted_session_fallbacks": 3,
+    "history_files": [
+      {
+        "bytes": 273276928,
+        "goals": 54,
+        "mtime": "2026-10-14T20:32:54.522678Z",
+        "name": "ariadne.db"
+      },
+      {
+        "bytes": 81633280,
+        "goals": 15,
+        "mtime": "2026-10-09T23:40:45.388799Z",
+        "name": "ariadne.db.backup-schema-20"
+      },
+      {
+        "bytes": 48971776,
+        "goals": 13,
+        "mtime": "2026-10-08T18:28:27.397853Z",
+        "name": "ariadne.db.bak-20261008-202827"
+      },
+      {
+        "bytes": 49139712,
+        "goals": 13,
+        "mtime": "2026-10-08T20:08:55.555555Z",
+        "name": "ariadne.db.bak-20261008-220855"
+      },
+      {
+        "bytes": 80261120,
+        "goals": 15,
+        "mtime": "2026-10-09T21:08:38.146718Z",
+        "name": "ariadne.db.bak-20261009-230838-pre-rollback"
+      },
+      {
+        "bytes": 101449728,
+        "goals": 22,
+        "mtime": "2026-10-10T08:33:06.118545Z",
+        "name": "ariadne.db.bak-20261010-presquash-fix"
+      },
+      {
+        "bytes": 152326144,
+        "goals": 30,
+        "mtime": "2026-10-11T07:39:41.435738Z",
+        "name": "ariadne.db.bak-20261011-093941-pre-0001-fix"
+      }
+    ],
+    "retained_session_end_facts_without_session": 3,
+    "sessions_without_usage": 26,
+    "unattributed_usage_sessions": 0,
+    "zero_usage_sessions": 0
+  },
+  "cutoff": "2026-10-14T20:27:17.371Z",
+  "generated_at": "2026-10-14T20:33:12.735341Z",
+  "inventory": {
+    "events": 171122,
+    "facts": 31203,
+    "goals": 54,
+    "in_progress_tasks": 1,
+    "running_sessions": 3,
+    "sessions": 615,
+    "tasks": 180,
+    "usage_rows": 1072
+  },
+  "source": {
+    "bytes": 273215488,
+    "label": "online SQLite backup of ~/.ariadne/ariadne.db",
+    "revision": "f4de5ba521f3d0edeeb207ce866ec0b9ea1f96b6",
+    "sha256": "b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47",
+    "sqlite_user_version": 0
+  },
+  "timing": {
+    "ended_session_lifetime_secs": 3910876,
+    "ended_sessions_with_lifetime": 612,
+    "unsupported": [
+      "active model execution",
+      "human wait outside console permissions",
+      "queue time before a session launch",
+      "tool execution",
+      "per-launch elapsed time"
+    ]
+  },
+  "trace_selection": {
+    "max_daemon_prompt_chars": 61872,
+    "max_daemon_prompts": 34,
+    "max_repeated_tool_prefixes": 8,
+    "method": "12 largest canonical-usage sessions plus one ordinary exited agent and reviewer session when absent",
+    "selected_sessions": 14,
+    "selected_usage_share": 0.34535310615555637
+  }
+}

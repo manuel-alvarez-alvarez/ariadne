@@ -1,0 +1,318 @@
+{
+  "max_daemon_prompt_chars": 61872,
+  "max_daemon_prompts": 34,
+  "max_repeated_tool_prefixes": 8,
+  "method": "12 largest canonical-usage sessions plus one ordinary exited agent and reviewer session when absent",
+  "selected_sessions": 14,
+  "selected_usage_share": 0.34535310615555637,
+  "traces": [
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 61872,
+        "daemon_prompts": 12,
+        "events": 5782,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 0
+      },
+      "effort": "medium",
+      "goal_id": "01m4ke8jjjmrpq43smjy487nr8",
+      "model": "claude-acp:sonnet",
+      "seat": "agent",
+      "session_id": "01m4kf30z3vs1n1y73d7t3bwnd",
+      "status": "exited",
+      "task_id": "01m4kf02expbtzgp6t7b9fv5ka",
+      "usage": {
+        "cached_input_tokens": 805330531,
+        "input_tokens": 807782719,
+        "output_tokens": 994118
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 44018,
+        "daemon_prompts": 13,
+        "events": 3815,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 1
+      },
+      "effort": "medium",
+      "goal_id": "01m4ke8jjjmrpq43smjy487nr8",
+      "model": "claude-acp:sonnet",
+      "seat": "agent",
+      "session_id": "01m4m371vw9hgpth2pc7tz0gkt",
+      "status": "exited",
+      "task_id": "01m4kf10nfnxb04nkbk04qskeq",
+      "usage": {
+        "cached_input_tokens": 539888750,
+        "input_tokens": 541490536,
+        "output_tokens": 671687
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 19150,
+        "daemon_prompts": 8,
+        "events": 2298,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 0
+      },
+      "effort": null,
+      "goal_id": "01m4mym25rgh5n3tba1m94eh0r",
+      "model": "claude-acp:sonnet",
+      "seat": "agent",
+      "session_id": "01m4myv6ppjky1ef1zcwz2b2h9",
+      "status": "exited",
+      "task_id": "01m4myt24rtbbvysrchxprhxdn",
+      "usage": {
+        "cached_input_tokens": 331055142,
+        "input_tokens": 331864110,
+        "output_tokens": 329317
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 11597,
+        "daemon_prompts": 19,
+        "events": 2311,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 0
+      },
+      "effort": "high",
+      "goal_id": "01m4g7w5p6zcbx38tb6zs4k2vy",
+      "model": "claude-acp:sonnet",
+      "seat": "agent",
+      "session_id": "01m4h5zedve2kchn8hzg2jyjjr",
+      "status": "exited",
+      "task_id": "01m4h4wr8vmehe579a99pe7e6t",
+      "usage": {
+        "cached_input_tokens": 318509199,
+        "input_tokens": 319365470,
+        "output_tokens": 360536
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 14019,
+        "daemon_prompts": 5,
+        "events": 1712,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 0
+      },
+      "effort": "high",
+      "goal_id": "01m4r1514d2kvj1ven5659mbkh",
+      "model": "claude-acp:sonnet",
+      "seat": "agent",
+      "session_id": "01m4r2fm4kjth85jaa37qnz5a7",
+      "status": "exited",
+      "task_id": "01m4r2f5x9jfnvg2s5cccmnb1q",
+      "usage": {
+        "cached_input_tokens": 271953507,
+        "input_tokens": 272743721,
+        "output_tokens": 315497
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 30907,
+        "daemon_prompts": 9,
+        "events": 2236,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 8
+      },
+      "effort": "high",
+      "goal_id": "01m4rsrz8pe4fwgyxmq4r9v3t3",
+      "model": "claude-acp:opus[1m]",
+      "seat": "agent",
+      "session_id": "01m4rtkect220ye5gm2ep2m3t7",
+      "status": "exited",
+      "task_id": "01m4rthb3qa45y78k8wzn8jyfk",
+      "usage": {
+        "cached_input_tokens": 243219731,
+        "input_tokens": 245562618,
+        "output_tokens": 544461
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 34146,
+        "daemon_prompts": 9,
+        "events": 1687,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 0
+      },
+      "effort": "high",
+      "goal_id": "01m4rsrz8pe4fwgyxmq4r9v3t3",
+      "model": "claude-acp:opus[1m]",
+      "seat": "agent",
+      "session_id": "01m4rtke454cxxx26dgct043jh",
+      "status": "exited",
+      "task_id": "01m4rthb2q81gy6t53fs5nhhbe",
+      "usage": {
+        "cached_input_tokens": 216671636,
+        "input_tokens": 218221707,
+        "output_tokens": 369783
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 14390,
+        "daemon_prompts": 6,
+        "events": 3288,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 2
+      },
+      "effort": "high",
+      "goal_id": "01m4g7w5p6zcbx38tb6zs4k2vy",
+      "model": "claude-acp:claude-fable-5-1[1m]",
+      "seat": "agent",
+      "session_id": "01m4gk044v01n034btj0ya422a",
+      "status": "exited",
+      "task_id": "01m4g996xcv8trb05h5dpcj48p",
+      "usage": {
+        "cached_input_tokens": 209858594,
+        "input_tokens": 213595779,
+        "output_tokens": 995490
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 11733,
+        "daemon_prompts": 3,
+        "events": 1448,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 0
+      },
+      "effort": null,
+      "goal_id": "01m4tprt6d1axyatezb2mz3n5v",
+      "model": "claude-acp:sonnet",
+      "seat": "agent",
+      "session_id": "01m4xfwkvxmxvejsp20q2yq4bw",
+      "status": "exited",
+      "task_id": "01m4xfwja6tb4kqtaz705zgye9",
+      "usage": {
+        "cached_input_tokens": 201909205,
+        "input_tokens": 202561521,
+        "output_tokens": 259012
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 16549,
+        "daemon_prompts": 34,
+        "events": 1637,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 0
+      },
+      "effort": null,
+      "goal_id": "01m4r1514d2kvj1ven5659mbkh",
+      "model": "claude-acp:sonnet",
+      "seat": "agent",
+      "session_id": "01m4rahjz2swmrk71yq0xadqbz",
+      "status": "exited",
+      "task_id": "01m4r2f5x9jfnvg2s5cccmnb1q",
+      "usage": {
+        "cached_input_tokens": 190482175,
+        "input_tokens": 191128264,
+        "output_tokens": 291424
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 35165,
+        "daemon_prompts": 6,
+        "events": 1470,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 2
+      },
+      "effort": "high",
+      "goal_id": "01m4rsrz8pe4fwgyxmq4r9v3t3",
+      "model": "claude-acp:opus[1m]",
+      "seat": "agent",
+      "session_id": "01m4rtkdsx2a71zkd7arpyv9dc",
+      "status": "exited",
+      "task_id": "01m4rthb1snf68681n95ahcj9j",
+      "usage": {
+        "cached_input_tokens": 186106173,
+        "input_tokens": 187644417,
+        "output_tokens": 421795
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 10205,
+        "daemon_prompts": 5,
+        "events": 1039,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 0
+      },
+      "effort": null,
+      "goal_id": "01m4tprt6d1axyatezb2mz3n5v",
+      "model": "claude-acp:sonnet",
+      "seat": "agent",
+      "session_id": "01m4w1jnbrw121jr7vjv6jp5ec",
+      "status": "exited",
+      "task_id": "01m4w1jhb26r7bhrkywamqvpny",
+      "usage": {
+        "cached_input_tokens": 171645217,
+        "input_tokens": 172502888,
+        "output_tokens": 296854
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 4866,
+        "daemon_prompts": 4,
+        "events": 453,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 0
+      },
+      "effort": null,
+      "goal_id": "01m45meqy6pgf43ccdrjbfd401",
+      "model": "claude-acp:sonnet",
+      "seat": "agent",
+      "session_id": "01m45mtmmbkzy6qxpbp1q5ym1f",
+      "status": "exited",
+      "task_id": "01m45msmrpjkxy4swebyn4r0jd",
+      "usage": {
+        "cached_input_tokens": 12249006,
+        "input_tokens": 12398266,
+        "output_tokens": 38886
+      }
+    },
+    {
+      "derived_event_metrics": {
+        "daemon_prompt_chars": 932,
+        "daemon_prompts": 2,
+        "events": 178,
+        "large_tool_result_chars": 0,
+        "large_tool_results": 0,
+        "repeated_tool_prefixes": 0
+      },
+      "effort": null,
+      "goal_id": null,
+      "model": "codex-acp:gpt-6-sol",
+      "seat": "reviewer",
+      "session_id": "01m4ebbjftgad0wxwj2rpjrxnr",
+      "status": "exited",
+      "task_id": null,
+      "usage": {
+        "cached_input_tokens": 10081024,
+        "input_tokens": 10415213,
+        "output_tokens": 26703
+      }
+    }
+  ]
+}
