@@ -8,7 +8,7 @@ Saved Claude transcripts establish per-request usage for mapped sessions and nat
 
 ## Reproducible evidence
 
-Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15` at `/tmp/token-followup.db`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Source revision: `32d004ef0d543ed82b7ef4447f3b577568b76f9f`. Analyzer SHA-256: `b7236ab119135b961da3fbb2f6bd6208e40bc5944c9c35691097f731939f8f61`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
+Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15` at `/tmp/token-followup.db`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Source revision: `b4ca47627e75a97679464fadc134d12741eabef8`. Analyzer SHA-256: `fa93617e4caff5e8a4b6174c191e218c9184b231bd57e617164755a4ffeb292c`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
 
 The follow-up found 48,769 unique request records, of which 48,769 map through native session IDs. It discarded 81,531 repeated Claude records and excluded 0 conflicting duplicate native IDs. The CSV artifacts retain no raw transcript text.
 
@@ -24,7 +24,7 @@ Request input includes cached input. Uncached input equals input minus cached in
 
 `wakeup-analysis.csv` joins a daemon prompt to subsequent mapped requests in the same session. It records a temporal candidate and not a causal delivery join: events retain no vendor request ID, delivery cause, or outcome correlation. Session/task status and ending facts remain lifecycle outcomes, not request-start timestamps.
 
-`handoff-analysis.csv` inventories each native `switched_from` predecessor-successor pair. Stored events can support a renderer inspection, but the deployed renderer revision and selected-entry set are not retained together; each row therefore states that uncertainty separately. This study does not claim omitted context or later rereading.
+`handoff-analysis.csv` inventories each native `switched_from` pair and measures the first saved successor prompt. It marks retained delivered handoff text separately from three missing successor-prompt candidates. The historical renderer revision and pre-budget selected-entry set remain unavailable, so delivered length does not prove which history caused an outcome.
 
 `tool-output.csv` links Claude and Codex tool calls/results by native tool-call ID. It separates mapped requests, unmatched calls, and unavailable request associations. Result characters describe retained text only; arrays of text blocks are measured and unsupported shapes are labelled. They are not billed-token measurements or proof of later prompt inclusion.
 

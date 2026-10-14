@@ -154,6 +154,11 @@ def claude_requests(path: Path, internal: dict[str, dict[str, Any]], cutoff: str
                 elif other["usage_record"] and prior["usage_record"] and any(prior[field] != other[field] for field in TOKENS):
                     prior["usage_status"] = "ambiguous_conflict"
                     counts["conflicting_usage_records"] += 1
+                if other.get("usage_status") == "ambiguous_conflict":
+                    prior["usage_status"] = "ambiguous_conflict"
+                for call in tool_calls.values():
+                    if call["request_id"] == other_id:
+                        call["request_id"] = vendor_id
                 for alias, target in list(aliases.items()):
                     if target == other_id:
                         aliases[alias] = vendor_id
@@ -420,11 +425,11 @@ def main() -> int:
     baseline_cutoff = json.loads(baseline_snapshot.read_text())["cutoff"] if baseline_snapshot.exists() else ""
     audit_goal_ids = {args.audit_goal_id}
     cohorts: dict[str, dict[str, Any]] = {}
-    for cohort in ("shared_frozen_session_ids", "not_in_frozen_session_ids", "newer_evidence", "this_goal_overhead"):
+    for cohort in ("shared_frozen_historical_interval", "shared_frozen_post_cutoff", "not_in_frozen_session_ids", "newer_evidence", "this_goal_overhead"):
         cohorts[cohort] = {"cohort": cohort, "requests": 0, "sessions": set(), **usage()}
     for row in request_rows:
         session = session_by_id[row["session_id"]]
-        cohort = "this_goal_overhead" if session.get("goal_id") in audit_goal_ids else "shared_frozen_session_ids" if row["session_id"] in baseline_session_ids else "newer_evidence" if row["timestamp"] > baseline_cutoff else "not_in_frozen_session_ids"
+        cohort = "this_goal_overhead" if session.get("goal_id") in audit_goal_ids else "shared_frozen_post_cutoff" if row["session_id"] in baseline_session_ids and row["timestamp"] > baseline_cutoff else "shared_frozen_historical_interval" if row["session_id"] in baseline_session_ids else "newer_evidence" if row["timestamp"] > baseline_cutoff else "not_in_frozen_session_ids"
         item = cohorts[cohort]
         item["requests"] += 1
         item["sessions"].add(row["session_id"])
@@ -434,7 +439,23 @@ def main() -> int:
         item["sessions"] = len(item["sessions"])
         item["uncached_input_tokens"] = uncached(item)
         cohort_rows.append(item)
-    handoffs = [{"predecessor_session_id": session["switched_from"], "successor_session_id": session["id"], "goal_id": session.get("goal_id") or "", "task_id": session.get("task_id") or "", "renderer_revision": "uncertain_deployment_revision", "candidate_selection": "unavailable", "supported_consequence": "successor first request is retained when present", "reason": "stored events exist but no deployed renderer revision or persisted selected-entry set"} for session in sessions if session.get("switched_from")]
+    handoffs = []
+    for session in sessions:
+        if not session.get("switched_from"):
+            continue
+        event = conn.execute("SELECT id, payload, payload_codec FROM agent_events WHERE session_id=? AND kind='user_prompt_submit' ORDER BY created_at LIMIT 1", (session["id"],)).fetchone()
+        text = ""
+        if event:
+            try:
+                raw = event["payload"]
+                if event["payload_codec"] == "deflate":
+                    import zlib
+                    raw = zlib.decompress(raw, -zlib.MAX_WBITS)
+                text = json.loads(raw).get("text") or json.loads(raw).get("prompt") or ""
+            except (ValueError, TypeError, __import__("zlib").error):
+                text = ""
+        task = tasks.get(session.get("task_id"), {})
+        handoffs.append({"predecessor_session_id": session["switched_from"], "successor_session_id": session["id"], "goal_id": session.get("goal_id") or "", "task_id": session.get("task_id") or "", "delivered_prompt_event_id": event["id"] if event else "", "delivered_prompt_chars": len(text), "handoff_marker": int("This is the history of the session" in text), "renderer_revision": "uncertain_deployment_revision", "candidate_selection": "delivered_prompt_retained" if text else "no_successor_prompt", "supported_consequence": task.get("status") or "no_task", "reason": "delivered body is retained; historical renderer selection and deployment revision are not"})
 
     request_total = usage()
     for row in request_rows:
@@ -462,7 +483,7 @@ def main() -> int:
     write_csv(out / "tool-output.csv", tool_values, ["family", "session_id", "request_id", "tool_call_id", "tool_name", "turn_id", "result_chars", "result_representation", "timestamp", "association", "request_association"])
     write_csv(out / "wakeup-analysis.csv", wakeups, ["event_id", "session_id", "delivered_at", "delivery_cause", "next_request_id", "next_request_delay_secs", "outcome_join", "limitation"])
     write_csv(out / "cohort-comparison.csv", cohort_rows, ["cohort", "requests", "sessions", "input_tokens", "cached_input_tokens", "output_tokens", "uncached_input_tokens"])
-    write_csv(out / "handoff-analysis.csv", handoffs, ["predecessor_session_id", "successor_session_id", "goal_id", "task_id", "renderer_revision", "candidate_selection", "supported_consequence", "reason"])
+    write_csv(out / "handoff-analysis.csv", handoffs, ["predecessor_session_id", "successor_session_id", "goal_id", "task_id", "delivered_prompt_event_id", "delivered_prompt_chars", "handoff_marker", "renderer_revision", "candidate_selection", "supported_consequence", "reason"])
     write_csv(out / "request-reconciliation.csv", reconciliation_rows, ["session_id", "goal_id", "task_id", "launch_id", "session_counter_present", "state", "request_input_tokens", "request_cached_input_tokens", "request_output_tokens", "counter_input_tokens", "counter_cached_input_tokens", "counter_output_tokens", "input_residual", "cached_input_residual", "output_residual"])
     (out / "followup-snapshot.json").write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
     (out / "followup-reconciliation.json").write_text(json.dumps(reconciliation, indent=2, sort_keys=True) + "\n")
@@ -492,7 +513,7 @@ Request input includes cached input. Uncached input equals input minus cached in
 
 `wakeup-analysis.csv` joins a daemon prompt to subsequent mapped requests in the same session. It records a temporal candidate and not a causal delivery join: events retain no vendor request ID, delivery cause, or outcome correlation. Session/task status and ending facts remain lifecycle outcomes, not request-start timestamps.
 
-`handoff-analysis.csv` inventories each native `switched_from` predecessor-successor pair. Stored events can support a renderer inspection, but the deployed renderer revision and selected-entry set are not retained together; each row therefore states that uncertainty separately. This study does not claim omitted context or later rereading.
+`handoff-analysis.csv` inventories each native `switched_from` pair and measures the first saved successor prompt. It marks retained delivered handoff text separately from three missing successor-prompt candidates. The historical renderer revision and pre-budget selected-entry set remain unavailable, so delivered length does not prove which history caused an outcome.
 
 `tool-output.csv` links Claude and Codex tool calls/results by native tool-call ID. It separates mapped requests, unmatched calls, and unavailable request associations. Result characters describe retained text only; arrays of text blocks are measured and unsupported shapes are labelled. They are not billed-token measurements or proof of later prompt inclusion.
 

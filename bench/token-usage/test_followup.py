@@ -56,6 +56,16 @@ with tempfile.TemporaryDirectory() as directory:
     values, _, _ = followup.claude_requests(bridge, {"internal": {"id": "session"}}, "2026-10-02T00:00:00Z")
     assert len(values) == 1 and values[0]["input_tokens"] == 16
 
+    bridge_conflict = root / "alias-conflict.jsonl"
+    r_only = {**record, "requestId": "r", "message": {**record["message"], "id": None, "content": [{"type": "tool_use", "id": "call-r", "name": "Bash"}]}}
+    r_conflict = {**r_only, "message": {**r_only["message"], "usage": {**record["message"]["usage"], "output_tokens": 9}}}
+    m_only = {**record, "requestId": None, "message": {**record["message"], "id": "m"}}
+    bridge_both = {**record, "requestId": "r", "message": {**record["message"], "id": "m"}}
+    bridge_conflict.write_text("\n".join(json.dumps(value) for value in (r_only, r_conflict, m_only, bridge_both)) + "\n")
+    values, tools, _ = followup.claude_requests(bridge_conflict, {"internal": {"id": "session"}}, "2026-10-02T00:00:00Z")
+    assert len(values) == 1 and values[0]["usage_status"] == "ambiguous_conflict"
+    assert tools[0]["request_id"] == values[0]["request_id"] and values[0]["tool_calls"] == 1
+
     resumed = root / "resumed.jsonl"
     resumed.write_text("\n".join(json.dumps(value) for value in (
         {"type": "token_usage_record", "timestamp": "2026-10-01T00:00:00Z", "payload": {"response_id": "same", "turn_id": "turn", "session_id": "one", "usage": {"input_tokens": 5, "cached_input_tokens": 1, "output_tokens": 1}}},
