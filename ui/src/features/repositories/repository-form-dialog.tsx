@@ -8,11 +8,13 @@
  * agreed with the user there, not here — this is only the default that choice
  * starts from.
  *
- * Editing a repository whose remote is on GitHub or GitLab also shows one
- * switch for the integration with that forge (spec 025), sent only when it
+ * A repository whose remote is on GitHub or GitLab also shows one switch for
+ * the integration with that forge (spec 025). Editing sends it only when it
  * moved, since an absent field is one the daemon leaves alone. Registering
- * shows none of it — nothing is detected until the daemon has opened the
- * checkout — and neither does a checkout with no such remote.
+ * probes `POST /v1/forge/detect` itself, off the path field, and sends it
+ * only once that probe actually found one; a checkout with no such remote
+ * shows neither there nor once registered. "Supervise posts" sits right
+ * below the switch and only while it is on, in both forms.
  *
  * The client only catches what it can know on its own: a missing or relative
  * path. Everything else is the daemon's to say — it opens the checkout and
@@ -22,17 +24,18 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useEffect } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   type Control,
   Controller,
   type FieldError as FormFieldError,
   useForm,
+  useWatch,
 } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
-import { ApiError, type ForgeDto, type RepositoryDto } from "@/api"
+import { ApiError, type ForgeDetectionDto, type ForgeDto, type RepositoryDto } from "@/api"
 import { FormDialog, FormDialogBody, FormDialogContent } from "@/components/form-dialog"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -49,9 +52,12 @@ import { pickedWorkflow, WorkflowSelect } from "@/features/workflows/workflow-se
 import { describeError } from "@/lib/format"
 import { forgeCliName, forgeKindLabel, forgeRepositoryLabel } from "./forge"
 import { PERMISSION_MODES } from "./permission-modes"
-import { useCreateRepository, useUpdateRepository } from "./queries"
+import { useCreateRepository, useDetectForge, useUpdateRepository } from "./queries"
 
 const PERMISSION_ITEMS = PERMISSION_MODES.map(({ value, label }) => ({ value, label }))
+
+/** How long the path field sits still before a detection fires on its own. */
+const DETECT_SETTLES_MS = 400
 
 const formSchema = z.object({
   path: z
@@ -92,20 +98,68 @@ export function RepositoryFormDialog({
   const editing = repository !== null
   const createRepository = useCreateRepository()
   const updateRepository = useUpdateRepository()
+  const detectForge = useDetectForge()
   const saving = createRepository.isPending || updateRepository.isPending
-  const forge = repository?.forge
 
   const form = useForm<RepositoryFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: EMPTY_VALUES,
   })
   const { control, formState, handleSubmit, register, reset, setError } = form
+  const forgeEnabled = useWatch({ control, name: "forge_enabled" })
+
+  // Registering probes the path itself — nothing is detected server-side
+  // until the daemon has opened the checkout. Editing skips this: the
+  // repository already carries what the daemon detected, in `forge`.
+  const [detected, setDetected] = useState<ForgeDetectionDto | null>(null)
+  const detectRequest = useRef(0)
+  const detectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const probe = useCallback(
+    (path: string) => {
+      if (editing || !path.startsWith("/")) return
+      const request = ++detectRequest.current
+      detectForge.mutate(
+        { path },
+        {
+          onSuccess: (result) => {
+            // A slower, earlier probe must not overwrite a later one's answer.
+            if (request === detectRequest.current) setDetected(result)
+          },
+        },
+      )
+    },
+    [editing, detectForge],
+  )
+
+  const onPathChange = useCallback(
+    (path: string) => {
+      clearTimeout(detectTimeout.current ?? undefined)
+      detectTimeout.current = setTimeout(() => probe(path), DETECT_SETTLES_MS)
+    },
+    [probe],
+  )
+
+  const onPathBlur = useCallback(
+    (path: string) => {
+      clearTimeout(detectTimeout.current ?? undefined)
+      probe(path)
+    },
+    [probe],
+  )
+
+  useEffect(() => () => clearTimeout(detectTimeout.current ?? undefined), [])
+
+  const forge = editing ? (repository?.forge ?? null) : detected
 
   // Every open starts from what is actually stored, never from the previous
   // attempt. Keyed off the dialog opening rather than the prop: a
   // `repository_updated` off the stream mid-edit must not wipe what was typed.
   useEffect(() => {
     if (!open) return
+    detectRequest.current++
+    clearTimeout(detectTimeout.current ?? undefined)
+    setDetected(null)
     if (repository) {
       reset({
         path: repository.path,
@@ -154,6 +208,7 @@ export function RepositoryFormDialog({
           permission_mode: values.permission_mode,
           supervise_posts: values.supervise_posts,
           default_workflow: workflow,
+          ...(detected ? { forge: { enabled: values.forge_enabled } } : {}),
         })
         toast.success("Repository registered", { description: created.path })
       }
@@ -226,7 +281,10 @@ export function RepositoryFormDialog({
               spellCheck={false}
               className="font-mono"
               aria-invalid={formState.errors.path ? true : undefined}
-              {...register("path")}
+              {...register("path", {
+                onChange: (e) => onPathChange(e.target.value),
+                onBlur: (e) => onPathBlur(e.target.value),
+              })}
             />
             {formState.errors.path ? (
               <FieldError errors={[formState.errors.path]} />
@@ -317,28 +375,6 @@ export function RepositoryFormDialog({
             )}
           </Field>
 
-          <Field>
-            <div className="flex items-center gap-3">
-              <Controller
-                control={control}
-                name="supervise_posts"
-                render={({ field }) => (
-                  <Switch
-                    id="repository-supervise-posts"
-                    aria-label="Supervise posts"
-                    checked={field.value}
-                    onCheckedChange={(checked) => field.onChange(checked)}
-                  />
-                )}
-              />
-              <FieldLabel htmlFor="repository-supervise-posts">Supervise posts</FieldLabel>
-            </div>
-            <FieldDescription>
-              Open every pull request an agent requests on the forge as a draft, for your approval
-              before it is ready to merge.
-            </FieldDescription>
-          </Field>
-
           <Field data-invalid={formState.errors.default_workflow ? true : undefined}>
             <FieldLabel htmlFor="repository-default-workflow">Default workflow</FieldLabel>
             <WorkflowSelect
@@ -359,6 +395,30 @@ export function RepositoryFormDialog({
           {forge ? (
             <ForgeSwitch forge={forge} control={control} error={formState.errors.forge_enabled} />
           ) : null}
+
+          {forgeEnabled ? (
+            <Field>
+              <div className="flex items-center gap-3">
+                <Controller
+                  control={control}
+                  name="supervise_posts"
+                  render={({ field }) => (
+                    <Switch
+                      id="repository-supervise-posts"
+                      aria-label="Supervise posts"
+                      checked={field.value}
+                      onCheckedChange={(checked) => field.onChange(checked)}
+                    />
+                  )}
+                />
+                <FieldLabel htmlFor="repository-supervise-posts">Supervise posts</FieldLabel>
+              </div>
+              <FieldDescription>
+                Put agent replies, reviews and resolves in your pending GitHub review or GitLab
+                draft notes, and open pull requests as drafts.
+              </FieldDescription>
+            </Field>
+          ) : null}
         </FormDialogBody>
       </FormDialogContent>
     </FormDialog>
@@ -369,13 +429,17 @@ export function RepositoryFormDialog({
  * The integration with the forge the daemon detected on the remote (spec 025),
  * as one switch. Enabling asks the forge's own CLI whether it is signed in to
  * the host, so a refusal comes back in the CLI's words and lands here.
+ *
+ * `forge` is a stored `ForgeDto` once the repository is registered, or the
+ * leaner `ForgeDetectionDto` the create form's own probe answers with ahead
+ * of that — neither `enabled` nor `login` apply there yet.
  */
 function ForgeSwitch({
   forge,
   control,
   error,
 }: {
-  forge: ForgeDto
+  forge: ForgeDto | ForgeDetectionDto
   control: Control<RepositoryFormValues>
   error: FormFieldError | undefined
 }) {
@@ -407,8 +471,10 @@ function ForgeSwitch({
         <FieldDescription data-testid="forge-remote">
           <span className="font-mono">{forgeRepositoryLabel(forge)}</span>, via{" "}
           <code>{forgeCliName(forge.kind)}</code>
-          {forge.enabled && forge.login ? `, signed in as ${forge.login}` : ""}. Lists its pull
-          requests and issues, and keeps them up to date.
+          {"enabled" in forge && forge.enabled && forge.login
+            ? `, signed in as ${forge.login}`
+            : ""}
+          . Lists its pull requests and issues, and keeps them up to date.
         </FieldDescription>
       )}
     </Field>

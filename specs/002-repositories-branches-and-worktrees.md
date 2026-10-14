@@ -94,12 +94,16 @@ and the integration with it (025).
     answers nothing.
 13. `supervise_posts` says whether this repository's agents hold what they
     post to the forge for a person's approval before the forge ever sees it:
-    every pull request a task opens is forced to a draft ([026](026-pull-requests.md)
-    rule 23), and a later task holds replies, reviews and resolves the same
-    way. It defaults to `true`, is set when the repository is registered and
-    changed by editing it, from the CLI and the desktop app alike, and an
-    edit that does not name it keeps it. A repository registered before the
-    flag existed reads it as `true`.
+    every pull request a task opens is forced to a draft, and every reply,
+    review and resolve lands in the person's own pending GitHub review or
+    GitLab draft notes instead of posting directly ([026](026-pull-requests.md)
+    rules 23 and 24). It defaults to `true`, is set when the repository is
+    registered and changed by editing it, from the CLI and the desktop app
+    alike, and an edit that does not name it keeps it. A repository
+    registered before the flag existed reads it as `true`. The CLI and the
+    desktop app show it only once the repository's forge integration is on
+    (025 rule 16): with nothing to post to, there is nothing for it to hold
+    back.
 
 ## Acceptance criteria
 
@@ -131,6 +135,13 @@ and the integration with it (025).
   from the desktop app's repository form
   (`repo.rs::tests::repo_add_and_update_take_the_supervise_posts_flag`,
   `ui/src/features/repositories/repository-form-dialog.test.tsx::saves the supervise posts switch`).
+- `repo inspect` shows the "supervise posts" row only once the forge is
+  enabled, not for a repository with no forge row or one that is detected but
+  disabled (`repo.rs::tests::repo_add_and_update_take_the_supervise_posts_flag`),
+  and the desktop form shows the switch only below an "on" forge switch, in
+  both the create and the edit dialog, keeping its value while it is hidden
+  (`ui/src/features/repositories/repository-form-dialog.test.tsx::hides
+  supervise posts under an off forge switch, keeping its value`).
 - A repository defaults new goals to `develop-review-merge`, takes another default at
   registration or on an edit, and changes no existing goal
   (`repositories.rs::a_repository_defaults_new_goals_without_changing_existing_ones`,
