@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "1"
+VERSION = "2"
 TOKENS = ("input_tokens", "cached_input_tokens", "output_tokens")
 
 
@@ -65,22 +65,50 @@ def digest(path: Path) -> str:
     return value.hexdigest()
 
 
-def string_size(value: Any) -> int:
-    return len(value) if isinstance(value, str) else 0
+def retained_digest(path: Path, cutoff: str) -> str:
+    """Hash only JSONL lines retained by the documented cutoff."""
+    value = hashlib.sha256()
+    with path.open(encoding="utf-8", errors="replace") as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record.get("timestamp"), str) and record["timestamp"] > cutoff:
+                continue
+            value.update(line.encode("utf-8", "replace"))
+    return value.hexdigest()
+
+
+def string_size(value: Any) -> tuple[int, str]:
+    """Measure retained text blocks without claiming they are tokens."""
+    if isinstance(value, str):
+        return len(value), "text"
+    if isinstance(value, list):
+        total = 0
+        supported = True
+        for part in value:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                total += len(part["text"])
+            elif isinstance(part, str):
+                total += len(part)
+            else:
+                supported = False
+        return total, "blocks" if supported else "partially_unsupported_blocks"
+    return 0, "unsupported_content_type"
 
 
 def claude_requests(path: Path, internal: dict[str, dict[str, Any]], cutoff: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
-    """Return unique vendor requests and tool result records from one Claude file."""
-    requests: list[dict[str, Any]] = []
-    tools: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    """Merge repeated Claude blocks by message ID and join tools by tool_use ID."""
+    requests: dict[str, dict[str, Any]] = {}
+    tool_calls: dict[str, dict[str, Any]] = {}
+    tool_results: list[dict[str, Any]] = []
     session_id: str | None = None
-    last_request: str | None = None
     counts = collections.Counter()
     try:
         file = path.open(encoding="utf-8", errors="replace")
     except OSError:
-        return requests, tools, counts
+        return [], [], counts
     with file:
         for line in file:
             try:
@@ -95,34 +123,59 @@ def claude_requests(path: Path, internal: dict[str, dict[str, Any]], cutoff: str
             if isinstance(key, str) and key in internal:
                 session_id = internal[key]["id"]
             if record.get("type") != "assistant" or not isinstance(record.get("message"), dict):
-                if record.get("type") == "user" and last_request:
+                if record.get("type") == "user":
                     for part in (record.get("message") or {}).get("content") or []:
                         if isinstance(part, dict) and part.get("type") == "tool_result":
-                            tools.append({"request_id": last_request, "tool_call_id": str(part.get("tool_use_id") or "missing"), "tool_name": "unknown", "result_chars": string_size(part.get("content")), "timestamp": record.get("timestamp") or ""})
+                            length, representation = string_size(part.get("content"))
+                            tool_results.append({"session_id": session_id or "unmapped", "tool_call_id": str(part.get("tool_use_id") or "missing"), "result_chars": length, "result_representation": representation, "timestamp": record.get("timestamp") or "", "source_assistant_uuid": record.get("sourceToolAssistantUUID") or ""})
                 continue
             message = record["message"]
-            vendor_id = record.get("requestId") or message.get("id")
+            message_id = message.get("id")
+            request_id = record.get("requestId")
+            vendor_id = message_id if isinstance(message_id, str) else request_id
             if not isinstance(vendor_id, str):
                 counts["assistant_without_request_id"] += 1
                 continue
-            # Claude can repeat content blocks and usage for one message.
-            if vendor_id in seen:
+            raw = message.get("usage")
+            if raw is not None and not isinstance(raw, dict):
+                counts["invalid_usage"] += 1
+                raw = None
+            if raw is None:
+                counts["assistant_without_usage"] += 1
+                item = None
+            else:
+                direct_input = int(raw.get("input_tokens") or 0)
+                cache_create = int(raw.get("cache_creation_input_tokens") or 0)
+                cached = int(raw.get("cache_read_input_tokens") or 0)
+                item = {"input_tokens": direct_input + cache_create + cached, "cached_input_tokens": cached, "output_tokens": int(raw.get("output_tokens") or 0)}
+            if vendor_id in requests:
                 counts["duplicate_request_records"] += 1
-                continue
-            seen.add(vendor_id)
-            raw = message.get("usage") or {}
-            if not isinstance(raw, dict):
-                raw = {}
-            direct_input = int(raw.get("input_tokens") or 0)
-            cache_create = int(raw.get("cache_creation_input_tokens") or 0)
-            cached = int(raw.get("cache_read_input_tokens") or 0)
-            item = {"input_tokens": direct_input + cache_create + cached, "cached_input_tokens": cached, "output_tokens": int(raw.get("output_tokens") or 0)}
-            tool_calls = [part for part in message.get("content") or [] if isinstance(part, dict) and part.get("type") == "tool_use"]
-            requests.append({"family": "claude", "session_id": session_id or "unmapped", "vendor_session_id": record.get("sessionId") or "missing", "request_id": vendor_id, "turn_id": record.get("uuid") or "missing", "response_id": message.get("id") or "missing", "timestamp": record.get("timestamp") or "", "model": message.get("model") or "unknown", "effort": record.get("effort") or record.get("perTurnEffort") or "unknown", "tool_calls": len(tool_calls), "usage_record": int(bool(raw)), "deduplication": "request_id", **item})
-            last_request = vendor_id
-            for part in tool_calls:
-                tools.append({"request_id": vendor_id, "tool_call_id": str(part.get("id") or "missing"), "tool_name": part.get("name") or "unknown", "result_chars": 0, "timestamp": record.get("timestamp") or ""})
-    return requests, tools, counts
+                prior = requests[vendor_id]
+                if item is not None and prior["usage_record"] and any(prior[field] != item[field] for field in TOKENS):
+                    prior["usage_status"] = "ambiguous_conflict"
+                    counts["conflicting_usage_records"] += 1
+            else:
+                initial = item or usage()
+                requests[vendor_id] = {"family": "claude", "session_id": session_id or "unmapped", "vendor_session_id": record.get("sessionId") or "missing", "request_id": vendor_id, "turn_id": "unknown_not_assumed_agent_turn", "response_id": message_id or "missing", "timestamp": record.get("timestamp") or "", "model": message.get("model") or "unknown", "effort": record.get("effort") or record.get("perTurnEffort") or "unknown", "tool_calls": 0, "usage_record": int(item is not None), "usage_status": "present" if item is not None else "missing", "deduplication": "message.id_then_requestId", **initial}
+            for part in message.get("content") or []:
+                if isinstance(part, dict) and part.get("type") == "tool_use":
+                    call_id = str(part.get("id") or "missing")
+                    if call_id in tool_calls:
+                        counts["duplicate_tool_call_blocks"] += 1
+                    tool_calls[call_id] = {"family": "claude", "session_id": session_id or "unmapped", "request_id": vendor_id, "tool_call_id": call_id, "tool_name": part.get("name") or "unknown", "result_chars": 0, "result_representation": "missing_result", "timestamp": record.get("timestamp") or "", "association": "native_tool_use_id", "request_association": "native_assistant_content"}
+    tools = list(tool_calls.values())
+    by_call = {(row["session_id"], row["tool_call_id"]): row for row in tools}
+    for result in tool_results:
+        target = by_call.get((result["session_id"], result["tool_call_id"]))
+        if target is None:
+            tools.append({"family": "claude", "session_id": result["session_id"], "request_id": "unmapped", "tool_call_id": result["tool_call_id"], "tool_name": "unknown", "result_chars": result["result_chars"], "result_representation": result["result_representation"], "timestamp": result["timestamp"], "association": "unmatched_tool_result", "request_association": "unavailable"})
+            counts["unmatched_tool_results"] += 1
+        else:
+            target["result_chars"] = max(target["result_chars"], result["result_chars"])
+            target["result_representation"] = result["result_representation"]
+    for row in requests.values():
+        row["tool_calls"] = sum(call["request_id"] == row["request_id"] for call in tools)
+    return list(requests.values()), tools, counts
 
 
 def codex_requests(path: Path, internal: dict[str, dict[str, Any]], cutoff: str) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -161,6 +214,45 @@ def codex_requests(path: Path, internal: dict[str, dict[str, Any]], cutoff: str)
     return requests, counts
 
 
+def codex_tools(path: Path, internal: dict[str, dict[str, Any]], cutoff: str) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Join Codex function calls/results by native call ID, not request order."""
+    calls: dict[tuple[str, str], dict[str, Any]] = {}
+    results: list[dict[str, Any]] = []
+    counts = collections.Counter()
+    try:
+        file = path.open(encoding="utf-8", errors="replace")
+    except OSError:
+        return [], counts
+    with file:
+        for line in file:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record.get("timestamp"), str) and record["timestamp"] > cutoff:
+                continue
+            payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+            meta = payload.get("session_meta") if isinstance(payload.get("session_meta"), dict) else {}
+            vendor_session = payload.get("session_id") or meta.get("id")
+            sid = internal.get(vendor_session, {}).get("id", "unmapped") if isinstance(vendor_session, str) else "unmapped"
+            item = payload.get("item") if isinstance(payload.get("item"), dict) else payload
+            if item.get("type") == "function_call" and isinstance(item.get("call_id"), str):
+                key = (sid, item["call_id"])
+                calls[key] = {"family": "codex", "session_id": sid, "request_id": "unavailable_no_native_response_link", "tool_call_id": item["call_id"], "tool_name": item.get("name") or "unknown", "result_chars": 0, "result_representation": "missing_result", "timestamp": record.get("timestamp") or "", "association": "native_call_id", "request_association": "unavailable_no_native_response_link"}
+            elif item.get("type") == "function_call_output" and isinstance(item.get("call_id"), str):
+                length, representation = string_size(item.get("output"))
+                results.append({"sid": sid, "call_id": item["call_id"], "length": length, "representation": representation, "timestamp": record.get("timestamp") or ""})
+    for result in results:
+        target = calls.get((result["sid"], result["call_id"]))
+        if target:
+            target["result_chars"] = max(target["result_chars"], result["length"])
+            target["result_representation"] = result["representation"]
+        else:
+            calls[(result["sid"], result["call_id"])] = {"family": "codex", "session_id": result["sid"], "request_id": "unmapped", "tool_call_id": result["call_id"], "tool_name": "unknown", "result_chars": result["length"], "result_representation": result["representation"], "timestamp": result["timestamp"], "association": "unmatched_native_call_id", "request_association": "unavailable"}
+            counts["unmatched_outputs"] += 1
+    return list(calls.values()), counts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", required=True, type=Path)
@@ -169,6 +261,8 @@ def main() -> int:
     parser.add_argument("--codex-transcripts", type=Path, default=Path("/Users/malvarez/.codex/sessions"))
     parser.add_argument("--claude-transcripts", type=Path, default=Path("/Users/malvarez/.claude/projects"))
     parser.add_argument("--source-label", required=True)
+    parser.add_argument("--audit-goal-id", default="01m4y11d2c2q2zt30qgg5gjkj9")
+    parser.add_argument("--snapshot-location", default="external SQLite snapshot supplied to --database")
     args = parser.parse_args()
     source = args.database.resolve()
     out = args.output.resolve()
@@ -177,6 +271,8 @@ def main() -> int:
     conn.row_factory = sqlite3.Row
     sessions = rows(conn, "SELECT * FROM agent_sessions")
     session_by_id = {row["id"]: row for row in sessions}
+    tasks = {row["id"]: row for row in rows(conn, "SELECT * FROM tasks")}
+    agents = {row["id"]: row for row in rows(conn, "SELECT * FROM task_agents")}
     internal = {row["internal_session_id"]: row for row in sessions if row.get("internal_session_id")}
     cutoff = max(value for value in (conn.execute("SELECT MAX(created_at) FROM agent_events").fetchone()[0], conn.execute("SELECT MAX(updated_at) FROM session_usage").fetchone()[0], conn.execute("SELECT MAX(created_at) FROM stat_facts").fetchone()[0]) if value)
 
@@ -184,6 +280,7 @@ def main() -> int:
     request_rows: list[dict[str, Any]] = []
     tool_rows: list[dict[str, Any]] = []
     manifest = hashlib.sha256()
+    manifest_rows: list[dict[str, Any]] = []
     claude_counts = collections.Counter()
     if args.claude_transcripts.exists():
         files = sorted(args.claude_transcripts.rglob("*.jsonl"))
@@ -194,6 +291,7 @@ def main() -> int:
             tool_rows.extend(results)
             if found:
                 manifest.update(("claude:" + digest(path) + "\n").encode())
+                manifest_rows.append({"family": "claude", "source_id": hashlib.sha256(f"claude:{path.relative_to(args.claude_transcripts)}".encode()).hexdigest(), "retained_content_sha256": retained_digest(path, cutoff), "parser": "assistant_message_usage_and_tool_ids", "mapped_requests": sum(row["session_id"] != "unmapped" for row in found), "unmapped_requests": sum(row["session_id"] == "unmapped" for row in found)})
         formats.append({"family": "claude", "files": len(files), "mapped_sessions": len({row["session_id"] for row in request_rows if row["session_id"] != "unmapped"}), "request_history": "supported", "reason": "assistant requestId/message.id and per-message usage are retained"})
     else:
         formats.append({"family": "claude", "files": 0, "mapped_sessions": 0, "request_history": "unavailable", "reason": "transcript root does not exist"})
@@ -204,9 +302,13 @@ def main() -> int:
         for path in files:
             found, counts = codex_requests(path, internal, cutoff)
             request_rows.extend(found)
+            codex_tool_rows, tool_counts = codex_tools(path, internal, cutoff)
+            tool_rows.extend(codex_tool_rows)
+            codex_counts.update(tool_counts)
             codex_counts.update(counts)
             if found:
                 manifest.update(("codex:" + digest(path) + "\n").encode())
+                manifest_rows.append({"family": "codex", "source_id": hashlib.sha256(f"codex:{path.relative_to(args.codex_transcripts)}".encode()).hexdigest(), "retained_content_sha256": retained_digest(path, cutoff), "parser": "token_usage_record_and_function_call_ids", "mapped_requests": sum(row["session_id"] != "unmapped" for row in found), "unmapped_requests": sum(row["session_id"] == "unmapped" for row in found)})
         formats.append({"family": "codex", "files": len(files), "mapped_sessions": len({row["session_id"] for row in request_rows if row["family"] == "codex" and row["session_id"] != "unmapped"}), "request_history": "supported_with_field_semantics_limit", "reason": "token_usage_record has a native response_id and non-overlapping usage field; turn and thread totals overlap"})
     else:
         formats.append({"family": "codex", "files": 0, "mapped_sessions": 0, "request_history": "unavailable", "reason": "transcript root does not exist"})
@@ -216,16 +318,16 @@ def main() -> int:
 
     # A response/message ID is authoritative within its format. Exact copies
     # collapse; conflicting copies are excluded rather than silently chosen.
-    deduped: dict[tuple[str, str], dict[str, Any]] = {}
-    conflicts: set[tuple[str, str]] = set()
+    deduped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    conflicts: set[tuple[str, str, str]] = set()
     for row in request_rows:
-        key = (row["family"], row["request_id"])
+        key = (row["family"], row["vendor_session_id"], row["request_id"])
         prior = deduped.get(key)
         if prior is None:
             deduped[key] = row
         elif any(prior[field] != row[field] for field in TOKENS):
             conflicts.add(key)
-    request_rows = [row for key, row in deduped.items() if key not in conflicts]
+    request_rows = [row for key, row in deduped.items() if key not in conflicts and row.get("usage_status", "present") == "present"]
     unmapped_request_records = sum(row["session_id"] == "unmapped" for row in request_rows)
     request_rows = [row for row in request_rows if row["session_id"] != "unmapped"]
     # Request histories use native request IDs.  No timeline is inferred for
@@ -242,7 +344,9 @@ def main() -> int:
         for value in values:
             add(total, value)
         session = session_by_id[sid]
-        timeline.append({"session_id": sid, "goal_id": session.get("goal_id") or "", "task_id": session.get("task_id") or "", "seat": session.get("seat") or "", "model": session.get("model") or "", "requests": len(values), "first_request_at": first.isoformat().replace("+00:00", "Z") if first else "", "last_request_at": last.isoformat().replace("+00:00", "Z") if last else "", "observed_request_span_secs": round((last - first).total_seconds()) if first and last else "", "interval_definition": "first-to-last recorded model request; parallel requests are not added", **total, "uncached_input_tokens": uncached(total)})
+        task = tasks.get(session.get("task_id"), {})
+        agent = agents.get(session.get("task_agent_id"), {})
+        timeline.append({"session_id": sid, "goal_id": session.get("goal_id") or "", "task_id": session.get("task_id") or "", "seat": session.get("seat") or "", "workflow_column": agent.get("step") or task.get("step") or "unknown", "model": session.get("model") or "", "effort": session.get("effort") or "default", "launch_id": session.get("launch_id") or "", "task_outcome": task.get("status") or "unattributed", "session_status": session.get("status") or "", "partial": int(session.get("status") not in {"exited", "failed"}), "requests": len(values), "first_request_at": first.isoformat().replace("+00:00", "Z") if first else "", "last_request_at": last.isoformat().replace("+00:00", "Z") if last else "", "observed_request_span_secs": round((last - first).total_seconds()) if first and last else "", "interval_definition": "first-to-last recorded model request; parallel requests are not added", **total, "uncached_input_tokens": uncached(total)})
 
     # Associate a daemon delivery only when the retained session ID is native.
     wakeups: list[dict[str, Any]] = []
@@ -265,22 +369,23 @@ def main() -> int:
     # result length without adding a second call row.
     merged_tools: dict[tuple[str, str], dict[str, Any]] = {}
     for row in tool_rows:
-        key = (row["request_id"], row["tool_call_id"])
+        key = (row["family"], row["session_id"], row["tool_call_id"])
         prior = merged_tools.setdefault(key, dict(row))
         prior["result_chars"] = max(prior["result_chars"], row["result_chars"])
         if prior["tool_name"] == "unknown":
             prior["tool_name"] = row["tool_name"]
-    tool_values = sorted(merged_tools.values(), key=lambda value: (value["request_id"], value["tool_call_id"]))
+    mapped_request_keys = {(row["family"], row["session_id"], row["request_id"]) for row in request_rows}
+    tool_values = sorted((row for row in merged_tools.values() if (row["family"], row["session_id"], row["request_id"]) in mapped_request_keys or row["request_association"] != "native_assistant_content"), key=lambda value: (value["family"], value["request_id"], value["tool_call_id"]))
 
     baseline_snapshot = Path(__file__).with_name("snapshot.json")
     baseline_cutoff = json.loads(baseline_snapshot.read_text())["cutoff"] if baseline_snapshot.exists() else ""
-    audit_goal_ids = {row["id"] for row in rows(conn, "SELECT id FROM goals WHERE title LIKE '%request-level%' OR title LIKE '%Explain token usage%'")}
+    audit_goal_ids = {args.audit_goal_id}
     cohorts: dict[str, dict[str, Any]] = {}
-    for cohort in ("shared_baseline_cohort", "newer_evidence", "this_goal_overhead"):
+    for cohort in ("pre_followup_cutoff_not_verified_shared", "newer_evidence", "this_goal_overhead"):
         cohorts[cohort] = {"cohort": cohort, "requests": 0, "sessions": set(), **usage()}
     for row in request_rows:
         session = session_by_id[row["session_id"]]
-        cohort = "this_goal_overhead" if session.get("goal_id") in audit_goal_ids else "shared_baseline_cohort" if row["timestamp"] <= baseline_cutoff else "newer_evidence"
+        cohort = "this_goal_overhead" if session.get("goal_id") in audit_goal_ids else "pre_followup_cutoff_not_verified_shared" if row["timestamp"] <= baseline_cutoff else "newer_evidence"
         item = cohorts[cohort]
         item["requests"] += 1
         item["sessions"].add(row["session_id"])
@@ -290,24 +395,35 @@ def main() -> int:
         item["sessions"] = len(item["sessions"])
         item["uncached_input_tokens"] = uncached(item)
         cohort_rows.append(item)
-    handoffs = [{"coverage": "unavailable", "reason": "historical renderer revision, candidate set, selected entries, and prompt inclusion are not retained together", "supported_consequence": "none"}]
+    handoffs = [{"predecessor_session_id": session["switched_from"], "successor_session_id": session["id"], "goal_id": session.get("goal_id") or "", "task_id": session.get("task_id") or "", "renderer_revision": "uncertain_deployment_revision", "candidate_selection": "unavailable", "supported_consequence": "successor first request is retained when present", "reason": "stored events exist but no deployed renderer revision or persisted selected-entry set"} for session in sessions if session.get("switched_from")]
 
     request_total = usage()
     for row in request_rows:
         add(request_total, row)
-    baseline_total = usage()
-    for row in rows(conn, "SELECT input_tokens, cached_input_tokens, output_tokens FROM session_usage"):
-        add(baseline_total, row)
-    reconciliation = {"request_usage_rule": "sum one mapped retained native response/message ID per format; exclude conflicting duplicate IDs", "request_usage": {**request_total, "uncached_input_tokens": uncached(request_total)}, "canonical_session_usage": {**baseline_total, "uncached_input_tokens": uncached(baseline_total)}, "comparison": "not additive: transcript request coverage is partial and vendor accounting may differ", "deduplicated_claude_request_records": claude_counts["duplicate_request_records"], "conflicting_duplicate_request_ids_excluded": len(conflicts), "codex_request_coverage": "token_usage_record usage field only; cumulative token_count and turn/thread totals excluded", "unmapped_request_records_excluded": unmapped_request_records}
-    snapshot = {"analyzer_version": VERSION, "revision": args.revision, "source": {"label": args.source_label, "sha256": digest(source)}, "cutoff": cutoff, "transcript_manifest_sha256": manifest.hexdigest(), "coverage": {"formats": formats, "claude_parser": dict(claude_counts), "codex_inventory": dict(codex_counts), "mapped_request_sessions": len(grouped), "partial_sessions": sum(session["status"] not in {"exited", "failed"} for session in sessions)}, "separation": {"baseline": "frozen artifacts under bench/token-usage excluding followup-*", "newer_evidence": "this snapshot only", "goal_overhead": "the current goal is retained only through its own session identifiers and is excluded from historical claims"}}
+    usage_by_session: dict[str, dict[str, int]] = collections.defaultdict(usage)
+    for row in rows(conn, "SELECT * FROM session_usage"):
+        add(usage_by_session[row["session_id"]], row)
+    reconciliation_rows = []
+    for sid, session in session_by_id.items():
+        counter, observed = usage_by_session[sid], usage()
+        for row in grouped.get(sid, []): add(observed, row)
+        state = "request_partial" if not grouped.get(sid) else "matched" if observed == counter else "reset_or_multi_launch_or_scope_difference"
+        reconciliation_rows.append({"session_id": sid, "goal_id": session.get("goal_id") or "", "task_id": session.get("task_id") or "", "launch_id": session.get("launch_id") or "", "session_counter_present": int(sid in usage_by_session), "state": state, "request_input_tokens": observed["input_tokens"], "request_cached_input_tokens": observed["cached_input_tokens"], "request_output_tokens": observed["output_tokens"], "counter_input_tokens": counter["input_tokens"], "counter_cached_input_tokens": counter["cached_input_tokens"], "counter_output_tokens": counter["output_tokens"], "input_residual": counter["input_tokens"] - observed["input_tokens"], "cached_input_residual": counter["cached_input_tokens"] - observed["cached_input_tokens"], "output_residual": counter["output_tokens"] - observed["output_tokens"]})
+    frozen = json.loads(Path(__file__).with_name("reconciliation.json").read_text())
+    current_total = usage()
+    for value in usage_by_session.values(): add(current_total, value)
+    reconciliation = {"request_usage_rule": "sum one mapped retained native response/message ID per format; exclude conflicts and missing usage", "request_usage": {**request_total, "uncached_input_tokens": uncached(request_total)}, "current_snapshot_session_usage_not_baseline": {**current_total, "uncached_input_tokens": uncached(current_total)}, "frozen_baseline_canonical_usage": frozen["canonical_usage"], "frozen_baseline_rule": frozen["canonical_rule"], "frozen_baseline_deleted_session_fallbacks": frozen["fallback_usage"], "per_session_comparison": "request-reconciliation.csv; residuals remain unexplained unless stated by its state", "deduplicated_claude_request_records": claude_counts["duplicate_request_records"], "conflicting_duplicate_request_ids_excluded": len(conflicts), "unmapped_request_records_excluded": unmapped_request_records}
+    snapshot = {"analyzer_version": VERSION, "analyzer_sha256": digest(Path(__file__)), "revision": args.revision, "source": {"label": args.source_label, "external_snapshot_location": args.snapshot_location, "sha256": digest(source)}, "cutoff": cutoff, "transcript_manifest_sha256": manifest.hexdigest(), "coverage": {"formats": formats, "claude_parser": dict(claude_counts), "codex_inventory": dict(codex_counts), "mapped_request_sessions": len(grouped), "partial_sessions": sum(session["status"] not in {"exited", "failed"} for session in sessions)}, "separation": {"baseline": "frozen artifacts under bench/token-usage excluding followup-*", "pre_cutoff": "pre-followup cutoff is not proof of shared frozen session identity because frozen public artifacts omit session IDs", "goal_overhead": args.audit_goal_id}}
 
     write_csv(out / "format-inventory.csv", formats, ["family", "files", "mapped_sessions", "request_history", "reason"])
-    write_csv(out / "request-usage.csv", request_rows, ["family", "session_id", "vendor_session_id", "request_id", "turn_id", "response_id", "timestamp", "model", "effort", "tool_calls", "usage_record", "deduplication", "input_tokens", "cached_input_tokens", "output_tokens"])
-    write_csv(out / "session-timeline.csv", timeline, ["session_id", "goal_id", "task_id", "seat", "model", "requests", "first_request_at", "last_request_at", "observed_request_span_secs", "interval_definition", "input_tokens", "cached_input_tokens", "output_tokens", "uncached_input_tokens"])
-    write_csv(out / "tool-output.csv", tool_values, ["request_id", "tool_call_id", "tool_name", "result_chars", "timestamp"])
+    write_csv(out / "followup-transcript-manifest.csv", manifest_rows, ["family", "source_id", "retained_content_sha256", "parser", "mapped_requests", "unmapped_requests"])
+    write_csv(out / "request-usage.csv", request_rows, ["family", "session_id", "vendor_session_id", "request_id", "turn_id", "response_id", "timestamp", "model", "effort", "tool_calls", "usage_record", "usage_status", "deduplication", "input_tokens", "cached_input_tokens", "output_tokens"])
+    write_csv(out / "session-timeline.csv", timeline, ["session_id", "goal_id", "task_id", "seat", "workflow_column", "model", "effort", "launch_id", "task_outcome", "session_status", "partial", "requests", "first_request_at", "last_request_at", "observed_request_span_secs", "interval_definition", "input_tokens", "cached_input_tokens", "output_tokens", "uncached_input_tokens"])
+    write_csv(out / "tool-output.csv", tool_values, ["family", "session_id", "request_id", "tool_call_id", "tool_name", "result_chars", "result_representation", "timestamp", "association", "request_association"])
     write_csv(out / "wakeup-analysis.csv", wakeups, ["event_id", "session_id", "delivered_at", "delivery_cause", "next_request_id", "next_request_delay_secs", "outcome_join", "limitation"])
     write_csv(out / "cohort-comparison.csv", cohort_rows, ["cohort", "requests", "sessions", "input_tokens", "cached_input_tokens", "output_tokens", "uncached_input_tokens"])
-    write_csv(out / "handoff-analysis.csv", handoffs, ["coverage", "reason", "supported_consequence"])
+    write_csv(out / "handoff-analysis.csv", handoffs, ["predecessor_session_id", "successor_session_id", "goal_id", "task_id", "renderer_revision", "candidate_selection", "supported_consequence", "reason"])
+    write_csv(out / "request-reconciliation.csv", reconciliation_rows, ["session_id", "goal_id", "task_id", "launch_id", "session_counter_present", "state", "request_input_tokens", "request_cached_input_tokens", "request_output_tokens", "counter_input_tokens", "counter_cached_input_tokens", "counter_output_tokens", "input_residual", "cached_input_residual", "output_residual"])
     (out / "followup-snapshot.json").write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
     (out / "followup-reconciliation.json").write_text(json.dumps(reconciliation, indent=2, sort_keys=True) + "\n")
     (out / "FOLLOWUP-REPORT.md").write_text(f"""# Request-level transcript follow-up
@@ -320,29 +436,29 @@ Saved Claude transcripts establish per-request usage for mapped sessions and nat
 
 ## Reproducible evidence
 
-Cutoff: `{cutoff}`. Source: `{args.source_label}`. Source SHA-256: `{digest(source)}`. Analyzer revision: `{args.revision}`. Transcript manifest: `{manifest.hexdigest()}`. See `followup-snapshot.json`, `format-inventory.csv`, and `followup-reconciliation.json`.
+Cutoff: `{cutoff}`. Source: `{args.source_label}` at `{args.snapshot_location}`. Source SHA-256: `{digest(source)}`. Source revision: `{args.revision}`. Analyzer SHA-256: `{digest(Path(__file__))}`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
 
 The follow-up found {len(request_rows):,} unique request records, of which {sum(row['session_id'] != 'unmapped' for row in request_rows):,} map through native session IDs. It discarded {claude_counts['duplicate_request_records']:,} repeated Claude records and excluded {len(conflicts):,} conflicting duplicate native IDs. The CSV artifacts retain no raw transcript text.
 
 ## Cohorts, accounting, and timing
 
-`cohort-comparison.csv` separates mapped requests shared with the frozen baseline cutoff from newer evidence and this goal's overhead. These are transcript cohorts, not a before/after experiment. They do not show a saving.
+`cohort-comparison.csv` separates this goal by its explicit goal ID, newer evidence, and records before the follow-up cutoff. The final category is not called shared baseline: frozen public artifacts omit session IDs, so a true identity intersection needs the external frozen SQLite snapshot. These are transcript cohorts, not a before/after experiment.
 
-Request input includes cached input. Uncached input equals input minus cached input. `followup-reconciliation.json` compares the request sum with the baseline cumulative session counter without adding them. The difference is expected: formats and mappings are incomplete, while vendor and daemon records can have different scopes.
+Request input includes cached input. Uncached input equals input minus cached input. `request-reconciliation.csv` compares each mapped session with its retained session counters and records residuals. `followup-reconciliation.json` names the frozen baseline canonical total and fallback rule separately from the current snapshot; neither total replaces the other.
 
 `session-timeline.csv` measures only first-to-last timestamped model request in a session. It never sums per-request intervals, so parallel requests and waits do not inflate elapsed time. It does not measure model inference, tool runtime, queueing, or human wait.
 
 ## Wakeups, handoffs, and tool results
 
-`wakeup-analysis.csv` joins a daemon prompt to the first later retained request only when both share the native Ariadne session ID. This is temporal sequencing, not delivery causation. The database has no delivery ID, cause, outcome link, or rendered-prompt membership, so corrections cannot be separated reliably from repeated deliveries.
+`wakeup-analysis.csv` joins a daemon prompt to subsequent mapped requests in the same session. It records a temporal candidate and not a causal delivery join: events retain no vendor request ID, delivery cause, or outcome correlation. Session/task status and ending facts remain lifecycle outcomes, not request-start timestamps.
 
-Saved handoff text can be inspected locally, but historical rendering revision, candidate set, selection, and prompt inclusion are not retained as structured records. This study therefore does not reconstruct omitted handoff context or claim that later rereading came from a handoff.
+`handoff-analysis.csv` inventories each native `switched_from` predecessor-successor pair. Stored events can support a renderer inspection, but the deployed renderer revision and selected-entry set are not retained together; each row therefore states that uncertainty separately. This study does not claim omitted context or later rereading.
 
-`tool-output.csv` links Claude tool calls and results by native tool-call ID. Result characters describe retained text only. They are not billed-token measurements and do not establish that a result was later included in context.
+`tool-output.csv` links Claude and Codex tool calls/results by native tool-call ID. It separates mapped requests, unmatched calls, and unavailable request associations. Result characters describe retained text only; arrays of text blocks are measured and unsupported shapes are labelled. They are not billed-token measurements or proof of later prompt inclusion.
 
 ## Recommendation
 
-Keep TU-03 unchanged. Rank TU-01 first: add delivery IDs, causes, and resulting request/outcome links because existing records cannot resolve repeated delivery versus correction. Rank TU-02 second: record handoff candidate and selected lengths, renderer revision, and prompt inclusion because saved text cannot reconstruct selection. Rank TU-04 third: record request prompt components and tool-result inclusion because result size alone does not show token contribution. These are evidence-gap instruments, not production optimizations.
+Keep TU-03 unchanged. Rank TU-01 first: record delivery IDs, causes, and resulting request/outcome links. Rank TU-02 second: record deployed renderer revision, candidates, selected entries, and prompt inclusion. Rank TU-04 third: record prompt components and tool-result inclusion. The evidence identifies these residual gaps, but it does not show that suppressing any item saves tokens or time. A controlled comparison must keep checks and review columns unchanged and compare tokens, completion lead time, retry/review outcomes, and failure diagnosis quality.
 
 The strongest counter-evidence is the existing review history: repeated work may be a distinct revision or correction. No saved transcript demonstrates token savings or faster completion from suppressing a wakeup, reducing a handoff, or truncating a tool result. Preserve required checks and review columns. Stop here for the user decision before any production change.
 """)

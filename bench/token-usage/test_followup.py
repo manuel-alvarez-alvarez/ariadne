@@ -27,11 +27,28 @@ with tempfile.TemporaryDirectory() as directory:
 
     claude = root / "claude.jsonl"
     record = {"type": "assistant", "timestamp": "2026-10-01T00:00:00Z", "sessionId": "internal", "requestId": "request", "uuid": "turn", "message": {"id": "message", "model": "model", "usage": {"input_tokens": 10, "cache_read_input_tokens": 4, "cache_creation_input_tokens": 2, "output_tokens": 3}, "content": []}}
-    claude.write_text(json.dumps(record) + "\n" + json.dumps(record) + "\n")
-    values, _, counts = followup.claude_requests(claude, {"internal": {"id": "session"}}, "2026-10-02T00:00:00Z")
+    tool_block = {**record, "message": {**record["message"], "content": [{"type": "tool_use", "id": "call", "name": "Bash"}]}}
+    conflict = {**record, "message": {**record["message"], "usage": {"input_tokens": 10, "cache_read_input_tokens": 4, "cache_creation_input_tokens": 2, "output_tokens": 7}}}
+    result = {"type": "user", "timestamp": "2026-10-01T00:00:01Z", "sessionId": "internal", "message": {"content": [{"type": "tool_result", "tool_use_id": "call", "content": [{"type": "text", "text": "four"}, {"type": "text", "text": "chars"}]}]}}
+    claude.write_text("\n".join(json.dumps(value) for value in (record, tool_block, conflict, result)) + "\n")
+    values, tools, counts = followup.claude_requests(claude, {"internal": {"id": "session"}}, "2026-10-02T00:00:00Z")
     assert len(values) == 1
     assert values[0]["input_tokens"] == 16
     assert values[0]["cached_input_tokens"] == 4
-    assert counts["duplicate_request_records"] == 1
+    assert values[0]["tool_calls"] == 1
+    assert counts["duplicate_request_records"] == 2
+    assert counts["conflicting_usage_records"] == 1
+    assert tools[0]["tool_name"] == "Bash"
+    assert tools[0]["result_chars"] == 9
+
+    resumed = root / "resumed.jsonl"
+    resumed.write_text("\n".join(json.dumps(value) for value in (
+        {"type": "token_usage_record", "timestamp": "2026-10-01T00:00:00Z", "payload": {"response_id": "same", "turn_id": "turn", "session_id": "one", "usage": {"input_tokens": 5, "cached_input_tokens": 1, "output_tokens": 1}}},
+        {"type": "token_usage_record", "timestamp": "2026-10-01T00:00:01Z", "payload": {"response_id": "same", "turn_id": "turn", "session_id": "two", "usage": {"input_tokens": 7, "cached_input_tokens": 2, "output_tokens": 1}}},
+        {"type": "token_usage_record", "timestamp": "2026-10-03T00:00:00Z", "payload": {"response_id": "after", "turn_id": "turn", "session_id": "one", "usage": {"input_tokens": 999, "cached_input_tokens": 0, "output_tokens": 0}}},
+    )) + "\n")
+    values, counts = followup.codex_requests(resumed, {"one": {"id": "first"}, "two": {"id": "second"}}, "2026-10-02T00:00:00Z")
+    assert {(value["session_id"], value["request_id"]) for value in values} == {("first", "same"), ("second", "same")}
+    assert counts["after_cutoff"] == 1
 
 print("followup parser checks: ok")

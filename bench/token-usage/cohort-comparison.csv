@@ -1,4 +1,4 @@
 cohort,requests,sessions,input_tokens,cached_input_tokens,output_tokens,uncached_input_tokens
-shared_baseline_cohort,51799,596,10370885777,10234967475,25909253,135918302
-newer_evidence,479,11,50262236,48950026,184743,1312210
-this_goal_overhead,0,0,0,0,0,0
+pre_followup_cutoff_not_verified_shared,48256,594,10091388842,9971623152,25867893,119765690
+newer_evidence,129,6,9961151,9540362,54261,420789
+this_goal_overhead,384,5,42244579,41142016,155644,1102563

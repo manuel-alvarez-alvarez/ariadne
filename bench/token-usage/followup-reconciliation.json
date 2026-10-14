@@ -1,20 +1,42 @@
 {
-  "canonical_session_usage": {
+  "conflicting_duplicate_request_ids_excluded": 0,
+  "current_snapshot_session_usage_not_baseline": {
     "cached_input_tokens": 10728903243,
     "input_tokens": 10886543176,
     "output_tokens": 30473542,
     "uncached_input_tokens": 157639933
   },
-  "codex_request_coverage": "token_usage_record usage field only; cumulative token_count and turn/thread totals excluded",
-  "comparison": "not additive: transcript request coverage is partial and vendor accounting may differ",
-  "conflicting_duplicate_request_ids_excluded": 0,
   "deduplicated_claude_request_records": 81531,
-  "request_usage": {
-    "cached_input_tokens": 10283917501,
-    "input_tokens": 10421148013,
-    "output_tokens": 26093996,
-    "uncached_input_tokens": 137230512
+  "frozen_baseline_canonical_usage": {
+    "cached_input_tokens": 10681322842,
+    "input_tokens": 10837777871,
+    "output_tokens": 30300608
   },
-  "request_usage_rule": "sum one mapped retained native response/message ID per format; exclude conflicting duplicate IDs",
-  "unmapped_request_records_excluded": 86077
+  "frozen_baseline_deleted_session_fallbacks": {
+    "01m4d97xrpkyhmqny98mxz11wx": {
+      "cached_input_tokens": 859930,
+      "input_tokens": 899644,
+      "output_tokens": 5001
+    },
+    "01m4d9tbr1v59109p567vnvg1q": {
+      "cached_input_tokens": 147375,
+      "input_tokens": 164961,
+      "output_tokens": 939
+    },
+    "01m4k9f105rvc6fm8krhj4078h": {
+      "cached_input_tokens": 14160,
+      "input_tokens": 27560,
+      "output_tokens": 143
+    }
+  },
+  "frozen_baseline_rule": "sum session_usage once per (session_id, launch source), then use newest session_ended fact only for missing/deleted sessions",
+  "per_session_comparison": "request-reconciliation.csv; residuals remain unexplained unless stated by its state",
+  "request_usage": {
+    "cached_input_tokens": 10022305530,
+    "input_tokens": 10143594572,
+    "output_tokens": 26077798,
+    "uncached_input_tokens": 121289042
+  },
+  "request_usage_rule": "sum one mapped retained native response/message ID per format; exclude conflicts and missing usage",
+  "unmapped_request_records_excluded": 82814
 }

@@ -1,11 +1,13 @@
 {
-  "analyzer_version": "1",
+  "analyzer_sha256": "85b9e667a08b8aff602a5cb33f7b3ebe536d1603974b9b3b39dc38972737e327",
+  "analyzer_version": "2",
   "coverage": {
     "claude_parser": {
+      "conflicting_usage_records": 6818,
       "duplicate_request_records": 81531
     },
     "codex_inventory": {
-      "after_cutoff": 350,
+      "after_cutoff": 919,
       "cumulative_counter_records": 57834,
       "request_usage_records": 40282,
       "state_records_without_usage": 2294
@@ -20,7 +22,7 @@
       },
       {
         "family": "codex",
-        "files": 1529,
+        "files": 1532,
         "mapped_sessions": 232,
         "reason": "token_usage_record has a native response_id and non-overlapping usage field; turn and thread totals overlap",
         "request_history": "supported_with_field_semantics_limit"
@@ -44,15 +46,16 @@
     "partial_sessions": 2
   },
   "cutoff": "2026-10-14T22:17:05.521Z",
-  "revision": "21ae5e699c4bcde8cd772de832a3c13d18669a98",
+  "revision": "7640a689b3b9e8d884f95f31752c5a0c91d36055",
   "separation": {
     "baseline": "frozen artifacts under bench/token-usage excluding followup-*",
-    "goal_overhead": "the current goal is retained only through its own session identifiers and is excluded from historical claims",
-    "newer_evidence": "this snapshot only"
+    "goal_overhead": "01m4y11d2c2q2zt30qgg5gjkj9",
+    "pre_cutoff": "pre-followup cutoff is not proof of shared frozen session identity because frozen public artifacts omit session IDs"
   },
   "source": {
+    "external_snapshot_location": "/tmp/token-followup.db",
     "label": "SQLite backup created 2026-10-15",
     "sha256": "adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a"
   },
-  "transcript_manifest_sha256": "35718f855c8ba089d8a20bc95ba372b708f14d067016c75bcac44f1dad0c3ebe"
+  "transcript_manifest_sha256": "a249e3237db71a2b3e8c94e666fb0dcaaf77a7ee1501f404da0a303dc2d436a6"
 }

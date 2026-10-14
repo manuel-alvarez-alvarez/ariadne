@@ -8,28 +8,28 @@ Saved Claude transcripts establish per-request usage for mapped sessions and nat
 
 ## Reproducible evidence
 
-Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Analyzer revision: `21ae5e699c4bcde8cd772de832a3c13d18669a98`. Transcript manifest: `35718f855c8ba089d8a20bc95ba372b708f14d067016c75bcac44f1dad0c3ebe`. See `followup-snapshot.json`, `format-inventory.csv`, and `followup-reconciliation.json`.
+Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15` at `/tmp/token-followup.db`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Source revision: `7640a689b3b9e8d884f95f31752c5a0c91d36055`. Analyzer SHA-256: `85b9e667a08b8aff602a5cb33f7b3ebe536d1603974b9b3b39dc38972737e327`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
 
-The follow-up found 52,278 unique request records, of which 52,278 map through native session IDs. It discarded 81,531 repeated Claude records and excluded 0 conflicting duplicate native IDs. The CSV artifacts retain no raw transcript text.
+The follow-up found 48,769 unique request records, of which 48,769 map through native session IDs. It discarded 81,531 repeated Claude records and excluded 0 conflicting duplicate native IDs. The CSV artifacts retain no raw transcript text.
 
 ## Cohorts, accounting, and timing
 
-`cohort-comparison.csv` separates mapped requests shared with the frozen baseline cutoff from newer evidence and this goal's overhead. These are transcript cohorts, not a before/after experiment. They do not show a saving.
+`cohort-comparison.csv` separates this goal by its explicit goal ID, newer evidence, and records before the follow-up cutoff. The final category is not called shared baseline: frozen public artifacts omit session IDs, so a true identity intersection needs the external frozen SQLite snapshot. These are transcript cohorts, not a before/after experiment.
 
-Request input includes cached input. Uncached input equals input minus cached input. `followup-reconciliation.json` compares the request sum with the baseline cumulative session counter without adding them. The difference is expected: formats and mappings are incomplete, while vendor and daemon records can have different scopes.
+Request input includes cached input. Uncached input equals input minus cached input. `request-reconciliation.csv` compares each mapped session with its retained session counters and records residuals. `followup-reconciliation.json` names the frozen baseline canonical total and fallback rule separately from the current snapshot; neither total replaces the other.
 
 `session-timeline.csv` measures only first-to-last timestamped model request in a session. It never sums per-request intervals, so parallel requests and waits do not inflate elapsed time. It does not measure model inference, tool runtime, queueing, or human wait.
 
 ## Wakeups, handoffs, and tool results
 
-`wakeup-analysis.csv` joins a daemon prompt to the first later retained request only when both share the native Ariadne session ID. This is temporal sequencing, not delivery causation. The database has no delivery ID, cause, outcome link, or rendered-prompt membership, so corrections cannot be separated reliably from repeated deliveries.
+`wakeup-analysis.csv` joins a daemon prompt to subsequent mapped requests in the same session. It records a temporal candidate and not a causal delivery join: events retain no vendor request ID, delivery cause, or outcome correlation. Session/task status and ending facts remain lifecycle outcomes, not request-start timestamps.
 
-Saved handoff text can be inspected locally, but historical rendering revision, candidate set, selection, and prompt inclusion are not retained as structured records. This study therefore does not reconstruct omitted handoff context or claim that later rereading came from a handoff.
+`handoff-analysis.csv` inventories each native `switched_from` predecessor-successor pair. Stored events can support a renderer inspection, but the deployed renderer revision and selected-entry set are not retained together; each row therefore states that uncertainty separately. This study does not claim omitted context or later rereading.
 
-`tool-output.csv` links Claude tool calls and results by native tool-call ID. Result characters describe retained text only. They are not billed-token measurements and do not establish that a result was later included in context.
+`tool-output.csv` links Claude and Codex tool calls/results by native tool-call ID. It separates mapped requests, unmatched calls, and unavailable request associations. Result characters describe retained text only; arrays of text blocks are measured and unsupported shapes are labelled. They are not billed-token measurements or proof of later prompt inclusion.
 
 ## Recommendation
 
-Keep TU-03 unchanged. Rank TU-01 first: add delivery IDs, causes, and resulting request/outcome links because existing records cannot resolve repeated delivery versus correction. Rank TU-02 second: record handoff candidate and selected lengths, renderer revision, and prompt inclusion because saved text cannot reconstruct selection. Rank TU-04 third: record request prompt components and tool-result inclusion because result size alone does not show token contribution. These are evidence-gap instruments, not production optimizations.
+Keep TU-03 unchanged. Rank TU-01 first: record delivery IDs, causes, and resulting request/outcome links. Rank TU-02 second: record deployed renderer revision, candidates, selected entries, and prompt inclusion. Rank TU-04 third: record prompt components and tool-result inclusion. The evidence identifies these residual gaps, but it does not show that suppressing any item saves tokens or time. A controlled comparison must keep checks and review columns unchanged and compare tokens, completion lead time, retry/review outcomes, and failure diagnosis quality.
 
 The strongest counter-evidence is the existing review history: repeated work may be a distinct revision or correction. No saved transcript demonstrates token savings or faster completion from suppressing a wakeup, reducing a handoff, or truncating a tool result. Preserve required checks and review columns. Stop here for the user decision before any production change.

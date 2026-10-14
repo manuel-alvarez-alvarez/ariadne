@@ -65,12 +65,15 @@ PYTHONDONTWRITEBYTECODE=1 python3 bench/token-usage/followup.py \
   --database /tmp/ariadne-token-usage-snapshot.db \
   --output /tmp/ariadne-token-usage-followup \
   --revision "$(git rev-parse HEAD)" \
+  --snapshot-location /tmp/ariadne-token-usage-snapshot.db \
   --source-label 'refreshed SQLite backup of ~/.ariadne/ariadne.db'
 PYTHONDONTWRITEBYTECODE=1 python3 bench/token-usage/test_followup.py
 ```
 
-`followup-snapshot.json` records the cutoff, source hash, analyzer revision,
-transcript manifest, format inventory, and partial coverage. The committed
+`followup-snapshot.json` records the cutoff, source hash, analyzer source
+hash, requested source revision, format inventory, and partial coverage.
+`followup-transcript-manifest.csv` records a stable hashed source identity and
+retained-content SHA-256 for every parsed source. The committed
 request-level rows include only sessions with a native Ariadne mapping. They
 contain identifiers and aggregate counters, never raw prompt or tool text.
 Codex `token_usage_record.usage` is a per-response evidence layer. Its
@@ -78,6 +81,12 @@ cumulative `token_count` records and overlapping turn/thread totals are
 excluded from request totals. Claude records are deduplicated by native
 request ID. OpenCode is inventoried as unsupported because this installation
 does not retain a native Ariadne join or validated deduplication rule.
+
+The committed follow-up was generated from the external snapshot
+`/tmp/token-followup.db`, SHA-256
+`adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`.
+Reproduce it only with that database and transcript roots that match the
+follow-up manifest. The frozen baseline has separate, documented inputs.
 
 ## Checks
 
