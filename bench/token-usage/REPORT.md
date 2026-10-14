@@ -21,7 +21,7 @@ Required checks and review columns remain part of every comparison.
 
 - Cutoff: `2026-10-14T20:31:49.158Z`; analyzer version `2`; source SHA-256
   `b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47`. The raw database is deliberately not in Git.
-- Primary source: `pinned snapshot /tmp/ariadne-token-usage-snapshot.XXXXXX.db`. The inventory also inspected
+- Primary source: `pinned`. The inventory also inspected
   6 dated backups. Their retained IDs, event IDs, and
   shared usage counters are compared in `snapshot.json`; they are not summed.
 - The primary source holds 54 surviving goals, 180
@@ -35,10 +35,10 @@ Required checks and review columns remain part of every comparison.
 - Local transcript metadata scanned 2,901 files and mapped
   {'codex': 227, 'claude': 370} retained internal sessions.
   It found 349 final vendor counter snapshots;
-  171 are within 1% of the corresponding
+  148 are within 1% of the corresponding
   Ariadne session input and output. The rest are retained as discrepancies,
   not adjusted into the canonical total. The retained, cutoff-filtered
-  transcript manifest SHA-256 is `eeb5a52f535138ca551715c202c5b9ebe41e0667e3a51f94be7d0e302864f471`.
+  transcript manifest SHA-256 is `67e96b596df0596ca733492dfd490107e6fac9626e71ed08ad7dbce83ab8e2ae`.
 
 ## Counting rules and reconciliation
 

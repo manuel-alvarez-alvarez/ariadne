@@ -128,29 +128,31 @@ def tool_key(body: dict[str, Any]) -> str | None:
     return text_at(body, ("tool_call_id",), ("toolCallId",))
 
 
-def transcript_inventory(internal_sessions: dict[str, dict[str, Any]], cutoff: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def transcript_inventory(internal_sessions: dict[str, dict[str, Any]], cutoff: str, roots: dict[str, Path]) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     """Map local transcript metadata to retained internal session IDs.
 
     The output deliberately contains counters and Ariadne session IDs only.
     It never writes transcript paths or content.
     """
-    roots = (("codex", Path("/Users/malvarez/.codex/sessions"), "rollout-*.jsonl"),
-             ("claude", Path("/Users/malvarez/.claude/projects"), "*.jsonl"))
+    families = (("codex", roots["codex"], "rollout-*.jsonl"), ("claude", roots["claude"], "*.jsonl"))
     scanned = collections.Counter()
     mapped_files = collections.Counter()
     mapped_sessions: dict[str, set[str]] = collections.defaultdict(set)
     after_cutoff = collections.Counter()
     manifest = hashlib.sha256()
+    manifest_rows: list[dict[str, Any]] = []
     counter_rows: list[dict[str, Any]] = []
-    for family, root, pattern in roots:
+    for family, root, pattern in families:
         if not root.exists():
             continue
-        for path in root.rglob(pattern):
+        for path in sorted(root.rglob(pattern), key=lambda p: p.relative_to(root).as_posix()):
             scanned[family] += 1
             session_keys: set[str] = set()
             last_cost: dict[str, Any] | None = None
+            cost_aligned = False
             codex_segments: list[dict[str, int]] = []
             codex_last: dict[str, int] | None = None
+            file_digest = hashlib.sha256()
             try:
                 with path.open(encoding="utf-8", errors="replace") as handle:
                     for line in handle:
@@ -162,6 +164,7 @@ def transcript_inventory(internal_sessions: dict[str, dict[str, Any]], cutoff: s
                         if isinstance(stamp, str) and stamp > cutoff:
                             after_cutoff[family] += 1
                             continue
+                        file_digest.update(line.encode("utf-8", "replace"))
                         manifest.update(family.encode())
                         manifest.update(line.encode("utf-8", "replace"))
                         nested = record.get("payload") if isinstance(record.get("payload"), dict) else {}
@@ -170,6 +173,7 @@ def transcript_inventory(internal_sessions: dict[str, dict[str, Any]], cutoff: s
                                 session_keys.add(key)
                         if family == "claude" and record.get("type") == "cost-state":
                             last_cost = record
+                            cost_aligned = isinstance(stamp, str)
                         if family == "codex" and record.get("type") == "event_msg" and nested.get("type") == "token_count":
                             total = ((nested.get("info") or {}).get("total_token_usage") or {})
                             usage = {"input_tokens": int(total.get("input_tokens") or 0), "cached_input_tokens": int(total.get("cached_input_tokens") or 0), "output_tokens": int(total.get("output_tokens") or 0)}
@@ -178,6 +182,9 @@ def transcript_inventory(internal_sessions: dict[str, dict[str, Any]], cutoff: s
                             codex_last = usage
             except OSError:
                 continue
+            manifest.update(f"{family}:{path.relative_to(root).as_posix()}:{file_digest.hexdigest()}\n".encode())
+            if session_keys:
+                manifest_rows.append({"family": family, "file_identity_sha256": hashlib.sha256(f"{family}:{path.relative_to(root).as_posix()}".encode()).hexdigest(), "filtered_content_sha256": file_digest.hexdigest()})
             for key in session_keys:
                 mapped_files[family] += 1
                 mapped_sessions[family].add(key)
@@ -198,12 +205,12 @@ def transcript_inventory(internal_sessions: dict[str, dict[str, Any]], cutoff: s
                     output = sum(part["output_tokens"] for part in codex_segments)
                 else:
                     continue
-                counter_rows.append({"internal_session_id": key, "session_id": internal_sessions[key]["id"], "family": family,
+                counter_rows.append({"internal_session_id": key, "session_id": internal_sessions[key]["id"], "family": family, "temporal_alignment": "aligned" if family == "codex" or cost_aligned else "unaligned_untimestamped_cost_state",
                                      "transcript_uncached_input_tokens": uncached_input, "transcript_cached_input_tokens": cached_input,
                                      "transcript_input_tokens": uncached_input + cached_input, "transcript_output_tokens": output})
     return ({"files_scanned": dict(scanned), "mapped_files": dict(mapped_files), "mapped_sessions": {family: len(ids) for family, ids in mapped_sessions.items()},
              "counter_snapshots": collections.Counter(row["family"] for row in counter_rows), "records_after_database_cutoff": dict(after_cutoff), "filtered_manifest_sha256": manifest.hexdigest(),
-             "mapping": "matched Claude sessionId, Codex session_meta.payload.id, or a retained metadata identifier to agent_sessions.internal_session_id; no transcript launch identifier was retained"}, counter_rows)
+             "mapping": "matched Claude sessionId, Codex session_meta.payload.id, or a retained metadata identifier to agent_sessions.internal_session_id; no transcript launch identifier was retained"}, counter_rows, manifest_rows)
 
 
 def render_markdown(snapshot: dict[str, Any], recommendations: list[dict[str, Any]]) -> str:
@@ -397,6 +404,8 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path, help="directory for aggregate artifacts")
     parser.add_argument("--revision", default="unknown", help="Ariadne source revision used to analyze")
     parser.add_argument("--history-dir", type=Path, help="directory holding dated database backups; defaults to snapshot parent")
+    parser.add_argument("--codex-transcripts", type=Path, default=Path("/Users/malvarez/.codex/sessions"), help="external Codex transcript root")
+    parser.add_argument("--claude-transcripts", type=Path, default=Path("/Users/malvarez/.claude/projects"), help="external Claude transcript root")
     parser.add_argument("--source-label", help="safe source description to publish instead of the snapshot path")
     args = parser.parse_args()
 
@@ -654,13 +663,13 @@ def main() -> int:
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     running_sessions = sum(s["status"] in {"running", "starting", "idle", "waiting_permission"} for s in sessions)
     zero_usage = sum(s["id"] in usage_by_session and sum(usage_by_session[s["id"]].values()) == 0 for s in sessions)
-    transcript_meta, transcript_counters = transcript_inventory(internal_sessions, cutoff)
+    transcript_meta, transcript_counters, transcript_manifest_rows = transcript_inventory(internal_sessions, cutoff, {"codex": args.codex_transcripts, "claude": args.claude_transcripts})
     transcript_rows = []
     for row in transcript_counters:
         db_usage = usage_by_session.get(row["session_id"], usage_dict())
         session_launches = [u["source"] for u in usages if u["session_id"] == row["session_id"]]
         transcript_rows.append({**row, "database_input_tokens": db_usage["input_tokens"], "database_cached_input_tokens": db_usage["cached_input_tokens"], "database_output_tokens": db_usage["output_tokens"], "input_delta": row["transcript_input_tokens"] - db_usage["input_tokens"], "cached_input_delta": row["transcript_cached_input_tokens"] - db_usage["cached_input_tokens"], "output_delta": row["transcript_output_tokens"] - db_usage["output_tokens"], "retained_launches": len(session_launches), "comparison": "transcript cumulative is session/file scoped; it cannot allocate totals to launch sources"})
-    transcript_close = sum(abs(row["input_delta"]) <= max(1, row["database_input_tokens"] // 100) and abs(row["output_delta"]) <= max(1, row["database_output_tokens"] // 100) and abs(row["transcript_cached_input_tokens"] - row["database_cached_input_tokens"]) <= max(1, row["database_cached_input_tokens"] // 100) for row in transcript_rows)
+    transcript_close = sum(row["temporal_alignment"] == "aligned" and abs(row["input_delta"]) <= max(1, row["database_input_tokens"] // 100) and abs(row["output_delta"]) <= max(1, row["database_output_tokens"] // 100) and abs(row["transcript_cached_input_tokens"] - row["database_cached_input_tokens"]) <= max(1, row["database_cached_input_tokens"] // 100) for row in transcript_rows)
     migrations = read_rows(conn, "SELECT version, description, installed_on FROM _sqlx_migrations ORDER BY version") if table_exists(conn, "_sqlx_migrations") else []
     snapshot = {
         "analyzer_version": VERSION,
@@ -713,7 +722,8 @@ def main() -> int:
         limitations = "partial cutoff work" if row["partial"] else ("missing session usage" if row["sessions_missing_usage"] else "retained usage only")
         goal_analysis.append({"goal_id": row["goal_id"], "status": row["status"], "sessions": row["sessions"], "missing_usage_sessions": row["sessions_missing_usage"], "partial": row["partial"], "input_tokens": row["input_tokens"], "output_tokens": row["output_tokens"], "dominant_session_id": dominant["id"] if dominant else "", "dominant_session_share": round(dominant_usage / billable_total(row) if billable_total(row) else 0, 6), "dominant_role": roles.most_common(1)[0][0] if roles else "", "dominant_column": columns.most_common(1)[0][0] if columns else "", "ending_facts": len(goal_endings), "ending_outcomes": ";".join(sorted(collections.Counter(r["ending_status"] or "unknown" for r in goal_endings).elements())), "evidence_limit": limitations})
     write_csv(out / "goal-analysis.csv", goal_analysis, ["goal_id", "status", "sessions", "missing_usage_sessions", "partial", "input_tokens", "output_tokens", "dominant_session_id", "dominant_session_share", "dominant_role", "dominant_column", "ending_facts", "ending_outcomes", "evidence_limit"])
-    write_csv(out / "transcript-reconciliation.csv", transcript_rows, ["session_id", "internal_session_id", "family", "transcript_uncached_input_tokens", "transcript_cached_input_tokens", "transcript_input_tokens", "transcript_output_tokens", "database_input_tokens", "database_cached_input_tokens", "database_output_tokens", "input_delta", "cached_input_delta", "output_delta", "retained_launches", "comparison"])
+    write_csv(out / "transcript-reconciliation.csv", transcript_rows, ["session_id", "internal_session_id", "family", "temporal_alignment", "transcript_uncached_input_tokens", "transcript_cached_input_tokens", "transcript_input_tokens", "transcript_output_tokens", "database_input_tokens", "database_cached_input_tokens", "database_output_tokens", "input_delta", "cached_input_delta", "output_delta", "retained_launches", "comparison"])
+    write_csv(out / "transcript-manifest.csv", transcript_manifest_rows, ["family", "file_identity_sha256", "filtered_content_sha256"])
     audit_rows = []
     for goal in goals:
         if goal["title"].casefold() == "performance review":

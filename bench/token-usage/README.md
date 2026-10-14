@@ -47,6 +47,9 @@ manifest means current transcript files cannot reproduce the pinned transcript
 comparison. The database-only aggregates remain reproducible from the pinned
 SQLite copy; acquire an external transcript copy with the recorded manifest to
 reproduce transcript evidence exactly.
+Use `--codex-transcripts` and `--claude-transcripts` to point the analyzer at
+that preserved external copy. `transcript-manifest.csv` contains stable
+hashed file identities and filtered content hashes for matched evidence.
 
 ## Checks
 

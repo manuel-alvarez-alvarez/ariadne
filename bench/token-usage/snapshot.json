@@ -10,21 +10,21 @@
     "deleted_session_fallbacks": 3,
     "history_files": [
       {
-        "bytes": 278142976,
+        "bytes": 278388736,
         "counts": {
-          "agent_events": 172309,
+          "agent_events": 172377,
           "agent_sessions": 620,
           "goals": 54,
           "session_usage": 1077,
           "stat_facts": 31224,
           "tasks": 181
         },
-        "mtime": "2026-10-14T21:03:24.514949Z",
+        "mtime": "2026-10-14T21:05:54.513769Z",
         "name": "ariadne.db",
         "overlap": {
           "agent_events": {
             "all_backup_records_in_primary": false,
-            "backup_only": 1187,
+            "backup_only": 1255,
             "shared": 171122
           },
           "agent_sessions": {
@@ -54,9 +54,9 @@
           },
           "usage_counters": {
             "backup_shared_sum": {
-              "cached_input_tokens": 10701264193,
-              "input_tokens": 10858058119,
-              "output_tokens": 30361287
+              "cached_input_tokens": 10702881345,
+              "input_tokens": 10859689499,
+              "output_tokens": 30365186
             },
             "changed_rows": 2,
             "identical_rows": 1070,
@@ -484,7 +484,7 @@
         "claude": 1377,
         "codex": 1524
       },
-      "filtered_manifest_sha256": "eeb5a52f535138ca551715c202c5b9ebe41e0667e3a51f94be7d0e302864f471",
+      "filtered_manifest_sha256": "67e96b596df0596ca733492dfd490107e6fac9626e71ed08ad7dbce83ab8e2ae",
       "mapped_files": {
         "claude": 555,
         "codex": 227
@@ -496,14 +496,14 @@
       "mapping": "matched Claude sessionId, Codex session_meta.payload.id, or a retained metadata identifier to agent_sessions.internal_session_id; no transcript launch identifier was retained",
       "records_after_database_cutoff": {
         "claude": 293,
-        "codex": 1841
+        "codex": 1975
       },
-      "within_one_percent_of_database_input_and_output": 171
+      "within_one_percent_of_database_input_and_output": 148
     },
     "zero_usage_sessions": 0
   },
   "cutoff": "2026-10-14T20:31:49.158Z",
-  "generated_at": "2026-10-14T21:03:29.258020Z",
+  "generated_at": "2026-10-14T21:06:12.301550Z",
   "inventory": {
     "events": 171122,
     "facts": 31203,
@@ -521,8 +521,8 @@
       "facts_through": "2026-10-14T20:17:22.716Z",
       "usage_through": "2026-10-14T20:31:42.956Z"
     },
-    "label": "pinned snapshot /tmp/ariadne-token-usage-snapshot.XXXXXX.db",
-    "revision": "d62442bf0d6917594d06bb176a94ccefb9664db4",
+    "label": "pinned",
+    "revision": "02e28ba5383d601f9467e1340ca1c6c81bc7bc78",
     "sha256": "b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47",
     "snapshot_acquired_at": "2026-10-14T20:31:52.696616Z",
     "sqlite_user_version": 0
