@@ -242,7 +242,7 @@ pub(super) struct DeletePendingCommentReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct EditPendingReviewBodyReq {
-    /// The new verdict and summary.
+    /// The new text of the pending review body.
     pub body: String,
 }
 
@@ -1327,7 +1327,7 @@ mod tests {
         .await
         .expect("delete");
         mcp.edit_pending_review_body(Parameters(EditPendingReviewBodyReq {
-            body: "**Verdict: Comment**\n\nNothing open.".into(),
+            body: "Updated review body.".into(),
         }))
         .await
         .expect("edit the review body");
@@ -1359,10 +1359,7 @@ mod tests {
         let delete: serde_json::Value = serde_json::from_str(&seen[1].body).expect("json");
         assert_eq!(delete, serde_json::json!({"forge_id": "rc-501"}));
         let body: serde_json::Value = serde_json::from_str(&seen[2].body).expect("json");
-        assert_eq!(
-            body,
-            serde_json::json!({"body": "**Verdict: Comment**\n\nNothing open."})
-        );
+        assert_eq!(body, serde_json::json!({"body": "Updated review body."}));
     }
 
     /// Where the repository holds posts back, the daemon answers

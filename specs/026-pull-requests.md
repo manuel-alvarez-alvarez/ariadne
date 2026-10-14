@@ -503,20 +503,19 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   after without GitHub refusing the edit of a review it holds with no
   body at all:
   `github/comments.rs::tests::a_freshly_created_pending_review_is_editable_right_after`.
-- A reply or a resolve that folds its own text into the pending review's
-  body, rather than posting a comment of its own, brings `list_comments`'
+- A reply that folds its text into the pending review's body, rather than
+  posting a comment of its own, brings `list_comments`'
   own copy of that body current too, read fresh off the forge right after
   (rule 25): neither folds its own answer back, so without this a later
   read would still answer the body the review held before either changed
   it:
-  `github/comments.rs::tests::pending_review_body_reads_what_a_resolve_just_folded_into_it`,
-  `::pending_review_body_reads_what_a_conversation_reply_just_folded_into_it`.
+  `github/comments.rs::tests::pending_review_body_reads_what_a_conversation_reply_just_folded_into_it`.
 - A pending review past its first hundred comments still has a later one
   found: the node lookup `edit_pending_comment` and `delete_pending_comment`
   share pages the same way a request's threads do:
   `github/comments.rs::tests::edit_pending_comment_finds_a_comment_past_the_first_hundred`.
-- A reply or a resolve that folds into a pending review holding no comment
-  of its own yet — no round of `submit_review_pending` ever posted one —
+- A reply that folds into a pending review holding no comment of its own yet
+  — no round of `submit_review_pending` ever posted one —
   still has `list_comments` answer its body right after: held through
   `add_comments`, which holds one whether or not it was already there,
   never `edit_comment`, which only changes one already held (rule 25).
