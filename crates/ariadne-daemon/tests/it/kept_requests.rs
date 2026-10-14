@@ -2448,9 +2448,11 @@ async fn editing_and_deleting_a_held_pending_finding_updates_list_comments_at_on
                 "graphql",
                 "--hostname",
                 "github.com",
+                "--paginate",
                 "-f",
-                "query=query($id: ID!) { node(id: $id) { ... on PullRequestReview { \
-                 comments(first: 100) { nodes { id databaseId } } } } }",
+                "query=query($id: ID!, $endCursor: String) { node(id: $id) { ... on \
+                 PullRequestReview { comments(first: 100, after: $endCursor) { pageInfo { \
+                 hasNextPage endCursor } nodes { id databaseId } } } } }",
             ],
             0,
             r#"{"data":{"node":{"comments":{"nodes":[{"id":"PRRC_1","databaseId":501}]}}}}"#,

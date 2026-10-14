@@ -617,6 +617,21 @@ pub(super) async fn reply(
             .reply_pending(&slug(&forge), pull.number, &login, &comment, &sent)
             .await
             .map_err(forge_error)?;
+        // A conversation reply folds into the pending review's own body
+        // rather than posting a comment of its own, answering that
+        // review's id in its place (026 rule 25): read fresh and held,
+        // the same as `edit_pending_review_body`'s own echo, so
+        // `list_comments` never answers the body this reply has since
+        // changed. An inline thread reply answers its own new id instead,
+        // and touches no review body to bring current.
+        if forge_id.starts_with("rv-")
+            && let Some((_, body)) = client(&state, &forge)
+                .pending_review_body(&slug(&forge), pull.number, &login)
+                .await
+                .map_err(forge_error)?
+        {
+            state.launcher.live.edit_comment(&pull.id, &forge_id, &body);
+        }
         state
             .store
             .mark_pending_reply(&pull.id, &comment.forge_id)
@@ -751,6 +766,18 @@ pub(super) async fn resolve(
                 .resolve_pending(&slug(&forge), pull.number, &login, &comment)
                 .await
                 .map_err(forge_error)?;
+            // A resolve folds its line into the pending review's own body
+            // under its "Threads to resolve" heading, answering that
+            // review's id (026 rule 25): read fresh and held, the same as
+            // `edit_pending_review_body`'s own echo, so `list_comments`
+            // never answers the body a resolve has since changed.
+            if let Some((_, body)) = client(&state, &forge)
+                .pending_review_body(&slug(&forge), pull.number, &login)
+                .await
+                .map_err(forge_error)?
+            {
+                state.launcher.live.edit_comment(&pull.id, &id, &body);
+            }
             state.forge_poll.wake(&pull.repository_id);
             state.notify_scheduler_pull_request(&pull.id);
             let pending = PendingReplyDto { pending: true, id };

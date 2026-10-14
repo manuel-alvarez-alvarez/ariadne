@@ -604,6 +604,22 @@ impl ForgeClient {
         }
     }
 
+    /// The current body of the viewer's own pending review, with its own
+    /// forge id, read fresh: GitHub only, since GitLab's draft notes hold
+    /// no body shared the way a reply or a resolve folds into GitHub's
+    /// (026 rule 25).
+    pub(crate) async fn pending_review_body(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+    ) -> Result<Option<(String, String)>, String> {
+        match self {
+            Self::Github(cli) => cli.pending_review_body(repository, number, login).await,
+            Self::Gitlab(_) => Ok(None),
+        }
+    }
+
     /// Write the one summary comment a review keeps on request `number`
     /// (029): `existing` edited in place, else a new one. Answers its forge
     /// id and when it was written.

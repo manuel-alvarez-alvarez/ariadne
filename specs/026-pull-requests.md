@@ -466,6 +466,23 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   once, never waiting on a detail fetch that would never read either
   change back on its own:
   `kept_requests.rs::editing_and_deleting_a_held_pending_finding_updates_list_comments_at_once`.
+- A review GitHub creates fresh holds the hidden verdict mark as its body,
+  never an empty one, so `edit_pending_review_body` can replace it right
+  after without GitHub refusing the edit of a review it holds with no
+  body at all:
+  `github/comments.rs::tests::a_freshly_created_pending_review_is_editable_right_after`.
+- A reply or a resolve that folds its own text into the pending review's
+  body, rather than posting a comment of its own, brings `list_comments`'
+  own copy of that body current too, read fresh off the forge right after
+  (rule 25): neither folds its own answer back, so without this a later
+  read would still answer the body the review held before either changed
+  it:
+  `github/comments.rs::tests::pending_review_body_reads_what_a_resolve_just_folded_into_it`,
+  `::pending_review_body_reads_what_a_conversation_reply_just_folded_into_it`.
+- A pending review past its first hundred comments still has a later one
+  found: the node lookup `edit_pending_comment` and `delete_pending_comment`
+  share pages the same way a request's threads do:
+  `github/comments.rs::tests::edit_pending_comment_finds_a_comment_past_the_first_hundred`.
 - A trailing trailer and the blank line before it are stripped, and text with no trailer is left whole:
   `forge/pulls.rs::tests::strip_trailers_takes_off_a_trailing_trailer_and_the_blank_line_before_it`,
   `::strip_trailers_leaves_text_with_no_trailer_whole`.
