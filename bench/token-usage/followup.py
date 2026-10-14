@@ -594,6 +594,8 @@ The follow-up found {len(request_rows):,} retained request records, all mapped t
 
 Request input includes cached input. Uncached input equals input minus cached input. `request-reconciliation.csv` compares current retained requests with current session counters. `shared-cohort-reconciliation.csv` compares requests at or before the frozen cutoff with frozen per-session counters, and records post-cutoff requests in shared sessions separately. The baseline hash is recorded in `followup-snapshot.json`. Residuals label missing retained requests separately; all other residuals remain unresolved where counters, resets, and launch scope do not identify a unique cause. `followup-reconciliation.json` names the frozen baseline canonical total and fallback rule separately from the current snapshot; neither total replaces the other.
 
+`manual-inspection.json` traces the three largest absolute input residuals. They have 11/12, 6/6, and 5/5 frozen counter-source/session-start counts. These establish segmented resumed scope. The negative residual case also shows why excluded requests cannot explain every mismatch. No source-to-request identity is retained, so each quantified remainder stays unresolved.
+
 `session-timeline.csv` measures only first-to-last timestamped model request in a session. It never sums per-request intervals, so parallel requests and waits do not inflate elapsed time. It does not measure model inference, tool runtime, queueing, or human wait.
 
 ## Wakeups, handoffs, and tool results

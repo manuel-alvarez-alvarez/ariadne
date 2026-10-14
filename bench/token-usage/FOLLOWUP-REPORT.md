@@ -8,7 +8,7 @@ Saved Claude transcripts establish per-request usage for mapped sessions and nat
 
 ## Reproducible evidence
 
-Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15` at `/tmp/token-followup.db`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Source revision: `fe10bc18e13d9b9011bb34cdaba25bc0e97b3b90`. Analyzer SHA-256: `d2f7d70be867499b9188ad88172cc8c94885ac572005aa74278c32a142578d81`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
+Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15` at `/tmp/token-followup.db`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Source revision: `1b07a7d576d87d5a19055489ece8bd2b63c6a42d`. Analyzer SHA-256: `dd5e0929075b866816cc33f60dd15adb8f3ee89b3ed46cfdd66bbd1dab43afa0`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
 
 The follow-up found 48,769 retained request records, all mapped through native session IDs. It discarded 81,531 repeated Claude blocks and excluded 6,782 ambiguous-usage request identities (6,782 identities including missing usage) in `excluded-requests.csv`. The CSV artifacts retain no raw transcript text.
 
@@ -17,6 +17,8 @@ The follow-up found 48,769 retained request records, all mapped through native s
 `cohort-comparison.csv` uses the supplied frozen SQLite snapshot to intersect native `agent_sessions.id` values. It separates those shared identities, new sessions, and this goal by explicit goal ID. These transcript cohorts are not a before/after experiment.
 
 Request input includes cached input. Uncached input equals input minus cached input. `request-reconciliation.csv` compares current retained requests with current session counters. `shared-cohort-reconciliation.csv` compares requests at or before the frozen cutoff with frozen per-session counters, and records post-cutoff requests in shared sessions separately. The baseline hash is recorded in `followup-snapshot.json`. Residuals label missing retained requests separately; all other residuals remain unresolved where counters, resets, and launch scope do not identify a unique cause. `followup-reconciliation.json` names the frozen baseline canonical total and fallback rule separately from the current snapshot; neither total replaces the other.
+
+`manual-inspection.json` traces the three largest absolute input residuals. They have 11/12, 6/6, and 5/5 frozen counter-source/session-start counts. These establish segmented resumed scope. The negative residual case also shows why excluded requests cannot explain every mismatch. No source-to-request identity is retained, so each quantified remainder stays unresolved.
 
 `session-timeline.csv` measures only first-to-last timestamped model request in a session. It never sums per-request intervals, so parallel requests and waits do not inflate elapsed time. It does not measure model inference, tool runtime, queueing, or human wait.
 
