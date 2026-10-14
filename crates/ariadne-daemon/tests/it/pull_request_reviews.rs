@@ -1226,7 +1226,7 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
             as_session(
                 &format!("/v1/pull-requests/{id}/reviews"),
                 &session.id,
-                json!({"event": "request_changes", "body": "One finding.", "comments": [
+                json!({"event": "request_changes", "comments": [
                     {"path": "a.txt", "line": 1, "title": "Empty list",
                      "body": "An empty list panics.", "priority": "P0"}
                 ]}),
