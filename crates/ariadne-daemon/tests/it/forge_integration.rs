@@ -12,7 +12,7 @@ use std::path::Path;
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use ariadne_api::repositories::RepositoryDto;
+use ariadne_api::repositories::{ForgeDetectionDto, RepositoryDto};
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::ForgeKind;
 
@@ -424,4 +424,72 @@ async fn concurrent_registrations_that_enable_leave_no_repository_for_the_loser(
         "the refused registration left no row"
     );
     assert!(repositories[0].forge.as_ref().unwrap().enabled);
+}
+
+/// `POST /v1/forge/detect` reads a checkout's remote the same way
+/// registration does, ahead of writing anything down.
+#[tokio::test]
+async fn detect_reads_the_forge_without_registering() {
+    let h = harness().await;
+    let path = checkout_with_origin(&h, "repo", "git@github.com:acme/widgets.git");
+
+    let detected: Option<ForgeDetectionDto> = h
+        .json(
+            post_json("/v1/forge/detect", json!({"path": path})),
+            StatusCode::OK,
+        )
+        .await;
+    let detected = detected.expect("a github origin is detected");
+    assert_eq!(detected.kind, ForgeKind::Github);
+    assert_eq!(detected.host, "github.com");
+    assert_eq!(detected.owner, "acme");
+    assert_eq!(detected.name, "widgets");
+    assert_eq!(detected.remote, "origin");
+
+    assert!(
+        h.store.list_repositories().await.unwrap().is_empty(),
+        "detecting registers nothing"
+    );
+}
+
+#[tokio::test]
+async fn detect_answers_null_for_a_checkout_with_no_forge_remote() {
+    let h = harness().await;
+    let path = h.git_repo("repo").display().to_string();
+
+    let detected: Option<ForgeDetectionDto> = h
+        .json(
+            post_json("/v1/forge/detect", json!({"path": path})),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(detected.is_none());
+}
+
+#[tokio::test]
+async fn detect_refuses_a_relative_or_non_git_path() {
+    let h = harness().await;
+
+    let err = h
+        .error(
+            post_json("/v1/forge/detect", json!({"path": "relative/repo"})),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error.message.contains("must be absolute"),
+        "{}",
+        err.error.message
+    );
+
+    let not_a_repo = h.dir.path().join("empty");
+    std::fs::create_dir_all(&not_a_repo).unwrap();
+    h.error(
+        post_json(
+            "/v1/forge/detect",
+            json!({"path": not_a_repo.display().to_string()}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
 }

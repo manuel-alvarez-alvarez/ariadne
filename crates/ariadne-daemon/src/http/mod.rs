@@ -143,7 +143,7 @@ impl AppState {
         workflows::delete, workflows::reset, workflows::parse,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
-        forge::get_tunnel, forge::set_tunnel,
+        forge::detect, forge::get_tunnel, forge::set_tunnel,
         issues::list, issues::get,
         pull_requests::list, pull_requests::get, pull_requests::get_by_number, pull_requests::refresh, pull_requests::search,
         pull_requests::comments, pull_requests::comment, pull_requests::reply, pull_requests::resolve,
@@ -301,6 +301,7 @@ pub fn router(state: AppState) -> Router {
                 .put(repositories::update)
                 .delete(repositories::delete),
         )
+        .route("/v1/forge/detect", post(forge::detect))
         .route(
             "/v1/forge/tunnel",
             get(forge::get_tunnel).put(forge::set_tunnel),

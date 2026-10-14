@@ -29,8 +29,11 @@ you. `ariadne repo inspect <repo-id>` prints the detected remote, whether
 the integration is on, and the stored login; `ariadne repo ls` has a FORGE
 column, `<kind> <owner>/<name> on|off`. The desktop app's repository dialog
 has one switch, "GitHub integration" or "GitLab integration", once a remote
-was detected, with the detected repository, the CLI and the login beside
-it.
+was detected — while editing, off the repository's own stored row, and
+while registering, off a probe of the path field itself, since nothing is
+stored yet — with the detected repository, the CLI and the login beside
+it. "Supervise posts" sits right below that switch and only while it is on,
+in both dialogs.
 
 The same checkout — the same host, owner and repository name — can only be
 enabled on one registered repository row at a time, even registered twice

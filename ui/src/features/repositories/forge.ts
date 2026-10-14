@@ -19,8 +19,12 @@ export function forgeKindLabel(kind: ForgeDto["kind"]): string {
   return KIND_LABELS[kind]
 }
 
-/** The forge repository, as its own URL would name it: `github.com/acme/widgets`. */
-export function forgeRepositoryLabel(forge: ForgeDto): string {
+/**
+ * The forge repository, as its own URL would name it: `github.com/acme/widgets`.
+ * Takes a plain `ForgeDto` or the leaner `ForgeDetectionDto` `POST /v1/forge/detect`
+ * answers before one is registered.
+ */
+export function forgeRepositoryLabel(forge: Pick<ForgeDto, "host" | "owner" | "name">): string {
   return `${forge.host}/${forge.owner}/${forge.name}`
 }
 

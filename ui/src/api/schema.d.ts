@@ -188,6 +188,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/forge/detect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Detect the forge a checkout's remote is on, the same way registration
+         *     does. Null for a checkout with no GitHub or GitLab remote.
+         */
+        post: operations["repositories_detect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/forge/tunnel": {
         parameters: {
             query?: never;
@@ -2235,8 +2255,9 @@ export interface components {
             path: string;
             permission_mode?: null | components["schemas"]["PermissionMode"];
             /**
-             * @description Open every pull request this repository's agents post as a draft for
-             *     a person's approval. Omit for `true`.
+             * @description Put agent replies, reviews and resolves in your pending GitHub review
+             *     or GitLab draft notes, and open pull requests as drafts. Omit for
+             *     `true`.
              */
             supervise_posts?: boolean | null;
         };
@@ -2312,6 +2333,14 @@ export interface components {
         /** @description Payload of the deletion events: the id of the gone entity. */
         DeletedDto: {
             id: string;
+        };
+        /** @description `POST /v1/forge/detect`: the checkout to probe. */
+        DetectForgeRequest: {
+            /**
+             * @description Absolute path of the checkout to probe.
+             * @example /home/me/dev/ariadne
+             */
+            path: string;
         };
         /**
          * @description Where a Kev flavour runs.
@@ -2518,6 +2547,23 @@ export interface components {
         FlavourOptionsDto: {
             devices: components["schemas"]["DeviceOptionDto"][];
             flavour: components["schemas"]["Flavour"];
+        };
+        /**
+         * @description What `POST /v1/forge/detect` answers: the forge a checkout's remote
+         *     names, read the same way registration reads it. Null for a checkout with
+         *     no usable GitHub or GitLab remote.
+         */
+        ForgeDetectionDto: {
+            /**
+             * @description Lower-cased, like `owner` and `name`.
+             * @example github.com
+             */
+            host: string;
+            kind: components["schemas"]["ForgeKind"];
+            name: string;
+            owner: string;
+            /** @description The remote it was read off, `origin` where there is one. */
+            remote: string;
         };
         /** @description The forge a repository's remote is on, and whether Ariadne works with it. */
         ForgeDto: {
@@ -3248,9 +3294,8 @@ export interface components {
              */
             permission_mode: components["schemas"]["PermissionMode"];
             /**
-             * @description Whether this repository's agents hold what they post to the forge for
-             *     a person's approval: every pull request opened as a draft today, and
-             *     a later release holding replies, reviews and resolves the same way.
+             * @description Put agent replies, reviews and resolves in your pending GitHub review
+             *     or GitLab draft notes, and open pull requests as drafts.
              */
             supervise_posts: boolean;
             updated_at: string;
@@ -3903,7 +3948,11 @@ export interface components {
             forge?: null | components["schemas"]["ForgeUpdate"];
             path?: string | null;
             permission_mode?: null | components["schemas"]["PermissionMode"];
-            /** @description Absent = unchanged. */
+            /**
+             * @description Put agent replies, reviews and resolves in your pending GitHub review
+             *     or GitLab draft notes, and open pull requests as drafts. Absent =
+             *     unchanged.
+             */
             supervise_posts?: boolean | null;
         };
         /** @description Partial update; absent fields stay unchanged. */
@@ -4298,6 +4347,36 @@ export interface operations {
                 content: {
                     "text/event-stream": components["schemas"]["DomainEvent"];
                 };
+            };
+        };
+    };
+    repositories_detect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DetectForgeRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": null | components["schemas"]["ForgeDetectionDto"];
+                };
+            };
+            /** @description not an absolute path, or not a git work tree */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
