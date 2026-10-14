@@ -61,6 +61,7 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    to choose.
 5. `depends_on` is for a genuine compilation, execution, or acceptance
    prerequisite only; tasks that merely touch nearby files run together.
+   Tasks that run together stay off the same code.
    Where one task hands another a route, a response shape, a function or a
    file, it names that interface in both tickets instead of a `depends_on`
    edge.

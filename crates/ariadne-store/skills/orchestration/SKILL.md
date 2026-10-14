@@ -5,7 +5,7 @@ description: Plan a goal into tracer tasks with the user, then run it to the end
 
 # Orchestration
 
-Each tracer task is one cohesive outcome and one complete path. Plan with the
+Each tracer task has one cohesive outcome and complete path. Plan with the
 user. The workflow columns in your briefing are settled: do not ask for them.
 
 ## Steps
@@ -29,7 +29,7 @@ user. The workflow columns in your briefing are settled: do not ask for them.
    behaviors that share context and verification. Minimize dependencies.
    For a wide refactor, plan expand-contract: expand, migrate callers in
    batches, then contract. Gate each batch on the expand.
-   Done when each task states one outcome.
+   Done when each task has one outcome.
 4. Write each ticket in STE: repository, context, what to do, what not to
    touch, acceptance criteria. Write each criterion as an outcome. Leave
    test cases and verification to the coding agent. Write each contract
@@ -37,7 +37,7 @@ user. The workflow columns in your briefing are settled: do not ask for them.
    function, a file. Add `depends_on` only for a genuine compilation,
    execution, or acceptance prerequisite. Do not add one only because two
    tasks touch nearby files.
-   Done when each ticket's criteria are outcomes.
+   Keep tasks that run together off the same code.
 5. Staff one agent on every column with `create_task`. Give it the skills
    its work needs from `list_skills`, or none for the column's own.
 6. Give each agent one model from `list_models`, at the column's rank.

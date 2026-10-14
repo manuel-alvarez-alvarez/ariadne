@@ -1694,6 +1694,7 @@ mod tests {
             "Write each contract between two tasks into both tickets: a route, a response shape, a function, a file.",
             "Add `depends_on` only for a genuine compilation, execution, or acceptance prerequisite.",
             "Do not add one only because two tasks touch nearby files.",
+            "Keep tasks that run together off the same code.",
             "Run no checks yourself: the last column proved the work.",
             "\"The frontend waits for the backend to land.\" -> Write the contract into both tickets. Both run now.",
         ] {
