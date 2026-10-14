@@ -277,17 +277,6 @@ impl Store {
         Ok(())
     }
 
-    /// Record the summary comment an Ariadne review keeps on the request
-    /// (029), once it first posts it.
-    pub async fn set_pull_request_summary(&self, id: &str, forge_id: &str) -> Result<()> {
-        sqlx::query("UPDATE pull_requests SET summary_comment_id = ? WHERE id = ?")
-            .bind(forge_id)
-            .bind(id)
-            .execute(self.w())
-            .await?;
-        Ok(())
-    }
-
     /// Ask Ariadne to review a request of the user's own on `pin` with
     /// `skills` beside `pr-reviewer`, or stop asking with None (029).
     pub async fn set_pull_request_review_asked(
