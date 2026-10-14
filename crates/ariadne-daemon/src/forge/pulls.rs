@@ -102,6 +102,70 @@ pub struct DraftComment {
     pub body: String,
 }
 
+/// The lines a unified diff shows on its new side, by path (029): every
+/// line of a hunk that is added or kept, numbered as the new file numbers
+/// it, and none of the removed ones, which have no number there. A forge
+/// takes an inline comment on these lines alone: GitHub refuses any other
+/// outright on a submitted review, and on a pending one answers success
+/// with no thread at all, so a finding is checked here before it goes.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct ShownLines {
+    /// Each path's hunks as `(first, last)` on the new side, inclusive.
+    by_path: std::collections::HashMap<String, Vec<(i64, i64)>>,
+}
+
+impl ShownLines {
+    /// Read `diff`, as `git diff` writes it. A path comes from its `+++ b/`
+    /// header, and each `@@ -a,b +c,d @@` hunk shows the new side's lines
+    /// `c` through `c + d - 1`; a hunk with no count, `+c`, shows the one
+    /// line `c`. A deleted file, `+++ /dev/null`, shows nothing.
+    pub(crate) fn parse(diff: &str) -> Self {
+        let mut by_path: std::collections::HashMap<String, Vec<(i64, i64)>> =
+            std::collections::HashMap::new();
+        let mut path: Option<String> = None;
+        for line in diff.lines() {
+            if let Some(header) = line.strip_prefix("+++ ") {
+                let header = header.split('\t').next().unwrap_or(header);
+                path = header.strip_prefix("b/").map(str::to_string);
+                continue;
+            }
+            let Some(rest) = line.strip_prefix("@@ ") else {
+                continue;
+            };
+            let Some(current) = path.as_ref() else {
+                continue;
+            };
+            let Some(new_side) = rest.split(' ').find_map(|part| part.strip_prefix('+')) else {
+                continue;
+            };
+            let (start, count) = match new_side.split_once(',') {
+                Some((start, count)) => (start.parse::<i64>(), count.parse::<i64>()),
+                None => (new_side.parse::<i64>(), Ok(1)),
+            };
+            let (Ok(start), Ok(count)) = (start, count) else {
+                continue;
+            };
+            if count < 1 {
+                continue;
+            }
+            by_path
+                .entry(current.clone())
+                .or_default()
+                .push((start, start + count - 1));
+        }
+        Self { by_path }
+    }
+
+    /// Whether the diff shows `line` of `path` on its new side.
+    pub(crate) fn shows(&self, path: &str, line: i64) -> bool {
+        self.by_path.get(path).is_some_and(|hunks| {
+            hunks
+                .iter()
+                .any(|&(first, last)| (first..=last).contains(&line))
+        })
+    }
+}
+
 /// The thread every comment on a request's conversation is in: a comment
 /// on the request and a review body are flat on both forges, so a reply to
 /// any of them answers the conversation.
@@ -260,6 +324,65 @@ pub(crate) async fn start_work(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The lines a diff shows on its new side are the added and kept lines
+    /// of each hunk, numbered as the new file numbers them: a removed line
+    /// is not one of them, nor a line past a hunk's end, nor any line of a
+    /// file the diff does not touch, nor of one it deletes. A hunk with no
+    /// count shows its one line.
+    #[test]
+    fn a_diff_shows_the_new_side_lines_of_its_hunks_and_nothing_else() {
+        let diff = "\
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,4 +10,5 @@ fn kept() {
+ kept
+-gone
++added
++added too
+ kept
+@@ -40 +41 @@ fn one() {
+-old
++new
+diff --git a/gone.txt b/gone.txt
+deleted file mode 100644
+--- a/gone.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-gone
+diff --git a/new.txt b/new.txt
+new file mode 100644
+--- /dev/null
++++ b/new.txt
+@@ -0,0 +1,2 @@
++first
++second
+";
+        let shown = ShownLines::parse(diff);
+        for line in 10..=14 {
+            assert!(
+                shown.shows("src/lib.rs", line),
+                "line {line} of the first hunk"
+            );
+        }
+        assert!(!shown.shows("src/lib.rs", 9), "before the first hunk");
+        assert!(!shown.shows("src/lib.rs", 15), "past the first hunk");
+        assert!(
+            shown.shows("src/lib.rs", 41),
+            "a hunk with no count shows its one line"
+        );
+        assert!(!shown.shows("src/lib.rs", 40));
+        assert!(shown.shows("new.txt", 1) && shown.shows("new.txt", 2));
+        assert!(!shown.shows("new.txt", 3));
+        assert!(!shown.shows("gone.txt", 1), "a deleted file shows nothing");
+        assert!(
+            !shown.shows("other.rs", 1),
+            "a file the diff does not touch"
+        );
+        assert_eq!(ShownLines::parse(""), ShownLines::default());
+    }
 
     /// A body a review signed reads back as its text and its marks, as a
     /// finding or as the summary.
