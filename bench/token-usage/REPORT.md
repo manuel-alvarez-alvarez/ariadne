@@ -33,11 +33,12 @@ Required checks and review columns remain part of every comparison.
   October 5–14. The database has a wider surviving inventory; neither source
   proves that deleted rows before the retained ledger are complete.
 - Local transcript metadata scanned 2,901 files and mapped
-  370 retained internal sessions.
-  It found 122 final vendor counter snapshots;
-  23 are within 1% of the corresponding
+  {'codex': 227, 'claude': 370} retained internal sessions.
+  It found 349 final vendor counter snapshots;
+  171 are within 1% of the corresponding
   Ariadne session input and output. The rest are retained as discrepancies,
-  not adjusted into the canonical total.
+  not adjusted into the canonical total. The retained, cutoff-filtered
+  transcript manifest SHA-256 is `eeb5a52f535138ca551715c202c5b9ebe41e0667e3a51f94be7d0e302864f471`.
 
 ## Counting rules and reconciliation
 
@@ -170,17 +171,17 @@ changing policy.
 
 **Counter-evidence.** The existing rules intentionally protect high-value evidence. A smaller handoff that causes re-reading, wrong changes, or review churn is a regression.
 
-### TU-03 — Classify repeated verification before suppressing any command
+### TU-03 — Keep verification policy unchanged; add no suppression candidate
 
-**Evidence.** Selected traces expose repeated tool-command prefixes, while task end facts retain retries and review cycles. The record does not identify whether repetitions were required by changed code, flaky checks, or review findings.
+**Evidence.** The selected traces contain zero repeated completed exact commands after opener-to-completion matching. Earlier prefix/title matching conflated different commands and edits.
 
-**Bounded scope.** Build an offline classifier/report for repeated commands keyed by commit/head and workflow column. Do not skip hooks, required checks, or reviewer-requested reruns.
+**Bounded scope.** Do not change checks or add command suppression. Revisit only if future attribution records an identical command, unchanged revision, and completed prior result.
 
-**Expected benefit.** Potentially lower tool wait and subsequent context tokens by avoiding proven duplicate checks; benefit is unquantified. Confidence: low.
+**Expected benefit.** No expected saving from this baseline. Confidence: high.
 
-**Quality guard and measurement.** Sample repeated commands and label necessity. In a later controlled implementation, compare elapsed tool duration, retry rate, review findings, and task outcomes against the same check policy.
+**Quality guard and measurement.** Keep required checks unchanged. If a later duplicate is found, compare tool duration, retry rate, review findings, and task outcomes before any change.
 
-**Counter-evidence.** Repeated checks often establish a flaky-test proof or validate a later change. The audit must not equate repetition with waste.
+**Counter-evidence.** The selected traces have substantial review-cycle work, but that is different revisions and corrections, not duplicate verification.
 
 ### TU-04 — Bound broad tool-result retention with task-aware summaries
 

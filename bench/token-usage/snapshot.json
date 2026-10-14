@@ -10,21 +10,21 @@
     "deleted_session_fallbacks": 3,
     "history_files": [
       {
-        "bytes": 277659648,
+        "bytes": 278142976,
         "counts": {
-          "agent_events": 172183,
+          "agent_events": 172309,
           "agent_sessions": 620,
           "goals": 54,
           "session_usage": 1077,
           "stat_facts": 31224,
           "tasks": 181
         },
-        "mtime": "2026-10-14T20:57:24.518460Z",
+        "mtime": "2026-10-14T21:03:24.514949Z",
         "name": "ariadne.db",
         "overlap": {
           "agent_events": {
             "all_backup_records_in_primary": false,
-            "backup_only": 1061,
+            "backup_only": 1187,
             "shared": 171122
           },
           "agent_sessions": {
@@ -54,9 +54,9 @@
           },
           "usage_counters": {
             "backup_shared_sum": {
-              "cached_input_tokens": 10697979713,
-              "input_tokens": 10854726282,
-              "output_tokens": 30352015
+              "cached_input_tokens": 10701264193,
+              "input_tokens": 10858058119,
+              "output_tokens": 30361287
             },
             "changed_rows": 2,
             "identical_rows": 1070,
@@ -475,23 +475,35 @@
     ],
     "sessions_without_usage": 26,
     "transcript_inventory": {
-      "counter_interpretation": "vendor final cost-state and Ariadne cumulative session counters agree within 1% for this subset; other deltas show retained files can be partial or use different cache accounting",
-      "counter_snapshots": 122,
+      "counter_interpretation": "transcript and Ariadne cumulative session counters agree within 1% for input, cached input, and output for this subset; other deltas show partial files or different accounting windows",
+      "counter_snapshots": {
+        "claude": 122,
+        "codex": 227
+      },
       "files_scanned": {
         "claude": 1377,
         "codex": 1524
       },
+      "filtered_manifest_sha256": "eeb5a52f535138ca551715c202c5b9ebe41e0667e3a51f94be7d0e302864f471",
       "mapped_files": {
-        "claude": 555
+        "claude": 555,
+        "codex": 227
       },
-      "mapped_sessions": 370,
-      "mapping": "matched transcript sessionId or header id to agent_sessions.internal_session_id; no transcript launch identifier was retained",
-      "within_one_percent_of_database_input_and_output": 23
+      "mapped_sessions": {
+        "claude": 370,
+        "codex": 227
+      },
+      "mapping": "matched Claude sessionId, Codex session_meta.payload.id, or a retained metadata identifier to agent_sessions.internal_session_id; no transcript launch identifier was retained",
+      "records_after_database_cutoff": {
+        "claude": 293,
+        "codex": 1841
+      },
+      "within_one_percent_of_database_input_and_output": 171
     },
     "zero_usage_sessions": 0
   },
   "cutoff": "2026-10-14T20:31:49.158Z",
-  "generated_at": "2026-10-14T20:57:43.442414Z",
+  "generated_at": "2026-10-14T21:03:29.258020Z",
   "inventory": {
     "events": 171122,
     "facts": 31203,
@@ -510,7 +522,7 @@
       "usage_through": "2026-10-14T20:31:42.956Z"
     },
     "label": "pinned snapshot /tmp/ariadne-token-usage-snapshot.XXXXXX.db",
-    "revision": "a738290c8e23de26915a7b7f2b2c345935a4cc4e",
+    "revision": "d62442bf0d6917594d06bb176a94ccefb9664db4",
     "sha256": "b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47",
     "snapshot_acquired_at": "2026-10-14T20:31:52.696616Z",
     "sqlite_user_version": 0

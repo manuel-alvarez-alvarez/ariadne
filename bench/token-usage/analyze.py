@@ -128,7 +128,7 @@ def tool_key(body: dict[str, Any]) -> str | None:
     return text_at(body, ("tool_call_id",), ("toolCallId",))
 
 
-def transcript_inventory(internal_sessions: dict[str, dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def transcript_inventory(internal_sessions: dict[str, dict[str, Any]], cutoff: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Map local transcript metadata to retained internal session IDs.
 
     The output deliberately contains counters and Ariadne session IDs only.
@@ -138,7 +138,9 @@ def transcript_inventory(internal_sessions: dict[str, dict[str, Any]]) -> tuple[
              ("claude", Path("/Users/malvarez/.claude/projects"), "*.jsonl"))
     scanned = collections.Counter()
     mapped_files = collections.Counter()
-    mapped_sessions: set[str] = set()
+    mapped_sessions: dict[str, set[str]] = collections.defaultdict(set)
+    after_cutoff = collections.Counter()
+    manifest = hashlib.sha256()
     counter_rows: list[dict[str, Any]] = []
     for family, root, pattern in roots:
         if not root.exists():
@@ -147,6 +149,8 @@ def transcript_inventory(internal_sessions: dict[str, dict[str, Any]]) -> tuple[
             scanned[family] += 1
             session_keys: set[str] = set()
             last_cost: dict[str, Any] | None = None
+            codex_segments: list[dict[str, int]] = []
+            codex_last: dict[str, int] | None = None
             try:
                 with path.open(encoding="utf-8", errors="replace") as handle:
                     for line in handle:
@@ -154,31 +158,52 @@ def transcript_inventory(internal_sessions: dict[str, dict[str, Any]]) -> tuple[
                             record = json.loads(line)
                         except ValueError:
                             continue
-                        for key in (record.get("sessionId"), record.get("id")):
+                        stamp = record.get("timestamp")
+                        if isinstance(stamp, str) and stamp > cutoff:
+                            after_cutoff[family] += 1
+                            continue
+                        manifest.update(family.encode())
+                        manifest.update(line.encode("utf-8", "replace"))
+                        nested = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+                        for key in (record.get("sessionId"), record.get("id"), nested.get("sessionId"), nested.get("session_id"), nested.get("id")):
                             if isinstance(key, str) and key in internal_sessions:
                                 session_keys.add(key)
                         if family == "claude" and record.get("type") == "cost-state":
                             last_cost = record
+                        if family == "codex" and record.get("type") == "event_msg" and nested.get("type") == "token_count":
+                            total = ((nested.get("info") or {}).get("total_token_usage") or {})
+                            usage = {"input_tokens": int(total.get("input_tokens") or 0), "cached_input_tokens": int(total.get("cached_input_tokens") or 0), "output_tokens": int(total.get("output_tokens") or 0)}
+                            if codex_last and (usage["input_tokens"] < codex_last["input_tokens"] or usage["output_tokens"] < codex_last["output_tokens"]):
+                                codex_segments.append(codex_last)
+                            codex_last = usage
             except OSError:
                 continue
             for key in session_keys:
                 mapped_files[family] += 1
-                mapped_sessions.add(key)
-                if not last_cost:
-                    continue
-                models = last_cost.get("modelUsage") or {}
+                mapped_sessions[family].add(key)
                 uncached_input = cached_input = output = 0
-                for value in models.values():
-                    if not isinstance(value, dict):
-                        continue
-                    uncached_input += int(value.get("inputTokens") or 0)
-                    cached_input += int(value.get("cacheReadInputTokens") or 0) + int(value.get("cacheCreationInputTokens") or 0)
-                    output += int(value.get("outputTokens") or 0)
+                if family == "claude" and last_cost:
+                    for value in (last_cost.get("modelUsage") or {}).values():
+                        if not isinstance(value, dict):
+                            continue
+                        # A cache write was read for the first time. Only a
+                        # cache read is cached input under spec 012 rule 16.
+                        uncached_input += int(value.get("inputTokens") or 0) + int(value.get("cacheCreationInputTokens") or 0)
+                        cached_input += int(value.get("cacheReadInputTokens") or 0)
+                        output += int(value.get("outputTokens") or 0)
+                elif family == "codex" and codex_last:
+                    codex_segments.append(codex_last)
+                    uncached_input = sum(part["input_tokens"] - part["cached_input_tokens"] for part in codex_segments)
+                    cached_input = sum(part["cached_input_tokens"] for part in codex_segments)
+                    output = sum(part["output_tokens"] for part in codex_segments)
+                else:
+                    continue
                 counter_rows.append({"internal_session_id": key, "session_id": internal_sessions[key]["id"], "family": family,
                                      "transcript_uncached_input_tokens": uncached_input, "transcript_cached_input_tokens": cached_input,
                                      "transcript_input_tokens": uncached_input + cached_input, "transcript_output_tokens": output})
-    return ({"files_scanned": dict(scanned), "mapped_files": dict(mapped_files), "mapped_sessions": len(mapped_sessions),
-             "counter_snapshots": len(counter_rows), "mapping": "matched transcript sessionId or header id to agent_sessions.internal_session_id; no transcript launch identifier was retained"}, counter_rows)
+    return ({"files_scanned": dict(scanned), "mapped_files": dict(mapped_files), "mapped_sessions": {family: len(ids) for family, ids in mapped_sessions.items()},
+             "counter_snapshots": collections.Counter(row["family"] for row in counter_rows), "records_after_database_cutoff": dict(after_cutoff), "filtered_manifest_sha256": manifest.hexdigest(),
+             "mapping": "matched Claude sessionId, Codex session_meta.payload.id, or a retained metadata identifier to agent_sessions.internal_session_id; no transcript launch identifier was retained"}, counter_rows)
 
 
 def render_markdown(snapshot: dict[str, Any], recommendations: list[dict[str, Any]]) -> str:
@@ -232,10 +257,11 @@ Required checks and review columns remain part of every comparison.
   proves that deleted rows before the retained ledger are complete.
 - Local transcript metadata scanned {sum(coverage['transcript_inventory']['files_scanned'].values()):,} files and mapped
   {coverage['transcript_inventory']['mapped_sessions']} retained internal sessions.
-  It found {coverage['transcript_inventory']['counter_snapshots']} final vendor counter snapshots;
+  It found {sum(coverage['transcript_inventory']['counter_snapshots'].values())} final vendor counter snapshots;
   {coverage['transcript_inventory']['within_one_percent_of_database_input_and_output']} are within 1% of the corresponding
   Ariadne session input and output. The rest are retained as discrepancies,
-  not adjusted into the canonical total.
+  not adjusted into the canonical total. The retained, cutoff-filtered
+  transcript manifest SHA-256 is `{coverage['transcript_inventory']['filtered_manifest_sha256']}`.
 
 ## Counting rules and reconciliation
 
@@ -628,13 +654,13 @@ def main() -> int:
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     running_sessions = sum(s["status"] in {"running", "starting", "idle", "waiting_permission"} for s in sessions)
     zero_usage = sum(s["id"] in usage_by_session and sum(usage_by_session[s["id"]].values()) == 0 for s in sessions)
-    transcript_meta, transcript_counters = transcript_inventory(internal_sessions)
+    transcript_meta, transcript_counters = transcript_inventory(internal_sessions, cutoff)
     transcript_rows = []
     for row in transcript_counters:
         db_usage = usage_by_session.get(row["session_id"], usage_dict())
         session_launches = [u["source"] for u in usages if u["session_id"] == row["session_id"]]
-        transcript_rows.append({**row, "database_input_tokens": db_usage["input_tokens"], "database_cached_input_tokens": db_usage["cached_input_tokens"], "database_output_tokens": db_usage["output_tokens"], "input_delta": row["transcript_input_tokens"] - db_usage["input_tokens"], "output_delta": row["transcript_output_tokens"] - db_usage["output_tokens"], "retained_launches": len(session_launches), "comparison": "vendor cost-state is session-scoped; it cannot allocate totals to launch sources"})
-    transcript_close = sum(abs(row["input_delta"]) <= max(1, row["database_input_tokens"] // 100) and abs(row["output_delta"]) <= max(1, row["database_output_tokens"] // 100) for row in transcript_rows)
+        transcript_rows.append({**row, "database_input_tokens": db_usage["input_tokens"], "database_cached_input_tokens": db_usage["cached_input_tokens"], "database_output_tokens": db_usage["output_tokens"], "input_delta": row["transcript_input_tokens"] - db_usage["input_tokens"], "cached_input_delta": row["transcript_cached_input_tokens"] - db_usage["cached_input_tokens"], "output_delta": row["transcript_output_tokens"] - db_usage["output_tokens"], "retained_launches": len(session_launches), "comparison": "transcript cumulative is session/file scoped; it cannot allocate totals to launch sources"})
+    transcript_close = sum(abs(row["input_delta"]) <= max(1, row["database_input_tokens"] // 100) and abs(row["output_delta"]) <= max(1, row["database_output_tokens"] // 100) and abs(row["transcript_cached_input_tokens"] - row["database_cached_input_tokens"]) <= max(1, row["database_cached_input_tokens"] // 100) for row in transcript_rows)
     migrations = read_rows(conn, "SELECT version, description, installed_on FROM _sqlx_migrations ORDER BY version") if table_exists(conn, "_sqlx_migrations") else []
     snapshot = {
         "analyzer_version": VERSION,
@@ -643,14 +669,14 @@ def main() -> int:
         "source": {"label": args.source_label or source.name, "sha256": source_hash, "bytes": source.stat().st_size, "revision": args.revision, "sqlite_user_version": conn.execute("PRAGMA user_version").fetchone()[0], "snapshot_acquired_at": dt.datetime.fromtimestamp(source.stat().st_mtime, dt.timezone.utc).isoformat().replace("+00:00", "Z"), "coverage": source_coverage},
         "inventory": {"goals": len(goals), "tasks": len(tasks), "sessions": len(sessions), "events": event_count, "usage_rows": len(usages), "facts": len(facts), "running_sessions": running_sessions, "in_progress_tasks": sum(t["status"] == "in_progress" for t in tasks)},
         "canonical_usage": canonical,
-        "coverage": {"history_files": history_files, "backup_count": max(0, len(history_files) - 1), "transcript_inventory": {**transcript_meta, "within_one_percent_of_database_input_and_output": transcript_close, "counter_interpretation": "vendor final cost-state and Ariadne cumulative session counters agree within 1% for this subset; other deltas show retained files can be partial or use different cache accounting"}, "schema_migrations": migrations, "sessions_without_usage": sum(s["id"] not in usage_by_session for s in sessions), "zero_usage_sessions": zero_usage, "deleted_session_fallbacks": len(fallback_usage), "retained_session_end_facts_without_session": sum(sid not in sessions_by_id for sid in latest_end_fact)},
+        "coverage": {"history_files": history_files, "backup_count": max(0, len(history_files) - 1), "transcript_inventory": {**transcript_meta, "within_one_percent_of_database_input_and_output": transcript_close, "counter_interpretation": "transcript and Ariadne cumulative session counters agree within 1% for input, cached input, and output for this subset; other deltas show partial files or different accounting windows"}, "schema_migrations": migrations, "sessions_without_usage": sum(s["id"] not in usage_by_session for s in sessions), "zero_usage_sessions": zero_usage, "deleted_session_fallbacks": len(fallback_usage), "retained_session_end_facts_without_session": sum(sid not in sessions_by_id for sid in latest_end_fact)},
         "timing": {"ended_sessions_with_lifetime": ended_count, "ended_session_lifetime_secs": ended_lifetime, "unsupported": ["active model execution", "human wait outside console permissions", "queue time before a session launch", "tool execution", "per-launch elapsed time"]},
         "trace_selection": {"method": "12 largest input-plus-output sessions plus median-usage exited agent and reviewer sessions", "selected_sessions": len(selected), "selected_usage_share": selected_share, "coverage": {"input": selected_parts["input_tokens"] / canonical["input_tokens"], "uncached_input": uncached(selected_parts) / uncached(canonical), "cached_input": selected_parts["cached_input_tokens"] / canonical["cached_input_tokens"], "output": selected_parts["output_tokens"] / canonical["output_tokens"]}, "max_daemon_prompts": max((x["derived_event_metrics"]["daemon_prompts"] for x in selected), default=0), "max_daemon_prompt_chars": max((x["derived_event_metrics"]["daemon_prompt_chars"] for x in selected), default=0), "max_repeated_tool_prefixes": max((x["derived_event_metrics"]["repeated_tool_prefixes"] for x in selected), default=0)},
     }
     recommendations = [
         {"id": "TU-01", "title": "Attribute scheduler deliveries before considering coalescing", "evidence": "Selected traces include review returns with distinct reviewed SHAs and short continuation prompts. They prove delivery volume, but not redundant work or per-delivery tokens.", "scope": "Add diagnostic delivery IDs, causes, and completion outcomes at the scheduler/ACP boundary. Do not suppress a delivery, change a workflow column, or change prompt text.", "benefit": "No claimed saving until matched evidence identifies duplicate deliveries. It enables a bounded later coalescing experiment.", "confidence": "high for measurement; no savings estimate", "measurement": "Compare delivery causes, completed responses, prompt characters, canonical uncached input, selected completion lead time, and finish/review outcomes under unchanged checks.", "counter_evidence": "The largest reviewed cycle contains distinct review revisions. Treating it as duplicate wake-up work would weaken correction quality."},
         {"id": "TU-02", "title": "Measure and tighten handoff selection at the existing character budget", "evidence": "The code already folds and ranks handoff history, but cumulative session usage cannot show which selected entries caused input. Long/restarted sessions are identifiable in the trace sample, making this a bounded observability-first candidate.", "scope": "Add offline/diagnostic handoff selection metrics and a fixture corpus before changing the ranking policy. Do not shrink the configured budget or discard corrections, blockers, failed commands, edits, or decisive checks without an outcome comparison.", "benefit": "Estimated lower repeated input and faster resume turns where a handoff is much smaller than raw history.", "confidence": "low", "measurement": "For matched resumes, record candidate/selected character counts, continuation turns, canonical tokens, time to next useful state, and task outcome. Preserve existing handoff behavior as the control.", "counter_evidence": "The existing rules intentionally protect high-value evidence. A smaller handoff that causes re-reading, wrong changes, or review churn is a regression."},
-        {"id": "TU-03", "title": "Classify repeated verification before suppressing any command", "evidence": "Selected traces expose repeated tool-command prefixes, while task end facts retain retries and review cycles. The record does not identify whether repetitions were required by changed code, flaky checks, or review findings.", "scope": "Build an offline classifier/report for repeated commands keyed by commit/head and workflow column. Do not skip hooks, required checks, or reviewer-requested reruns.", "benefit": "Potentially lower tool wait and subsequent context tokens by avoiding proven duplicate checks; benefit is unquantified.", "confidence": "low", "measurement": "Sample repeated commands and label necessity. In a later controlled implementation, compare elapsed tool duration, retry rate, review findings, and task outcomes against the same check policy.", "counter_evidence": "Repeated checks often establish a flaky-test proof or validate a later change. The audit must not equate repetition with waste."},
+        {"id": "TU-03", "title": "Keep verification policy unchanged; add no suppression candidate", "evidence": "The selected traces contain zero repeated completed exact commands after opener-to-completion matching. Earlier prefix/title matching conflated different commands and edits.", "scope": "Do not change checks or add command suppression. Revisit only if future attribution records an identical command, unchanged revision, and completed prior result.", "benefit": "No expected saving from this baseline.", "confidence": "high", "measurement": "Keep required checks unchanged. If a later duplicate is found, compare tool duration, retry rate, review findings, and task outcomes before any change.", "counter_evidence": "The selected traces have substantial review-cycle work, but that is different revisions and corrections, not duplicate verification."},
         {"id": "TU-04", "title": "Bound broad tool-result retention with task-aware summaries", "evidence": "The trace indicators count large stored tool-result payloads. Tool outputs may be echoed into agent context or handoffs, but this database does not record prompt assembly per turn, so causal token savings are untested.", "scope": "First add a report of large result payloads by tool, role, and outcome. Any later truncation must keep exit status, failing lines, paths, diffs, and an explicit way to retrieve full output.", "benefit": "Potentially lower input context and handoff size, plus faster model turns on noisy command output.", "confidence": "low", "measurement": "Compare prompt/handoff size, canonical token categories, diagnosis success, retry rate, and reviewer findings on matched command-heavy tasks.", "counter_evidence": "Full output can contain the only failure clue. Do not truncate before a representative trace review demonstrates redundant material."},
     ]
     end_facts = [fact for fact in facts if fact["kind"] == "session_ended"]
@@ -687,7 +713,7 @@ def main() -> int:
         limitations = "partial cutoff work" if row["partial"] else ("missing session usage" if row["sessions_missing_usage"] else "retained usage only")
         goal_analysis.append({"goal_id": row["goal_id"], "status": row["status"], "sessions": row["sessions"], "missing_usage_sessions": row["sessions_missing_usage"], "partial": row["partial"], "input_tokens": row["input_tokens"], "output_tokens": row["output_tokens"], "dominant_session_id": dominant["id"] if dominant else "", "dominant_session_share": round(dominant_usage / billable_total(row) if billable_total(row) else 0, 6), "dominant_role": roles.most_common(1)[0][0] if roles else "", "dominant_column": columns.most_common(1)[0][0] if columns else "", "ending_facts": len(goal_endings), "ending_outcomes": ";".join(sorted(collections.Counter(r["ending_status"] or "unknown" for r in goal_endings).elements())), "evidence_limit": limitations})
     write_csv(out / "goal-analysis.csv", goal_analysis, ["goal_id", "status", "sessions", "missing_usage_sessions", "partial", "input_tokens", "output_tokens", "dominant_session_id", "dominant_session_share", "dominant_role", "dominant_column", "ending_facts", "ending_outcomes", "evidence_limit"])
-    write_csv(out / "transcript-reconciliation.csv", transcript_rows, ["session_id", "internal_session_id", "family", "transcript_uncached_input_tokens", "transcript_cached_input_tokens", "transcript_input_tokens", "transcript_output_tokens", "database_input_tokens", "database_cached_input_tokens", "database_output_tokens", "input_delta", "output_delta", "retained_launches", "comparison"])
+    write_csv(out / "transcript-reconciliation.csv", transcript_rows, ["session_id", "internal_session_id", "family", "transcript_uncached_input_tokens", "transcript_cached_input_tokens", "transcript_input_tokens", "transcript_output_tokens", "database_input_tokens", "database_cached_input_tokens", "database_output_tokens", "input_delta", "cached_input_delta", "output_delta", "retained_launches", "comparison"])
     audit_rows = []
     for goal in goals:
         if goal["title"].casefold() == "performance review":

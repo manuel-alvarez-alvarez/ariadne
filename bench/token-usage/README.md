@@ -40,6 +40,14 @@ For this baseline, the external snapshot was
 `snapshot.json`. Run the same command with that path, the pinned revision, and
 the `pinned snapshot` source label to reproduce the recorded evidence.
 
+Transcript reconciliation also reads the local Codex and Claude transcript
+directories. It filters records later than the database cutoff and records a
+SHA-256 manifest of those retained lines in `snapshot.json`. A changed
+manifest means current transcript files cannot reproduce the pinned transcript
+comparison. The database-only aggregates remain reproducible from the pinned
+SQLite copy; acquire an external transcript copy with the recorded manifest to
+reproduce transcript evidence exactly.
+
 ## Checks
 
 Run these commands from the repository root. Use a fresh output directory.

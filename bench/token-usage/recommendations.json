@@ -21,13 +21,13 @@
   },
   {
     "id": "TU-03",
-    "title": "Classify repeated verification before suppressing any command",
-    "evidence": "Selected traces expose repeated tool-command prefixes, while task end facts retain retries and review cycles. The record does not identify whether repetitions were required by changed code, flaky checks, or review findings.",
-    "scope": "Build an offline classifier/report for repeated commands keyed by commit/head and workflow column. Do not skip hooks, required checks, or reviewer-requested reruns.",
-    "benefit": "Potentially lower tool wait and subsequent context tokens by avoiding proven duplicate checks; benefit is unquantified.",
-    "confidence": "low",
-    "measurement": "Sample repeated commands and label necessity. In a later controlled implementation, compare elapsed tool duration, retry rate, review findings, and task outcomes against the same check policy.",
-    "counter_evidence": "Repeated checks often establish a flaky-test proof or validate a later change. The audit must not equate repetition with waste."
+    "title": "Keep verification policy unchanged; add no suppression candidate",
+    "evidence": "The selected traces contain zero repeated completed exact commands after opener-to-completion matching. Earlier prefix/title matching conflated different commands and edits.",
+    "scope": "Do not change checks or add command suppression. Revisit only if future attribution records an identical command, unchanged revision, and completed prior result.",
+    "benefit": "No expected saving from this baseline.",
+    "confidence": "high",
+    "measurement": "Keep required checks unchanged. If a later duplicate is found, compare tool duration, retry rate, review findings, and task outcomes before any change.",
+    "counter_evidence": "The selected traces have substantial review-cycle work, but that is different revisions and corrections, not duplicate verification."
   },
   {
     "id": "TU-04",
