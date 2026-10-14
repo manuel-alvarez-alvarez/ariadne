@@ -581,7 +581,7 @@ fn pending_review_comment_numeric_id(forge_id: &str) -> Result<i64, PendingEditE
     forge_id
         .strip_prefix("rc-")
         .and_then(|id| id.parse().ok())
-        .ok_or_else(|| PendingEditError::Forge(format!("{forge_id} names no review comment")))
+        .ok_or_else(|| PendingEditError::BadForgeId(format!("{forge_id} names no review comment")))
 }
 
 /// The permalink of a review thread, anchored at its first comment, the
@@ -1278,6 +1278,24 @@ sys.stdout.write(answers[count])
             .unwrap_err();
         assert!(
             matches!(error, super::PendingEditError::NotPending),
+            "{error:?}"
+        );
+    }
+
+    /// A `forge_id` of the wrong shape — an `ic-` conversation id, say,
+    /// handed to `edit_pending_comment` rather than `rc-` — is the
+    /// caller's own mistake, not the forge's: refused with
+    /// [`PendingEditError::BadForgeId`], never reaching the forge at all.
+    #[tokio::test]
+    async fn edit_pending_comment_refuses_a_forge_id_of_the_wrong_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(dir.path(), &[]));
+        let error = github
+            .edit_pending_comment("github.com/acme/widgets", 1, "me", "ic-501", "Fixed.")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, super::PendingEditError::BadForgeId(_)),
             "{error:?}"
         );
     }

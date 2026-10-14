@@ -488,6 +488,22 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   found: the node lookup `edit_pending_comment` and `delete_pending_comment`
   share pages the same way a request's threads do:
   `github/comments.rs::tests::edit_pending_comment_finds_a_comment_past_the_first_hundred`.
+- A reply or a resolve that folds into a pending review holding no comment
+  of its own yet — no round of `submit_review_pending` ever posted one —
+  still has `list_comments` answer its body right after: held through
+  `add_comments`, which holds one whether or not it was already there,
+  never `edit_comment`, which only changes one already held (rule 25).
+  Marked `from_review`, the same mark `hold_review_comments` forces on
+  `submit_review_pending`'s own first post of it, so the pending set it
+  belongs to carries it past a poll the same way:
+  `kept_requests.rs::a_reply_holds_the_pending_reviews_body_even_with_no_review_post_of_its_own`.
+- A `forge_id` naming no comment or draft note of any shape — the
+  caller's own mistake, not the forge's — answers 400, never the 409 a
+  merely-submitted or merely-published one does, nor the 502 a real forge
+  refusal does (rule 25):
+  `github/comments.rs::tests::edit_pending_comment_refuses_a_forge_id_of_the_wrong_shape`,
+  `gitlab/comments.rs::tests::edit_pending_comment_refuses_a_forge_id_of_the_wrong_shape`,
+  `kept_requests.rs::pending_edit_routes_answer_400_with_a_malformed_forge_id`.
 - A trailing trailer and the blank line before it are stripped, and text with no trailer is left whole:
   `forge/pulls.rs::tests::strip_trailers_takes_off_a_trailing_trailer_and_the_blank_line_before_it`,
   `::strip_trailers_leaves_text_with_no_trailer_whole`.

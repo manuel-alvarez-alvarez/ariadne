@@ -925,11 +925,14 @@ impl Cli {
 /// Why editing, deleting or replacing one of the viewer's own pending forge
 /// posts failed (026 rule 25): the target is no longer pending — the user already
 /// submitted the review it was in, or published the draft note, or there
-/// never was one — or the forge call itself failed.
+/// never was one — the forge call itself failed — or `forge_id` itself
+/// names no comment or draft note of any shape, a caller's own mistake
+/// rather than anything the forge said.
 #[derive(Debug)]
 pub(crate) enum PendingEditError {
     NotPending,
     Forge(String),
+    BadForgeId(String),
 }
 
 impl From<String> for PendingEditError {

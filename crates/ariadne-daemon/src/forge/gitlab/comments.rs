@@ -250,7 +250,7 @@ fn draft_note_numeric_id(forge_id: &str) -> Result<i64, PendingEditError> {
     forge_id
         .strip_prefix("draft-")
         .and_then(|id| id.parse().ok())
-        .ok_or_else(|| PendingEditError::Forge(format!("{forge_id} names no draft note")))
+        .ok_or_else(|| PendingEditError::BadForgeId(format!("{forge_id} names no draft note")))
 }
 
 /// One entry of `GET .../draft_notes`, read for the discussion a draft
@@ -511,6 +511,27 @@ sys.exit(1)
         assert!(
             args.iter().any(|a| a.contains("draft_notes/55")),
             "{args:?}"
+        );
+    }
+
+    /// A `forge_id` of the wrong shape — an `rc-` GitHub-style id, say,
+    /// rather than `draft-` — is the caller's own mistake, not the
+    /// forge's: refused with [`PendingEditError::BadForgeId`], never
+    /// reaching the forge at all.
+    #[tokio::test]
+    async fn edit_pending_comment_refuses_a_forge_id_of_the_wrong_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let gitlab = Gitlab::new(Cli {
+            timeout: Duration::from_secs(5),
+            ..Cli::new(Some(&fake_glab_scripted(dir.path(), &[])), "glab")
+        });
+        let error = gitlab
+            .edit_pending_comment("gitlab.example/acme/widgets", 1, "rc-55", "Fixed.")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, super::PendingEditError::BadForgeId(_)),
+            "{error:?}"
         );
     }
 

@@ -80,6 +80,17 @@ fn client(state: &AppState, forge: &ForgeIntegration) -> ForgeClient {
 /// dropping what this post just added, and no later poll ever corrects
 /// it; only a read that fails twice wakes the poller for whatever else a
 /// fetch still brings current, and leaves the copy as it was.
+///
+/// Written through `add_comments`, never `edit_comment`: a reply or a
+/// resolve that is the first to fold anything into a pending review this
+/// request created holds no comment of it yet (`submit_review_pending`'s
+/// own post is what usually adds one), and `edit_comment` only ever
+/// changes a comment already held, silently answering nothing for one it
+/// does not find — leaving `list_comments` to answer the stale body this
+/// read means to replace, and the id dangling in `local_additions` with
+/// no comment behind it, which costs every later poll its `unmoved` skip.
+/// `add_comments` holds it either way, in the same shape
+/// `submit_review_pending` gives its own first post of it.
 async fn echo_pending_review_body(
     state: &AppState,
     forge: &ForgeIntegration,
@@ -96,7 +107,32 @@ async fn echo_pending_review_body(
             .await
         {
             Ok(Some((_, body))) => {
-                state.launcher.live.edit_comment(pull_id, forge_id, &body);
+                state.launcher.live.add_comments(
+                    pull_id,
+                    &[ariadne_store::NewPullRequestComment {
+                        forge_id: forge_id.to_string(),
+                        thread_id: CONVERSATION.into(),
+                        kind: "issue_comment".into(),
+                        author_login: login.to_string(),
+                        author_is_bot: false,
+                        body,
+                        path: None,
+                        line: None,
+                        in_reply_to: None,
+                        created_at: chrono::Utc::now()
+                            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                        resolved: false,
+                        // Never read back by a detail fetch while the
+                        // review stays pending, so only `local_additions`
+                        // keeps it alive across one — and
+                        // `merge_fresh_details` only ever carries a local
+                        // addition that far for one marked `from_review`,
+                        // the same mark `hold_review_comments` forces true
+                        // on `submit_review_pending`'s own first post of
+                        // it, whichever session's reply or resolve this is.
+                        from_review: true,
+                    }],
+                );
                 return;
             }
             Ok(None) => return,
@@ -119,12 +155,15 @@ fn forge_item_label(forge: &ForgeIntegration, github: &str, gitlab: &str) -> Str
 }
 
 /// [`PendingEditError`] as the route's own answer: 409 for a target that is
-/// no longer pending, else the forge's own refusal.
+/// no longer pending, 400 for a `forge_id` that names no comment or draft
+/// note of any shape — the caller's own mistake, not the forge's — else
+/// the forge's own refusal.
 fn pending_edit_error(error: PendingEditError, forge_id: &str) -> ApiError {
     match error {
         PendingEditError::NotPending => ApiError::conflict(format!(
             "{forge_id} is no longer pending: the user already submitted or published it"
         )),
+        PendingEditError::BadForgeId(e) => ApiError::bad_request(e),
         PendingEditError::Forge(e) => forge_error(e),
     }
 }

@@ -957,6 +957,111 @@ async fn the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_pos
     .await;
 }
 
+/// A reply that finds the pending review already there — no `/reviews`
+/// post of this task's own ever ran to hold a comment of it — still has
+/// `list_comments` answer its body right after: the echo this fix added
+/// writes it through `add_comments`, which holds a comment whether or
+/// not one was already there, never through `edit_comment`, which only
+/// ever changes one already held and answers nothing for one it does not
+/// find (026 rule 25).
+#[tokio::test]
+async fn a_reply_holds_the_pending_reviews_body_even_with_no_review_post_of_its_own() {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let reviews = json!([
+        {"id": 501, "user": {"login": "alice"}, "body": "Why not here?",
+         "submitted_at": "2026-10-02T00:01:00Z"},
+        {"id": 9, "node_id": "PR_kwDOx", "state": "PENDING", "user": {"login": "me"},
+         "body": "<!-- ariadne:pending-review-verdict -->", "submitted_at": null},
+    ]);
+    let mut script = script_of(
+        pull("OPEN", "abc"),
+        &[],
+        &[],
+        &json!({"check_runs": []}).to_string(),
+        &reviews.to_string(),
+        &threads.to_string(),
+    );
+    script.as_array_mut().unwrap().splice(
+        0..0,
+        [
+            // The pending review's own comment count, for `pending_drafts`
+            // (031): none, since this task never posted a finding of its
+            // own into it.
+            answer(
+                &[
+                    "api",
+                    "repos/acme/widgets/pulls/1/reviews/9/comments",
+                    "--hostname",
+                    "github.com",
+                ],
+                0,
+                "[]",
+            ),
+            answer(
+                &[
+                    "api",
+                    "graphql",
+                    "--hostname",
+                    "github.com",
+                    "-f",
+                    "query=mutation($id: ID!, $body: String!) { \
+                     updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
+                     pullRequestReview { id } } }",
+                ],
+                0,
+                r#"{"data": {"updatePullRequestReview": {"pullRequestReview": {"id": "PR_kwDOx"}}}}"#,
+            ),
+        ],
+    );
+    // The stub's own tempdir, which its `gh` binary lives under, must
+    // outlive this test: dropping it via `..` deletes the binary mid-test.
+    let Kept {
+        h,
+        stub: _stub,
+        agent,
+        id,
+        ..
+    } = kept_request(script).await;
+    let mut stored: Vec<Value> = Vec::new();
+    eventually(TIMEOUT, "alice's comment to be stored", async || {
+        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+        stored.iter().any(|c| c["author_login"] == "alice")
+    })
+    .await;
+    let other_side = stored
+        .iter()
+        .find(|c| c["author_login"] == "alice")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let reply: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
+                &agent.id,
+                json!({"body": "Fixed it."}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(reply["pending"], true);
+    assert_eq!(reply["id"], "rv-9");
+    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+    let review = comments
+        .iter()
+        .find(|c| c["id"] == "rv-9")
+        .expect("the pending review's own body is held, not merely edited in place");
+    assert!(
+        review["body"]
+            .as_str()
+            .unwrap()
+            .contains("ariadne:pending-review-verdict"),
+        "{review:?}"
+    );
+}
+
 /// The three pending-edit routes (026 rule 25) answer 409 with no pending review or
 /// draft note of the viewer's own to edit, making only the one listing call
 /// `quiet_script` already answers empty: there is nothing pending yet.
@@ -1003,6 +1108,46 @@ async fn pending_edit_routes_answer_409_with_no_pending_review() {
         StatusCode::CONFLICT,
     )
     .await;
+}
+
+/// A `forge_id` of the wrong shape — naming no comment GitHub or GitLab
+/// ever holds, whole or pending — is the caller's own mistake, not the
+/// forge's: 400, refused before any forge call and with no pending
+/// review needed to tell it apart from one that is merely gone (026 rule
+/// 25).
+#[tokio::test]
+async fn pending_edit_routes_answer_400_with_a_malformed_forge_id() {
+    let Kept {
+        h,
+        stub: _stub,
+        agent,
+        id,
+        ..
+    } = kept_request(quiet_script()).await;
+    let error = h
+        .error(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/edit"),
+                &agent.id,
+                json!({"forge_id": "ic-501", "body": "Fixed."}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert_eq!(error.error.code, "invalid_request");
+    assert!(error.error.message.contains("ic-501"), "{error:?}");
+
+    let error = h
+        .error(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/delete"),
+                &agent.id,
+                json!({"forge_id": "ic-501"}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert_eq!(error.error.code, "invalid_request");
 }
 
 /// `edit_pending_review_body` (026 rule 25) replaces the viewer's pending review
