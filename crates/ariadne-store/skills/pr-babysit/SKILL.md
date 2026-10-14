@@ -5,13 +5,15 @@ description: Keep a task request until it merges or closes. Answer comments, fix
 
 # PR babysit
 
-Keep the request until it merges or closes. On your first turn, with no request
-open, do step 1. With one already open, start at step 2. On each later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.
+Keep the request until it merges or closes. On your first turn, with no
+request open, do step 1. With one already open, start at step 2. On each
+later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.
 
 ## Steps
 
 1. Push the task branch. Call `open_pull_request`. Take the title from the
-   repository's commit conventions. Fill its pull request template, or write three full sections: Why, What changed, How to test.
+   repository's commit conventions. Fill its pull request template, or
+   write three full sections: Why, What changed, How to test.
 2. Call `get_pull_request`. Call `list_comments` with `unanswered_only`.
 3. Answer each inline review comment of the other side, once per comment:
    - An ask for a change: accept it, or reply `Not changed: <why>.`
@@ -23,13 +25,13 @@ open, do step 1. With one already open, start at step 2. On each later turn, Ari
    - A comment on the conversation: answer it the same way, once per comment.
 4. A suggestion block you accept: apply it. Write your own code only where it
    does not compile or pass. Else reply `Not changed: <why>.`
-5. Read each failed check's log at its URL. For each batch of accepted changes
-   or failed checks, make one coherent commit. Group related accepted changes
-   in one coherent commit; keep unrelated changes separate. Run the checks
-   affected by the batch. Update the branch, then push the batch once. Reply
-   separately to every actionable comment after the final push: `Fixed in
-   <sha>: <what changed>.`
-6. The repository's history rules choose the branch update. Fetch both first.
+5. Group related accepted changes and failed-check fixes in one coherent
+   commit per batch; keep unrelated changes separate. Read a failed
+   check's log at its URL. Run the checks the batch affects, then update
+   the branch and push it once. Reply to every actionable comment after
+   the final push: `Fixed in <sha>: <what changed>.`
+6. The repository's history rules choose the branch update. Fetch the base and
+   task branch first.
    Where merges are allowed, run `git merge --no-edit
    <remote>/<base>`. A linear-history rule requires `git rebase
    <remote>/<base>` and `git push --force-with-lease`. Before that guarded
@@ -38,10 +40,13 @@ open, do step 1. With one already open, start at step 2. On each later turn, Ari
    to the remote branch. Never amend a pushed commit outside an approved
    rebase.
 7. Call `report_pull_request` only when readiness changes:
-   - `ready: true` with the `head_sha` you read once every approval and check is green
+   - `ready: true` with the `head_sha` you read once every approval and
+     check is green
    - `ready: false` when one goes back.
-8. On a merge, where you sit on a task, update `<base>` in the primary checkout:
-   - `git -C <repo> merge --ff-only <remote>/<base>` where `<base>` is checked out
+8. On a merge, where you sit on a task, update `<base>` in the primary
+   checkout:
+   - `git -C <repo> merge --ff-only <remote>/<base>` where `<base>` is
+     checked out
    - else `git -C <repo> fetch <remote> <base>:<base>`.
    Call `complete_step` with the merge as the reason. Else end your turn:
    Ariadne ends your session. On a close, where you sit on a task, call
@@ -51,8 +56,10 @@ open, do step 1. With one already open, start at step 2. On each later turn, Ari
 
 - Never merge the request. Leave every thread open.
 - Commit only what a comment or a failed check asks for.
-- Post no new thread, summary or top-level comment, except step 3's reply.
-- Use only your session's request tools. On failure, report it; post nothing another way.
+- Post no new thread, summary or top-level comment, except steps 3 and 5's
+  replies.
+- Use only your session's request tools. On failure, report it; post
+  nothing another way.
 
 ## Supervised repositories
 

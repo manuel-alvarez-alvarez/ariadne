@@ -1052,7 +1052,10 @@ mod tests {
                 "code-review",
                 "Run each required check with no reusable result, once for this verdict.",
             ),
-            ("pr-babysit", "Run the checks affected by the batch."),
+            (
+                "pr-babysit",
+                "Run the checks the batch affects, then update the branch and push it once.",
+            ),
             (
                 "coding",
                 "For a code behavior change, write a failing test first",
@@ -1321,13 +1324,14 @@ mod tests {
             "`get_pull_request`",
             "`list_comments` with `unanswered_only`",
             "The repository's history rules choose the branch update.",
+            "Fetch the base and task branch first.",
             "A linear-history rule requires `git rebase <remote>/<base>` and `git push --force-with-lease`.",
             "Where merges are allowed, run `git merge --no-edit <remote>/<base>`.",
             "Push the task branch. Call `open_pull_request`.",
             "repository's commit conventions",
             "Fill its pull request template, or write three full sections: Why, What changed, How to test.",
-            "Group related accepted changes in one coherent commit; keep unrelated changes separate.",
-            "Run the checks affected by the batch. Update the branch, then push the batch once.",
+            "Group related accepted changes and failed-check fixes in one coherent",
+            "Run the checks the batch affects, then update the branch and push it once.",
             "Never amend a pushed commit outside an approved rebase.",
             "Never use an unguarded force push or discard commits others added to the remote branch.",
             "Call `report_pull_request` only when readiness changes:",
@@ -1366,10 +1370,10 @@ mod tests {
             "A comment on the conversation: answer it the same way, once per comment.",
             "A suggestion block you accept: apply it.",
             "Else reply `Not changed: <why>.`",
-            "Group related accepted changes in one coherent commit; keep unrelated changes separate.",
+            "Group related accepted changes and failed-check fixes in one coherent",
             "Commit only what a comment or a failed check asks for.",
             "Leave every thread open.",
-            "Post no new thread, summary or top-level comment, except step 3's reply.",
+            "Post no new thread, summary or top-level comment, except steps 3 and 5's",
         ] {
             assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
         }
