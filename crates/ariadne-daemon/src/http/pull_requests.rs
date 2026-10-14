@@ -623,14 +623,19 @@ pub(super) async fn reply(
         // the same as `edit_pending_review_body`'s own echo, so
         // `list_comments` never answers the body this reply has since
         // changed. An inline thread reply answers its own new id instead,
-        // and touches no review body to bring current.
-        if forge_id.starts_with("rv-")
-            && let Some((_, body)) = client(&state, &forge)
+        // and touches no review body to bring current. The post above
+        // already succeeded on the forge, so this read is best-effort: a
+        // reply already there must not fail the request and so go
+        // unmarked, retried and posted again. A poll woken on its own
+        // failure still brings the cache current, later.
+        if forge_id.starts_with("rv-") {
+            match client(&state, &forge)
                 .pending_review_body(&slug(&forge), pull.number, &login)
                 .await
-                .map_err(forge_error)?
-        {
-            state.launcher.live.edit_comment(&pull.id, &forge_id, &body);
+            {
+                Ok(Some((_, body))) => state.launcher.live.edit_comment(&pull.id, &forge_id, &body),
+                Ok(None) | Err(_) => state.forge_poll.wake(&pull.repository_id),
+            }
         }
         state
             .store
@@ -770,11 +775,14 @@ pub(super) async fn resolve(
             // under its "Threads to resolve" heading, answering that
             // review's id (026 rule 25): read fresh and held, the same as
             // `edit_pending_review_body`'s own echo, so `list_comments`
-            // never answers the body a resolve has since changed.
-            if let Some((_, body)) = client(&state, &forge)
+            // never answers the body a resolve has since changed. The
+            // resolve above already succeeded on the forge, so this read
+            // is best-effort: a resolve already there must not fail the
+            // request over it. The unconditional wake below still brings
+            // the cache current on a failure, later.
+            if let Ok(Some((_, body))) = client(&state, &forge)
                 .pending_review_body(&slug(&forge), pull.number, &login)
                 .await
-                .map_err(forge_error)?
             {
                 state.launcher.live.edit_comment(&pull.id, &id, &body);
             }
