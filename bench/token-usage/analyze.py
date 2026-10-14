@@ -128,6 +128,36 @@ def tool_key(body: dict[str, Any]) -> str | None:
     return text_at(body, ("tool_call_id",), ("toolCallId",))
 
 
+def transcript_tool_commands(internal_sessions: dict[str, dict[str, Any]], cutoff: str, root: Path) -> dict[tuple[str, str], str]:
+    """Recover completed Claude command inputs when ACP pre-tool events omit them."""
+    commands: dict[tuple[str, str], str] = {}
+    if not root.exists():
+        return commands
+    for path in sorted(root.rglob("*.jsonl"), key=lambda p: p.relative_to(root).as_posix()):
+        try:
+            with path.open(encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if record.get("type") != "assistant" or record.get("timestamp", "") > cutoff:
+                        continue
+                    internal_id = record.get("sessionId")
+                    if internal_id not in internal_sessions:
+                        continue
+                    for item in (record.get("message") or {}).get("content") or []:
+                        if not isinstance(item, dict) or item.get("type") != "tool_use":
+                            continue
+                        tool_id = item.get("id")
+                        command = (item.get("input") or {}).get("command")
+                        if isinstance(tool_id, str) and isinstance(command, str):
+                            commands[(internal_sessions[internal_id]["id"], tool_id)] = command
+        except OSError:
+            continue
+    return commands
+
+
 def transcript_inventory(internal_sessions: dict[str, dict[str, Any]], cutoff: str, roots: dict[str, Path]) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     """Map local transcript metadata to retained internal session IDs.
 
@@ -388,9 +418,9 @@ comes first because it only records delivery attribution and cannot remove a
 required check or review. TU-02 is second because handoff measurement can
 change future context policy but needs fixture coverage. TU-04 is third: its
 large-result signal has possible input and latency benefit, but truncation can
-hide failure evidence. TU-03 is rejected for this baseline because exact
-command matching found no repetitions. No candidate has demonstrated token or
-time savings yet.
+hide failure evidence. TU-03 keeps verification unchanged: transcript-backed
+exact repetitions lack revision and result attribution. No candidate has
+demonstrated token or time savings yet.
 
 {candidate_lines}
 
@@ -443,6 +473,8 @@ def main() -> int:
     usages = read_rows(conn, "SELECT * FROM session_usage")
     facts = read_rows(conn, "SELECT * FROM stat_facts ORDER BY created_at")
     event_count = conn.execute("SELECT COUNT(*) FROM agent_events").fetchone()[0]
+    source_coverage = {"events_through": conn.execute("SELECT MAX(created_at) FROM agent_events").fetchone()[0], "usage_through": conn.execute("SELECT MAX(updated_at) FROM session_usage").fetchone()[0], "facts_through": conn.execute("SELECT MAX(created_at) FROM stat_facts").fetchone()[0]}
+    cutoff = max(value for value in source_coverage.values() if value)
     task_agents = read_rows(conn, "SELECT * FROM task_agents") if table_exists(conn, "task_agents") else []
     transitions = read_rows(conn, "SELECT * FROM task_transitions") if table_exists(conn, "task_transitions") else []
 
@@ -556,6 +588,7 @@ def main() -> int:
     trace_metrics: dict[str, dict[str, Any]] = collections.defaultdict(lambda: {"events": 0, "daemon_prompts": 0, "daemon_prompt_chars": 0, "daemon_prompt_ids": [], "prompt_classes": collections.Counter(), "review_shas": set(), "large_tool_results": 0, "large_tool_result_chars": 0, "tool_prefixes": collections.Counter(), "large_event_ids": []})
     completed_calls: set[tuple[str, str]] = set()
     event_rows = list(conn.execute("SELECT id, session_id, kind, payload, payload_codec FROM agent_events"))
+    transcript_commands = transcript_tool_commands(internal_sessions, cutoff, args.claude_transcripts)
     opener_commands: dict[tuple[str, str], str] = {}
     for row in event_rows:
         if row["kind"] != "pre_tool_use":
@@ -590,7 +623,7 @@ def main() -> int:
                 continue
             if key:
                 completed_calls.add((sid, key))
-            command = opener_commands.get((sid, key or ""))
+            command = opener_commands.get((sid, key or "")) or transcript_commands.get((sid, key or ""))
             if command:
                 # Only identical complete commands count.  A shared title or
                 # truncated first line can describe different edits/checks.
@@ -600,6 +633,13 @@ def main() -> int:
                 metric["large_tool_results"] += 1
                 metric["large_tool_result_chars"] += len(result)
                 metric["large_event_ids"].append(row["id"])
+
+    command_inputs = {
+        "completed_calls_with_ids": len(completed_calls),
+        "opener_inputs": sum(key in opener_commands for key in completed_calls),
+        "transcript_recovered_inputs": sum(key not in opener_commands and key in transcript_commands for key in completed_calls),
+    }
+    command_inputs["missing_inputs"] = command_inputs["completed_calls_with_ids"] - command_inputs["opener_inputs"] - command_inputs["transcript_recovered_inputs"]
 
     ranked_sessions = sorted(usage_by_session, key=lambda sid: billable_total(usage_by_session[sid]), reverse=True)
     selected_ids = ranked_sessions[:12]
@@ -639,9 +679,10 @@ def main() -> int:
     # An ending fact is the only retained completion timestamp.  Use its last
     # occurrence per task for comparisons; retain every prior ending as retry
     # evidence in completion-timing.csv.
+    terminal_task_ids = {task["id"] for task in tasks if task["status"] in {"finished", "cancelled", "failed"}}
     final_completion = {}
     for row in completion_rows:
-        if row["task_id"] != "retained_deleted":
+        if row["task_id"] in terminal_task_ids:
             final_completion[row["task_id"]] = row
     final_lead_times = [int(r["lead_time_secs"]) for r in final_completion.values() if isinstance(r.get("lead_time_secs"), (int, float))]
     completion_summary = {"rule": "latest task_ended fact per retained task; earlier ending facts remain retry evidence", "tasks_with_selected_ending": len(final_completion), "ending_facts": len(completion_rows), "finished": sum(r["ending_status"] == "finished" for r in final_completion.values()), "cancelled": sum(r["ending_status"] == "cancelled" for r in final_completion.values()), "failed": sum(r["ending_status"] == "failed" for r in final_completion.values()), "lead_time_seconds": {"count": len(final_lead_times), "median": round(statistics.median(final_lead_times)) if final_lead_times else None, "p90": sorted(final_lead_times)[max(0, int(.9 * len(final_lead_times)) - 1)] if final_lead_times else None, "minimum": min(final_lead_times, default=None), "maximum": max(final_lead_times, default=None)}}
@@ -673,8 +714,6 @@ def main() -> int:
         except sqlite3.Error:
             pass
 
-    source_coverage = {"events_through": conn.execute("SELECT MAX(created_at) FROM agent_events").fetchone()[0], "usage_through": conn.execute("SELECT MAX(updated_at) FROM session_usage").fetchone()[0], "facts_through": conn.execute("SELECT MAX(created_at) FROM stat_facts").fetchone()[0]}
-    cutoff = max(value for value in source_coverage.values() if value)
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     running_sessions = sum(s["status"] in {"running", "starting", "idle", "waiting_permission"} for s in sessions)
     zero_usage = sum(s["id"] in usage_by_session and sum(usage_by_session[s["id"]].values()) == 0 for s in sessions)
@@ -693,14 +732,14 @@ def main() -> int:
         "source": {"label": args.source_label or source.name, "sha256": source_hash, "bytes": source.stat().st_size, "revision": args.revision, "sqlite_user_version": conn.execute("PRAGMA user_version").fetchone()[0], "snapshot_acquired_at": dt.datetime.fromtimestamp(source.stat().st_mtime, dt.timezone.utc).isoformat().replace("+00:00", "Z"), "coverage": source_coverage},
         "inventory": {"goals": len(goals), "tasks": len(tasks), "sessions": len(sessions), "events": event_count, "usage_rows": len(usages), "facts": len(facts), "running_sessions": running_sessions, "in_progress_tasks": sum(t["status"] == "in_progress" for t in tasks)},
         "canonical_usage": canonical,
-        "coverage": {"history_files": history_files, "backup_count": max(0, len(history_files) - 1), "transcript_inventory": {**transcript_meta, "within_one_percent_of_database_input_and_output": transcript_close, "counter_interpretation": "transcript and Ariadne cumulative session counters agree within 1% for input, cached input, and output for this subset; other deltas show partial files or different accounting windows"}, "schema_migrations": migrations, "sessions_without_usage": sum(s["id"] not in usage_by_session for s in sessions), "zero_usage_sessions": zero_usage, "deleted_session_fallbacks": len(fallback_usage), "retained_session_end_facts_without_session": sum(sid not in sessions_by_id for sid in latest_end_fact)},
+        "coverage": {"history_files": history_files, "backup_count": max(0, len(history_files) - 1), "transcript_inventory": {**transcript_meta, "within_one_percent_of_database_input_and_output": transcript_close, "counter_interpretation": "transcript and Ariadne cumulative session counters agree within 1% for input, cached input, and output for this subset; other deltas show partial files or different accounting windows"}, "transcript_command_inputs": {**command_inputs, "rule": "Claude assistant tool_use input.command matched to a retained post_tool_use toolCallId before the database cutoff; missing transcript inputs remain unavailable"}, "schema_migrations": migrations, "sessions_without_usage": sum(s["id"] not in usage_by_session for s in sessions), "zero_usage_sessions": zero_usage, "deleted_session_fallbacks": len(fallback_usage), "retained_session_end_facts_without_session": sum(sid not in sessions_by_id for sid in latest_end_fact)},
         "timing": {"ended_sessions_with_lifetime": ended_count, "ended_session_lifetime_secs": ended_lifetime, "unsupported": ["active model execution", "human wait outside console permissions", "queue time before a session launch", "tool execution", "per-launch elapsed time"]},
         "trace_selection": {"method": "12 largest input-plus-output sessions plus median-usage exited agent and reviewer sessions", "selected_sessions": len(selected), "selected_usage_share": selected_share, "coverage": {"input": selected_parts["input_tokens"] / canonical["input_tokens"], "uncached_input": uncached(selected_parts) / uncached(canonical), "cached_input": selected_parts["cached_input_tokens"] / canonical["cached_input_tokens"], "output": selected_parts["output_tokens"] / canonical["output_tokens"]}, "max_daemon_prompts": max((x["derived_event_metrics"]["daemon_prompts"] for x in selected), default=0), "max_daemon_prompt_chars": max((x["derived_event_metrics"]["daemon_prompt_chars"] for x in selected), default=0), "max_repeated_tool_prefixes": max((x["derived_event_metrics"]["repeated_tool_prefixes"] for x in selected), default=0)},
     }
     recommendations = [
         {"id": "TU-01", "title": "Attribute scheduler deliveries before considering coalescing", "evidence": "Selected traces include review returns with distinct reviewed SHAs and short continuation prompts. They prove delivery volume, but not redundant work or per-delivery tokens.", "scope": "Add diagnostic delivery IDs, causes, and completion outcomes at the scheduler/ACP boundary. Do not suppress a delivery, change a workflow column, or change prompt text.", "benefit": "No claimed saving until matched evidence identifies duplicate deliveries. It enables a bounded later coalescing experiment.", "confidence": "high for measurement; no savings estimate", "measurement": "Compare delivery causes, completed responses, prompt characters, canonical uncached input, selected completion lead time, and finish/review outcomes under unchanged checks.", "counter_evidence": "The largest reviewed cycle contains distinct review revisions. Treating it as duplicate wake-up work would weaken correction quality."},
         {"id": "TU-02", "title": "Measure and tighten handoff selection at the existing character budget", "evidence": "The code already folds and ranks handoff history, but cumulative session usage cannot show which selected entries caused input. Long/restarted sessions are identifiable in the trace sample, making this a bounded observability-first candidate.", "scope": "Add offline/diagnostic handoff selection metrics and a fixture corpus before changing the ranking policy. Do not shrink the configured budget or discard corrections, blockers, failed commands, edits, or decisive checks without an outcome comparison.", "benefit": "Estimated lower repeated input and faster resume turns where a handoff is much smaller than raw history.", "confidence": "low", "measurement": "For matched resumes, record candidate/selected character counts, continuation turns, canonical tokens, time to next useful state, and task outcome. Preserve existing handoff behavior as the control.", "counter_evidence": "The existing rules intentionally protect high-value evidence. A smaller handoff that causes re-reading, wrong changes, or review churn is a regression."},
-        {"id": "TU-03", "title": "Keep verification policy unchanged; add no suppression candidate", "evidence": "The selected traces contain zero repeated completed exact commands after opener-to-completion matching. Earlier prefix/title matching conflated different commands and edits.", "scope": "Do not change checks or add command suppression. Revisit only if future attribution records an identical command, unchanged revision, and completed prior result.", "benefit": "No expected saving from this baseline.", "confidence": "high", "measurement": "Keep required checks unchanged. If a later duplicate is found, compare tool duration, retry rate, review findings, and task outcomes before any change.", "counter_evidence": "The selected traces have substantial review-cycle work, but that is different revisions and corrections, not duplicate verification."},
+        {"id": "TU-03", "title": "Keep verification policy unchanged; add no suppression candidate", "evidence": "Transcript-backed command inputs recover repeated exact completed commands. They lack revision and prior-result attribution, so they do not identify avoidable verification.", "scope": "Do not change checks or add command suppression. Revisit only if future attribution records an identical command, unchanged revision, and completed prior result.", "benefit": "No expected saving from this baseline.", "confidence": "high", "measurement": "Keep required checks unchanged. If a later duplicate is found, compare tool duration, retry rate, review findings, and task outcomes before any change.", "counter_evidence": "The selected traces have substantial review-cycle work, but that is different revisions and corrections, not duplicate verification."},
         {"id": "TU-04", "title": "Bound broad tool-result retention with task-aware summaries", "evidence": "The trace indicators count large stored tool-result payloads. Tool outputs may be echoed into agent context or handoffs, but this database does not record prompt assembly per turn, so causal token savings are untested.", "scope": "First add a report of large result payloads by tool, role, and outcome. Any later truncation must keep exit status, failing lines, paths, diffs, and an explicit way to retrieve full output.", "benefit": "Potentially lower input context and handoff size, plus faster model turns on noisy command output.", "confidence": "low", "measurement": "Compare prompt/handoff size, canonical token categories, diagnosis success, retry rate, and reviewer findings on matched command-heavy tasks.", "counter_evidence": "Full output can contain the only failure clue. Do not truncate before a representative trace review demonstrates redundant material."},
     ]
     end_facts = [fact for fact in facts if fact["kind"] == "session_ended"]
@@ -731,11 +770,15 @@ def main() -> int:
         reported = [s for s in goal_sessions_rows if s["id"] in usage_by_session]
         dominant = max(reported, key=lambda s: billable_total(usage_by_session[s["id"]]), default=None)
         dominant_usage = billable_total(usage_by_session[dominant["id"]]) if dominant else 0
-        roles = collections.Counter(session_meta(s)[0] for s in reported)
-        columns = collections.Counter(session_meta(s)[1] for s in reported)
+        roles: dict[str, int] = collections.defaultdict(int)
+        columns: dict[str, int] = collections.defaultdict(int)
+        for session in reported:
+            role, column, _, _, _ = session_meta(session)
+            roles[role] += billable_total(usage_by_session[session["id"]])
+            columns[column] += billable_total(usage_by_session[session["id"]])
         goal_endings = [r for r in completion_rows if r["goal_id"] == row["goal_id"]]
         limitations = "partial cutoff work" if row["partial"] else ("missing session usage" if row["sessions_missing_usage"] else "retained usage only")
-        goal_analysis.append({"goal_id": row["goal_id"], "status": row["status"], "sessions": row["sessions"], "missing_usage_sessions": row["sessions_missing_usage"], "partial": row["partial"], "input_tokens": row["input_tokens"], "output_tokens": row["output_tokens"], "dominant_session_id": dominant["id"] if dominant else "", "dominant_session_share": round(dominant_usage / billable_total(row) if billable_total(row) else 0, 6), "dominant_role": roles.most_common(1)[0][0] if roles else "", "dominant_column": columns.most_common(1)[0][0] if columns else "", "ending_facts": len(goal_endings), "ending_outcomes": ";".join(sorted(collections.Counter(r["ending_status"] or "unknown" for r in goal_endings).elements())), "evidence_limit": limitations})
+        goal_analysis.append({"goal_id": row["goal_id"], "status": row["status"], "sessions": row["sessions"], "missing_usage_sessions": row["sessions_missing_usage"], "partial": row["partial"], "input_tokens": row["input_tokens"], "output_tokens": row["output_tokens"], "dominant_session_id": dominant["id"] if dominant else "", "dominant_session_share": round(dominant_usage / billable_total(row) if billable_total(row) else 0, 6), "dominant_role": max(roles, key=roles.get, default=""), "dominant_column": max(columns, key=columns.get, default=""), "ending_facts": len(goal_endings), "ending_outcomes": ";".join(sorted(collections.Counter(r["ending_status"] or "unknown" for r in goal_endings).elements())), "evidence_limit": limitations})
     write_csv(out / "goal-analysis.csv", goal_analysis, ["goal_id", "status", "sessions", "missing_usage_sessions", "partial", "input_tokens", "output_tokens", "dominant_session_id", "dominant_session_share", "dominant_role", "dominant_column", "ending_facts", "ending_outcomes", "evidence_limit"])
     write_csv(out / "transcript-reconciliation.csv", transcript_rows, ["session_id", "internal_session_id", "family", "temporal_alignment", "transcript_uncached_input_tokens", "transcript_cached_input_tokens", "transcript_input_tokens", "transcript_output_tokens", "database_input_tokens", "database_cached_input_tokens", "database_output_tokens", "input_delta", "cached_input_delta", "output_delta", "retained_launches", "comparison"])
     write_csv(out / "transcript-manifest.csv", transcript_manifest_rows, ["family", "file_identity_sha256", "filtered_content_sha256"])

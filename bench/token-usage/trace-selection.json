@@ -7,7 +7,7 @@
   },
   "max_daemon_prompt_chars": 61872,
   "max_daemon_prompts": 34,
-  "max_repeated_tool_prefixes": 0,
+  "max_repeated_tool_prefixes": 112,
   "method": "12 largest input-plus-output sessions plus median-usage exited agent and reviewer sessions",
   "selected_sessions": 14,
   "selected_usage_share": 0.34198708209383366,
@@ -211,7 +211,7 @@
           "review_return": 8,
           "short_continuation": 3
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 112
       },
       "effort": "medium",
       "goal_id": "01m4ke8jjjmrpq43smjy487nr8",
@@ -354,7 +354,7 @@
           "review_return": 6,
           "short_continuation": 5
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 49
       },
       "effort": "medium",
       "goal_id": "01m4ke8jjjmrpq43smjy487nr8",
@@ -448,7 +448,7 @@
           "review_return": 4,
           "short_continuation": 2
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 45
       },
       "effort": null,
       "goal_id": "01m4mym25rgh5n3tba1m94eh0r",
@@ -538,7 +538,7 @@
         "prompt_classes": {
           "initial_or_other": 19
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 23
       },
       "effort": "high",
       "goal_id": "01m4g7w5p6zcbx38tb6zs4k2vy",
@@ -639,7 +639,7 @@
           "initial_or_other": 4,
           "short_continuation": 1
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 13
       },
       "effort": "high",
       "goal_id": "01m4r1514d2kvj1ven5659mbkh",
@@ -780,7 +780,7 @@
           "review_return": 1,
           "short_continuation": 1
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 9
       },
       "effort": "high",
       "goal_id": "01m4rsrz8pe4fwgyxmq4r9v3t3",
@@ -877,7 +877,7 @@
           "initial_or_other": 7,
           "short_continuation": 2
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 6
       },
       "effort": "high",
       "goal_id": "01m4rsrz8pe4fwgyxmq4r9v3t3",
@@ -1233,7 +1233,7 @@
         "prompt_classes": {
           "initial_or_other": 6
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 2
       },
       "effort": "high",
       "goal_id": "01m4g7w5p6zcbx38tb6zs4k2vy",
@@ -1318,7 +1318,7 @@
         "prompt_classes": {
           "initial_or_other": 3
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 11
       },
       "effort": null,
       "goal_id": "01m4tprt6d1axyatezb2mz3n5v",
@@ -1413,7 +1413,7 @@
           "initial_or_other": 32,
           "short_continuation": 2
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 41
       },
       "effort": null,
       "goal_id": "01m4r1514d2kvj1ven5659mbkh",
@@ -1525,7 +1525,7 @@
           "initial_or_other": 4,
           "review_return": 2
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 1
       },
       "effort": "high",
       "goal_id": "01m4rsrz8pe4fwgyxmq4r9v3t3",
@@ -1611,7 +1611,7 @@
           "initial_or_other": 3,
           "short_continuation": 2
         },
-        "repeated_tool_prefixes": 0
+        "repeated_tool_prefixes": 5
       },
       "effort": null,
       "goal_id": "01m4tprt6d1axyatezb2mz3n5v",

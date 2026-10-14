@@ -32,13 +32,13 @@ Required checks and review columns remain part of every comparison.
 - The task listing supplied with this study said 48 goals and 179 tasks from
   October 5–14. The database has a wider surviving inventory; neither source
   proves that deleted rows before the retained ledger are complete.
-- Local transcript metadata scanned 2,901 files and mapped
+- Local transcript metadata scanned 2,903 files and mapped
   {'codex': 227, 'claude': 370} retained internal sessions.
   It found 349 final vendor counter snapshots;
   148 are within 1% of the corresponding
   Ariadne session input and output. The rest are retained as discrepancies,
   not adjusted into the canonical total. The retained, cutoff-filtered
-  transcript manifest SHA-256 is `67e96b596df0596ca733492dfd490107e6fac9626e71ed08ad7dbce83ab8e2ae`.
+  transcript manifest SHA-256 is `6a9fefcc5ca1818ed540de10a590db747acc0593a1832ab0962eacdf3a3b88a6`.
 
 ## Counting rules and reconciliation
 
@@ -128,7 +128,7 @@ Within the selected traces, the largest observed daemon-prompt count is
 34 and the largest observed daemon-prompt text
 volume is 61,872 characters. The selected
 trace with the most repeated exact commands has
-0. These indicators establish where to
+112. These indicators establish where to
 sample; they do not establish that every repetition is avoidable.
 
 The trace review separates full prompts with distinct reviewed SHAs from short
@@ -158,9 +158,9 @@ comes first because it only records delivery attribution and cannot remove a
 required check or review. TU-02 is second because handoff measurement can
 change future context policy but needs fixture coverage. TU-04 is third: its
 large-result signal has possible input and latency benefit, but truncation can
-hide failure evidence. TU-03 is rejected for this baseline because exact
-command matching found no repetitions. No candidate has demonstrated token or
-time savings yet.
+hide failure evidence. TU-03 keeps verification unchanged: transcript-backed
+exact repetitions lack revision and result attribution. No candidate has
+demonstrated token or time savings yet.
 
 ### TU-01 — Attribute scheduler deliveries before considering coalescing
 
@@ -188,7 +188,7 @@ time savings yet.
 
 ### TU-03 — Keep verification policy unchanged; add no suppression candidate
 
-**Evidence.** The selected traces contain zero repeated completed exact commands after opener-to-completion matching. Earlier prefix/title matching conflated different commands and edits.
+**Evidence.** Transcript-backed command inputs recover repeated exact completed commands. They lack revision and prior-result attribution, so they do not identify avoidable verification.
 
 **Bounded scope.** Do not change checks or add command suppression. Revisit only if future attribution records an identical command, unchanged revision, and completed prior result.
 

@@ -22,7 +22,7 @@
   {
     "id": "TU-03",
     "title": "Keep verification policy unchanged; add no suppression candidate",
-    "evidence": "The selected traces contain zero repeated completed exact commands after opener-to-completion matching. Earlier prefix/title matching conflated different commands and edits.",
+    "evidence": "Transcript-backed command inputs recover repeated exact completed commands. They lack revision and prior-result attribution, so they do not identify avoidable verification.",
     "scope": "Do not change checks or add command suppression. Revisit only if future attribution records an identical command, unchanged revision, and completed prior result.",
     "benefit": "No expected saving from this baseline.",
     "confidence": "high",
