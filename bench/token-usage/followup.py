@@ -612,7 +612,7 @@ Request input includes cached input. Uncached input equals input minus cached in
 
 The handoff sample includes the largest retained successor prompt (247,208 characters, cancelled) and a finished ordinary successor (50,949 characters). Both retain rendered session-history context and a persisted successor prompt. Stored renderer source provides `handoff_text`, `render_entry`, and `apply_budget` rules. The historical deployed revision, selected entries, and omitted candidates are absent, so the body cannot reconstruct the original selection.
 
-The tool inventory has repeated and large retained operations. `manual-inspection.json` records two mapped `Read` results of 85,089 and 78,622 characters and mapped `Bash` groups of 1,030 and 617 calls, with native record IDs. It also records the lifecycle-status join limit for failure evidence. The tool table retains unmatched results and representation limits. It does not retain a request prompt-component identifier, so it cannot establish whether a result was reread, included in a later prompt, or caused a correction. Stored result characters are not token savings.
+The tool inventory has repeated and large retained operations. `manual-inspection.json` records two mapped `Read` results of 85,089 and 78,622 characters and mapped `Bash` groups of 1,030 and 617 calls. Its sampled repeated-command group has fingerprint `bf556d72887258b5`, native call IDs, retained results, and a later request ID. The records support unresolved repetition; they do not retain a stable revision or semantic-operation join. The tool table retains unmatched results and representation limits. Stored result characters are not token savings.
 
 ## Recommendation
 

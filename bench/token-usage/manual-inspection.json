@@ -36,7 +36,8 @@
           "observed_interval_ms": 1737,
           "intervening_bash_calls": 0
         }
-      ]
+      ],
+      "inspection_scope": "inspected_sequence"
     },
     {
       "session_id": "01m4m371vw9hgpth2pc7tz0gkt",
@@ -45,7 +46,8 @@
       "event_id": "01m4m373bjdnr411fnzqz2wef1",
       "next_request_id": "msg_011CfuSskGP7FnQhT8GG7j4a",
       "signal": "one correction-marker delivery among 13",
-      "outcome": "finished"
+      "outcome": "finished",
+      "inspection_scope": "inventory_only_temporal_candidate"
     },
     {
       "session_id": "01m4myv6ppjky1ef1zcwz2b2h9",
@@ -53,7 +55,8 @@
       "input_tokens": 331864110,
       "event_id": "01m4myv8djxtpwms9n7vfrbfq9",
       "next_request_id": "msg_011Cfv5ZUMUqDYigcXzSHRKJ",
-      "outcome": "finished"
+      "outcome": "finished",
+      "inspection_scope": "inventory_only_temporal_candidate"
     },
     {
       "session_id": "01m4c5vrty2dyazsaf02kapm9v",
@@ -61,7 +64,8 @@
       "input_tokens": 3357778,
       "event_id": "01m4c5vvpqpemtwjz8tmk5kf1e",
       "next_request_id": "msg_011Cfod73AsznSNKkLaXsmax",
-      "outcome": "finished"
+      "outcome": "finished",
+      "inspection_scope": "inventory_only_temporal_candidate"
     }
   ],
   "limits": "Event-to-request links are temporal candidates. Tool IDs are native transcript references. Outcomes are task metadata and do not prove that a prompt or tool caused completion.",
@@ -105,7 +109,17 @@
       "distinct_command_inputs": 918,
       "exact_repeated_command_groups": 69,
       "calls_in_repeated_groups": 181,
-      "inspection": "A sampled exact-repeat group has separate native tool calls and results before later model requests. The retained records establish repeated command text, but omit a stable revision or semantic-operation identifier; it can be a retry, re-read, or distinct correction."
+      "inspection": "A sampled exact-repeat group has separate native tool calls and results before later model requests. The retained records establish repeated command text, but omit a stable revision or semantic-operation identifier; it can be a retry, re-read, or distinct correction.",
+      "sampled_group": {
+        "command_sha256_prefix": "bf556d72887258b5",
+        "native_call_ids": [
+          "toolu_01Quithsq6HQnZdndxAnNKy4",
+          "toolu_01ScR7kiknZgzWyxQyeNyNZF"
+        ],
+        "later_request_id": "msg_011CfuDEdYGirJVYgKMUNr5X",
+        "result_summary": "Both native calls retained results; no stable file revision or semantic-operation link joins the two calls.",
+        "classification": "unresolved_repetition"
+      }
     },
     "failure_evidence": "The selected major transcript has 17 native tool_result records with is_error. Two are traced in cases.error_followups. They are followed by later requests but do not establish the content of a retry, revision, or causal correction."
   },
@@ -150,7 +164,12 @@
             "event_id": "01m4a4hgz2d2gfxfb4tw5csfyn",
             "finding": "reported readiness and waited for human merge"
           }
-        ]
+        ],
+        "delivered_context_comparison": {
+          "present": "rendered history and predecessor context",
+          "successor_checked_again": "open PR, checks, and pending comments",
+          "absent_or_uncertain": "no selected-entry list, deployed renderer revision, or field proving that the delivered text supplied those PR facts"
+        }
       }
     ]
   },

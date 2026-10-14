@@ -8,7 +8,7 @@ Saved Claude transcripts establish per-request usage for mapped sessions and nat
 
 ## Reproducible evidence
 
-Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15` at `/tmp/token-followup.db`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Source revision: `b913cbfdef5f6547bf261a47ce09682f4a53cd82`. Analyzer SHA-256: `72b0a4d7a2282263589fdcd82ed6074826c536b335415c22f36c995b4abb0a7c`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
+Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15` at `/tmp/token-followup.db`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Source revision: `70df639377a3956f9e85991a08a35e40678d9194`. Analyzer SHA-256: `770a8bae817ca3ef8f8cefa478de561953959f82543c646e66810621f1befb5a`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
 
 The follow-up found 48,769 retained request records, all mapped through native session IDs. It discarded 81,531 repeated Claude blocks and excluded 6,782 ambiguous-usage request identities (6,782 identities including missing usage) in `excluded-requests.csv`. The CSV artifacts retain no raw transcript text.
 
@@ -36,7 +36,7 @@ Request input includes cached input. Uncached input equals input minus cached in
 
 The handoff sample includes the largest retained successor prompt (247,208 characters, cancelled) and a finished ordinary successor (50,949 characters). Both retain rendered session-history context and a persisted successor prompt. Stored renderer source provides `handoff_text`, `render_entry`, and `apply_budget` rules. The historical deployed revision, selected entries, and omitted candidates are absent, so the body cannot reconstruct the original selection.
 
-The tool inventory has repeated and large retained operations. `manual-inspection.json` records two mapped `Read` results of 85,089 and 78,622 characters and mapped `Bash` groups of 1,030 and 617 calls, with native record IDs. It also records the lifecycle-status join limit for failure evidence. The tool table retains unmatched results and representation limits. It does not retain a request prompt-component identifier, so it cannot establish whether a result was reread, included in a later prompt, or caused a correction. Stored result characters are not token savings.
+The tool inventory has repeated and large retained operations. `manual-inspection.json` records two mapped `Read` results of 85,089 and 78,622 characters and mapped `Bash` groups of 1,030 and 617 calls. Its sampled repeated-command group has fingerprint `bf556d72887258b5`, native call IDs, retained results, and a later request ID. The records support unresolved repetition; they do not retain a stable revision or semantic-operation join. The tool table retains unmatched results and representation limits. Stored result characters are not token savings.
 
 ## Recommendation
 

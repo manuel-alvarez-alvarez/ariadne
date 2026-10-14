@@ -1,5 +1,5 @@
 {
-  "analyzer_sha256": "72b0a4d7a2282263589fdcd82ed6074826c536b335415c22f36c995b4abb0a7c",
+  "analyzer_sha256": "770a8bae817ca3ef8f8cefa478de561953959f82543c646e66810621f1befb5a",
   "analyzer_version": "2",
   "baseline_database": {
     "available": true,
@@ -12,7 +12,7 @@
       "duplicate_request_records": 81531
     },
     "codex_inventory": {
-      "after_cutoff": 2651,
+      "after_cutoff": 2746,
       "cumulative_counter_records": 57834,
       "request_usage_records": 40282,
       "state_records_without_usage": 2294
@@ -51,7 +51,7 @@
     "partial_sessions": 2
   },
   "cutoff": "2026-10-14T22:17:05.521Z",
-  "revision": "b913cbfdef5f6547bf261a47ce09682f4a53cd82",
+  "revision": "70df639377a3956f9e85991a08a35e40678d9194",
   "separation": {
     "baseline": "frozen artifacts under bench/token-usage excluding followup-*",
     "goal_overhead": "01m4y11d2c2q2zt30qgg5gjkj9",
@@ -62,5 +62,5 @@
     "label": "SQLite backup created 2026-10-15",
     "sha256": "adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a"
   },
-  "transcript_manifest_sha256": "11acbe54a84b3e8f811829a4cf1b2b404576f49658718b656be617191e6695b2"
+  "transcript_manifest_sha256": "1ee71deb76e0af81ce31254e641e6a04b26d3b02cc7a84411338558ecdb832e6"
 }
