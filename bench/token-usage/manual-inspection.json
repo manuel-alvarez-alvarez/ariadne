@@ -6,7 +6,7 @@
     "wakeup_candidates": "unique temporal candidates only; no causal delivery claim"
   },
   "cases": [
-    {"session_id":"01m4kf30z3vs1n1y73d7t3bwnd","class":"major","input_tokens":805121096,"event_id":"01m4kf335zwhtaz67rmz7mrr5q","next_request_id":"msg_011CftzDoayYNC9SUTbNLp1M","tool_call_ids":["toolu_013vnHtY48aMcdSjnsREu5v7","toolu_01LfNKrG5xXPnTrgNw85w8gR","toolu_01Cury7LZjNWZnyRFg6s6cq9"],"outcome":"finished"},
+    {"session_id":"01m4kf30z3vs1n1y73d7t3bwnd","class":"major","input_tokens":805121096,"event_id":"01m4kf335zwhtaz67rmz7mrr5q","next_request_id":"msg_011CftzDoayYNC9SUTbNLp1M","tool_call_ids":["toolu_013vnHtY48aMcdSjnsREu5v7","toolu_01LfNKrG5xXPnTrgNw85w8gR","toolu_01Cury7LZjNWZnyRFg6s6cq9"],"outcome":"finished","error_followups":[{"tool_result_id":"toolu_01XVy1dYjTLjLPhVYiXkxfVL","result_at":"2026-10-10T17:53:10.775Z","next_request_id":"msg_011CftyzutcopuCabWHySNGa","next_request_at":"2026-10-10T17:53:10.779Z","intervening_bash_calls":0},{"tool_result_id":"toolu_019D1rxDUq5iLnq9GJ4zfr8E","result_at":"2026-10-10T18:05:12.708Z","next_request_id":"msg_011Cftzv87ocb8JeTvu3gSjj","next_request_at":"2026-10-10T18:05:12.712Z","intervening_bash_calls":0}]},
     {"session_id":"01m4m371vw9hgpth2pc7tz0gkt","class":"major","input_tokens":540410359,"event_id":"01m4m373bjdnr411fnzqz2wef1","next_request_id":"msg_011CfuSskGP7FnQhT8GG7j4a","signal":"one correction-marker delivery among 13","outcome":"finished"},
     {"session_id":"01m4myv6ppjky1ef1zcwz2b2h9","class":"major","input_tokens":331864110,"event_id":"01m4myv8djxtpwms9n7vfrbfq9","next_request_id":"msg_011Cfv5ZUMUqDYigcXzSHRKJ","outcome":"finished"},
     {"session_id":"01m4c5vrty2dyazsaf02kapm9v","class":"ordinary_reviewer","input_tokens":3357778,"event_id":"01m4c5vvpqpemtwjz8tmk5kf1e","next_request_id":"msg_011Cfod73AsznSNKkLaXsmax","outcome":"finished"}
@@ -22,6 +22,8 @@
       {"session_id":"01m4kf30z3vs1n1y73d7t3bwnd","tool_name":"Bash","calls":1030,"result_chars":1383796,"max_result_chars":24912},
       {"session_id":"01m4m371vw9hgpth2pc7tz0gkt","tool_name":"Bash","calls":617,"result_chars":735385,"max_result_chars":23529}
     ],
-    "failure_evidence":"Daemon post_tool_use lifecycle records include completed and failed statuses, but retained transcript call IDs do not provide a universal native join to that lifecycle status; no failure is attributed to a request or later correction."
-  }
+    "repeated_command_evidence":{"session_id":"01m4kf30z3vs1n1y73d7t3bwnd","bash_calls":1030,"distinct_command_inputs":918,"exact_repeated_command_groups":69,"calls_in_repeated_groups":181},
+    "failure_evidence":"The selected major transcript has 17 native tool_result records with is_error. Two are traced in cases.error_followups. They are followed by later requests but do not establish the content of a retry, revision, or causal correction."
+  },
+  "handoff_inspection":{"selection":"largest retained successor prompt and one finished ordinary successor","renderer_sources":"Stored source history has handoff_text, render_entry, and apply_budget rules. The saved successor body has the history marker, but it cannot identify the deployed revision or pre-budget selected entries.","cases":[{"event_id":"01m4s320dhh01x3dbr72xmp15g","predecessor_session_id":"01m4rtkd735xfnzf1w3qfdw466","successor_session_id":"01m4s31xs6b8phfn0mg6rjbz9k","delivered_prompt_chars":247208,"history_marker":true,"task_outcome":"cancelled"},{"event_id":"01m4a4h4b42pc3f8gwr6njdmxe","predecessor_session_id":"01m4a4gfm536ccn7spghtb195x","successor_session_id":"01m4a4h3m1mrztdr1mw0hcrva5","delivered_prompt_chars":50949,"history_marker":true,"task_outcome":"finished"}]}
 }

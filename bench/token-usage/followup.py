@@ -398,26 +398,43 @@ def main() -> int:
         components[find(index)].append(row)
     excluded_requests: list[dict[str, Any]] = []
     selected: list[dict[str, Any]] = []
+    canonical_request_ids: dict[tuple[str, str, str], str] = {}
     for component in components.values():
-        representative = dict(component[0])
+        # Prefer a retained usage row with an Ariadne mapping.  This avoids
+        # losing mapping fields when an earlier copy is only an alias shell.
+        representative = dict(next((row for row in component if row.get("usage_status", "present") == "present" and row["session_id"] != "unmapped"), component[0]))
         aliases = sorted({name for row in component for name in (row["request_id"], *filter(None, row.get("alias_ids", "").split("|")))})
         representative["alias_ids"] = "|".join(aliases)
+        for name in aliases:
+            canonical_request_ids[(representative["family"], representative["session_id"], name)] = representative["request_id"]
         present = [row for row in component if row.get("usage_status", "present") == "present"]
         token_sets = {tuple(row[field] for field in TOKENS) for row in present}
         ambiguous = any(row.get("usage_status") == "ambiguous_conflict" for row in component) or len(token_sets) > 1
         if ambiguous:
-            excluded_requests.append({"family": representative["family"], "vendor_session_id": representative["vendor_session_id"], "request_id": representative["request_id"], "alias_ids": representative["alias_ids"], "reason": "ambiguous_conflicting_usage"})
+            excluded_requests.append({"family": representative["family"], "session_id": representative["session_id"], "vendor_session_id": representative["vendor_session_id"], "request_id": representative["request_id"], "alias_ids": representative["alias_ids"], "reason": "ambiguous_conflicting_usage"})
             continue
         if not present:
-            excluded_requests.append({"family": representative["family"], "vendor_session_id": representative["vendor_session_id"], "request_id": representative["request_id"], "alias_ids": representative["alias_ids"], "reason": "missing_usage"})
+            excluded_requests.append({"family": representative["family"], "session_id": representative["session_id"], "vendor_session_id": representative["vendor_session_id"], "request_id": representative["request_id"], "alias_ids": representative["alias_ids"], "reason": "missing_usage"})
             continue
         representative.update({field: present[0][field] for field in TOKENS})
+        representative["usage_record"] = 1
         representative["usage_status"] = "present"
         selected.append(representative)
     request_rows = selected
     conflicts = {row["request_id"] for row in excluded_requests if row["reason"] == "ambiguous_conflicting_usage"}
     unmapped_request_records = sum(row["session_id"] == "unmapped" for row in request_rows)
     request_rows = [row for row in request_rows if row["session_id"] != "unmapped"]
+    # Calls are parsed before cross-file request alias components exist.  Move
+    # every call to the selected request identity, then calculate counts from
+    # the merged calls rather than stale per-file counters.
+    for tool in tool_rows:
+        key = (tool["family"], tool["session_id"], tool["request_id"])
+        canonical = canonical_request_ids.get(key)
+        if canonical:
+            tool["request_id"] = canonical
+    tool_count_by_request = collections.Counter((tool["family"], tool["session_id"], tool["request_id"]) for tool in tool_rows)
+    for request in request_rows:
+        request["tool_calls"] = tool_count_by_request[(request["family"], request["session_id"], request["request_id"])]
     # Request histories use native request IDs.  No timeline is inferred for
     # unmapped records, and elapsed spans are per session rather than summed.
     timeline: list[dict[str, Any]] = []
@@ -523,14 +540,19 @@ def main() -> int:
         state = "request_partial" if not grouped.get(sid) else "matched" if observed == counter else "reset_or_multi_launch_or_scope_difference"
         reconciliation_rows.append({"session_id": sid, "goal_id": session.get("goal_id") or "", "task_id": session.get("task_id") or "", "launch_id": session.get("launch_id") or "", "session_counter_present": int(counter_present), "state": "missing_counter" if not counter_present else state, "request_input_tokens": observed["input_tokens"], "request_cached_input_tokens": observed["cached_input_tokens"], "request_output_tokens": observed["output_tokens"], "counter_input_tokens": counter["input_tokens"], "counter_cached_input_tokens": counter["cached_input_tokens"], "counter_output_tokens": counter["output_tokens"], "input_residual": counter["input_tokens"] - observed["input_tokens"], "cached_input_residual": counter["cached_input_tokens"] - observed["cached_input_tokens"], "output_residual": counter["output_tokens"] - observed["output_tokens"]})
     shared_reconciliation = []
+    excluded_by_session = collections.Counter(row["session_id"] for row in excluded_requests)
+    source_count_by_session = collections.Counter(row["session_id"] for row in rows(conn, "SELECT session_id, source FROM session_usage"))
+    starts_by_session = collections.Counter(row[0] for row in conn.execute("SELECT session_id FROM agent_events WHERE kind='session_start'"))
+    sessions_by_task = collections.Counter(session.get("task_id") for session in sessions if session.get("task_id"))
     for sid in sorted(baseline_session_ids):
         historical = usage()
         post_cutoff = usage()
         for row in grouped.get(sid, []):
             add(post_cutoff if row["timestamp"] > baseline_cutoff else historical, row)
         frozen_counter = baseline_usage_by_session.get(sid, usage())
-        state = "no_retained_historical_request" if not grouped.get(sid) else "matched_frozen_counter" if historical == frozen_counter else "unresolved_residual_existing_scope_or_reset_evidence_insufficient"
-        shared_reconciliation.append({"session_id": sid, "historical_request_input_tokens": historical["input_tokens"], "historical_request_cached_input_tokens": historical["cached_input_tokens"], "historical_request_output_tokens": historical["output_tokens"], "frozen_counter_input_tokens": frozen_counter["input_tokens"], "frozen_counter_cached_input_tokens": frozen_counter["cached_input_tokens"], "frozen_counter_output_tokens": frozen_counter["output_tokens"], "post_cutoff_request_input_tokens": post_cutoff["input_tokens"], "post_cutoff_request_cached_input_tokens": post_cutoff["cached_input_tokens"], "post_cutoff_request_output_tokens": post_cutoff["output_tokens"], "input_residual": frozen_counter["input_tokens"] - historical["input_tokens"], "cached_input_residual": frozen_counter["cached_input_tokens"] - historical["cached_input_tokens"], "output_residual": frozen_counter["output_tokens"] - historical["output_tokens"], "state": state})
+        task_session_count = sessions_by_task.get(session_by_id.get(sid, {}).get("task_id"), 0)
+        state = "no_retained_historical_request" if not grouped.get(sid) else "matched_frozen_counter" if historical == frozen_counter else "excluded_ambiguous_request_usage" if excluded_by_session[sid] else "multiple_counter_sources" if source_count_by_session[sid] > 1 else "restarted_session" if starts_by_session[sid] > 1 else "multi_session_task_scope" if task_session_count > 1 else "unresolved_residual"
+        shared_reconciliation.append({"session_id": sid, "historical_request_input_tokens": historical["input_tokens"], "historical_request_cached_input_tokens": historical["cached_input_tokens"], "historical_request_output_tokens": historical["output_tokens"], "frozen_counter_input_tokens": frozen_counter["input_tokens"], "frozen_counter_cached_input_tokens": frozen_counter["cached_input_tokens"], "frozen_counter_output_tokens": frozen_counter["output_tokens"], "post_cutoff_request_input_tokens": post_cutoff["input_tokens"], "post_cutoff_request_cached_input_tokens": post_cutoff["cached_input_tokens"], "post_cutoff_request_output_tokens": post_cutoff["output_tokens"], "excluded_request_identities": excluded_by_session[sid], "counter_sources": source_count_by_session[sid], "session_starts": starts_by_session[sid], "task_session_count": task_session_count, "input_residual": frozen_counter["input_tokens"] - historical["input_tokens"], "cached_input_residual": frozen_counter["cached_input_tokens"] - historical["cached_input_tokens"], "output_residual": frozen_counter["output_tokens"] - historical["output_tokens"], "state": state})
     frozen = json.loads(Path(__file__).with_name("reconciliation.json").read_text())
     current_total = usage()
     for value in usage_by_session.values(): add(current_total, value)
@@ -540,14 +562,14 @@ def main() -> int:
     write_csv(out / "format-inventory.csv", formats, ["family", "files", "mapped_sessions", "request_history", "reason"])
     write_csv(out / "followup-transcript-manifest.csv", manifest_rows, ["family", "source_id", "retained_content_sha256", "parser", "mapped_requests", "unmapped_requests"])
     write_csv(out / "request-usage.csv", request_rows, ["family", "session_id", "vendor_session_id", "request_id", "alias_ids", "turn_id", "response_id", "timestamp", "model", "effort", "tool_calls", "usage_record", "usage_status", "deduplication", "input_tokens", "cached_input_tokens", "output_tokens"])
-    write_csv(out / "excluded-requests.csv", excluded_requests, ["family", "vendor_session_id", "request_id", "alias_ids", "reason"])
+    write_csv(out / "excluded-requests.csv", excluded_requests, ["family", "session_id", "vendor_session_id", "request_id", "alias_ids", "reason"])
     write_csv(out / "session-timeline.csv", timeline, ["session_id", "goal_id", "task_id", "seat", "workflow_column", "model", "effort", "launch_id", "task_outcome", "session_status", "partial", "requests", "first_request_at", "last_request_at", "observed_request_span_secs", "interval_definition", "input_tokens", "cached_input_tokens", "output_tokens", "uncached_input_tokens"])
     write_csv(out / "tool-output.csv", tool_values, ["family", "session_id", "request_id", "tool_call_id", "tool_name", "turn_id", "result_chars", "result_representation", "timestamp", "association", "request_association"])
     write_csv(out / "wakeup-analysis.csv", wakeups, ["event_id", "session_id", "delivered_at", "prompt_chars", "delivery_cause", "next_request_id", "next_request_delay_secs", "candidate_count", "match_kind", "outcome_join", "limitation"])
     write_csv(out / "cohort-comparison.csv", cohort_rows, ["cohort", "requests", "sessions", "input_tokens", "cached_input_tokens", "output_tokens", "uncached_input_tokens"])
     write_csv(out / "handoff-analysis.csv", handoffs, ["predecessor_session_id", "successor_session_id", "goal_id", "task_id", "delivered_prompt_event_id", "delivered_prompt_chars", "handoff_marker", "renderer_revision", "candidate_selection", "supported_consequence", "reason"])
     write_csv(out / "request-reconciliation.csv", reconciliation_rows, ["session_id", "goal_id", "task_id", "launch_id", "session_counter_present", "state", "request_input_tokens", "request_cached_input_tokens", "request_output_tokens", "counter_input_tokens", "counter_cached_input_tokens", "counter_output_tokens", "input_residual", "cached_input_residual", "output_residual"])
-    write_csv(out / "shared-cohort-reconciliation.csv", shared_reconciliation, ["session_id", "historical_request_input_tokens", "historical_request_cached_input_tokens", "historical_request_output_tokens", "frozen_counter_input_tokens", "frozen_counter_cached_input_tokens", "frozen_counter_output_tokens", "post_cutoff_request_input_tokens", "post_cutoff_request_cached_input_tokens", "post_cutoff_request_output_tokens", "input_residual", "cached_input_residual", "output_residual", "state"])
+    write_csv(out / "shared-cohort-reconciliation.csv", shared_reconciliation, ["session_id", "historical_request_input_tokens", "historical_request_cached_input_tokens", "historical_request_output_tokens", "frozen_counter_input_tokens", "frozen_counter_cached_input_tokens", "frozen_counter_output_tokens", "post_cutoff_request_input_tokens", "post_cutoff_request_cached_input_tokens", "post_cutoff_request_output_tokens", "excluded_request_identities", "counter_sources", "session_starts", "task_session_count", "input_residual", "cached_input_residual", "output_residual", "state"])
     (out / "followup-snapshot.json").write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
     (out / "followup-reconciliation.json").write_text(json.dumps(reconciliation, indent=2, sort_keys=True) + "\n")
     (out / "FOLLOWUP-REPORT.md").write_text(f"""# Request-level transcript follow-up
@@ -582,13 +604,15 @@ Request input includes cached input. Uncached input equals input minus cached in
 
 ## Manual record inspection
 
-`manual-inspection.json` selects the three largest mapped-session input totals and one median mapped reviewer session. Each selected daemon event has a later native request and a finished task outcome; one major session has a correction-marker delivery among thirteen. Those are supported sequence facts, not evidence that the delivery caused the work. Native tool IDs are recorded for the first major case. The inspection also covers handoffs: retained successor prompts support delivered-body measurement, while three candidates have no retained successor prompt. Historical renderer behavior is documented in the stored renderer sources, but the deployed renderer revision and pre-budget selected-entry set are absent for these old events.
+`manual-inspection.json` selects the three largest mapped-session input totals and one median mapped reviewer session. Each selected daemon event has a later native request and a finished task outcome; one major session has a correction-marker delivery among thirteen. Those are supported sequence facts, not evidence that the delivery caused the work. The first major transcript has 17 native error results. Two sampled error results have their later request IDs and observed four-millisecond record intervals. It also has 69 exact repeated-command groups across 1,030 Bash calls. These facts establish retry candidates, but not whether a command was necessary or a correction succeeded.
+
+The handoff sample includes the largest retained successor prompt (247,208 characters, cancelled) and a finished ordinary successor (50,949 characters). Both retain the history marker. Stored renderer source provides `handoff_text`, `render_entry`, and `apply_budget` rules. The historical deployed revision and selected entries are still absent, so the body cannot reconstruct the original selection.
 
 The tool inventory has repeated and large retained operations. `manual-inspection.json` records two mapped `Read` results of 85,089 and 78,622 characters and mapped `Bash` groups of 1,030 and 617 calls, with native record IDs. It also records the lifecycle-status join limit for failure evidence. The tool table retains unmatched results and representation limits. It does not retain a request prompt-component identifier, so it cannot establish whether a result was reread, included in a later prompt, or caused a correction. Stored result characters are not token savings.
 
 ## Recommendation
 
-Keep TU-03 unchanged. Rank TU-01 first: its bounded scope is delivery ID, cause, receiving request/turn, and lifecycle outcome; competing temporal matches are evidence, while many unique candidates are counter-evidence. Rank TU-02 second: its scope is deployed renderer revision, candidates, selected entries, and prompt inclusion; retained handoff bodies are counter-evidence to a claim that all handoffs are opaque. Rank TU-04 third: its scope is request prompt components and native tool-result inclusion; large/repeated retained outputs are evidence, while character size is counter-evidence to a billed-token claim. Confidence is moderate that each gap exists and low that reducing it saves tokens or time. Each comparison must keep checks and review columns unchanged and compare request categories, completion lead time, retry/review outcomes, and failure-diagnosis quality against matched task types.
+Keep TU-03 unchanged. Rank TU-01 first: its bounded scope is delivery ID, cause, receiving request/turn, and lifecycle outcome; competing temporal matches are evidence, while many unique candidates and completed tasks are counter-evidence. Rank TU-02 second: its scope is deployed renderer revision, candidates, selected entries, and prompt inclusion; retained handoff bodies and renderer source are counter-evidence to a claim that all handoffs are opaque. Rank TU-04 third: its scope is request prompt components and tool-result inclusion; repeated commands and native error results are evidence, while their later requests cannot establish rereading or savings. Confidence is moderate that each gap exists and low that reducing it saves tokens or time. Each comparison must keep checks and review columns unchanged and compare request categories, completion lead time, retry/review outcomes, and failure-diagnosis quality against matched task types.
 
 The strongest counter-evidence is the existing review history: repeated work may be a distinct revision or correction. No saved transcript demonstrates token savings or faster completion from suppressing a wakeup, reducing a handoff, or truncating a tool result. Preserve required checks and review columns. Stop here for the user decision before any production change.
 """)
