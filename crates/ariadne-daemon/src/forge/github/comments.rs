@@ -248,9 +248,9 @@ impl Github {
 
     /// The viewer's pending review on `number` — GitHub holds at most one
     /// per user per request — found among the request's reviews, or
-    /// created with no event and no body where there is none: creating one
-    /// is itself silent, since a pending review shows nobody but its own
-    /// author until it is submitted.
+    /// created with no event, and the hidden verdict mark as its body,
+    /// where there is none: creating one is itself silent, since a pending
+    /// review shows nobody but its own author until it is submitted.
     pub(super) async fn pending_review(
         &self,
         repo: &str,
@@ -262,10 +262,11 @@ impl Github {
         }
         let (host, owner, name) = split_slug(repo)?;
         let path = format!("repos/{owner}/{name}/pulls/{number}/reviews");
-        // An explicit empty `body` field, rather than no field at all: `gh
-        // api` sends no request body where there are no `-f`/`-F` fields
-        // and no `--input`, and GitHub's own review-creation endpoint is
-        // untested against that empty a request. No `event` field still
+        // Created with a body that is the hidden verdict mark alone, which
+        // renders as nothing: GitHub refuses to edit a review it holds with
+        // no body at all ("Could not edit a review with a missing body"),
+        // and every later change of the pending review — a verdict, a
+        // reply, a resolve — is an edit of its body. No `event` field still
         // leaves the review pending.
         let output = self
             .cli
@@ -277,7 +278,7 @@ impl Github {
                 "--method",
                 "POST",
                 "-f",
-                "body=",
+                &format!("body={PENDING_VERDICT_MARK}"),
             ])
             .await?;
         serde_json::from_str(&output)
@@ -652,7 +653,8 @@ sys.stdout.write(answers[count])
     }
 
     /// A reply to an inline review comment, with no pending review yet,
-    /// creates one with no body of its own and joins its thread through
+    /// creates one — its body the hidden verdict mark alone, so GitHub lets
+    /// every later edit of the body through — and joins its thread through
     /// `addPullRequestReviewThreadReply`, answering the new draft comment's
     /// own id.
     #[tokio::test]
@@ -679,6 +681,10 @@ sys.stdout.write(answers[count])
         assert_eq!(id, "rc-501");
         let create = call_args(dir.path(), 1);
         assert!(create.contains(&"--method".to_string()) && create.contains(&"POST".to_string()));
+        assert!(
+            create.contains(&format!("body={}", super::PENDING_VERDICT_MARK)),
+            "the review is created with the hidden mark as its body: {create:?}"
+        );
         let mutate = call_args(dir.path(), 2);
         assert!(
             mutate.contains(&"reviewId=PR_kwDOx".to_string()),
