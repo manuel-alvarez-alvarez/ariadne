@@ -1,0 +1,2 @@
+coverage,reason,supported_consequence
+unavailable,"historical renderer revision, candidate set, selected entries, and prompt inclusion are not retained together",none

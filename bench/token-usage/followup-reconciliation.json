@@ -1,0 +1,20 @@
+{
+  "canonical_session_usage": {
+    "cached_input_tokens": 10728903243,
+    "input_tokens": 10886543176,
+    "output_tokens": 30473542,
+    "uncached_input_tokens": 157639933
+  },
+  "codex_request_coverage": "token_usage_record usage field only; cumulative token_count and turn/thread totals excluded",
+  "comparison": "not additive: transcript request coverage is partial and vendor accounting may differ",
+  "conflicting_duplicate_request_ids_excluded": 0,
+  "deduplicated_claude_request_records": 81531,
+  "request_usage": {
+    "cached_input_tokens": 10283917501,
+    "input_tokens": 10421148013,
+    "output_tokens": 26093996,
+    "uncached_input_tokens": 137230512
+  },
+  "request_usage_rule": "sum one mapped retained native response/message ID per format; exclude conflicting duplicate IDs",
+  "unmapped_request_records_excluded": 86077
+}

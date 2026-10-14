@@ -1,0 +1,4 @@
+cohort,requests,sessions,input_tokens,cached_input_tokens,output_tokens,uncached_input_tokens
+shared_baseline_cohort,51799,596,10370885777,10234967475,25909253,135918302
+newer_evidence,479,11,50262236,48950026,184743,1312210
+this_goal_overhead,0,0,0,0,0,0
