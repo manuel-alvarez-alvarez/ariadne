@@ -9,12 +9,13 @@ use super::{
 };
 use crate::forge::live::{self, Details, Live};
 use crate::forge::pulls::{CONVERSATION, DraftComment, ReviewDraft};
-use crate::forge::{ForgeClient, PullRequestRef, pulls};
+use crate::forge::{ForgeClient, ForgeKind, PendingEditError, PullRequestRef, pulls};
 use ariadne_api::pull_requests::{
-    AskBabysitRequest, AskReviewRequest, PendingReplyDto, PendingReviewDto, PullRequestCommentDto,
-    PullRequestCommentQuery, PullRequestDiffQuery, PullRequestDto, PullRequestListQuery,
-    PullRequestMatchDto, ReplyAnswerDto, ReplyCommentRequest, ReportPullRequestRequest,
-    SubmitReviewAnswerDto, SubmitReviewRequest,
+    AskBabysitRequest, AskReviewRequest, DeletePendingCommentRequest, EditPendingCommentRequest,
+    EditPendingReviewBodyRequest, PendingEditDto, PendingReplyDto, PendingReviewDto,
+    PullRequestCommentDto, PullRequestCommentQuery, PullRequestDiffQuery, PullRequestDto,
+    PullRequestListQuery, PullRequestMatchDto, ReplyAnswerDto, ReplyCommentRequest,
+    ReportPullRequestRequest, SubmitReviewAnswerDto, SubmitReviewRequest,
 };
 use ariadne_store::{
     AgentSession, ForgeIntegration, PullRequest, PullRequestComment, PullRequestFilter,
@@ -67,6 +68,24 @@ fn slug(forge: &ForgeIntegration) -> String {
 }
 fn client(state: &AppState, forge: &ForgeIntegration) -> ForgeClient {
     ForgeClient::for_repository(&state.launcher.cfg, forge)
+}
+/// What changed, in words that name the forge (033): a pending review
+/// comment or a draft note.
+fn forge_item_label(forge: &ForgeIntegration, github: &str, gitlab: &str) -> String {
+    match forge.kind() {
+        ForgeKind::Github => format!("the pending GitHub {github}"),
+        ForgeKind::Gitlab => format!("the GitLab {gitlab}"),
+    }
+}
+/// [`PendingEditError`] as the route's own answer: 409 for a target that is
+/// no longer pending, else the forge's own refusal.
+fn pending_edit_error(error: PendingEditError, forge_id: &str) -> ApiError {
+    match error {
+        PendingEditError::NotPending => ApiError::conflict(format!(
+            "{forge_id} is no longer pending: the user already submitted or published it"
+        )),
+        PendingEditError::Forge(e) => forge_error(e),
+    }
 }
 
 /// Tell a client watching the stream that this request's readiness
@@ -753,6 +772,116 @@ pub(super) async fn resolve(
                 .expect("PullRequestCommentDto serializes"),
         ),
     ))
+}
+
+/// Edit the body of one of the viewer's own pending forge posts: a pending
+/// review comment (GitHub) or a draft note (GitLab), by its own forge id
+/// (033). Refused with 409 once the user submits or publishes it.
+#[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/edit", tag = "pull-requests",
+    params(("id" = String, Path)),
+    request_body = EditPendingCommentRequest,
+    responses((status = 200, body = PendingEditDto), (status = 400), (status = 403), (status = 404), (status = 409), (status = 502)))]
+pub(super) async fn edit_pending_comment(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<EditPendingCommentRequest>,
+) -> ApiResult<Json<PendingEditDto>> {
+    let row = state.store.get_pull_request(&id).await?;
+    own_session(&state, &headers, &row).await?;
+    let body = pulls::strip_trailers(req.body.trim());
+    if body.is_empty() {
+        return Err(ApiError::bad_request("an edit needs a body"));
+    }
+    // Held the same way a reply and a review are: all three read, change
+    // and write the one pending review or draft notes, and a pair of them
+    // racing each other must not lose one's change to the other's.
+    let _reply_lock = state.reply_locks.hold(&row.id).await;
+    let pull = read_held(&state, row).await?;
+    let forge = integration(&state, &pull.repository_id).await?;
+    let login = forge.login.clone().unwrap_or_default();
+    client(&state, &forge)
+        .edit_pending_comment(&slug(&forge), pull.number, &login, &req.forge_id, &body)
+        .await
+        .map_err(|e| pending_edit_error(e, &req.forge_id))?;
+    state.forge_poll.wake(&pull.repository_id);
+    state.notify_scheduler_pull_request(&pull.id);
+    Ok(Json(PendingEditDto {
+        id: req.forge_id,
+        changed: forge_item_label(&forge, "review comment", "draft note"),
+    }))
+}
+
+/// Delete one of the viewer's own pending forge posts, by its own forge id
+/// (033). Refused with 409 once the user submits or publishes it.
+#[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/delete", tag = "pull-requests",
+    params(("id" = String, Path)),
+    request_body = DeletePendingCommentRequest,
+    responses((status = 200, body = PendingEditDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
+pub(super) async fn delete_pending_comment(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<DeletePendingCommentRequest>,
+) -> ApiResult<Json<PendingEditDto>> {
+    let row = state.store.get_pull_request(&id).await?;
+    own_session(&state, &headers, &row).await?;
+    let _reply_lock = state.reply_locks.hold(&row.id).await;
+    let pull = read_held(&state, row).await?;
+    let forge = integration(&state, &pull.repository_id).await?;
+    let login = forge.login.clone().unwrap_or_default();
+    client(&state, &forge)
+        .delete_pending_comment(&slug(&forge), pull.number, &login, &req.forge_id)
+        .await
+        .map_err(|e| pending_edit_error(e, &req.forge_id))?;
+    state.forge_poll.wake(&pull.repository_id);
+    state.notify_scheduler_pull_request(&pull.id);
+    Ok(Json(PendingEditDto {
+        id: req.forge_id,
+        changed: forge_item_label(&forge, "review comment", "draft note"),
+    }))
+}
+
+/// Replace the body of the viewer's own pending review outright (033):
+/// GitHub only, since GitLab holds no pending review body apart from its
+/// draft notes. Refused with 409 once the user submits it, or where there
+/// is none.
+#[utoipa::path(post, path = "/v1/pull-requests/{id}/pending-review/body", tag = "pull-requests",
+    params(("id" = String, Path)),
+    request_body = EditPendingReviewBodyRequest,
+    responses((status = 200, body = PendingEditDto), (status = 400), (status = 403), (status = 404), (status = 409), (status = 502)))]
+pub(super) async fn edit_pending_review_body(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<EditPendingReviewBodyRequest>,
+) -> ApiResult<Json<PendingEditDto>> {
+    let row = state.store.get_pull_request(&id).await?;
+    own_session(&state, &headers, &row).await?;
+    let body = pulls::strip_trailers(req.body.trim());
+    if body.is_empty() {
+        return Err(ApiError::bad_request("a pending review body needs text"));
+    }
+    let _reply_lock = state.reply_locks.hold(&row.id).await;
+    let pull = read_held(&state, row).await?;
+    let forge = integration(&state, &pull.repository_id).await?;
+    if forge.kind() != ForgeKind::Github {
+        return Err(ApiError::bad_request(
+            "only GitHub holds a pending review body of its own; edit a GitLab draft note \
+             through comments/edit instead",
+        ));
+    }
+    let login = forge.login.clone().unwrap_or_default();
+    let forge_id = client(&state, &forge)
+        .edit_pending_review_body(&slug(&forge), pull.number, &login, &body)
+        .await
+        .map_err(|e| pending_edit_error(e, "the pending review"))?;
+    state.forge_poll.wake(&pull.repository_id);
+    state.notify_scheduler_pull_request(&pull.id);
+    Ok(Json(PendingEditDto {
+        id: forge_id,
+        changed: "the GitHub pending review body".into(),
+    }))
 }
 
 /// What the request's session says of it: `ready` once the babysitting task

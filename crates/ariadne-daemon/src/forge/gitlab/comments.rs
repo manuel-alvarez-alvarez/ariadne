@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use super::Gitlab;
 use super::details::{note_id, project};
+use crate::forge::PendingEditError;
 use crate::forge::pulls::{CONVERSATION, split_slug};
 use ariadne_store::PullRequestComment;
 
@@ -178,6 +179,78 @@ impl Gitlab {
             .map_err(|e| format!("cannot read the draft note GitLab stored: {e}"))?;
         Ok(draft_note_id(created.id))
     }
+
+    /// Edit the body of one of the viewer's own draft notes, `PUT
+    /// .../draft_notes/<id>` (033). A draft note GitLab no longer holds —
+    /// consumed into a published note the moment the user publishes it —
+    /// answers 404, read as [`PendingEditError::NotPending`] rather than
+    /// any other forge refusal.
+    pub(crate) async fn edit_pending_comment(
+        &self,
+        repo: &str,
+        number: i64,
+        forge_id: &str,
+        body: &str,
+    ) -> Result<String, PendingEditError> {
+        let (host, owner, name) = split_slug(repo)?;
+        let id = draft_note_numeric_id(forge_id)?;
+        let path = format!(
+            "projects/{}/merge_requests/{number}/draft_notes/{id}",
+            project(owner, name)
+        );
+        match self
+            .cli
+            .call(&[
+                "api",
+                &path,
+                "--hostname",
+                host,
+                "--method",
+                "PUT",
+                "-f",
+                &format!("note={body}"),
+            ])
+            .await
+        {
+            Ok(_) => Ok(forge_id.to_string()),
+            Err(refusal) if refusal.is_missing() => Err(PendingEditError::NotPending),
+            Err(refusal) => Err(PendingEditError::Forge(refusal.to_string())),
+        }
+    }
+
+    /// Delete one of the viewer's own draft notes, `DELETE
+    /// .../draft_notes/<id>` (033). Refused the same way
+    /// [`Self::edit_pending_comment`] is.
+    pub(crate) async fn delete_pending_comment(
+        &self,
+        repo: &str,
+        number: i64,
+        forge_id: &str,
+    ) -> Result<(), PendingEditError> {
+        let (host, owner, name) = split_slug(repo)?;
+        let id = draft_note_numeric_id(forge_id)?;
+        let path = format!(
+            "projects/{}/merge_requests/{number}/draft_notes/{id}",
+            project(owner, name)
+        );
+        match self
+            .cli
+            .call(&["api", &path, "--hostname", host, "--method", "DELETE"])
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(refusal) if refusal.is_missing() => Err(PendingEditError::NotPending),
+            Err(refusal) => Err(PendingEditError::Forge(refusal.to_string())),
+        }
+    }
+}
+
+/// `forge_id` as the numeric id of a draft note, `draft-<n>`.
+fn draft_note_numeric_id(forge_id: &str) -> Result<i64, PendingEditError> {
+    forge_id
+        .strip_prefix("draft-")
+        .and_then(|id| id.parse().ok())
+        .ok_or_else(|| PendingEditError::Forge(format!("{forge_id} names no draft note")))
 }
 
 /// One entry of `GET .../draft_notes`, read for the discussion a draft
@@ -400,6 +473,103 @@ sys.stdout.write(answers[count])
                 )
                 .await
                 .is_err()
+        );
+    }
+
+    /// A `glab` stub that refuses its one call as GitLab does for a draft
+    /// note already published: 404, so [`Refusal::is_missing`] reads it.
+    const NOT_FOUND_STUB: &str = r#"#!/usr/bin/env python3
+import sys
+sys.stderr.write("glab: 404 Not Found (HTTP 404)\n")
+sys.exit(1)
+"#;
+
+    fn fake_glab_not_found(dir: &std::path::Path) -> String {
+        let path = dir.join("glab");
+        std::fs::write(&path, NOT_FOUND_STUB).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.display().to_string()
+    }
+
+    /// `edit_pending_comment` (033) writes the draft note's body with `PUT
+    /// .../draft_notes/<id>`, answering the same forge id.
+    #[tokio::test]
+    async fn edit_pending_comment_edits_the_draft_notes_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let gitlab = Gitlab::new(Cli {
+            timeout: Duration::from_secs(5),
+            ..Cli::new(Some(&fake_glab_scripted(dir.path(), &["{}"])), "glab")
+        });
+        let id = gitlab
+            .edit_pending_comment("gitlab.example/acme/widgets", 1, "draft-55", "Fixed.")
+            .await
+            .unwrap();
+        assert_eq!(id, "draft-55");
+        let args = scripted_call_args(dir.path(), 0);
+        assert!(args.contains(&"note=Fixed.".to_string()), "{args:?}");
+        assert!(args.contains(&"PUT".to_string()), "{args:?}");
+        assert!(
+            args.iter().any(|a| a.contains("draft_notes/55")),
+            "{args:?}"
+        );
+    }
+
+    /// A draft note GitLab has already consumed into a published note
+    /// answers 404, read as `NotPending` rather than any other refusal.
+    #[tokio::test]
+    async fn edit_pending_comment_refuses_a_draft_note_already_published() {
+        let dir = tempfile::tempdir().unwrap();
+        let gitlab = Gitlab::new(Cli {
+            timeout: Duration::from_secs(5),
+            ..Cli::new(Some(&fake_glab_not_found(dir.path())), "glab")
+        });
+        let error = gitlab
+            .edit_pending_comment("gitlab.example/acme/widgets", 1, "draft-55", "Fixed.")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, super::PendingEditError::NotPending),
+            "{error:?}"
+        );
+    }
+
+    /// `delete_pending_comment` (033) deletes the draft note with `DELETE
+    /// .../draft_notes/<id>`.
+    #[tokio::test]
+    async fn delete_pending_comment_deletes_the_draft_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let gitlab = Gitlab::new(Cli {
+            timeout: Duration::from_secs(5),
+            ..Cli::new(Some(&fake_glab_scripted(dir.path(), &["{}"])), "glab")
+        });
+        gitlab
+            .delete_pending_comment("gitlab.example/acme/widgets", 1, "draft-55")
+            .await
+            .unwrap();
+        let args = scripted_call_args(dir.path(), 0);
+        assert!(args.contains(&"DELETE".to_string()), "{args:?}");
+        assert!(
+            args.iter().any(|a| a.contains("draft_notes/55")),
+            "{args:?}"
+        );
+    }
+
+    /// Deleting a draft note already published is refused the same way
+    /// editing one is.
+    #[tokio::test]
+    async fn delete_pending_comment_refuses_a_draft_note_already_published() {
+        let dir = tempfile::tempdir().unwrap();
+        let gitlab = Gitlab::new(Cli {
+            timeout: Duration::from_secs(5),
+            ..Cli::new(Some(&fake_glab_not_found(dir.path())), "glab")
+        });
+        let error = gitlab
+            .delete_pending_comment("gitlab.example/acme/widgets", 1, "draft-55")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, super::PendingEditError::NotPending),
+            "{error:?}"
         );
     }
 }

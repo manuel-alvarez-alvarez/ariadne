@@ -295,6 +295,11 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     The `resolve_thread` tool reads a `pending` answer the same way
     `submit_review` does, and says the resolve waits in the user's forge
     drafts rather than handing back the pending shape.
+16c. The user asking for a change to a finding, a verdict or a resolve
+    still pending under rule 13a or 16b is answered through
+    `edit_pending_comment`, `delete_pending_comment` and
+    `edit_pending_review_body` (026 rule 25, 013), never through another
+    round of `submit_review` or `resolve_thread`.
 
 ## Verdict and attention
 
@@ -457,10 +462,15 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `::a_pending_resolve_tells_the_agent_to_continue_rather_than_the_raw_answer`.
 - The reviewer briefing fills every placeholder it names:
   `prompts.rs::tests::the_pull_request_texts_fill_every_placeholder_they_name`.
-- The reviewer PR seat lists its eight tools and no task or message tool, and
-  its tools call the routes of its request:
+- The reviewer PR seat lists its thirteen tools and no task or message tool,
+  and its tools call the routes of its request:
   `mcp.rs::tests::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`,
   `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
+- A finding, a verdict or a resolve still pending is changed only through
+  `edit_pending_comment`, `delete_pending_comment` and
+  `edit_pending_review_body` (rule 16c, 026 rule 25), each calling its own
+  route of the session's request:
+  `tools.rs::tests::the_pending_edit_tools_call_the_routes_of_the_sessions_request`.
 - The skill is within its caps, names the three priorities, names
   `request_changes` only beside P0, resolves a thread a push fixed, and
   approves on its own no more than it names merge, sleep, poll, `gh` or

@@ -957,6 +957,120 @@ async fn the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_pos
     .await;
 }
 
+/// The three pending-edit routes (033) answer 409 with no pending review or
+/// draft note of the viewer's own to edit, making only the one listing call
+/// `quiet_script` already answers empty: there is nothing pending yet.
+#[tokio::test]
+async fn pending_edit_routes_answer_409_with_no_pending_review() {
+    // The stub's own tempdir, which its `gh` binary lives under, must
+    // outlive this test: dropping it via `..` deletes the binary mid-test.
+    let Kept {
+        h,
+        stub: _stub,
+        agent,
+        id,
+        ..
+    } = kept_request(quiet_script()).await;
+    let error = h
+        .error(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/edit"),
+                &agent.id,
+                json!({"forge_id": "rc-501", "body": "Fixed."}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert_eq!(error.error.code, "conflict");
+    assert!(error.error.message.contains("rc-501"), "{error:?}");
+
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/comments/delete"),
+            &agent.id,
+            json!({"forge_id": "rc-501"}),
+        ),
+        StatusCode::CONFLICT,
+    )
+    .await;
+
+    h.error(
+        as_session(
+            &format!("/v1/pull-requests/{id}/pending-review/body"),
+            &agent.id,
+            json!({"body": "New body."}),
+        ),
+        StatusCode::CONFLICT,
+    )
+    .await;
+}
+
+/// `edit_pending_review_body` (033) replaces the viewer's pending review
+/// body outright, through the same `updatePullRequestReview` mutation
+/// `reply_pending` reuses, answering which forge item changed.
+#[tokio::test]
+async fn edit_pending_review_body_replaces_the_pending_reviews_body() {
+    let threads =
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let mut script = script_of(
+        pull("OPEN", "abc"),
+        &[],
+        &[],
+        &json!({"check_runs": []}).to_string(),
+        "[]",
+        &threads.to_string(),
+    );
+    script.as_array_mut().unwrap().splice(
+        0..0,
+        [
+            answer(
+                &[
+                    "api",
+                    "repos/acme/widgets/pulls/1/reviews",
+                    "--hostname",
+                    "github.com",
+                ],
+                0,
+                r#"[{"id": 9, "node_id": "PR_kwDOx", "state": "PENDING", "body": "Old note.",
+                    "user": {"login": "me"}}]"#,
+            ),
+            answer(
+                &[
+                    "api",
+                    "graphql",
+                    "--hostname",
+                    "github.com",
+                    "-f",
+                    "query=mutation($id: ID!, $body: String!) { \
+                     updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
+                     pullRequestReview { id } } }",
+                ],
+                0,
+                r#"{"data": {"updatePullRequestReview": {"pullRequestReview": {"id": "PR_kwDOx"}}}}"#,
+            ),
+        ],
+    );
+    let Kept {
+        h,
+        stub: _stub,
+        agent,
+        id,
+        ..
+    } = kept_request(script).await;
+    let answer: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/pending-review/body"),
+                &agent.id,
+                json!({"body": "New body."}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(answer["id"], "rv-9");
+    assert_eq!(answer["changed"], "the GitHub pending review body");
+}
+
 /// Two replies racing for the same conversation body: both pass the once
 /// check before either reaches the forge, but the pull request's reply
 /// lock serializes them, so the second rereads the first's answer instead
