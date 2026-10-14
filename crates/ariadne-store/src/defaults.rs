@@ -1705,6 +1705,27 @@ mod tests {
         }
     }
 
+    /// Acceptance criteria state outcomes, not test cases: the coding agent
+    /// picks its own tests. And plan review asks one question at a time,
+    /// about tracer size and `depends_on`, the same as step 2's open points
+    /// — without this, a planner could prescribe tests or collect every
+    /// plan decision into one turn while this suite stays green.
+    #[test]
+    fn the_orchestration_skill_writes_outcomes_and_reviews_the_plan_one_question_at_a_time() {
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for phrase in [
+            "Write each criterion as an outcome.",
+            "Leave test cases and verification to the coding agent.",
+            "Ask about the plan one question at a time, with its five parts.",
+            "Ask about tracer size and each `depends_on`.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
+    }
+
     /// The seat text carries no playbook step: not one of the phases, and no
     /// numbered step at all — a step that crept back in would be a rule
     /// stated in two layers, and the skill's copy going stale under it.
