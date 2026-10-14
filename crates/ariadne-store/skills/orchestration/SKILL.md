@@ -43,7 +43,11 @@ user. The workflow columns in your briefing are settled: do not ask for them.
 6. Give each agent one model from `list_models`, at the column's rank.
    Where a column names no rank, take the lowest rank and effort that
    finish the work. Staff `local` only where the user names it. State a
-   reason for each step up.
+   reason for each step up. Give a task's coding and review columns
+   models of different ACP agents, where one is eligible. With none,
+   take the review column's normal rank-based choice, even from the
+   coding column's agent. Tell the user independent review was
+   unavailable.
    Done when every agent has one model.
 7. Show the user the tasks and the models. Ask about the plan one question at
    a time, with its five parts. Ask about tracer size and each `depends_on`.

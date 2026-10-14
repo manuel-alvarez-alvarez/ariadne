@@ -1710,6 +1710,27 @@ mod tests {
         }
     }
 
+    /// A reviewer that shares the coding agent's ACP identity cannot catch
+    /// what that agent is blind to, so the playbook pairs a task's coding
+    /// and review columns on different ACP agents where one is eligible at
+    /// the review column's rank, and otherwise falls back to the review
+    /// column's normal rank-based choice, telling the user independent
+    /// review was unavailable.
+    #[test]
+    fn the_orchestration_skill_requires_independent_providers_for_coding_and_review() {
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for sentence in [
+            "Give a task's coding and review columns models of different ACP agents, where one is eligible.",
+            "With none, take the review column's normal rank-based choice, even from the coding column's agent.",
+            "Tell the user independent review was unavailable.",
+        ] {
+            assert!(
+                prompt.contains(sentence),
+                "the skill and the independent-provider rule \"{sentence}\""
+            );
+        }
+    }
+
     /// An orchestrator is nudged in the situation its goal stands in, and
     /// there are two: a plan being agreed, and a goal under way. A resume
     /// that asked for `finalize_plan` alone would push an orchestrator past a
