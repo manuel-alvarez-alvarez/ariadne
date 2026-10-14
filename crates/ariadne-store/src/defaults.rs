@@ -1690,10 +1690,34 @@ mod tests {
     fn the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule() {
         let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
         for phrase in [
+            "Give each one cohesive outcome, one repository, and a complete path through every layer it touches.",
             "Write each contract between two tasks into both tickets: a route, a response shape, a function, a file.",
-            "Add `depends_on` only where the code cannot compile or run without the other task.",
+            "Add `depends_on` only for a genuine compilation, execution, or acceptance prerequisite.",
+            "Do not add one only because two tasks touch nearby files.",
+            "Keep tasks that run together off the same code.",
             "Run no checks yourself: the last column proved the work.",
             "\"The frontend waits for the backend to land.\" -> Write the contract into both tickets. Both run now.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
+    }
+
+    /// Acceptance criteria state outcomes, not test cases: the coding agent
+    /// picks its own tests. And plan review asks one question at a time,
+    /// about tracer size and `depends_on`, the same as step 2's open points
+    /// — without this, a planner could prescribe tests or collect every
+    /// plan decision into one turn while this suite stays green.
+    #[test]
+    fn the_orchestration_skill_writes_outcomes_and_reviews_the_plan_one_question_at_a_time() {
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for phrase in [
+            "Write each criterion as an outcome.",
+            "Leave test cases and verification to the coding agent.",
+            "Ask about the plan one question at a time, with its five parts.",
+            "Ask about tracer size and each `depends_on`.",
         ] {
             assert!(
                 prompt.contains(phrase),

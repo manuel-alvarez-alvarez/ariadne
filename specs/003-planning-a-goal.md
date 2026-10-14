@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-10-12
+updated: 2026-10-14
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -52,13 +52,19 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    asking one question at a time, with these parts, is the playbook's.
    The user answers in the session's terminal (`ariadne goal attach`). An
    orchestrator waiting on an answer is not nudged.
-4. It writes one task per unit of work: small, finishable alone, one
-   repository. Each ticket carries context, what to do, what not to touch and
-   acceptance criteria, in Simplified Technical English (006).
-5. `depends_on` is for real dependencies only; tasks that merely touch nearby
-   files run together. Where one task hands another a route, a response
-   shape, a function or a file, it names that interface in both tickets
-   instead of a `depends_on` edge.
+4. It writes one task per unit of work: one cohesive outcome, one repository,
+   and a complete path through every layer the outcome touches. A task
+   groups behaviors that share context and verification rather than
+   splitting them apart. Each ticket carries context, what to do, what not to
+   touch and acceptance criteria written as outcomes, in Simplified Technical
+   English (006); the test cases and the verification are the coding agent's
+   to choose.
+5. `depends_on` is for a genuine compilation, execution, or acceptance
+   prerequisite only; tasks that merely touch nearby files run together.
+   Tasks that run together stay off the same code.
+   Where one task hands another a route, a response shape, a function or a
+   file, it names that interface in both tickets instead of a `depends_on`
+   edge.
 6. It staffs one agent on every column of each task (030), and gives every
    agent one model from the catalog (011) — a model is required, so no agent
    is staffed without one. A column's agent runs on the column's skills
@@ -70,8 +76,10 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);
    - what each agent runs on. The orchestrator sizes every one of them from
-     the catalog (011) and shows the user the tasks and the models, and
-     revises them until the user writes an explicit yes.
+     the catalog (011) and shows the user the tasks and the models. It asks
+     about the plan the same way it asks about the goal (3): one question at
+     a time, with its five parts, and it revises the plan until the user
+     writes an explicit yes.
    Nothing a column settles is asked about: whether a task is reviewed, and
    how it lands, follow from the goal's workflow, settled when the goal was
    created (030).
@@ -122,6 +130,10 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   (`::the_orchestration_skill_asks_one_question_at_a_time_with_its_parts`), staffs
   one agent on every column and asks no reviewer question
   (`::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`).
+- Each task has one cohesive outcome and complete affected path, and
+  `depends_on` names only a real prerequisite
+  (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`,
+  `::the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule`).
 - The playbook takes each column's rank, and states a reason for each step
   up (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`).
 - The orchestrator is briefed to end planning with `finalize_plan` and with no
