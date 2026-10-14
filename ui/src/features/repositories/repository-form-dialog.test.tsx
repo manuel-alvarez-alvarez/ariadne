@@ -286,3 +286,63 @@ it("keeps the switch on through a redundant probe of the same path, and sends it
   expect(post).toHaveBeenCalled()
   expect(sentBody).toMatchObject({ forge: { enabled: true } })
 })
+
+/**
+ * Changing the path after enabling its detected forge, then registering
+ * before the next probe (the blur fires) returns, must not carry the
+ * previous path's choice along: neither enabling a different forge the user
+ * never chose, nor failing to register over a stale selection.
+ */
+it("drops the stale forge choice from a changed path submitted before its next probe returns", async () => {
+  const user = userEvent.setup()
+  const post = vi.fn(async () => jsonResponse(aRepository({ forge: null }), 201))
+  let sentBody: unknown
+  let detectCalls = 0
+  let resolveSecondDetect: (() => void) | undefined
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init)
+    const { pathname } = new URL(request.url)
+    if (pathname === "/v1/workflows") return jsonResponse([aWorkflow({ name: "build-test" })])
+    if (pathname === "/v1/forge/detect" && request.method === "POST") {
+      detectCalls += 1
+      if (detectCalls === 1) {
+        return jsonResponse({
+          kind: "github",
+          host: "github.com",
+          owner: "acme",
+          name: "widgets",
+          remote: "origin",
+        })
+      }
+      return new Promise<Response>((resolve) => {
+        resolveSecondDetect = () => resolve(jsonResponse(null))
+      })
+    }
+    if (pathname === "/v1/repositories" && request.method === "POST") {
+      sentBody = await request.clone().json()
+      return post()
+    }
+    return new Response("not found", { status: 404 })
+  })
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={null} />)
+
+  const pathInput = await screen.findByLabelText("Path")
+  await user.type(pathInput, "/home/me/dev/widgets")
+  await user.tab()
+  const forgeSwitch = await screen.findByRole("switch", { name: "GitHub integration" })
+  await user.click(forgeSwitch)
+  expect(forgeSwitch.getAttribute("aria-checked")).toBe("true")
+
+  await user.type(pathInput, "2") // the switch's choice no longer describes this path
+  expect(screen.queryByRole("switch", { name: /integration/i })).toBeNull()
+  await user.tab() // starts the next probe, left unresolved
+  await waitFor(() => expect(detectCalls).toBe(2))
+
+  await user.click(screen.getByLabelText("Default workflow"))
+  await user.click(await screen.findByRole("option", { name: "build-test" }))
+  await user.click(screen.getByRole("button", { name: /register/i }))
+
+  expect(post).toHaveBeenCalled()
+  expect(sentBody).not.toHaveProperty("forge")
+  resolveSecondDetect?.()
+})

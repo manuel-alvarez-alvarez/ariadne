@@ -158,9 +158,19 @@ export function RepositoryFormDialog({
   const onPathChange = useCallback(
     (path: string) => {
       clearTimeout(detectTimeout.current ?? undefined)
+      // The path text just changed, so whatever the last probe answered —
+      // on, off, or none — no longer describes it. Clear it at once, rather
+      // than leaving it to survive into a submit that beats the next probe
+      // back.
+      if (!editing) {
+        detectRequest.current++
+        detectedRef.current = null
+        setDetected(null)
+        setValue("forge_enabled", false)
+      }
       detectTimeout.current = setTimeout(() => probe(path), DETECT_SETTLES_MS)
     },
-    [probe],
+    [editing, probe, setValue],
   )
 
   const onPathBlur = useCallback(
