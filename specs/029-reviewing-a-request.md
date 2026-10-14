@@ -232,13 +232,16 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     "Request changes" or "Comment" — and the round's summary lead the held
     text, `**Verdict: <verdict>**`, a blank line, then `body`; the forge
     never shows it to anyone but the viewer until they publish it.
-    - GitHub: each inline comment joins the viewer's one pending review
-      (`Github::pending_review`, 026 rule 24) as a new thread,
-      `addPullRequestReviewThread`, naming that review's id rather than
-      creating one of its own; the verdict and the summary are set at the
-      pending review's own top, replacing only the text above a hidden
-      mark, `<!-- ariadne:pending-review-verdict -->`, so a later round
-      keeps any reply text `reply_pending` appended below it. No event is
+    - GitHub: the verdict and the summary are set at the viewer's one
+      pending review's own top (`Github::pending_review`, 026 rule 24),
+      replacing only the text above a hidden mark,
+      `<!-- ariadne:pending-review-verdict -->`, so a later round keeps
+      any reply text `reply_pending` appended below it; then each inline
+      comment joins that review as a new thread,
+      `addPullRequestReviewThread`, naming its id rather than creating one
+      of its own. The body goes first so that a body GitHub refuses ends
+      the round with nothing held: threads added first would stay in the
+      drafts unrecorded, and a retry would add them again. No event is
       ever set, so the review stays pending.
     - GitLab: each inline comment is a draft note of its own,
       `POST .../draft_notes`, with the same position `submit_review`
@@ -447,9 +450,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   viewer's own pending review rather than submitting one, marks them the
   review's, and posts no summary comment:
   `kept_requests.rs::an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_when_supervised`.
-  On GitHub, each finding joins the pending review as a new thread and the
-  verdict and summary lead its body, creating the review first where there
-  is none:
+  On GitHub, the verdict and summary lead the pending review's body, set
+  before any finding joins it as a new thread, creating the review first
+  where there is none:
   `github/reviews.rs::tests::submit_review_pending_adds_each_finding_and_sets_the_header`;
   a later round replaces only that leading text, keeping any reply text
   below it:
