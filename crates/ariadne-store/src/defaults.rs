@@ -2068,8 +2068,9 @@ mod tests {
             // priorities, one inline comment per finding with its title and
             // its fix, the summary of four parts with no line in any of
             // them, the one review, the report and the later round, which
-            // resolves each thread a push fixed.
-            PR_REVIEWER_SKILL => 5200,
+            // resolves each thread a push fixed; and the one sentence that
+            // puts a finding on a line the diff shows.
+            PR_REVIEWER_SKILL => 5300,
             _ => 2400,
         };
 

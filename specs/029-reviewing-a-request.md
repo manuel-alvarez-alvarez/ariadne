@@ -12,6 +12,7 @@ tests:
   - crates/ariadne-daemon/src/forge/news.rs
   - crates/ariadne-daemon/src/forge/github/reviews.rs
   - crates/ariadne-daemon/src/forge/github/comments.rs
+  - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/forge/gitlab/reviews.rs
   - crates/ariadne-daemon/src/forge/gitlab/comments.rs
   - crates/ariadne-daemon/src/forge/github/pulls.rs
@@ -182,7 +183,14 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     line from 1, no title or no body answers 400, and so does an empty
     `body`, and a `request_changes` with no P0 among its comments and none
     of the review's still open: a change request shows its P0s on their
-    lines.
+    lines. A comment on a line the change does not show answers 400 too,
+    naming the path and the line, before anything reaches the forge: the
+    lines are those `get_diff` shows on its new side, read from the same
+    diff (`ShownLines`), since a forge takes an inline comment nowhere
+    else — GitHub refuses one on a submitted review, and on a pending one
+    (rule 13a) answers success with no thread, which would end the round
+    half held. A session with no worktree left has no diff to check
+    against, and its comments go on unchecked.
     - GitHub: one `gh api repos/<owner>/<name>/pulls/<n>/reviews` call with
       `REQUEST_CHANGES` or `COMMENT`, the head as `commit_id`, every inline
       comment and no body; a forge whose own answer says the review lacks a
@@ -224,13 +232,16 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     "Request changes" or "Comment" — and the round's summary lead the held
     text, `**Verdict: <verdict>**`, a blank line, then `body`; the forge
     never shows it to anyone but the viewer until they publish it.
-    - GitHub: each inline comment joins the viewer's one pending review
-      (`Github::pending_review`, 026 rule 24) as a new thread,
-      `addPullRequestReviewThread`, naming that review's id rather than
-      creating one of its own; the verdict and the summary are set at the
-      pending review's own top, replacing only the text above a hidden
-      mark, `<!-- ariadne:pending-review-verdict -->`, so a later round
-      keeps any reply text `reply_pending` appended below it. No event is
+    - GitHub: the verdict and the summary are set at the viewer's one
+      pending review's own top (`Github::pending_review`, 026 rule 24),
+      replacing only the text above a hidden mark,
+      `<!-- ariadne:pending-review-verdict -->`, so a later round keeps
+      any reply text `reply_pending` appended below it; then each inline
+      comment joins that review as a new thread,
+      `addPullRequestReviewThread`, naming its id rather than creating one
+      of its own. The body goes first so that a body GitHub refuses ends
+      the round with nothing held: threads added first would stay in the
+      drafts unrecorded, and a retry would add them again. No event is
       ever set, so the review stays pending.
     - GitLab: each inline comment is a draft note of its own,
       `POST .../draft_notes`, with the same position `submit_review`
@@ -414,6 +425,13 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   call with `REQUEST_CHANGES`, both comments and their priorities, and marks
   them the review's; `approve` answers 400 and the forge sees no call:
   `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
+- A finding on a line the diff does not show — past a file's last shown
+  line, or in a file the change never touched — answers 400 naming the
+  path and the line, and the forge sees no call:
+  `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
+  The lines a diff shows are the added and kept lines of its hunks on the
+  new side, and nothing of a deleted or untouched file:
+  `pulls.rs::tests::a_diff_shows_the_new_side_lines_of_its_hunks_and_nothing_else`.
 - A `reviewed_sha` is stored and raises no `waiting_user`; the same sha
   again, and a later one, raise nothing either:
   `pull_request_reviews.rs::a_reviewed_sha_is_stored_and_raises_no_waiting_user`,
@@ -432,9 +450,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   viewer's own pending review rather than submitting one, marks them the
   review's, and posts no summary comment:
   `kept_requests.rs::an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_when_supervised`.
-  On GitHub, each finding joins the pending review as a new thread and the
-  verdict and summary lead its body, creating the review first where there
-  is none:
+  On GitHub, the verdict and summary lead the pending review's body, set
+  before any finding joins it as a new thread, creating the review first
+  where there is none:
   `github/reviews.rs::tests::submit_review_pending_adds_each_finding_and_sets_the_header`;
   a later round replaces only that leading text, keeping any reply text
   below it:

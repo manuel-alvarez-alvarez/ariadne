@@ -224,9 +224,9 @@ impl Github {
 
     /// The viewer's pending review on `number` — GitHub holds at most one
     /// per user per request — found among the request's reviews, or
-    /// created with no event and no body where there is none: creating one
-    /// is itself silent, since a pending review shows nobody but its own
-    /// author until it is submitted.
+    /// created with no event, and the hidden verdict mark as its body,
+    /// where there is none: creating one is itself silent, since a pending
+    /// review shows nobody but its own author until it is submitted.
     pub(super) async fn pending_review(
         &self,
         repo: &str,
@@ -246,12 +246,43 @@ impl Github {
         if let Some(found) = reviews.into_iter().find(|r| {
             r.state.eq_ignore_ascii_case("pending") && r.user.login.eq_ignore_ascii_case(login)
         }) {
-            return Ok(found);
+            if !found.body.trim().is_empty() {
+                return Ok(found);
+            }
+            // A pending review with no body at all — one an earlier Ariadne
+            // created with `body=`, or one begun by hand on the forge — is
+            // one GitHub refuses to edit through either API ("Could not
+            // edit a review with a missing body"), and every pending post
+            // is an edit of it. Holding no draft comment, it is deleted and
+            // made again with a body, losing nothing; holding any, it is
+            // the user's to submit or discard first.
+            let held: Vec<serde_json::Value> = self
+                .pages(host, &format!("{path}/{}/comments", found.id))
+                .await?;
+            if !held.is_empty() {
+                return Err(format!(
+                    "GitHub holds a pending review of yours on #{number} with no body, which \
+                     it refuses to edit, and {} draft comment(s) in it: submit or discard that \
+                     review on the forge, and the next post makes one Ariadne can edit",
+                    held.len()
+                ));
+            }
+            self.cli
+                .answer(&[
+                    "api",
+                    &format!("{path}/{}", found.id),
+                    "--hostname",
+                    host,
+                    "--method",
+                    "DELETE",
+                ])
+                .await?;
         }
-        // An explicit empty `body` field, rather than no field at all: `gh
-        // api` sends no request body where there are no `-f`/`-F` fields
-        // and no `--input`, and GitHub's own review-creation endpoint is
-        // untested against that empty a request. No `event` field still
+        // Created with a body that is the hidden verdict mark alone, which
+        // renders as nothing: GitHub refuses to edit a review it holds with
+        // no body at all ("Could not edit a review with a missing body"),
+        // and every later change of the pending review — a verdict, a
+        // reply, a resolve — is an edit of its body. No `event` field still
         // leaves the review pending.
         let output = self
             .cli
@@ -263,7 +294,7 @@ impl Github {
                 "--method",
                 "POST",
                 "-f",
-                "body=",
+                &format!("body={PENDING_VERDICT_MARK}"),
             ])
             .await?;
         serde_json::from_str(&output)
@@ -495,7 +526,8 @@ sys.stdout.write(answers[count])
     }
 
     /// A reply to an inline review comment, with no pending review yet,
-    /// creates one with no body of its own and joins its thread through
+    /// creates one — its body the hidden verdict mark alone, so GitHub lets
+    /// every later edit of the body through — and joins its thread through
     /// `addPullRequestReviewThreadReply`, answering the new draft comment's
     /// own id.
     #[tokio::test]
@@ -505,7 +537,7 @@ sys.stdout.write(answers[count])
             dir.path(),
             &[
                 "[]",
-                r#"{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}"#,
+                r#"{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}"#,
                 r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"databaseId":501}}}}"#,
             ],
         ));
@@ -522,6 +554,10 @@ sys.stdout.write(answers[count])
         assert_eq!(id, "rc-501");
         let create = call_args(dir.path(), 1);
         assert!(create.contains(&"--method".to_string()) && create.contains(&"POST".to_string()));
+        assert!(
+            create.contains(&format!("body={}", super::PENDING_VERDICT_MARK)),
+            "the review is created with the hidden mark as its body: {create:?}"
+        );
         let mutate = call_args(dir.path(), 2);
         assert!(
             mutate.contains(&"reviewId=PR_kwDOx".to_string()),
@@ -541,9 +577,9 @@ sys.stdout.write(answers[count])
             dir.path(),
             &[
                 "[]",
-                r#"{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}"#,
+                r#"{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}"#,
                 r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"databaseId":501}}}}"#,
-                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}]"#,
                 r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"databaseId":502}}}}"#,
             ],
         ));
@@ -583,6 +619,95 @@ sys.stdout.write(answers[count])
         assert!(
             second_mutate.contains(&"reviewId=PR_kwDOx".to_string()),
             "{second_mutate:?}"
+        );
+    }
+
+    /// A pending review found with no body at all — one an earlier Ariadne
+    /// created with `body=` — is one GitHub refuses to edit. Holding no
+    /// draft comment, it is deleted and made again with the hidden mark as
+    /// its body, and the reply joins the new one.
+    #[tokio::test]
+    async fn a_bodiless_pending_review_holding_no_draft_is_deleted_and_made_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                "[]",
+                "",
+                r#"{"id":10,"node_id":"PR_kwDOy","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}"#,
+                r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"databaseId":501}}}}"#,
+            ],
+        ));
+        let id = github
+            .reply_pending(
+                "github.com/acme/widgets",
+                1,
+                "me",
+                &review_comment("T1"),
+                "Fixed.",
+            )
+            .await
+            .unwrap();
+        assert_eq!(id, "rc-501");
+        let drafts = call_args(dir.path(), 1);
+        assert!(
+            drafts
+                .iter()
+                .any(|a| a == "repos/acme/widgets/pulls/1/reviews/9/comments"),
+            "the bodiless review's draft comments are read first: {drafts:?}"
+        );
+        let delete = call_args(dir.path(), 2);
+        assert!(
+            delete
+                .iter()
+                .any(|a| a == "repos/acme/widgets/pulls/1/reviews/9")
+                && delete.contains(&"DELETE".to_string()),
+            "{delete:?}"
+        );
+        let create = call_args(dir.path(), 3);
+        assert!(
+            create.contains(&"POST".to_string())
+                && create.contains(&format!("body={}", super::PENDING_VERDICT_MARK)),
+            "{create:?}"
+        );
+        let mutate = call_args(dir.path(), 4);
+        assert!(
+            mutate.contains(&"reviewId=PR_kwDOy".to_string()),
+            "the reply joins the new review: {mutate:?}"
+        );
+    }
+
+    /// A bodiless pending review that holds draft comments is the user's
+    /// to submit or discard: the reply is refused, saying so, and nothing
+    /// of theirs is deleted.
+    #[tokio::test]
+    async fn a_bodiless_pending_review_holding_drafts_is_the_users_to_settle() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"[{"id":301,"body":"Theirs.","path":"src/lib.rs","line":3}]"#,
+            ],
+        ));
+        let refused = github
+            .reply_pending(
+                "github.com/acme/widgets",
+                1,
+                "me",
+                &review_comment("T1"),
+                "Fixed.",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            refused.contains("submit or discard") && refused.contains("1 draft comment"),
+            "{refused}"
+        );
+        assert!(
+            !dir.path().join("call-2.json").exists(),
+            "nothing is deleted or created behind the user's drafts"
         );
     }
 

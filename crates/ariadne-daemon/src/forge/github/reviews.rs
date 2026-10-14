@@ -160,6 +160,11 @@ impl Github {
     ) -> Result<Vec<NewPullRequestComment>, String> {
         let (host, _, _) = split_slug(repo)?;
         let pending = self.pending_review(repo, number, login).await?;
+        // The header first, the threads after: a body GitHub refuses to
+        // edit ends the round with nothing held, where threads posted
+        // first would stay in the drafts unrecorded, to be posted again
+        // by the retry.
+        self.apply_pending_header(host, &pending, header).await?;
         let mut stored = Vec::new();
         for comment in &review.comments {
             let output = self
@@ -188,9 +193,16 @@ impl Github {
                 .map_err(|e| format!("cannot read the pending finding GitHub stored: {e}"))?;
             let node =
                 &answered["data"]["addPullRequestReviewThread"]["thread"]["comments"]["nodes"][0];
-            let id = node["databaseId"]
-                .as_i64()
-                .ok_or_else(|| "GitHub answered no id for the pending finding".to_string())?;
+            // GitHub answers a thread on a line its diff does not show
+            // with no error and no thread at all, rather than the 422 a
+            // submitted review gets: named here, so a round that reaches
+            // this far still says which finding it stopped on.
+            let id = node["databaseId"].as_i64().ok_or_else(|| {
+                format!(
+                    "GitHub stored no pending finding on {}:{}: it shows no such line of the diff",
+                    comment.path, comment.line
+                )
+            })?;
             stored.push(NewPullRequestComment {
                 forge_id: review_comment_id(id),
                 thread_id: review_comment_id(id),
@@ -206,7 +218,6 @@ impl Github {
                 from_review: false,
             });
         }
-        self.apply_pending_header(host, &pending, header).await?;
         // Recorded as the review's the same way the posted summary is
         // (`hold_review_comments`), under the pending review's own id: the
         // verdict and summary have no comment of their own on GitHub, so
@@ -460,19 +471,20 @@ sys.stdout.write(answers[count])
     /// the verdict and summary at the review body's own top, and holds a
     /// `from_review` conversation entry of the verdict too, under the
     /// pending review's own id, with no event ever submitted: the pending
-    /// review's listing is read once, not once per finding.
+    /// review's listing is read once, not once per finding, and the header
+    /// is set before any thread is added.
     #[tokio::test]
     async fn submit_review_pending_adds_each_finding_and_sets_the_header() {
         let dir = tempfile::tempdir().unwrap();
         let binary = fake_gh_scripted(
             dir.path(),
             &[
-                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}]"#,
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
                 r#"{"data":{"addPullRequestReviewThread":{"thread":{"comments":{"nodes":[
                     {"databaseId": 501, "createdAt": "2026-10-02T00:00:00Z"}]}}}}}"#,
                 r#"{"data":{"addPullRequestReviewThread":{"thread":{"comments":{"nodes":[
                     {"databaseId": 502, "createdAt": "2026-10-02T00:01:00Z"}]}}}}}"#,
-                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
             ],
         );
         let github = Github::new(Cli {
@@ -524,14 +536,16 @@ sys.stdout.write(answers[count])
             !pending_list.contains(&"--method".to_string()),
             "the pending review is read, not created again: {pending_list:?}"
         );
-        let first = call_args(dir.path(), 1);
+        // The header goes first, so a body GitHub refuses leaves no
+        // thread behind; the findings follow it.
+        let first = call_args(dir.path(), 2);
         assert!(
             first.contains(&"reviewId=PR_kwDOx".to_string()),
             "{first:?}"
         );
         assert!(first.contains(&"path=src/lib.rs".to_string()), "{first:?}");
         assert!(first.contains(&"line=3".to_string()), "{first:?}");
-        let header_call = call_args(dir.path(), 3);
+        let header_call = call_args(dir.path(), 1);
         let body = header_call
             .iter()
             .find_map(|a| a.strip_prefix("body="))
@@ -551,7 +565,7 @@ sys.stdout.write(answers[count])
         let binary = fake_gh_scripted(
             dir.path(),
             &[
-                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}]"#,
                 r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
             ],
         );
