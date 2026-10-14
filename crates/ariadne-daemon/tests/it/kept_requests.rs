@@ -35,7 +35,7 @@ fn pull(state: &str, sha: &str) -> Value {
 
 fn review_comment(id: i64, login: &str, reply_to: Option<i64>, at: &str) -> Value {
     json!({"id": id, "in_reply_to_id": reply_to, "user": {"login": login, "type": "User"},
-        "body": format!("comment {id} by {login}"), "path": "src/lib.rs", "line": 3,
+        "body": format!("comment {id} by {login}"), "path": "widget", "line": 1,
         "created_at": at})
 }
 
@@ -1943,7 +1943,7 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
         .unwrap()
     };
     let finding = json!([{"id": 501, "body": "**[P1] Untested**\n\nNo test covers it.",
-        "path": "src/lib.rs", "line": 3, "created_at": "2026-10-02T00:00:00Z"}]);
+        "path": "widget", "line": 1, "created_at": "2026-10-02T00:00:00Z"}]);
     let mut script = headed(quiet_script());
     let entries = script.as_array_mut().unwrap();
     for entry in [
@@ -2027,7 +2027,7 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
                 &format!("/v1/pull-requests/{id}/reviews"),
                 &review.id,
                 json!({"event": "comment", "body": "One P1.", "comments": [
-                    {"path": "src/lib.rs", "line": 3, "title": "Untested",
+                    {"path": "widget", "line": 1, "title": "Untested",
                      "body": "No test covers it.", "priority": "P1"}
                 ]}),
             ),
@@ -2103,7 +2103,7 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
     let mut answered = posted.as_array().unwrap().clone();
     answered.push(
         json!({"id": 601, "in_reply_to_id": 501, "user": me, "body": "Added the test.",
-        "path": "src/lib.rs", "line": 3, "created_at": "2026-10-03T00:00:00Z"}),
+        "path": "widget", "line": 1, "created_at": "2026-10-03T00:00:00Z"}),
     );
     holds(&mut script, json!(answered), summary);
     stub.reprogram(script);
@@ -2247,7 +2247,7 @@ async fn an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_
                 &format!("/v1/pull-requests/{id}/reviews"),
                 &review.id,
                 json!({"event": "comment", "body": "One P1.", "comments": [
-                    {"path": "src/lib.rs", "line": 3, "title": "Untested",
+                    {"path": "widget", "line": 1, "title": "Untested",
                      "body": "No test covers it.", "priority": "P1"}
                 ]}),
             ),
@@ -2536,7 +2536,7 @@ async fn editing_and_deleting_a_held_pending_finding_updates_list_comments_at_on
                 &format!("/v1/pull-requests/{id}/reviews"),
                 &review.id,
                 json!({"event": "comment", "body": "One P0.", "comments": [
-                    {"path": "src/lib.rs", "line": 3, "title": "An empty list panics",
+                    {"path": "widget", "line": 1, "title": "An empty list panics",
                      "body": "An empty list panics.", "priority": "P0"}
                 ]}),
             ),

@@ -32,7 +32,8 @@ answer in a thread you opened. Do one round, then end your turn.
    - P1: a defect or a missing proof that will cause a failure later.
    - P2: a change that is worth the work.
 7. Write every new finding as one inline comment on the line of the defect:
-   - `path` and `line`: where the defect is, in the new version.
+   - `path` and `line`: where the defect is, in the new version. The
+     line is one the diff shows, as its `+` side counts it.
    - `title`: the defect in a few words.
    - `body`: what goes wrong, with the input and the failure it causes.
      Then a paragraph that starts "Fix:" and says how to fix it. Where

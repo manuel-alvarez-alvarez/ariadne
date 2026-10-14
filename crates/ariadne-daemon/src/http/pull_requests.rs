@@ -1008,10 +1008,7 @@ pub(super) async fn diff(
 ) -> ApiResult<String> {
     let row = state.store.get_pull_request(&id).await?;
     let session = own_session(&state, &headers, &row).await?;
-    let worktree = session
-        .worktree_path
-        .map(std::path::PathBuf::from)
-        .filter(|path| path.is_dir())
+    let worktree = session_worktree(&session)
         .ok_or_else(|| ApiError::conflict("the session has no worktree"))?;
     let git = &state.launcher.git;
     let failed = |e: anyhow::Error| ApiError::conflict(format!("{e:#}"));
@@ -1024,6 +1021,28 @@ pub(super) async fn diff(
         return git.diff_since(&worktree, since).await.map_err(failed);
     }
     let pull = read_held(&state, row).await?;
+    change_diff(&state, &worktree, &pull).await
+}
+
+/// The worktree `session` runs in, where it has one that still exists.
+fn session_worktree(session: &AgentSession) -> Option<std::path::PathBuf> {
+    session
+        .worktree_path
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_dir())
+}
+
+/// The whole change of `pull`, `git diff <base>...HEAD` in `worktree`: the
+/// base is the remote's copy of the base branch where the checkout holds
+/// one, else the local branch.
+async fn change_diff(
+    state: &AppState,
+    worktree: &std::path::Path,
+    pull: &PullRequest,
+) -> ApiResult<String> {
+    let git = &state.launcher.git;
+    let failed = |e: anyhow::Error| ApiError::conflict(format!("{e:#}"));
     let repo = state.store.get_repository(&pull.repository_id).await?;
     let remote = repo
         .forge
@@ -1031,14 +1050,14 @@ pub(super) async fn diff(
         .map_or_else(|| "origin".to_string(), |forge| forge.remote.clone());
     let tracking = format!("{remote}/{}", pull.base_branch);
     let base = match git
-        .has_commit(&worktree, &format!("refs/remotes/{tracking}"))
+        .has_commit(worktree, &format!("refs/remotes/{tracking}"))
         .await
         .map_err(failed)?
     {
         true => tracking,
         false => pull.base_branch.clone(),
     };
-    git.diff(&worktree, &base, "HEAD").await.map_err(failed)
+    git.diff(worktree, &base, "HEAD").await.map_err(failed)
 }
 
 /// Post one round of a review of a request, in the user's name (029): its
@@ -1060,7 +1079,7 @@ pub(super) async fn submit_review(
     Json(req): Json<SubmitReviewRequest>,
 ) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
     let row = state.store.get_pull_request(&id).await?;
-    own_session(&state, &headers, &row).await?;
+    let session = own_session(&state, &headers, &row).await?;
     let asked = match req.event.as_str() {
         "request_changes" => true,
         "comment" => false,
@@ -1126,6 +1145,23 @@ pub(super) async fn submit_review(
         });
     }
     let pull = read_held(&state, row).await?;
+    // A finding sits on a line the change shows, on its new side: a forge
+    // takes an inline comment nowhere else — GitHub refuses it on a
+    // submitted review, and on a pending one answers success with no
+    // thread, which would end the round half held. Checked against the
+    // same diff `get_diff` answers, before anything reaches the forge, so
+    // the reviewer learns which line to correct; a session with no
+    // worktree left has no diff to check against and goes on unchecked.
+    if let Some(worktree) = session_worktree(&session).filter(|_| !comments.is_empty()) {
+        let shown = pulls::ShownLines::parse(&change_diff(&state, &worktree, &pull).await?);
+        if let Some(off) = comments.iter().find(|c| !shown.shows(&c.path, c.line)) {
+            return Err(ApiError::bad_request(format!(
+                "the diff shows no line {} of {}: a finding sits on a line the change \
+                 shows, numbered as get_diff shows it on its new side",
+                off.line, off.path
+            )));
+        }
+    }
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
     // A change request is its P0 findings, each on its own line of code: a

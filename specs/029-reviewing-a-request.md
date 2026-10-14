@@ -12,6 +12,7 @@ tests:
   - crates/ariadne-daemon/src/forge/news.rs
   - crates/ariadne-daemon/src/forge/github/reviews.rs
   - crates/ariadne-daemon/src/forge/github/comments.rs
+  - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/forge/gitlab/reviews.rs
   - crates/ariadne-daemon/src/forge/gitlab/comments.rs
   - crates/ariadne-daemon/src/forge/github/pulls.rs
@@ -182,7 +183,14 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     line from 1, no title or no body answers 400, and so does an empty
     `body`, and a `request_changes` with no P0 among its comments and none
     of the review's still open: a change request shows its P0s on their
-    lines.
+    lines. A comment on a line the change does not show answers 400 too,
+    naming the path and the line, before anything reaches the forge: the
+    lines are those `get_diff` shows on its new side, read from the same
+    diff (`ShownLines`), since a forge takes an inline comment nowhere
+    else — GitHub refuses one on a submitted review, and on a pending one
+    (rule 13a) answers success with no thread, which would end the round
+    half held. A session with no worktree left has no diff to check
+    against, and its comments go on unchecked.
     - GitHub: one `gh api repos/<owner>/<name>/pulls/<n>/reviews` call with
       `REQUEST_CHANGES` or `COMMENT`, the head as `commit_id`, every inline
       comment and no body; a forge whose own answer says the review lacks a
@@ -419,6 +427,13 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   call with `REQUEST_CHANGES`, both comments and their priorities, and marks
   them the review's; `approve` answers 400 and the forge sees no call:
   `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
+- A finding on a line the diff does not show — past a file's last shown
+  line, or in a file the change never touched — answers 400 naming the
+  path and the line, and the forge sees no call:
+  `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
+  The lines a diff shows are the added and kept lines of its hunks on the
+  new side, and nothing of a deleted or untouched file:
+  `pulls.rs::tests::a_diff_shows_the_new_side_lines_of_its_hunks_and_nothing_else`.
 - A `reviewed_sha` is stored and raises no `waiting_user`; the same sha
   again, and a later one, raise nothing either:
   `pull_request_reviews.rs::a_reviewed_sha_is_stored_and_raises_no_waiting_user`,

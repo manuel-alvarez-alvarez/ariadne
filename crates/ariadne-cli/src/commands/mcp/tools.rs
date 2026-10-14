@@ -291,7 +291,9 @@ pub(super) enum Priority {
 pub(super) struct ReviewFinding {
     /// The file, from the root of the worktree.
     pub path: String,
-    /// The line of the defect in the new version of the file.
+    /// The line of the defect in the new version of the file: one the
+    /// diff shows, numbered as get_diff shows it on its new side. A line
+    /// the diff does not show is refused.
     pub line: i64,
     /// A short title of the defect, in a few words.
     pub title: String,
