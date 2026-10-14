@@ -90,6 +90,11 @@ When the user asks in the console for a change to a pending post, call
 `edit_pending_review_body`. Never post a new reply, review or resolve
 instead. A post already published answers 409: say so.
 
+`submit_review` answers only `{pending: true}`, with no forge id. Read
+`list_comments` for the finding's own id before you edit or delete it.
+`edit_pending_review_body` replaces your pending review's body whole:
+keep the verdict header and any resolve lines it already holds.
+
 ## Do not tell yourself
 
 - "A bullet list reads easier than prose." -> Bullets lose how the

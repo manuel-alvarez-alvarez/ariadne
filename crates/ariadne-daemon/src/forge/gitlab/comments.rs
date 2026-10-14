@@ -181,7 +181,7 @@ impl Gitlab {
     }
 
     /// Edit the body of one of the viewer's own draft notes, `PUT
-    /// .../draft_notes/<id>` (033). A draft note GitLab no longer holds —
+    /// .../draft_notes/<id>` (026 rule 25). A draft note GitLab no longer holds —
     /// consumed into a published note the moment the user publishes it —
     /// answers 404, read as [`PendingEditError::NotPending`] rather than
     /// any other forge refusal.
@@ -219,7 +219,7 @@ impl Gitlab {
     }
 
     /// Delete one of the viewer's own draft notes, `DELETE
-    /// .../draft_notes/<id>` (033). Refused the same way
+    /// .../draft_notes/<id>` (026 rule 25). Refused the same way
     /// [`Self::edit_pending_comment`] is.
     pub(crate) async fn delete_pending_comment(
         &self,
@@ -491,7 +491,7 @@ sys.exit(1)
         path.display().to_string()
     }
 
-    /// `edit_pending_comment` (033) writes the draft note's body with `PUT
+    /// `edit_pending_comment` (026 rule 25) writes the draft note's body with `PUT
     /// .../draft_notes/<id>`, answering the same forge id.
     #[tokio::test]
     async fn edit_pending_comment_edits_the_draft_notes_body() {
@@ -533,7 +533,7 @@ sys.exit(1)
         );
     }
 
-    /// `delete_pending_comment` (033) deletes the draft note with `DELETE
+    /// `delete_pending_comment` (026 rule 25) deletes the draft note with `DELETE
     /// .../draft_notes/<id>`.
     #[tokio::test]
     async fn delete_pending_comment_deletes_the_draft_note() {

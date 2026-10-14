@@ -207,6 +207,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     - GitHub: `edit_pending_comment` and `delete_pending_comment` read the viewer's still-pending review (rule 24's own finder, split from its create-if-missing form so a caller that means only to look never brings one into existence), then look up the comment's GraphQL node id among that review's own comments — `updatePullRequestReviewComment` and `deletePullRequestReviewComment` take a node id, never the database id `addPullRequestReviewThread` answers. A comment the lookup does not find, because its round was since submitted, answers 409 the same as no pending review at all. `edit_pending_review_body` overwrites the pending review's body through the same `updatePullRequestReview` mutation rule 24 already uses, refused with 409 where there is no pending review to find.
     - GitLab: `edit_pending_comment` and `delete_pending_comment` write straight to the draft note by its own id, `PUT` and `DELETE .../draft_notes/<id>`; a note GitLab has already consumed into a published note on the user's publish answers 404, read as the 409 above. GitLab holds no pending review body of its own, so `edit_pending_review_body` answers 400 on it.
     The three tools are `edit_pending_comment`, `delete_pending_comment` and `edit_pending_review_body` (013), on the agent, pull request reviewer and pull request keeper seats alike.
+    A successful edit or delete also writes Ariadne's own held comments at once (`live::LivePulls::edit_comment`, `::remove_comment`): rule 9 already holds that GitHub never lists a pending review's own comments among a request's, and GitLab never lists a draft note among a discussion's, until the user publishes it, so no detail fetch ever reads either change back on its own. Without this, `list_comments` would answer the body a finding was posted with forever, and a deleted finding would stay in `merge_fresh_details`'s own carry-forward for as long as the pending set it belonged to stayed open — read by `submit_review`'s own `open_p0` check as a P0 still open.
 
 ## HTTP
 
@@ -441,7 +442,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   comment still in the viewer's own pending review, by its node id, and
   refuse one the review no longer holds; `replace_pending_review_body`
   overwrites the pending review's body outright, and refuses with no
-  pending review (033):
+  pending review (rule 25):
   `github/comments.rs::tests::edit_pending_comment_edits_a_comment_still_in_the_viewers_pending_review`,
   `::edit_pending_comment_refuses_with_no_pending_review`,
   `::edit_pending_comment_refuses_a_comment_the_pending_review_no_longer_holds`,
@@ -450,16 +451,20 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `::replace_pending_review_body_refuses_with_no_pending_review`.
 - GitLab writes a draft note's edit and delete straight to its own id, and
   reads a 404 — a note the user already published — as no longer pending
-  (033):
+  (rule 25):
   `gitlab/comments.rs::tests::edit_pending_comment_edits_the_draft_notes_body`,
   `::edit_pending_comment_refuses_a_draft_note_already_published`,
   `::delete_pending_comment_deletes_the_draft_note`,
   `::delete_pending_comment_refuses_a_draft_note_already_published`.
 - The three routes answer 409 with no pending review or draft note to
   edit, and `edit_pending_review_body` replaces the pending review's body
-  outright through the same mutation a reply's own write reuses (033):
+  outright through the same mutation a reply's own write reuses (rule 25):
   `kept_requests.rs::pending_edit_routes_answer_409_with_no_pending_review`,
   `::edit_pending_review_body_replaces_the_pending_reviews_body`.
+- Editing or deleting a held pending finding updates `list_comments` at
+  once, never waiting on a detail fetch that would never read either
+  change back on its own:
+  `kept_requests.rs::editing_and_deleting_a_held_pending_finding_updates_list_comments_at_once`.
 - A trailing trailer and the blank line before it are stripped, and text with no trailer is left whole:
   `forge/pulls.rs::tests::strip_trailers_takes_off_a_trailing_trailer_and_the_blank_line_before_it`,
   `::strip_trailers_leaves_text_with_no_trailer_whole`.

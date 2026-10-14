@@ -1289,7 +1289,7 @@ mod tests {
         assert_eq!(report["reviewed_sha"], "abc");
     }
 
-    /// The three pending-edit tools (033) each call their own route of the
+    /// The three pending-edit tools (013 rule 13) each call their own route of the
     /// session's request, with the body the agent gave them.
     #[tokio::test]
     async fn the_pending_edit_tools_call_the_routes_of_the_sessions_request() {

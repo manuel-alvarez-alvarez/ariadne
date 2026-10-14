@@ -62,8 +62,9 @@ drafts. `pending: true` means it is waiting there, not that it failed. Go
 on. The user publishes the drafts; you never do.
 
 When the user asks in the console for a change to a pending reply, call
-`edit_pending_comment` or `delete_pending_comment`. A reply already
-published answers 409: say so.
+`edit_pending_comment`, `delete_pending_comment` or
+`edit_pending_review_body`. Never post a new reply instead. A post
+already published answers 409: say so.
 
 ## Do not tell yourself
 

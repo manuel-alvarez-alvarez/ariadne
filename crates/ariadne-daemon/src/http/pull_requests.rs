@@ -69,7 +69,8 @@ fn slug(forge: &ForgeIntegration) -> String {
 fn client(state: &AppState, forge: &ForgeIntegration) -> ForgeClient {
     ForgeClient::for_repository(&state.launcher.cfg, forge)
 }
-/// What changed, in words that name the forge (033): a pending review
+
+/// What changed, in words that name the forge (026 rule 25): a pending review
 /// comment or a draft note.
 fn forge_item_label(forge: &ForgeIntegration, github: &str, gitlab: &str) -> String {
     match forge.kind() {
@@ -77,6 +78,7 @@ fn forge_item_label(forge: &ForgeIntegration, github: &str, gitlab: &str) -> Str
         ForgeKind::Gitlab => format!("the GitLab {gitlab}"),
     }
 }
+
 /// [`PendingEditError`] as the route's own answer: 409 for a target that is
 /// no longer pending, else the forge's own refusal.
 fn pending_edit_error(error: PendingEditError, forge_id: &str) -> ApiError {
@@ -776,7 +778,7 @@ pub(super) async fn resolve(
 
 /// Edit the body of one of the viewer's own pending forge posts: a pending
 /// review comment (GitHub) or a draft note (GitLab), by its own forge id
-/// (033). Refused with 409 once the user submits or publishes it.
+/// (026 rule 25). Refused with 409 once the user submits or publishes it.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/edit", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = EditPendingCommentRequest,
@@ -804,6 +806,13 @@ pub(super) async fn edit_pending_comment(
         .edit_pending_comment(&slug(&forge), pull.number, &login, &req.forge_id, &body)
         .await
         .map_err(|e| pending_edit_error(e, &req.forge_id))?;
+    // No detail fetch ever reads a pending comment's edit back
+    // (`live::LivePulls::edit_comment`): the held body is the only copy
+    // there is until the user publishes it.
+    state
+        .launcher
+        .live
+        .edit_comment(&pull.id, &req.forge_id, &body);
     state.forge_poll.wake(&pull.repository_id);
     state.notify_scheduler_pull_request(&pull.id);
     Ok(Json(PendingEditDto {
@@ -813,7 +822,7 @@ pub(super) async fn edit_pending_comment(
 }
 
 /// Delete one of the viewer's own pending forge posts, by its own forge id
-/// (033). Refused with 409 once the user submits or publishes it.
+/// (026 rule 25). Refused with 409 once the user submits or publishes it.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/delete", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = DeletePendingCommentRequest,
@@ -834,6 +843,11 @@ pub(super) async fn delete_pending_comment(
         .delete_pending_comment(&slug(&forge), pull.number, &login, &req.forge_id)
         .await
         .map_err(|e| pending_edit_error(e, &req.forge_id))?;
+    // Dropped from the held comments and from `local_additions`
+    // (`live::LivePulls::remove_comment`): no detail fetch ever reads a
+    // pending comment's deletion back, and a pending set left open by
+    // another finding must not resurrect this one.
+    state.launcher.live.remove_comment(&pull.id, &req.forge_id);
     state.forge_poll.wake(&pull.repository_id);
     state.notify_scheduler_pull_request(&pull.id);
     Ok(Json(PendingEditDto {
@@ -842,7 +856,7 @@ pub(super) async fn delete_pending_comment(
     }))
 }
 
-/// Replace the body of the viewer's own pending review outright (033):
+/// Replace the body of the viewer's own pending review outright (026 rule 25):
 /// GitHub only, since GitLab holds no pending review body apart from its
 /// draft notes. Refused with 409 once the user submits it, or where there
 /// is none.
@@ -876,6 +890,7 @@ pub(super) async fn edit_pending_review_body(
         .edit_pending_review_body(&slug(&forge), pull.number, &login, &body)
         .await
         .map_err(|e| pending_edit_error(e, "the pending review"))?;
+    state.launcher.live.edit_comment(&pull.id, &forge_id, &body);
     state.forge_poll.wake(&pull.repository_id);
     state.notify_scheduler_pull_request(&pull.id);
     Ok(Json(PendingEditDto {

@@ -168,7 +168,7 @@ pub struct ReplyCommentRequest {
     pub body: String,
 }
 
-/// Body of `POST /v1/pull-requests/{id}/comments/edit` (033): change the
+/// Body of `POST /v1/pull-requests/{id}/comments/edit` (026 rule 25): change the
 /// body of one of the viewer's own pending forge posts — a pending review
 /// comment (GitHub) or a draft note (GitLab) — while it still waits in the
 /// user's forge drafts.
@@ -181,14 +181,14 @@ pub struct EditPendingCommentRequest {
     pub body: String,
 }
 
-/// Body of `POST /v1/pull-requests/{id}/comments/delete` (033).
+/// Body of `POST /v1/pull-requests/{id}/comments/delete` (026 rule 25).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeletePendingCommentRequest {
     pub forge_id: String,
 }
 
-/// Body of `POST /v1/pull-requests/{id}/pending-review/body` (033): GitHub
+/// Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25): GitHub
 /// only, since GitLab holds no pending review body apart from its draft
 /// notes.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -197,7 +197,7 @@ pub struct EditPendingReviewBodyRequest {
     pub body: String,
 }
 
-/// What editing, deleting or replacing a pending forge post answers (033):
+/// What editing, deleting or replacing a pending forge post answers (026 rule 25):
 /// which forge item changed, in words that name the forge.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PendingEditDto {

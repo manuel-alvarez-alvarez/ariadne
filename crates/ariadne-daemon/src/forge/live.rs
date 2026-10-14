@@ -404,6 +404,51 @@ impl LivePulls {
         }
     }
 
+    /// Hold the new body of one of Ariadne's own local additions after a
+    /// successful edit (026 rule 25): the forge call already succeeded, so
+    /// this is an echo of it, the same as `add_comments`'. GitHub never
+    /// lists a pending review's own comments among a request's, and
+    /// GitLab never lists a draft note among a discussion's, until the
+    /// user publishes it (`merge_fresh_details`), so no detail fetch ever
+    /// reads this edit back on its own: without this write, the held body
+    /// would stay the one the comment was posted with, forever.
+    pub fn edit_comment(&self, id: &str, forge_id: &str, body: &str) {
+        let mut held = self
+            .rows
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(live) = held.get_mut(id) {
+            live.generation += 1;
+            live.local_additions
+                .insert(forge_id.to_string(), live.generation);
+            if let Some(details) = live.details.as_mut()
+                && let Some(comment) = details.comments.iter_mut().find(|c| c.forge_id == forge_id)
+            {
+                comment.body = body.to_string();
+            }
+        }
+    }
+
+    /// Drop one of Ariadne's own local additions after a successful
+    /// delete (026 rule 25), from both the held comments and
+    /// `local_additions`: a comment gone from `local_additions` is one
+    /// `merge_fresh_details` never carries forward again, whatever a
+    /// pending set still open says of the rest, and dropped from the
+    /// comments a fresh read's own `previous` snapshot carries forward
+    /// from, it cannot be read back from there either.
+    pub fn remove_comment(&self, id: &str, forge_id: &str) {
+        let mut held = self
+            .rows
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(live) = held.get_mut(id) {
+            live.local_additions.remove(forge_id);
+            if let Some(details) = live.details.as_mut() {
+                details.comments.retain(|c| c.forge_id != forge_id);
+            }
+        }
+    }
+
     /// Keep a fresh detail read, its comments carrying forward any this
     /// cache already held that the read's own comments do not, and that
     /// were added after `since` — the generation this cache stood at

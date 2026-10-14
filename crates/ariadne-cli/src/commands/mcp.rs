@@ -690,7 +690,7 @@ pub(crate) mod tests {
 
     /// The agent of a column is listed its eighteen tools: the task, the
     /// two step calls, the failure, the diff, the request its task opens and
-    /// the request's eight tools (033), and the two message tools. No seat
+    /// the request's eight tools (013 rule 13), and the two message tools. No seat
     /// word of the old pipeline names a seat, and no seat of a session with
     /// a request in its environment is a column's agent. Nothing it is
     /// listed resolves a thread.
@@ -740,7 +740,7 @@ pub(crate) mod tests {
 
     /// A reviewer pull request session (029) is listed thirteen tools: the
     /// request, its diff, its comments, one comment, a reply, the three
-    /// pending-edit tools (033), the resolve of a thread it opened, one
+    /// pending-edit tools (013 rule 13), the resolve of a thread it opened, one
     /// review and the report. It has no task tool and no message tool, and
     /// nothing it is listed approves or merges.
     #[test]
@@ -801,7 +801,7 @@ pub(crate) mod tests {
     /// A keeper pull request session (032) is listed eleven tools:
     /// `wait_for_user` and `withdraw_wait_for_user`, and nine of its own —
     /// the request, its diff, its comments, one comment, a reply, the
-    /// three pending-edit tools (033), and the report. It has no task
+    /// three pending-edit tools (013 rule 13), and the report. It has no task
     /// tool, no message tool, and nothing it is listed resolves a thread
     /// or submits a review: those are the reviewer seat's alone.
     #[test]

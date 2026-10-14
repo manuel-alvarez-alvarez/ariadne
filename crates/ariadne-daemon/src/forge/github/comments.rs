@@ -227,7 +227,7 @@ impl Github {
     /// reviews — GitHub holds at most one per user per request — or `None`
     /// where there is none: unlike [`Self::pending_review`], this creates
     /// nothing, so a caller that only means to find one, never to start
-    /// one, reads an empty answer as "not pending" (033) rather than
+    /// one, reads an empty answer as "not pending" (026 rule 25) rather than
     /// bringing a review into existence just to say so.
     pub(super) async fn find_pending_review(
         &self,
@@ -380,7 +380,7 @@ impl Github {
     }
 
     /// Edit the body of one of the viewer's own still-pending review
-    /// comments, `updatePullRequestReviewComment` (033). Refused with
+    /// comments, `updatePullRequestReviewComment` (026 rule 25). Refused with
     /// [`PendingEditError::NotPending`] where `forge_id` names no comment
     /// of the viewer's own pending review: the user already submitted it,
     /// or there never was one.
@@ -419,7 +419,7 @@ impl Github {
     }
 
     /// Delete one of the viewer's own still-pending review comments,
-    /// `deletePullRequestReviewComment` (033). Refused the same way
+    /// `deletePullRequestReviewComment` (026 rule 25). Refused the same way
     /// [`Self::edit_pending_comment`] is.
     pub(crate) async fn delete_pending_comment(
         &self,
@@ -451,7 +451,7 @@ impl Github {
         Ok(())
     }
 
-    /// Replace the viewer's pending review body outright (033), unlike
+    /// Replace the viewer's pending review body outright (026 rule 25), unlike
     /// [`Self::apply_pending_header`], which merges a verdict into only its
     /// top: refused with [`PendingEditError::NotPending`] where there is
     /// none, rather than creating one just to hold the edit.
@@ -474,7 +474,7 @@ impl Github {
 
     /// The GraphQL node id of comment `id` of `pending`'s own comments, read
     /// fresh so a comment the user already submitted away is told apart
-    /// from one still in the viewer's pending review (033): the mutations
+    /// from one still in the viewer's pending review (026 rule 25): the mutations
     /// `edit_pending_comment` and `delete_pending_comment` take a node id,
     /// never the database id `addPullRequestReviewThread` itself answers.
     async fn pending_review_comment_node(
@@ -995,7 +995,7 @@ sys.stdout.write(answers[count])
         );
     }
 
-    /// `edit_pending_comment` (033) looks up the viewer's own still-pending
+    /// `edit_pending_comment` (026 rule 25) looks up the viewer's own still-pending
     /// review, reads the comment's node id among that review's own
     /// comments, and edits it by node id, `updatePullRequestReviewComment`
     /// — never the database id `addPullRequestReviewThread` answers.
@@ -1061,7 +1061,7 @@ sys.stdout.write(answers[count])
         );
     }
 
-    /// `delete_pending_comment` (033) deletes a comment still in the
+    /// `delete_pending_comment` (026 rule 25) deletes a comment still in the
     /// viewer's pending review by its node id, `deletePullRequestReviewComment`.
     #[tokio::test]
     async fn delete_pending_comment_deletes_a_comment_still_in_the_viewers_pending_review() {
@@ -1088,7 +1088,7 @@ sys.stdout.write(answers[count])
         );
     }
 
-    /// `replace_pending_review_body` (033) overwrites the viewer's pending
+    /// `replace_pending_review_body` (026 rule 25) overwrites the viewer's pending
     /// review body outright, unlike `apply_pending_header`'s merge above a
     /// marker: whatever text the body held is gone.
     #[tokio::test]

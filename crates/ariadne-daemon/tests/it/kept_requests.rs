@@ -957,7 +957,7 @@ async fn the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_pos
     .await;
 }
 
-/// The three pending-edit routes (033) answer 409 with no pending review or
+/// The three pending-edit routes (026 rule 25) answer 409 with no pending review or
 /// draft note of the viewer's own to edit, making only the one listing call
 /// `quiet_script` already answers empty: there is nothing pending yet.
 #[tokio::test]
@@ -1005,7 +1005,7 @@ async fn pending_edit_routes_answer_409_with_no_pending_review() {
     .await;
 }
 
-/// `edit_pending_review_body` (033) replaces the viewer's pending review
+/// `edit_pending_review_body` (026 rule 25) replaces the viewer's pending review
 /// body outright, through the same `updatePullRequestReview` mutation
 /// `reply_pending` reuses, answering which forge item changed.
 #[tokio::test]
@@ -2354,6 +2354,233 @@ async fn an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_
         heading,
         "## Threads to resolve\n\
          - https://github.com/acme/widgets/pull/1#discussion_r501\n"
+    );
+}
+
+/// Editing or deleting a held pending finding (026 rule 25) updates
+/// Ariadne's own view of it at once: GitHub never lists a pending review's
+/// own comments among a request's, so a fresh detail read never catches
+/// either change up on its own (`live::LivePulls::edit_comment`,
+/// `::remove_comment`). A stale cache would otherwise read a deleted
+/// finding as still open, which `submit_review`'s own `open_p0` check
+/// reads to require `request_changes` all over again.
+#[tokio::test]
+async fn editing_and_deleting_a_held_pending_finding_updates_list_comments_at_once() {
+    let Kept {
+        h,
+        stub,
+        task,
+        id,
+        repo,
+        path,
+        ..
+    } = kept_request(quiet_script()).await;
+    let tip = sh(&path, &format!("git rev-parse {}", task.branch));
+    let headed = |script: Value| -> Value {
+        serde_json::from_str(
+            &script
+                .to_string()
+                .replace("abc", &tip)
+                .replace("\"fix\"", &format!("\"{}\"", task.branch)),
+        )
+        .unwrap()
+    };
+    let mut script = headed(quiet_script());
+    let entries = script.as_array_mut().unwrap();
+    for entry in [
+        // The viewer's pending review already exists: found, never created.
+        answer(
+            &[
+                "api",
+                "repos/acme/widgets/pulls/1/reviews",
+                "--hostname",
+                "github.com",
+            ],
+            0,
+            r#"[{"id": 9, "node_id": "PR_kwDOx", "state": "PENDING", "body": "",
+                "user": {"login": "me"}}]"#,
+        ),
+        // Every detail read of a request with a pending review of "me"'s
+        // own also counts its own comments, for `pending_drafts` (031).
+        answer(
+            &[
+                "api",
+                "repos/acme/widgets/pulls/1/reviews/9/comments",
+                "--hostname",
+                "github.com",
+            ],
+            0,
+            "[]",
+        ),
+        answer(
+            &[
+                "api",
+                "graphql",
+                "--hostname",
+                "github.com",
+                "-f",
+                "query=mutation($reviewId: ID!, $path: String!, $line: Int!, $body: String!) { \
+                 addPullRequestReviewThread(input: {pullRequestReviewId: $reviewId, path: \
+                 $path, line: $line, side: RIGHT, body: $body}) { thread { comments(first: 1) \
+                 { nodes { databaseId createdAt } } } } }",
+            ],
+            0,
+            r#"{"data":{"addPullRequestReviewThread":{"thread":{"comments":{"nodes":[
+                {"databaseId": 501, "createdAt": "2026-10-02T00:00:00Z"}]}}}}}"#,
+        ),
+        answer(
+            &[
+                "api",
+                "graphql",
+                "--hostname",
+                "github.com",
+                "-f",
+                "query=mutation($id: ID!, $body: String!) { \
+                 updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
+                 pullRequestReview { id } } }",
+            ],
+            0,
+            r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+        ),
+        answer(
+            &[
+                "api",
+                "graphql",
+                "--hostname",
+                "github.com",
+                "-f",
+                "query=query($id: ID!) { node(id: $id) { ... on PullRequestReview { \
+                 comments(first: 100) { nodes { id databaseId } } } } }",
+            ],
+            0,
+            r#"{"data":{"node":{"comments":{"nodes":[{"id":"PRRC_1","databaseId":501}]}}}}"#,
+        ),
+        answer(
+            &[
+                "api",
+                "graphql",
+                "--hostname",
+                "github.com",
+                "-f",
+                "query=mutation($id: ID!, $body: String!) { updatePullRequestReviewComment(input: \
+                 {pullRequestReviewCommentId: $id, body: $body}) { pullRequestReviewComment { \
+                 databaseId } } }",
+            ],
+            0,
+            r#"{"data":{"updatePullRequestReviewComment":{"pullRequestReviewComment":{"databaseId":501}}}}"#,
+        ),
+        answer(
+            &[
+                "api",
+                "graphql",
+                "--hostname",
+                "github.com",
+                "-f",
+                "query=mutation($id: ID!) { deletePullRequestReviewComment(input: \
+                 {pullRequestReviewCommentId: $id}) { pullRequestReview { id } } }",
+            ],
+            0,
+            r#"{"data":{"deletePullRequestReviewComment":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+        ),
+    ] {
+        entries.insert(0, entry);
+    }
+    stub.reprogram(script);
+    h.state.forge_poll.wake(&repo);
+    eventually(
+        TIMEOUT,
+        "the detail fetch to read the new head",
+        async || {
+            h.launcher.live.get(&id).is_some_and(|live| {
+                live.pull.head_sha == tip
+                    && live
+                        .details
+                        .as_ref()
+                        .is_some_and(|details| details.head_sha == tip)
+            })
+        },
+    )
+    .await;
+    h.flush_scheduler().await;
+
+    let ask = Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "/v1/repositories/{repo}/pull-requests/1/ariadne-review"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"asked": true, "model": "stub:review-model"}).to_string(),
+        ))
+        .unwrap();
+    let _: Value = h.json(ask, StatusCode::OK).await;
+    let mut review = None;
+    eventually(TIMEOUT, "the review session to be idle", async || {
+        review = h
+            .store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|s| s.status() == SessionStatus::Idle && s.launched_at.is_some());
+        review.is_some()
+    })
+    .await;
+    let review = review.unwrap();
+    let posted: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/reviews"),
+                &review.id,
+                json!({"event": "comment", "body": "One P0.", "comments": [
+                    {"path": "src/lib.rs", "line": 3, "title": "An empty list panics",
+                     "body": "An empty list panics.", "priority": "P0"}
+                ]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(posted, json!({"pending": true}));
+
+    let edited: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/edit"),
+                &review.id,
+                json!({"forge_id": "rc-501", "body": "**[P0] Fixed on review**\n\nActually fine."}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(edited["id"], "rc-501");
+    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+    let finding = comments
+        .iter()
+        .find(|c| c["id"] == "rc-501")
+        .expect("the edited finding is still held");
+    assert_eq!(
+        finding["body"], "**[P0] Fixed on review**\n\nActually fine.",
+        "list_comments reads the edited body, never the one it was posted with: {comments:?}"
+    );
+
+    let deleted: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/comments/delete"),
+                &review.id,
+                json!({"forge_id": "rc-501"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(deleted["id"], "rc-501");
+    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+    assert!(
+        comments.iter().all(|c| c["id"] != "rc-501"),
+        "the deleted finding is gone from list_comments, not merely from the forge: {comments:?}"
     );
 }
 

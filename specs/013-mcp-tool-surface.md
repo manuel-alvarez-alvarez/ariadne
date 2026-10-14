@@ -92,7 +92,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `reply_comment` (one `comment_id` and a `body`; the daemon posts it),
      `edit_pending_comment`, `delete_pending_comment` and
      `edit_pending_review_body` (one of its own posts still pending in the
-     user's forge drafts, found by the forge id it was posted under; 033)
+     user's forge drafts, found by the forge id it was posted under; rule 13)
      and `report_pull_request` (`ready`) — `send_message` and
      `read_messages`. Eighteen tools. It works one workflow column on its
      task, and its instructions name the task and the column.
@@ -109,7 +109,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      request it reads `/v1/pull-requests/{id}/diff`, and `since` narrows it
      to the commits after that sha), `list_comments`, `get_comment`,
      `reply_comment`, `edit_pending_comment`, `delete_pending_comment`,
-     `edit_pending_review_body` (033), `submit_review` (one round: an
+     `edit_pending_review_body` (rule 13), `submit_review` (one round: an
      `event` of `request_changes` or `comment`, a `body` that is the
      review's whole summary, written into its one summary comment, and the
      round's new `comments` of `path`, `line`, `body` and a `priority` of
@@ -127,7 +127,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      set and seat `keeper` (032), on a request of the user's own asked for
      by hand: `get_pull_request`, `get_diff`, `list_comments`,
      `get_comment`, `reply_comment`, `edit_pending_comment`,
-     `delete_pending_comment`, `edit_pending_review_body` (033) and
+     `delete_pending_comment`, `edit_pending_review_body` (rule 13) and
      `report_pull_request` — the same nine request tools the agent seat
      has — beside `wait_for_user` and `withdraw_wait_for_user`. Eleven
      tools, and no task tool and no message tool, the same as the
@@ -166,7 +166,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     deserialized from them, so a spelling set on one of the two alone offers
     a word and then refuses it.
 13. `edit_pending_comment`, `delete_pending_comment` and
-    `edit_pending_review_body` (033) are on the agent, pull request
+    `edit_pending_review_body` (rule 13) are on the agent, pull request
     reviewer and pull request keeper seats alike: whichever session posted
     the pending item, every session of the request may change or remove
     it, since all three post under the one integration login (026 rule
@@ -251,7 +251,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - `edit_pending_comment`, `delete_pending_comment` and
   `edit_pending_review_body` are on the agent, pull request reviewer and
   pull request keeper seats alike, each calling its own route of the
-  session's request with the body the agent gave it (033)
+  session's request with the body the agent gave it (rule 13)
   (`tools.rs::the_pending_edit_tools_call_the_routes_of_the_sessions_request`).
 - A refused call reaches the agent in the daemon's words
   (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`).
