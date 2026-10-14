@@ -3127,10 +3127,9 @@ export interface components {
         };
         /**
          * @description What `POST .../reviews` answers where the repository holds posts back
-         *     (026 rule 24 / 029 rule 13a): the review's findings and verdict wait,
-         *     unposted, in the viewer's own pending review (GitHub) or draft notes
-         *     (GitLab), in place of the posted comments the route otherwise answers
-         *     with.
+         *     (026 rule 24 / 029 rule 13a): the review's findings wait, unposted, in
+         *     the viewer's own pending review (GitHub) or draft notes (GitLab), in
+         *     place of the posted comments the route otherwise answers with.
          */
         PendingReviewDto: {
             /** @description Always true: a posted review never takes this shape. */
