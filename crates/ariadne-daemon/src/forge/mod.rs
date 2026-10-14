@@ -534,6 +534,92 @@ impl ForgeClient {
         }
     }
 
+    /// Edit the body of one of the viewer's own pending forge posts: a
+    /// pending review comment (GitHub) or a draft note (GitLab), by its
+    /// own forge id (026 rule 25). Answers the same forge id, or
+    /// [`PendingEditError::NotPending`] where the user already submitted
+    /// the review it was in, or published the draft note.
+    pub(crate) async fn edit_pending_comment(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+        forge_id: &str,
+        body: &str,
+    ) -> Result<String, PendingEditError> {
+        match self {
+            Self::Github(cli) => {
+                cli.edit_pending_comment(repository, number, login, forge_id, body)
+                    .await
+            }
+            Self::Gitlab(cli) => {
+                cli.edit_pending_comment(repository, number, forge_id, body)
+                    .await
+            }
+        }
+    }
+
+    /// Delete one of the viewer's own pending forge posts, by its own
+    /// forge id (026 rule 25). [`PendingEditError::NotPending`] the same way
+    /// [`Self::edit_pending_comment`] answers it.
+    pub(crate) async fn delete_pending_comment(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+        forge_id: &str,
+    ) -> Result<(), PendingEditError> {
+        match self {
+            Self::Github(cli) => {
+                cli.delete_pending_comment(repository, number, login, forge_id)
+                    .await
+            }
+            Self::Gitlab(cli) => {
+                cli.delete_pending_comment(repository, number, forge_id)
+                    .await
+            }
+        }
+    }
+
+    /// Replace the body of the viewer's own pending review outright (026 rule 25):
+    /// GitHub only, since GitLab holds no review body of its own apart
+    /// from its draft notes. Answers the pending review's own forge id, or
+    /// [`PendingEditError::NotPending`] where the user already submitted
+    /// it, or where there is none.
+    pub(crate) async fn edit_pending_review_body(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+        body: &str,
+    ) -> Result<String, PendingEditError> {
+        match self {
+            Self::Github(cli) => {
+                cli.replace_pending_review_body(repository, number, login, body)
+                    .await
+            }
+            Self::Gitlab(_) => Err(PendingEditError::Forge(
+                "GitLab holds no pending review body of its own".into(),
+            )),
+        }
+    }
+
+    /// The current body of the viewer's own pending review, with its own
+    /// forge id, read fresh: GitHub only, since GitLab's draft notes hold
+    /// no body shared the way a reply or a resolve folds into GitHub's
+    /// (026 rule 25).
+    pub(crate) async fn pending_review_body(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+    ) -> Result<Option<(String, String)>, String> {
+        match self {
+            Self::Github(cli) => cli.pending_review_body(repository, number, login).await,
+            Self::Gitlab(_) => Ok(None),
+        }
+    }
+
     /// Write the one summary comment a review keeps on request `number`
     /// (029): `existing` edited in place, else a new one. Answers its forge
     /// id and when it was written.
@@ -833,6 +919,25 @@ impl Cli {
             executed: true,
             message,
         })
+    }
+}
+
+/// Why editing, deleting or replacing one of the viewer's own pending forge
+/// posts failed (026 rule 25): the target is no longer pending — the user already
+/// submitted the review it was in, or published the draft note, or there
+/// never was one — the forge call itself failed — or `forge_id` itself
+/// names no comment or draft note of any shape, a caller's own mistake
+/// rather than anything the forge said.
+#[derive(Debug)]
+pub(crate) enum PendingEditError {
+    NotPending,
+    Forge(String),
+    BadForgeId(String),
+}
+
+impl From<String> for PendingEditError {
+    fn from(error: String) -> Self {
+        PendingEditError::Forge(error)
     }
 }
 

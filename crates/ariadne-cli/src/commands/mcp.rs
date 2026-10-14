@@ -82,6 +82,9 @@ impl McpSeat {
                 "list_comments",
                 "get_comment",
                 "reply_comment",
+                "edit_pending_comment",
+                "delete_pending_comment",
+                "edit_pending_review_body",
                 "report_pull_request",
                 "send_message",
                 "read_messages",
@@ -98,6 +101,9 @@ impl McpSeat {
                 "list_comments",
                 "get_comment",
                 "reply_comment",
+                "edit_pending_comment",
+                "delete_pending_comment",
+                "edit_pending_review_body",
                 "resolve_thread",
                 "submit_review",
                 "report_pull_request",
@@ -113,6 +119,9 @@ impl McpSeat {
                 "list_comments",
                 "get_comment",
                 "reply_comment",
+                "edit_pending_comment",
+                "delete_pending_comment",
+                "edit_pending_review_body",
                 "report_pull_request",
             ],
         }
@@ -584,6 +593,9 @@ pub(crate) mod tests {
                     "list_comments",
                     "get_comment",
                     "reply_comment",
+                    "edit_pending_comment",
+                    "delete_pending_comment",
+                    "edit_pending_review_body",
                     "report_pull_request",
                     "send_message",
                     "read_messages",
@@ -599,6 +611,9 @@ pub(crate) mod tests {
                     "list_comments",
                     "get_comment",
                     "reply_comment",
+                    "edit_pending_comment",
+                    "delete_pending_comment",
+                    "edit_pending_review_body",
                     "resolve_thread",
                     "submit_review",
                     "report_pull_request",
@@ -614,6 +629,9 @@ pub(crate) mod tests {
                     "list_comments",
                     "get_comment",
                     "reply_comment",
+                    "edit_pending_comment",
+                    "delete_pending_comment",
+                    "edit_pending_review_body",
                     "report_pull_request",
                 ][..],
             ),
@@ -628,6 +646,9 @@ pub(crate) mod tests {
             "complete_goal",
             "complete_step",
             "create_task",
+            "delete_pending_comment",
+            "edit_pending_comment",
+            "edit_pending_review_body",
             "fail_step",
             "fail_task",
             "finalize_plan",
@@ -667,12 +688,12 @@ pub(crate) mod tests {
         }
     }
 
-    /// The agent of a column is listed its thirteen tools: the task, the
+    /// The agent of a column is listed its eighteen tools: the task, the
     /// two step calls, the failure, the diff, the request its task opens and
-    /// the request's five tools, and the two message tools. No seat word of
-    /// the old pipeline names a seat, and no seat of a session with a request
-    /// in its environment is a column's agent. Nothing it is listed resolves
-    /// a thread.
+    /// the request's eight tools (013 rule 13), and the two message tools. No seat
+    /// word of the old pipeline names a seat, and no seat of a session with
+    /// a request in its environment is a column's agent. Nothing it is
+    /// listed resolves a thread.
     #[test]
     fn the_agent_seat_lists_its_step_tools_and_nothing_of_a_review() {
         assert_eq!(mcp_seat("agent", false).unwrap(), McpSeat::Agent);
@@ -685,11 +706,14 @@ pub(crate) mod tests {
             McpSeat::Agent,
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
-        assert_eq!(mcp.seat.tools().len(), 15);
+        assert_eq!(mcp.seat.tools().len(), 18);
         for tool in [
             "get_pull_request",
             "list_comments",
             "reply_comment",
+            "edit_pending_comment",
+            "delete_pending_comment",
+            "edit_pending_review_body",
             "report_pull_request",
             "open_pull_request",
             "complete_step",
@@ -714,10 +738,11 @@ pub(crate) mod tests {
         assert!(instructions.contains("column develop"), "{instructions}");
     }
 
-    /// A reviewer pull request session (029) is listed eight tools: the
-    /// request, its diff, its comments, one comment, a reply, the resolve of
-    /// a thread it opened, one review and the report. It has no task tool and no
-    /// message tool, and nothing it is listed approves or merges.
+    /// A reviewer pull request session (029) is listed thirteen tools: the
+    /// request, its diff, its comments, one comment, a reply, the three
+    /// pending-edit tools (013 rule 13), the resolve of a thread it opened, one
+    /// review and the report. It has no task tool and no message tool, and
+    /// nothing it is listed approves or merges.
     #[test]
     fn the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool() {
         assert_eq!(
@@ -737,6 +762,9 @@ pub(crate) mod tests {
         assert_eq!(
             listed,
             [
+                "delete_pending_comment",
+                "edit_pending_comment",
+                "edit_pending_review_body",
                 "get_comment",
                 "get_diff",
                 "get_pull_request",
@@ -748,7 +776,7 @@ pub(crate) mod tests {
                 "wait_for_user",
                 "withdraw_wait_for_user",
             ],
-            "the pull request reviewer is listed eight tools"
+            "the pull request reviewer is listed thirteen tools"
         );
         for tool in [
             "get_task",
@@ -770,12 +798,12 @@ pub(crate) mod tests {
         assert!(instructions.contains("pull request 01PR"), "{instructions}");
     }
 
-    /// A keeper pull request session (032) is listed eight tools:
-    /// `wait_for_user` and `withdraw_wait_for_user`, and six of its own —
-    /// the request, its diff, its comments, one comment, a reply, and the
-    /// report. It has no task tool, no message tool, and nothing it is
-    /// listed resolves a thread or submits a review: those are the
-    /// reviewer seat's alone.
+    /// A keeper pull request session (032) is listed eleven tools:
+    /// `wait_for_user` and `withdraw_wait_for_user`, and nine of its own —
+    /// the request, its diff, its comments, one comment, a reply, the
+    /// three pending-edit tools (013 rule 13), and the report. It has no task
+    /// tool, no message tool, and nothing it is listed resolves a thread
+    /// or submits a review: those are the reviewer seat's alone.
     #[test]
     fn the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool() {
         assert_eq!(
@@ -799,6 +827,9 @@ pub(crate) mod tests {
         assert_eq!(
             listed,
             [
+                "delete_pending_comment",
+                "edit_pending_comment",
+                "edit_pending_review_body",
                 "get_comment",
                 "get_diff",
                 "get_pull_request",
@@ -808,7 +839,7 @@ pub(crate) mod tests {
                 "wait_for_user",
                 "withdraw_wait_for_user",
             ],
-            "the pull request keeper is listed eight tools, six of its own"
+            "the pull request keeper is listed eleven tools, nine of its own"
         );
         for tool in [
             "get_task",

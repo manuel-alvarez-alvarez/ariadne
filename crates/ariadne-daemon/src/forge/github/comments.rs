@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use super::Github;
 use super::details::{issue_comment_id, review_comment_id, review_id};
+use crate::forge::PendingEditError;
 use crate::forge::pulls::{CONVERSATION, split_slug};
 use ariadne_store::PullRequestComment;
 
@@ -42,6 +43,15 @@ pub(super) struct ReviewSummary {
 /// text above it, leaving any reply text `reply_pending` appended below it
 /// in place.
 const PENDING_VERDICT_MARK: &str = "<!-- ariadne:pending-review-verdict -->";
+
+/// The viewer's own pending review's comments, by their GraphQL node id:
+/// what [`Github::pending_review_comment_node`] looks a numeric database
+/// id up among. `gh api graphql --paginate` walks `$endCursor` through
+/// every page, so a pending review past its first hundred comments is
+/// still found whole.
+const PENDING_REVIEW_COMMENTS: &str = "query($id: ID!, $endCursor: String) { \
+     node(id: $id) { ... on PullRequestReview { comments(first: 100, after: $endCursor) { \
+     pageInfo { hasNextPage endCursor } nodes { id databaseId } } } } }";
 
 impl Github {
     /// Reply to `comment` with `body`, and answer the forge id the reply is
@@ -222,73 +232,124 @@ impl Github {
             .await
     }
 
+    /// The viewer's pending review on `number`, found among the request's
+    /// reviews — GitHub holds at most one per user per request — or `None`
+    /// where there is none: unlike [`Self::pending_review`], this creates
+    /// nothing, so a caller that only means to find one, never to start
+    /// one, reads an empty answer as "not pending" (026 rule 25) rather than
+    /// bringing a review into existence just to say so.
+    pub(super) async fn find_pending_review(
+        &self,
+        repo: &str,
+        number: i64,
+        login: &str,
+    ) -> Result<Option<ReviewSummary>, String> {
+        if login.is_empty() {
+            return Err("no login to find a pending review under".into());
+        }
+        let (host, owner, name) = split_slug(repo)?;
+        let path = format!("repos/{owner}/{name}/pulls/{number}/reviews");
+        let reviews: Vec<ReviewSummary> = self.pages(host, &path).await?;
+        Ok(reviews.into_iter().find(|r| {
+            r.state.eq_ignore_ascii_case("pending") && r.user.login.eq_ignore_ascii_case(login)
+        }))
+    }
+
+    /// The current body of the viewer's own pending review, read fresh,
+    /// with its own forge id — so a caller whose `reply_pending` or
+    /// `resolve_pending` just folded text into it can bring the live
+    /// cache's own copy of that id current (026 rule 25), without a
+    /// change of what either answers or how it holds.
+    pub(crate) async fn pending_review_body(
+        &self,
+        repo: &str,
+        number: i64,
+        login: &str,
+    ) -> Result<Option<(String, String)>, String> {
+        Ok(self
+            .find_pending_review(repo, number, login)
+            .await?
+            .map(|pending| (review_id(pending.id), pending.body)))
+    }
+
     /// The viewer's pending review on `number` — GitHub holds at most one
     /// per user per request — found among the request's reviews, or
     /// created with no event, and the hidden verdict mark as its body,
     /// where there is none: creating one is itself silent, since a pending
-    /// review shows nobody but its own author until it is submitted.
+    /// review shows nobody but its own author until it is submitted. One
+    /// found with no body at all is recovered the same way
+    /// [`Self::replace_pending_review_body`]'s own find recovers it.
     pub(super) async fn pending_review(
         &self,
         repo: &str,
         number: i64,
         login: &str,
     ) -> Result<ReviewSummary, String> {
-        if login.is_empty() {
-            // With no login to match an existing pending review against,
-            // every reply would create another: GitHub refuses a second
-            // pending review of the same user with a 422, rather than
-            // reusing the first the way a real login would.
-            return Err("no login to find or create a pending review under".into());
-        }
         let (host, owner, name) = split_slug(repo)?;
         let path = format!("repos/{owner}/{name}/pulls/{number}/reviews");
-        let reviews: Vec<ReviewSummary> = self.pages(host, &path).await?;
-        if let Some(found) = reviews.into_iter().find(|r| {
-            r.state.eq_ignore_ascii_case("pending") && r.user.login.eq_ignore_ascii_case(login)
-        }) {
-            if !found.body.trim().is_empty() {
-                return Ok(found);
+        match self.find_pending_review(repo, number, login).await? {
+            Some(found) => {
+                self.recover_bodiless_review(host, &path, number, found)
+                    .await
             }
-            // A pending review with no body at all — one an earlier Ariadne
-            // created with `body=`, or one begun by hand on the forge — is
-            // one GitHub refuses to edit through either API ("Could not
-            // edit a review with a missing body"), and every pending post
-            // is an edit of it. Holding no draft comment, it is deleted and
-            // made again with a body, losing nothing; holding any, it is
-            // the user's to submit or discard first.
-            let held: Vec<serde_json::Value> = self
-                .pages(host, &format!("{path}/{}/comments", found.id))
-                .await?;
-            if !held.is_empty() {
-                return Err(format!(
-                    "GitHub holds a pending review of yours on #{number} with no body, which \
-                     it refuses to edit, and {} draft comment(s) in it: submit or discard that \
-                     review on the forge, and the next post makes one Ariadne can edit",
-                    held.len()
-                ));
-            }
-            self.cli
-                .answer(&[
-                    "api",
-                    &format!("{path}/{}", found.id),
-                    "--hostname",
-                    host,
-                    "--method",
-                    "DELETE",
-                ])
-                .await?;
+            None => self.create_pending_review(host, &path).await,
         }
-        // Created with a body that is the hidden verdict mark alone, which
-        // renders as nothing: GitHub refuses to edit a review it holds with
-        // no body at all ("Could not edit a review with a missing body"),
-        // and every later change of the pending review — a verdict, a
-        // reply, a resolve — is an edit of its body. No `event` field still
-        // leaves the review pending.
+    }
+
+    /// Recover `found`'s empty body (026 rule 25): one GitHub refuses to
+    /// edit through either API ("Could not edit a review with a missing
+    /// body") — an earlier Ariadne's own, made with `body=`, or one begun
+    /// by hand on the forge — is deleted and made again with the hidden
+    /// mark where it holds no draft comment of its own, losing nothing;
+    /// holding any makes it the user's to submit or discard first, named
+    /// in the error rather than touched. `found` itself, unchanged, where
+    /// its body already holds something.
+    async fn recover_bodiless_review(
+        &self,
+        host: &str,
+        path: &str,
+        number: i64,
+        found: ReviewSummary,
+    ) -> Result<ReviewSummary, String> {
+        if !found.body.trim().is_empty() {
+            return Ok(found);
+        }
+        let held: Vec<serde_json::Value> = self
+            .pages(host, &format!("{path}/{}/comments", found.id))
+            .await?;
+        if !held.is_empty() {
+            return Err(format!(
+                "GitHub holds a pending review of yours on #{number} with no body, which \
+                 it refuses to edit, and {} draft comment(s) in it: submit or discard that \
+                 review on the forge, and the next post makes one Ariadne can edit",
+                held.len()
+            ));
+        }
+        self.cli
+            .answer(&[
+                "api",
+                &format!("{path}/{}", found.id),
+                "--hostname",
+                host,
+                "--method",
+                "DELETE",
+            ])
+            .await?;
+        self.create_pending_review(host, path).await
+    }
+
+    /// Create the viewer's pending review fresh, the hidden verdict mark
+    /// alone as its body, which renders as nothing: GitHub refuses to
+    /// edit a review it holds with no body at all ("Could not edit a
+    /// review with a missing body"), and every later change of the
+    /// pending review — a verdict, a reply, a resolve — is an edit of its
+    /// body. No `event` field still leaves the review pending.
+    async fn create_pending_review(&self, host: &str, path: &str) -> Result<ReviewSummary, String> {
         let output = self
             .cli
             .answer(&[
                 "api",
-                &path,
+                path,
                 "--hostname",
                 host,
                 "--method",
@@ -395,6 +456,162 @@ impl Github {
         let body = with_section_line(&pending.body, "Threads to resolve", &line);
         self.update_pending_review_body(host, &pending, &body).await
     }
+
+    /// Edit the body of one of the viewer's own still-pending review
+    /// comments, `updatePullRequestReviewComment` (026 rule 25). Refused with
+    /// [`PendingEditError::NotPending`] where `forge_id` names no comment
+    /// of the viewer's own pending review: the user already submitted it,
+    /// or there never was one.
+    pub(crate) async fn edit_pending_comment(
+        &self,
+        repo: &str,
+        number: i64,
+        login: &str,
+        forge_id: &str,
+        body: &str,
+    ) -> Result<String, PendingEditError> {
+        let (host, _, _) = split_slug(repo)?;
+        let id = pending_review_comment_numeric_id(forge_id)?;
+        let pending = self
+            .find_pending_review(repo, number, login)
+            .await?
+            .ok_or(PendingEditError::NotPending)?;
+        let node = self.pending_review_comment_node(host, &pending, id).await?;
+        self.cli
+            .answer(&[
+                "api",
+                "graphql",
+                "--hostname",
+                host,
+                "-f",
+                "query=mutation($id: ID!, $body: String!) { \
+                 updatePullRequestReviewComment(input: {pullRequestReviewCommentId: $id, body: \
+                 $body}) { pullRequestReviewComment { databaseId } } }",
+                "-f",
+                &format!("id={node}"),
+                "-f",
+                &format!("body={body}"),
+            ])
+            .await?;
+        Ok(forge_id.to_string())
+    }
+
+    /// Delete one of the viewer's own still-pending review comments,
+    /// `deletePullRequestReviewComment` (026 rule 25). Refused the same way
+    /// [`Self::edit_pending_comment`] is.
+    pub(crate) async fn delete_pending_comment(
+        &self,
+        repo: &str,
+        number: i64,
+        login: &str,
+        forge_id: &str,
+    ) -> Result<(), PendingEditError> {
+        let (host, _, _) = split_slug(repo)?;
+        let id = pending_review_comment_numeric_id(forge_id)?;
+        let pending = self
+            .find_pending_review(repo, number, login)
+            .await?
+            .ok_or(PendingEditError::NotPending)?;
+        let node = self.pending_review_comment_node(host, &pending, id).await?;
+        self.cli
+            .answer(&[
+                "api",
+                "graphql",
+                "--hostname",
+                host,
+                "-f",
+                "query=mutation($id: ID!) { deletePullRequestReviewComment(input: \
+                 {pullRequestReviewCommentId: $id}) { pullRequestReview { id } } }",
+                "-f",
+                &format!("id={node}"),
+            ])
+            .await?;
+        Ok(())
+    }
+
+    /// Replace the viewer's pending review body outright (026 rule 25), unlike
+    /// [`Self::apply_pending_header`], which merges a verdict into only its
+    /// top: refused with [`PendingEditError::NotPending`] where there is
+    /// none, rather than creating one just to hold the edit.
+    pub(crate) async fn replace_pending_review_body(
+        &self,
+        repo: &str,
+        number: i64,
+        login: &str,
+        body: &str,
+    ) -> Result<String, PendingEditError> {
+        let (host, owner, name) = split_slug(repo)?;
+        let path = format!("repos/{owner}/{name}/pulls/{number}/reviews");
+        let found = self
+            .find_pending_review(repo, number, login)
+            .await?
+            .ok_or(PendingEditError::NotPending)?;
+        // Recovered the same way `pending_review` recovers it (026 rule
+        // 25): an older review found with no body at all is still one
+        // GitHub refuses to edit, whatever this call's own new body is,
+        // since the refusal reads the review's current state, not the
+        // mutation's.
+        let pending = self
+            .recover_bodiless_review(host, &path, number, found)
+            .await?;
+        Ok(self
+            .update_pending_review_body(host, &pending, body)
+            .await?)
+    }
+
+    /// The GraphQL node id of comment `id` of `pending`'s own comments, read
+    /// fresh so a comment the user already submitted away is told apart
+    /// from one still in the viewer's pending review (026 rule 25): the mutations
+    /// `edit_pending_comment` and `delete_pending_comment` take a node id,
+    /// never the database id `addPullRequestReviewThread` itself answers.
+    async fn pending_review_comment_node(
+        &self,
+        host: &str,
+        pending: &ReviewSummary,
+        id: i64,
+    ) -> Result<String, PendingEditError> {
+        let output = self
+            .cli
+            .answer(&[
+                "api",
+                "graphql",
+                "--hostname",
+                host,
+                "--paginate",
+                "-f",
+                &format!("query={PENDING_REVIEW_COMMENTS}"),
+                "-f",
+                &format!("id={}", pending.node_id),
+            ])
+            .await?;
+        for page in serde_json::Deserializer::from_str(&output).into_iter::<serde_json::Value>() {
+            let page = page.map_err(|e| {
+                PendingEditError::Forge(format!(
+                    "cannot read the pending review's own comments GitHub stored: {e}"
+                ))
+            })?;
+            if let Some(node_id) = page["data"]["node"]["comments"]["nodes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|node| node["databaseId"].as_i64() == Some(id))
+                .and_then(|node| node["id"].as_str())
+            {
+                return Ok(node_id.to_string());
+            }
+        }
+        Err(PendingEditError::NotPending)
+    }
+}
+
+/// `forge_id` as the numeric id of a review comment, `rc-<n>`: what
+/// [`Github::edit_pending_comment`] and [`Github::delete_pending_comment`]
+/// look up among the viewer's own pending review's comments.
+fn pending_review_comment_numeric_id(forge_id: &str) -> Result<i64, PendingEditError> {
+    forge_id
+        .strip_prefix("rc-")
+        .and_then(|id| id.parse().ok())
+        .ok_or_else(|| PendingEditError::BadForgeId(format!("{forge_id} names no review comment")))
 }
 
 /// The permalink of a review thread, anchored at its first comment, the
@@ -762,6 +979,57 @@ sys.stdout.write(answers[count])
         );
     }
 
+    /// A conversation reply, like a resolve, folds straight into the
+    /// pending review's own body: `pending_review_body`, read right after,
+    /// answers the body the reply left, quote and all, not the one the
+    /// review held before it — what a caller echoes into the live cache so
+    /// `list_comments` never answers stale (026 rule 25).
+    #[tokio::test]
+    async fn pending_review_body_reads_what_a_conversation_reply_just_folded_into_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"Earlier note.","user":{"login":"me"}}]"#,
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING",
+                    "body":"Earlier note.\n\n> Why not here?\n\nFixed it.","user":{"login":"me"}}]"#,
+            ],
+        ));
+        let comment = PullRequestComment {
+            id: "ic-42".into(),
+            pull_request_id: "p".into(),
+            forge_id: "ic-42".into(),
+            thread_id: "conversation".into(),
+            kind: "issue_comment".into(),
+            author_login: "alice".into(),
+            author_is_bot: false,
+            body: "Why not here?".into(),
+            path: None,
+            line: None,
+            in_reply_to: None,
+            created_at: "2026-10-01T00:00:00Z".into(),
+            answered: false,
+            resolved: false,
+            told_at: None,
+            from_review: false,
+        };
+        let id = github
+            .reply_pending("github.com/acme/widgets", 1, "me", &comment, "Fixed it.")
+            .await
+            .unwrap();
+        let (fresh_id, body) = github
+            .pending_review_body("github.com/acme/widgets", 1, "me")
+            .await
+            .unwrap()
+            .expect("the pending review is still there");
+        assert_eq!(fresh_id, id);
+        assert!(
+            body.contains("Fixed it."),
+            "the reply's own text, not the note the review held before it: {body:?}"
+        );
+    }
+
     /// The conversation URL anchors a plain comment by its issue-comment id
     /// and a review's own body by its review id, the way GitHub's own UI
     /// links to either.
@@ -898,6 +1166,44 @@ sys.stdout.write(answers[count])
         );
     }
 
+    /// `resolve_pending` folds its line straight into the pending review's
+    /// own body rather than posting a comment of its own: `pending_review_body`,
+    /// read right after, answers that new body, not the one the review held
+    /// before the resolve — what a caller echoes into the live cache so
+    /// `list_comments` never answers stale (026 rule 25).
+    #[tokio::test]
+    async fn pending_review_body_reads_what_a_resolve_just_folded_into_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"Earlier note.","user":{"login":"me"}}]"#,
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+                r###"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING",
+                    "body":"## Threads to resolve\n- https://github.com/acme/widgets/pull/1#discussion_r202\n",
+                    "user":{"login":"me"}}]"###,
+            ],
+        ));
+        let comment = PullRequestComment {
+            forge_id: "rc-202".into(),
+            ..review_comment("T2")
+        };
+        let id = github
+            .resolve_pending("github.com/acme/widgets", 1, "me", &comment)
+            .await
+            .unwrap();
+        let (fresh_id, body) = github
+            .pending_review_body("github.com/acme/widgets", 1, "me")
+            .await
+            .unwrap()
+            .expect("the pending review is still there");
+        assert_eq!(fresh_id, id);
+        assert!(
+            body.contains("https://github.com/acme/widgets/pull/1#discussion_r202"),
+            "the resolve's own line, not the empty body the review held before it: {body:?}"
+        );
+    }
+
     /// A reply `reply_pending` appended after the heading (per
     /// `Github::append_to_pending_review`, a blank line away) does not push
     /// an earlier thread's line out from under it: a later resolve still
@@ -960,6 +1266,273 @@ sys.stdout.write(answers[count])
                 .resolve_pending("github.com/acme/widgets", 1, "me", &comment)
                 .await
                 .is_err()
+        );
+    }
+
+    /// `edit_pending_comment` (026 rule 25) looks up the viewer's own still-pending
+    /// review, reads the comment's node id among that review's own
+    /// comments, and edits it by node id, `updatePullRequestReviewComment`
+    /// — never the database id `addPullRequestReviewThread` answers.
+    #[tokio::test]
+    async fn edit_pending_comment_edits_a_comment_still_in_the_viewers_pending_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"{"data":{"node":{"comments":{"nodes":[
+                    {"id":"PRRC_1","databaseId":501},{"id":"PRRC_2","databaseId":502}]}}}}"#,
+                r#"{"data":{"updatePullRequestReviewComment":{"pullRequestReviewComment":{"databaseId":501}}}}"#,
+            ],
+        ));
+        let id = github
+            .edit_pending_comment("github.com/acme/widgets", 1, "me", "rc-501", "Fixed.")
+            .await
+            .unwrap();
+        assert_eq!(id, "rc-501");
+        let mutate = call_args(dir.path(), 2);
+        assert!(mutate.contains(&"id=PRRC_1".to_string()), "{mutate:?}");
+        assert!(mutate.contains(&"body=Fixed.".to_string()), "{mutate:?}");
+    }
+
+    /// With no pending review of the viewer's own at all, `edit_pending_comment`
+    /// answers [`PendingEditError::NotPending`] off the one listing call,
+    /// making no mutation: there is nothing pending to edit.
+    #[tokio::test]
+    async fn edit_pending_comment_refuses_with_no_pending_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(dir.path(), &["[]"]));
+        let error = github
+            .edit_pending_comment("github.com/acme/widgets", 1, "me", "rc-501", "Fixed.")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, super::PendingEditError::NotPending),
+            "{error:?}"
+        );
+    }
+
+    /// A `forge_id` of the wrong shape — an `ic-` conversation id, say,
+    /// handed to `edit_pending_comment` rather than `rc-` — is the
+    /// caller's own mistake, not the forge's: refused with
+    /// [`PendingEditError::BadForgeId`], never reaching the forge at all.
+    #[tokio::test]
+    async fn edit_pending_comment_refuses_a_forge_id_of_the_wrong_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(dir.path(), &[]));
+        let error = github
+            .edit_pending_comment("github.com/acme/widgets", 1, "me", "ic-501", "Fixed.")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, super::PendingEditError::BadForgeId(_)),
+            "{error:?}"
+        );
+    }
+
+    /// A comment no longer among the viewer's pending review's own comments
+    /// — the round it was in has since been submitted — is refused the
+    /// same way, after the node lookup finds it missing.
+    #[tokio::test]
+    async fn edit_pending_comment_refuses_a_comment_the_pending_review_no_longer_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"{"data":{"node":{"comments":{"nodes":[{"id":"PRRC_2","databaseId":502}]}}}}"#,
+            ],
+        ));
+        let error = github
+            .edit_pending_comment("github.com/acme/widgets", 1, "me", "rc-501", "Fixed.")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, super::PendingEditError::NotPending),
+            "{error:?}"
+        );
+    }
+
+    /// A pending review with more than a hundred comments still has its
+    /// hundred-and-first found: `--paginate` walks `$endCursor` through
+    /// every page of `PENDING_REVIEW_COMMENTS`, the same way `threads`
+    /// walks every page of a request's review threads.
+    #[tokio::test]
+    async fn edit_pending_comment_finds_a_comment_past_the_first_hundred() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_page = r#"{"data":{"node":{"comments":{"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[{"id":"PRRC_1","databaseId":501}]}}}}"#;
+        let second_page = r#"{"data":{"node":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"PRRC_2","databaseId":502}]}}}}"#;
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                &format!("{first_page}{second_page}"),
+                r#"{"data":{"updatePullRequestReviewComment":{"pullRequestReviewComment":{"databaseId":502}}}}"#,
+            ],
+        ));
+        let id = github
+            .edit_pending_comment("github.com/acme/widgets", 1, "me", "rc-502", "Fixed.")
+            .await
+            .unwrap();
+        assert_eq!(id, "rc-502");
+        let mutate = call_args(dir.path(), 2);
+        assert!(mutate.contains(&"id=PRRC_2".to_string()), "{mutate:?}");
+    }
+
+    /// `delete_pending_comment` (026 rule 25) deletes a comment still in the
+    /// viewer's pending review by its node id, `deletePullRequestReviewComment`.
+    #[tokio::test]
+    async fn delete_pending_comment_deletes_a_comment_still_in_the_viewers_pending_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"{"data":{"node":{"comments":{"nodes":[{"id":"PRRC_1","databaseId":501}]}}}}"#,
+                r#"{"data":{"deletePullRequestReviewComment":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+            ],
+        ));
+        github
+            .delete_pending_comment("github.com/acme/widgets", 1, "me", "rc-501")
+            .await
+            .unwrap();
+        let mutate = call_args(dir.path(), 2);
+        assert!(mutate.contains(&"id=PRRC_1".to_string()), "{mutate:?}");
+        assert!(
+            mutate
+                .iter()
+                .any(|a| a.contains("deletePullRequestReviewComment")),
+            "{mutate:?}"
+        );
+    }
+
+    /// `replace_pending_review_body` (026 rule 25) overwrites the viewer's pending
+    /// review body outright, unlike `apply_pending_header`'s merge above a
+    /// marker: whatever text the body held is gone.
+    #[tokio::test]
+    async fn replace_pending_review_body_replaces_the_whole_body_outright() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"Old note.","user":{"login":"me"}}]"#,
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+            ],
+        ));
+        let id = github
+            .replace_pending_review_body("github.com/acme/widgets", 1, "me", "New body.")
+            .await
+            .unwrap();
+        assert_eq!(id, "rv-9");
+        let mutate = call_args(dir.path(), 1);
+        let body = mutate
+            .iter()
+            .find_map(|a| a.strip_prefix("body="))
+            .expect("a body argument");
+        assert_eq!(body, "New body.");
+    }
+
+    /// A review `pending_review` creates fresh, body the hidden verdict
+    /// mark alone, is still a review `replace_pending_review_body` can edit
+    /// right after: GitHub refuses a `updatePullRequestReview` mutation
+    /// against a review it holds with a missing body, and the mark is
+    /// never that.
+    #[tokio::test]
+    async fn a_freshly_created_pending_review_is_editable_right_after() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                "[]",
+                &format!(
+                    r#"{{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"{}","user":{{"login":"me"}}}}"#,
+                    super::PENDING_VERDICT_MARK
+                ),
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}]"#,
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+            ],
+        ));
+        github
+            .pending_review("github.com/acme/widgets", 1, "me")
+            .await
+            .unwrap();
+        let create = call_args(dir.path(), 1);
+        assert!(
+            create.contains(&format!("body={}", super::PENDING_VERDICT_MARK)),
+            "the review is created with the hidden mark as its body: {create:?}"
+        );
+        let id = github
+            .replace_pending_review_body("github.com/acme/widgets", 1, "me", "New body.")
+            .await
+            .unwrap();
+        assert_eq!(id, "rv-9");
+        let mutate = call_args(dir.path(), 3);
+        assert!(mutate.contains(&"body=New body.".to_string()), "{mutate:?}");
+    }
+
+    /// An older pending review found with no body at all — one from
+    /// before the hidden-mark fix, or begun by hand on the forge — is
+    /// recovered the same way `pending_review` recovers it, holding no
+    /// draft comment of its own: deleted and made again, then replaced
+    /// with the caller's own new body outright, never left for GitHub to
+    /// refuse ("Could not edit a review with a missing body").
+    #[tokio::test]
+    async fn replace_pending_review_body_recovers_an_older_bodiless_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(
+            dir.path(),
+            &[
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                "[]",
+                "",
+                r#"{"id":10,"node_id":"PR_kwDOy","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}"#,
+                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOy"}}}}"#,
+            ],
+        ));
+        let id = github
+            .replace_pending_review_body("github.com/acme/widgets", 1, "me", "New body.")
+            .await
+            .unwrap();
+        assert_eq!(id, "rv-10");
+        let drafts = call_args(dir.path(), 1);
+        assert!(
+            drafts
+                .iter()
+                .any(|a| a == "repos/acme/widgets/pulls/1/reviews/9/comments"),
+            "the bodiless review's draft comments are read first: {drafts:?}"
+        );
+        let delete = call_args(dir.path(), 2);
+        assert!(
+            delete
+                .iter()
+                .any(|a| a == "repos/acme/widgets/pulls/1/reviews/9")
+                && delete.contains(&"DELETE".to_string()),
+            "{delete:?}"
+        );
+        let create = call_args(dir.path(), 3);
+        assert!(
+            create.contains(&"POST".to_string())
+                && create.contains(&format!("body={}", super::PENDING_VERDICT_MARK)),
+            "{create:?}"
+        );
+        let mutate = call_args(dir.path(), 4);
+        assert!(mutate.contains(&"body=New body.".to_string()), "{mutate:?}");
+    }
+
+    /// With no pending review, `replace_pending_review_body` answers
+    /// [`PendingEditError::NotPending`] rather than creating one just to
+    /// hold the edit.
+    #[tokio::test]
+    async fn replace_pending_review_body_refuses_with_no_pending_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let github = github(&fake_gh(dir.path(), &["[]"]));
+        let error = github
+            .replace_pending_review_body("github.com/acme/widgets", 1, "me", "New body.")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, super::PendingEditError::NotPending),
+            "{error:?}"
         );
     }
 }

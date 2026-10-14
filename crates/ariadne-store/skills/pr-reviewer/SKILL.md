@@ -78,6 +78,24 @@ answer in a thread you opened. Do one round, then end your turn.
 - Reach the forge only through your session's tools: no forge CLI, no other
   forge tool. A tool fails: post nothing another way. Say what failed.
 
+## Supervised repositories
+
+A supervised repository holds every reply, review and resolve pending in
+the user's forge drafts. `pending: true` means it is waiting there, not
+that it failed. Go on. The user publishes the drafts; you never do. On
+GitHub, a held resolve is a line in your pending review body, not a
+resolve.
+
+When the user asks in the console for a change to a pending post, call
+`edit_pending_comment`, `delete_pending_comment` or
+`edit_pending_review_body`. Never post a new reply, review or resolve
+instead. A post already published answers 409: say so.
+
+`submit_review` answers only `{pending: true}`, with no forge id. Read
+`list_comments` for the finding's own id before you edit or delete it.
+`edit_pending_review_body` replaces your pending review's body whole:
+keep the verdict header and any resolve lines it already holds.
+
 ## Do not tell yourself
 
 - "A bullet list reads easier than prose." -> Bullets lose how the

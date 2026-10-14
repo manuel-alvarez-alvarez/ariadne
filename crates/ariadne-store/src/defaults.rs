@@ -2052,9 +2052,16 @@ mod tests {
     /// sits where it does, closed on one sentence of what the verdict
     /// rests on, and its table is written only where a round has a row
     /// for it.
+    /// `pr-babysit` moves again, from 3500 to 4000, and `pr-reviewer` from
+    /// 5200 to 6200: both now carry a "Supervised repositories" section
+    /// (026 rule 25), naming the three tools that edit or delete a post
+    /// still pending in the user's forge drafts; `pr-reviewer`'s own also
+    /// says where to read a pending finding's forge id, that replacing the
+    /// pending review body is whole, not a merge, and carries the one
+    /// sentence that puts a finding on a line the diff shows.
     #[test]
     fn skill_size_caps_hold() {
-        const TOTAL: usize = 42_900;
+        const TOTAL: usize = 43_000;
         let cap = |name: &str| match name {
             ORCHESTRATION_SKILL => 4600,
             "debugging" => 3400,
@@ -2063,14 +2070,16 @@ mod tests {
             // Eight steps: the open, the read, the three reply shapes and
             // the two loop stops (a follow-up and a kept-open finding), the
             // suggestion rule, the checks, the report, and the two endings.
-            PR_BABYSIT_SKILL => 3500,
+            // Plus a "Supervised repositories" section (026 rule 25).
+            PR_BABYSIT_SKILL => 4000,
             // Eleven steps: the read, the checks, the hunt, the three
             // priorities, one inline comment per finding with its title and
             // its fix, the summary of four parts with no line in any of
             // them, the one review, the report and the later round, which
             // resolves each thread a push fixed; and the one sentence that
-            // puts a finding on a line the diff shows.
-            PR_REVIEWER_SKILL => 5300,
+            // puts a finding on a line the diff shows. Plus a "Supervised
+            // repositories" section (026 rule 25).
+            PR_REVIEWER_SKILL => 6200,
             _ => 2400,
         };
 

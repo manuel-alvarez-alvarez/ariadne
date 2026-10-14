@@ -16,6 +16,7 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::messages::SendMessageRequest;
 use ariadne_api::pull_requests::{
+    DeletePendingCommentRequest, EditPendingCommentRequest, EditPendingReviewBodyRequest,
     ReplyCommentRequest, ReportPullRequestRequest, ReviewCommentRequest, SubmitReviewRequest,
 };
 use ariadne_api::sessions::SwitchSessionRequest;
@@ -218,6 +219,31 @@ pub(super) struct GetCommentReq {
 pub(super) struct ResolveThreadReq {
     /// The `id` of a comment of the thread, as `list_comments` gives it.
     pub comment_id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct EditPendingCommentReq {
+    /// The forge id of your own pending comment, as `reply_comment` or
+    /// `submit_review` answered it.
+    pub forge_id: String,
+    /// The new text.
+    pub body: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct DeletePendingCommentReq {
+    /// The forge id of your own pending comment, as `reply_comment` or
+    /// `submit_review` answered it.
+    pub forge_id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct EditPendingReviewBodyReq {
+    /// The new verdict and summary.
+    pub body: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -813,6 +839,75 @@ impl AriadneMcp {
     }
 
     #[tool(
+        description = "Edit one of your own pending forge posts. It is a pending review comment or a draft note. Use it only when the user asks for a change in the console. Refused once the user submits or publishes it."
+    )]
+    async fn edit_pending_comment(
+        &self,
+        Parameters(req): Parameters<EditPendingCommentReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = req.body.trim();
+        if body.is_empty() {
+            return Err(McpError::invalid_params("an edit needs a body", None));
+        }
+        let path = self.pull_request_path("/comments/edit").await?;
+        json_result(
+            self.post(
+                &path,
+                &EditPendingCommentRequest {
+                    forge_id: req.forge_id,
+                    body: body.to_string(),
+                },
+            )
+            .await?,
+        )
+    }
+
+    #[tool(
+        description = "Delete one of your own pending forge posts. It is a pending review comment or a draft note. Use it only when the user asks for a change in the console. Refused once the user submits or publishes it."
+    )]
+    async fn delete_pending_comment(
+        &self,
+        Parameters(req): Parameters<DeletePendingCommentReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = self.pull_request_path("/comments/delete").await?;
+        json_result(
+            self.post(
+                &path,
+                &DeletePendingCommentRequest {
+                    forge_id: req.forge_id,
+                },
+            )
+            .await?,
+        )
+    }
+
+    #[tool(
+        description = "Replace the body of your pending review outright. It is the verdict and summary GitHub holds at its top. GitHub only. Use it only when the user asks for a change in the console. Refused once the user submits the review, or where there is none."
+    )]
+    async fn edit_pending_review_body(
+        &self,
+        Parameters(req): Parameters<EditPendingReviewBodyReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = req.body.trim();
+        if body.is_empty() {
+            return Err(McpError::invalid_params(
+                "a pending review body needs text",
+                None,
+            ));
+        }
+        let path = self.pull_request_path("/pending-review/body").await?;
+        json_result(
+            self.post(
+                &path,
+                &EditPendingReviewBodyRequest {
+                    body: body.to_string(),
+                },
+            )
+            .await?,
+        )
+    }
+
+    #[tool(
         description = "Resolve the thread of one of your own review comments once a push fixed it. Ariadne resolves it on the forge. A thread somebody else opened is refused: its author resolves it. A supervised repository lists it to resolve in your forge drafts instead."
     )]
     async fn resolve_thread(
@@ -1194,6 +1289,65 @@ mod tests {
         );
         let report: serde_json::Value = serde_json::from_str(&seen[2].body).expect("json");
         assert_eq!(report["reviewed_sha"], "abc");
+    }
+
+    /// The three pending-edit tools (013 rule 13) each call their own route of the
+    /// session's request, with the body the agent gave them.
+    #[tokio::test]
+    async fn the_pending_edit_tools_call_the_routes_of_the_sessions_request() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpSeat::PullRequestReviewer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.edit_pending_comment(Parameters(EditPendingCommentReq {
+            forge_id: "rc-501".into(),
+            body: "Fixed in abc.".into(),
+        }))
+        .await
+        .expect("edit");
+        mcp.delete_pending_comment(Parameters(DeletePendingCommentReq {
+            forge_id: "rc-501".into(),
+        }))
+        .await
+        .expect("delete");
+        mcp.edit_pending_review_body(Parameters(EditPendingReviewBodyReq {
+            body: "**Verdict: Comment**\n\nNothing open.".into(),
+        }))
+        .await
+        .expect("edit the review body");
+
+        let seen = seen.lock().expect("lock").clone();
+        let calls: Vec<(String, String)> = seen
+            .iter()
+            .map(|s| (s.method.clone(), s.path.clone()))
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                ("POST".into(), "/v1/pull-requests/01PR/comments/edit".into()),
+                (
+                    "POST".into(),
+                    "/v1/pull-requests/01PR/comments/delete".into()
+                ),
+                (
+                    "POST".into(),
+                    "/v1/pull-requests/01PR/pending-review/body".into()
+                ),
+            ]
+        );
+        let edit: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(
+            edit,
+            serde_json::json!({"forge_id": "rc-501", "body": "Fixed in abc."})
+        );
+        let delete: serde_json::Value = serde_json::from_str(&seen[1].body).expect("json");
+        assert_eq!(delete, serde_json::json!({"forge_id": "rc-501"}));
+        let body: serde_json::Value = serde_json::from_str(&seen[2].body).expect("json");
+        assert_eq!(
+            body,
+            serde_json::json!({"body": "**Verdict: Comment**\n\nNothing open."})
+        );
     }
 
     /// Where the repository holds posts back, the daemon answers

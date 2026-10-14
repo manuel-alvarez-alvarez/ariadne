@@ -147,6 +147,8 @@ impl AppState {
         issues::list, issues::get,
         pull_requests::list, pull_requests::get, pull_requests::get_by_number, pull_requests::refresh, pull_requests::search,
         pull_requests::comments, pull_requests::comment, pull_requests::reply, pull_requests::resolve,
+        pull_requests::edit_pending_comment, pull_requests::delete_pending_comment,
+        pull_requests::edit_pending_review_body,
         pull_requests::report,
         pull_requests::diff, pull_requests::submit_review, pull_requests::ask_review,
         pull_requests::ask_babysit,
@@ -186,6 +188,7 @@ impl AppState {
         ariadne_api::attention::CreateAgentRequest,
         ariadne_api::pull_requests::PendingReplyDto,
         ariadne_api::pull_requests::PendingReviewDto,
+        ariadne_api::pull_requests::PendingEditDto,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
@@ -244,6 +247,18 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/pull-requests/{id}/comments/{comment_id}/resolve",
             post(pull_requests::resolve),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/edit",
+            post(pull_requests::edit_pending_comment),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/delete",
+            post(pull_requests::delete_pending_comment),
+        )
+        .route(
+            "/v1/pull-requests/{id}/pending-review/body",
+            post(pull_requests::edit_pending_review_body),
         )
         .route("/v1/pull-requests/{id}/report", post(pull_requests::report))
         .route("/v1/pull-requests/{id}/diff", get(pull_requests::diff))
