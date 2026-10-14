@@ -20,8 +20,9 @@ changes, and use verification that fits work that preserves behavior.
    Name its claim, not its function. Take the expected value from the spec,
    a worked example or another independent source.
    Done when the test reaches its claim through a public interface.
-4. Run that test and watch it fail for the predicted reason. Build the code
-   that turns it green. Repeat for every behavior change.
+4. Run that test alone, never the suite around it. Watch it fail for the
+   predicted reason. Build the code that turns it green. Repeat for every
+   behavior change.
    Done when every behavior change has meaningful proof.
 5. For prose or a behavior-preserving refactor, choose verification that
    fits the risk. Inspect the diff and run relevant existing checks.
@@ -48,7 +49,7 @@ column squashes.
 - Write the simplest code that meets the criteria.
 - Give each behavior test one reason to fail and no test-order dependence.
 - Assert at the seam. A preserving refactor leaves the test green.
-- Prefer real values to fast mocks.
+- Prefer real values to mocks where the real thing is fast.
 - Test your claims, not a library's guarantees.
 
 ## Two tests that lie
@@ -66,6 +67,8 @@ column squashes.
   verification, even when they need no new test.
 - "Mocking internals makes this easier." -> A mock behind the seam couples
   the test to code free to change.
+- "I will save a note on this task." -> Save to memory only a trap that
+  will come back. The commit is the record of the task.
 
 ## Done
 

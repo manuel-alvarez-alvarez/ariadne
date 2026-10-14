@@ -993,7 +993,7 @@ mod tests {
             .find("Search the handoff reasons, accessible logs and CI evidence.")
             .expect("the code-review skill does not inspect check evidence");
         let checks = text
-            .find("Run every other required check once for this verdict.")
+            .find("Run each required check with no reusable result, once for this verdict.")
             .expect("the code-review skill does not run missing checks");
         assert!(
             evidence < checks,
@@ -1009,8 +1009,7 @@ mod tests {
             "Search the handoff reasons, accessible logs and CI evidence.",
             "its revision matches `git rev-parse HEAD`",
             "Its command must be a check this diff requires",
-            "evidence is missing, outdated or insufficient",
-            "Run every other required check once for this verdict.",
+            "Run each required check with no reusable result, once for this verdict.",
             "Include the SHA from `git rev-parse HEAD`",
             "On any must-fix finding, call `fail_step` with the verdict.",
             "Else call `complete_step` with the verdict, and list the optional findings in it.",
@@ -1044,13 +1043,14 @@ mod tests {
             ),
             (
                 "code-review",
-                "Run every other required check once for this verdict.",
+                "Run each required check with no reusable result, once for this verdict.",
             ),
             ("pr-babysit", "run the checks of what you changed"),
             (
                 "coding",
                 "For a code behavior change, write a failing test first",
             ),
+            ("coding", "Run that test alone, never the suite around it."),
             (
                 "coding",
                 "For prose or a behavior-preserving refactor, choose verification",

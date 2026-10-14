@@ -14,9 +14,8 @@ Judge repository conventions and task acceptance apart.
    Read each result's revision, command and result.
    Done when you can judge what every result covers.
 2. Reuse a result only when its revision matches `git rev-parse HEAD`.
-   Its command must be a check this diff requires. Run a required check when
-   evidence is missing, outdated or insufficient. Run every other required
-   check once for this verdict.
+   Its command must be a check this diff requires. Run each required check
+   with no reusable result, once for this verdict.
    Done when every required check has a reused or fresh result.
 3. Pin the scope. For a second review, read the prior SHA from your
    conversation. Run `git merge-base --is-ancestor <sha> HEAD`.
@@ -66,6 +65,8 @@ Judge repository conventions and task acceptance apart.
   proves nothing here. Run the check.
 - "The task passes, so conventions do not matter." -> A correct feature can
   still damage the repository.
+- "I will save a note on this review." -> Save to memory only a breach that
+  will come back. The verdict is the record.
 
 ## Done
 
