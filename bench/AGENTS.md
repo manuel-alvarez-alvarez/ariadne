@@ -18,6 +18,10 @@ None of this runs in CI.
   `ai` permission mode.
 - [`ai-opportunities/`](ai-opportunities/README.md) — measured pilots for
   failure diagnosis, stalled progress and handoff history selection.
+- [`token-usage/`](token-usage/README.md) — an offline, privacy-preserving
+  historical token-use audit. Its analyzer reads a copied SQLite snapshot and
+  exports aggregate evidence only; source databases and raw transcripts never
+  enter Git.
 
 ## Checks
 

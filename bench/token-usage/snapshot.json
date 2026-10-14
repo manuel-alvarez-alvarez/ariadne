@@ -1,0 +1,562 @@
+{
+  "analyzer_version": "2",
+  "canonical_usage": {
+    "cached_input_tokens": 10681322842,
+    "input_tokens": 10837777871,
+    "output_tokens": 30300608
+  },
+  "coverage": {
+    "backup_count": 6,
+    "deleted_session_fallbacks": 3,
+    "history_files": [
+      {
+        "bytes": 280608768,
+        "counts": {
+          "agent_events": 172793,
+          "agent_sessions": 622,
+          "goals": 54,
+          "session_usage": 1079,
+          "stat_facts": 31234,
+          "tasks": 181
+        },
+        "mtime": "2026-10-14T21:25:54.506202Z",
+        "name": "ariadne.db",
+        "overlap": {
+          "agent_events": {
+            "all_backup_records_in_primary": false,
+            "backup_only": 1671,
+            "shared": 171122
+          },
+          "agent_sessions": {
+            "all_backup_records_in_primary": false,
+            "backup_only": 7,
+            "shared": 615
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 54
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": false,
+            "backup_only": 7,
+            "shared": 1072
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": false,
+            "backup_only": 31,
+            "shared": 31203
+          },
+          "tasks": {
+            "all_backup_records_in_primary": false,
+            "backup_only": 1,
+            "shared": 180
+          },
+          "usage_counters": {
+            "backup_shared_sum": {
+              "cached_input_tokens": 10707138369,
+              "input_tokens": 10863982006,
+              "output_tokens": 30371664
+            },
+            "changed_rows": 2,
+            "identical_rows": 1070,
+            "primary_shared_sum": {
+              "cached_input_tokens": 10680301377,
+              "input_tokens": 10836685706,
+              "output_tokens": 30294525
+            },
+            "shared_rows": 1072
+          }
+        }
+      },
+      {
+        "bytes": 81633280,
+        "counts": {
+          "agent_events": 49439,
+          "agent_sessions": 153,
+          "goals": 15,
+          "session_usage": 297,
+          "stat_facts": 11613,
+          "tasks": 71
+        },
+        "mtime": "2026-10-09T23:40:45.388799Z",
+        "name": "ariadne.db.backup-schema-20",
+        "overlap": {
+          "agent_events": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 49439
+          },
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 153
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 15
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 297
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 11613
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 71
+          },
+          "usage_counters": {
+            "backup_shared_sum": {
+              "cached_input_tokens": 2866018940,
+              "input_tokens": 2917097939,
+              "output_tokens": 9968322
+            },
+            "changed_rows": 0,
+            "identical_rows": 297,
+            "primary_shared_sum": {
+              "cached_input_tokens": 2866018940,
+              "input_tokens": 2917097939,
+              "output_tokens": 9968322
+            },
+            "shared_rows": 297
+          }
+        }
+      },
+      {
+        "bytes": 48971776,
+        "counts": {
+          "agent_events": 30322,
+          "agent_sessions": 107,
+          "goals": 13,
+          "session_usage": 205,
+          "stat_facts": 7302,
+          "tasks": 48
+        },
+        "mtime": "2026-10-08T18:28:27.397853Z",
+        "name": "ariadne.db.bak-20261008-202827",
+        "overlap": {
+          "agent_events": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 30322
+          },
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 107
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 13
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 205
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 7302
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 48
+          },
+          "usage_counters": {
+            "backup_shared_sum": {
+              "cached_input_tokens": 1516713678,
+              "input_tokens": 1545950394,
+              "output_tokens": 5768843
+            },
+            "changed_rows": 0,
+            "identical_rows": 205,
+            "primary_shared_sum": {
+              "cached_input_tokens": 1516713678,
+              "input_tokens": 1545950394,
+              "output_tokens": 5768843
+            },
+            "shared_rows": 205
+          }
+        }
+      },
+      {
+        "bytes": 49139712,
+        "counts": {
+          "agent_events": 30414,
+          "agent_sessions": 108,
+          "goals": 13,
+          "session_usage": 206,
+          "stat_facts": 7305,
+          "tasks": 48
+        },
+        "mtime": "2026-10-08T20:08:55.555555Z",
+        "name": "ariadne.db.bak-20261008-220855",
+        "overlap": {
+          "agent_events": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 30414
+          },
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 108
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 13
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 206
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 7305
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 48
+          },
+          "usage_counters": {
+            "backup_shared_sum": {
+              "cached_input_tokens": 1519003598,
+              "input_tokens": 1548362844,
+              "output_tokens": 5777345
+            },
+            "changed_rows": 0,
+            "identical_rows": 206,
+            "primary_shared_sum": {
+              "cached_input_tokens": 1519003598,
+              "input_tokens": 1548362844,
+              "output_tokens": 5777345
+            },
+            "shared_rows": 206
+          }
+        }
+      },
+      {
+        "bytes": 80261120,
+        "counts": {
+          "agent_events": 47045,
+          "agent_sessions": 152,
+          "goals": 15,
+          "session_usage": 290,
+          "stat_facts": 10997,
+          "tasks": 71
+        },
+        "mtime": "2026-10-09T21:08:38.146718Z",
+        "name": "ariadne.db.bak-20261009-230838-pre-rollback",
+        "overlap": {
+          "agent_events": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 47045
+          },
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 152
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 15
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 290
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 10997
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 71
+          },
+          "usage_counters": {
+            "backup_shared_sum": {
+              "cached_input_tokens": 2551901979,
+              "input_tokens": 2601932570,
+              "output_tokens": 9629180
+            },
+            "changed_rows": 0,
+            "identical_rows": 290,
+            "primary_shared_sum": {
+              "cached_input_tokens": 2551901979,
+              "input_tokens": 2601932570,
+              "output_tokens": 9629180
+            },
+            "shared_rows": 290
+          }
+        }
+      },
+      {
+        "bytes": 101449728,
+        "counts": {
+          "agent_events": 62222,
+          "agent_sessions": 241,
+          "goals": 22,
+          "session_usage": 449,
+          "stat_facts": 14275,
+          "tasks": 94
+        },
+        "mtime": "2026-10-10T08:33:06.118545Z",
+        "name": "ariadne.db.bak-20261010-presquash-fix",
+        "overlap": {
+          "agent_events": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 62222
+          },
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 241
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 22
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 449
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 14275
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 94
+          },
+          "usage_counters": {
+            "backup_shared_sum": {
+              "cached_input_tokens": 3416114046,
+              "input_tokens": 3478921595,
+              "output_tokens": 11896328
+            },
+            "changed_rows": 0,
+            "identical_rows": 449,
+            "primary_shared_sum": {
+              "cached_input_tokens": 3416114046,
+              "input_tokens": 3478921595,
+              "output_tokens": 11896328
+            },
+            "shared_rows": 449
+          }
+        }
+      },
+      {
+        "bytes": 152326144,
+        "counts": {
+          "agent_events": 98052,
+          "agent_sessions": 375,
+          "goals": 30,
+          "session_usage": 758,
+          "stat_facts": 22841,
+          "tasks": 125
+        },
+        "mtime": "2026-10-11T07:39:41.435738Z",
+        "name": "ariadne.db.bak-20261011-093941-pre-0001-fix",
+        "overlap": {
+          "agent_events": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 98052
+          },
+          "agent_sessions": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 375
+          },
+          "goals": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 30
+          },
+          "session_usage": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 758
+          },
+          "stat_facts": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 22841
+          },
+          "tasks": {
+            "all_backup_records_in_primary": true,
+            "backup_only": 0,
+            "shared": 125
+          },
+          "usage_counters": {
+            "backup_shared_sum": {
+              "cached_input_tokens": 5787520215,
+              "input_tokens": 5880743805,
+              "output_tokens": 17378407
+            },
+            "changed_rows": 0,
+            "identical_rows": 758,
+            "primary_shared_sum": {
+              "cached_input_tokens": 5787520215,
+              "input_tokens": 5880743805,
+              "output_tokens": 17378407
+            },
+            "shared_rows": 758
+          }
+        }
+      }
+    ],
+    "retained_session_end_facts_without_session": 3,
+    "schema_migrations": [
+      {
+        "description": "init",
+        "installed_on": "2026-10-05 08:40:26",
+        "version": 1
+      },
+      {
+        "description": "agent requests",
+        "installed_on": "2026-10-11 07:39:42",
+        "version": 2
+      },
+      {
+        "description": "pull request readiness",
+        "installed_on": "2026-10-11 07:39:42",
+        "version": 3
+      },
+      {
+        "description": "drop forge review pin",
+        "installed_on": "2026-10-11 18:53:54",
+        "version": 4
+      },
+      {
+        "description": "pull request babysitting",
+        "installed_on": "2026-10-12 19:34:12",
+        "version": 5
+      },
+      {
+        "description": "pull request asks revision",
+        "installed_on": "2026-10-14 00:46:05",
+        "version": 6
+      },
+      {
+        "description": "supervise posts",
+        "installed_on": "2026-10-14 00:46:05",
+        "version": 7
+      },
+      {
+        "description": "pending pull request replies",
+        "installed_on": "2026-10-14 00:46:05",
+        "version": 8
+      }
+    ],
+    "sessions_without_usage": 26,
+    "transcript_command_inputs": {
+      "completed_calls_with_ids": 51118,
+      "missing_inputs": 20468,
+      "opener_inputs": 10878,
+      "rule": "Claude assistant tool_use input.command matched to a retained post_tool_use toolCallId before the database cutoff; missing transcript inputs remain unavailable",
+      "transcript_recovered_inputs": 19772
+    },
+    "transcript_inventory": {
+      "counter_interpretation": "transcript and Ariadne cumulative session counters agree within 1% for input, cached input, and output for this subset; other deltas show partial files or different accounting windows",
+      "counter_snapshots": {
+        "claude": 122,
+        "codex": 227
+      },
+      "files_scanned": {
+        "claude": 1377,
+        "codex": 1526
+      },
+      "filtered_manifest_sha256": "6a9fefcc5ca1818ed540de10a590db747acc0593a1832ab0962eacdf3a3b88a6",
+      "mapped_files": {
+        "claude": 555,
+        "codex": 227
+      },
+      "mapped_sessions": {
+        "claude": 370,
+        "codex": 227
+      },
+      "mapping": "matched Claude sessionId, Codex session_meta.payload.id, or a retained metadata identifier to agent_sessions.internal_session_id; no transcript launch identifier was retained",
+      "records_after_database_cutoff": {
+        "claude": 308,
+        "codex": 2882
+      },
+      "within_one_percent_of_database_input_and_output": 148
+    },
+    "zero_usage_sessions": 0
+  },
+  "cutoff": "2026-10-14T20:31:49.158Z",
+  "generated_at": "2026-10-14T21:26:14.221663Z",
+  "inventory": {
+    "events": 171122,
+    "facts": 31203,
+    "goals": 54,
+    "in_progress_tasks": 1,
+    "running_sessions": 3,
+    "sessions": 615,
+    "tasks": 180,
+    "usage_rows": 1072
+  },
+  "source": {
+    "bytes": 273215488,
+    "coverage": {
+      "events_through": "2026-10-14T20:31:49.158Z",
+      "facts_through": "2026-10-14T20:17:22.716Z",
+      "usage_through": "2026-10-14T20:31:42.956Z"
+    },
+    "label": "pinned",
+    "revision": "096ea0a8b141a5ffb04a0397599f36d4f8c295a6",
+    "sha256": "b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47",
+    "snapshot_acquired_at": "2026-10-14T20:31:52.696616Z",
+    "sqlite_user_version": 0
+  },
+  "timing": {
+    "ended_session_lifetime_secs": 3910876,
+    "ended_sessions_with_lifetime": 612,
+    "unsupported": [
+      "active model execution",
+      "human wait outside console permissions",
+      "queue time before a session launch",
+      "tool execution",
+      "per-launch elapsed time"
+    ]
+  },
+  "trace_selection": {
+    "coverage": {
+      "cached_input": 0.34573023235280653,
+      "input": 0.34240024949483483,
+      "output": 0.19420732415666378,
+      "uncached_input": 0.11505938233535465
+    },
+    "max_daemon_prompt_chars": 61872,
+    "max_daemon_prompts": 34,
+    "max_repeated_tool_prefixes": 112,
+    "method": "12 largest input-plus-output sessions plus median-usage exited agent and reviewer sessions",
+    "selected_sessions": 14,
+    "selected_usage_share": 0.34198708209383366
+  }
+}

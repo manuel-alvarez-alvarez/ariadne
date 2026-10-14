@@ -1,0 +1,828 @@
+#!/usr/bin/env python3
+"""Produce privacy-preserving historical token-use aggregates from Ariadne SQLite.
+
+The input database is read-only.  It and raw event payloads must stay outside
+Git; this program writes only totals, identifiers, and derived trace metrics.
+Run ``python3 bench/token-usage/analyze.py --help`` for the contract.
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import csv
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import statistics
+import sys
+import zlib
+from pathlib import Path
+from typing import Any, Iterable
+
+
+VERSION = "2"
+TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "output_tokens")
+NOW = dt.datetime.now(dt.timezone.utc)
+
+
+def iso(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def seconds(a: str | None, b: str | None) -> float | None:
+    start, end = iso(a), iso(b)
+    if not start or not end:
+        return None
+    return max(0.0, (end - start).total_seconds())
+
+
+def read_rows(conn: sqlite3.Connection, sql: str, args: Iterable[Any] = ()) -> list[dict[str, Any]]:
+    return [dict(row) for row in conn.execute(sql, tuple(args))]
+
+
+def table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone() is not None
+
+
+def add_usage(target: dict[str, int], row: dict[str, Any]) -> None:
+    for field in TOKEN_FIELDS:
+        target[field] += max(0, int(row.get(field) or 0))
+
+
+def usage_dict() -> dict[str, int]:
+    return {field: 0 for field in TOKEN_FIELDS}
+
+
+def uncached(row: dict[str, Any]) -> int:
+    return max(0, row["input_tokens"] - row["cached_input_tokens"])
+
+
+def billable_total(row: dict[str, int]) -> int:
+    """Input includes cached input, so rank usage as input plus output."""
+    return row["input_tokens"] + row["output_tokens"]
+
+
+def max_time(rows: list[dict[str, Any]], field: str) -> str | None:
+    return max((row[field] for row in rows if row.get(field)), default=None)
+
+
+def write_csv(path: Path, rows: list[dict[str, Any]], columns: list[str]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def payload(raw: bytes, codec: str) -> dict[str, Any] | None:
+    try:
+        decoded = zlib.decompress(raw, -zlib.MAX_WBITS) if codec == "deflate" else raw
+        value = json.loads(decoded)
+        return value if isinstance(value, dict) else None
+    except (UnicodeDecodeError, ValueError, zlib.error):
+        return None
+
+
+def text_at(value: Any, *paths: tuple[str, ...]) -> str | None:
+    for path in paths:
+        here = value
+        for key in path:
+            if not isinstance(here, dict):
+                here = None
+                break
+            here = here.get(key)
+        if isinstance(here, str):
+            return here
+    return None
+
+
+def tool_text(body: dict[str, Any]) -> str:
+    """Read Claude ACP result text without exporting it."""
+    acp = body.get("acp")
+    if not isinstance(acp, dict):
+        return text_at(body, ("tool_output",), ("tool", "output"), ("output",)) or ""
+    parts: list[str] = []
+    raw = acp.get("rawOutput")
+    if isinstance(raw, str):
+        parts.append(raw)
+    for item in acp.get("content", []):
+        if isinstance(item, dict):
+            content = item.get("content")
+            if isinstance(content, dict) and isinstance(content.get("text"), str):
+                parts.append(content["text"])
+    return "\n".join(parts)
+
+
+def tool_key(body: dict[str, Any]) -> str | None:
+    acp = body.get("acp")
+    if isinstance(acp, dict) and isinstance(acp.get("toolCallId"), str):
+        return acp["toolCallId"]
+    return text_at(body, ("tool_call_id",), ("toolCallId",))
+
+
+def transcript_tool_commands(internal_sessions: dict[str, dict[str, Any]], cutoff: str, root: Path) -> dict[tuple[str, str], str]:
+    """Recover completed Claude command inputs when ACP pre-tool events omit them."""
+    commands: dict[tuple[str, str], str] = {}
+    if not root.exists():
+        return commands
+    for path in sorted(root.rglob("*.jsonl"), key=lambda p: p.relative_to(root).as_posix()):
+        try:
+            with path.open(encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if record.get("type") != "assistant" or record.get("timestamp", "") > cutoff:
+                        continue
+                    internal_id = record.get("sessionId")
+                    if internal_id not in internal_sessions:
+                        continue
+                    for item in (record.get("message") or {}).get("content") or []:
+                        if not isinstance(item, dict) or item.get("type") != "tool_use":
+                            continue
+                        tool_id = item.get("id")
+                        command = (item.get("input") or {}).get("command")
+                        if isinstance(tool_id, str) and isinstance(command, str):
+                            commands[(internal_sessions[internal_id]["id"], tool_id)] = command
+        except OSError:
+            continue
+    return commands
+
+
+def transcript_inventory(internal_sessions: dict[str, dict[str, Any]], cutoff: str, roots: dict[str, Path]) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Map local transcript metadata to retained internal session IDs.
+
+    The output deliberately contains counters and Ariadne session IDs only.
+    It never writes transcript paths or content.
+    """
+    families = (("codex", roots["codex"], "rollout-*.jsonl"), ("claude", roots["claude"], "*.jsonl"))
+    scanned = collections.Counter()
+    mapped_files = collections.Counter()
+    mapped_sessions: dict[str, set[str]] = collections.defaultdict(set)
+    after_cutoff = collections.Counter()
+    manifest = hashlib.sha256()
+    manifest_rows: list[dict[str, Any]] = []
+    counter_rows: list[dict[str, Any]] = []
+    for family, root, pattern in families:
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob(pattern), key=lambda p: p.relative_to(root).as_posix()):
+            scanned[family] += 1
+            session_keys: set[str] = set()
+            last_cost: dict[str, Any] | None = None
+            cost_aligned = False
+            codex_segments: list[dict[str, int]] = []
+            codex_last: dict[str, int] | None = None
+            file_digest = hashlib.sha256()
+            try:
+                with path.open(encoding="utf-8", errors="replace") as handle:
+                    for line in handle:
+                        try:
+                            record = json.loads(line)
+                        except ValueError:
+                            continue
+                        stamp = record.get("timestamp")
+                        if isinstance(stamp, str) and stamp > cutoff:
+                            after_cutoff[family] += 1
+                            continue
+                        file_digest.update(line.encode("utf-8", "replace"))
+                        manifest.update(family.encode())
+                        manifest.update(line.encode("utf-8", "replace"))
+                        nested = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+                        for key in (record.get("sessionId"), record.get("id"), nested.get("sessionId"), nested.get("session_id"), nested.get("id")):
+                            if isinstance(key, str) and key in internal_sessions:
+                                session_keys.add(key)
+                        if family == "claude" and record.get("type") == "cost-state":
+                            last_cost = record
+                            cost_aligned = isinstance(stamp, str)
+                        if family == "codex" and record.get("type") == "event_msg" and nested.get("type") == "token_count":
+                            total = ((nested.get("info") or {}).get("total_token_usage") or {})
+                            usage = {"input_tokens": int(total.get("input_tokens") or 0), "cached_input_tokens": int(total.get("cached_input_tokens") or 0), "output_tokens": int(total.get("output_tokens") or 0)}
+                            if codex_last and (usage["input_tokens"] < codex_last["input_tokens"] or usage["output_tokens"] < codex_last["output_tokens"]):
+                                codex_segments.append(codex_last)
+                            codex_last = usage
+            except OSError:
+                continue
+            manifest.update(f"{family}:{path.relative_to(root).as_posix()}:{file_digest.hexdigest()}\n".encode())
+            if session_keys:
+                manifest_rows.append({"family": family, "file_identity_sha256": hashlib.sha256(f"{family}:{path.relative_to(root).as_posix()}".encode()).hexdigest(), "filtered_content_sha256": file_digest.hexdigest()})
+            for key in session_keys:
+                mapped_files[family] += 1
+                mapped_sessions[family].add(key)
+                uncached_input = cached_input = output = 0
+                if family == "claude" and last_cost:
+                    for value in (last_cost.get("modelUsage") or {}).values():
+                        if not isinstance(value, dict):
+                            continue
+                        # A cache write was read for the first time. Only a
+                        # cache read is cached input under spec 012 rule 16.
+                        uncached_input += int(value.get("inputTokens") or 0) + int(value.get("cacheCreationInputTokens") or 0)
+                        cached_input += int(value.get("cacheReadInputTokens") or 0)
+                        output += int(value.get("outputTokens") or 0)
+                elif family == "codex" and codex_last:
+                    codex_segments.append(codex_last)
+                    uncached_input = sum(part["input_tokens"] - part["cached_input_tokens"] for part in codex_segments)
+                    cached_input = sum(part["cached_input_tokens"] for part in codex_segments)
+                    output = sum(part["output_tokens"] for part in codex_segments)
+                else:
+                    continue
+                counter_rows.append({"internal_session_id": key, "session_id": internal_sessions[key]["id"], "family": family, "temporal_alignment": "aligned" if family == "codex" or cost_aligned else "unaligned_untimestamped_cost_state",
+                                     "transcript_uncached_input_tokens": uncached_input, "transcript_cached_input_tokens": cached_input,
+                                     "transcript_input_tokens": uncached_input + cached_input, "transcript_output_tokens": output})
+    return ({"files_scanned": dict(scanned), "mapped_files": dict(mapped_files), "mapped_sessions": {family: len(ids) for family, ids in mapped_sessions.items()},
+             "counter_snapshots": collections.Counter(row["family"] for row in counter_rows), "records_after_database_cutoff": dict(after_cutoff), "filtered_manifest_sha256": manifest.hexdigest(),
+             "mapping": "matched Claude sessionId, Codex session_meta.payload.id, or a retained metadata identifier to agent_sessions.internal_session_id; no transcript launch identifier was retained"}, counter_rows, manifest_rows)
+
+
+def render_markdown(snapshot: dict[str, Any], recommendations: list[dict[str, Any]]) -> str:
+    u = snapshot["canonical_usage"]
+    inv = snapshot["inventory"]
+    timing = snapshot["timing"]
+    coverage = snapshot["coverage"]
+    traces = snapshot["trace_selection"]
+    candidate_lines = "\n".join(
+        f"### {r['id']} — {r['title']}\n\n"
+        f"**Evidence.** {r['evidence']}\n\n"
+        f"**Bounded scope.** {r['scope']}\n\n"
+        f"**Expected benefit.** {r['benefit']} Confidence: {r['confidence']}.\n\n"
+        f"**Quality guard and measurement.** {r['measurement']}\n\n"
+        f"**Counter-evidence.** {r['counter_evidence']}\n"
+        for r in recommendations
+    )
+    return f"""# Historical token-use baseline and recommendations
+
+## Decision checkpoint
+
+This is a historical audit, not authorization to alter production prompts,
+skills, model assignments, or workflow gates. The user should select stable
+recommendation identifiers below before implementation work is created.
+
+## Question and answer
+
+**Question:** Where did this Ariadne installation spend avoidable tokens and
+elapsed time, and which bounded improvements should be tested first?
+
+The records demonstrate high cumulative usage and review cycles, but not
+avoidable model work. `TU-01` through `TU-04` are diagnostic or controlled-test
+candidates, not measured savings. Add attribution before suppressing a
+wake-up, check, handoff entry, or tool result.
+Required checks and review columns remain part of every comparison.
+
+## Snapshot and coverage
+
+- Cutoff: `{snapshot['cutoff']}`; analyzer version `{VERSION}`; source SHA-256
+  `{snapshot['source']['sha256']}`. The raw database is deliberately not in Git.
+- Primary source: `{snapshot['source']['label']}`. The inventory also inspected
+  {coverage['backup_count']} dated backups. Their retained IDs, event IDs, and
+  shared usage counters are compared in `snapshot.json`; they are not summed.
+- The primary source holds {inv['goals']} surviving goals, {inv['tasks']}
+  surviving tasks, {inv['sessions']} surviving sessions, {inv['events']}
+  events, and {inv['usage_rows']} cumulative transcript-source rows. It has
+  {inv['running_sessions']} running sessions and {inv['in_progress_tasks']}
+  in-progress tasks, reported as partial.
+- The task listing supplied with this study said 48 goals and 179 tasks from
+  October 5–14. The database has a wider surviving inventory; neither source
+  proves that deleted rows before the retained ledger are complete.
+- Local transcript metadata scanned {sum(coverage['transcript_inventory']['files_scanned'].values()):,} files and mapped
+  {coverage['transcript_inventory']['mapped_sessions']} retained internal sessions.
+  It found {sum(coverage['transcript_inventory']['counter_snapshots'].values())} final vendor counter snapshots;
+  {coverage['transcript_inventory']['within_one_percent_of_database_input_and_output']} are within 1% of the corresponding
+  Ariadne session input and output. The rest are retained as discrepancies,
+  not adjusted into the canonical total. The retained, cutoff-filtered
+  transcript manifest SHA-256 is `{coverage['transcript_inventory']['filtered_manifest_sha256']}`.
+
+## Counting rules and reconciliation
+
+`input_tokens` includes cached input; `cached_input_tokens` is a subset, so
+uncached input is `input - cached`, never another additive total. Canonical
+usage is the sum of `session_usage` once per `(session_id, source)`, because
+those are cumulative transcript totals that replace earlier reports. It is
+{u['input_tokens']:,} input ({uncached(u):,} uncached +
+{u['cached_input_tokens']:,} cached) and {u['output_tokens']:,} output tokens.
+
+The session-end ledger is not added to that total: an end fact stores the
+session's cumulative usage and a restarted session can produce more than one
+such fact. Summing it would duplicate tokens. For deleted sessions, the
+latest surviving end fact is a fallback only when there is no live usage row;
+{coverage['deleted_session_fallbacks']} such fallback(s) were needed here.
+{coverage['sessions_without_usage']} surviving session(s) have no usage row:
+that is **missing usage**, not demonstrated zero. Sessions with an actual
+usage row of zero are counted separately ({coverage['zero_usage_sessions']}).
+
+`reconciliation.json` records direct usage, non-additive end facts, fact
+counts, and launch-source matching. ACP writes the launch id as `source`.
+Retired launch rows can be absent after a relaunch, so unmatched sources keep
+only the evidence retained in facts.
+Transcript metadata maps to sessions, not launch IDs. Therefore it validates
+representative cumulative session counters but cannot distribute a vendor
+counter across a session's launch sources. `transcript-reconciliation.csv`
+records each such comparison and its retained launch count.
+
+## Inventory and aggregates
+
+The files below cover every surviving goal and task, including cancelled and
+failed/retried work where its rows or facts remain. `goals.csv` and
+`tasks.csv` use canonical session usage; `dimensions.csv` groups the same
+canonical total by role, workflow column, model, effort, and current outcome.
+`outcomes.csv` also retains task-end facts, whose count can exceed surviving
+tasks because retries write another ending.
+
+- [snapshot.json](snapshot.json) — cutoff, revisions, coverage and counts.
+- [goals.csv](goals.csv) and [tasks.csv](tasks.csv) — one aggregate per
+  surviving entity, with distinct token categories and partial flags.
+- [dimensions.csv](dimensions.csv) — comparable dimensional totals.
+- [entity-attribution.csv](entity-attribution.csv) — retained per-session
+  goal/task role, column, model, effort, outcome, and usage-evidence rows.
+- [outcomes.csv](outcomes.csv), [timing.csv](timing.csv), and [reconciliation.json](reconciliation.json)
+  — retained facts, gaps, and non-additive counter checks.
+- [completion-timing.csv](completion-timing.csv) and [completion-summary.json](completion-summary.json)
+  — every ending fact and the latest ending selected per retained task.
+- [goal-analysis.csv](goal-analysis.csv) — every goal's dominant contributor,
+  outcome evidence, and coverage limitation.
+- [transcript-reconciliation.csv](transcript-reconciliation.csv) — local
+  transcript metadata matches and vendor-counter comparisons without paths or text.
+- [trace-selection.json](trace-selection.json) — selected trace identifiers
+  and derived indicators only; raw payloads stay outside Git.
+- [audit-overhead.csv](audit-overhead.csv) — this audit's partial goal usage,
+  kept separate from completed historical comparisons.
+
+## Timing evidence
+
+The database records session and task wall-clock lifetimes, not CPU time or
+model active time. It records console-permission waits in ledger facts where
+available, but it does not separate queue delay, human wait outside a
+permission prompt, tool execution, model inference, or active execution.
+
+- Ended-session lifetime observed: {timing['ended_session_lifetime_secs']:,} s
+  across {timing['ended_sessions_with_lifetime']} sessions. This is inclusive
+  wall time, so it must not be called execution time.
+- Goal and task CSV row lifetimes use their stored `updated_at`; they are not
+  completion measurements and can include later metadata changes or retries.
+  Future comparisons use the latest `task_ended` fact per retained task;
+  `completion-summary.json` gives its distribution and prior facts remain
+  retry evidence in `completion-timing.csv`.
+- Running work is partial at the cutoff and excluded from completed-work
+  elapsed comparisons. This review's own goal is separately labelled in the
+  aggregates when present; its running session has no final usage at cutoff.
+
+## Trace method and findings
+
+The analyzer selects the twelve largest input-plus-output sessions plus
+median-usage completed agent and reviewer sessions. The selected traces cover
+{traces['selected_usage_share']:.1%} of input plus output; separate category
+coverage is in `trace-selection.json`. `trace-findings.csv` gives event IDs
+and separates observed signals from inference and untested benefits. Derived
+event counts flag repeated daemon prompts, repeated completed tool calls, and
+large ACP tool-result payloads; none alone proves avoidable work.
+
+Within the selected traces, the largest observed daemon-prompt count is
+{traces['max_daemon_prompts']} and the largest observed daemon-prompt text
+volume is {traces['max_daemon_prompt_chars']:,} characters. The selected
+trace with the most repeated exact commands has
+{traces['max_repeated_tool_prefixes']}. These indicators establish where to
+sample; they do not establish that every repetition is avoidable.
+
+The trace review separates full prompts with distinct reviewed SHAs from short
+continuations. The full review returns are distinct correction cycles, not
+duplicate copies. Short continuations lack delivery outcomes, so the audit
+does not classify them as waste. Large tool payloads remain diagnostic signals:
+the ledger does not say which later prompt included a payload.
+
+Manual content inspection covers the largest correction-cycle session and the
+median agent and reviewer samples: 7.5% of canonical input plus output.
+`trace-findings.csv` separates the two timeout causes, the orphan-process
+correction, and PR update news. Those examples show necessary review work and
+unresolved delivery value; they do not establish avoidable work.
+
+The repository already limits several suspected sources: skills are indexed as
+one line and opened only when needed (`agents/prompts.rs`), handoff rendering
+folds entries and applies a character budget (`agents/handoff.rs`), and
+transcript counters are cumulative per source (`store/usage.rs`). These are
+implemented safeguards, not new recommendations. Their presence also means a
+larger handoff or prompt metric is a reason to inspect a selected trace before
+changing policy.
+
+## Ranked candidates
+
+Order is by evidence quality, implementation effort, and quality risk. TU-01
+comes first because it only records delivery attribution and cannot remove a
+required check or review. TU-02 is second because handoff measurement can
+change future context policy but needs fixture coverage. TU-04 is third: its
+large-result signal has possible input and latency benefit, but truncation can
+hide failure evidence. TU-03 keeps verification unchanged: transcript-backed
+exact repetitions lack revision and result attribution. No candidate has
+demonstrated token or time savings yet.
+
+{candidate_lines}
+
+## Limitations and what would change the ranking
+
+The audit cannot reconstruct tokens per prompt or tool call, because the
+database stores cumulative launch counters rather than per-turn usage. It
+cannot infer active execution time from wall-clock fields. A model
+or effort comparison is observational and confounded by task size, role, and
+outcome; compare like role/column/outcome workloads before acting. The ranking
+would change if a controlled before/after run preserves the same required
+checks and shows no reduction in tokens or lead time, or if trace review shows
+the flagged content is necessary to correct outcomes.
+
+## Reproduction
+
+See [README.md](README.md). The command reads a database in read-only mode;
+copy a live SQLite database with its WAL using SQLite's backup API first, and
+keep that copy outside the repository.
+"""
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--database", required=True, type=Path, help="SQLite snapshot to read")
+    parser.add_argument("--output", required=True, type=Path, help="directory for aggregate artifacts")
+    parser.add_argument("--revision", default="unknown", help="Ariadne source revision used to analyze")
+    parser.add_argument("--history-dir", type=Path, help="directory holding dated database backups; defaults to snapshot parent")
+    parser.add_argument("--codex-transcripts", type=Path, default=Path("/Users/malvarez/.codex/sessions"), help="external Codex transcript root")
+    parser.add_argument("--claude-transcripts", type=Path, default=Path("/Users/malvarez/.claude/projects"), help="external Claude transcript root")
+    parser.add_argument("--source-label", help="safe source description to publish instead of the snapshot path")
+    args = parser.parse_args()
+
+    source = args.database.resolve()
+    if not source.is_file():
+        parser.error(f"database is not a file: {source}")
+    out = args.output.resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+
+    required = ("goals", "tasks", "agent_sessions", "session_usage", "agent_events", "stat_facts")
+    absent = [name for name in required if not table_exists(conn, name)]
+    if absent:
+        parser.error("unsupported database; missing " + ", ".join(absent))
+
+    goals = read_rows(conn, "SELECT * FROM goals ORDER BY created_at")
+    tasks = read_rows(conn, "SELECT * FROM tasks ORDER BY created_at")
+    sessions = read_rows(conn, "SELECT * FROM agent_sessions ORDER BY created_at")
+    usages = read_rows(conn, "SELECT * FROM session_usage")
+    facts = read_rows(conn, "SELECT * FROM stat_facts ORDER BY created_at")
+    event_count = conn.execute("SELECT COUNT(*) FROM agent_events").fetchone()[0]
+    source_coverage = {"events_through": conn.execute("SELECT MAX(created_at) FROM agent_events").fetchone()[0], "usage_through": conn.execute("SELECT MAX(updated_at) FROM session_usage").fetchone()[0], "facts_through": conn.execute("SELECT MAX(created_at) FROM stat_facts").fetchone()[0]}
+    cutoff = max(value for value in source_coverage.values() if value)
+    task_agents = read_rows(conn, "SELECT * FROM task_agents") if table_exists(conn, "task_agents") else []
+    transitions = read_rows(conn, "SELECT * FROM task_transitions") if table_exists(conn, "task_transitions") else []
+
+    goals_by_id = {x["id"]: x for x in goals}
+    tasks_by_id = {x["id"]: x for x in tasks}
+    agents_by_id = {x["id"]: x for x in task_agents}
+    sessions_by_id = {x["id"]: x for x in sessions}
+    internal_sessions = {x["internal_session_id"]: x for x in sessions if x.get("internal_session_id")}
+    usage_by_session: dict[str, dict[str, int]] = collections.defaultdict(usage_dict)
+    source_rows_by_session: collections.Counter[str] = collections.Counter()
+    for row in usages:
+        add_usage(usage_by_session[row["session_id"]], row)
+        source_rows_by_session[row["session_id"]] += 1
+
+    # An ended-session fact is cumulative. Only a fact for a missing session
+    # may fill a canonical gap, and the newest fact wins for its session.
+    latest_end_fact: dict[str, dict[str, Any]] = {}
+    for fact in facts:
+        if fact["kind"] == "session_ended" and fact["session_id"]:
+            latest_end_fact[fact["session_id"]] = fact
+    fallback_usage: dict[str, dict[str, int]] = {}
+    for session_id, fact in latest_end_fact.items():
+        if session_id in sessions_by_id or session_id in usage_by_session:
+            continue
+        data = json.loads(fact["data"])
+        fallback_usage[session_id] = {
+            "input_tokens": max(0, int(data.get("input_tokens", 0))),
+            "cached_input_tokens": max(0, int(data.get("cached_input_tokens", 0))),
+            "output_tokens": max(0, int(data.get("output_tokens", 0))),
+        }
+
+    canonical = usage_dict()
+    for row in usage_by_session.values():
+        add_usage(canonical, row)
+    for row in fallback_usage.values():
+        add_usage(canonical, row)
+
+    end_fact_sum = usage_dict()
+    for fact in facts:
+        if fact["kind"] == "session_ended":
+            data = json.loads(fact["data"])
+            add_usage(end_fact_sum, data)
+
+    def session_meta(session: dict[str, Any]) -> tuple[str, str, str, str, str]:
+        agent = agents_by_id.get(session.get("task_agent_id"), {})
+        task = tasks_by_id.get(session.get("task_id"), {})
+        return (
+            session.get("seat") or "unknown",
+            agent.get("step") or task.get("step") or "unknown",
+            session.get("model") or "unknown",
+            session.get("effort") or "default",
+            task.get("status") or "unattributed",
+        )
+
+    dimensions: dict[tuple[str, str], dict[str, Any]] = {}
+    def dimension(dimension: str, key: str, usage: dict[str, int], partial: bool) -> None:
+        item = dimensions.setdefault((dimension, key), {"dimension": dimension, "value": key, "sessions": 0, "partial_sessions": 0, **usage_dict()})
+        item["sessions"] += 1
+        item["partial_sessions"] += int(partial)
+        add_usage(item, usage)
+
+    goal_usage: dict[str, dict[str, int]] = collections.defaultdict(usage_dict)
+    task_usage: dict[str, dict[str, int]] = collections.defaultdict(usage_dict)
+    goal_sessions: collections.Counter[str] = collections.Counter()
+    task_sessions: collections.Counter[str] = collections.Counter()
+    for session in sessions:
+        sid = session["id"]
+        usage = usage_by_session.get(sid, usage_dict())
+        partial = session["status"] in {"running", "starting", "idle", "waiting_permission"}
+        role, column, model, effort, outcome = session_meta(session)
+        for dim, value in (("role", role), ("workflow_column", column), ("model", model), ("effort", effort), ("outcome", outcome)):
+            dimension(dim, value, usage, partial)
+        if session.get("goal_id"):
+            add_usage(goal_usage[session["goal_id"]], usage)
+            goal_sessions[session["goal_id"]] += 1
+        if session.get("task_id"):
+            add_usage(task_usage[session["task_id"]], usage)
+            task_sessions[session["task_id"]] += 1
+    # Deleted sessions contribute through their retained end fact. Keep their
+    # canonical fallback in explicit retained-evidence buckets so dimensions
+    # reconcile even when their task or goal row is gone.
+    for session_id, usage in fallback_usage.items():
+        fact = latest_end_fact[session_id]
+        data = json.loads(fact["data"])
+        for dim, value in (("role", fact.get("seat") or "retained_unknown"), ("workflow_column", data.get("step") or "retained_unknown"), ("model", fact.get("model") or "retained_unknown"), ("effort", fact.get("effort") or "retained_unknown"), ("outcome", "retained_deleted")):
+            dimension(dim, value, usage, False)
+
+    task_rows: list[dict[str, Any]] = []
+    for task in tasks:
+        known = [s for s in sessions if s.get("task_id") == task["id"]]
+        row = {"task_id": task["id"], "goal_id": task["goal_id"], "title": task["title"], "status": task["status"], "step": task.get("step") or "", "created_at": task["created_at"], "updated_at": task["updated_at"], "sessions": task_sessions[task["id"]], "sessions_missing_usage": sum(s["id"] not in usage_by_session for s in known), "sessions_zero_usage": sum(s["id"] in usage_by_session and billable_total(usage_by_session[s["id"]]) == 0 for s in known), "partial": int(task["status"] == "in_progress"), "row_lifetime_secs": seconds(task["created_at"], task["updated_at"]) or "", **task_usage[task["id"]]}
+        row["uncached_input_tokens"] = uncached(row)
+        task_rows.append(row)
+    goal_rows: list[dict[str, Any]] = []
+    for goal in goals:
+        known = [s for s in sessions if s.get("goal_id") == goal["id"]]
+        row = {"goal_id": goal["id"], "title": goal["title"], "status": goal["status"], "workflow": goal.get("workflow") or "", "created_at": goal["created_at"], "updated_at": goal["updated_at"], "sessions": goal_sessions[goal["id"]], "sessions_missing_usage": sum(s["id"] not in usage_by_session for s in known), "sessions_zero_usage": sum(s["id"] in usage_by_session and billable_total(usage_by_session[s["id"]]) == 0 for s in known), "partial": int(goal["status"] in {"active", "planning"}), "row_lifetime_secs": seconds(goal["created_at"], goal["updated_at"]) or "", **goal_usage[goal["id"]]}
+        row["uncached_input_tokens"] = uncached(row)
+        goal_rows.append(row)
+
+    ended_lifetime = 0
+    ended_count = 0
+    for session in sessions:
+        lifetime = seconds(session.get("created_at"), session.get("ended_at"))
+        if lifetime is not None and session["status"] in {"exited", "failed"}:
+            ended_lifetime += round(lifetime)
+            ended_count += 1
+
+    # Analyze only derived per-session event indicators. No payload text leaves
+    # the process; hashes let a reviewer reproduce repeated-content counts.
+    trace_metrics: dict[str, dict[str, Any]] = collections.defaultdict(lambda: {"events": 0, "daemon_prompts": 0, "daemon_prompt_chars": 0, "daemon_prompt_ids": [], "prompt_classes": collections.Counter(), "review_shas": set(), "large_tool_results": 0, "large_tool_result_chars": 0, "tool_prefixes": collections.Counter(), "large_event_ids": []})
+    completed_calls: set[tuple[str, str]] = set()
+    event_rows = list(conn.execute("SELECT id, session_id, kind, payload, payload_codec FROM agent_events"))
+    transcript_commands = transcript_tool_commands(internal_sessions, cutoff, args.claude_transcripts)
+    opener_commands: dict[tuple[str, str], str] = {}
+    for row in event_rows:
+        if row["kind"] != "pre_tool_use":
+            continue
+        body = payload(row["payload"], row["payload_codec"])
+        if body and (key := tool_key(body)) and (command := text_at(body, ("tool_input", "command"), ("acp", "rawInput", "command"), ("command",))):
+            opener_commands[(row["session_id"] or "unattributed", key)] = command
+    for row in event_rows:
+        sid = row["session_id"] or "unattributed"
+        metric = trace_metrics[sid]
+        metric["events"] += 1
+        body = payload(row["payload"], row["payload_codec"])
+        if not body:
+            continue
+        if row["kind"] == "user_prompt_submit" and body.get("source") == "daemon":
+            text = text_at(body, ("text",), ("prompt",)) or ""
+            metric["daemon_prompts"] += 1
+            metric["daemon_prompt_chars"] += len(text)
+            metric["daemon_prompt_ids"].append(row["id"])
+            if re.search(r"\bReviewed SHA:\s*[0-9a-f]{7,40}\b", text):
+                metric["prompt_classes"]["review_return"] += 1
+                sha = re.search(r"\bReviewed SHA:\s*([0-9a-f]{7,40})\b", text)
+                if sha:
+                    metric["review_shas"].add(sha.group(1))
+            elif len(text.strip()) <= 120 and text.strip().startswith("Continue "):
+                metric["prompt_classes"]["short_continuation"] += 1
+            else:
+                metric["prompt_classes"]["initial_or_other"] += 1
+        if row["kind"] == "post_tool_use":
+            key = tool_key(body)
+            if key and (sid, key) in completed_calls:
+                continue
+            if key:
+                completed_calls.add((sid, key))
+            command = opener_commands.get((sid, key or "")) or transcript_commands.get((sid, key or ""))
+            if command:
+                # Only identical complete commands count.  A shared title or
+                # truncated first line can describe different edits/checks.
+                metric["tool_prefixes"][command.strip()] += 1
+            result = tool_text(body)
+            if len(result) >= 4000:
+                metric["large_tool_results"] += 1
+                metric["large_tool_result_chars"] += len(result)
+                metric["large_event_ids"].append(row["id"])
+
+    command_inputs = {
+        "completed_calls_with_ids": len(completed_calls),
+        "opener_inputs": sum(key in opener_commands for key in completed_calls),
+        "transcript_recovered_inputs": sum(key not in opener_commands and key in transcript_commands for key in completed_calls),
+    }
+    command_inputs["missing_inputs"] = command_inputs["completed_calls_with_ids"] - command_inputs["opener_inputs"] - command_inputs["transcript_recovered_inputs"]
+
+    ranked_sessions = sorted(usage_by_session, key=lambda sid: billable_total(usage_by_session[sid]), reverse=True)
+    selected_ids = ranked_sessions[:12]
+    # Add ordinary completed agent/reviewer sessions if largest traces omit them.
+    for seat in ("agent", "reviewer"):
+        candidates = [s["id"] for s in sessions if s.get("seat") == seat and s.get("status") == "exited" and s["id"] in usage_by_session and s["id"] not in selected_ids]
+        if candidates:
+            candidates.sort(key=lambda sid: billable_total(usage_by_session[sid]))
+            selected_ids.append(candidates[len(candidates) // 2])
+    selected = []
+    selected_tokens = 0
+    selected_parts = usage_dict()
+    for sid in selected_ids:
+        session = sessions_by_id.get(sid, {})
+        usage = usage_by_session[sid]
+        selected_tokens += billable_total(usage)
+        add_usage(selected_parts, usage)
+        metric = trace_metrics[sid]
+        selected.append({"session_id": sid, "goal_id": session.get("goal_id"), "task_id": session.get("task_id"), "seat": session.get("seat"), "model": session.get("model"), "effort": session.get("effort"), "status": session.get("status"), "usage": usage, "derived_event_metrics": {**{k: v for k, v in metric.items() if k not in {"tool_prefixes", "review_shas"}}, "distinct_review_shas": len(metric["review_shas"]), "repeated_tool_prefixes": sum(n - 1 for n in metric["tool_prefixes"].values() if n > 1)}})
+    total_tokens = billable_total(canonical)
+    selected_share = selected_tokens / total_tokens if total_tokens else 0
+
+    task_end_facts = [f for f in facts if f["kind"] == "task_ended"]
+    outcome_facts = collections.Counter()
+    status_seconds = collections.defaultdict(int)
+    for fact in task_end_facts:
+        data = json.loads(fact["data"])
+        outcome_facts[data.get("status", "unknown")] += 1
+        for state, value in (data.get("status_secs") or {}).items():
+            status_seconds[state] += max(0, int(value or 0))
+    permission_waits = [int(json.loads(f["data"]).get("wait_ms") or 0) for f in facts if f["kind"] == "permission" and json.loads(f["data"]).get("decided_by") == "console"]
+    completion_rows = []
+    for fact in task_end_facts:
+        data = json.loads(fact["data"])
+        completion_rows.append({"task_id": fact.get("task_id") or "retained_deleted", "goal_id": fact.get("goal_id") or "retained_deleted", "ending_status": data.get("status"), "ended_at": fact["created_at"], "lead_time_secs": data.get("lead_time_secs"), "step": data.get("step") or "", "retry_evidence": "task-ended facts can repeat for retries"})
+
+    # An ending fact is the only retained completion timestamp.  Use its last
+    # occurrence per task for comparisons; retain every prior ending as retry
+    # evidence in completion-timing.csv.
+    terminal_task_ids = {task["id"] for task in tasks if task["status"] in {"finished", "cancelled", "failed"}}
+    final_completion = {}
+    for row in completion_rows:
+        if row["task_id"] in terminal_task_ids:
+            final_completion[row["task_id"]] = row
+    final_lead_times = [int(r["lead_time_secs"]) for r in final_completion.values() if isinstance(r.get("lead_time_secs"), (int, float))]
+    completion_summary = {"rule": "latest task_ended fact per retained task; earlier ending facts remain retry evidence", "tasks_with_selected_ending": len(final_completion), "ending_facts": len(completion_rows), "finished": sum(r["ending_status"] == "finished" for r in final_completion.values()), "cancelled": sum(r["ending_status"] == "cancelled" for r in final_completion.values()), "failed": sum(r["ending_status"] == "failed" for r in final_completion.values()), "lead_time_seconds": {"count": len(final_lead_times), "median": round(statistics.median(final_lead_times)) if final_lead_times else None, "p90": sorted(final_lead_times)[max(0, int(.9 * len(final_lead_times)) - 1)] if final_lead_times else None, "minimum": min(final_lead_times, default=None), "maximum": max(final_lead_times, default=None)}}
+
+    history_files = []
+    parent = (args.history_dir or source.parent).resolve()
+    for candidate in sorted(parent.glob("ariadne.db*")):
+        if candidate.name.endswith(("-wal", "-shm")) or not candidate.is_file():
+            continue
+        try:
+            check = sqlite3.connect(f"file:{candidate}?mode=ro", uri=True)
+            check.row_factory = sqlite3.Row
+            counts = {table: check.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in ("goals", "tasks", "agent_sessions", "agent_events", "session_usage", "stat_facts")}
+            overlaps = {}
+            for table in ("goals", "tasks", "agent_sessions", "agent_events", "session_usage", "stat_facts"):
+                key = "id" if table not in {"session_usage"} else "source"
+                source_ids = {str(r[0]) for r in conn.execute(f"SELECT {key} FROM {table}")}
+                backup_ids = {str(r[0]) for r in check.execute(f"SELECT {key} FROM {table}")}
+                overlaps[table] = {"shared": len(source_ids & backup_ids), "backup_only": len(backup_ids - source_ids), "all_backup_records_in_primary": not (backup_ids - source_ids)}
+            primary_usage = {(r["session_id"], r["source"]): r for r in usages}
+            backup_usage = {(r["session_id"], r["source"]): dict(r) for r in check.execute("SELECT * FROM session_usage")}
+            shared_usage = set(primary_usage) & set(backup_usage)
+            identical_usage = sum(all(int(primary_usage[key][field]) == int(backup_usage[key][field]) for field in TOKEN_FIELDS) for key in shared_usage)
+            overlaps["usage_counters"] = {"shared_rows": len(shared_usage), "identical_rows": identical_usage, "changed_rows": len(shared_usage) - identical_usage,
+                                          "primary_shared_sum": {field: sum(int(primary_usage[k][field]) for k in shared_usage) for field in TOKEN_FIELDS},
+                                          "backup_shared_sum": {field: sum(int(backup_usage[k][field]) for k in shared_usage) for field in TOKEN_FIELDS}}
+            check.close()
+            history_files.append({"name": candidate.name, "bytes": candidate.stat().st_size, "mtime": dt.datetime.fromtimestamp(candidate.stat().st_mtime, dt.timezone.utc).isoformat().replace("+00:00", "Z"), "counts": counts, "overlap": overlaps})
+        except sqlite3.Error:
+            pass
+
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    running_sessions = sum(s["status"] in {"running", "starting", "idle", "waiting_permission"} for s in sessions)
+    zero_usage = sum(s["id"] in usage_by_session and sum(usage_by_session[s["id"]].values()) == 0 for s in sessions)
+    transcript_meta, transcript_counters, transcript_manifest_rows = transcript_inventory(internal_sessions, cutoff, {"codex": args.codex_transcripts, "claude": args.claude_transcripts})
+    transcript_rows = []
+    for row in transcript_counters:
+        db_usage = usage_by_session.get(row["session_id"], usage_dict())
+        session_launches = [u["source"] for u in usages if u["session_id"] == row["session_id"]]
+        transcript_rows.append({**row, "database_input_tokens": db_usage["input_tokens"], "database_cached_input_tokens": db_usage["cached_input_tokens"], "database_output_tokens": db_usage["output_tokens"], "input_delta": row["transcript_input_tokens"] - db_usage["input_tokens"], "cached_input_delta": row["transcript_cached_input_tokens"] - db_usage["cached_input_tokens"], "output_delta": row["transcript_output_tokens"] - db_usage["output_tokens"], "retained_launches": len(session_launches), "comparison": "transcript cumulative is session/file scoped; it cannot allocate totals to launch sources"})
+    transcript_close = sum(row["temporal_alignment"] == "aligned" and abs(row["input_delta"]) <= max(1, row["database_input_tokens"] // 100) and abs(row["output_delta"]) <= max(1, row["database_output_tokens"] // 100) and abs(row["transcript_cached_input_tokens"] - row["database_cached_input_tokens"]) <= max(1, row["database_cached_input_tokens"] // 100) for row in transcript_rows)
+    migrations = read_rows(conn, "SELECT version, description, installed_on FROM _sqlx_migrations ORDER BY version") if table_exists(conn, "_sqlx_migrations") else []
+    snapshot = {
+        "analyzer_version": VERSION,
+        "cutoff": cutoff,
+        "generated_at": NOW.isoformat().replace("+00:00", "Z"),
+        "source": {"label": args.source_label or source.name, "sha256": source_hash, "bytes": source.stat().st_size, "revision": args.revision, "sqlite_user_version": conn.execute("PRAGMA user_version").fetchone()[0], "snapshot_acquired_at": dt.datetime.fromtimestamp(source.stat().st_mtime, dt.timezone.utc).isoformat().replace("+00:00", "Z"), "coverage": source_coverage},
+        "inventory": {"goals": len(goals), "tasks": len(tasks), "sessions": len(sessions), "events": event_count, "usage_rows": len(usages), "facts": len(facts), "running_sessions": running_sessions, "in_progress_tasks": sum(t["status"] == "in_progress" for t in tasks)},
+        "canonical_usage": canonical,
+        "coverage": {"history_files": history_files, "backup_count": max(0, len(history_files) - 1), "transcript_inventory": {**transcript_meta, "within_one_percent_of_database_input_and_output": transcript_close, "counter_interpretation": "transcript and Ariadne cumulative session counters agree within 1% for input, cached input, and output for this subset; other deltas show partial files or different accounting windows"}, "transcript_command_inputs": {**command_inputs, "rule": "Claude assistant tool_use input.command matched to a retained post_tool_use toolCallId before the database cutoff; missing transcript inputs remain unavailable"}, "schema_migrations": migrations, "sessions_without_usage": sum(s["id"] not in usage_by_session for s in sessions), "zero_usage_sessions": zero_usage, "deleted_session_fallbacks": len(fallback_usage), "retained_session_end_facts_without_session": sum(sid not in sessions_by_id for sid in latest_end_fact)},
+        "timing": {"ended_sessions_with_lifetime": ended_count, "ended_session_lifetime_secs": ended_lifetime, "unsupported": ["active model execution", "human wait outside console permissions", "queue time before a session launch", "tool execution", "per-launch elapsed time"]},
+        "trace_selection": {"method": "12 largest input-plus-output sessions plus median-usage exited agent and reviewer sessions", "selected_sessions": len(selected), "selected_usage_share": selected_share, "coverage": {"input": selected_parts["input_tokens"] / canonical["input_tokens"], "uncached_input": uncached(selected_parts) / uncached(canonical), "cached_input": selected_parts["cached_input_tokens"] / canonical["cached_input_tokens"], "output": selected_parts["output_tokens"] / canonical["output_tokens"]}, "max_daemon_prompts": max((x["derived_event_metrics"]["daemon_prompts"] for x in selected), default=0), "max_daemon_prompt_chars": max((x["derived_event_metrics"]["daemon_prompt_chars"] for x in selected), default=0), "max_repeated_tool_prefixes": max((x["derived_event_metrics"]["repeated_tool_prefixes"] for x in selected), default=0)},
+    }
+    recommendations = [
+        {"id": "TU-01", "title": "Attribute scheduler deliveries before considering coalescing", "evidence": "Selected traces include review returns with distinct reviewed SHAs and short continuation prompts. They prove delivery volume, but not redundant work or per-delivery tokens.", "scope": "Add diagnostic delivery IDs, causes, and completion outcomes at the scheduler/ACP boundary. Do not suppress a delivery, change a workflow column, or change prompt text.", "benefit": "No claimed saving until matched evidence identifies duplicate deliveries. It enables a bounded later coalescing experiment.", "confidence": "high for measurement; no savings estimate", "measurement": "Compare delivery causes, completed responses, prompt characters, canonical uncached input, selected completion lead time, and finish/review outcomes under unchanged checks.", "counter_evidence": "The largest reviewed cycle contains distinct review revisions. Treating it as duplicate wake-up work would weaken correction quality."},
+        {"id": "TU-02", "title": "Measure and tighten handoff selection at the existing character budget", "evidence": "The code already folds and ranks handoff history, but cumulative session usage cannot show which selected entries caused input. Long/restarted sessions are identifiable in the trace sample, making this a bounded observability-first candidate.", "scope": "Add offline/diagnostic handoff selection metrics and a fixture corpus before changing the ranking policy. Do not shrink the configured budget or discard corrections, blockers, failed commands, edits, or decisive checks without an outcome comparison.", "benefit": "Estimated lower repeated input and faster resume turns where a handoff is much smaller than raw history.", "confidence": "low", "measurement": "For matched resumes, record candidate/selected character counts, continuation turns, canonical tokens, time to next useful state, and task outcome. Preserve existing handoff behavior as the control.", "counter_evidence": "The existing rules intentionally protect high-value evidence. A smaller handoff that causes re-reading, wrong changes, or review churn is a regression."},
+        {"id": "TU-03", "title": "Keep verification policy unchanged; add no suppression candidate", "evidence": "Transcript-backed command inputs recover repeated exact completed commands. They lack revision and prior-result attribution, so they do not identify avoidable verification.", "scope": "Do not change checks or add command suppression. Revisit only if future attribution records an identical command, unchanged revision, and completed prior result.", "benefit": "No expected saving from this baseline.", "confidence": "high", "measurement": "Keep required checks unchanged. If a later duplicate is found, compare tool duration, retry rate, review findings, and task outcomes before any change.", "counter_evidence": "The selected traces have substantial review-cycle work, but that is different revisions and corrections, not duplicate verification."},
+        {"id": "TU-04", "title": "Bound broad tool-result retention with task-aware summaries", "evidence": "The trace indicators count large stored tool-result payloads. Tool outputs may be echoed into agent context or handoffs, but this database does not record prompt assembly per turn, so causal token savings are untested.", "scope": "First add a report of large result payloads by tool, role, and outcome. Any later truncation must keep exit status, failing lines, paths, diffs, and an explicit way to retrieve full output.", "benefit": "Potentially lower input context and handoff size, plus faster model turns on noisy command output.", "confidence": "low", "measurement": "Compare prompt/handoff size, canonical token categories, diagnosis success, retry rate, and reviewer findings on matched command-heavy tasks.", "counter_evidence": "Full output can contain the only failure clue. Do not truncate before a representative trace review demonstrates redundant material."},
+    ]
+    end_facts = [fact for fact in facts if fact["kind"] == "session_ended"]
+    fact_launches = {fact["launch_id"] for fact in end_facts if fact.get("launch_id")}
+    usage_launches = {row["source"] for row in usages}
+    reconciliation = {"canonical_rule": "sum session_usage once per (session_id, launch source), then use newest session_ended fact only for missing/deleted sessions", "canonical_usage": canonical, "uncached_input_tokens": uncached(canonical), "session_ended_fact_sum_non_additive": end_fact_sum, "session_ended_fact_count": len(end_facts), "session_ended_distinct_sessions": len(latest_end_fact), "session_ended_distinct_launches": len(fact_launches), "usage_rows": len(usages), "usage_sources_matching_retained_end_launch": len(usage_launches & fact_launches), "usage_sources_without_retained_end_launch": len(usage_launches - fact_launches), "session_ended_facts_missing_session": sum(sid not in sessions_by_id for sid in latest_end_fact), "fallback_usage": fallback_usage, "notes": ["Cached input is a subset of input and is never added to it.", "End facts contain cumulative session totals and can duplicate a session across launches.", "Usage source is the launch id written by ACP; old launch rows can be absent after a relaunch."]}
+
+    write_csv(out / "goals.csv", goal_rows, ["goal_id", "title", "status", "workflow", "created_at", "updated_at", "sessions", "sessions_missing_usage", "sessions_zero_usage", "partial", "row_lifetime_secs", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens"])
+    write_csv(out / "tasks.csv", task_rows, ["task_id", "goal_id", "title", "status", "step", "created_at", "updated_at", "sessions", "sessions_missing_usage", "sessions_zero_usage", "partial", "row_lifetime_secs", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens"])
+    dim_rows = []
+    for value in dimensions.values():
+        value["uncached_input_tokens"] = uncached(value)
+        dim_rows.append(value)
+    write_csv(out / "dimensions.csv", sorted(dim_rows, key=lambda x: (x["dimension"], -x["input_tokens"])), ["dimension", "value", "sessions", "partial_sessions", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens"])
+    write_csv(out / "outcomes.csv", [{"kind": "surviving_task", "outcome": status, "count": count} for status, count in sorted(collections.Counter(t["status"] for t in tasks).items())] + [{"kind": "task_ended_fact", "outcome": status, "count": count} for status, count in sorted(outcome_facts.items())], ["kind", "outcome", "count"])
+    attribution_rows = []
+    for session in sessions:
+        role, column, model, effort, outcome = session_meta(session)
+        usage = usage_by_session.get(session["id"], usage_dict())
+        attribution_rows.append({"goal_id": session.get("goal_id") or "unknown", "task_id": session.get("task_id") or "unknown", "role": role, "workflow_column": column, "model": model, "effort": effort, "current_task_outcome": outcome, "session_status": session["status"], "usage_evidence": "reported" if session["id"] in usage_by_session else "missing", "partial": int(session["status"] not in {"exited", "failed"}), **usage, "uncached_input_tokens": uncached(usage)})
+    write_csv(out / "entity-attribution.csv", attribution_rows, ["goal_id", "task_id", "role", "workflow_column", "model", "effort", "current_task_outcome", "session_status", "usage_evidence", "partial", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens"])
+    write_csv(out / "timing.csv", [{"category": f"task_status:{state}", "count": len(task_end_facts), "seconds": total, "note": "summed from task_ended facts; state is not an outcome"} for state, total in sorted(status_seconds.items())] + [{"category": "ended_session_lifetime", "count": ended_count, "seconds": ended_lifetime, "note": "inclusive wall time, not active execution"}, {"category": "console_permission_wait", "count": len(permission_waits), "seconds": sum(permission_waits) / 1000, "note": "only console-decided permission facts"}], ["category", "count", "seconds", "note"])
+    write_csv(out / "completion-timing.csv", completion_rows, ["task_id", "goal_id", "ending_status", "ended_at", "lead_time_secs", "step", "retry_evidence"])
+    (out / "completion-summary.json").write_text(json.dumps(completion_summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    goal_analysis = []
+    for row in goal_rows:
+        goal_sessions_rows = [s for s in sessions if s.get("goal_id") == row["goal_id"]]
+        reported = [s for s in goal_sessions_rows if s["id"] in usage_by_session]
+        dominant = max(reported, key=lambda s: billable_total(usage_by_session[s["id"]]), default=None)
+        dominant_usage = billable_total(usage_by_session[dominant["id"]]) if dominant else 0
+        roles: dict[str, int] = collections.defaultdict(int)
+        columns: dict[str, int] = collections.defaultdict(int)
+        for session in reported:
+            role, column, _, _, _ = session_meta(session)
+            roles[role] += billable_total(usage_by_session[session["id"]])
+            columns[column] += billable_total(usage_by_session[session["id"]])
+        goal_endings = [r for r in completion_rows if r["goal_id"] == row["goal_id"]]
+        limitations = "partial cutoff work" if row["partial"] else ("missing session usage" if row["sessions_missing_usage"] else "retained usage only")
+        goal_analysis.append({"goal_id": row["goal_id"], "status": row["status"], "sessions": row["sessions"], "missing_usage_sessions": row["sessions_missing_usage"], "partial": row["partial"], "input_tokens": row["input_tokens"], "output_tokens": row["output_tokens"], "dominant_session_id": dominant["id"] if dominant else "", "dominant_session_share": round(dominant_usage / billable_total(row) if billable_total(row) else 0, 6), "dominant_role": max(roles, key=roles.get, default=""), "dominant_column": max(columns, key=columns.get, default=""), "ending_facts": len(goal_endings), "ending_outcomes": ";".join(sorted(collections.Counter(r["ending_status"] or "unknown" for r in goal_endings).elements())), "evidence_limit": limitations})
+    write_csv(out / "goal-analysis.csv", goal_analysis, ["goal_id", "status", "sessions", "missing_usage_sessions", "partial", "input_tokens", "output_tokens", "dominant_session_id", "dominant_session_share", "dominant_role", "dominant_column", "ending_facts", "ending_outcomes", "evidence_limit"])
+    write_csv(out / "transcript-reconciliation.csv", transcript_rows, ["session_id", "internal_session_id", "family", "temporal_alignment", "transcript_uncached_input_tokens", "transcript_cached_input_tokens", "transcript_input_tokens", "transcript_output_tokens", "database_input_tokens", "database_cached_input_tokens", "database_output_tokens", "input_delta", "cached_input_delta", "output_delta", "retained_launches", "comparison"])
+    write_csv(out / "transcript-manifest.csv", transcript_manifest_rows, ["family", "file_identity_sha256", "filtered_content_sha256"])
+    audit_rows = []
+    for goal in goals:
+        if goal["title"].casefold() == "performance review":
+            usage = goal_usage[goal["id"]]
+            audit_rows.append({"goal_id": goal["id"], "status": goal["status"], "sessions": goal_sessions[goal["id"]], **usage, "uncached_input_tokens": uncached(usage), "classification": "this historical audit; partial at snapshot cutoff"})
+    write_csv(out / "audit-overhead.csv", audit_rows, ["goal_id", "status", "sessions", "input_tokens", "cached_input_tokens", "uncached_input_tokens", "output_tokens", "classification"])
+    finding_rows = []
+    for trace in selected:
+        metric = trace["derived_event_metrics"]
+        classes = metric.get("prompt_classes", {})
+        finding_rows.append({"session_id": trace["session_id"], "finding": "prompt_delivery_reviewed", "event_references": ";".join(metric.get("daemon_prompt_ids", [])[:20]), "measured": f"{classes.get('review_return', 0)} review returns with {metric.get('distinct_review_shas', 0)} distinct SHA(s); {classes.get('short_continuation', 0)} short continuations; {classes.get('initial_or_other', 0)} initial/other prompts", "inference": "Distinct review SHAs show review returns are not duplicate copies. Short continuations can only be evaluated with delivery outcome data.", "benefit_status": "no demonstrated wake-up waste"})
+        finding_rows.append({"session_id": trace["session_id"], "finding": "large_tool_result_reviewed", "event_references": ";".join(metric.get("large_event_ids", [])[:20]), "measured": f"{metric.get('large_tool_results', 0)} post-tool results >=4000 chars; {metric.get('large_tool_result_chars', 0)} retained characters", "inference": "Payload size is measured. The retained ledger lacks later prompt inclusion, so no output is classified redundant.", "benefit_status": "candidate for diagnostic measurement only"})
+        finding_rows.append({"session_id": trace["session_id"], "finding": "exact_command_repetition", "event_references": "", "measured": f"{metric.get('repeated_tool_prefixes', 0)} repeated completed exact commands", "inference": "Different edits with a shared tool title are excluded.", "benefit_status": "no command suppression recommendation from this metric"})
+    # Reviewed samples. These statements summarize inspected event sequences;
+    # they retain IDs, outcomes, and avoid exporting event bodies.
+    reviewed = {
+        "01m4kf30z3vs1n1y73d7t3bwnd": ("major_review_cycle", "01m4kj3kjn5cnbn79kct7716pj;01m4kkyc62c2mkx77rmsmxhaqe;01m4m0hz7j4gcqq3qxvzbfzdqv", "Task 01m4kf02expbtzgp6t7b9fv5ka alternated develop/review nine times and finished. Eight reviewed SHAs are distinct corrections.", "necessary correction and review evidence; no wake-up suppression case"),
+        "01m4n557dgkfpxpqxad9jnphht": ("ordinary_agent_run", "01m4n559fw9gwm4kaj6ydmjbcq;01m4n56t7m29hwrjk6w14pkjf4", "Task 01m4n3p0jp0h45z3w751pzv6nr moved develop to review to PR and finished. Its eight prompts and 45 completed tool calls accompany one review pass.", "necessary workflow sequence; broad-output and handoff causality remain unobserved"),
+        "01m4regcg3k443n3sd5e8dnr57": ("ordinary_reviewer_run", "01m4regdwqkcqgxyf3pkgf2c1r;01m4rg1qs7tgz0ftwkn0h1v4r0", "Loose reviewer session has no retained task link. Five prompts and 37 completed tool calls cannot be attributed to a task outcome.", "unresolved attribution; exclude from workflow-saving claims"),
+    }
+    for session_id, (finding, refs, measured, status) in reviewed.items():
+        if any(trace["session_id"] == session_id for trace in selected):
+            finding_rows.append({"session_id": session_id, "finding": finding, "event_references": refs, "measured": measured, "inference": "Inspected sequence and retained task transitions; raw bodies remain outside Git.", "benefit_status": status})
+    details = [
+        ("01m4kf30z3vs1n1y73d7t3bwnd", "review_timeout_stats", "01m4kj3kjn5cnbn79kct7716pj", "Review reports a whole-workspace timeout in stats_attention. The next revision needed a bounded-load investigation, so this rerun is a test-reliability correction.", "necessary investigation; no token saving inferred"),
+        ("01m4kf30z3vs1n1y73d7t3bwnd", "review_timeout_scheduler", "01m4kkyc62c2mkx77rmsmxhaqe", "Review reports a separate scheduler_attention timeout after the prior correction. It is a different failing check and retry cause.", "necessary investigation; no token saving inferred"),
+        ("01m4kf30z3vs1n1y73d7t3bwnd", "review_orphan_process", "01m4m0hz7j4gcqq3qxvzbfzdqv", "Review found an orphaned sleep process and requested a concrete test-harness fix. This connects broad test work to process-cleanup behavior in AGENTS.md.", "necessary quality fix; do not suppress the check"),
+        ("01m4n557dgkfpxpqxad9jnphht", "ordinary_pr_update", "01m4n56t7m29hwrjk6w14pkjf4", "PR-column delivery reports behind-main and pending-check news. The retained task finished, but the event record cannot prove whether all PR wake-ups changed the resulting work.", "unresolved delivery value; measure before coalescing"),
+    ]
+    for session_id, finding, refs, measured, status in details:
+        if any(trace["session_id"] == session_id for trace in selected):
+            finding_rows.append({"session_id": session_id, "finding": finding, "event_references": refs, "measured": measured, "inference": "Manual event-content inspection; raw text remains outside Git.", "benefit_status": status})
+    write_csv(out / "trace-findings.csv", finding_rows, ["session_id", "finding", "event_references", "measured", "inference", "benefit_status"])
+    (out / "snapshot.json").write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (out / "reconciliation.json").write_text(json.dumps(reconciliation, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (out / "trace-selection.json").write_text(json.dumps({**snapshot["trace_selection"], "traces": selected}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (out / "recommendations.json").write_text(json.dumps(recommendations, indent=2) + "\n", encoding="utf-8")
+    (out / "REPORT.md").write_text(render_markdown(snapshot, recommendations), encoding="utf-8")
+    print(json.dumps({"output": str(out), "canonical_usage": canonical, "goals": len(goals), "tasks": len(tasks)}, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
