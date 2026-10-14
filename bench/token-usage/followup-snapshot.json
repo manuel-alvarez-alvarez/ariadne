@@ -1,9 +1,10 @@
 {
-  "analyzer_sha256": "fa93617e4caff5e8a4b6174c191e218c9184b231bd57e617164755a4ffeb292c",
+  "analyzer_sha256": "3d2b85bcccac76fe033e04e500d9f0ce2c2b43f5b4deee7a9f23cf6505d15782",
   "analyzer_version": "2",
   "baseline_database": {
     "available": true,
-    "session_ids": 615
+    "session_ids": 615,
+    "sha256": "b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47"
   },
   "coverage": {
     "claude_parser": {
@@ -11,7 +12,7 @@
       "duplicate_request_records": 81531
     },
     "codex_inventory": {
-      "after_cutoff": 1875,
+      "after_cutoff": 2008,
       "cumulative_counter_records": 57834,
       "request_usage_records": 40282,
       "state_records_without_usage": 2294
@@ -50,7 +51,7 @@
     "partial_sessions": 2
   },
   "cutoff": "2026-10-14T22:17:05.521Z",
-  "revision": "b4ca47627e75a97679464fadc134d12741eabef8",
+  "revision": "610489c16d060f1f24ec92698a441d1b1a2c2555",
   "separation": {
     "baseline": "frozen artifacts under bench/token-usage excluding followup-*",
     "goal_overhead": "01m4y11d2c2q2zt30qgg5gjkj9",
@@ -61,5 +62,5 @@
     "label": "SQLite backup created 2026-10-15",
     "sha256": "adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a"
   },
-  "transcript_manifest_sha256": "c537c2d91931cf8db4667206b842a23d00e2cde89f85746700b8729e84536f5c"
+  "transcript_manifest_sha256": "21c52d5b4fda9d8d8eec47242a0b3c6ee92f01cc01b76d6820e3fd2e232ae7ee"
 }

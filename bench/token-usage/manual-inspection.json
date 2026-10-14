@@ -1,0 +1,27 @@
+{
+  "selection": "three highest mapped-session input totals and one median mapped reviewer session",
+  "coverage": {
+    "major_sessions": 3,
+    "ordinary_sessions": 1,
+    "wakeup_candidates": "unique temporal candidates only; no causal delivery claim"
+  },
+  "cases": [
+    {"session_id":"01m4kf30z3vs1n1y73d7t3bwnd","class":"major","input_tokens":805121096,"event_id":"01m4kf335zwhtaz67rmz7mrr5q","next_request_id":"msg_011CftzDoayYNC9SUTbNLp1M","tool_call_ids":["toolu_013vnHtY48aMcdSjnsREu5v7","toolu_01LfNKrG5xXPnTrgNw85w8gR","toolu_01Cury7LZjNWZnyRFg6s6cq9"],"outcome":"finished"},
+    {"session_id":"01m4m371vw9hgpth2pc7tz0gkt","class":"major","input_tokens":540410359,"event_id":"01m4m373bjdnr411fnzqz2wef1","next_request_id":"msg_011CfuSskGP7FnQhT8GG7j4a","signal":"one correction-marker delivery among 13","outcome":"finished"},
+    {"session_id":"01m4myv6ppjky1ef1zcwz2b2h9","class":"major","input_tokens":331864110,"event_id":"01m4myv8djxtpwms9n7vfrbfq9","next_request_id":"msg_011Cfv5ZUMUqDYigcXzSHRKJ","outcome":"finished"},
+    {"session_id":"01m4c5vrty2dyazsaf02kapm9v","class":"ordinary_reviewer","input_tokens":3357778,"event_id":"01m4c5vvpqpemtwjz8tmk5kf1e","next_request_id":"msg_011Cfod73AsznSNKkLaXsmax","outcome":"finished"}
+  ],
+  "limits":"Event-to-request links are temporal candidates. Tool IDs are native transcript references. Outcomes are task metadata and do not prove that a prompt or tool caused completion."
+  ,"tool_findings": {
+    "selection":"largest mapped retained result and highest-count mapped operation groups",
+    "large_mapped_results":[
+      {"session_id":"01m4h3qazwr6vbqembbv9q9a8s","request_id":"msg_011CfsFUrE8VHaovugKe2EyZ","tool_call_id":"toolu_01SBEtb4842r9fDhvkAZEDvv","tool_name":"Read","result_chars":85089},
+      {"session_id":"01m4gk044v01n034btj0ya422a","request_id":"msg_011CfrsJuR35ZQwhp9ejU4RB","tool_call_id":"toolu_01C1CpsZTvXGf7QrhKP94EC4","tool_name":"Read","result_chars":78622}
+    ],
+    "repeated_mapped_operations":[
+      {"session_id":"01m4kf30z3vs1n1y73d7t3bwnd","tool_name":"Bash","calls":1030,"result_chars":1383796,"max_result_chars":24912},
+      {"session_id":"01m4m371vw9hgpth2pc7tz0gkt","tool_name":"Bash","calls":617,"result_chars":735385,"max_result_chars":23529}
+    ],
+    "failure_evidence":"Daemon post_tool_use lifecycle records include completed and failed statuses, but retained transcript call IDs do not provide a universal native join to that lifecycle status; no failure is attributed to a request or later correction."
+  }
+}
