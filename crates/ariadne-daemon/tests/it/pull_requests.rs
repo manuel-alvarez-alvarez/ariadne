@@ -643,14 +643,15 @@ async fn a_fetch_drops_the_viewers_own_pending_review_and_its_comments() {
     );
 }
 
-/// A fetch of a tracked GitLab request's detail read never calls the
-/// draft notes endpoint at all: a draft note never enters `discussions`
-/// until the viewer publishes it, so there is nothing for this detail
-/// read to filter the way GitHub's pending review needs — and nothing
-/// left for it to count either, which is why it makes no such call in the
-/// first place.
+/// A fetch of a tracked GitLab request's detail read counts the viewer's
+/// own draft notes (`GET .../draft_notes`) only to set `has_pending_posts`
+/// (026 rule 9): a draft note never enters `discussions` until the viewer
+/// publishes it, so there is nothing for this detail read to filter the
+/// way GitHub's pending review needs, but the count itself still has to
+/// reach `merge_fresh_details`, or a review's own finding held as a draft
+/// note loses its indefinite carry-forward after one poll (029).
 #[tokio::test]
-async fn a_gitlab_fetch_makes_no_call_for_the_viewers_draft_notes() {
+async fn a_gitlab_fetch_counts_draft_notes_only_for_has_pending_posts() {
     use crate::common::{TIMEOUT, eventually};
     let pull = json!({"iid":7,"project_id":1,"source_project_id":2,"web_url":"https://gitlab.com/acme/widgets/-/merge_requests/7","title":"Fix widgets","author":{"username":"other"},"state":"opened","draft":false,"source_branch":"fix","target_branch":"main","sha":"abc123","head_pipeline":{"status":"success"},"detailed_merge_status":"mergeable","created_at":"2026-10-01T00:00:00Z"});
     let stub = stub_forge_cli(json!([
@@ -689,8 +690,14 @@ async fn a_gitlab_fetch_makes_no_call_for_the_viewers_draft_notes() {
             0,
             "{\"diverged_commits_count\": 0}"
         ),
-        // No entry for `.../draft_notes`: a call there would be refused
-        // outright, which `stub.invocations()` below proves never happens.
+        answer(
+            &[
+                "api",
+                "projects/acme%2Fwidgets/merge_requests/7/draft_notes"
+            ],
+            0,
+            r#"[{"id": 1}]"#
+        ),
     ]));
     let h = harness().forge_cli(&stub).await;
     let path = h.git_repo("gitlab-drafts");
@@ -723,12 +730,25 @@ async fn a_gitlab_fetch_makes_no_call_for_the_viewers_draft_notes() {
     })
     .await;
     assert!(
-        !stub
-            .invocations()
+        stub.invocations()
             .iter()
             .any(|i| i.args.iter().any(|a| a.contains("draft_notes"))),
-        "{:?}",
+        "the draft notes endpoint is called to count the viewer's own drafts: {:?}",
         stub.invocations()
+    );
+    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{row_id}/comments")).await;
+    assert_eq!(
+        comments,
+        Vec::<Value>::new(),
+        "the draft note's own content never becomes a live-view comment"
+    );
+    assert!(
+        h.launcher
+            .live
+            .get(&row_id)
+            .and_then(|live| live.details)
+            .is_some_and(|d| d.has_pending_posts),
+        "the open draft note keeps has_pending_posts true for merge_fresh_details to read"
     );
 }
 

@@ -3,6 +3,7 @@
 //! in its latest pipeline, and whether its head is behind its target.
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use tracing::warn;
 
 use super::Gitlab;
 use crate::forge::pulls::{FailedCheck, ForgeDetails, split_slug};
@@ -119,16 +120,14 @@ impl Gitlab {
     /// read leaves them out with no filter of its own to write, unlike the
     /// one GitHub's pending review needs.
     ///
-    /// `ForgeDetails::has_pending_posts` is always `false` here: telling
-    /// "a draft note is still open" from "there never was one" would cost
-    /// the one extra call (`GET .../draft_notes`) 026 rule 9 already
-    /// chose not to pay again just to find out. A review's own finding
-    /// held as a draft note gets only the one-poll grace
-    /// `merge_fresh_details` already gives any local addition, not the
-    /// indefinite one a still-open pending set gives GitHub's: a round
-    /// that spans more than one missed poll before the user publishes or
-    /// Ariadne's own tools touch it again may need to repost a P0 that
-    /// `open_p0` no longer finds.
+    /// `ForgeDetails::has_pending_posts` still costs the one extra call
+    /// (`GET .../draft_notes`, [`Gitlab::draft_posts`]) 026 rule 9 asks
+    /// for: without it, a review's own finding held as a draft note gets
+    /// only the one-poll grace `merge_fresh_details` gives any local
+    /// addition, and a round spanning more than one missed poll loses an
+    /// open P0 that `open_p0` can no longer find. A read error is read as
+    /// "no draft note" rather than failing the whole detail read over a
+    /// feature only this one signal needs.
     pub(crate) async fn details(
         &self,
         repo: &str,
@@ -146,6 +145,13 @@ impl Gitlab {
             self.failed_checks(host, owner, name, &base),
             self.object::<Diverged>(host, &diverged),
         )?;
+        let has_pending_posts = match self.draft_posts(repo, number).await {
+            Ok(count) => count > 0,
+            Err(error) => {
+                warn!(%error, %repo, number, "cannot read the viewer's own draft notes");
+                false
+            }
+        };
         let mut comments = Vec::new();
         for discussion in discussions {
             let notes: Vec<Note> = discussion.notes.into_iter().filter(|n| !n.system).collect();
@@ -182,7 +188,7 @@ impl Gitlab {
             comments,
             failed_checks,
             behind_base: diverged.diverged_commits_count > 0,
-            has_pending_posts: false,
+            has_pending_posts,
         })
     }
 
