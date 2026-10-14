@@ -11,20 +11,19 @@ recommendation identifiers below before implementation work is created.
 **Question:** Where did this Ariadne installation spend avoidable tokens and
 elapsed time, and which bounded improvements should be tested first?
 
-The strongest measured opportunity is to reduce repeated wake-up prompts and
-their copied task context (`TU-01`), then make transcript-handoff selection
-observable and tighter (`TU-02`). Repeated full verification and broad tool
-output are visible candidates (`TU-03`, `TU-04`), but the stored events do not
-attribute their model-token effect, so their savings are estimates to test.
+The records demonstrate high cumulative usage and review cycles, but not
+avoidable model work. `TU-01` through `TU-04` are diagnostic or controlled-test
+candidates, not measured savings. Add attribution before suppressing a
+wake-up, check, handoff entry, or tool result.
 Required checks and review columns remain part of every comparison.
 
 ## Snapshot and coverage
 
-- Cutoff: `2026-10-14T20:31:49.158Z`; analyzer version `1`; source SHA-256
+- Cutoff: `2026-10-14T20:31:49.158Z`; analyzer version `2`; source SHA-256
   `b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47`. The raw database is deliberately not in Git.
 - Primary source: `pinned snapshot /tmp/ariadne-token-usage-snapshot.XXXXXX.db`. The inventory also inspected
-  6 dated backups. Their overlap is not proven from
-  retained identifiers, so they establish availability only and are not summed.
+  6 dated backups. Their retained IDs, event IDs, and
+  shared usage counters are compared in `snapshot.json`; they are not summed.
 - The primary source holds 54 surviving goals, 180
   surviving tasks, 615 surviving sessions, 171122
   events, and 1072 cumulative transcript-source rows. It has
@@ -33,6 +32,12 @@ Required checks and review columns remain part of every comparison.
 - The task listing supplied with this study said 48 goals and 179 tasks from
   October 5–14. The database has a wider surviving inventory; neither source
   proves that deleted rows before the retained ledger are complete.
+- Local transcript metadata scanned 2,901 files and mapped
+  370 retained internal sessions.
+  It found 122 final vendor counter snapshots;
+  23 are within 1% of the corresponding
+  Ariadne session input and output. The rest are retained as discrepancies,
+  not adjusted into the canonical total.
 
 ## Counting rules and reconciliation
 
@@ -56,6 +61,10 @@ usage row of zero are counted separately (0).
 counts, and launch-source matching. ACP writes the launch id as `source`.
 Retired launch rows can be absent after a relaunch, so unmatched sources keep
 only the evidence retained in facts.
+Transcript metadata maps to sessions, not launch IDs. Therefore it validates
+representative cumulative session counters but cannot distribute a vendor
+counter across a session's launch sources. `transcript-reconciliation.csv`
+records each such comparison and its retained launch count.
 
 ## Inventory and aggregates
 
@@ -74,6 +83,12 @@ tasks because retries write another ending.
   goal/task role, column, model, effort, outcome, and usage-evidence rows.
 - [outcomes.csv](outcomes.csv), [timing.csv](timing.csv), and [reconciliation.json](reconciliation.json)
   — retained facts, gaps, and non-additive counter checks.
+- [completion-timing.csv](completion-timing.csv) and [completion-summary.json](completion-summary.json)
+  — every ending fact and the latest ending selected per retained task.
+- [goal-analysis.csv](goal-analysis.csv) — every goal's dominant contributor,
+  outcome evidence, and coverage limitation.
+- [transcript-reconciliation.csv](transcript-reconciliation.csv) — local
+  transcript metadata matches and vendor-counter comparisons without paths or text.
 - [trace-selection.json](trace-selection.json) — selected trace identifiers
   and derived indicators only; raw payloads stay outside Git.
 - [audit-overhead.csv](audit-overhead.csv) — this audit's partial goal usage,
@@ -91,7 +106,9 @@ permission prompt, tool execution, model inference, or active execution.
   wall time, so it must not be called execution time.
 - Goal and task CSV row lifetimes use their stored `updated_at`; they are not
   completion measurements and can include later metadata changes or retries.
-  `timing.csv` is the supported aggregate of ending-fact status durations.
+  Future comparisons use the latest `task_ended` fact per retained task;
+  `completion-summary.json` gives its distribution and prior facts remain
+  retry evidence in `completion-timing.csv`.
 - Running work is partial at the cutoff and excluded from completed-work
   elapsed comparisons. This review's own goal is separately labelled in the
   aggregates when present; its running session has no final usage at cutoff.
@@ -109,9 +126,15 @@ large ACP tool-result payloads; none alone proves avoidable work.
 Within the selected traces, the largest observed daemon-prompt count is
 34 and the largest observed daemon-prompt text
 volume is 61,872 characters. The selected
-trace with the most repeated command prefixes has
-8. These indicators establish where to
+trace with the most repeated exact commands has
+0. These indicators establish where to
 sample; they do not establish that every repetition is avoidable.
+
+The trace review separates full prompts with distinct reviewed SHAs from short
+continuations. The full review returns are distinct correction cycles, not
+duplicate copies. Short continuations lack delivery outcomes, so the audit
+does not classify them as waste. Large tool payloads remain diagnostic signals:
+the ledger does not say which later prompt included a payload.
 
 The repository already limits several suspected sources: skills are indexed as
 one line and opened only when needed (`agents/prompts.rs`), handoff rendering
@@ -123,17 +146,17 @@ changing policy.
 
 ## Ranked candidates
 
-### TU-01 — Coalesce scheduler wake-ups before sending a full daemon prompt
+### TU-01 — Attribute scheduler deliveries before considering coalescing
 
-**Evidence.** Trace indicators count daemon-originated prompt deliveries per session and their character volume; each delivery can repeat goal/task status and handoff context. The database has no per-prompt usage, so this is a measured repetition indicator rather than measured token waste.
+**Evidence.** Selected traces include review returns with distinct reviewed SHAs and short continuation prompts. They prove delivery volume, but not redundant work or per-delivery tokens.
 
-**Bounded scope.** Add a deduplicated pending-attention key at the scheduler/ACP delivery boundary. Preserve every distinct failure, user message, and explicit resume; do not change workflow columns, required checks, or prompt content for the first delivery.
+**Bounded scope.** Add diagnostic delivery IDs, causes, and completion outcomes at the scheduler/ACP boundary. Do not suppress a delivery, change a workflow column, or change prompt text.
 
-**Expected benefit.** Estimated reduction in repeated input context and avoidable wake-up latency; quantify only after instrumenting per-delivery counters. Confidence: medium.
+**Expected benefit.** No claimed saving until matched evidence identifies duplicate deliveries. It enables a bounded later coalescing experiment. Confidence: high for measurement; no savings estimate.
 
-**Quality guard and measurement.** On matched tasks, compare daemon prompt count, prompt characters, canonical uncached input, output, task lead time, and finish/review outcomes. Keep the same workflow and required checks.
+**Quality guard and measurement.** Compare delivery causes, completed responses, prompt characters, canonical uncached input, selected completion lead time, and finish/review outcomes under unchanged checks.
 
-**Counter-evidence.** A wake-up may carry newly relevant state. If coalescing delays recovery, increases retries, or changes outcome quality, retain the existing behavior.
+**Counter-evidence.** The largest reviewed cycle contains distinct review revisions. Treating it as duplicate wake-up work would weaken correction quality.
 
 ### TU-02 — Measure and tighten handoff selection at the existing character budget
 

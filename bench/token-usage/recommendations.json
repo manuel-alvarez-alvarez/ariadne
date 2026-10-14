@@ -1,13 +1,13 @@
 [
   {
     "id": "TU-01",
-    "title": "Coalesce scheduler wake-ups before sending a full daemon prompt",
-    "evidence": "Trace indicators count daemon-originated prompt deliveries per session and their character volume; each delivery can repeat goal/task status and handoff context. The database has no per-prompt usage, so this is a measured repetition indicator rather than measured token waste.",
-    "scope": "Add a deduplicated pending-attention key at the scheduler/ACP delivery boundary. Preserve every distinct failure, user message, and explicit resume; do not change workflow columns, required checks, or prompt content for the first delivery.",
-    "benefit": "Estimated reduction in repeated input context and avoidable wake-up latency; quantify only after instrumenting per-delivery counters.",
-    "confidence": "medium",
-    "measurement": "On matched tasks, compare daemon prompt count, prompt characters, canonical uncached input, output, task lead time, and finish/review outcomes. Keep the same workflow and required checks.",
-    "counter_evidence": "A wake-up may carry newly relevant state. If coalescing delays recovery, increases retries, or changes outcome quality, retain the existing behavior."
+    "title": "Attribute scheduler deliveries before considering coalescing",
+    "evidence": "Selected traces include review returns with distinct reviewed SHAs and short continuation prompts. They prove delivery volume, but not redundant work or per-delivery tokens.",
+    "scope": "Add diagnostic delivery IDs, causes, and completion outcomes at the scheduler/ACP boundary. Do not suppress a delivery, change a workflow column, or change prompt text.",
+    "benefit": "No claimed saving until matched evidence identifies duplicate deliveries. It enables a bounded later coalescing experiment.",
+    "confidence": "high for measurement; no savings estimate",
+    "measurement": "Compare delivery causes, completed responses, prompt characters, canonical uncached input, selected completion lead time, and finish/review outcomes under unchanged checks.",
+    "counter_evidence": "The largest reviewed cycle contains distinct review revisions. Treating it as duplicate wake-up work would weaken correction quality."
   },
   {
     "id": "TU-02",

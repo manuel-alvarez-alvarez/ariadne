@@ -61,6 +61,8 @@ assert s['canonical_usage'] == r['canonical_usage']
 assert r['uncached_input_tokens'] == r['canonical_usage']['input_tokens'] - r['canonical_usage']['cached_input_tokens']
 assert len(list(csv.DictReader((root / 'goals.csv').open()))) == s['inventory']['goals']
 assert len(list(csv.DictReader((root / 'tasks.csv').open()))) == s['inventory']['tasks']
+assert json.loads((root / 'completion-summary.json').read_text())['tasks_with_selected_ending']
+assert len(list(csv.DictReader((root / 'goal-analysis.csv').open()))) == s['inventory']['goals']
 assert not list(root.rglob('*.db'))
 print('artifact checks: ok')
 PY
@@ -78,6 +80,10 @@ git diff --check
 - `trace-selection.json` contains selected IDs and derived counts only; it
   never exports event bodies.
 - `recommendations.json` is the machine-readable stable recommendation list.
+- `completion-timing.csv` and `completion-summary.json` retain every task end
+  and define the latest-ending completion comparison.
+- `goal-analysis.csv` and `transcript-reconciliation.csv` describe per-goal
+  concentration and sanitized local transcript counter coverage.
 
 `input_tokens` already includes `cached_input_tokens`. Therefore uncached input
 is `input_tokens - cached_input_tokens`; cached input is never added again.

@@ -7,7 +7,7 @@
   },
   "max_daemon_prompt_chars": 61872,
   "max_daemon_prompts": 34,
-  "max_repeated_tool_prefixes": 8,
+  "max_repeated_tool_prefixes": 0,
   "method": "12 largest input-plus-output sessions plus median-usage exited agent and reviewer sessions",
   "selected_sessions": 14,
   "selected_usage_share": 0.34198708209383366,
@@ -30,6 +30,7 @@
           "01m4m0hz7j4gcqq3qxvzbfzdqv"
         ],
         "daemon_prompts": 12,
+        "distinct_review_shas": 8,
         "events": 5782,
         "large_event_ids": [
           "01m4kf3a2tz0n91e8nzk1g3tzy",
@@ -205,6 +206,11 @@
         ],
         "large_tool_result_chars": 1435797,
         "large_tool_results": 170,
+        "prompt_classes": {
+          "initial_or_other": 1,
+          "review_return": 8,
+          "short_continuation": 3
+        },
         "repeated_tool_prefixes": 0
       },
       "effort": "medium",
@@ -239,6 +245,7 @@
           "01m4mhxtbwnjh051w8ep2e2anb"
         ],
         "daemon_prompts": 13,
+        "distinct_review_shas": 6,
         "events": 3815,
         "large_event_ids": [
           "01m4m378yj43dx0c28h9ectbcr",
@@ -342,7 +349,12 @@
         ],
         "large_tool_result_chars": 852019,
         "large_tool_results": 98,
-        "repeated_tool_prefixes": 1
+        "prompt_classes": {
+          "initial_or_other": 2,
+          "review_return": 6,
+          "short_continuation": 5
+        },
+        "repeated_tool_prefixes": 0
       },
       "effort": "medium",
       "goal_id": "01m4ke8jjjmrpq43smjy487nr8",
@@ -371,6 +383,7 @@
           "01m4nawwnc3cndnjf4c6sxcgz0"
         ],
         "daemon_prompts": 8,
+        "distinct_review_shas": 4,
         "events": 2298,
         "large_event_ids": [
           "01m4myvcemzw7scmp9yg17xjb3",
@@ -430,6 +443,11 @@
         ],
         "large_tool_result_chars": 404272,
         "large_tool_results": 54,
+        "prompt_classes": {
+          "initial_or_other": 2,
+          "review_return": 4,
+          "short_continuation": 2
+        },
         "repeated_tool_prefixes": 0
       },
       "effort": null,
@@ -470,6 +488,7 @@
           "01m4hge95fwhwdthb5hvgw0qst"
         ],
         "daemon_prompts": 19,
+        "distinct_review_shas": 0,
         "events": 2311,
         "large_event_ids": [
           "01m4h5zrf0g8w3ha52razy8cxz",
@@ -516,6 +535,9 @@
         ],
         "large_tool_result_chars": 302845,
         "large_tool_results": 41,
+        "prompt_classes": {
+          "initial_or_other": 19
+        },
         "repeated_tool_prefixes": 0
       },
       "effort": "high",
@@ -542,6 +564,7 @@
           "01m4rag5164n5qpvckxhmgn5t3"
         ],
         "daemon_prompts": 5,
+        "distinct_review_shas": 0,
         "events": 1712,
         "large_event_ids": [
           "01m4r2fvvvmhj1z2pwensvmgww",
@@ -612,6 +635,10 @@
         ],
         "large_tool_result_chars": 677702,
         "large_tool_results": 65,
+        "prompt_classes": {
+          "initial_or_other": 4,
+          "short_continuation": 1
+        },
         "repeated_tool_prefixes": 0
       },
       "effort": "high",
@@ -642,6 +669,7 @@
           "01m4s0tkjvesxjv3scfdg378v5"
         ],
         "daemon_prompts": 9,
+        "distinct_review_shas": 1,
         "events": 2236,
         "large_event_ids": [
           "01m4rtkrmamdbgv2215g8qrhjg",
@@ -747,7 +775,12 @@
         ],
         "large_tool_result_chars": 1204139,
         "large_tool_results": 100,
-        "repeated_tool_prefixes": 8
+        "prompt_classes": {
+          "initial_or_other": 7,
+          "review_return": 1,
+          "short_continuation": 1
+        },
+        "repeated_tool_prefixes": 0
       },
       "effort": "high",
       "goal_id": "01m4rsrz8pe4fwgyxmq4r9v3t3",
@@ -777,6 +810,7 @@
           "01m4s0zt37dbwvw8jm62nfaa1v"
         ],
         "daemon_prompts": 9,
+        "distinct_review_shas": 0,
         "events": 1687,
         "large_event_ids": [
           "01m4rtkjtg07m279cbja67jgxw",
@@ -839,6 +873,10 @@
         ],
         "large_tool_result_chars": 592747,
         "large_tool_results": 57,
+        "prompt_classes": {
+          "initial_or_other": 7,
+          "short_continuation": 2
+        },
         "repeated_tool_prefixes": 0
       },
       "effort": "high",
@@ -866,6 +904,7 @@
           "01m4h2q2t6wmbsk6e90x9s3ryf"
         ],
         "daemon_prompts": 6,
+        "distinct_review_shas": 0,
         "events": 3288,
         "large_event_ids": [
           "01m4gk114k8rq2q6v39qke7tfs",
@@ -1191,7 +1230,10 @@
         ],
         "large_tool_result_chars": 5177428,
         "large_tool_results": 320,
-        "repeated_tool_prefixes": 2
+        "prompt_classes": {
+          "initial_or_other": 6
+        },
+        "repeated_tool_prefixes": 0
       },
       "effort": "high",
       "goal_id": "01m4g7w5p6zcbx38tb6zs4k2vy",
@@ -1215,6 +1257,7 @@
           "01m4xkmqbzt2n2f73g2nhrqvn9"
         ],
         "daemon_prompts": 3,
+        "distinct_review_shas": 0,
         "events": 1448,
         "large_event_ids": [
           "01m4xfwy3nkfn0kyv9taqjstrz",
@@ -1272,6 +1315,9 @@
         ],
         "large_tool_result_chars": 571126,
         "large_tool_results": 52,
+        "prompt_classes": {
+          "initial_or_other": 3
+        },
         "repeated_tool_prefixes": 0
       },
       "effort": null,
@@ -1327,6 +1373,7 @@
           "01m4rq0ak2gd4zb97h1smp53vg"
         ],
         "daemon_prompts": 34,
+        "distinct_review_shas": 0,
         "events": 1637,
         "large_event_ids": [
           "01m4rap5mxwbpfaybjcmqyk50t",
@@ -1362,6 +1409,10 @@
         ],
         "large_tool_result_chars": 267134,
         "large_tool_results": 30,
+        "prompt_classes": {
+          "initial_or_other": 32,
+          "short_continuation": 2
+        },
         "repeated_tool_prefixes": 0
       },
       "effort": null,
@@ -1389,6 +1440,7 @@
           "01m4rzgnjgasbff9k4fe0bb4s8"
         ],
         "daemon_prompts": 6,
+        "distinct_review_shas": 2,
         "events": 1470,
         "large_event_ids": [
           "01m4rtksspn9x71rt1dq8jwjht",
@@ -1469,7 +1521,11 @@
         ],
         "large_tool_result_chars": 708691,
         "large_tool_results": 75,
-        "repeated_tool_prefixes": 2
+        "prompt_classes": {
+          "initial_or_other": 4,
+          "review_return": 2
+        },
+        "repeated_tool_prefixes": 0
       },
       "effort": "high",
       "goal_id": "01m4rsrz8pe4fwgyxmq4r9v3t3",
@@ -1495,6 +1551,7 @@
           "01m4w3vy6h0zvn47crm4ktqbpx"
         ],
         "daemon_prompts": 5,
+        "distinct_review_shas": 0,
         "events": 1039,
         "large_event_ids": [
           "01m4w1jzv2sy8vrvvbyqs0b79m",
@@ -1550,6 +1607,10 @@
         ],
         "large_tool_result_chars": 522657,
         "large_tool_results": 50,
+        "prompt_classes": {
+          "initial_or_other": 3,
+          "short_continuation": 2
+        },
         "repeated_tool_prefixes": 0
       },
       "effort": null,
@@ -1579,6 +1640,7 @@
           "01m4n5vtjzpn0eg8rfz5x9r21g"
         ],
         "daemon_prompts": 8,
+        "distinct_review_shas": 0,
         "events": 194,
         "large_event_ids": [
           "01m4n55jw71j56ky4cr1pq9qx8",
@@ -1590,6 +1652,9 @@
         ],
         "large_tool_result_chars": 37661,
         "large_tool_results": 6,
+        "prompt_classes": {
+          "initial_or_other": 8
+        },
         "repeated_tool_prefixes": 0
       },
       "effort": null,
@@ -1616,6 +1681,7 @@
           "01m4rjssa3xetqg0t3ndx77ch2"
         ],
         "daemon_prompts": 5,
+        "distinct_review_shas": 0,
         "events": 142,
         "large_event_ids": [
           "01m4regj0s4setfz3gjbzfa1bc",
@@ -1631,6 +1697,9 @@
         ],
         "large_tool_result_chars": 87137,
         "large_tool_results": 10,
+        "prompt_classes": {
+          "initial_or_other": 5
+        },
         "repeated_tool_prefixes": 0
       },
       "effort": null,
