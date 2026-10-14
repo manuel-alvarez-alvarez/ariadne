@@ -472,7 +472,7 @@ sys.stdout.write(answers[count])
         let binary = fake_gh_scripted(
             dir.path(),
             &[
-                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}]"#,
                 r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
                 r#"{"data":{"addPullRequestReviewThread":{"thread":{"comments":{"nodes":[
                     {"databaseId": 501, "createdAt": "2026-10-02T00:00:00Z"}]}}}}}"#,
@@ -558,7 +558,7 @@ sys.stdout.write(answers[count])
         let binary = fake_gh_scripted(
             dir.path(),
             &[
-                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"","user":{"login":"me"}}]"#,
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}]"#,
                 r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
             ],
         );
