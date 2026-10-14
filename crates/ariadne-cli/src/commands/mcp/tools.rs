@@ -306,11 +306,10 @@ pub(super) struct ReviewFinding {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct SubmitReviewReq {
-    /// `request_changes` while a P0 finding is open. Else `comment`.
+    /// `request_changes` while a P0 or P1 finding is open. Else `comment`.
     pub event: ReviewEvent,
-    /// The whole summary of the review as it stands now: the commit range
-    /// you reviewed, the state, and each open finding by priority and title.
-    /// Ariadne keeps one summary comment and replaces its text with this.
+    /// Kept for compatibility. New reviews do not publish a summary.
+    #[serde(default)]
     pub body: String,
     /// One inline comment per new finding, on the line of the defect. Leave
     /// it empty in a round with no new finding.
@@ -908,7 +907,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Resolve the thread of one of your own review comments once a push fixed it. Ariadne resolves it on the forge. A thread somebody else opened is refused: its author resolves it. A supervised repository lists it to resolve in your forge drafts instead."
+        description = "Resolve one of your own fixed review threads. Ariadne resolves it on the forge. In a supervised repository, leave it for the user."
     )]
     async fn resolve_thread(
         &self,
@@ -963,7 +962,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post one round of your review in the name of the user. Give each new finding its file, line and priority. The body replaces the text of your one summary comment. Set `event` to `request_changes` while a P0 is open, else to `comment`. A supervised repository holds it in the forge drafts instead."
+        description = "Post new inline findings in the user's name. Give each finding its file, line and priority. Set `event` to `request_changes` while a P0 or P1 is open, else `comment`. A supervised repository holds findings in forge drafts."
     )]
     async fn submit_review(
         &self,

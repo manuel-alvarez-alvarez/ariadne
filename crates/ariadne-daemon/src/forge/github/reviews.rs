@@ -4,8 +4,8 @@
 use serde::Deserialize;
 
 use super::Github;
-use super::details::{issue_comment_id, review_comment_id, review_id};
-use crate::forge::pulls::{CONVERSATION, REVIEW_MARK, ReviewDraft, split_slug};
+use super::details::review_comment_id;
+use crate::forge::pulls::{REVIEW_MARK, ReviewDraft, split_slug};
 use ariadne_store::NewPullRequestComment;
 
 #[derive(Deserialize)]
@@ -34,12 +34,6 @@ struct PostedComment {
     body: String,
     path: Option<String>,
     line: Option<i64>,
-    created_at: String,
-}
-
-#[derive(Deserialize)]
-struct Comment {
-    id: i64,
     created_at: String,
 }
 
@@ -218,78 +212,7 @@ impl Github {
                 from_review: false,
             });
         }
-        // Recorded as the review's the same way the posted summary is
-        // (`hold_review_comments`), under the pending review's own id: the
-        // verdict and summary have no comment of their own on GitHub, so
-        // this is what stands for it until the forge lets a fetch see the
-        // pending review itself.
-        stored.push(NewPullRequestComment {
-            forge_id: review_id(pending.id),
-            thread_id: CONVERSATION.into(),
-            kind: "issue_comment".into(),
-            author_login: login.to_string(),
-            author_is_bot: false,
-            body: header.to_string(),
-            path: None,
-            line: None,
-            in_reply_to: None,
-            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-            resolved: false,
-            from_review: false,
-        });
         Ok(stored)
-    }
-
-    /// Write the one summary comment a review keeps on request `number`
-    /// (029): `existing`, an `ic-<id>` of an earlier round, is edited in
-    /// place, `gh api repos/<owner>/<name>/issues/comments/<id> --method
-    /// PATCH`; with none, or one GitHub answers 404 for, a comment is posted
-    /// on the conversation. Any other failed edit is the error: a second
-    /// summary would leave the first behind. Answers its forge id and when
-    /// it was written.
-    pub(crate) async fn write_summary(
-        &self,
-        repo: &str,
-        number: i64,
-        existing: Option<&str>,
-        body: &str,
-    ) -> Result<(String, String), String> {
-        let (host, owner, name) = split_slug(repo)?;
-        let field = format!("body={body}");
-        if let Some(id) = existing.and_then(|id| id.strip_prefix("ic-")) {
-            let edited = self
-                .cli
-                .call(&[
-                    "api",
-                    &format!("repos/{owner}/{name}/issues/comments/{id}"),
-                    "--hostname",
-                    host,
-                    "--method",
-                    "PATCH",
-                    "-f",
-                    &field,
-                ])
-                .await;
-            match edited {
-                Ok(output) => return read_comment(&output),
-                Err(refusal) if refusal.is_missing() => {}
-                Err(refusal) => return Err(refusal.to_string()),
-            }
-        }
-        let output = self
-            .cli
-            .answer(&[
-                "api",
-                &format!("repos/{owner}/{name}/issues/{number}/comments"),
-                "--hostname",
-                host,
-                "--method",
-                "POST",
-                "-f",
-                &field,
-            ])
-            .await?;
-        read_comment(&output)
     }
 
     /// Whether request `number` still asks for the review of `login`, read
@@ -329,13 +252,6 @@ impl Github {
         }
         Ok(requested)
     }
-}
-
-/// The id and the time of a comment GitHub answered with.
-fn read_comment(output: &str) -> Result<(String, String), String> {
-    let comment: Comment = serde_json::from_str(output)
-        .map_err(|e| format!("cannot read the comment GitHub stored: {e}"))?;
-    Ok((issue_comment_id(comment.id), comment.created_at))
 }
 
 /// Whether GitHub refused a review for having no body: what its own answer

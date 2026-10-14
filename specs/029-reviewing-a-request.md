@@ -162,33 +162,18 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     given. The base is `<remote>/<base_branch>` where the checkout holds it,
     else the local base branch. A `since` that is no hex sha of a commit in
     the worktree answers 400.
-13. `POST /v1/pull-requests/{id}/reviews` takes `event`, `body` and
+13. `POST /v1/pull-requests/{id}/reviews` takes `event`, an optional legacy `body`, and
     `comments` of `path`, `line`, `title`, `body` and `priority` (`P0`, `P1`
     or `P2`). One call is one round of the review. `comments` are the
     round's new findings, each one inline comment on the line of its
     defect, posted as `**[P0] Title**`, a blank line, then its body: what
     goes wrong and how to fix it, with a trailer an agent's skill appends
-    stripped first (026 rule 16). `body` is required: the review's whole
-    summary as it stands, tied to no line, stripped of such a trailer too.
-    The review keeps one summary
-    comment on the request (`pull_requests.summary_comment_id`):
-    the first round posts it, and every later round replaces its
-    text, so the request carries one summary however many rounds ran. A
-    summary the forge answers 404 for is posted again; any other failed
-    edit is the error, and posts no second summary. Every comment a review
-    posts — each finding, the summary, each reply — ends on an HTML comment,
-    `<!-- ariadne:review -->`, which the forge renders as nothing, and the
-    summary on `<!-- ariadne:review-summary -->` too: what tells the
-    review's comments from the user's own when no row recalls them. A review
-    stopped and asked again, whose row went in between, finds its findings
-    and edits its summary by them. The marks are left out of every body a
-    reader is shown. The findings are marked and held before the summary is
-    written: a summary that fails answers 502 saying the findings are
-    posted, and a round with no comments writes it. A round with no new
-    finding posts no review, only the summary. A comment with no path, no
-    line from 1, no title or no body answers 400, and so does an empty
-    `body`, and a `request_changes` with no P0 among its comments and none
-    of the review's still open: a change request shows its P0s on their
+    stripped first (026 rule 16). The daemon never writes a review summary,
+    status comment, or summary draft. A round with no new finding posts no
+    review. Historical summary comments remain untouched and recognisable.
+    A comment with no path, no line from 1, no title or no body answers 400,
+    and so does a `request_changes` with no P0 or P1 among its comments and
+    none of the review's still open: a change request shows its blockers on their
     lines. A comment on a line the change does not show answers 400 too,
     naming the path and the line, before anything reaches the forge: the
     lines are those `get_diff` shows on its new side, read from the same
@@ -205,16 +190,13 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
       A forge that refuses answers 502 with its own reason — GitHub's
       `{"message", "errors"}` beside the CLI's line — so the session can act
       on it, and the skill says the failure rather than posting another way. The daemon then
-      reads the review's comments back. The summary is an issue comment,
-      `.../issues/<n>/comments`, edited with `PATCH
-      .../issues/comments/<id>`.
+      reads the review's comments back.
     - GitLab: one discussion per inline comment on the merge request's diff,
-      through `glab api`. GitLab has no review verdict: the summary note,
-      edited with `PUT .../notes/<id>`, says where the review stands. Each
+      through `glab api`. Each
       position names the file on both sides of the diff: the merge
       request's `diffs` are read before anything is posted, and a renamed
       file takes its old path as `old_path`.
-    The daemon marks the posted summary and comments `from_review`
+    The daemon marks the posted comments `from_review`
     (`pull_request_comment_marks`, 026 rule 10), as it marks a review
     session's replies, holds them beside the last read until the next fetch
     reads them back, and answers them with 201. On a request of
@@ -231,28 +213,16 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     news, so the answer to a finding reaches its reviewer. On a request of the user's
     own the review is a comment whatever its `event`: no forge takes a
     change request from a request's own author.
-13a. A repository that supervises its posts (002 rule 13) holds a review
-    back the same way it holds a reply back (026 rule 24): nothing is
-    submitted and no summary comment is posted, and the route answers
-    `{pending: true}` in place of the posted comments. The verdict —
-    "Request changes" or "Comment" — and the round's summary lead the held
-    text, `**Verdict: <verdict>**`, a blank line, then `body`; the forge
-    never shows it to anyone but the viewer until they publish it.
-    - GitHub: the verdict and the summary are set at the viewer's one
-      pending review's own top (`Github::pending_review`, 026 rule 24),
-      replacing only the text above a hidden mark,
-      `<!-- ariadne:pending-review-verdict -->`, so a later round keeps
-      any reply text `reply_pending` appended below it; then each inline
+13a. A repository that supervises its posts (002 rule 13) holds new inline
+    findings back the same way it holds a reply back (026 rule 24). The route
+    answers `{pending: true}`. A round with no new finding creates no draft.
+    - GitHub: each inline
       comment joins that review as a new thread,
       `addPullRequestReviewThread`, naming its id rather than creating one
-      of its own. The body goes first so that a body GitHub refuses ends
-      the round with nothing held: threads added first would stay in the
-      drafts unrecorded, and a retry would add them again. No event is
-      ever set, so the review stays pending.
+      of its own. No event is ever set, so the review stays pending.
     - GitLab: each inline comment is a draft note of its own,
       `POST .../draft_notes`, with the same position `submit_review`
-      gives a published discussion; one more draft note, tied to no line,
-      carries the verdict and the summary. Nothing here publishes a note.
+      gives a published discussion. Nothing here publishes a note.
     The daemon marks every comment it held as the review's
     (`pull_request_comment_marks`, 026 rule 10) the same way a posted one
     is, so it answers and reads the same as a posted review's would once
@@ -296,22 +266,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     - GitLab: `PUT .../merge_requests/<n>/discussions/<id>` with
       `resolved=true`, through `glab api`.
     The conversation is no thread, and nothing resolves it.
-16b. A repository that supervises its posts (002 rule 13) holds a resolve
-    back too, unresolved, and the route answers `{pending: true, id}` in
-    place of the resolved comment, `id` the pending item's own forge id.
-    - GitHub: a line naming the thread, under a "Threads to resolve"
-      heading of the viewer's one pending review (026 rule 24), created
-      once rather than on every call; the heading always goes at the
-      body's end, after any text a reply or a verdict (rule 13a) put
-      there.
-    - GitLab: the viewer's own draft note of that discussion, where there
-      is one, takes `resolve_discussion: true`, `PUT
-      .../draft_notes/<id>`; with none, one is made first, `POST
-      .../draft_notes`, with a short body and `resolve_discussion: true`
-      set on it from the start.
-    The `resolve_thread` tool reads a `pending` answer the same way
-    `submit_review` does, and says the resolve waits in the user's forge
-    drafts rather than handing back the pending shape.
+16b. In a repository that supervises posts, the reviewer leaves a fixed
+    thread unresolved for the human author. It creates no reply, resolution
+    text, or draft.
 16c. The user asking for a change to a finding, a verdict or a resolve
     still pending under rule 13a or 16b is answered through
     `edit_pending_comment`, `delete_pending_comment` and
@@ -320,14 +277,27 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 
 ## Verdict and attention
 
-17. `pr-reviewer` asks for changes when a P0 finding exists, and comments
-    otherwise. P0 breaks behavior, data or security and must change before
-    the request lands; P1 is a defect or a missing proof that will bite; P2
-    is worth fixing. It writes the review body as the whole summary of the
-    review as it stands, with no file, no line, no trailer and nothing of
-    its work beyond the summary's one sentence of evidence, in order: a
-    title and a prose summary always, a table where it holds a row, and a
-    recommendation:
+17. `pr-reviewer` asks for changes when an active P0 or P1 finding exists,
+    where the forge permits it, and comments otherwise. P0 is a critical
+    risk. P1 is a proven defect, unmet requirement, or written repository-rule
+    violation. P2 is optional. It posts only new inline findings. It creates
+    no summary, status table, summary comment, or summary draft. It records
+    the reviewed revision and evidence that covers its current head.
+
+    Each new finding has a title, failure and fix. Where the fix replaces the commented line alone, a ```suggestion
+    block under the fix holds the new text of that one line, and a fix
+    across lines, across files, or one a test must prove stays prose. On a
+    later round it settles each thread it opened before it hunts, reading
+    the author's reply: where the defect is actually gone at the head it
+    resolves silently outside supervised mode; where the last reply claims a fix (`Fixed in <sha>: ...`) and the defect survives, it
+    gets one reply, `Still there: <why>.`, never posted twice in the same
+    thread; any other answered reply that leaves the defect in place —
+    `Not changed: ...` or any other — gets nothing back, and its row
+    turns `declined`, left open for the user; a thread nobody has
+    answered gets nothing; it waits.
+
+<!-- historical summary contract follows; it no longer applies -->
+<!--
     - a title, "## Review summary";
     - a prose summary, not bullets, one paragraph of three to six
       sentences, naming the behavior the change touches, who sees it,
@@ -358,7 +328,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     thread; any other answered reply that leaves the defect in place —
     `Not changed: ...` or any other — gets nothing back, and its row
     turns `declined`, left open for the user; a thread nobody has
-    answered gets nothing; it waits.
+      answered gets nothing; it waits.
+-->
 18. A review posted, or a request reported ready, notifies nobody by
     itself: the approval and the merge stay the user's to give in their own
     time, and only the `pull_request` attention producer's own readiness

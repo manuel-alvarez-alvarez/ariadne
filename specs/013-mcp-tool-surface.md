@@ -110,9 +110,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      to the commits after that sha), `list_comments`, `get_comment`,
      `reply_comment`, `edit_pending_comment`, `delete_pending_comment`,
      `edit_pending_review_body` (rule 13), `submit_review` (one round: an
-     `event` of `request_changes` or `comment`, a `body` that is the
-     review's whole summary, written into its one summary comment, and the
-     round's new `comments` of `path`, `line`, `body` and a `priority` of
+     `event` of `request_changes` or `comment`, and the round's new inline
+     `comments` of `path`, `line`, `body` and a `priority` of
      `P0`, `P1` or `P2`), `resolve_thread` (one `comment_id` of a thread it
      opened, once a push fixed it) and `report_pull_request` (which takes
      `reviewed_sha` beside `ready` and `state`). Thirteen tools, and no

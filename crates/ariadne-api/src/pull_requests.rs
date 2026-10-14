@@ -86,6 +86,9 @@ pub struct PullRequestDto {
     /// session (029, 032), or the author of the task that opened it (005).
     #[serde(default)]
     pub session_id: Option<String>,
+    /// Whether this repository holds agent posts for human review.
+    #[serde(default)]
+    pub supervise_posts: bool,
 }
 
 /// One check that failed on a request's head.
@@ -263,8 +266,8 @@ pub enum SubmitReviewAnswerDto {
 pub struct SubmitReviewRequest {
     /// `request_changes` or `comment`. Every other event is refused.
     pub event: String,
-    /// The review's summary as it stands now: the daemon writes it into the
-    /// one summary comment the review keeps on the request.
+    /// Optional text from older clients. New reviews do not publish it.
+    #[serde(default)]
     pub body: String,
     #[serde(default)]
     pub comments: Vec<ReviewCommentRequest>,

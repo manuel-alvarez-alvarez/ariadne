@@ -8,7 +8,7 @@ use serde::Deserialize;
 use super::Gitlab;
 use super::comments::draft_note_id;
 use super::details::{note_id, project};
-use crate::forge::pulls::{CONVERSATION, ReviewDraft, split_slug};
+use crate::forge::pulls::{ReviewDraft, split_slug};
 use ariadne_store::NewPullRequestComment;
 
 /// What `glab api .../draft_notes` answers for one created draft note.
@@ -151,7 +151,7 @@ impl Gitlab {
         number: i64,
         review: &ReviewDraft,
         login: &str,
-        verdict: &str,
+        _verdict: &str,
     ) -> Result<Vec<NewPullRequestComment>, String> {
         let (host, owner, name) = split_slug(repo)?;
         let base = format!("projects/{}/merge_requests/{number}", project(owner, name));
@@ -216,95 +216,7 @@ impl Gitlab {
                 });
             }
         }
-        let output = self
-            .cli
-            .answer(&[
-                "api",
-                &drafts,
-                "--hostname",
-                host,
-                "--method",
-                "POST",
-                "-f",
-                &format!("note={verdict}"),
-            ])
-            .await?;
-        let created: CreatedDraftNote = serde_json::from_str(&output)
-            .map_err(|e| format!("cannot read the draft note GitLab stored: {e}"))?;
-        stored.push(NewPullRequestComment {
-            forge_id: draft_note_id(created.id),
-            thread_id: CONVERSATION.into(),
-            kind: "issue_comment".into(),
-            author_login: login.to_string(),
-            author_is_bot: false,
-            body: verdict.to_string(),
-            path: None,
-            line: None,
-            in_reply_to: None,
-            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-            resolved: false,
-            from_review: false,
-        });
         Ok(stored)
-    }
-
-    /// Write the one summary note a review keeps on merge request `number`
-    /// (029): `existing`, a `note-<id>` of an earlier round, is edited in
-    /// place with `PUT .../notes/<id>`; with none, or one GitLab answers 404
-    /// for, a note is posted. Any other failed edit is the error. Answers
-    /// its forge id and when it was written.
-    pub(crate) async fn write_summary(
-        &self,
-        repo: &str,
-        number: i64,
-        existing: Option<&str>,
-        body: &str,
-    ) -> Result<(String, String), String> {
-        let (host, owner, name) = split_slug(repo)?;
-        let notes = format!(
-            "projects/{}/merge_requests/{number}/notes",
-            project(owner, name)
-        );
-        let field = format!("body={body}");
-        let read = |output: &str| {
-            serde_json::from_str::<PostedNote>(output)
-                .map(|note| (note_id(note.id), note.created_at))
-                .map_err(|e| format!("cannot read the note GitLab stored: {e}"))
-        };
-        if let Some(id) = existing.and_then(|id| id.strip_prefix("note-")) {
-            let edited = self
-                .cli
-                .call(&[
-                    "api",
-                    &format!("{notes}/{id}"),
-                    "--hostname",
-                    host,
-                    "--method",
-                    "PUT",
-                    "-f",
-                    &field,
-                ])
-                .await;
-            match edited {
-                Ok(output) => return read(&output),
-                Err(refusal) if refusal.is_missing() => {}
-                Err(refusal) => return Err(refusal.to_string()),
-            }
-        }
-        let output = self
-            .cli
-            .answer(&[
-                "api",
-                &notes,
-                "--hostname",
-                host,
-                "--method",
-                "POST",
-                "-f",
-                &field,
-            ])
-            .await?;
-        read(&output)
     }
 
     /// The draft notes count GitLab keeps on request `number` (031): held
