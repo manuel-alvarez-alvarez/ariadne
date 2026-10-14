@@ -1,5 +1,5 @@
 family,files,mapped_sessions,request_history,reason
 claude,1377,372,supported,assistant requestId/message.id and per-message usage are retained
-codex,1534,232,supported_with_field_semantics_limit,token_usage_record has a native response_id and non-overlapping usage field; turn and thread totals overlap
+codex,1535,232,supported_with_field_semantics_limit,token_usage_record has a native response_id and non-overlapping usage field; turn and thread totals overlap
 ariadne_sqlite,1,623,unavailable,session_usage is cumulative by session/source; daemon events lack per-request token attribution
 opencode,1,0,unavailable,"token-bearing records exist, but no native Ariadne session join or validated deduplication rule is retained"

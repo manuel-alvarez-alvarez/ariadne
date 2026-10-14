@@ -20,7 +20,6 @@ source.close()
 PY
 python3 bench/token-usage/analyze.py \
   --database /tmp/ariadne-token-usage-snapshot.db \
-  --baseline-database /tmp/ariadne-token-usage-snapshot.XXXXXX.db \
   --output /tmp/ariadne-token-usage-report \
   --revision "$(git rev-parse HEAD)" \
   --history-dir /Users/malvarez/.ariadne \
@@ -64,6 +63,7 @@ Create a fresh SQLite backup as above, then run:
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 bench/token-usage/followup.py \
   --database /tmp/ariadne-token-usage-snapshot.db \
+  --baseline-database /tmp/ariadne-token-usage-snapshot.XXXXXX.db \
   --output /tmp/ariadne-token-usage-followup \
   --revision "$(git rev-parse HEAD)" \
   --snapshot-location /tmp/ariadne-token-usage-snapshot.db \

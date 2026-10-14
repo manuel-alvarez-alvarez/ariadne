@@ -134,10 +134,29 @@ def claude_requests(path: Path, internal: dict[str, dict[str, Any]], cutoff: str
             message_id = message.get("id")
             request_id = record.get("requestId")
             supplied_aliases = [value for value in (request_id, message_id) if isinstance(value, str)]
-            vendor_id = next((aliases[value] for value in supplied_aliases if value in aliases), message_id if isinstance(message_id, str) else request_id)
+            known_ids = {aliases[value] for value in supplied_aliases if value in aliases}
+            vendor_id = min(known_ids) if known_ids else (message_id if isinstance(message_id, str) else request_id)
             if not isinstance(vendor_id, str):
                 counts["assistant_without_request_id"] += 1
                 continue
+            # A later block can bridge requestId-only and message.id-only
+            # records.  Merge the connected component before usage selection.
+            for other_id in sorted(known_ids - {vendor_id}):
+                other = requests.pop(other_id)
+                prior = requests.get(vendor_id)
+                if prior is None:
+                    requests[vendor_id] = other
+                    prior = other
+                elif other["usage_record"] and not prior["usage_record"]:
+                    prior.update({field: other[field] for field in TOKENS})
+                    prior["usage_record"] = 1
+                    prior["usage_status"] = other["usage_status"]
+                elif other["usage_record"] and prior["usage_record"] and any(prior[field] != other[field] for field in TOKENS):
+                    prior["usage_status"] = "ambiguous_conflict"
+                    counts["conflicting_usage_records"] += 1
+                for alias, target in list(aliases.items()):
+                    if target == other_id:
+                        aliases[alias] = vendor_id
             raw = message.get("usage")
             if raw is not None and not isinstance(raw, dict):
                 counts["invalid_usage"] += 1

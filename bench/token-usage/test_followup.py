@@ -48,6 +48,14 @@ with tempfile.TemporaryDirectory() as directory:
     values, _, _ = followup.claude_requests(missing_then_present, {"internal": {"id": "session"}}, "2026-10-02T00:00:00Z")
     assert len(values) == 1 and values[0]["usage_status"] == "present" and values[0]["input_tokens"] == 16
 
+    bridge = root / "alias-bridge.jsonl"
+    first = {**record, "requestId": "r", "message": {**record["message"], "id": None}}
+    second = {**record, "requestId": None, "message": {**record["message"], "id": "m"}}
+    third = {**record, "requestId": "r", "message": {**record["message"], "id": "m"}}
+    bridge.write_text("\n".join(json.dumps(value) for value in (first, second, third)) + "\n")
+    values, _, _ = followup.claude_requests(bridge, {"internal": {"id": "session"}}, "2026-10-02T00:00:00Z")
+    assert len(values) == 1 and values[0]["input_tokens"] == 16
+
     resumed = root / "resumed.jsonl"
     resumed.write_text("\n".join(json.dumps(value) for value in (
         {"type": "token_usage_record", "timestamp": "2026-10-01T00:00:00Z", "payload": {"response_id": "same", "turn_id": "turn", "session_id": "one", "usage": {"input_tokens": 5, "cached_input_tokens": 1, "output_tokens": 1}}},
