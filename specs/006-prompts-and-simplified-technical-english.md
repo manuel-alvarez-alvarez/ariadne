@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-10-12
+updated: 2026-10-14
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -106,27 +106,37 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      `reviewer` seats alone, which say that Ariadne wakes the session with
      the request's news (026, 030) instead. No skill names a timer or a
      poll.
-6. A skill carries only the commit of the step it owns: `coding` commits the
+6. `coding` uses test-first development for a code behavior change: it runs
+   the new seam test failing before implementation. Prose changes and
+   behavior-preserving refactors use verification that fits their risk.
+   `coding` reports the committed revision, every check command and its
+   result in its completion handoff. `code-review` reads the handoff reasons,
+   accessible logs and CI evidence before deciding which checks to run. It
+   reuses a result only when its revision is the reviewed revision and its
+   command covers a required check. Missing, outdated or insufficient
+   evidence runs the required check. Evidence never replaces code inspection,
+   acceptance review or repository-rule enforcement.
+7. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
    amends nothing, since the merge column squashes. `refactoring` commits
    the moves it made, and `pr-babysit` never amends a pushed request. No
    skill divides a task into slices or small commits.
-7. The lifecycle briefings are Ariadne's own constants, read from the code on
+8. The lifecycle briefings are Ariadne's own constants, read from the code on
    every launch and every resume. No route reads or writes one, and no row
    holds one. Because nothing is copied into the database, rewording a default
    reaches every session started after it. The notice an orchestrator gets
    when the scheduler moved an exhausted agent to another model (021) is one
    of those constants too.
-8. A briefing is rendered by substituting `{name}` tokens. Rendering is
+9. A briefing is rendered by substituting `{name}` tokens. Rendering is
    lenient by construction: an unknown token, an unclosed brace and an empty
    template all render to something, and none of them fails a spawn.
-9. Each kind declares the placeholders its builder fills in, and a default
+10. Each kind declares the placeholders its builder fills in, and a default
    naming one outside its list fails the suite. Nothing hand-written reaches
    an agent any more — every text is the code's — so the check runs over the
    defaults rather than at a save. The kinds are the orchestrator's briefing,
    resume and attention, `IncomingMessage`, `StepBriefing`, `StepReturn` and
    `AgentResume` (`ariadne_core::PromptKind`).
-10. Default texts, shipped skills, workflow documents, session rules and tool
+11. Default texts, shipped skills, workflow documents, session rules and tool
     descriptions use ASD-STE100 Simplified Technical English: one instruction
     to a sentence, the imperative for an instruction, the active voice, at
     most 20 words a sentence (`ste::MAX_WORDS`), one meaning per word, a list
@@ -134,23 +144,23 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     skill with each wrapped sentence joined first — and a
     list of banned words (`utilise`, `prior to`, `in order to`, `ensure`,
     `should`, `may`).
-11. STE binds what the agents write too — turn text and visible reasoning,
+12. STE binds what the agents write too — turn text and visible reasoning,
     task titles and descriptions, step and task reasons, commits, and pull
     request text — and that rule lives in the session rules, where no edit
     of a skill can remove it.
-12. Every default text is capped in size, per text and in total, and the caps
+13. Every default text is capped in size, per text and in total, and the caps
     come down to what a rewrite fits in. Moving a cap is a decision argued in
     the test's own documentation, never a way round a failing assertion. The
     shipped skill documents are capped on their own scale, since a skill is
     read once and on purpose rather than carried by every turn.
-13. The handoff is a text built from a session's stored events for a
+14. The handoff is a text built from a session's stored events for a
     session switched to another coding agent (021): no ACP agent can resume
     another's conversation, so the new agent gets this instead, as its
     history. `handoff_text` (`crates/ariadne-daemon/src/agents/handoff.rs`)
     folds the events the same way the console does (008), and opens the text
     with one line that names it as the history of the session the agent
     continues and tells it to go on from where that history ends.
-14. One entry follows per kept event, oldest first, each under its own
+15. One entry follows per kept event, oldest first, each under its own
     marker: a `user_prompt_submit` whole under `user` where its source is
     `console`, and folded to its first six lines with a count of the rest
     under `daemon` where its source is `daemon`; an `agent_message` whole
@@ -163,10 +173,10 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     `permission.replied` as one line, the head of the call and the option
     chosen; and a `session.error` as one line, its message.
     `agent_thought`, `stop`, `session_start` and `session_end` are left out.
-15. Every entry is fenced in a character reserved to the fence alone, and
+16. Every entry is fenced in a character reserved to the fence alone, and
     stripped from the entry's own text first, so nothing a tool's output or
     a diff carries can forge the fence and close the block early.
-16. The text is kept under a budget of characters by entry priority, then
+17. The text is kept under a budget of characters by entry priority, then
     recency for ties, and an entry is never cut in
     the middle. A line in the dropped entries' place counts how many there
     were. A budget that fits every entry writes no such line.
@@ -209,10 +219,15 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 - Every shipped skill holds to the STE limit with each wrapped sentence read
   whole, and a closing quote ends with its sentence
   (`defaults.rs::the_ste_rules_are_read_off_a_text_line_by_line`).
-- The develop and review skills run the checks of what changed, and no
-  shipped skill names a whole suite
+- `coding` uses a failing seam test before each code behavior change. Prose
+  changes and behavior-preserving refactors use appropriate verification.
+  Its completion handoff identifies the checked revision, each command and
+  result. `code-review` reuses only matching evidence and runs missing,
+  outdated or insufficient required checks. Evidence does not replace its
+  code inspection, acceptance review or repository-rule enforcement
   (`defaults.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`,
-  `::the_review_skill_starts_its_checks_before_the_read_and_ends_on_a_step_call`).
+  `::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`).
+  No shipped skill names a whole suite.
   The merge skill pushes before it fast-forwards, with a squash onto the
   merge base and a guard before the push
   (`::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
