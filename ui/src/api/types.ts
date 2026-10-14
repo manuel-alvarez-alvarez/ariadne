@@ -23,6 +23,8 @@ export type UpdateRepositoryRequest = Schemas["UpdateRepositoryRequest"]
 export type ForgeDto = Schemas["ForgeDto"]
 export type ForgeTunnelDto = Schemas["ForgeTunnelDto"]
 export type SetTunnelRequest = Schemas["SetTunnelRequest"]
+export type ForgeDetectionDto = Schemas["ForgeDetectionDto"]
+export type DetectForgeRequest = Schemas["DetectForgeRequest"]
 export type PermissionMode = Schemas["PermissionMode"]
 
 export type TaskDto = Schemas["TaskDto"]

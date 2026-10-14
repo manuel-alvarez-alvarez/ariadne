@@ -169,13 +169,13 @@ pub(super) async fn delete(
 
 /// Whatever git says about a checkout the caller named is a bad request:
 /// they gave the path, and the answer is about the path.
-fn bad(e: impl std::fmt::Display) -> ApiError {
+pub(super) fn bad(e: impl std::fmt::Display) -> ApiError {
     ApiError::bad_request(e.to_string())
 }
 
 /// An absolute path, the first of the checks goal creation makes before it
 /// writes a repo down.
-fn repo_path(raw: &str) -> Result<PathBuf, ApiError> {
+pub(super) fn repo_path(raw: &str) -> Result<PathBuf, ApiError> {
     let path = PathBuf::from(raw);
     if !path.is_absolute() {
         return Err(ApiError::bad_request(format!(

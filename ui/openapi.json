@@ -333,6 +333,47 @@
         }
       }
     },
+    "/v1/forge/detect": {
+      "post": {
+        "tags": [
+          "repositories"
+        ],
+        "summary": "Detect the forge a checkout's remote is on, the same way registration\ndoes. Null for a checkout with no GitHub or GitLab remote.",
+        "operationId": "detect",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DetectForgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ForgeDetectionDto"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "not an absolute path, or not a git work tree"
+          }
+        }
+      }
+    },
     "/v1/forge/tunnel": {
       "get": {
         "tags": [
@@ -5292,7 +5333,7 @@
               "boolean",
               "null"
             ],
-            "description": "Open every pull request this repository's agents post as a draft for\na person's approval. Omit for `true`."
+            "description": "Put agent replies, reviews and resolves in your pending GitHub review\nor GitLab draft notes, and open pull requests as drafts. Omit for\n`true`."
           }
         },
         "additionalProperties": false
@@ -5440,6 +5481,21 @@
             "type": "string"
           }
         }
+      },
+      "DetectForgeRequest": {
+        "type": "object",
+        "description": "`POST /v1/forge/detect`: the checkout to probe.",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute path of the checkout to probe.",
+            "example": "/home/me/dev/ariadne"
+          }
+        },
+        "additionalProperties": false
       },
       "Device": {
         "type": "string",
@@ -6073,6 +6129,37 @@
           },
           "flavour": {
             "$ref": "#/components/schemas/Flavour"
+          }
+        }
+      },
+      "ForgeDetectionDto": {
+        "type": "object",
+        "description": "What `POST /v1/forge/detect` answers: the forge a checkout's remote\nnames, read the same way registration reads it. Null for a checkout with\nno usable GitHub or GitLab remote.",
+        "required": [
+          "kind",
+          "host",
+          "owner",
+          "name",
+          "remote"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "Lower-cased, like `owner` and `name`.",
+            "example": "github.com"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ForgeKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "remote": {
+            "type": "string",
+            "description": "The remote it was read off, `origin` where there is one."
           }
         }
       },
@@ -7671,7 +7758,7 @@
           },
           "supervise_posts": {
             "type": "boolean",
-            "description": "Whether this repository's agents hold what they post to the forge for\na person's approval: every pull request opened as a draft today, and\na later release holding replies, reviews and resolves the same way."
+            "description": "Put agent replies, reviews and resolves in your pending GitHub review\nor GitLab draft notes, and open pull requests as drafts."
           },
           "updated_at": {
             "type": "string"
@@ -9113,7 +9200,7 @@
               "boolean",
               "null"
             ],
-            "description": "Absent = unchanged."
+            "description": "Put agent replies, reviews and resolves in your pending GitHub review\nor GitLab draft notes, and open pull requests as drafts. Absent =\nunchanged."
           }
         },
         "additionalProperties": false

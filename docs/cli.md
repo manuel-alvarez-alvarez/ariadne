@@ -426,12 +426,13 @@ permission requests are answered belongs to the repository, not the task:
 ariadne repo update <repo-id> --permission-mode ask
 ```
 
-A repository's `supervise_posts` flag is on by default: it opens every pull
-request a task's `pr` column requests on the forge as a draft, for your
-approval before it is ready to merge. See [Repositories, branches and
+A repository's `supervise_posts` flag is on by default: it puts agent
+replies, reviews and resolves in your pending GitHub review or GitLab draft
+notes, and opens pull requests as drafts. See [Repositories, branches and
 worktrees](../specs/002-repositories-branches-and-worktrees.md), rule 13, for
-the rule, including what a later release holds the same way. Turn it off
-with:
+the rule. The desktop app and `repo inspect` show it only once the
+repository's forge integration is on — see [Forge
+integration](../specs/025-forge-integration.md), rule 16. Turn it off with:
 
 ```sh
 ariadne repo update <repo-id> --supervise-posts off

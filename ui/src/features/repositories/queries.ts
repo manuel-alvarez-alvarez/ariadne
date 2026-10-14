@@ -17,6 +17,7 @@ import {
   api,
   type CreateRepositoryRequest,
   cacheRow,
+  type DetectForgeRequest,
   dropRow,
   qk,
   type SetTunnelRequest,
@@ -79,5 +80,16 @@ export function useSetTunnel() {
   return useMutation({
     mutationFn: (body: SetTunnelRequest) => unwrap(api().PUT("/v1/forge/tunnel", { body })),
     onSuccess: (tunnel) => queryClient.setQueryData(qk.forge.tunnel(), tunnel),
+  })
+}
+
+/**
+ * `POST /v1/forge/detect` — the forge a checkout's remote is on, read ahead
+ * of registering it. A one-shot probe, not a cached read: no query key backs
+ * it.
+ */
+export function useDetectForge() {
+  return useMutation({
+    mutationFn: (body: DetectForgeRequest) => unwrap(api().POST("/v1/forge/detect", { body })),
   })
 }

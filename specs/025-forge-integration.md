@@ -1,7 +1,7 @@
 ---
 id: forge-integration
 status: current
-updated: 2026-10-11
+updated: 2026-10-14
 areas: [core, api, store, daemon, cli, ui]
 commits: []
 tests:
@@ -99,30 +99,49 @@ the desktop app as a whole (015).
     `ForgeKind`, the `Remote` parser, the detection and
     `ForgeClient::for_repository`; `github/` and `gitlab/` each hold one
     forge's CLI calls.
+12. `POST /v1/forge/detect` reads a checkout's remote the same way
+    registration does, without registering or writing anything: `{path}` in,
+    a `ForgeDetectionDto` (`kind`, `host`, `owner`, `name`, `remote`) out, or
+    null where the checkout has no usable remote. `path` must be absolute and
+    an existing git work tree; either failure is refused with 400. This is
+    what the desktop create form probes ahead of registering, since nothing
+    is detected server-side before the daemon has opened the checkout for
+    real (rule 5).
 
 ## Command line
 
-12. `ariadne repo add` and `ariadne repo update` take `--forge on|off`
+13. `ariadne repo add` and `ariadne repo update` take `--forge on|off`
     (014). There is no `--review-model`, `--review-effort` or
     `--babysit-model`: every review's pin is asked for directly on its own
     request, never on the repository (029). No forge flag sends no `forge`.
-13. `ariadne repo ls` has a FORGE column: `<kind> <owner>/<name> on|off`, for
+14. `ariadne repo ls` has a FORGE column: `<kind> <owner>/<name> on|off`, for
     example `github acme/widgets on`, or `-`. `ariadne repo inspect` prints
     the forge block: `forge`, `forge remote` (the remote and the host) and
     `forge login`.
 
 ## Desktop
 
-14. The repositories table has a Forge column over two lines: the kind,
+15. The repositories table has a Forge column over two lines: the kind,
     with `· off` where the integration is disabled, then `owner/name`; or
     `none` (015).
-15. The repository dialog shows one switch, "GitHub integration" or "GitLab
-    integration", while it edits a repository with a forge row, described by
-    the detected `host/owner/name`, the CLI it goes through, and the login.
-    A repository with no row, and registration, show no switch: the daemon
-    detects nothing before it opens the checkout. The dialog sends
-    `forge.enabled` only when the switch moved, and a refusal to enable lands
-    on the switch in the daemon's words.
+16. The repository dialog shows one switch, "GitHub integration" or "GitLab
+    integration": while editing, for a repository with a forge row, described
+    by the detected `host/owner/name`, the CLI it goes through, and the
+    login; while registering, for a path rule 12's probe finds one for,
+    fired off the path field losing focus and off typing settling there,
+    off by default since nothing is enabled yet. A repository with no row, a
+    path with no remote on either forge, and a path not yet probed show no
+    switch. The dialog sends `forge.enabled` on an edit only when the switch
+    moved, and on a registration only when the probe found a forge; a
+    refusal to enable lands on the switch in the daemon's words, either way.
+    A later probe that answers differently than the one last settled — a
+    changed path, or one that turned relative or unreadable — resets a
+    switch the person left on; one that only repeats the same answer, the
+    way the switch's own click blurs the path field a second time, leaves
+    it exactly as they just set it. "Supervise posts" ([002](002-repositories-branches-and-worktrees.md) rule
+    13) sits directly below the switch in both dialogs and shows only while
+    it is on; turning the switch off hides the field at once without losing
+    what it held, and turning it back on shows that same value again.
 
 ## Acceptance criteria
 
@@ -171,6 +190,30 @@ the desktop app as a whole (015).
 - The repositories table shows the Forge column
   (`ui/src/features/repositories/repositories-page.test.tsx::shows the forge
   each remote is on over two lines, and whether it is enabled`).
+- `POST /v1/forge/detect` answers a detected forge without registering
+  anything, null for a checkout with no usable remote, and 400 for a
+  relative path or one that is not a git work tree
+  (`forge_integration.rs::detect_reads_the_forge_without_registering`,
+  `::detect_answers_null_for_a_checkout_with_no_forge_remote`,
+  `::detect_refuses_a_relative_or_non_git_path`).
+- The create form shows the switch, off, once a probed path answers with a
+  forge, shows none for a path with no forge, and sends `forge.enabled` on
+  register only once the switch was turned on
+  (`ui/src/features/repositories/repository-form-dialog.test.tsx::shows the
+  forge switch, off, once a path with a forge is entered`, `::shows no forge
+  switch for a path with no forge`, `::sends forge enabled in the create
+  request once the switch is turned on`). A re-probed path that answers
+  differently, or turns relative, resets a switch left on rather than
+  keeping it; a re-probed path that answers the same — the blur a click on
+  the switch itself fires — leaves it exactly as just set
+  (`::resets the switch and hides supervise posts once a re-probed path has
+  no forge`, `::resets the switch once the path turns relative after a
+  forge was detected`, `::keeps the switch on through a redundant probe of
+  the same path, and sends it enabled`).
+- Supervise posts sits below the switch and only while it is on, in both
+  dialogs, and keeps its value across the switch going off and back on
+  (`::saves the supervise posts switch`, `::hides supervise posts under an
+  off forge switch, keeping its value`).
 
 ## Sources
 
@@ -178,6 +221,7 @@ the desktop app as a whole (015).
 `crates/ariadne-store/migrations/0004_drop_forge_review_pin.sql`,
 `crates/ariadne-store/src/forge.rs`, `crates/ariadne-daemon/src/forge/`,
 `crates/ariadne-daemon/src/http/repositories.rs`,
+`crates/ariadne-daemon/src/http/forge.rs`,
 `crates/ariadne-daemon/tests/it/common/forge.rs`,
 `crates/ariadne-cli/src/commands/repo.rs`,
 `ui/src/features/repositories/repository-form-dialog.tsx`,

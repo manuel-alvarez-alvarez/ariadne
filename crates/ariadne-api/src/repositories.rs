@@ -21,9 +21,8 @@ pub struct RepositoryDto {
     /// How the ACP permission requests of every session in this checkout are
     /// answered.
     pub permission_mode: PermissionMode,
-    /// Whether this repository's agents hold what they post to the forge for
-    /// a person's approval: every pull request opened as a draft today, and
-    /// a later release holding replies, reviews and resolves the same way.
+    /// Put agent replies, reviews and resolves in your pending GitHub review
+    /// or GitLab draft notes, and open pull requests as drafts.
     pub supervise_posts: bool,
     /// The forge its remote is on, or null where the checkout has no usable
     /// remote (025).
@@ -100,6 +99,30 @@ pub struct ForgeDto {
     pub login: Option<String>,
 }
 
+/// `POST /v1/forge/detect`: the checkout to probe.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DetectForgeRequest {
+    /// Absolute path of the checkout to probe.
+    #[schema(example = "/home/me/dev/ariadne")]
+    pub path: String,
+}
+
+/// What `POST /v1/forge/detect` answers: the forge a checkout's remote
+/// names, read the same way registration reads it. Null for a checkout with
+/// no usable GitHub or GitLab remote.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ForgeDetectionDto {
+    pub kind: ForgeKind,
+    /// Lower-cased, like `owner` and `name`.
+    #[schema(example = "github.com")]
+    pub host: String,
+    pub owner: String,
+    pub name: String,
+    /// The remote it was read off, `origin` where there is one.
+    pub remote: String,
+}
+
 /// A change to the forge integration; absent fields stay unchanged.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -124,8 +147,9 @@ pub struct CreateRepositoryRequest {
     /// Omit for `auto`.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
-    /// Open every pull request this repository's agents post as a draft for
-    /// a person's approval. Omit for `true`.
+    /// Put agent replies, reviews and resolves in your pending GitHub review
+    /// or GitLab draft notes, and open pull requests as drafts. Omit for
+    /// `true`.
     #[serde(default)]
     pub supervise_posts: Option<bool>,
     /// The forge integration to set up once the remote is detected.
@@ -147,7 +171,9 @@ pub struct UpdateRepositoryRequest {
     /// Absent = unchanged.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
-    /// Absent = unchanged.
+    /// Put agent replies, reviews and resolves in your pending GitHub review
+    /// or GitLab draft notes, and open pull requests as drafts. Absent =
+    /// unchanged.
     #[serde(default)]
     pub supervise_posts: Option<bool>,
     /// Absent = unchanged.

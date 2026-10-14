@@ -76,8 +76,8 @@ pub(crate) enum RepoCommand {
         /// approvals, ai lets the AI permission model decide (default: auto)
         #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
         permission_mode: Option<PermissionMode>,
-        /// Hold what this repository's agents post to the forge for your
-        /// approval, every pull request opened as a draft included
+        /// Put agent replies, reviews and resolves in your pending GitHub
+        /// review or GitLab draft notes, and open pull requests as drafts
         /// (default: on)
         #[arg(long = "supervise-posts", value_enum)]
         supervise_posts: Option<Switch>,
@@ -114,8 +114,8 @@ pub(crate) enum RepoCommand {
         /// New permission mode: auto, ask, learn, or ai (the AI permission model decides)
         #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
         permission_mode: Option<PermissionMode>,
-        /// Hold what this repository's agents post to the forge for your
-        /// approval, every pull request opened as a draft included
+        /// Put agent replies, reviews and resolves in your pending GitHub
+        /// review or GitLab draft notes, and open pull requests as drafts
         #[arg(long = "supervise-posts", value_enum)]
         supervise_posts: Option<Switch>,
         /// New default workflow for the goals created in it from now on
@@ -278,7 +278,6 @@ fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'st
         ("path", r.path.clone().into()),
         ("branch", r.base_branch.clone().into()),
         ("permissions", r.permission_mode.as_str().into()),
-        ("supervise posts", switch_label(r.supervise_posts).into()),
         ("default workflow", r.default_workflow.clone().into()),
         (
             "description",
@@ -287,60 +286,68 @@ fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'st
     ];
     match &r.forge {
         None => rows.push(("forge", "-".into())),
-        Some(forge) => rows.extend([
-            ("forge", forge_label(forge).into()),
-            ("webhook state", forge.webhook.state.clone().into()),
-            (
-                "webhook URL",
-                forge
-                    .webhook
-                    .url
-                    .clone()
-                    .unwrap_or_else(|| "-".into())
-                    .into(),
-            ),
-            (
-                "webhook error",
-                forge
-                    .webhook
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| "-".into())
-                    .into(),
-            ),
-            (
-                "webhook last delivery",
-                forge
-                    .webhook
-                    .last_delivery_at
-                    .clone()
-                    .unwrap_or_else(|| "-".into())
-                    .into(),
-            ),
-            (
-                "fetch error",
-                forge
-                    .webhook
-                    .fetch_error
-                    .clone()
-                    .unwrap_or_else(|| "-".into())
-                    .into(),
-            ),
-            (
-                "tunnel",
-                tunnel
-                    .map_or_else(|| "-".into(), super::forge::label)
-                    .into(),
-            ),
-            (
-                "forge remote",
-                format!("{} ({})", forge.remote, forge.host).into(),
-            ),
-            (
-                "forge login",
-                forge.login.clone().unwrap_or_else(|| "-".into()).into(),
-            ),
-        ]),
+        Some(forge) => {
+            rows.push(("forge", forge_label(forge).into()));
+            // `supervise posts` names what Ariadne holds back from the
+            // forge, so it says nothing where there is no forge integration
+            // live to hold it from.
+            if forge.enabled {
+                rows.push(("supervise posts", switch_label(r.supervise_posts).into()));
+            }
+            rows.extend([
+                ("webhook state", forge.webhook.state.clone().into()),
+                (
+                    "webhook URL",
+                    forge
+                        .webhook
+                        .url
+                        .clone()
+                        .unwrap_or_else(|| "-".into())
+                        .into(),
+                ),
+                (
+                    "webhook error",
+                    forge
+                        .webhook
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "-".into())
+                        .into(),
+                ),
+                (
+                    "webhook last delivery",
+                    forge
+                        .webhook
+                        .last_delivery_at
+                        .clone()
+                        .unwrap_or_else(|| "-".into())
+                        .into(),
+                ),
+                (
+                    "fetch error",
+                    forge
+                        .webhook
+                        .fetch_error
+                        .clone()
+                        .unwrap_or_else(|| "-".into())
+                        .into(),
+                ),
+                (
+                    "tunnel",
+                    tunnel
+                        .map_or_else(|| "-".into(), super::forge::label)
+                        .into(),
+                ),
+                (
+                    "forge remote",
+                    format!("{} ({})", forge.remote, forge.host).into(),
+                ),
+                (
+                    "forge login",
+                    forge.login.clone().unwrap_or_else(|| "-".into()).into(),
+                ),
+            ]);
+        }
     }
     rows.extend([
         ("created", Kv::meta(moment(&r.created_at))),
@@ -493,7 +500,10 @@ mod tests {
         };
         assert_eq!(supervise_posts, Some(Switch::On));
 
-        let supervised = fixtures::repository("01A", "/r", "main");
+        let supervised = RepositoryDto {
+            forge: Some(forge(true, Some("octocat"))),
+            ..fixtures::repository("01A", "/r", "main")
+        };
         assert!(
             crate::output::kv_block(
                 &inspect_rows(&supervised, None),
@@ -503,6 +513,7 @@ mod tests {
         );
         let unsupervised = RepositoryDto {
             supervise_posts: false,
+            forge: Some(forge(true, Some("octocat"))),
             ..fixtures::repository("01A", "/r", "main")
         };
         let block = crate::output::kv_block(
@@ -514,6 +525,30 @@ mod tests {
                 .lines()
                 .any(|l| l.starts_with("supervise posts") && l.trim_end().ends_with("off")),
             "{block}"
+        );
+
+        // The row names what the forge integration holds back, so it says
+        // nothing where there is no such integration live.
+        let no_forge = fixtures::repository("01A", "/r", "main");
+        assert!(
+            !crate::output::kv_block(
+                &inspect_rows(&no_forge, None),
+                &crate::output::View::plain()
+            )
+            .contains("supervise posts"),
+            "no forge row to hold posts from"
+        );
+        let detected_not_enabled = RepositoryDto {
+            forge: Some(forge(false, None)),
+            ..fixtures::repository("01A", "/r", "main")
+        };
+        assert!(
+            !crate::output::kv_block(
+                &inspect_rows(&detected_not_enabled, None),
+                &crate::output::View::plain()
+            )
+            .contains("supervise posts"),
+            "a detected but disabled forge holds nothing back either"
         );
     }
 
