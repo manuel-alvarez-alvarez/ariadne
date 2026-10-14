@@ -367,6 +367,12 @@ duplicate copies. Short continuations lack delivery outcomes, so the audit
 does not classify them as waste. Large tool payloads remain diagnostic signals:
 the ledger does not say which later prompt included a payload.
 
+Manual content inspection covers the largest correction-cycle session and the
+median agent and reviewer samples: 7.5% of canonical input plus output.
+`trace-findings.csv` separates the two timeout causes, the orphan-process
+correction, and PR update news. Those examples show necessary review work and
+unresolved delivery value; they do not establish avoidable work.
+
 The repository already limits several suspected sources: skills are indexed as
 one line and opened only when needed (`agents/prompts.rs`), handoff rendering
 folds entries and applies a character budget (`agents/handoff.rs`), and
@@ -756,6 +762,15 @@ def main() -> int:
     for session_id, (finding, refs, measured, status) in reviewed.items():
         if any(trace["session_id"] == session_id for trace in selected):
             finding_rows.append({"session_id": session_id, "finding": finding, "event_references": refs, "measured": measured, "inference": "Inspected sequence and retained task transitions; raw bodies remain outside Git.", "benefit_status": status})
+    details = [
+        ("01m4kf30z3vs1n1y73d7t3bwnd", "review_timeout_stats", "01m4kj3kjn5cnbn79kct7716pj", "Review reports a whole-workspace timeout in stats_attention. The next revision needed a bounded-load investigation, so this rerun is a test-reliability correction.", "necessary investigation; no token saving inferred"),
+        ("01m4kf30z3vs1n1y73d7t3bwnd", "review_timeout_scheduler", "01m4kkyc62c2mkx77rmsmxhaqe", "Review reports a separate scheduler_attention timeout after the prior correction. It is a different failing check and retry cause.", "necessary investigation; no token saving inferred"),
+        ("01m4kf30z3vs1n1y73d7t3bwnd", "review_orphan_process", "01m4m0hz7j4gcqq3qxvzbfzdqv", "Review found an orphaned sleep process and requested a concrete test-harness fix. This connects broad test work to process-cleanup behavior in AGENTS.md.", "necessary quality fix; do not suppress the check"),
+        ("01m4n557dgkfpxpqxad9jnphht", "ordinary_pr_update", "01m4n56t7m29hwrjk6w14pkjf4", "PR-column delivery reports behind-main and pending-check news. The retained task finished, but the event record cannot prove whether all PR wake-ups changed the resulting work.", "unresolved delivery value; measure before coalescing"),
+    ]
+    for session_id, finding, refs, measured, status in details:
+        if any(trace["session_id"] == session_id for trace in selected):
+            finding_rows.append({"session_id": session_id, "finding": finding, "event_references": refs, "measured": measured, "inference": "Manual event-content inspection; raw text remains outside Git.", "benefit_status": status})
     write_csv(out / "trace-findings.csv", finding_rows, ["session_id", "finding", "event_references", "measured", "inference", "benefit_status"])
     (out / "snapshot.json").write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (out / "reconciliation.json").write_text(json.dumps(reconciliation, indent=2, sort_keys=True) + "\n", encoding="utf-8")

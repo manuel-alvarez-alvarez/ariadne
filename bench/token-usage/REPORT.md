@@ -137,6 +137,12 @@ duplicate copies. Short continuations lack delivery outcomes, so the audit
 does not classify them as waste. Large tool payloads remain diagnostic signals:
 the ledger does not say which later prompt included a payload.
 
+Manual content inspection covers the largest correction-cycle session and the
+median agent and reviewer samples: 7.5% of canonical input plus output.
+`trace-findings.csv` separates the two timeout causes, the orphan-process
+correction, and PR update news. Those examples show necessary review work and
+unresolved delivery value; they do not establish avoidable work.
+
 The repository already limits several suspected sources: skills are indexed as
 one line and opened only when needed (`agents/prompts.rs`), handoff rendering
 folds entries and applies a character budget (`agents/handoff.rs`), and
