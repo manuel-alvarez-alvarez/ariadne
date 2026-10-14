@@ -8,7 +8,7 @@ Saved Claude transcripts establish per-request usage for mapped sessions and nat
 
 ## Reproducible evidence
 
-Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15` at `/tmp/token-followup.db`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Source revision: `12e120714ec73db2c5191e4ae4eef8be454d818c`. Analyzer SHA-256: `c177f9d664328c6aa2c095ae5b5d17e1ea6aa018056162c05e28e592519a49a3`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
+Cutoff: `2026-10-14T22:17:05.521Z`. Source: `SQLite backup created 2026-10-15` at `/tmp/token-followup.db`. Source SHA-256: `adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`. Source revision: `1d841cb6c71540b2c9ded6fb6627acf61272fe0d`. Analyzer SHA-256: `c177f9d664328c6aa2c095ae5b5d17e1ea6aa018056162c05e28e592519a49a3`. `followup-transcript-manifest.csv` has a per-source retained-content hash; it does not hash records after the cutoff.
 
 The follow-up found 48,769 unique request records, of which 48,769 map through native session IDs. It discarded 81,531 repeated Claude records and excluded 0 conflicting duplicate native IDs. The CSV artifacts retain no raw transcript text.
 
