@@ -216,24 +216,15 @@ function Row({ item }: { item: AttentionItem }) {
 
   return (
     <li>
-      {/* A `drafts` item's own target has no panel of Ariadne's to open —
-          only the forge's — so it is a plain external link rather than the
-          router's `Link` (`ui/AGENTS.md`). */}
-      {"external" in target ? (
-        <a href={target.external} className={className}>
-          {content}
-        </a>
-      ) : (
-        <Link
-          to={target}
-          // Set exactly when the target is a task panel replacing an open
-          // goal's, rather than stacking on it (`target.replace`).
-          replace={target.replace}
-          className={className}
-        >
-          {content}
-        </Link>
-      )}
+      <Link
+        to={target}
+        // Set exactly when the target is a task panel replacing an open
+        // goal's, rather than stacking on it (`target.replace`).
+        replace={target.replace}
+        className={className}
+      >
+        {content}
+      </Link>
       {affectedLinks ? (
         <div className="flex flex-wrap gap-2 px-3 pb-2 pl-9 text-xs text-muted-foreground">
           <span>Open:</span>

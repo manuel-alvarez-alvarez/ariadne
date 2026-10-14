@@ -269,7 +269,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
             failed_checks: details.failed_checks,
             behind_base: details.behind_base,
             head_sha,
-            pending_drafts: details.pending_drafts,
+            has_pending_posts: details.has_pending_posts,
         },
     );
     publish_evidence_transition(state, &row, before, after);

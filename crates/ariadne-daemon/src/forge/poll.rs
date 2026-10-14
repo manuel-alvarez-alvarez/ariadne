@@ -684,7 +684,7 @@ async fn read_row(
                     failed_checks: details.failed_checks,
                     behind_base: details.behind_base,
                     head_sha,
-                    pending_drafts: details.pending_drafts,
+                    has_pending_posts: details.has_pending_posts,
                 },
             );
             Ok(())
@@ -777,16 +777,7 @@ fn pulls_moved(
         // transition a `pull_request` readiness item depends on (031).
         live.evidence_ok.hash(&mut hasher);
         if let Some(details) = &live.details {
-            (
-                details.behind_base,
-                details.failed_checks.len(),
-                // The viewer's own unsubmitted draft posts (031): a change
-                // to this alone can leave every other hashed field
-                // unchanged, and a `drafts` attention item appearing or
-                // clearing is exactly such a transition.
-                details.pending_drafts,
-            )
-                .hash(&mut hasher);
+            (details.behind_base, details.failed_checks.len()).hash(&mut hasher);
             for comment in &details.comments {
                 (&comment.forge_id, &comment.body, comment.resolved).hash(&mut hasher);
             }

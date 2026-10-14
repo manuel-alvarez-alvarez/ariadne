@@ -49,15 +49,6 @@ struct PostedNote {
     created_at: String,
 }
 
-/// One entry of `GET .../draft_notes` (031): its own id is all
-/// [`Gitlab::draft_posts`] needs, since that call only ever answers the
-/// count.
-#[derive(Deserialize)]
-struct DraftNote {
-    #[allow(dead_code)]
-    id: i64,
-}
-
 impl Gitlab {
     /// Post `review`: one discussion per inline comment, placed on the
     /// merge request's diff. Answers what it posted.
@@ -306,21 +297,6 @@ impl Gitlab {
             .await?;
         read(&output)
     }
-
-    /// The draft notes count GitLab keeps on request `number` (031): held
-    /// back where `supervise_posts` is on so a person finishes and
-    /// publishes them themselves, directly on the forge. `GET
-    /// .../draft_notes` answers only the signed-in viewer's own, so nothing
-    /// here filters by login the way GitHub's pending-review read must.
-    pub(crate) async fn draft_posts(&self, repo: &str, number: i64) -> Result<i64, String> {
-        let (host, owner, name) = split_slug(repo)?;
-        let path = format!(
-            "projects/{}/merge_requests/{number}/draft_notes",
-            project(owner, name)
-        );
-        let notes: Vec<DraftNote> = self.pages(host, &path).await?;
-        Ok(notes.len() as i64)
-    }
 }
 
 #[cfg(test)]
@@ -333,63 +309,6 @@ mod tests {
     use super::Gitlab;
     use crate::forge::Cli;
     use crate::forge::pulls::{DraftComment, ReviewDraft};
-
-    const DRAFT_NOTES_STUB: &str = r#"#!/usr/bin/env python3
-import sys
-sys.stdout.write('[{"id": 1}, {"id": 2}]')
-"#;
-
-    const DRAFT_NOTES_TWO_PAGES_STUB: &str = r#"#!/usr/bin/env python3
-import sys
-sys.stdout.write('[{"id": 1}, {"id": 2}][{"id": 3}]')
-"#;
-
-    fn fake_glab_draft_notes(dir: &std::path::Path) -> String {
-        fake_glab_with(dir, DRAFT_NOTES_STUB)
-    }
-
-    fn fake_glab_with(dir: &std::path::Path, script: &str) -> String {
-        let path = dir.join("glab");
-        std::fs::write(&path, script).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        path.display().to_string()
-    }
-
-    /// `draft_posts` reaches the forge through `glab api .../draft_notes`,
-    /// and answers the length of whatever it lists (031) — the whole round
-    /// trip, not only the count.
-    #[tokio::test]
-    async fn draft_posts_counts_the_draft_notes_glab_lists() {
-        let dir = tempfile::tempdir().unwrap();
-        let gitlab = Gitlab::new(Cli {
-            timeout: Duration::from_secs(5),
-            ..Cli::new(Some(&fake_glab_draft_notes(dir.path())), "glab")
-        });
-        let count = gitlab
-            .draft_posts("gitlab.com/group/sub/widgets", 7)
-            .await
-            .unwrap();
-        assert_eq!(count, 2);
-    }
-
-    /// `draft_notes` paginates (031): a second page of draft notes must
-    /// still count, not only the first `glab api --paginate` writes.
-    #[tokio::test]
-    async fn draft_posts_counts_every_page_glab_lists() {
-        let dir = tempfile::tempdir().unwrap();
-        let gitlab = Gitlab::new(Cli {
-            timeout: Duration::from_secs(5),
-            ..Cli::new(
-                Some(&fake_glab_with(dir.path(), DRAFT_NOTES_TWO_PAGES_STUB)),
-                "glab",
-            )
-        });
-        let count = gitlab
-            .draft_posts("gitlab.com/group/sub/widgets", 7)
-            .await
-            .unwrap();
-        assert_eq!(count, 3);
-    }
 
     /// A `glab` stub that answers, in order, one scripted `stdout` per
     /// call, numbering each call's own arguments beside it.

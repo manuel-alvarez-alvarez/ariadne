@@ -64,11 +64,6 @@ pub enum AttentionProducer {
     /// request nobody is assigned to, or a request a babysitting task has
     /// confirmed ready to merge.
     PullRequest,
-    /// `crate::attention::drafts` (`ariadne-daemon`): a tracked request
-    /// whose repository holds agent posts for approval (`supervise_posts`),
-    /// where the viewer's own pending review or draft notes still wait,
-    /// unsubmitted, on the forge itself.
-    Drafts,
 }
 
 /// One entity an item's blocker affects.
@@ -94,10 +89,6 @@ pub enum AttentionTarget {
     PullRequest { pull_request_id: String },
     /// A settings section, named for the client's own routing.
     Settings { section: String },
-    /// The request's own page on the forge: where a client finishes and
-    /// submits a pending review or a draft note, which Ariadne has no
-    /// surface of its own for (`crate::attention::drafts`).
-    Forge { url: String },
 }
 
 /// One item on the Needs attention list.

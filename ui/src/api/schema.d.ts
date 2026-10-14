@@ -2049,7 +2049,7 @@ export interface components {
          *     to tell apart from recovery's.
          * @enum {string}
          */
-        AttentionProducer: "recovery" | "agent_request" | "pull_request" | "drafts";
+        AttentionProducer: "recovery" | "agent_request" | "pull_request";
         /**
          * @description Why a live agent session needs the user's attention.
          *
@@ -2132,10 +2132,6 @@ export interface components {
             /** @enum {string} */
             kind: "settings";
             section: string;
-        } | {
-            /** @enum {string} */
-            kind: "forge";
-            url: string;
         };
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {

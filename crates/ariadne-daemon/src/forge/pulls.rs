@@ -61,13 +61,15 @@ pub struct ForgeDetails {
     pub comments: Vec<NewPullRequestComment>,
     pub failed_checks: Vec<FailedCheck>,
     pub behind_base: bool,
-    /// The viewer's own unsubmitted posts on the request (031): `None`
-    /// where there is none at all — no pending review on GitHub, no draft
-    /// note on GitLab — and `Some` of its comment count otherwise, which
-    /// GitHub alone can leave at `Some(0)`: a pending review with a
-    /// verdict and no inline comment of its own is still a draft waiting
-    /// to be submitted, not nothing.
-    pub pending_drafts: Option<i64>,
+    /// Whether this same read still finds a pending review (GitHub) or a
+    /// draft note (GitLab) of the viewer's own: internal bookkeeping for
+    /// `forge::live::merge_fresh_details` alone, never shown to a user or
+    /// exposed as an attention item — the filter above already drops a
+    /// pending post from `comments` outright. Without this, a review's
+    /// own finding held in the pending set could never be told apart from
+    /// one a forge user genuinely deleted, since both are equally absent
+    /// from a fresh read while the finding stays unconfirmed.
+    pub has_pending_posts: bool,
 }
 
 /// One check that failed on a request's head, as `pull_requests.failed_checks`

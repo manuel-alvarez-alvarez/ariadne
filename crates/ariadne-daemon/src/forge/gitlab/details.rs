@@ -3,7 +3,6 @@
 //! in its latest pipeline, and whether its head is behind its target.
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use tracing::warn;
 
 use super::Gitlab;
 use crate::forge::pulls::{FailedCheck, ForgeDetails, split_slug};
@@ -112,9 +111,24 @@ impl Gitlab {
         serde_json::from_str(&output).map_err(|e| format!("cannot read `glab api {path}`: {e}"))
     }
 
-    /// `_login` is unread: GitLab's `draft_posts` answers only the signed-in
-    /// viewer's own draft notes (031), whoever that is, so there is nothing
-    /// here to filter by it the way GitHub's pending-review read must.
+    /// `_login` is unread: GitLab's drafts endpoints answer only the
+    /// signed-in viewer's own draft notes (031), whoever that is, so there
+    /// is nothing here to filter by it the way GitHub's pending-review
+    /// read must. Draft notes never enter `discussions` at all — GitLab
+    /// holds them apart until the viewer publishes them — so this detail
+    /// read leaves them out with no filter of its own to write, unlike the
+    /// one GitHub's pending review needs.
+    ///
+    /// `ForgeDetails::has_pending_posts` is always `false` here: telling
+    /// "a draft note is still open" from "there never was one" would cost
+    /// the one extra call (`GET .../draft_notes`) 026 rule 9 already
+    /// chose not to pay again just to find out. A review's own finding
+    /// held as a draft note gets only the one-poll grace
+    /// `merge_fresh_details` already gives any local addition, not the
+    /// indefinite one a still-open pending set gives GitHub's: a round
+    /// that spans more than one missed poll before the user publishes or
+    /// Ariadne's own tools touch it again may need to repost a P0 that
+    /// `open_p0` no longer finds.
     pub(crate) async fn details(
         &self,
         repo: &str,
@@ -132,21 +146,6 @@ impl Gitlab {
             self.failed_checks(host, owner, name, &base),
             self.object::<Diverged>(host, &diverged),
         )?;
-        // The viewer's own draft notes (031), read apart from the rest of
-        // this detail read: an older GitLab, or one a token cannot reach
-        // this endpoint on, must never fail the whole detail read over a
-        // feature this list is the only one that needs. `0` is "no draft
-        // note", not "unread" — GitLab's own note objects are each a draft
-        // in full, so there is no verdict-only review to leave at `Some(0)`
-        // the way GitHub's own pending review can.
-        let pending_drafts = match self.draft_posts(repo, number).await {
-            Ok(0) => None,
-            Ok(count) => Some(count),
-            Err(error) => {
-                warn!(%error, %repo, number, "cannot read the viewer's own draft notes");
-                None
-            }
-        };
         let mut comments = Vec::new();
         for discussion in discussions {
             let notes: Vec<Note> = discussion.notes.into_iter().filter(|n| !n.system).collect();
@@ -183,7 +182,7 @@ impl Gitlab {
             comments,
             failed_checks,
             behind_base: diverged.diverged_commits_count > 0,
-            pending_drafts,
+            has_pending_posts: false,
         })
     }
 

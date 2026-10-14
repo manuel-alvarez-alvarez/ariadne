@@ -80,7 +80,6 @@ import {
 } from "@/hooks/use-global-shortcuts"
 import { attachCommand } from "@/lib/clipboard"
 import { shortId } from "@/lib/format"
-import { openExternalUrl } from "@/lib/open-external"
 import { keySequenceLabel, shortcutLabel } from "@/lib/shortcuts"
 import { paths, taskPanelFrom } from "@/routes/paths"
 
@@ -156,13 +155,6 @@ export function CommandPalette({
 
   function go(entry: PaletteEntry) {
     const target = paletteTargetTo(entry.target, search, pathname)
-    // An attention row's own `drafts` item has no panel of Ariadne's to
-    // navigate to — only the forge's own page, reached the same way a
-    // rendered `<a href>` would (`ui/AGENTS.md`).
-    if (typeof target !== "string" && "external" in target) {
-      run(() => openExternalUrl(target.external))
-      return
-    }
     // A task target may ask to replace rather than push — see `entries.ts` —
     // which a plain string target never does.
     const replace = typeof target === "string" ? undefined : target.replace

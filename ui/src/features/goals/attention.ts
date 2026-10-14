@@ -415,15 +415,9 @@ function reasons(index: Map<string, Flagged>): Map<string, SessionAttention> {
  */
 /**
  * Where an attention row navigates: an internal route, for `<Link to={…}>`
- * and `useNavigate()` alike, or an external URL for a target with no panel
- * of Ariadne's own to open — a `drafts` item's own forge page chief among
- * them. A caller that renders a link renders a plain `<a href>` for the
- * external case (`ui/AGENTS.md`); one that only has a callback to answer
- * with reaches the same forge page through `openExternalUrl`.
+ * and `useNavigate()` alike.
  */
-export type AttentionNavTarget =
-  | { external: string }
-  | { pathname?: string; search: string; replace?: boolean }
+export type AttentionNavTarget = { pathname?: string; search: string; replace?: boolean }
 
 export function attentionTarget(
   item: AttentionItem,
@@ -443,11 +437,9 @@ export function attentionTarget(
 
 /**
  * Where a recovery row's own target (`GET /v1/attention`) lands: the console
- * of the session it names, the panel of the task it names, the Repositories
- * screen for a configuration blocker — the daemon names a section of it,
- * but there is no per-section route to deep-link into yet — or the
- * request's own page on the forge for a `drafts` item, which Ariadne has
- * no panel of its own to finish or submit a draft from.
+ * of the session it names, the panel of the task it names, or the
+ * Repositories screen for a configuration blocker — the daemon names a
+ * section of it, but there is no per-section route to deep-link into yet.
  */
 function recoveryTarget(
   item: AttentionItemDto,
@@ -465,8 +457,6 @@ function recoveryTarget(
     }
     case "settings":
       return { pathname: paths.repositories(), search: "" }
-    case "forge":
-      return { external: item.target.url }
   }
 }
 
@@ -540,7 +530,6 @@ export function recoveryHeadline(item: AttentionItemDto): string {
   if (item.producer === "pull_request") {
     return item.reason === "configuration" ? "Review needed" : "Ready to merge"
   }
-  if (item.producer === "drafts") return "Draft waiting on the forge"
   return RECOVERY_CAUSE_TITLE[item.reason]
 }
 

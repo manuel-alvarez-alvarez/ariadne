@@ -104,6 +104,12 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    no news to a reviewer. On a request of the user's own a push alone is
    news: its comments are the news of the task's author that keeps it (026),
    and each is told once.
+   The viewer's own pending review, its body, its comments and its replies
+   give a reviewer row none of this: the detail read drops them from the
+   conversation outright (026 rule 9), so neither this row's own news nor
+   its author's ever names one, and nothing here starts a review pass over
+   content nobody has published yet
+   (`pull_request_reviews.rs::a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_news`).
 8. A review's news is told at once: the next reconcile after a push or a
    reply hands it over, with no wait for activity to settle. A push also
    waits for the session to be idle: once it is, the daemon moves the
@@ -424,6 +430,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `reviewed_sha`; the same head again hands nothing:
   `pull_request_reviews.rs::a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha`,
   `news.rs::tests::a_push_to_a_request_i_review_is_told_once_with_the_last_reviewed_sha`.
+- A pending review of the viewer's own, and its own pending comments and
+  replies, give a reviewer session's `list_comments` nothing of it and wake
+  it with no news:
+  `pull_request_reviews.rs::a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_news`.
 - `get_diff` answers the diff against the base, and `since` narrows it:
   `pull_request_reviews.rs::the_diff_reads_the_worktree_against_its_base_and_since_narrows_it`.
 - A review with `request_changes` and two comments runs the forge's review

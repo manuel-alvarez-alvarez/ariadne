@@ -524,6 +524,58 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     );
 }
 
+/// A pending review of the viewer's own, and its pending comments and
+/// replies — the shape pull request #110 showed waking the reviewer
+/// agent too, not only the keeper — give the reviewer session's own
+/// `list_comments` nothing of it, and no news to wake it with: the
+/// detail read's own filter (026 rule 9) covers a reviewer's request the
+/// same way it covers a kept one's
+/// (`kept_requests.rs::a_pending_reviews_comments_give_no_live_view_comment_and_no_news`).
+#[tokio::test]
+async fn a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_news() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let session = idle_session(&h, &id).await;
+    let briefed = h.prompts_to(&session).len();
+
+    let pending_comments = json!([
+        {"id": 601, "in_reply_to_id": null, "user": {"login": "me"}, "body": "a pending finding",
+         "path": "a.txt", "line": 1, "created_at": "2026-10-02T00:00:00Z",
+         "pull_request_review_id": 9},
+        {"id": 602, "in_reply_to_id": 601, "user": {"login": "me"}, "body": "a pending reply",
+         "path": "a.txt", "line": 1, "created_at": "2026-10-02T00:01:00Z",
+         "pull_request_review_id": 9},
+    ]);
+    let reviews = json!([{"id": 9, "user": {"login": "me"}, "body": "", "submitted_at": null}]);
+    let mut pending_script = script(&Shown::open(&head));
+    for entry in pending_script.as_array_mut().unwrap() {
+        if entry["args"] == json!(["api", "repos/acme/widgets/pulls/1/comments"]) {
+            entry["stdout"] = json!(pending_comments.to_string());
+        }
+        if entry["args"] == json!(["api", "repos/acme/widgets/pulls/1/reviews"]) {
+            entry["stdout"] = json!(reviews.to_string());
+        }
+    }
+    stub.reprogram(pending_script);
+    fetch_again(&h, &stub, &repo).await;
+
+    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
+    assert!(comments.is_empty(), "{comments:?}");
+    // Prove the quiet, not merely that nothing has arrived yet.
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(
+        h.prompts_to(&session).len(),
+        briefed,
+        "a pending review wakes no reviewer session"
+    );
+}
+
 /// A push reaches an idle review session on the very next reconcile, with
 /// no wait for the news to settle (029): back-to-back pushes each hand
 /// the agent their own prompt, rather than being folded into one.
