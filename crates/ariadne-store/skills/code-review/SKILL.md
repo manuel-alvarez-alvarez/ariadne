@@ -13,18 +13,19 @@ Judge repository conventions and task acceptance apart.
    worktree. Search the handoff reasons, accessible logs and CI evidence.
    Read each result's revision, command and result.
    Done when you can judge what every result covers.
-2. Reuse a result only when its revision matches `git rev-parse HEAD`.
-   Its command must be a check this diff requires. Run each required check
-   with no reusable result, once for this verdict.
-   Done when every required check has a reused or fresh result.
-3. Pin the scope. For a second review, read the prior SHA from your
+2. Pin the scope. For a second review, read the prior SHA from your
    conversation. Run `git merge-base --is-ancestor <sha> HEAD`.
    If HEAD is not after that SHA, use `get_diff`. Otherwise, run
    `git log <sha>..HEAD` and `git diff <sha>..HEAD`. With no SHA, use
    `get_diff`.
    Done when the revisions resolve and the diff is not empty.
-4. Read the task and repository instructions. List the source for each axis.
-   Read the scoped diff and surrounding code. Map every hunk to its purpose.
+3. Read the task and repository instructions. List the checks the scoped
+   diff requires. Reuse a result only when its revision matches
+   `git rev-parse HEAD`. Its command must be a check this diff requires.
+   Run each required check with no reusable result, once for this verdict.
+   Done when every required check has a reused or fresh result.
+4. List the source for each axis. Read the scoped diff and surrounding
+   code. Map every hunk to its purpose.
 5. Judge the repository axis against documented style, naming, structure and
    patterns. Judge the acceptance axis against every criterion, its tests and
    added behavior. A reused result proves only its covered behavior.
