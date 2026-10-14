@@ -1381,7 +1381,7 @@ mod tests {
             .split(|c: char| !c.is_ascii_alphanumeric())
             .map(str::to_lowercase)
             .collect();
-        for gone in ["sleep", "poll", "polling", "gh", "glab"] {
+        for gone in ["merge", "sleep", "poll", "polling", "gh", "glab"] {
             assert!(
                 !words.iter().any(|word| word == gone),
                 "the pr-reviewer skill names {gone}"

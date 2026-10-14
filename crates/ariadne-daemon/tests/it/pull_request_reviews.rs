@@ -176,7 +176,7 @@ fn push(path: &Path) -> String {
 /// rule 24), and this file's reviews and resolves are about the forge's
 /// own CLI calls, posted directly, rather than that held-back path
 /// (covered instead by
-/// `kept_requests.rs::an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_when_supervised`).
+/// `github/reviews.rs::tests::submit_review_pending_adds_each_finding_without_changing_the_body`).
 async fn repository(h: &Harness, path: &Path) -> String {
     let repo: Value = h
         .json(
@@ -645,6 +645,20 @@ async fn the_diff_reads_the_worktree_against_its_base_and_since_narrows_it() {
     assert!(since.contains("+++ b/b.txt"), "{since}");
     assert!(!since.contains("a.txt"), "{since}");
 
+    let unrelated = sh(
+        &path,
+        "printf unrelated > unrelated.txt && git add unrelated.txt && \\
+         git -c user.email=t@t -c user.name=t commit -qm unrelated && git rev-parse HEAD",
+    );
+    h.error(
+        get_as(
+            &format!("/v1/pull-requests/{id}/diff?since={unrelated}"),
+            &session.id,
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+
     h.error(
         get_as(
             &format!("/v1/pull-requests/{id}/diff?since=--all"),
@@ -843,7 +857,7 @@ async fn a_review_strips_a_trailing_trailer_from_its_findings() {
 /// comment, and the stored thread reads resolved. A thread somebody else
 /// opened is refused, and so is a resolve from any other session.
 #[tokio::test]
-async fn a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other() {
+async fn a_review_resolves_its_own_fixed_finding_only_when_posts_are_not_supervised() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
@@ -901,6 +915,23 @@ async fn a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other() {
     let stranger = h.lone_session("stranger").await;
     h.error(resolve(&mine, &stranger.id), StatusCode::FORBIDDEN)
         .await;
+
+    let repository = h
+        .store
+        .get_repository(&h.store.get_pull_request(&id).await.unwrap().repository_id)
+        .await
+        .unwrap();
+    h.set_supervise_posts(&repository, true).await;
+    h.error(resolve(&mine, &session.id), StatusCode::CONFLICT)
+        .await;
+    assert!(
+        stub.invocations().iter().all(|call| !call
+            .args
+            .iter()
+            .any(|arg| arg.contains("resolveReviewThread"))),
+        "supervision leaves resolution to the user"
+    );
+    h.set_supervise_posts(&repository, false).await;
 
     let resolved: Value = h.json(resolve(&mine, &session.id), StatusCode::OK).await;
     assert_eq!(resolved["resolved"], true);

@@ -158,10 +158,11 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     `report_pull_request`, and no task tool and no message tool (013). The
     user reaches the session through its console (008).
 12. `GET /v1/pull-requests/{id}/diff?since=` answers `git diff <base>...HEAD`
-    in the session's worktree, or `git diff <since>..HEAD` where `since` is
-    given. The base is `<remote>/<base_branch>` where the checkout holds it,
-    else the local base branch. A `since` that is no hex sha of a commit in
-    the worktree answers 400.
+    in the session's worktree, or `git diff <since>..HEAD` only where `since`
+    is an ancestor of the current head. The base is `<remote>/<base_branch>`
+    where the checkout holds it, else the local base branch. A `since` that is
+    not a hex sha of a commit in the worktree, or is not an ancestor, answers
+    400 so rewritten history receives the full diff.
 13. `POST /v1/pull-requests/{id}/reviews` takes `event`, an optional legacy `body`, and
     `comments` of `path`, `line`, `title`, `body` and `priority` (`P0`, `P1`
     or `P2`). One call is one round of the review. `comments` are the
@@ -202,12 +203,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     reads them back, and answers them with 201. On a request of
     the user's own a `from_review` comment counts as another login's: it is
     told once to the task's author, as "by the Ariadne review", and waits
-    on it until the author replies (026 rules 12 to 16) — but for the
-    round's own summary, the one `from_review` comment posted to the
-    conversation thread rather than to a line
-    (`forge/pulls.rs::CONVERSATION`): it only restates findings the author
-    was already told as inline comments, so a new or edited round of it is
-    never news of its own (`forge/news.rs`). The other way, a
+    on it until the author replies (026 rules 12 to 16). No additional
+    review-level comment is posted: each finding is already inline. The other way, a
     comment under the login that no review posted — the author's answer,
     or the user's — in a thread a review opened is the review session's
     news, so the answer to a finding reaches its reviewer. On a request of the user's
@@ -269,8 +266,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 16b. In a repository that supervises posts, the reviewer leaves a fixed
     thread unresolved for the human author. It creates no reply, resolution
     text, or draft.
-16c. The user asking for a change to a finding, a verdict or a resolve
-    still pending under rule 13a or 16b is answered through
+16c. The user asking for a change to a pending finding or review body is answered through
     `edit_pending_comment`, `delete_pending_comment` and
     `edit_pending_review_body` (026 rule 25, 013), never through another
     round of `submit_review` or `resolve_thread`.
@@ -292,8 +288,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     resolves silently outside supervised mode; where the last reply claims a fix (`Fixed in <sha>: ...`) and the defect survives, it
     gets one reply, `Still there: <why>.`, never posted twice in the same
     thread; any other answered reply that leaves the defect in place —
-    `Not changed: ...` or any other — gets nothing back, and its row
-    turns `declined`, left open for the user; a thread nobody has
+    `Not changed: ...` or any other — gets nothing back and stays open for
+    the user; a thread nobody has
     answered gets nothing; it waits.
 
 18. A review posted, or a request reported ready, notifies nobody by
@@ -314,148 +310,55 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   by a slug rather than a login, never does:
   `forge/github/pulls.rs::tests::a_user_review_request_names_its_login`,
   `::a_team_review_request_matches_no_login`.
-- The review session resolves the thread of its own fixed finding through
-  `resolveReviewThread`, and a thread someone else opened, or a resolve from
-  another session, is refused:
-  `pull_request_reviews.rs::a_review_resolves_the_thread_of_its_own_fixed_finding_and_no_other`.
-- A round's findings are one review with no body, the summary is one
-  comment posted once and edited by the next round, a round with no new
-  finding posts no review, and a change request stands on a P0 still open:
+- The review session resolves its own fixed finding through `resolveReviewThread`
+  only when posts are not supervised. A thread someone else opened, a resolve
+  from another session, and a supervised resolve are refused without a forge
+  mutation:
+  `pull_request_reviews.rs::a_review_resolves_its_own_fixed_finding_only_when_posts_are_not_supervised`.
+- A round posts only its inline findings, accepts `request_changes` for active
+  P0 or P1 findings, and refuses approval. A round with no findings does not
+  call the forge:
   `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
-  GitLab's summary note is edited the same way:
-  `pull_request_reviews.rs::a_gitlab_finding_on_a_renamed_file_names_its_old_path`.
   The author's answer in a review's thread reaches the review:
   `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_pr_agent`.
-- A summary that fails keeps the findings posted, and a round with no
-  comments writes it:
-  `pull_request_reviews.rs::a_failed_summary_keeps_the_posted_findings_for_a_round_with_no_comments`.
-  A failed summary edit posts no second summary; one GitHub says is gone is
-  posted again:
-  `pull_request_reviews.rs::a_summary_is_posted_again_only_where_github_says_it_is_gone`.
-  A detail read before any fetch withdraws no review request:
-  `pull_request_reviews.rs::a_detail_read_before_any_fetch_keeps_a_review_request_asking`.
-  A review stopped and asked again edits its summary, found by its mark:
-  `pull_request_reviews.rs::a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment`.
-- A review GitHub refuses for having no body is retried with a body that is
-  the hidden review mark alone, never a line of visible text:
+- A review GitHub refuses for having no body is retried with the hidden review
+  mark alone, never visible text:
   `github/reviews.rs::tests::a_review_refused_for_its_body_is_retried_with_no_visible_text`.
-  That retried body, with no text before the mark, still reads back as the
-  review's own:
-  `pulls.rs::tests::the_review_mark_alone_reads_back_as_signed_with_no_text`.
-- A trailer an agent's skill appends to the round's summary or a finding's
-  body is stripped before either is signed:
-  `pull_request_reviews.rs::a_review_strips_a_trailing_trailer_from_its_summary_and_its_findings`.
-- A new or edited round of the review's own summary is no news of its own to
-  the task's author, though an inline finding the same round posts still is:
-  `news.rs::tests::a_review_summary_wakes_no_keeping_agent`,
-  `news.rs::tests::an_inline_finding_beside_a_summary_is_still_news`.
-- Back-to-back pushes each reach an idle review session on the next
-  reconcile, with no wait for the news to settle:
-  `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.
-- On GitLab a finding on a renamed file names its old path:
-  `pull_request_reviews.rs::a_gitlab_finding_on_a_renamed_file_names_its_old_path`.
-- An Ariadne review of a request a task's author keeps reaches that author,
-  waits on it, and is answered by its reply:
-  `kept_requests.rs::an_ariadne_review_of_a_kept_request_reaches_its_pr_agent`.
-- A draft is no work and gets no row until it leaves draft:
-  `pull_request_reviews.rs::a_draft_starts_no_review_until_it_leaves_draft`.
-- A review-requested pull request starts no session until the user asks: the
-  row it needs to offer a manual start still exists, and asking is what
-  starts the session:
-  `pull_request_reviews.rs::a_review_requested_pull_request_starts_no_session_until_asked`.
-- A push moves the worktree and hands one prompt that names the last
-  `reviewed_sha`; the same head again hands nothing:
-  `pull_request_reviews.rs::a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha`,
-  `news.rs::tests::a_push_to_a_request_i_review_is_told_once_with_the_last_reviewed_sha`.
-- A pending review of the viewer's own, and its own pending comments and
-  replies, give a reviewer session's `list_comments` nothing of it and wake
-  it with no news:
-  `pull_request_reviews.rs::a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_news`.
-- `get_diff` answers the diff against the base, and `since` narrows it:
+- A trailer an agent's skill appends to a finding body is stripped before it is
+  signed:
+  `pull_request_reviews.rs::a_review_strips_a_trailing_trailer_from_its_findings`.
+- `get_diff` accepts `since` only when that revision is an ancestor of the
+  reviewed head; a present but unrelated revision answers 400:
   `pull_request_reviews.rs::the_diff_reads_the_worktree_against_its_base_and_since_narrows_it`.
-- A review with `request_changes` and two comments runs the forge's review
-  call with `REQUEST_CHANGES`, both comments and their priorities, and marks
-  them the review's; `approve` answers 400 and the forge sees no call:
-  `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
-- A finding on a line the diff does not show — past a file's last shown
-  line, or in a file the change never touched — answers 400 naming the
-  path and the line, and the forge sees no call:
-  `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
-  The lines a diff shows are the added and kept lines of its hunks on the
-  new side, and nothing of a deleted or untouched file:
-  `pulls.rs::tests::a_diff_shows_the_new_side_lines_of_its_hunks_and_nothing_else`.
-- A `reviewed_sha` is stored and raises no `waiting_user`; the same sha
-  again, and a later one, raise nothing either:
-  `pull_request_reviews.rs::a_reviewed_sha_is_stored_and_raises_no_waiting_user`,
-  `store.rs::a_reviewed_sha_moves_once`.
-- A merged, closed or withdrawn request ends the session, removes the
-  worktree, and Ariadne stops working on it:
-  `pull_request_reviews.rs::a_merged_request_ends_its_review`,
-  `::a_closed_request_ends_its_review`,
-  `::a_withdrawn_review_request_ends_its_review`,
-  `::a_request_withdrawn_after_my_review_ends_its_review`,
-  `::a_review_posted_after_a_withdrawal_does_not_keep_the_review`.
-- A request the forge stops listing after my review keeps its session while
-  its timeline ends on my review:
-  `pull_request_reviews.rs::a_request_the_forge_stops_listing_after_my_review_keeps_its_review`.
-- A supervised repository holds a review's findings and verdict in the
-  viewer's own pending review rather than submitting one, marks them the
-  review's, and posts no summary comment:
-  `kept_requests.rs::an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_when_supervised`.
-  On GitHub, the verdict and summary lead the pending review's body, set
-  before any finding joins it as a new thread, creating the review first
-  where there is none:
-  `github/reviews.rs::tests::submit_review_pending_adds_each_finding_and_sets_the_header`;
-  a later round replaces only that leading text, keeping any reply text
-  below it:
-  `github/comments.rs::tests::apply_pending_header_replaces_its_top_and_keeps_the_reply_text_below`.
-  On GitLab, each finding and the verdict are draft notes of their own,
-  and nothing is published:
-  `gitlab/reviews.rs::tests::submit_review_pending_drafts_each_finding_and_the_verdict`,
-  `::submit_review_pending_drafts_the_verdict_with_no_finding`.
-  A supervised resolve lists the thread under a "Threads to resolve"
-  heading of the pending review, created once, rather than resolving it:
-  `kept_requests.rs::an_ariadne_review_holds_its_findings_and_verdict_in_the_pending_review_when_supervised`,
-  `github/comments.rs::tests::resolve_pending_lists_the_thread_under_a_heading_created_once`.
-  On GitLab it sets `resolve_discussion` on the viewer's own draft note of
-  the discussion, made first where there is none:
-  `gitlab/comments.rs::tests::resolve_pending_marks_its_own_draft_note_of_the_discussion`,
-  `::resolve_pending_creates_a_draft_note_with_no_draft_note_of_its_own_yet`.
-  `submit_review` and `resolve_thread` read a `pending` answer and tell
-  the agent, in their own words, to go on:
-  `tools.rs::tests::a_pending_review_tells_the_agent_to_continue_rather_than_the_raw_answer`,
-  `::a_pending_resolve_tells_the_agent_to_continue_rather_than_the_raw_answer`.
+- A supervised repository holds only new inline findings in the user's forge
+  drafts; it writes no verdict or summary. A round with no findings makes no
+  forge call:
+  `github/reviews.rs::tests::submit_review_pending_adds_each_finding_without_changing_the_body`,
+  `tools.rs::tests::a_pending_review_tells_the_agent_to_continue_rather_than_the_raw_answer`.
+  A supervised fixed thread is left for the user without a reply or draft:
+  `pull_request_reviews.rs::a_review_resolves_its_own_fixed_finding_only_when_posts_are_not_supervised`.
 - The reviewer briefing fills every placeholder it names:
   `prompts.rs::tests::the_pull_request_texts_fill_every_placeholder_they_name`.
 - The reviewer PR seat lists its thirteen tools and no task or message tool,
   and its tools call the routes of its request:
   `mcp.rs::tests::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`,
   `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
-- A finding, a verdict or a resolve still pending is changed only through
+  `get_pull_request` also exposes `supervise_posts` before the reviewer chooses
+  whether to resolve a fixed thread:
+  `tools.rs::tests::get_pull_request_shows_whether_the_repository_supervises_posts`.
+- A pending finding or review body is changed only through
   `edit_pending_comment`, `delete_pending_comment` and
   `edit_pending_review_body` (rule 16c, 026 rule 25), each calling its own
   route of the session's request:
   `tools.rs::tests::the_pending_edit_tools_call_the_routes_of_the_sessions_request`.
-- The skill is within its caps, names the three priorities, names
-  `request_changes` only beside P0, resolves a thread a push fixed, and
-  approves on its own no more than it names merge, sleep, poll, `gh` or
-  `glab`. On a later round a `Not changed:` reply gets no reply back and
-  turns its row `declined`; a claimed fix the defect survives gets one
-  `Still there: <why>.` reply, never a second one in the same thread; and
-  a small local fix carries a `suggestion` block:
+- The skill is within its caps, names the three priorities, permits
+  `request_changes` for P0 and P1, never approves or lands a request, and
+  reuses verification evidence only for the reviewed head. A `Not changed:`
+  reply gets no reply back, while a claimed fix that fails verification gets
+  one `Still there: <why>.` reply; a small local fix carries a `suggestion`
+  block:
   `defaults.rs::tests::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
   `::skill_size_caps_hold`.
-- The summary is a title, then a prose paragraph, then a table of the
-  open findings written only where it holds a row, then a recommendation,
-  in that order:
-  `defaults.rs::tests::the_pr_reviewer_skill_writes_its_summary_in_four_ordered_parts`.
-  The prose names the behavior touched, who sees it, what breaks if the
-  change is wrong, why the risk sits where it does, and closes on what the
-  verdict rests on, naming no finding, file or line otherwise:
-  `defaults.rs::tests::the_pr_reviewer_skill_summarizes_the_change_and_its_risk_in_prose`.
-  Each recommendation line is tied to the priority that earns it, and a
-  declined P0 still blocks it:
-  `defaults.rs::tests::the_pr_reviewer_skill_recommends_by_the_open_findings_priority`.
 - A request of mine is no work and gets no review until the user asks; the
   ask starts the work, and the review runs on the pin and with the skills
   they picked, detached at its head, and is a comment; stopping the asking

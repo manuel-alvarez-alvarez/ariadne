@@ -801,10 +801,8 @@ pub(super) async fn reply(
 /// Resolve the thread of one comment, once a push fixed what it found
 /// (029). Only a review session resolves, and only a thread it opened under
 /// the integration login: the threads of anyone else stay open for the
-/// person who wrote them. A repository that holds posts back lists it
-/// under a "Threads to resolve" heading of the user's own pending review
-/// (GitHub) or sets `resolve_discussion` on a draft note of its discussion
-/// (GitLab) instead, answering `{pending: true, id}` (026 rule 24).
+/// person who wrote them. A repository that supervises its posts refuses
+/// the resolve with 409: the fixed thread stays open for the human author.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/{comment_id}/resolve", tag = "pull-requests",
     params(("id" = String, Path), ("comment_id" = String, Path)),
     responses((status = 200, body = ReplyAnswerDto), (status = 403), (status = 404), (status = 409), (status = 502)))]
@@ -1275,10 +1273,8 @@ pub(super) async fn submit_review(
     let forge_client = client(&state, &forge);
     let repository = state.store.get_repository(&pull.repository_id).await?;
     if repository.supervise_posts() {
-        // Held unposted in the user's own forge drafts. The same lock
-        // a reply and a resolve hold on the one pending review body: a
-        // pair of them racing each other must not lose one's change to
-        // the other's.
+        // Held unposted in the user's own forge drafts. The reply lock
+        // serializes changes to GitHub's one pending review.
         let _reply_lock = state.reply_locks.hold(&pull.id).await;
         let mut posted = forge_client
             .submit_review_pending(
@@ -1290,7 +1286,6 @@ pub(super) async fn submit_review(
                     comments,
                 },
                 &login,
-                pulls::REVIEW_MARK,
             )
             .await
             .map_err(forge_error)?;

@@ -881,7 +881,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Replace the body of your pending review outright. It is the verdict and summary GitHub holds at its top. GitHub only. Use it only when the user asks for a change in the console. Refused once the user submits the review, or where there is none."
+        description = "Replace your pending GitHub review body. Use it only when the user asks for a console change. Refused after submission or without a pending review."
     )]
     async fn edit_pending_review_body(
         &self,
@@ -916,15 +916,7 @@ impl AriadneMcp {
         let path = self
             .pull_request_path(&format!("/comments/{}/resolve", req.comment_id))
             .await?;
-        let answer = self.post(&path, &serde_json::json!({})).await?;
-        if answer["pending"] == true {
-            return Ok(CallToolResult::success(vec![ContentBlock::text(
-                "The resolve is waiting in the user's forge drafts. The user must publish it \
-                 there. Continue your work."
-                    .to_string(),
-            )]));
-        }
-        json_result(answer)
+        json_result(self.post(&path, &serde_json::json!({})).await?)
     }
 
     #[tool(
@@ -1196,6 +1188,30 @@ mod tests {
             report,
             serde_json::json!({"ready": true, "head_sha": "abc", "reviewed_sha": null})
         );
+    }
+
+    #[tokio::test]
+    async fn get_pull_request_shows_whether_the_repository_supervises_posts() {
+        let (endpoint, _) = recording_daemon_answering_in_turn(vec![
+            r#"[{"id":"01PR"}]"#.into(),
+            r#"{"id":"01PR","repository_id":"01R","supervise_posts":true}"#.into(),
+            r#"{"id":"01R","path":"/repos/widgets","forge":{"login":"me"}}"#.into(),
+            r#"{"worktree_path":"/wt/task"}"#.into(),
+        ])
+        .await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let result = mcp
+            .get_pull_request(Parameters(Empty {}))
+            .await
+            .expect("read the request");
+        let ContentBlock::Text(text) = &result.content[0] else {
+            panic!("the request came back as something other than text");
+        };
+        let pull: serde_json::Value = serde_json::from_str(&text.text).expect("json");
+        assert_eq!(pull["supervise_posts"], true);
     }
 
     /// An agent whose task opened no request yet is told to open one, and

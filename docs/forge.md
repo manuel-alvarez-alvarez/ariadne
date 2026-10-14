@@ -172,8 +172,7 @@ Where the
 last reply claims a fix (`Fixed in <sha>: ...`) but the defect is still
 there, the reviewer replies once, `Still there: <why>.`, and never says it
 again in that thread. Any other answered reply that leaves the defect in
-place — a `Not changed:` reply, or any other — gets no reply back; its row
-turns `declined` and the thread stays open, for the user to settle. A
+place — a `Not changed:` reply, or any other — gets no reply back and the thread stays open for the user to settle. A
 thread nobody has answered gets nothing: it waits. On a request a task's
 agent keeps, the review's findings go to that agent like anyone else's
 comments, though they are posted under your login: it answers each one,
@@ -372,8 +371,7 @@ It keeps a small record of a request only while it works on it: the
 request a task opened, a request that asks for your review, and one of
 yours you asked it to review. The record is
 its own bookkeeping — which task keeps the request, what each agent was
-told, the head last reviewed, the review's summary comment — and a mark per
-comment it told or its review posted. Once the request merges or closes
+told, the head last reviewed and a mark per comment it told or its review posted. Once the request merges or closes
 and its work is taken down, the record goes, so an ended request takes no
 room. The sessions that ran on it stay, with their history and spend.
 

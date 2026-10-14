@@ -137,28 +137,18 @@ impl Github {
     }
 
     /// Post `review`'s findings into the viewer's own pending review (029
-    /// rule 13a), held back rather than submitted, where the repository
-    /// holds posts back: each inline comment joins it as a new thread,
-    /// `addPullRequestReviewThread`, and `header` — the verdict and the
-    /// round's summary — is set at the review body's own top
-    /// (`set_pending_review_header`), creating the pending review first
-    /// where there is none. No event is set, and nothing here submits it.
-    /// Answers what it held, as comments of `login`.
+    /// rule 13a). Each inline comment joins it as a new thread. No event is
+    /// set and nothing here submits it. Answers only what it held, as
+    /// comments of `login`.
     pub(crate) async fn submit_review_pending(
         &self,
         repo: &str,
         number: i64,
         review: &ReviewDraft,
         login: &str,
-        header: &str,
     ) -> Result<Vec<NewPullRequestComment>, String> {
         let (host, _, _) = split_slug(repo)?;
         let pending = self.pending_review(repo, number, login).await?;
-        // The header first, the threads after: a body GitHub refuses to
-        // edit ends the round with nothing held, where threads posted
-        // first would stay in the drafts unrecorded, to be posted again
-        // by the retry.
-        self.apply_pending_header(host, &pending, header).await?;
         let mut stored = Vec::new();
         for comment in &review.comments {
             let output = self
@@ -382,25 +372,17 @@ sys.stdout.write(answers[count])
             .unwrap()
     }
 
-    /// `submit_review`, with the repository holding posts back, adds each
-    /// finding to the viewer's own pending review as a new thread, sets
-    /// the verdict and summary at the review body's own top, and holds a
-    /// `from_review` conversation entry of the verdict too, under the
-    /// pending review's own id, with no event ever submitted: the pending
-    /// review's listing is read once, not once per finding, and the header
-    /// is set before any thread is added.
+    /// A supervised review adds only its inline findings to the pending
+    /// review. It leaves the pending body untouched.
     #[tokio::test]
-    async fn submit_review_pending_adds_each_finding_and_sets_the_header() {
+    async fn submit_review_pending_adds_each_finding_without_changing_the_body() {
         let dir = tempfile::tempdir().unwrap();
         let binary = fake_gh_scripted(
             dir.path(),
             &[
-                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}]"#,
-                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
+                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"User draft.","user":{"login":"me"}}]"#,
                 r#"{"data":{"addPullRequestReviewThread":{"thread":{"comments":{"nodes":[
                     {"databaseId": 501, "createdAt": "2026-10-02T00:00:00Z"}]}}}}}"#,
-                r#"{"data":{"addPullRequestReviewThread":{"thread":{"comments":{"nodes":[
-                    {"databaseId": 502, "createdAt": "2026-10-02T00:01:00Z"}]}}}}}"#,
             ],
         );
         let github = Github::new(Cli {
@@ -410,102 +392,25 @@ sys.stdout.write(answers[count])
         let review = ReviewDraft {
             request_changes: true,
             head_sha: "abc".into(),
-            comments: vec![
-                crate::forge::pulls::DraftComment {
-                    path: "src/lib.rs".into(),
-                    line: 3,
-                    body: "**[P0] Empty list**\n\nAn empty list panics.\n\n<!-- ariadne:review -->"
-                        .into(),
-                },
-                crate::forge::pulls::DraftComment {
-                    path: "tests/it.rs".into(),
-                    line: 9,
-                    body: "**[P1] Untested**\n\nNo test covers it.\n\n<!-- ariadne:review -->"
-                        .into(),
-                },
-            ],
+            comments: vec![crate::forge::pulls::DraftComment {
+                path: "src/lib.rs".into(),
+                line: 3,
+                body: "**[P0] Empty list**\n\nAn empty list panics.\n\n<!-- ariadne:review -->"
+                    .into(),
+            }],
         };
         let stored = github
-            .submit_review_pending(
-                "github.com/acme/widgets",
-                1,
-                &review,
-                "me",
-                "**Verdict: Request changes**\n\nOne P0 open.",
-            )
+            .submit_review_pending("github.com/acme/widgets", 1, &review, "me")
             .await
             .unwrap();
-        assert_eq!(
-            stored
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].forge_id, "rc-501");
+        let calls = (0..2).map(|n| call_args(dir.path(), n)).collect::<Vec<_>>();
+        assert!(
+            calls.iter().all(|call| !call
                 .iter()
-                .map(|c| c.forge_id.clone())
-                .collect::<Vec<_>>(),
-            ["rc-501", "rc-502", "rv-9"]
+                .any(|arg| arg.contains("updatePullRequestReview"))),
+            "the pending body stays user-authored: {calls:?}"
         );
-        assert!(stored[..2].iter().all(|c| c.kind == "review_comment"));
-        let verdict = stored.last().unwrap();
-        assert_eq!(verdict.kind, "issue_comment");
-        assert_eq!(verdict.thread_id, "conversation");
-        assert_eq!(verdict.body, "**Verdict: Request changes**\n\nOne P0 open.");
-        let pending_list = call_args(dir.path(), 0);
-        assert!(
-            !pending_list.contains(&"--method".to_string()),
-            "the pending review is read, not created again: {pending_list:?}"
-        );
-        // The header goes first, so a body GitHub refuses leaves no
-        // thread behind; the findings follow it.
-        let first = call_args(dir.path(), 2);
-        assert!(
-            first.contains(&"reviewId=PR_kwDOx".to_string()),
-            "{first:?}"
-        );
-        assert!(first.contains(&"path=src/lib.rs".to_string()), "{first:?}");
-        assert!(first.contains(&"line=3".to_string()), "{first:?}");
-        let header_call = call_args(dir.path(), 1);
-        let body = header_call
-            .iter()
-            .find_map(|a| a.strip_prefix("body="))
-            .expect("a body argument");
-        assert_eq!(
-            body,
-            "**Verdict: Request changes**\n\nOne P0 open.\n<!-- ariadne:pending-review-verdict -->"
-        );
-    }
-
-    /// A round with no new finding still holds the verdict and summary,
-    /// under the pending review's own id, the same way a round with no
-    /// comments writes the posted summary.
-    #[tokio::test]
-    async fn submit_review_pending_holds_the_verdict_with_no_finding() {
-        let dir = tempfile::tempdir().unwrap();
-        let binary = fake_gh_scripted(
-            dir.path(),
-            &[
-                r#"[{"id":9,"node_id":"PR_kwDOx","state":"PENDING","body":"<!-- ariadne:pending-review-verdict -->","user":{"login":"me"}}]"#,
-                r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
-            ],
-        );
-        let github = Github::new(Cli {
-            timeout: Duration::from_secs(5),
-            ..Cli::new(Some(&binary), "gh")
-        });
-        let review = ReviewDraft {
-            request_changes: false,
-            head_sha: "abc".into(),
-            comments: vec![],
-        };
-        let stored = github
-            .submit_review_pending(
-                "github.com/acme/widgets",
-                1,
-                &review,
-                "me",
-                "**Verdict: Comment**\n\nNothing new.",
-            )
-            .await
-            .unwrap();
-        assert_eq!(stored.len(), 1, "{stored:?}");
-        assert_eq!(stored[0].forge_id, "rv-9");
-        assert_eq!(stored[0].kind, "issue_comment");
     }
 }

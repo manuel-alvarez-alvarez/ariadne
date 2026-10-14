@@ -487,50 +487,25 @@ impl ForgeClient {
     /// unposted in the user's own forge drafts rather than submitted (026
     /// rule 24 / 029 rule 13a, where the repository holds posts back):
     /// each inline comment is added to GitHub's one pending review, or
-    /// GitLab's own draft note of it; `verdict` — the event and the
-    /// round's summary — is set at the pending review's own top (GitHub),
-    /// or in one more draft note of its own (GitLab). Nothing here submits
-    /// a review or posts a note. Answers what it held, as comments of
-    /// `login`.
+    /// GitLab's own draft note of it. Nothing here submits a review or
+    /// posts a note outside the user's drafts. Answers what it held, as
+    /// comments of `login`.
     pub async fn submit_review_pending(
         &self,
         repository: &str,
         number: i64,
         review: &pulls::ReviewDraft,
         login: &str,
-        verdict: &str,
     ) -> Result<Vec<ariadne_store::NewPullRequestComment>, String> {
         match self {
             Self::Github(cli) => {
-                cli.submit_review_pending(repository, number, review, login, verdict)
+                cli.submit_review_pending(repository, number, review, login)
                     .await
             }
             Self::Gitlab(cli) => {
-                cli.submit_review_pending(repository, number, review, login, verdict)
+                cli.submit_review_pending(repository, number, review, login)
                     .await
             }
-        }
-    }
-
-    /// Resolve the thread one stored comment of request `number` is in,
-    /// held back (026 rule 24 / 029 rule 16b, where the repository holds
-    /// posts back): GitHub lists it under a "Threads to resolve" heading
-    /// of the pending review body; GitLab sets `resolve_discussion` on the
-    /// viewer's own draft note of that discussion, made first where there
-    /// is none. Answers the forge id of the pending item.
-    pub async fn resolve_pending(
-        &self,
-        repository: &str,
-        number: i64,
-        login: &str,
-        comment: &ariadne_store::PullRequestComment,
-    ) -> Result<String, String> {
-        match self {
-            Self::Github(cli) => {
-                cli.resolve_pending(repository, number, login, comment)
-                    .await
-            }
-            Self::Gitlab(cli) => cli.resolve_pending(repository, number, comment).await,
         }
     }
 
