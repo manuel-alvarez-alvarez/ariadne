@@ -70,7 +70,7 @@ dto! {
     }
 
     pub(crate) fn workflow_step_dto(s: WorkflowStep) -> WorkflowStepDto {
-        .. id, title, description, skills, rank, gate
+        .. id, title, description, skills, ranks, gate
     }
 
     pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
@@ -402,12 +402,7 @@ fn step_dto(s: store::GoalStep) -> Result<WorkflowStepDto, StoreError> {
     let invalid = |field| StoreError::Invalid(format!("column {} has invalid {field}", s.id));
     Ok(WorkflowStepDto {
         skills: serde_json::from_str(&s.skills).map_err(|_| invalid("skills"))?,
-        rank: s
-            .rank
-            .as_deref()
-            .map(str::parse)
-            .transpose()
-            .map_err(|_| invalid("rank"))?,
+        ranks: serde_json::from_str(&s.ranks).map_err(|_| invalid("ranks"))?,
         gate: s
             .gate
             .as_deref()

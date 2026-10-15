@@ -17,8 +17,9 @@ pub struct WorkflowStepDto {
     pub description: String,
     /// The skills an agent on this step loads.
     pub skills: Vec<String>,
-    /// The model rank the step prefers, where the document named one.
-    pub rank: Option<ModelRank>,
+    /// The capability band the step allows: every `ModelRank` planning may
+    /// staff it on, unordered. Empty where the document named none.
+    pub ranks: Vec<ModelRank>,
     /// What the step waits for before the next one starts, where the
     /// document named one.
     pub gate: Option<StepGate>,

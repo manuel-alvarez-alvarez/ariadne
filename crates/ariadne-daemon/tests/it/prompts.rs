@@ -117,12 +117,13 @@ async fn the_orchestrator_briefing_names_the_workflow_and_its_columns_and_no_lan
         .iter()
         .map(|s| {
             let skills: Vec<String> = serde_json::from_str(&s.skills).unwrap();
+            let ranks: Vec<String> = serde_json::from_str(&s.ranks).unwrap();
             let mut line = format!("- {} [{}]: {}", s.id, s.title, s.description);
             if !skills.is_empty() {
                 line.push_str(&format!(" Skills: {}.", skills.join(", ")));
             }
-            if let Some(rank) = &s.rank {
-                line.push_str(&format!(" Rank: {rank}."));
+            if !ranks.is_empty() {
+                line.push_str(&format!(" Ranks: {}.", ranks.join(", ")));
             }
             line
         })

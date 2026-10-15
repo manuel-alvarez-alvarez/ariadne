@@ -822,7 +822,7 @@ mod tests {
             title: title.into(),
             description: String::new(),
             skills: vec![skill.into()],
-            rank: None,
+            ranks: Vec::new(),
             gate: None,
         }
     }

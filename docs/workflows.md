@@ -19,17 +19,17 @@ workflow develop-review-merge
   develop[Develop]
     Build the task on its branch and commit it.
     skills: coding
-    rank: balanced
+    ranks: balanced
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
     Fail the step with the changes to make.
     skills: code-review
-    rank: frontier
+    ranks: balanced, frontier
   merge[Merge]
     Rebase onto the base branch, squash, fast-forward and push.
     skills: merge
-    rank: fast
+    ranks: fast
     gate: merged
 ```
 
@@ -40,13 +40,18 @@ workflow develop-review-merge
    belongs to that column.
 4. A body line names a key or adds to the column's description:
    - `skills: a, b` names the column's skills, comma-separated.
-   - `rank: <word>` names the column's preferred rank: `fast`, `balanced`,
-     `frontier` or `local` (see [the four ranks](cli.md#work-with-tasks)).
+   - `ranks: a, b` names the column's capability band: one or more of
+     `fast`, `balanced`, `frontier` or `local`, comma-separated and
+     unordered (see [the four ranks](cli.md#work-with-tasks)). Planning may
+     staff the column on any rank it names; a blank list, a rank repeated
+     in the list, or a word none of the four answers to is refused. `rank:`
+     (singular) is not a stand-in for it — it is read as a plain
+     description line.
    - `gate: <word>` names what the column checks before a task moves on:
      `committed`, `pushed`, `merged` or `request-merged`.
    Each key appears at most once per column. Any other line is a
    description line, and consecutive description lines join with one
-   space. Skills, rank, gate and description are all optional.
+   space. Skills, ranks, gate and description are all optional.
 5. Blank lines and indentation are ignored. At least one column is
    required.
 6. A document that breaks one of these rules is refused, naming the line
@@ -67,17 +72,17 @@ workflow develop-review-pr
   develop[Develop]
     Build the task on its branch and commit it.
     skills: coding
-    rank: balanced
+    ranks: balanced
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
     Fail the step with the changes to make.
     skills: code-review
-    rank: frontier
+    ranks: balanced, frontier
   pr[Pull request]
     Push the branch, open the request and keep it until it merges or closes.
     skills: pr-babysit
-    rank: balanced
+    ranks: balanced
     gate: request-merged
 ```
 
@@ -103,14 +108,16 @@ completing a column gated on `request-merged`. See [The forge
 integration](forge.md) for what the `pr` column's agent does with the
 request it keeps.
 
-## Rank
+## Capability bands
 
-A column's `rank` says how capable a model its agent should run on by
-default: `fast` is quick and cheap, `balanced` is an everyday model,
-`frontier` is the most capable one, and `local` runs on your own machine.
-`ariadne models rank` sets which model answers to each rank — see [Using
-the CLI](cli.md#work-with-tasks). A column with no rank is staffed on
-whichever model the task's creator or the orchestrator picks.
+A column's `ranks` says how capable a model its agent may run on: `fast` is
+quick and cheap, `balanced` is an everyday model, `frontier` is the most
+capable one, and `local` runs on your own machine. A column may name more
+than one, and planning may staff it on any rank it names — `ranks: balanced,
+frontier` lets either answer. `ariadne models rank` sets which model answers
+to each rank — see [Using the CLI](cli.md#work-with-tasks). A column with no
+`ranks` is staffed on whichever model the task's creator or the orchestrator
+picks.
 
 ## The catalog
 

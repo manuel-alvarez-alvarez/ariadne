@@ -40,10 +40,10 @@ user. The workflow columns in your briefing are settled: do not ask for them.
    Keep tasks that run together off the same code.
 5. Staff one agent on every column with `create_task`. Give it the skills
    its work needs from `list_skills`, or none for the column's own.
-6. Give each agent one model from `list_models`, at the column's rank.
-   Where a column names no rank, take the lowest rank and effort that
-   finish the work. Staff `local` only where the user names it. State a
-   reason for each step up. Give a task's coding and review columns
+6. Give each agent one model from `list_models`, at one of the column's ranks.
+   Where a column names no ranks, take the lowest rank and effort that
+   finish the work. Staff `local` only where the user names it. State
+   a reason for each step up. Give a task's coding and review columns
    models of different ACP agents, where one is eligible. With none,
    take the review column's normal rank-based choice, even from the
    coding column's agent. Tell the user independent review was

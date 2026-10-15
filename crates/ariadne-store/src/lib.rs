@@ -167,6 +167,59 @@ fn pre_squash_message(path: &Path) -> String {
     )
 }
 
+/// Whether the database at `path` still carries `goal_steps.rank`, the
+/// single optional rank workflow capability bands replaced with the
+/// nonempty `ranks` list. There is no way to turn one snapshotted rank into
+/// a capability band without guessing, so this is checked before migration
+/// `0002` ever runs, the same as [`pre_squash_database`] is checked before
+/// any migration runs. `Some` is the sentence to show; a file that is not
+/// one of ours and a path with nothing on it are both `None`.
+///
+/// For `ariadne doctor`, which is asked why the daemon will not start and is
+/// the only thing still running to answer it.
+pub async fn pre_ranks_database(path: impl AsRef<Path>) -> Option<String> {
+    let path = path.as_ref();
+    if !path.is_file() {
+        return None;
+    }
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(false)
+                .read_only(true),
+        )
+        .await
+        .ok()?;
+    let old = has_rank_column(&pool).await.ok()?;
+    pool.close().await;
+    old.then(|| pre_ranks_message(path))
+}
+
+/// Whether `goal_steps` exists and still has its pre-capability-band `rank`
+/// column. A database with no `goal_steps` table at all is a fresh one.
+async fn has_rank_column(pool: &Pool<Sqlite>) -> Result<bool> {
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('goal_steps')")
+            .fetch_all(pool)
+            .await?;
+    Ok(columns.iter().any(|c| c == "rank"))
+}
+
+/// What a user holding one is told: the fix is the same one file to delete,
+/// named in full since it is wherever `db_path` puts it.
+fn pre_ranks_message(path: &Path) -> String {
+    let path = path.display();
+    format!(
+        "{path} predates workflow rank capability bands: its goal columns were \
+         snapshotted with a single optional rank, and there is no way to turn \
+         that into a nonempty capability band without guessing. Delete {path} \
+         (and its -wal and -shm files, if any) and start again — Ariadne is \
+         pre-1.0, so a database is recreated rather than migrated."
+    )
+}
+
 #[derive(Clone)]
 pub struct Store {
     /// Single-connection pool: every write serializes here.
@@ -218,6 +271,11 @@ impl Store {
         // what to do about it.
         if applied_elsewhere(&write).await? {
             return Err(StoreError::Invalid(pre_squash_message(path.as_ref())));
+        }
+        // Before migration 0002 rebuilds goal_steps out from under a
+        // database that still has real rows on the old column.
+        if has_rank_column(&write).await? {
+            return Err(StoreError::Invalid(pre_ranks_message(path.as_ref())));
         }
         // Rebuilds preserve child rows only with foreign keys off outside
         // the migration transaction. Restore enforcement before any writer runs.

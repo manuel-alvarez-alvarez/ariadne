@@ -102,10 +102,11 @@ impl Store {
         .execute(&mut *tx)
         .await?;
         for (ordinal, step) in steps.iter().enumerate() {
-            sqlx::query("INSERT INTO goal_steps (goal_id, ordinal, id, title, description, skills, rank, gate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+            let ranks: Vec<&str> = step.ranks.iter().map(|r| r.as_str()).collect();
+            sqlx::query("INSERT INTO goal_steps (goal_id, ordinal, id, title, description, skills, ranks, gate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&id).bind(ordinal as i64).bind(&step.id).bind(&step.title)
                 .bind(&step.description).bind(serde_json::to_string(&step.skills).expect("skills serialize"))
-                .bind(step.rank.map(|r| r.as_str())).bind(step.gate.map(|g| g.as_str()))
+                .bind(serde_json::to_string(&ranks).expect("ranks serialize")).bind(step.gate.map(|g| g.as_str()))
                 .execute(&mut *tx).await?;
         }
         for repository_id in &repository_ids {

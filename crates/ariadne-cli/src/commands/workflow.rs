@@ -19,7 +19,7 @@ use ariadne_api::workflows::{
 };
 use ariadne_client::{Client, ClientError};
 
-use super::{Subject, agent_label, confirm, path_segment};
+use super::{Subject, agent_label, confirm, path_segment, ranks_label};
 use crate::error::Failure;
 use crate::output::{
     Column, Format, UNCAPPED, age, col, dash, empty_state, ok_id_line, pager, print, print_json,
@@ -42,7 +42,7 @@ const STEPS: &[Column] = &[
     col("id", 16).title(),
     col("title", 20),
     col("skills", UNCAPPED).rank(2),
-    col("rank", UNCAPPED).rank(1),
+    col("ranks", UNCAPPED).rank(1),
     col("gate", UNCAPPED).rank(1),
 ];
 
@@ -268,7 +268,7 @@ fn step_row(s: &WorkflowStepDto) -> Vec<String> {
         s.id.clone(),
         s.title.clone(),
         agent_label(&s.skills),
-        dash(s.rank.map(|r| r.as_str())),
+        ranks_label(&s.ranks),
         dash(s.gate.map(|g| g.as_str())),
     ]
 }
@@ -339,7 +339,7 @@ mod tests {
                     title: "Develop".into(),
                     description: String::new(),
                     skills: vec!["coding".into()],
-                    rank: None,
+                    ranks: Vec::new(),
                     gate: None,
                 },
                 WorkflowStepDto {
@@ -347,7 +347,7 @@ mod tests {
                     title: "Review".into(),
                     description: String::new(),
                     skills: vec!["code-review".into()],
-                    rank: None,
+                    ranks: Vec::new(),
                     gate: None,
                 },
             ],
@@ -400,8 +400,8 @@ mod tests {
         assert_eq!(rm_question(&w), "Delete the develop-review-merge workflow?");
     }
 
-    /// One column of `workflow check`, with a dash for the rank and the gate
-    /// a column did not name.
+    /// One column of `workflow check`, with a dash for the ranks and the
+    /// gate a column did not name.
     #[test]
     fn a_step_row_dashes_what_the_document_did_not_name() {
         let step = WorkflowStepDto {
@@ -409,10 +409,30 @@ mod tests {
             title: "Develop".into(),
             description: String::new(),
             skills: vec!["coding".into()],
-            rank: None,
+            ranks: Vec::new(),
             gate: None,
         };
         assert_eq!(step_row(&step), ["develop", "Develop", "coding", "-", "-"]);
+    }
+
+    /// Several ranks in a column's capability band join, in the order the
+    /// document named them.
+    #[test]
+    fn a_step_row_joins_every_rank_of_the_capability_band() {
+        use ariadne_core::models::ModelRank;
+
+        let step = WorkflowStepDto {
+            id: "review".into(),
+            title: "Review".into(),
+            description: String::new(),
+            skills: vec!["code-review".into()],
+            ranks: vec![ModelRank::Balanced, ModelRank::Frontier],
+            gate: None,
+        };
+        assert_eq!(
+            step_row(&step),
+            ["review", "Review", "code-review", "balanced, frontier", "-"]
+        );
     }
 
     /// A named file is read whole; `-` and no file both fall through to
@@ -443,7 +463,7 @@ mod tests {
         let (client, _server) =
             serve(captured.clone(), Err((3, "unknown rank: urgent".into()))).await;
 
-        let err = check(&client, "workflow x\n  a[A]\n    rank: urgent\n".into())
+        let err = check(&client, "workflow x\n  a[A]\n    ranks: urgent\n".into())
             .await
             .expect_err("an invalid document");
         assert_eq!(err.to_string(), "line 3: unknown rank: urgent");
@@ -454,7 +474,7 @@ mod tests {
                 .unwrap()
                 .as_ref()
                 .and_then(|v| v.get("document")),
-            Some(&serde_json::json!("workflow x\n  a[A]\n    rank: urgent\n"))
+            Some(&serde_json::json!("workflow x\n  a[A]\n    ranks: urgent\n"))
         );
     }
 
@@ -564,7 +584,7 @@ mod tests {
                 Ok(()) => (
                     StatusCode::OK,
                     AxumJson(serde_json::json!({"name": "x", "steps": [
-                        {"id": "a", "title": "A", "description": "", "skills": [], "rank": null, "gate": null}
+                        {"id": "a", "title": "A", "description": "", "skills": [], "ranks": [], "gate": null}
                     ]})),
                 ),
                 Err((line, message)) => (

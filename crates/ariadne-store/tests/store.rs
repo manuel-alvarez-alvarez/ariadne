@@ -3222,6 +3222,65 @@ async fn a_database_on_the_old_chain_is_refused_with_the_pre_squash_message() {
     );
 }
 
+/// A database whose `goal_steps` still carries the single, optional `rank`
+/// column workflow capability bands replaced: there is no way to turn one
+/// snapshotted rank into a nonempty `ranks` list without guessing, so
+/// `Store::open` refuses it before migration `0002` rebuilds the table out
+/// from under it, naming the file to delete the same way a pre-squash
+/// database is refused.
+///
+/// The column is added by a raw `ALTER TABLE` rather than by replaying an
+/// old release, for the same reason the squash tests plant a row: the old
+/// `rank` column, on an otherwise current database, is exactly what every
+/// database written before this change has.
+#[tokio::test]
+async fn a_database_that_still_carries_the_single_rank_column_is_refused_with_a_reset_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pre-ranks.db");
+    // A current database first, so that the only thing wrong with it is the
+    // superseded column.
+    drop(Store::open(&path).await.unwrap());
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE goal_steps ADD COLUMN rank TEXT")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let message = match Store::open(&path).await {
+        Err(StoreError::Invalid(message)) => message,
+        Err(e) => panic!("opened with the wrong error: {e}"),
+        Ok(_) => panic!("a database with the old rank column opened"),
+    };
+    assert!(
+        message.contains(&path.display().to_string()) && message.contains("Delete"),
+        "the message names the file to delete: {message}"
+    );
+    assert!(
+        message.contains("predates workflow rank capability bands"),
+        "and says why: {message}"
+    );
+
+    // And `ariadne doctor` answers the same, which is what the user asks
+    // when the daemon it belongs to will not start.
+    assert_eq!(
+        ariadne_store::pre_ranks_database(&path).await.as_deref(),
+        Some(message.as_str())
+    );
+    // A database this release wrote is not called old.
+    let fresh = dir.path().join("fresh.db");
+    drop(Store::open(&fresh).await.unwrap());
+    assert_eq!(ariadne_store::pre_ranks_database(&fresh).await, None);
+    // Neither is a path with nothing on it.
+    assert_eq!(
+        ariadne_store::pre_ranks_database(dir.path().join("nothing.db")).await,
+        None
+    );
+}
+
 /// `0001_init.sql`'s own `CHECK (kind IN ('github'))` on `forge_integrations`
 /// is what a fresh database's schema actually enforces, not merely what the
 /// typed `SetForgeIntegration::kind: ForgeKind` the ordinary write path

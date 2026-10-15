@@ -471,7 +471,7 @@ impl AriadneMcp {
         )
     }
     #[tool(
-        description = "Read a task: its column, status, branch, dependencies and agents. Each agent gives its column and skills. The goal columns give each rank and gate."
+        description = "Read a task: its column, status, branch, dependencies and agents. Each agent gives its column and skills. The goal columns give each one's ranks and gate."
     )]
     async fn get_task(
         &self,
@@ -611,7 +611,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List every task of the goal, with each task and agent column. The goal columns give each rank and gate. This shows where the goal stands."
+        description = "List every task of the goal, with each task and agent column. The goal columns give each one's ranks and gate. This shows where the goal stands."
     )]
     async fn list_tasks(
         &self,
