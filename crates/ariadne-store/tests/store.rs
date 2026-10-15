@@ -5208,6 +5208,34 @@ async fn a_database_with_an_empty_migrations_table_still_counts_as_fresh() {
     );
 }
 
+/// A database already at migration 0008, upgrading past it for the first
+/// time, never wrote `fresh_install_marker`: 0009 finds no row to read and
+/// leaves `tunnel_enabled` exactly as the user had chosen it, on.
+#[tokio::test]
+async fn an_existing_database_upgrading_from_0008_with_the_tunnel_on_keeps_it_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+
+    let store = Store::open(&path).await.unwrap();
+    store.set_tunnel_enabled(true).await.unwrap();
+    store.close().await;
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 9")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let reopened = Store::open(&path).await.unwrap();
+    assert!(
+        reopened.forge_settings().await.unwrap().tunnel_enabled,
+        "an upgrade from a database that never saw a fresh install must not turn the tunnel off"
+    );
+}
+
 /// The forge row is read with its repository, lower-cased, in every list a
 /// repository is read through, and goes with the repository.
 #[tokio::test]

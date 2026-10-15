@@ -155,6 +155,28 @@ async fn applied_elsewhere(pool: &Pool<Sqlite>) -> Result<bool> {
     }))
 }
 
+/// Whether this database has never had a migration committed: whether
+/// `_sqlx_migrations` holds a row of one, not merely whether the table
+/// exists. sqlx creates the table itself before it applies the first
+/// migration, so a run killed between that create and 0001's own commit
+/// leaves the table standing with nothing in it — still no migration this
+/// database has actually finished, for all the table's presence says
+/// otherwise.
+async fn no_migration_applied_yet(pool: &Pool<Sqlite>) -> Result<bool> {
+    let recorded: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_optional(pool)
+    .await?;
+    if recorded.is_none() {
+        return Ok(true);
+    }
+    let applied: Option<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations LIMIT 1")
+        .fetch_optional(pool)
+        .await?;
+    Ok(applied.is_none())
+}
+
 /// What a user holding one is told: the fix is one file to delete, named in
 /// full since it is wherever `db_path` puts it.
 fn pre_squash_message(path: &Path) -> String {
@@ -218,6 +240,24 @@ impl Store {
         // what to do about it.
         if applied_elsewhere(&write).await? {
             return Err(StoreError::Invalid(pre_squash_message(path.as_ref())));
+        }
+        // Written before any migration runs, so a process killed anywhere
+        // in the migrations that follow still leaves 0009 a durable row to
+        // read once it finally runs: this table is ours, not sqlx's, so a
+        // migration rolled back by the same crash never takes it with it.
+        // The create is unconditional — an upgrade needs the (empty) table
+        // to exist too, for 0009's own `EXISTS` check to read false rather
+        // than fail outright — and the row is written only the one time
+        // this database has never had a migration committed (027 rule 11).
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS fresh_install_marker (id INTEGER PRIMARY KEY CHECK (id = 1))",
+        )
+        .execute(&write)
+        .await?;
+        if no_migration_applied_yet(&write).await? {
+            sqlx::query("INSERT OR IGNORE INTO fresh_install_marker (id) VALUES (1)")
+                .execute(&write)
+                .await?;
         }
         // Rebuilds preserve child rows only with foreign keys off outside
         // the migration transaction. Restore enforcement before any writer runs.

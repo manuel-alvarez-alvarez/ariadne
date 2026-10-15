@@ -124,7 +124,7 @@ A disabled integration has no worker, regardless of its retained hook status.
 
 11. The one `forge_settings` row holds `tunnel_enabled` (0 or 1, default 1) and `tunnel_subdomain` (NULL until first use).
     The schema seeds it with the tunnel on, and that seed never changes: migration 0001's checksum is fixed once shipped.
-    Migration 0009 then turns `tunnel_enabled` off, unconditionally, the one and only time it ever runs on a given database: a migration applies exactly once per database and commits atomically with its own `_sqlx_migrations` record, so a run killed midway leaves nothing applied for the next `open` to resume from — it either reruns 0009 whole, or finds it already applied and never touches the column at all. That is the only place outside the row's own `PUT /v1/forge/tunnel` that ever writes the column: every later `open` of the same database finds 0009 already applied, and leaves whichever choice it stored, on or off, untouched. So a fresh installation starts polling, by default, and no later `open` of the same database ever moves its own stored choice.
+    `Store::open` writes a `fresh_install_marker` row before it runs any migration, the one time it finds no `_sqlx_migrations` row at all — a database this is the very first `open` of, never one an earlier run already brought up to some version. That table is its own, not sqlx's: a run killed anywhere among the migrations that follow leaves the marker row standing regardless, since it already committed before any of them started. Migration 0009 then turns `tunnel_enabled` off only where that row exists, in the same step it drops the marker table, both atomic with its own `_sqlx_migrations` record: a database already past 0008 when 0009 first runs never wrote the row, so it leaves the column exactly as stored, on or off, and an upgrade's own choice never moves on its own. So a fresh installation starts polling, by default, and no upgrade is ever touched.
     `config.toml` adds `tunnel_host` (default `https://localtunnel.me`) and `tunnel_subdomain`.
     The configured subdomain wins over the stored one.
 12. The tunnel runs when `tunnel_enabled` holds, at least one integration is enabled, and `webhook_public_url` is unset.
@@ -228,6 +228,10 @@ A disabled integration has no worker, regardless of its retained hook status.
   before 0001 ever committed still runs every migration, 0009's own
   tunnel-off update included, rather than being mistaken for an upgrade:
   `store.rs::a_database_with_an_empty_migrations_table_still_counts_as_fresh`.
+  A database already at migration 0008 with the tunnel on, upgrading past
+  it for the first time, never wrote the marker 0009 reads, and keeps the
+  tunnel on:
+  `store.rs::an_existing_database_upgrading_from_0008_with_the_tunnel_on_keeps_it_on`.
   A fresh installation, polling by default, still fetches its enabled
   repositories by timer, unaffected by the switch:
   `pull_requests.rs::timer_wake_only_and_disable_control_repository_fetches`.
