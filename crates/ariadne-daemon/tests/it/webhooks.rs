@@ -70,29 +70,20 @@ async fn the_listener_binds_a_separate_random_or_fixed_port_and_serves_no_api() 
     api_task.abort();
 }
 
-fn script(gitlab: bool) -> Value {
+fn script() -> Value {
     json!([
         answer(&["auth", "status"], 0, ""),
-        answer(
-            &["api", "user"],
-            0,
-            if gitlab { r#"{"username":"me"}"# } else { "me" }
-        ),
+        answer(&["api", "user"], 0, "me"),
         answer(&["pr", "list"], 0, "[]"),
-        answer(&["mr", "list"], 0, "[]"),
         answer(&["api"], 0, r#"{"id":17}"#),
     ])
 }
 
-async fn enable(h: &crate::common::Harness, gitlab: bool) -> String {
+async fn enable(h: &crate::common::Harness) -> String {
     let path = h.git_repo("webhooks");
     sh(
         &path,
-        if gitlab {
-            "git remote add origin https://gitlab.com/acme/widgets.git"
-        } else {
-            "git remote add origin https://github.com/acme/widgets.git"
-        },
+        "git remote add origin https://github.com/acme/widgets.git",
     );
     let repo: Value = h
         .json(
@@ -107,19 +98,13 @@ async fn enable(h: &crate::common::Harness, gitlab: bool) -> String {
 }
 
 fn fetches(stub: &StubForgeCli) -> usize {
-    // GitHub's one repository fetch lists the open requests once, its
-    // review requests named on each of them. GitLab's still lists the
-    // open requests and the review requests apart, so one of its fetches
-    // is two `mr list` calls.
-    let calls = stub.invocations();
-    let lists = |program: &str| {
-        calls
-            .iter()
-            .filter(|call| call.args.first().is_some_and(|a| a == program))
-            .filter(|call| call.args.get(1).is_some_and(|a| a == "list"))
-            .count()
-    };
-    lists("pr") + lists("mr") / 2
+    // One repository fetch lists the open requests once, its review
+    // requests named on each of them.
+    stub.invocations()
+        .iter()
+        .filter(|call| call.args.first().is_some_and(|a| a == "pr"))
+        .filter(|call| call.args.get(1).is_some_and(|a| a == "list"))
+        .count()
 }
 
 async fn quiet(stub: &StubForgeCli, count: usize) {
@@ -135,8 +120,8 @@ async fn quiet(stub: &StubForgeCli, count: usize) {
     );
 }
 
-async fn deliveries(gitlab: bool) {
-    let stub = stub_forge_cli(script(gitlab));
+async fn deliveries() {
+    let stub = stub_forge_cli(script());
     let home = tempfile::tempdir().unwrap();
     std::fs::write(
         home.path().join("config.toml"),
@@ -156,7 +141,7 @@ async fn deliveries(gitlab: bool) {
         WebhookListen::bind(&h.launcher.cfg, h.store.clone(), h.state.forge_poll.clone())
             .await
             .unwrap();
-    let id = enable(&h, gitlab).await;
+    let id = enable(&h).await;
     eventually(TIMEOUT, "webhook state or fetch", async || {
         fetches(&stub) == 1
     })
@@ -168,21 +153,13 @@ async fn deliveries(gitlab: bool) {
     assert_eq!(secret.len(), 64);
     assert!(secret.bytes().all(|b| b.is_ascii_hexdigit()));
     quiet(&stub, 1).await;
-    let kind = if gitlab { "gitlab" } else { "github" };
+    let kind = "github";
     let url = format!("http://{}/webhooks/{kind}/{id}", listener.address());
     let body = b"{\"action\":\"opened\"}";
-    let signature = if gitlab {
-        secret.clone()
-    } else {
-        // Python provides an independent signature implementation.
-        let output = std::process::Command::new("python3").args(["-c", "import hmac,hashlib,sys;print('sha256='+hmac.new(sys.argv[1].encode(),b'{\"action\":\"opened\"}',hashlib.sha256).hexdigest())", &secret]).output().unwrap();
-        String::from_utf8(output.stdout).unwrap().trim().into()
-    };
-    let header = if gitlab {
-        "X-Gitlab-Token"
-    } else {
-        "X-Hub-Signature-256"
-    };
+    // Python provides an independent signature implementation.
+    let output = std::process::Command::new("python3").args(["-c", "import hmac,hashlib,sys;print('sha256='+hmac.new(sys.argv[1].encode(),b'{\"action\":\"opened\"}',hashlib.sha256).hexdigest())", &secret]).output().unwrap();
+    let signature: String = String::from_utf8(output.stdout).unwrap().trim().into();
+    let header = "X-Hub-Signature-256";
     let client = reqwest::Client::new();
     assert_eq!(
         client
@@ -206,19 +183,17 @@ async fn deliveries(gitlab: bool) {
             .status(),
         StatusCode::UNAUTHORIZED
     );
-    if !gitlab {
-        assert_eq!(
-            client
-                .post(&url)
-                .header(header, &signature)
-                .body("changed body")
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::UNAUTHORIZED
-        );
-    }
+    assert_eq!(
+        client
+            .post(&url)
+            .header(header, &signature)
+            .body("changed body")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
     assert!(
         h.store
             .forge_integration(&id)
@@ -233,7 +208,6 @@ async fn deliveries(gitlab: bool) {
             .post(&url)
             .header(header, &signature)
             .header("X-Github-Event", "ping")
-            .header("X-Gitlab-Event", "ping")
             .body(body.to_vec())
             .send()
             .await
@@ -287,39 +261,23 @@ async fn deliveries(gitlab: bool) {
         .find(|c| c.args.iter().any(|a| a == "POST"))
         .unwrap();
     assert!(create.args.iter().any(|a| a.contains(&secret)));
-    let expected_events: &[&str] = if gitlab {
-        &[
-            "merge_requests_events=true",
-            "note_events=true",
-            "pipeline_events=true",
-            "issues_events=true",
-        ]
-    } else {
-        &[
-            "events[]=pull_request",
-            "events[]=pull_request_review",
-            "events[]=pull_request_review_comment",
-            "events[]=issue_comment",
-            "events[]=check_suite",
-            "events[]=check_run",
-            "events[]=status",
-            "events[]=issues",
-        ]
-    };
+    let expected_events: &[&str] = &[
+        "events[]=pull_request",
+        "events[]=pull_request_review",
+        "events[]=pull_request_review_comment",
+        "events[]=issue_comment",
+        "events[]=check_suite",
+        "events[]=check_run",
+        "events[]=status",
+        "events[]=issues",
+    ];
     for event in expected_events {
         assert!(
             create.args.iter().any(|a| a == event),
             "missing event {event}"
         );
     }
-    assert_eq!(
-        create.args[1],
-        if gitlab {
-            "projects/acme%2Fwidgets/hooks"
-        } else {
-            "repos/acme/widgets/hooks"
-        }
-    );
+    assert_eq!(create.args[1], "repos/acme/widgets/hooks");
 
     assert!(
         create
@@ -357,25 +315,16 @@ async fn deliveries(gitlab: bool) {
 
 #[tokio::test]
 async fn github_signed_deliveries_wake_once_and_bad_signatures_ping_and_large_bodies_do_not() {
-    deliveries(false).await;
-}
-#[tokio::test]
-async fn gitlab_tokens_wake_once_and_bad_tokens_ping_and_large_bodies_do_not() {
-    deliveries(true).await;
+    deliveries().await;
 }
 
 #[tokio::test]
 async fn url_changes_update_hooks_withdrawal_restores_timer_and_disable_deletes() {
-    url_changes(false).await;
+    url_changes().await;
 }
 
-#[tokio::test]
-async fn gitlab_url_updates_preserve_the_token_and_withdrawal_restores_timer() {
-    url_changes(true).await;
-}
-
-async fn url_changes(gitlab: bool) {
-    let stub = stub_forge_cli(script(gitlab));
+async fn url_changes() {
+    let stub = stub_forge_cli(script());
     let h = harness()
         .forge_cli(&stub)
         .timeouts(ariadne_daemon::timeouts::Timeouts {
@@ -386,12 +335,12 @@ async fn url_changes(gitlab: bool) {
         .await;
     let url = h.state.forge_poll.webhook_url();
     url.set(Some("https://first.example".into()));
-    let id = enable(&h, gitlab).await;
+    let id = enable(&h).await;
     eventually(TIMEOUT, "webhook state or fetch", async || {
         fetches(&stub) == 1
     })
     .await;
-    let kind = if gitlab { "gitlab" } else { "github" };
+    let kind = "github";
     url.set(Some("https://second.example".into()));
     eventually(TIMEOUT, "webhook state or fetch", async || {
         h.store
@@ -404,27 +353,11 @@ async fn url_changes(gitlab: bool) {
             == Some(&format!("https://second.example/webhooks/{kind}/{id}"))
     })
     .await;
-    assert!(stub.invocations().iter().any(|c| {
-        c.args
+    assert!(
+        stub.invocations()
             .iter()
-            .any(|a| a == if gitlab { "PUT" } else { "PATCH" })
-    }));
-    if gitlab {
-        let secret = h
-            .store
-            .forge_integration(&id)
-            .await
-            .unwrap()
-            .unwrap()
-            .webhook_secret
-            .unwrap();
-        let update = stub
-            .invocations()
-            .into_iter()
-            .find(|c| c.args.iter().any(|a| a == "PUT"))
-            .unwrap();
-        assert!(update.args.contains(&format!("token={secret}")));
-    }
+            .any(|c| c.args.iter().any(|a| a == "PATCH"))
+    );
     eventually(TIMEOUT, "webhook state or fetch", async || {
         fetches(&stub) == 2
     })
@@ -508,7 +441,7 @@ async fn url_changes(gitlab: bool) {
 
 #[tokio::test]
 async fn a_refused_hook_keeps_the_forge_message_and_timer_fetches() {
-    let mut entries = script(false).as_array().unwrap().clone();
+    let mut entries = script().as_array().unwrap().clone();
     entries.pop();
     entries.push(json!({"args":["api"],"exit":1,"stderr":"HTTP 403: needs admin rights"}));
     let stub = stub_forge_cli(Value::Array(entries));
@@ -524,7 +457,7 @@ async fn a_refused_hook_keeps_the_forge_message_and_timer_fetches() {
         .forge_poll
         .webhook_url()
         .set(Some("https://hooks.example".into()));
-    let id = enable(&h, false).await;
+    let id = enable(&h).await;
     let row = h.store.forge_integration(&id).await.unwrap().unwrap();
     assert_eq!(row.webhook_state, "polling");
     assert!(row.webhook_error.unwrap().contains("needs admin rights"));
@@ -543,7 +476,7 @@ async fn a_refused_hook_keeps_the_forge_message_and_timer_fetches() {
 
 #[tokio::test]
 async fn a_missing_stored_hook_restores_timer_and_wakes_a_fetch() {
-    let stub = stub_forge_cli(script(false));
+    let stub = stub_forge_cli(script());
     let h = harness()
         .forge_cli(&stub)
         .timeouts(ariadne_daemon::timeouts::Timeouts {
@@ -554,9 +487,9 @@ async fn a_missing_stored_hook_restores_timer_and_wakes_a_fetch() {
         .await;
     let public = h.state.forge_poll.webhook_url();
     public.set(Some("https://first.example".into()));
-    let id = enable(&h, false).await;
+    let id = enable(&h).await;
     eventually(TIMEOUT, "initial fetch", async || fetches(&stub) == 1).await;
-    let mut entries = script(false).as_array().unwrap().clone();
+    let mut entries = script().as_array().unwrap().clone();
     entries.pop();
     entries.push(json!({"args":["api"],"exit":1,"stderr":"HTTP 404: hook not found"}));
     stub.reprogram(Value::Array(entries));
@@ -574,7 +507,7 @@ async fn a_missing_stored_hook_restores_timer_and_wakes_a_fetch() {
 
 #[tokio::test]
 async fn a_failed_hook_update_keeps_its_id_and_reports_the_error_with_timer_fallback() {
-    let stub = stub_forge_cli(script(true));
+    let stub = stub_forge_cli(script());
     let h = harness()
         .forge_cli(&stub)
         .timeouts(ariadne_daemon::timeouts::Timeouts {
@@ -585,7 +518,7 @@ async fn a_failed_hook_update_keeps_its_id_and_reports_the_error_with_timer_fall
         .await;
     let public = h.state.forge_poll.webhook_url();
     public.set(Some("https://first.example".into()));
-    let id = enable(&h, true).await;
+    let id = enable(&h).await;
     eventually(TIMEOUT, "initial fetch", async || fetches(&stub) == 1).await;
     let secret = h
         .store
@@ -595,7 +528,7 @@ async fn a_failed_hook_update_keeps_its_id_and_reports_the_error_with_timer_fall
         .unwrap()
         .webhook_secret
         .unwrap();
-    let mut entries = script(true).as_array().unwrap().clone();
+    let mut entries = script().as_array().unwrap().clone();
     entries.pop();
     entries.push(json!({"args":["api"],"exit":1,"stderr":format!("HTTP 500: failed request token={secret}")}));
     stub.reprogram(Value::Array(entries));
@@ -621,7 +554,7 @@ async fn a_failed_hook_update_keeps_its_id_and_reports_the_error_with_timer_fall
 async fn startup_checks_a_stored_hook_without_creating_another_and_fetches_once() {
     use ariadne_core::ForgeKind;
     use ariadne_store::{NewRepository, SetForgeIntegration, Store};
-    let stub = stub_forge_cli(script(false));
+    let stub = stub_forge_cli(script());
     let h = harness().forge_cli(&stub).await;
     let store = Store::open(&h.dir.path().join("restart.db")).await.unwrap();
     let repo = store
@@ -698,13 +631,13 @@ async fn startup_checks_a_stored_hook_without_creating_another_and_fetches_once(
 
 #[tokio::test]
 async fn a_changed_remote_deletes_the_old_hook_without_reusing_its_secret_or_id() {
-    let stub = stub_forge_cli(script(false));
+    let stub = stub_forge_cli(script());
     let h = harness().forge_cli(&stub).await;
     h.state
         .forge_poll
         .webhook_url()
         .set(Some("https://hooks.example".into()));
-    let id = enable(&h, false).await;
+    let id = enable(&h).await;
     let original = h.store.forge_integration(&id).await.unwrap().unwrap();
     let repo = h.store.get_repository(&id).await.unwrap();
     sh(
@@ -747,13 +680,13 @@ async fn a_changed_remote_deletes_the_old_hook_without_reusing_its_secret_or_id(
 
 #[tokio::test]
 async fn replacing_and_enabling_a_remote_in_one_edit_creates_its_own_hook() {
-    let stub = stub_forge_cli(script(false));
+    let stub = stub_forge_cli(script());
     let h = harness().forge_cli(&stub).await;
     h.state
         .forge_poll
         .webhook_url()
         .set(Some("https://hooks.example".into()));
-    let id = enable(&h, false).await;
+    let id = enable(&h).await;
     let original = h.store.forge_integration(&id).await.unwrap().unwrap();
     let repo = h.store.get_repository(&id).await.unwrap();
     sh(

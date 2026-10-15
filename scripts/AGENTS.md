@@ -121,8 +121,15 @@ in the root [`AGENTS.md`](../AGENTS.md).
   `reject-version-collision` (a branch's own new migration collides with a
   different one `main` shipped under the same version number while the
   branch was forked), `unrelated-change` (a change outside the migrations
-  directory). Builds a throwaway repository with one shipped migration on
-  `main` and drives `check-migrations.sh` against a branch built for the case.
+  directory), `accept-approved-edit` and `reject-near-miss-edit` (the one
+  named exception `check-migrations.sh` pins — see below — accepts exactly
+  its own old-to-new blob pair and nothing else; a git blob hash is a pure
+  function of its content, never of which repository holds it, so writing
+  this repository's own pre- and post-edit `0001_init.sql` bytes into the
+  throwaway one, verbatim, reproduces the exact same two blobs the real,
+  fixed pin names, with no override of any kind). Builds a throwaway
+  repository with one shipped migration on `main` and drives
+  `check-migrations.sh` against a branch built for the case.
 
 ## Conventions
 

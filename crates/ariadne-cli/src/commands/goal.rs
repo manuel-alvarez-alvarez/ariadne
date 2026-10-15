@@ -106,7 +106,7 @@ pub(crate) enum GoalCommand {
         /// Goal description (what should be achieved)
         #[arg(short = 'd', long)]
         description: Option<String>,
-        /// Create the goal from a GitHub or GitLab issue URL
+        /// Create the goal from a GitHub issue URL
         #[arg(long)]
         from_issue: Option<String>,
         /// Registered repository, by id or by the path it was added with

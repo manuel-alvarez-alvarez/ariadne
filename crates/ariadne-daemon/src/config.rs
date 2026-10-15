@@ -55,9 +55,6 @@ pub struct Config {
     /// The `gh` the GitHub integration runs (025). `None` looks up `gh` on
     /// the daemon's PATH.
     pub gh_bin: Option<String>,
-    /// The `glab` the GitLab integration runs (025). `None` looks up `glab`
-    /// on the daemon's PATH.
-    pub glab_bin: Option<String>,
     /// A command that stands in for the whole model install — the venv, pip
     /// and the weights — so the suite proves the install's states without
     /// downloading two gigabytes. Set by the test harness alone: it is not a
@@ -136,7 +133,6 @@ impl Config {
             python_bin: file.python_bin,
             nvidia_smi_bin: file.nvidia_smi_bin,
             gh_bin: file.gh_bin,
-            glab_bin: file.glab_bin,
             ai_permissions_installer: None,
             ai_permissions_serve_command: None,
             ai_permissions_endpoint: None,
@@ -232,7 +228,6 @@ mod tests {
         assert_eq!(config.python_bin, None);
         assert_eq!(config.nvidia_smi_bin, None);
         assert_eq!(config.gh_bin, None);
-        assert_eq!(config.glab_bin, None);
         assert_eq!(config.skills_dir, dir.path().join("home/skills"));
     }
 
@@ -258,13 +253,12 @@ mod tests {
         assert_eq!(cfg.tunnel_subdomain.as_deref(), Some("widgets"));
     }
 
-    /// The forge CLIs are keys a user may set, each a path or a bare name.
+    /// The forge CLI is a key a user may set, a path or a bare name.
     #[test]
-    fn the_forge_cli_keys_are_read() {
-        let dir = home_with("gh_bin = \"/opt/bin/gh\"\nglab_bin = \"glab-17\"\n");
+    fn the_forge_cli_key_is_read() {
+        let dir = home_with("gh_bin = \"/opt/bin/gh\"\n");
         let config = Config::load(Some(dir.path().join("home"))).unwrap();
         assert_eq!(config.gh_bin.as_deref(), Some("/opt/bin/gh"));
-        assert_eq!(config.glab_bin.as_deref(), Some("glab-17"));
     }
 
     #[test]

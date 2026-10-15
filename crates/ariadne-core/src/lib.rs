@@ -108,19 +108,20 @@ wire_enum! { PermissionMode, "permission mode", [
     Auto = "auto", Ask = "ask", Learn = "learn", Ai = "ai",
 ]}
 
-/// The forge a repository's remote is on (025): which CLI speaks to it.
+/// The forge a repository's remote is on (025): which CLI speaks to it. An
+/// enum, rather than an open string, so that a later forge is added as a new
+/// variant every match arm must answer for, not a string a caller could
+/// mistype.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ForgeKind {
     /// GitHub or a GitHub Enterprise host, through `gh`.
     Github,
-    /// GitLab or a self-managed GitLab host, through `glab`.
-    Gitlab,
 }
 
 wire_enum! { ForgeKind, "forge kind", [
-    Github = "github", Gitlab = "gitlab",
+    Github = "github",
 ]}
 
 /// A lifecycle briefing of Ariadne's own: one of the texts an agent is

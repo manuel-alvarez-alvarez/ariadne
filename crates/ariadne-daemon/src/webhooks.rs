@@ -11,7 +11,6 @@ use axum::{
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::{net::SocketAddr, sync::Arc};
-use subtle::ConstantTimeEq;
 use tokio::{net::TcpListener, sync::watch};
 
 /// The tunnel writes the current URL, or None when public ingress is unavailable.
@@ -67,7 +66,6 @@ impl WebhookListen {
         tracing::info!(%address, "webhook listener enabled");
         let router = Router::new()
             .route("/webhooks/github/{repository_id}", post(github))
-            .route("/webhooks/gitlab/{repository_id}", post(gitlab))
             .layer(DefaultBodyLimit::max(1024 * 1024))
             .with_state(Ingress { store, poll });
         let task = tokio::spawn(async move {
@@ -94,14 +92,6 @@ async fn github(
 ) -> StatusCode {
     deliver(state, id, headers, body, "github").await
 }
-async fn gitlab(
-    State(state): State<Ingress>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> StatusCode {
-    deliver(state, id, headers, body, "gitlab").await
-}
 async fn deliver(
     state: Ingress,
     id: String,
@@ -117,23 +107,17 @@ async fn deliver(
     let Some(secret) = row.webhook_secret.as_deref() else {
         return StatusCode::UNAUTHORIZED;
     };
-    let valid = if kind == "github" {
-        headers
-            .get("X-Hub-Signature-256")
-            .and_then(|h| h.to_str().ok())
-            .and_then(|s| s.strip_prefix("sha256="))
-            .and_then(|s| hex::decode(s).ok())
-            .is_some_and(|signature| {
-                let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
-                    .expect("HMAC accepts every key size");
-                mac.update(&body);
-                mac.verify_slice(&signature).is_ok()
-            })
-    } else {
-        headers
-            .get("X-Gitlab-Token")
-            .is_some_and(|token| bool::from(token.as_bytes().ct_eq(secret.as_bytes())))
-    };
+    let valid = headers
+        .get("X-Hub-Signature-256")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.strip_prefix("sha256="))
+        .and_then(|s| hex::decode(s).ok())
+        .is_some_and(|signature| {
+            let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+                .expect("HMAC accepts every key size");
+            mac.update(&body);
+            mac.verify_slice(&signature).is_ok()
+        });
     if !valid {
         return StatusCode::UNAUTHORIZED;
     }
@@ -142,12 +126,10 @@ async fn deliver(
         Ok(false) => return StatusCode::UNAUTHORIZED,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
     }
-    let event = if kind == "github" {
-        "X-Github-Event"
-    } else {
-        "X-Gitlab-Event"
-    };
-    if headers.get(event).is_none_or(|value| value != "ping") {
+    if headers
+        .get("X-Github-Event")
+        .is_none_or(|value| value != "ping")
+    {
         state.poll.wake(&id);
     }
     StatusCode::ACCEPTED

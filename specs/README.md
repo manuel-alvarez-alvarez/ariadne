@@ -35,7 +35,7 @@ test that proves it. Conventions for writing and changing one are in
 | 022 | [The `ai` permission mode](022-ai-permission-mode.md) | the fourth mode, the AI permission model's settings and prompts, the Python check and the install |
 | 023 | [Stats](023-stats.md) | the stats ledger, its facts, the stat families, and the route, command and screen over them |
 | 024 | [Advisory failure diagnosis](024-advisory-failure-diagnosis.md) | the optional local classifier beside a failed session's error, and why it never changes recovery |
-| 025 | [Forge integration](025-forge-integration.md) | the forge a repository's remote is on, enabling it, and the `gh` and `glab` client |
+| 025 | [Forge integration](025-forge-integration.md) | the forge a repository's remote is on, enabling it, and the `gh` client |
 | 026 | [Pull requests](026-pull-requests.md) | request identity, three births, held fetch lists, ledger, the request session and its news, CLI, and screen |
 | 027 | [Webhooks and tunnel](027-webhooks-and-tunnel.md) | separate signed ingress, hook lifecycle, public URL handle, fetch modes, and the tunnel with its switch |
 | 028 | [Issues and goals](028-issues-and-goals.md) | live forge issues and goals created from them |

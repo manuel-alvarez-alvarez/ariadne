@@ -25,15 +25,11 @@ use super::AppState;
 /// The binaries the daemon runs, with the flag each prints its version for
 /// and whether it holds credentials worth asking about.
 ///
-/// git is what a worktree is made of; `gh` and `glab` are how a published
-/// task is watched, and they are here because a forge CLI that is missing or
-/// signed out fails every poll of a pull request in a way nothing else in the
+/// git is what a worktree is made of; `gh` is how a published task is
+/// watched, and it is here because a forge CLI that is missing or signed
+/// out fails every poll of a pull request in a way nothing else in the
 /// system shows — the task simply sits there looking watched.
-const TOOLS: [(&str, &str, bool); 3] = [
-    ("git", "--version", false),
-    ("gh", "--version", true),
-    ("glab", "--version", true),
-];
+const TOOLS: [(&str, &str, bool); 2] = [("git", "--version", false), ("gh", "--version", true)];
 
 /// What the daemon sees: its PATH, the binaries on it, and the state of the
 /// directories it works in.

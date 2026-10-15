@@ -29,9 +29,9 @@ pub const FORGE_SIGNED_OUT: &str = "the forge CLI is not signed in";
 pub const FORGE_RATE_LIMITED: &str = "rate limited until";
 
 /// How many repository fetches may run at once against one forge host —
-/// `github.com`, a GitHub Enterprise host, a self-hosted GitLab — whatever
-/// started them: startup, the timer, or an explicit wake. Every repository
-/// on that host shares the same cap; a different host never waits on it.
+/// `github.com`, or a GitHub Enterprise host — whatever started them:
+/// startup, the timer, or an explicit wake. Every repository on that host
+/// shares the same cap; a different host never waits on it.
 pub const FORGE_HOST_FETCH_LIMIT: usize = 2;
 
 /// One [`Semaphore`] per forge host, lazily created with

@@ -55,10 +55,12 @@ item, or make it private. An item that a derive, serde, utoipa or a public
 signature reaches goes in the script's `IGNORED`, with its reason.
 
 `scripts/check-migrations.sh` guards `ariadne-store`'s migration files. A
-migration already on `main` is immutable once shipped: its checksum is what
-`_sqlx_migrations` recorded in every database that has already run it, and
-`ariadne-store` refuses to open a database whose recorded checksum disagrees
-(016, rule 9). The script compares `crates/ariadne-store/migrations/` on the
+migration already on `main` is immutable once shipped, with one named
+exception pinned by its exact old and new git blob (016, rule 9): its
+checksum is what `_sqlx_migrations` recorded in every database that has
+already run it, and `ariadne-store` refuses to open a database whose
+recorded checksum disagrees. The script compares
+`crates/ariadne-store/migrations/` on the
 latest commit of `main` directly against HEAD — never their merge-base,
 which would let a branch that forked before a migration landed see that
 migration as absent and accept its own, different copy of it as a fresh
@@ -71,7 +73,8 @@ one in the same change) — which also catches two branches racing to ship
 the same version number under different names. Run it by hand as
 `scripts/check-migrations.sh`; `scripts/tests/check-migrations.sh` proves
 each half, including a migration that landed through a squash after the
-branch forked.
+branch forked, and the one named exception's pin accepting exactly its own
+old-to-new blob pair and nothing else.
 
 The daemon's integration tests are one test binary, `it`: every file under
 `crates/ariadne-daemon/tests/it/` is a module that `tests/it/main.rs`

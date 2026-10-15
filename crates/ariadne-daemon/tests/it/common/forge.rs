@@ -1,26 +1,24 @@
-//! A scriptable stub of the forge CLIs, `gh` and `glab`, as test support.
+//! A scriptable stub of the forge CLI, `gh`, as test support.
 //!
-//! [`stub_forge_cli`] writes one python3 program and links it under both
-//! names, as [`super::acp`] links its stub agent: one shared launcher, so no
+//! [`stub_forge_cli`] writes one python3 program and links it under its
+//! name, as [`super::acp`] links its stub agent: one shared launcher, so no
 //! test waits on macOS to check a new executable. The program reads a JSON
 //! script, a list of entries, each an argument prefix (`args`), a `stdout`,
 //! an optional `stderr` and an `exit` code, an optional `program` that holds
-//! the entry to `gh` or to `glab`, and an optional `wait_for`, a file the
+//! the entry to `gh`, and an optional `wait_for`, a file the
 //! answer waits for, so a test holds a call open. It answers the first entry whose
 //! prefix matches, and an invocation no entry matches exits 1. It appends
 //! every invocation, its name and its arguments, to a log the test reads.
-//! [`super::HarnessBuilder::forge_cli`] points the daemon's `gh_bin` and
-//! `glab_bin` at it.
+//! [`super::HarnessBuilder::forge_cli`] points the daemon's `gh_bin` at it.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-/// The stub on disk: the two names the daemon runs, and the files it reads
+/// The stub on disk: the name the daemon runs, and the files it reads
 /// and reports through.
 pub(crate) struct StubForgeCli {
     pub gh: String,
-    pub glab: String,
     script_file: PathBuf,
     log: PathBuf,
     finished: PathBuf,
@@ -193,7 +191,6 @@ pub(crate) fn stub_forge_cli(script: Value) -> StubForgeCli {
     };
     StubForgeCli {
         gh: link("gh"),
-        glab: link("glab"),
         log: dir.path().join("forge-calls.jsonl"),
         finished: dir.path().join("forge-finished.jsonl"),
         pid_file: dir.path().join("forge-pid"),

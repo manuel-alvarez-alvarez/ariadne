@@ -44,24 +44,23 @@ async fn every_registry_agent_is_reported_with_what_discovery_made_of_it() {
     assert_eq!(stub.status, AcpAgentStatus::Ready, "{stub:?}");
 }
 
-/// git is what a worktree is made of, and `gh` and `glab` are what a
-/// published task is watched through, so all three are reported beside the
-/// agents rather than left to the caller to ask about. A forge CLI that is
-/// missing or signed out fails every poll of a pull request, and there is
-/// nowhere else that shows.
+/// git is what a worktree is made of, and `gh` is what a published task is
+/// watched through, so both are reported beside the agents rather than left
+/// to the caller to ask about. A forge CLI that is missing or signed out
+/// fails every poll of a pull request, and there is nowhere else that shows.
 #[tokio::test]
 async fn the_tools_a_session_and_a_published_task_need_are_reported() {
     let h = harness().await;
     let report = report(&h).await;
     let names: Vec<&str> = report.tools.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["git", "gh", "glab"]);
+    assert_eq!(names, ["git", "gh"]);
 
     // Which of them are installed on the machine running the tests is not
     // this test's business; that each is asked the questions that apply to it
-    // is. Only the forge CLIs have credentials, and only one that was found
+    // is. Only the forge CLI has credentials, and only one that was found
     // can be asked about them.
     for tool in &report.tools {
-        let forge = matches!(tool.name.as_str(), "gh" | "glab");
+        let forge = tool.name.as_str() == "gh";
         if !forge || tool.path.is_none() {
             assert_eq!(tool.authenticated, None, "{tool:?}");
         }

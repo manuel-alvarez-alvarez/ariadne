@@ -13,8 +13,6 @@ tests:
   - crates/ariadne-daemon/src/forge/github/reviews.rs
   - crates/ariadne-daemon/src/forge/github/comments.rs
   - crates/ariadne-daemon/src/forge/pulls.rs
-  - crates/ariadne-daemon/src/forge/gitlab/reviews.rs
-  - crates/ariadne-daemon/src/forge/gitlab/comments.rs
   - crates/ariadne-daemon/src/forge/github/pulls.rs
   - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
@@ -75,8 +73,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    writes no removal event for that. So it reads the request's timeline: the
    last review request or removed request for the login decides. A review
    decides nothing, so a review posted after a withdrawal does not ask
-   again. GitLab keeps a reviewer listed after a review, so a request it
-   does not list asks for nothing. A review of the user's own keeps nothing
+   again. A review of the user's own keeps nothing
    alive. Where the forge cannot answer, the last read stands. A review
    asked of a team the user belongs to is never found this way, since
    GitHub names a team by a slug or a name, never a login (026 Known gap).
@@ -192,11 +189,6 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
       `{"message", "errors"}` beside the CLI's line — so the session can act
       on it, and the skill says the failure rather than posting another way. The daemon then
       reads the review's comments back.
-    - GitLab: one discussion per inline comment on the merge request's diff,
-      through `glab api`. Each
-      position names the file on both sides of the diff: the merge
-      request's `diffs` are read before anything is posted, and a renamed
-      file takes its old path as `old_path`.
     The daemon marks the posted comments `from_review`
     (`pull_request_comment_marks`, 026 rule 10), as it marks a review
     session's replies, holds them beside the last read until the next fetch
@@ -217,9 +209,6 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
       comment joins that review as a new thread,
       `addPullRequestReviewThread`, naming its id rather than creating one
       of its own. No event is ever set, so the review stays pending.
-    - GitLab: each inline comment is a draft note of its own,
-      `POST .../draft_notes`, with the same position `submit_review`
-      gives a published discussion. Nothing here publishes a note.
     The daemon marks every comment it held as the review's
     (`pull_request_comment_marks`, 026 rule 10) the same way a posted one
     is, so it answers and reads the same as a posted review's would once
@@ -260,8 +249,6 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     - GitHub: `resolveReviewThread` through `gh api graphql`, on the thread's
       node id. A comment posted since the last detail fetch has its own id
       for a thread, so the request's threads are read for it first.
-    - GitLab: `PUT .../merge_requests/<n>/discussions/<id>` with
-      `resolved=true`, through `glab api`.
     The conversation is no thread, and nothing resolves it.
 16b. In a repository that supervises posts, the reviewer leaves a fixed
     thread unresolved for the human author. It creates no reply, resolution
@@ -403,8 +390,6 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 `crates/ariadne-daemon/src/forge/news.rs`, `crates/ariadne-daemon/src/forge/poll.rs`,
 `crates/ariadne-daemon/src/forge/github/reviews.rs`,
 `crates/ariadne-daemon/src/forge/github/comments.rs`,
-`crates/ariadne-daemon/src/forge/gitlab/reviews.rs`,
-`crates/ariadne-daemon/src/forge/gitlab/comments.rs`,
 `crates/ariadne-daemon/src/http/pull_requests.rs`,
 `crates/ariadne-daemon/src/launcher.rs`, `crates/ariadne-daemon/src/attention/pull_requests.rs`
 (031), `crates/ariadne-cli/src/commands/mcp.rs`, `crates/ariadne-cli/src/commands/mcp/tools.rs`,

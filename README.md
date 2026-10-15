@@ -110,8 +110,8 @@ what the old session knew, and the seat follows. When a model exhausts its quota
 automatically.
 </td>
 <td width="50%" valign="top">
-<h4>🔀 GitHub and GitLab, hands off</h4>
-Enable a registered repository's forge and Ariadne reads <code>gh</code> or <code>glab</code> for
+<h4>🔀 GitHub, hands off</h4>
+Enable a registered repository's forge and Ariadne reads <code>gh</code> for
 you: the agent of a task's <code>pr</code> column keeps the request it opened with
 <code>pr-babysit</code>, answering every comment and clearing every check until you merge it, a
 <code>pr-reviewer</code> session posts findings by priority on the ones you are asked to review,
@@ -213,7 +213,7 @@ ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the dae
 | [Stats](docs/stats.md) | what the work did, in five questions: the filters, `ariadne stats` and the Stats screen |
 | [Resuming a session](docs/resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
 | [How Ariadne works](docs/how-it-works.md) | a goal from planning through its workflow's columns, task lifecycle, and ACP sessions |
-| [The forge integration](docs/forge.md) | enabling GitHub or GitLab, the pull request and review sessions, webhooks and the tunnel, issues |
+| [The forge integration](docs/forge.md) | enabling GitHub, the pull request and review sessions, webhooks and the tunnel, issues |
 | [Ariadne Desktop](ui/README.md) | running the desktop app |
 
 ## Development

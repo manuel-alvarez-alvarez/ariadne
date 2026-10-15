@@ -13,7 +13,7 @@ use super::repositories::{bad, repo_path};
 use crate::gitwt::GitManager;
 
 /// Detect the forge a checkout's remote is on, the same way registration
-/// does. Null for a checkout with no GitHub or GitLab remote.
+/// does. Null for a checkout with no usable forge remote.
 #[utoipa::path(post, path = "/v1/forge/detect", tag = "repositories",
     request_body = DetectForgeRequest,
     responses(

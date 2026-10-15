@@ -1179,11 +1179,10 @@ async fn pending_edit_routes_answer_409_with_no_pending_review() {
     .await;
 }
 
-/// A `forge_id` of the wrong shape — naming no comment GitHub or GitLab
-/// ever holds, whole or pending — is the caller's own mistake, not the
-/// forge's: 400, refused before any forge call and with no pending
-/// review needed to tell it apart from one that is merely gone (026 rule
-/// 25).
+/// A `forge_id` of the wrong shape — naming no comment GitHub ever holds,
+/// whole or pending — is the caller's own mistake, not the forge's: 400,
+/// refused before any forge call and with no pending review needed to tell
+/// it apart from one that is merely gone (026 rule 25).
 #[tokio::test]
 async fn pending_edit_routes_answer_400_with_a_malformed_forge_id() {
     let Kept {

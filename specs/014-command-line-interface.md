@@ -144,7 +144,7 @@ same binary also serves (013).
     It shows measured capabilities, every degraded feature, and the rejection
     reason when the agent cannot satisfy the required contract. One ready
     agent is enough; a registry with none is a failure, since no session can
-    be spawned. Beside the agents it checks `git`, `gh` and `glab`, on this
+    be spawned. Beside the agents it checks `git` and `gh`, on this
     PATH and on the daemon's.
 20. Each `doctor` section is a shared output table: its check, verdict and
     detail columns fit the terminal, and `--no-trunc` prints their cells whole.

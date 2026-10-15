@@ -25,11 +25,11 @@ fn unresolved(e: impl std::fmt::Display) -> ApiError {
     ApiError::conflict(e.to_string())
 }
 
-/// Open the pull or merge request a task lands by, through the repository's
-/// own forge CLI, and answer its URL.
+/// Open the pull request a task lands by, through the repository's own
+/// forge CLI, and answer its URL.
 ///
-/// The daemon runs the forge call, never the agent: `gh` or `glab` only ever
-/// run here, with the authentication the user already set up for them
+/// The daemon runs the forge call, never the agent: `gh` only ever runs
+/// here, with the authentication the user already set up for it
 /// ([`crate::forge`]). The current column's agent supplies only what the
 /// daemon cannot read off the task or the repository — the title and the
 /// body — and gets the URL back to show the user.

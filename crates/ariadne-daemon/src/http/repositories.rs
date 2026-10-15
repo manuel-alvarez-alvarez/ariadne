@@ -229,7 +229,7 @@ async fn forge_asked(
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "forge_unavailable",
-            "this checkout has no remote on GitHub or GitLab to integrate with: Ariadne reads \
+            "this checkout has no forge remote to integrate with: Ariadne reads \
              `origin`, or the only remote where there is no `origin`",
         ));
     };

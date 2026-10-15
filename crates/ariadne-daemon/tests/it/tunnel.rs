@@ -1076,10 +1076,9 @@ async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds
     std::fs::write(
         home.join("config.toml"),
         format!(
-            "tcp_listen = \"127.0.0.1:{port}\"\ntunnel_host = \"{}\"\ngh_bin = \"{}\"\nglab_bin = \"{}\"\n",
+            "tcp_listen = \"127.0.0.1:{port}\"\ntunnel_host = \"{}\"\ngh_bin = \"{}\"\n",
             server.host(),
-            stub.gh,
-            stub.glab
+            stub.gh
         ),
     )
     .unwrap();

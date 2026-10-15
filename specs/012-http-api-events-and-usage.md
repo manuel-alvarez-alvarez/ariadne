@@ -208,7 +208,7 @@ and the ACP runtime that reports the agent events (021).
     ring buffer that evicts its oldest lines.
 19. `doctor` reports the environment the daemon actually runs in: its own
     paths, every registry agent with what discovery made of it, the tools a
-    session and a published task need (`git`, `gh`, `glab`), the Python
+    session and a published task need (`git`, `gh`), the Python
     interpreter the AI permission model installs into (022), and a worktree root it cannot
     write.
 20. `GET /v1/acp-agents` serves the cached ACP registry. `POST

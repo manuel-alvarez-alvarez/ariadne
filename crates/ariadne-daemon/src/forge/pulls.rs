@@ -61,8 +61,8 @@ pub struct ForgeDetails {
     pub comments: Vec<NewPullRequestComment>,
     pub failed_checks: Vec<FailedCheck>,
     pub behind_base: bool,
-    /// Whether this same read still finds a pending review (GitHub) or a
-    /// draft note (GitLab) of the viewer's own: internal bookkeeping for
+    /// Whether this same read still finds a pending review of the viewer's
+    /// own: internal bookkeeping for
     /// `forge::live::merge_fresh_details` alone, never shown to a user or
     /// exposed as an attention item — the filter above already drops a
     /// pending post from `comments` outright. Without this, a review's
@@ -239,7 +239,8 @@ pub(crate) fn unsigned(body: &str) -> String {
 }
 
 /// A forge repository as the fetch names it, `host/owner/name`, split into
-/// its three parts. On GitLab the owner can be a group path.
+/// its three parts. A nested owner, a group path, reads as one `owner`
+/// whole.
 pub(crate) fn split_slug(slug: &str) -> Result<(&str, &str, &str), String> {
     let (host, path) = slug
         .split_once('/')

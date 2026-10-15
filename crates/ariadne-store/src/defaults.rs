@@ -1281,9 +1281,10 @@ mod tests {
             "the merge skill does not name the primary checkout"
         );
         for (name, text) in all_defaults().into_iter().chain(all_skills()) {
-            for command in ["gh pr merge", "glab mr merge"] {
-                assert!(!text.contains(command), "the {name} names {command}");
-            }
+            assert!(
+                !text.contains("gh pr merge"),
+                "the {name} names gh pr merge"
+            );
         }
     }
 
@@ -1303,14 +1304,14 @@ mod tests {
             .map(str::to_lowercase)
             .collect();
         for gone in [
-            "gh", "glab", "sleep", "timer", "poll", "polling", "resolve", "resolved",
+            "gh", "sleep", "timer", "poll", "polling", "resolve", "resolved",
         ] {
             assert!(
                 !words.iter().any(|word| word == gone),
                 "the pr-babysit skill names {gone}"
             );
         }
-        for command in ["gh pr merge", "glab mr merge", "pr merge", "mr merge"] {
+        for command in ["gh pr merge", "pr merge"] {
             assert!(
                 !doc.contains(command),
                 "the pr-babysit skill names {command}"
@@ -1398,7 +1399,7 @@ mod tests {
             .split(|c: char| !c.is_ascii_alphanumeric())
             .map(str::to_lowercase)
             .collect();
-        for gone in ["merge", "sleep", "poll", "polling", "gh", "glab"] {
+        for gone in ["merge", "sleep", "poll", "polling", "gh"] {
             assert!(
                 !words.iter().any(|word| word == gone),
                 "the pr-reviewer skill names {gone}"
@@ -1828,18 +1829,7 @@ mod tests {
             )
             .collect::<Vec<_>>()
             .join("\n");
-        for forge in [
-            "GitHub",
-            "github",
-            "GitLab",
-            "gitlab",
-            "`gh`",
-            "gh pr",
-            "`glab`",
-            "glab mr",
-            "pull request",
-            "merge request",
-        ] {
+        for forge in ["GitHub", "github", "`gh`", "gh pr", "pull request"] {
             assert!(
                 !orchestrator.contains(forge),
                 "the orchestrator prompts name {forge}"

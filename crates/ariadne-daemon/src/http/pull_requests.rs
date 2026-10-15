@@ -145,12 +145,11 @@ async fn echo_pending_review_body(
     }
 }
 
-/// What changed, in words that name the forge (026 rule 25): a pending review
-/// comment or a draft note.
-fn forge_item_label(forge: &ForgeIntegration, github: &str, gitlab: &str) -> String {
+/// What changed, in words that name the forge (026 rule 25): a pending
+/// review comment.
+fn forge_item_label(forge: &ForgeIntegration, item: &str) -> String {
     match forge.kind() {
-        ForgeKind::Github => format!("the pending GitHub {github}"),
-        ForgeKind::Gitlab => format!("the GitLab {gitlab}"),
+        ForgeKind::Github => format!("the pending GitHub {item}"),
     }
 }
 
@@ -859,8 +858,8 @@ pub(super) async fn resolve(
 }
 
 /// Edit the body of one of the viewer's own pending forge posts: a pending
-/// review comment (GitHub) or a draft note (GitLab), by its own forge id
-/// (026 rule 25). Refused with 409 once the user submits or publishes it.
+/// review comment, by its own forge id (026 rule 25). Refused with 409 once
+/// the user submits or publishes it.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/comments/edit", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = EditPendingCommentRequest,
@@ -899,7 +898,7 @@ pub(super) async fn edit_pending_comment(
     state.notify_scheduler_pull_request(&pull.id);
     Ok(Json(PendingEditDto {
         id: req.forge_id,
-        changed: forge_item_label(&forge, "review comment", "draft note"),
+        changed: forge_item_label(&forge, "review comment"),
     }))
 }
 
@@ -934,14 +933,12 @@ pub(super) async fn delete_pending_comment(
     state.notify_scheduler_pull_request(&pull.id);
     Ok(Json(PendingEditDto {
         id: req.forge_id,
-        changed: forge_item_label(&forge, "review comment", "draft note"),
+        changed: forge_item_label(&forge, "review comment"),
     }))
 }
 
-/// Replace the body of the viewer's own pending review outright (026 rule 25):
-/// GitHub only, since GitLab holds no pending review body apart from its
-/// draft notes. Refused with 409 once the user submits it, or where there
-/// is none.
+/// Replace the body of the viewer's own pending review outright (026 rule
+/// 25). Refused with 409 once the user submits it, or where there is none.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/pending-review/body", tag = "pull-requests",
     params(("id" = String, Path)),
     request_body = EditPendingReviewBodyRequest,
@@ -963,7 +960,7 @@ pub(super) async fn edit_pending_review_body(
     let forge = integration(&state, &pull.repository_id).await?;
     if forge.kind() != ForgeKind::Github {
         return Err(ApiError::bad_request(
-            "only GitHub holds a pending review body of its own; edit a GitLab draft note \
+            "this forge holds no pending review body of its own; edit a pending comment \
              through comments/edit instead",
         ));
     }

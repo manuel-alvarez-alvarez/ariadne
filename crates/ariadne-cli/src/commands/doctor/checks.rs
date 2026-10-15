@@ -361,23 +361,19 @@ fn major_minor(version: &str) -> Option<(u32, u32)> {
     Some((digits(major)?, digits(minor)?))
 }
 
-/// One forge CLI, wherever it is reported from: installed and signed in is the
+/// The forge CLI, wherever it is reported from: installed and signed in is the
 /// only state a published task can be watched in, and the other two are
 /// warnings rather than failures — a task landed locally needs neither.
 pub(super) fn forge_check(forge: &BinaryDto, lookup: &str) -> Check {
     let (name, detail) = (forge.name.clone(), describe(forge, lookup));
-    let (forge_word, host) = match name.as_str() {
-        "glab" => ("merge request", "GitLab"),
-        _ => ("pull request", "GitHub"),
-    };
     match (forge.path.is_some(), forge.authenticated) {
         (true, Some(false)) => Check::warn(name.clone(), detail).hint(format!(
-            "run `{name} auth login` — Ariadne watches a published {forge_word} through it, \
+            "run `{name} auth login` — Ariadne watches a published pull request through it, \
              and every poll of one fails while it is signed out"
         )),
         (true, _) => Check::ok(name, detail),
         (false, _) => Check::warn(name.clone(), detail).hint(format!(
-            "install {name} to publish tasks to {host} — not needed for tasks landed locally"
+            "install {name} to publish tasks to GitHub — not needed for tasks landed locally"
         )),
     }
 }
@@ -388,7 +384,7 @@ mod tests {
 
     use super::super::tests::{binary, by_name};
 
-    /// The forge CLIs are the two questions nothing else asks: installed, and
+    /// The forge CLI is the two questions nothing else asks: installed, and
     /// signed in. Neither is a failure — a task landed locally needs neither —
     /// and both are worth a warning with the command that fixes them. git is
     /// the opposite: without it nothing spawns at all.
@@ -396,7 +392,7 @@ mod tests {
     fn a_forge_cli_is_reported_on_being_installed_and_being_signed_in() {
         let checks = tools(
             &[binary("git", false, None)],
-            &[binary("gh", true, Some(false)), binary("glab", false, None)],
+            &[binary("gh", true, Some(false))],
         );
         assert_eq!(by_name(&checks, "git").status, Status::Fail);
 
@@ -410,12 +406,13 @@ mod tests {
                 .is_some_and(|h| h.contains("gh auth login")),
             "{gh:?}"
         );
-        // Not installed at all: also a warning, and about GitLab.
-        let glab = by_name(&checks, "glab");
-        assert_eq!(glab.status, Status::Warn);
+        // Not installed at all: also a warning, and about GitHub.
+        let checks = tools(&[], &[binary("gh", false, None)]);
+        let gh = by_name(&checks, "gh");
+        assert_eq!(gh.status, Status::Warn);
         assert!(
-            glab.hint.as_deref().is_some_and(|h| h.contains("GitLab")),
-            "{glab:?}"
+            gh.hint.as_deref().is_some_and(|h| h.contains("GitHub")),
+            "{gh:?}"
         );
         // And signed in is nothing to report.
         let checks = tools(&[], &[binary("gh", true, Some(true))]);

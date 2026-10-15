@@ -14,12 +14,6 @@ pub(crate) const GITHUB_EVENTS: &[&str] = &[
     "status",
     "issues",
 ];
-pub(crate) const GITLAB_EVENTS: &[&str] = &[
-    "merge_requests_events",
-    "note_events",
-    "pipeline_events",
-    "issues_events",
-];
 
 /// The CLI's error without arguments: hook arguments can contain a secret.
 pub(super) async fn request(
@@ -72,7 +66,6 @@ impl ForgeClient {
     ) -> Result<i64, String> {
         match self {
             Self::Github(client) => client.create_hook(row, url, secret, GITHUB_EVENTS).await,
-            Self::Gitlab(client) => client.create_hook(row, url, secret, GITLAB_EVENTS).await,
         }
     }
     async fn update_hook_url(
@@ -83,19 +76,16 @@ impl ForgeClient {
     ) -> Result<(), String> {
         match self {
             Self::Github(client) => client.update_hook_url(row, id, url).await,
-            Self::Gitlab(client) => client.update_hook_url(row, id, url).await,
         }
     }
     async fn delete_hook(&self, row: &ForgeIntegration, id: i64) -> Result<(), String> {
         match self {
             Self::Github(client) => client.delete_hook(row, id).await,
-            Self::Gitlab(client) => client.delete_hook(row, id).await,
         }
     }
     async fn get_hook(&self, row: &ForgeIntegration, id: i64) -> Result<(), String> {
         match self {
             Self::Github(client) => client.get_hook(row, id).await,
-            Self::Gitlab(client) => client.get_hook(row, id).await,
         }
     }
 }
