@@ -247,3 +247,73 @@ async fn a_cancelled_fetch_releases_its_hosts_capacity_for_a_queued_one() {
 
     std::fs::write(&gate, "").unwrap();
 }
+
+/// A repository's own forge host can change after its worker already
+/// started — a remote edit, re-enabled under the new identity in the same
+/// request (027 rule 9) — and the fetch that follows must wait on the new
+/// host's own capacity rather than slip through on whatever host its
+/// worker happened to start on.
+#[tokio::test]
+async fn a_repository_moved_to_a_full_host_waits_for_that_hosts_capacity() {
+    let stub = stub_forge_cli(json!(login_probe()));
+    let h = harness().forge_cli(&stub).await;
+    let gate = h.dir.path().join("release-host");
+    let mut entries = login_probe();
+    entries.push(list_entry("github.com", "acme", "z", None));
+    entries.push(list_entry("github.other.test", "acme", "x", Some(&gate)));
+    entries.push(list_entry("github.other.test", "acme", "y", Some(&gate)));
+    entries.push(list_entry("github.other.test", "acme", "z", Some(&gate)));
+    entries.push(issues("acme", "z"));
+    entries.push(issues("acme", "x"));
+    entries.push(issues("acme", "y"));
+    stub.reprogram(json!(entries));
+
+    let z = repo_on(&h, "github.com", "acme", "z").await;
+    eventually(
+        TIMEOUT,
+        "z's first fetch, still on its original host",
+        async || listed(&stub, "github.com", "acme", "z"),
+    )
+    .await;
+
+    repo_on(&h, "github.other.test", "acme", "x").await;
+    repo_on(&h, "github.other.test", "acme", "y").await;
+    eventually(
+        TIMEOUT,
+        "x and y fill the destination host's own cap",
+        async || {
+            listed(&stub, "github.other.test", "acme", "x")
+                && listed(&stub, "github.other.test", "acme", "y")
+        },
+    )
+    .await;
+
+    let repo = h.store.get_repository(&z).await.unwrap();
+    sh(
+        std::path::Path::new(&repo.path),
+        "git remote set-url origin https://github.other.test/acme/z.git",
+    );
+    let _: Value = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{z}"),
+                json!({"forge": {"enabled": true}}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+
+    tokio::time::sleep(QUIET).await;
+    assert!(
+        !listed(&stub, "github.other.test", "acme", "z"),
+        "z must wait for its new host's own capacity, not slip through on its old host"
+    );
+
+    std::fs::write(&gate, "").unwrap();
+    eventually(
+        TIMEOUT,
+        "z's fetch, once its new host's capacity frees",
+        async || listed(&stub, "github.other.test", "acme", "z"),
+    )
+    .await;
+}

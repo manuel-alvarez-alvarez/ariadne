@@ -365,10 +365,7 @@ async fn sync(
             store.clone(),
             cfg.clone(),
             handoff.clone(),
-            WorkerTarget {
-                id: id.into(),
-                host: identity.1.clone(),
-            },
+            id.into(),
             timeouts,
             wake.clone(),
             changes,
@@ -401,39 +398,23 @@ async fn stop_worker_then_clear_list(
     live.clear_list(repository_id)
 }
 
-/// One worker's own repository, and the forge host it fetches against —
-/// bundled into one parameter so `worker`'s own count stays within clippy's
-/// cap.
-struct WorkerTarget {
-    id: String,
-    host: String,
-}
-
 async fn worker(
     store: Store,
     cfg: Arc<Config>,
     handoff: Handoff,
-    target: WorkerTarget,
+    id: String,
     timeouts: Timeouts,
     wake: Arc<Notify>,
     mut mode: watch::Receiver<Mode>,
 ) {
-    let WorkerTarget { id, host } = target;
     let mut backoff = timeouts.forge_poll;
     loop {
-        // Held only while this fetch actually runs: acquiring it waits out
-        // every other repository already at this host's cap, and dropping
-        // it — on success, on error, or on the task's own cancellation,
-        // since an `OwnedSemaphorePermit` releases on drop like any other
-        // guard — frees the slot for whichever repository asks for it next.
-        let permit = handoff
-            .host_limits
-            .semaphore(&host)
-            .acquire_owned()
-            .await
-            .expect("the host semaphore is never closed");
+        // `fetch` itself acquires its host's permit, on the integration it
+        // rereads there and then — never on a host captured here, which a
+        // repository's own remote can move past between one call and the
+        // next, well before this worker is torn down and respawned under
+        // its new identity (`sync`'s own `integration_changed`).
         let fetched = fetch(&store, &cfg, &handoff, &id).await;
-        drop(permit);
         if let Err(error) = &fetched
             && Refusal::of(error.clone()).is_rate_limited()
         {
@@ -537,6 +518,17 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
     else {
         return Ok(());
     };
+    // Acquired on this same read, not on a host captured when the worker
+    // started: a repository's remote can change its host between one fetch
+    // and the next, and the cap means nothing if a stale host still decides
+    // which semaphore a fetch waits on. Held for the rest of this call, on
+    // every exit path, by nothing more than this binding's own scope.
+    let _permit = handoff
+        .host_limits
+        .semaphore(&integration.host)
+        .acquire_owned()
+        .await
+        .expect("the host semaphore is never closed");
     let client = ForgeClient::for_repository(cfg, &integration);
     let slug = format!(
         "{}/{}/{}",

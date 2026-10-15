@@ -5168,6 +5168,46 @@ async fn a_fresh_database_starts_the_tunnel_off_and_an_existing_one_keeps_its_ch
     );
 }
 
+/// sqlx creates `_sqlx_migrations` before it applies the first migration, so
+/// a run killed between that create and 0001's own commit leaves the table
+/// standing with no row in it. Reading only whether the table exists would
+/// take that for an upgrade already at some version, and skip the off
+/// override `Store::open` owes a database no migration ever finished on.
+#[tokio::test]
+async fn a_database_with_an_empty_migrations_table_still_counts_as_fresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
+    let interrupted = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TABLE _sqlx_migrations (
+            version BIGINT PRIMARY KEY,
+            description TEXT NOT NULL,
+            installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            success BOOLEAN NOT NULL,
+            checksum BLOB NOT NULL,
+            execution_time BIGINT NOT NULL
+        )",
+    )
+    .execute(&interrupted)
+    .await
+    .unwrap();
+    interrupted.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    assert!(
+        !store.forge_settings().await.unwrap().tunnel_enabled,
+        "a table with no applied migration row is still a fresh database"
+    );
+}
+
 /// The forge row is read with its repository, lower-cased, in every list a
 /// repository is read through, and goes with the repository.
 #[tokio::test]

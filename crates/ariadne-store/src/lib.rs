@@ -131,25 +131,38 @@ pub async fn pre_squash_database(path: impl AsRef<Path>) -> Option<String> {
     old.then(|| pre_squash_message(path))
 }
 
-/// Whether this file ever ran a migration before now. `_sqlx_migrations`
-/// does not exist until the first one commits, so its absence is what tells
-/// a brand-new database from one an earlier run already brought up to some
-/// version — the distinction [`Store::open`] needs to default the tunnel
-/// switch off for the former alone, since 0001's own seed runs identically
-/// either way and cannot tell them apart on its own (027).
+/// Whether this file ever ran a migration before now: whether
+/// `_sqlx_migrations` holds a row of one that committed, not merely whether
+/// the table exists. sqlx creates the table itself before it applies the
+/// first migration, so a run killed between that create and 0001's own
+/// commit leaves the table standing with nothing in it — a database no
+/// migration has actually finished on, for all the table's presence says
+/// otherwise. Checking only the table would read that database as already
+/// brought up to some version, the same as a real upgrade, and so never
+/// tell it apart from a brand-new one — the distinction [`Store::open`]
+/// needs to default the tunnel switch off for the latter alone, since
+/// 0001's own seed runs identically either way and cannot tell them apart
+/// on its own (027).
 async fn migrations_already_ran(pool: &Pool<Sqlite>) -> Result<bool> {
     let recorded: Option<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
     )
     .fetch_optional(pool)
     .await?;
-    Ok(recorded.is_some())
+    if recorded.is_none() {
+        return Ok(false);
+    }
+    let applied: Option<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations LIMIT 1")
+        .fetch_optional(pool)
+        .await?;
+    Ok(applied.is_some())
 }
 
 /// Whether `_sqlx_migrations` records a migration this release does not ship —
 /// a later version of the squashed-away chain, or a version 1 whose checksum
 /// is the old `0001_init.sql`. Either way sqlx refuses to run over it. A
-/// database with no `_sqlx_migrations` table at all is a fresh one.
+/// database with no applied migration row at all — the table missing, or
+/// standing empty from an interrupted run — is a fresh one.
 async fn applied_elsewhere(pool: &Pool<Sqlite>) -> Result<bool> {
     if !migrations_already_ran(pool).await? {
         return Ok(false);
