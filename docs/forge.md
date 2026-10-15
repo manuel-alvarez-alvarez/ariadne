@@ -282,11 +282,27 @@ Each fetch reads every open request of the repository, and which of them
 ask for your review, and the open issues too: where the issues moved since
 the last read, the desktop app reads them again on its own.
 
+Ariadne never asks one forge host for more than two fetches at once: every
+repository on the same host — `github.com`, a GitHub Enterprise host, a
+self-hosted GitLab — shares that cap, whether its fetch started at startup,
+on the five-minute timer, or on an explicit wake. A repository whose fetch
+would push past the cap simply waits its turn, and runs the moment one of
+the other two finishes, fails, or is cancelled by turning its integration
+off mid-fetch; a repository on a different host is never held up by it.
+This traffic limit is independent of each repository's own webhook state
+and polling traffic above.
+
 ## The tunnel
 
 With no `webhook_public_url` configured, Ariadne can open its own tunnel so
 a forge on the public internet reaches your webhook listener without one —
 the `localtunnel-client` crate, no Node or `lt` binary needed.
+
+A brand-new installation starts with the switch off: every enabled
+repository polls on its five-minute timer until you turn the tunnel on
+yourself. Upgrading an existing installation never moves the switch —
+whichever choice its database already stored, on or off, stays exactly as
+it was.
 
 ```sh
 ariadne forge tunnel

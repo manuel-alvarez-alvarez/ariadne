@@ -5138,6 +5138,36 @@ async fn the_last_fetch_error_is_written_only_when_it_changes() {
     assert_eq!(read.fetch_error, None);
 }
 
+/// A brand-new database starts the tunnel switch off (027), though 0001's
+/// own seed still writes it on and never changes: `Store::open` turns it
+/// off itself, only the first time a path has never been opened before.
+/// Reopening the same file afterward is an upgrade, not a fresh install, so
+/// whichever choice it already holds — on or off — survives untouched.
+#[tokio::test]
+async fn a_fresh_database_starts_the_tunnel_off_and_an_existing_one_keeps_its_choice() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let store = Store::open(&path).await.unwrap();
+    assert!(!store.forge_settings().await.unwrap().tunnel_enabled);
+    store.set_tunnel_enabled(true).await.unwrap();
+    store.close().await;
+
+    let reopened = Store::open(&path).await.unwrap();
+    assert!(
+        reopened.forge_settings().await.unwrap().tunnel_enabled,
+        "reopening an existing database must not reset a stored choice"
+    );
+    reopened.set_tunnel_enabled(false).await.unwrap();
+    reopened.close().await;
+
+    let restarted = Store::open(&path).await.unwrap();
+    assert!(
+        !restarted.forge_settings().await.unwrap().tunnel_enabled,
+        "an existing database keeps an off choice too"
+    );
+}
+
 /// The forge row is read with its repository, lower-cased, in every list a
 /// repository is read through, and goes with the repository.
 #[tokio::test]
