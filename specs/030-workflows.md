@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-10-14
+updated: 2026-10-15
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:

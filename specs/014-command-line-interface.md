@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-10-11
+updated: 2026-10-15
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -322,7 +322,8 @@ same binary also serves (013).
     a pipe.
 40. `goal ls` prints each goal's non-cancelled task progress after its status,
     with failed and stalled task counts. `goal inspect` prints the lane task
-    summary, the goal's workflow and, one line per column, its rank and gate.
+    summary, the goal's workflow and, one line per column, its capability
+    band — every rank it lists (030) — and its gate.
 41. `task attach --step <id>` opens the console of that column's agent,
     live or revived, whether or not it is the task's current column; left
     out, `task attach`, `ariadne attach` and `task logs` resolve the task's

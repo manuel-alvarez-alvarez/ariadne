@@ -1220,6 +1220,13 @@ async fn openapi_describes_the_step_routes_and_workflow_fields() {
         doc["components"]["schemas"]["WorkflowStepDto"]["properties"]["rank"].is_null(),
         "capability bands replaced the single rank field"
     );
+    let ranks = &doc["components"]["schemas"]["WorkflowStepDto"]["properties"]["ranks"];
+    assert_eq!(ranks["type"], json!("array"), "{ranks}");
+    assert_eq!(
+        ranks["items"]["$ref"],
+        json!("#/components/schemas/ModelRank"),
+        "{ranks}"
+    );
 }
 
 #[tokio::test]

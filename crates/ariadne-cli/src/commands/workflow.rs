@@ -474,7 +474,9 @@ mod tests {
                 .unwrap()
                 .as_ref()
                 .and_then(|v| v.get("document")),
-            Some(&serde_json::json!("workflow x\n  a[A]\n    ranks: urgent\n"))
+            Some(&serde_json::json!(
+                "workflow x\n  a[A]\n    ranks: urgent\n"
+            ))
         );
     }
 

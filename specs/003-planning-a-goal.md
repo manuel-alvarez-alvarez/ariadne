@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-10-14
+updated: 2026-10-15
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -35,7 +35,7 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 1. A goal opens with one orchestrator session, started in the primary
    checkout of the goal's first repository and briefed with the goal, its
    workflow — the name, then one line per column with its id, title, skills,
-   rank, and description — and its repositories. The workflow is chosen when the
+   capability band, and description — and its repositories. The workflow is chosen when the
    goal is created, or taken from the default of its first repository (030);
    the orchestrator reads it off the briefing and does not ask for it. No
    numbers: how many tasks the goal takes is what the conversation settles.
@@ -68,16 +68,18 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 6. It staffs one agent on every column of each task (030), and gives every
    agent one model from the catalog (011) — a model is required, so no agent
    is staffed without one. A column's agent runs on the column's skills
-   unless the task names others. For each column it takes a model of the
-   column's preferred rank (030), and it states a reason for each step up.
-   Where a column names no rank, it takes the lowest rank and effort that
-   finish the work. `local` is staffed only where the user names it.
+   unless the task names others. For each column it takes a model at one of
+   the ranks in the column's capability band (030) — a band naming more than
+   one rank lets it pick any rank in it — and it states a reason for each
+   step up. Where a column names no ranks, it takes the lowest rank and
+   effort that finish the work. `local` is staffed only where the user
+   names it.
    A task's coding and review columns take models of different ACP agents
-   (011 rule 12) where an eligible one stands at the review column's rank.
-   With none eligible, the review column takes its normal rank-based choice
-   instead, even from the coding column's own agent, and the orchestrator
-   tells the user independent review was unavailable. No other column's
-   choice is narrowed by this rule.
+   (011 rule 12) where an eligible one stands at one of the review column's
+   ranks. With none eligible, the review column takes its normal rank-based
+   choice instead, even from the coding column's own agent, and the
+   orchestrator tells the user independent review was unavailable. No other
+   column's choice is narrowed by this rule.
 7. Two things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);
@@ -140,8 +142,9 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   `depends_on` names only a real prerequisite
   (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`,
   `::the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule`).
-- The playbook takes each column's rank, and states a reason for each step
-  up (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`).
+- The playbook takes a model at one of each column's ranks, and states a
+  reason for each step up
+  (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`).
 - The playbook gives a task's coding and review columns different ACP
   agents where one is eligible, falls back to the review column's normal
   choice with none eligible, and tells the user independent review was
