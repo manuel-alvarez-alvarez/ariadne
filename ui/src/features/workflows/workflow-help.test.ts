@@ -54,6 +54,27 @@ describe("workflowCompletionsAt", () => {
     expect(labels).toContain("frontier")
   })
 
+  it("ends a rank completion at the end of the token the cursor sits inside, in the first segment", () => {
+    const line = "    ranks: frontier, local"
+    const match = completionsAt("    ranks: fr", "ontier, local")
+    expect(match?.options.map((o) => o.label)).toEqual(["frontier"])
+    expect(`${line.slice(0, match?.from)}frontier${line.slice(match?.to)}`).toBe(line)
+  })
+
+  it("ends a rank completion at the end of the token the cursor sits inside, in a middle segment", () => {
+    const line = "    ranks: balanced, frontier, local"
+    const match = completionsAt("    ranks: balanced, fr", "ontier, local")
+    expect(match?.options.map((o) => o.label)).toEqual(["frontier"])
+    expect(`${line.slice(0, match?.from)}frontier${line.slice(match?.to)}`).toBe(line)
+  })
+
+  it("ends a rank completion at the end of the token the cursor sits inside, in the last segment", () => {
+    const line = "    ranks: balanced, frontier, local"
+    const match = completionsAt("    ranks: balanced, frontier, lo", "cal")
+    expect(match?.options.map((o) => o.label)).toEqual(["local"])
+    expect(`${line.slice(0, match?.from)}local${line.slice(match?.to)}`).toBe(line)
+  })
+
   it("offers the gate words after gate:", () => {
     const match = completionsAt("    gate: ")
     expect(match?.options.map((o) => o.label)).toEqual([

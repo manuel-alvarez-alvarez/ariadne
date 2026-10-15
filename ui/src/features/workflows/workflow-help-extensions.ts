@@ -16,6 +16,7 @@ function completionSource(skills: SkillOption[]) {
     if (!match) return null
     return {
       from: line.from + match.from,
+      to: line.from + match.to,
       options: match.options.map((option) => ({
         label: option.label,
         detail: option.detail,

@@ -18,6 +18,7 @@ interface WorkflowCompletionOption {
 
 interface WorkflowCompletionMatch {
   from: number
+  to: number
   options: WorkflowCompletionOption[]
 }
 
@@ -68,6 +69,10 @@ function trailingWord(text: string): string {
   return /[a-z0-9-]*$/i.exec(text)?.[0] ?? ""
 }
 
+function leadingWord(text: string): string {
+  return /^[a-z0-9-]*/i.exec(text)?.[0] ?? ""
+}
+
 /**
  * Every value named on a comma-separated line's value text (`skills:` or
  * `ranks:`), except the one in the segment the cursor sits in — that segment
@@ -95,7 +100,9 @@ function namedElsewhere(value: string, cursor: number): Set<string> {
  * document's first line (the `workflow <name>` line, where none of this
  * applies). The line's text past the cursor matters too: a skill named later
  * on the same line, as when a new entry is inserted before or between
- * existing ones, must not be offered again.
+ * existing ones, must not be offered again, and a cursor that sits inside an
+ * existing token — not only at its end — replaces that token whole, through
+ * `to`, rather than inserting in front of what follows it.
  */
 export function workflowCompletionsAt(
   lineText: string,
@@ -108,12 +115,13 @@ export function workflowCompletionsAt(
   const partial = trailingWord(before).toLowerCase()
   const from = before.length - partial.length
   const prefix = before.slice(0, from)
+  const to = cursor + leadingWord(lineText.slice(cursor)).length
 
   if (/^\s*$/.test(prefix)) {
     const options = KEYS.filter((key) => key.startsWith(partial)).map((key) => ({
       label: `${key}:`,
     }))
-    return options.length ? { from, options } : null
+    return options.length ? { from, to, options } : null
   }
 
   const ranksList = /^\s*ranks:\s*((?:[a-z][a-z0-9-]*\s*,\s*)*)$/i.exec(prefix)
@@ -123,14 +131,14 @@ export function workflowCompletionsAt(
     const options = RANK_VALUES.filter((value) => !already.has(value))
       .filter((value) => value.startsWith(partial))
       .map((value) => ({ label: value }))
-    return options.length ? { from, options } : null
+    return options.length ? { from, to, options } : null
   }
 
   if (/^\s*gate:\s*$/.test(prefix)) {
     const options = GATE_VALUES.filter((value) => value.startsWith(partial)).map((value) => ({
       label: value,
     }))
-    return options.length ? { from, options } : null
+    return options.length ? { from, to, options } : null
   }
 
   const skillsList = /^\s*skills:\s*((?:[a-z][a-z0-9-]*\s*,\s*)*)$/i.exec(prefix)
@@ -142,7 +150,7 @@ export function workflowCompletionsAt(
       .filter((skill) => !already.has(skill.name))
       .filter((skill) => skill.name.toLowerCase().startsWith(partial))
       .map((skill) => ({ label: skill.name, detail: skill.summary }))
-    return options.length ? { from, options } : null
+    return options.length ? { from, to, options } : null
   }
 
   return null
