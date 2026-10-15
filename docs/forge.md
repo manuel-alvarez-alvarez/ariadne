@@ -300,9 +300,9 @@ the `localtunnel-client` crate, no Node or `lt` binary needed.
 
 A brand-new installation starts with the switch off: every enabled
 repository polls on its five-minute timer until you turn the tunnel on
-yourself. Upgrading an existing installation never moves the switch —
-whichever choice its database already stored, on or off, stays exactly as
-it was.
+yourself. Upgrading to this release turns it off too, once, even where it
+was already on; after that one-time move, the switch is yours again, and
+every later restart leaves your choice alone.
 
 ```sh
 ariadne forge tunnel

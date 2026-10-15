@@ -124,7 +124,7 @@ A disabled integration has no worker, regardless of its retained hook status.
 
 11. The one `forge_settings` row holds `tunnel_enabled` (0 or 1, default 1) and `tunnel_subdomain` (NULL until first use).
     The schema seeds it, and its own default never changes: migration 0001's checksum is fixed once shipped.
-    `Store::open` turns `tunnel_enabled` off instead, the one time it finds no `_sqlx_migrations` row at all before it runs any migration — a database this is the very first `open` of, never one an earlier run already brought up to some version. The table's own presence says nothing on its own: sqlx creates it before it applies the first migration, so a run killed between that create and 0001's own commit leaves it standing with no row in it, exactly as a database that never had the table at all reads. Either way is still a fresh database, so the check reads the table's rows, never merely whether the table exists. That is the only moment it ever writes the column outside the row's own `PUT /v1/forge/tunnel`: a database that already holds an applied migration row, whatever version it names, is an upgrade, and keeps whichever choice it already stored, on or off, untouched. So a fresh installation starts polling, by default, and no upgrade's own stored choice ever moves on its own.
+    Migration 0009 turns `tunnel_enabled` off instead, unconditionally, the one time it ever runs on a database — a migration applies exactly once, ever, so this moves a fresh database and one already at an earlier version alike, and later `open`s of the same database never run it again. `PUT /v1/forge/tunnel` is the only other place that writes the column. So every installation starts polling, by default, once it has run 0009.
     `config.toml` adds `tunnel_host` (default `https://localtunnel.me`) and `tunnel_subdomain`.
     The configured subdomain wins over the stored one.
 12. The tunnel runs when `tunnel_enabled` holds, at least one integration is enabled, and `webhook_public_url` is unset.
@@ -221,12 +221,14 @@ A disabled integration has no worker, regardless of its retained hook status.
   `repositories-page.test.tsx::shows polling with the tunnel off: green with how to turn it on, red with the fetch error`.
 - The last fetch error is written only when it changes:
   `store.rs::the_last_fetch_error_is_written_only_when_it_changes`.
-- A fresh database starts the tunnel switch off; reopening an existing one,
-  whichever choice it already holds, on or off, keeps it untouched:
+- A fresh database starts the tunnel switch off; reopening it afterward,
+  whichever choice it already holds, on or off, keeps it untouched, since
+  0009 never runs a second time:
   `store.rs::a_fresh_database_starts_the_tunnel_off_and_an_existing_one_keeps_its_choice`.
   A database left with an empty `_sqlx_migrations` table by a run killed
-  before 0001 ever committed still counts as fresh, not as an upgrade:
-  `store.rs::a_database_with_an_empty_migrations_table_still_counts_as_fresh`.
+  before 0001 ever committed still runs every migration, 0009's own
+  tunnel-off update included:
+  `store.rs::a_database_with_an_empty_migrations_table_still_runs_every_migration`.
   A fresh installation, polling by default, still fetches its enabled
   repositories by timer, unaffected by the switch:
   `pull_requests.rs::timer_wake_only_and_disable_control_repository_fetches`.
