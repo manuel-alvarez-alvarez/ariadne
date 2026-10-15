@@ -160,7 +160,7 @@ NAME = r"(?:^|[\s/'\"=:])"
 PERSISTENT_PATH = (
     r"\.git/hooks/|LaunchAgents/|LaunchDaemons/|/cron\.|"
     + NAME
-    + r"(?:\.(?:bashrc|bash_profile|bash_login|profile|zshrc|zshenv|zprofile|zlogin|gitconfig|npmrc|mcp\.json)\b|"
+    + r"(?:\.(?:bashrc|bash_profile|bash_login|profile|zshrc|zshenv|zprofile|zlogin|gitconfig|npmrc|mcp\.json|gitlab-ci\.yml)\b|"
     r"\.github/(?:workflows/|dependabot\.yml)|\.circleci/|\.config/|\.cargo/config|"
     r"\.(?:claude|codex|cursor|vscode|agent|zed)/(?:hooks/|commands/|agents/|rules|[^\s'\"/]*(?:settings|config|tasks|launch|mcp|memory)[^\s'\"/]*)|"
     r"\.husky/|\.pre-commit-config\.yaml\b|\.assistant\.json\b|\.envrc\b|\.tool-versions\b|opencode\.jsonc?\b|"
@@ -178,7 +178,7 @@ COMMAND_START = (
 # A program at the start of a simple command that reaches a host of its own: a cloud or deploy
 # CLI, a remote shell or copy, a name lookup, a mail sender, or a raw socket.
 REMOTE_PROGRAM = COMMAND_START + (
-    r"(?:gh|kubectl|helm|aws|gcloud|az|doctl|terraform|tofu|pulumi|serverless|sls|vercel|fly|flyctl|"
+    r"(?:gh|glab|kubectl|helm|aws|gcloud|az|doctl|terraform|tofu|pulumi|serverless|sls|vercel|fly|flyctl|"
     r"heroku|netlify|ansible|ansible-playbook|rclone|sftp|telnet|dig|nslookup|host|ping|"
     r"mail|mailx|sendmail|ssmtp|twine|rancher|nomad|sshpass|nc|ncat|socat)(?:\s|$)"
 )
@@ -206,7 +206,7 @@ DOWNLOAD_RUN = (
     r"\b(?:sh|bash|zsh)\s+-c\s+[\"']?\$\(\s*(?:curl|wget)\b|\beval\s+[\"']?\$\(\s*(?:curl|wget)\b|"
     # A package from a URL, a git address or an archive runs its install hooks or its setup.
     r"\b(?:pip|pip3|npm|pnpm|yarn|bun|uv)\b[^;&|]*\b(?:install|add|i)\b[^;&|]*"
-    r"(?:https?://|git\+|github:|bitbucket:|\.tgz\b|\.tar\.gz\b|\.whl\b|\.zip\b)|"
+    r"(?:https?://|git\+|github:|gitlab:|bitbucket:|\.tgz\b|\.tar\.gz\b|\.whl\b|\.zip\b)|"
     # A fetch extracted by tar, then a run of what it extracted.
     r"\b(?:curl|wget)\b[^|]*\|\s*tar\s+-?[A-Za-z]*x[A-Za-z]*\b[^;&|]*(?:&&|;)[^;&|]*(?:\./|\b(?:sh|bash|make|python[0-9.]*|node)\b)|"
     + REGISTRY_RUN
