@@ -3222,101 +3222,42 @@ async fn a_database_on_the_old_chain_is_refused_with_the_pre_squash_message() {
     );
 }
 
-/// A database created before pull-request readiness used the shipped init
-/// migration unchanged. Opening it applies the later migration instead of
-/// rejecting the old init checksum.
+/// A fresh database already carries every column the old incremental chain
+/// used to add after the first squash — pull-request readiness, the
+/// babysitting and asks-revision columns, a repository's `supervise_posts`
+/// default, the `keeper` seat and `agent_requests` — all folded into the one
+/// shipped migration now, so a fresh store needs no later migration to
+/// reach any of them.
 #[tokio::test]
-async fn an_existing_database_adds_pull_request_readiness_columns() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("old.db");
-    drop(Store::open(&path).await.unwrap());
+async fn a_fresh_database_already_has_every_column_the_old_chain_added() {
+    let (store, _dir, pr) = store_with_my_pull_request().await;
+    assert_eq!(pr.ready_confirmed_at, None);
+    assert_eq!(pr.ready_head_sha, None);
+    assert!(!pr.babysit_asked);
+    assert_eq!(pr.asks_revision, 0);
 
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
-        .await
-        .unwrap();
-    sqlx::query("ALTER TABLE pull_requests DROP COLUMN ready_head_sha")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("ALTER TABLE pull_requests DROP COLUMN ready_confirmed_at")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 3")
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool.close().await;
+    let repo = store.get_repository(&pr.repository_id).await.unwrap();
+    assert!(repo.supervise_posts());
 
-    drop(Store::open(&path).await.unwrap());
-}
-
-/// A database at migration 0003 still carries `forge_integrations.review_model`
-/// and `review_effort`, from before every review started manually. Opening
-/// it applies 0004, which drops both columns, with no error.
-#[tokio::test]
-async fn an_existing_database_drops_the_forge_review_pin_columns() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("old.db");
-    drop(Store::open(&path).await.unwrap());
-
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
-        .await
-        .unwrap();
-    sqlx::query("ALTER TABLE forge_integrations ADD COLUMN review_model TEXT")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("ALTER TABLE forge_integrations ADD COLUMN review_effort TEXT")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 4")
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool.close().await;
-
-    drop(Store::open(&path).await.unwrap());
-}
-
-/// A repository registered before `supervise_posts` existed reads it as
-/// `true` once the migration backfills the column: an upgrade holds every
-/// agent's posts rather than exposing them by surprise.
-#[tokio::test]
-async fn an_existing_repository_is_supervised_after_the_migration() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("old.db");
-    let store = Store::open(&path).await.unwrap();
-    let repo = store
-        .create_repository(NewRepository {
-            default_workflow: None,
-            path: "/tmp/old-repo".into(),
-            base_branch: "main".into(),
-            description: None,
-            permission_mode: None,
-            supervise_posts: None,
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Keeper),
+            task_agent_id: None,
+            model: "stub:m".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(pr.id.clone()),
         })
         .await
         .unwrap();
-    drop(store);
 
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+    let (_, created) = store
+        .create_agent_request(&session.id, "pick a model")
         .await
         .unwrap();
-    sqlx::query("ALTER TABLE repositories DROP COLUMN supervise_posts")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 7")
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool.close().await;
-
-    let store = Store::open(&path).await.unwrap();
-    let repo = store.get_repository(&repo.id).await.unwrap();
-    assert!(repo.supervise_posts());
+    assert!(created);
 }
 
 // -- token usage ------------------------------------------------------------
@@ -5138,11 +5079,10 @@ async fn the_last_fetch_error_is_written_only_when_it_changes() {
     assert_eq!(read.fetch_error, None);
 }
 
-/// A brand-new database starts the tunnel switch off (027), though 0001's
-/// own seed still writes it on and never changes: migration 0009 turns it
-/// off, once. A migration never runs twice on the same database, so a
-/// later open of the same path leaves whichever choice it holds — on or
-/// off — exactly as the caller last set it.
+/// A brand-new database starts the tunnel switch off (027): 0001's own seed
+/// writes it off directly. The seed runs once, so a later open of the same
+/// path leaves whichever choice it holds — on or off — exactly as the
+/// caller last set it.
 #[tokio::test]
 async fn a_fresh_database_starts_the_tunnel_off_and_an_existing_one_keeps_its_choice() {
     let dir = tempfile::tempdir().unwrap();
@@ -5170,9 +5110,9 @@ async fn a_fresh_database_starts_the_tunnel_off_and_an_existing_one_keeps_its_ch
 
 /// sqlx creates `_sqlx_migrations` before it applies the first migration, so
 /// a run killed between that create and 0001's own commit leaves the table
-/// standing with no row in it. Reopening such a database still runs every
-/// migration from 0001 on, 0009's own tunnel-off update included, rather
-/// than mistaking the empty table for one already at some version.
+/// standing with no row in it. Reopening such a database still runs 0001,
+/// tunnel-off seed included, rather than mistaking the empty table for one
+/// already at some version.
 #[tokio::test]
 async fn a_database_with_an_empty_migrations_table_still_runs_every_migration() {
     let dir = tempfile::tempdir().unwrap();
@@ -5204,7 +5144,7 @@ async fn a_database_with_an_empty_migrations_table_still_runs_every_migration() 
     let store = Store::open(&path).await.unwrap();
     assert!(
         !store.forge_settings().await.unwrap().tunnel_enabled,
-        "an empty migrations table still lets every migration, 0009 included, run"
+        "an empty migrations table still lets 0001, tunnel-off seed included, run"
     );
 }
 

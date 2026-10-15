@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-10-14
+updated: 2026-10-15
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -203,7 +203,7 @@ reads behind them ([026](026-pull-requests.md)).
 
 ## Sources
 
-`crates/ariadne-store/migrations/0005_pull_request_babysitting.sql`,
+`crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-store/src/pull_requests.rs`, `crates/ariadne-store/src/defaults.rs`,
 `crates/ariadne-core/src/lib.rs`,
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
