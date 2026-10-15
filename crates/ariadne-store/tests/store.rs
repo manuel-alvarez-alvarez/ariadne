@@ -3226,16 +3226,16 @@ async fn a_database_on_the_old_chain_is_refused_with_the_pre_squash_message() {
 /// is what a fresh database's schema actually enforces, not merely what the
 /// typed `SetForgeIntegration::kind: ForgeKind` the ordinary write path
 /// takes can construct — `ForgeKind` has one variant today, so nothing
-/// through that path could ever name `gitlab` to prove the column refuses
-/// it. A raw insert does: `github` is accepted, and `gitlab`, the value an
-/// earlier release's wider `CHECK` once also allowed (025 rule 1a), is
-/// refused by the database itself.
+/// through that path could ever name an unsupported kind to prove the
+/// column refuses it. A raw insert does: `github` is accepted, and another
+/// forge name, the kind of value an earlier release's wider `CHECK` once
+/// also allowed (025 rule 1a), is refused by the database itself.
 ///
 /// Connected by path, after the migrating `Store` is dropped, the same way
 /// the checksum test above reaches `_sqlx_migrations` directly: this is a
 /// probe of the schema itself, not of anything `Store`'s own API exposes.
 #[tokio::test]
-async fn the_forge_integrations_kind_check_accepts_github_and_rejects_gitlab() {
+async fn the_forge_integrations_kind_check_accepts_github_and_rejects_other_kinds() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("forge-kind.db");
     drop(Store::open(&path).await.unwrap());
@@ -3267,11 +3267,11 @@ async fn the_forge_integrations_kind_check_accepts_github_and_rejects_gitlab() {
     let rejected = sqlx::query(
         "INSERT INTO forge_integrations
             (repository_id, kind, host, owner, name, remote, detected_at, updated_at)
-         VALUES ('r2', 'gitlab', 'gitlab.com', 'acme', 'widgets', 'origin', '', '')",
+         VALUES ('r2', 'bitbucket', 'bitbucket.org', 'acme', 'widgets', 'origin', '', '')",
     )
     .execute(&pool)
     .await
-    .expect_err("gitlab is no longer an accepted kind");
+    .expect_err("bitbucket is not an accepted kind");
     assert!(
         rejected.to_string().contains("CHECK constraint failed"),
         "refused for the kind CHECK, not some other reason: {rejected}"

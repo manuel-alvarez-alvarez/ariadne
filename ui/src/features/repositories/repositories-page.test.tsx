@@ -201,7 +201,7 @@ describe("RepositoriesPage", () => {
   it("shows the forge each remote is on over two lines, and whether it is enabled", async () => {
     stubDaemon([
       { ...ARIADNE, forge: aForge({ enabled: true, login: "octocat" }) },
-      { ...SANDBOX, forge: aForge({ kind: "gitlab", host: "gitlab.com", name: "sandbox" }) },
+      { ...SANDBOX, forge: aForge({ name: "sandbox" }) },
       aRepository({ id: "01JREPO00000000000000LOC", path: "/home/me/dev/local" }),
     ])
     renderScreen(<RepositoriesPage />)
@@ -212,9 +212,9 @@ describe("RepositoriesPage", () => {
       "GitHub",
       "acme/widgets",
     ])
-    const off = screen.getByTitle("gitlab.com/acme/sandbox")
+    const off = screen.getByTitle("github.com/acme/sandbox")
     expect([...off.children].map((line) => line.textContent)).toEqual([
-      "GitLab · off",
+      "GitHub · off",
       "acme/sandbox",
     ])
     const none = (await screen.findByTitle("/home/me/dev/local")).closest("tr")

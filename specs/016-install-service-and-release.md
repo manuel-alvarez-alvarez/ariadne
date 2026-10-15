@@ -98,9 +98,10 @@ Out: what the daemon does once running (009, 012).
    database written anywhere on that chain, or on the chain before it, is
    refused the same way, and that loss is accepted. From this reset on,
    every schema change adds a new migration file: `0001` is not edited
-   again, with one named exception. Removing GitLab (025) narrowed
-   `forge_integrations.kind`'s `CHECK` from `('github', 'gitlab')` to
-   `('github')` alone, in place, on `0001` itself.
+   again, with one named exception. Narrowing the forge integration to
+   GitHub alone (025) tightened `forge_integrations.kind`'s `CHECK` to
+   `('github')` from a wider set of accepted kinds, in place, on `0001`
+   itself.
    `scripts/check-migrations.sh` pins that edit's exact old and new git
    blob, so it is the one transition of the one file this rule ever lets
    through a second time; every other edit of `0001`, or of any other

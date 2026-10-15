@@ -199,7 +199,7 @@ export interface paths {
         put?: never;
         /**
          * Detect the forge a checkout's remote is on, the same way registration
-         *     does. Null for a checkout with no GitHub or GitLab remote.
+         *     does. Null for a checkout with no usable forge remote.
          */
         post: operations["repositories_detect"];
         delete?: never;
@@ -731,8 +731,8 @@ export interface paths {
         put?: never;
         /**
          * Edit the body of one of the viewer's own pending forge posts: a pending
-         *     review comment (GitHub) or a draft note (GitLab), by its own forge id
-         *     (026 rule 25). Refused with 409 once the user submits or publishes it.
+         *     review comment, by its own forge id (026 rule 25). Refused with 409 once
+         *     the user submits or publishes it.
          */
         post: operations["pull-requests_edit_pending_comment"];
         delete?: never;
@@ -837,10 +837,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Replace the body of the viewer's own pending review outright (026 rule 25):
-         *     GitHub only, since GitLab holds no pending review body apart from its
-         *     draft notes. Refused with 409 once the user submits it, or where there
-         *     is none.
+         * Replace the body of the viewer's own pending review outright (026 rule
+         *     25). Refused with 409 once the user submits it, or where there is none.
          */
         post: operations["pull-requests_edit_pending_review_body"];
         delete?: never;
@@ -1592,10 +1590,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Open the pull or merge request a task lands by, through the repository's
-         *     own forge CLI, and answer its URL.
-         * @description The daemon runs the forge call, never the agent: `gh` or `glab` only ever
-         *     run here, with the authentication the user already set up for them
+         * Open the pull request a task lands by, through the repository's own
+         *     forge CLI, and answer its URL.
+         * @description The daemon runs the forge call, never the agent: `gh` only ever runs
+         *     here, with the authentication the user already set up for it
          *     ([`crate::forge`]). The current column's agent supplies only what the
          *     daemon cannot read off the task or the repository — the title and the
          *     body — and gets the URL back to show the user.
@@ -2199,8 +2197,8 @@ export interface components {
         BinaryDto: {
             /**
              * @description Whether it holds credentials for the service it speaks to, for the
-             *     binaries that hold any: `gh auth status` and `glab auth status`, asked
-             *     of the daemon's own environment because that is where the polling
+             *     binaries that hold any: `gh auth status`, asked of the daemon's own
+             *     environment because that is where the polling
              *     runs. `None` for a binary with nothing to sign in to — git — and for
              *     one that was not found to ask.
              *
@@ -2313,9 +2311,8 @@ export interface components {
             path: string;
             permission_mode?: null | components["schemas"]["PermissionMode"];
             /**
-             * @description Put agent replies, reviews and resolves in your pending GitHub review
-             *     or GitLab draft notes, and open pull requests as drafts. Omit for
-             *     `true`.
+             * @description Put agent replies, reviews and resolves in your pending GitHub
+             *     review, and open pull requests as drafts. Omit for `true`.
              */
             supervise_posts?: boolean | null;
         };
@@ -2380,8 +2377,8 @@ export interface components {
             socket_path: string;
             /**
              * @description The other binaries the daemon runs: git, without which no worktree can
-             *     be cut at all, and the forge CLIs `gh` and `glab`, which are what a
-             *     published task is watched through.
+             *     be cut at all, and the forge CLI `gh`, which is what a published
+             *     task is watched through.
              */
             tools: components["schemas"]["BinaryDto"][];
             /** @example 0.1.0 */
@@ -2554,8 +2551,7 @@ export interface components {
         /**
          * @description Body of `POST /v1/pull-requests/{id}/comments/edit` (026 rule 25): change the
          *     body of one of the viewer's own pending forge posts — a pending review
-         *     comment (GitHub) or a draft note (GitLab) — while it still waits in the
-         *     user's forge drafts.
+         *     comment — while it still waits in the user's forge drafts.
          */
         EditPendingCommentRequest: {
             body: string;
@@ -2565,11 +2561,7 @@ export interface components {
              */
             forge_id: string;
         };
-        /**
-         * @description Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25): GitHub
-         *     only, since GitLab holds no pending review body apart from its draft
-         *     notes.
-         */
+        /** @description Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25). */
         EditPendingReviewBodyRequest: {
             body: string;
         };
@@ -2635,7 +2627,7 @@ export interface components {
         /**
          * @description What `POST /v1/forge/detect` answers: the forge a checkout's remote
          *     names, read the same way registration reads it. Null for a checkout with
-         *     no usable GitHub or GitLab remote.
+         *     no usable forge remote.
          */
         ForgeDetectionDto: {
             /**
@@ -2667,10 +2659,13 @@ export interface components {
             webhook: components["schemas"]["WebhookDto"];
         };
         /**
-         * @description The forge a repository's remote is on (025): which CLI speaks to it.
+         * @description The forge a repository's remote is on (025): which CLI speaks to it. An
+         *     enum, rather than an open string, so that a later forge is added as a new
+         *     variant every match arm must answer for, not a string a caller could
+         *     mistype.
          * @enum {string}
          */
-        ForgeKind: "github" | "gitlab";
+        ForgeKind: "github";
         /**
          * @description The forge settings and the tunnel state, as `GET /v1/forge/tunnel` and
          *     `forge_settings_updated` carry them (027).
@@ -3100,8 +3095,8 @@ export interface components {
          */
         PendingEditDto: {
             /**
-             * @description What changed: "the pending GitHub review comment", "the GitHub
-             *     pending review body" or "the GitLab draft note".
+             * @description What changed: "the pending GitHub review comment" or "the GitHub
+             *     pending review body".
              */
             changed: string;
             /** @description The forge id of the item that changed. */
@@ -3110,16 +3105,14 @@ export interface components {
         /**
          * @description What the reply route answers instead of a posted comment, where the
          *     repository holds agent posts for the user's approval (002, 026 rule 24):
-         *     the reply waits, unposted, as a pending review (GitHub) or a draft note
-         *     (GitLab) in the user's own forge drafts, until the user publishes it
-         *     there.
+         *     the reply waits, unposted, as a pending review in the user's own forge
+         *     drafts, until the user publishes it there.
          */
         PendingReplyDto: {
             /**
              * @description The forge id of the pending item: the pending review's own id for a
              *     reply to a top-level conversation comment, the new draft comment's
-             *     for a reply inside a review thread (GitHub); the draft note's id
-             *     (GitLab).
+             *     for a reply inside a review thread.
              */
             id: string;
             /** @description Always true: a posted reply never takes this shape. */
@@ -3128,8 +3121,8 @@ export interface components {
         /**
          * @description What `POST .../reviews` answers where the repository holds posts back
          *     (026 rule 24 / 029 rule 13a): the review's findings wait, unposted, in
-         *     the viewer's own pending review (GitHub) or draft notes (GitLab), in
-         *     place of the posted comments the route otherwise answers with.
+         *     the viewer's own pending review, in place of the posted comments the
+         *     route otherwise answers with.
          */
         PendingReviewDto: {
             /** @description Always true: a posted review never takes this shape. */
@@ -3403,8 +3396,8 @@ export interface components {
              */
             permission_mode: components["schemas"]["PermissionMode"];
             /**
-             * @description Put agent replies, reviews and resolves in your pending GitHub review
-             *     or GitLab draft notes, and open pull requests as drafts.
+             * @description Put agent replies, reviews and resolves in your pending GitHub
+             *     review, and open pull requests as drafts.
              */
             supervise_posts: boolean;
             updated_at: string;
@@ -4060,9 +4053,8 @@ export interface components {
             path?: string | null;
             permission_mode?: null | components["schemas"]["PermissionMode"];
             /**
-             * @description Put agent replies, reviews and resolves in your pending GitHub review
-             *     or GitLab draft notes, and open pull requests as drafts. Absent =
-             *     unchanged.
+             * @description Put agent replies, reviews and resolves in your pending GitHub
+             *     review, and open pull requests as drafts. Absent = unchanged.
              */
             supervise_posts?: boolean | null;
         };

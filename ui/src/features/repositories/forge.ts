@@ -11,10 +11,9 @@ import type { ForgeDto } from "@/api"
 
 const KIND_LABELS: Record<ForgeDto["kind"], string> = {
   github: "GitHub",
-  gitlab: "GitLab",
 }
 
-/** `GitHub`, `GitLab`. */
+/** `GitHub`. */
 export function forgeKindLabel(kind: ForgeDto["kind"]): string {
   return KIND_LABELS[kind]
 }
@@ -28,7 +27,11 @@ export function forgeRepositoryLabel(forge: Pick<ForgeDto, "host" | "owner" | "n
   return `${forge.host}/${forge.owner}/${forge.name}`
 }
 
-/** The forge CLI that signs Ariadne in to the host: `gh`, `glab`. */
+const CLI_NAMES: Record<ForgeDto["kind"], string> = {
+  github: "gh",
+}
+
+/** The forge CLI that signs Ariadne in to the host: `gh`. */
 export function forgeCliName(kind: ForgeDto["kind"]): string {
-  return kind === "github" ? "gh" : "glab"
+  return CLI_NAMES[kind]
 }
