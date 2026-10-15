@@ -35,7 +35,7 @@ const MINE: WorkflowDto = aWorkflow({
       title: "Ship it",
       description: "Release the work.",
       skills: [],
-      rank: null,
+      ranks: [],
       gate: null,
     },
     {
@@ -43,7 +43,7 @@ const MINE: WorkflowDto = aWorkflow({
       title: "Notify team",
       description: "Tell everyone it shipped.",
       skills: [],
-      rank: null,
+      ranks: [],
       gate: null,
     },
   ],

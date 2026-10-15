@@ -11,7 +11,15 @@ import { TaskSessions } from "./task-sessions"
 
 it("names a session row by the title of its agent's workflow step", async () => {
   const goal = aGoal({
-    steps: [{ id: "build", title: "Build", description: "Build the change.", skills: ["coding"] }],
+    steps: [
+      {
+        id: "build",
+        title: "Build",
+        description: "Build the change.",
+        skills: ["coding"],
+        ranks: [],
+      },
+    ],
   })
   const task = aTask({
     goal_id: goal.id,

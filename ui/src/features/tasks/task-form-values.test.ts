@@ -5,8 +5,8 @@ import { aTask } from "@/test/fixtures"
 import { taskToFormValues, toCreateTaskRequest, toUpdateTaskRequest } from "./task-form-values"
 
 const STEPS: WorkflowStepDto[] = [
-  { id: "build", title: "Build", description: "", skills: ["coding"] },
-  { id: "test", title: "Test", description: "", skills: ["testing"] },
+  { id: "build", title: "Build", description: "", skills: ["coding"], ranks: [] },
+  { id: "test", title: "Test", description: "", skills: ["testing"], ranks: [] },
 ]
 
 it("maps one workflow agent for every column", () => {

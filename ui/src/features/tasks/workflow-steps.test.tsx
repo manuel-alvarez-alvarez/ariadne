@@ -8,8 +8,8 @@ import { renderScreen } from "@/test/harness"
 import { WorkflowSteps } from "./workflow-steps"
 
 const STEPS = [
-  { id: "build", title: "Build", description: "Build the change.", skills: ["coding"] },
-  { id: "test", title: "Test", description: "Test the change.", skills: ["testing"] },
+  { id: "build", title: "Build", description: "Build the change.", skills: ["coding"], ranks: [] },
+  { id: "test", title: "Test", description: "Test the change.", skills: ["testing"], ranks: [] },
 ]
 
 it("draws every column on the track with its agent's skills, model and session under it", () => {

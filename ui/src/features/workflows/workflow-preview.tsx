@@ -10,7 +10,7 @@ import type { WorkflowParseResult } from "./use-workflow-parse"
 function StepBadge({ kind, value }: { kind: "rank" | "gate"; value: string }) {
   const meaning =
     kind === "rank"
-      ? "The model rank for this column."
+      ? "A model capability this column may be staffed on."
       : "The work state required before this column completes."
   const label = kind === "gate" ? `Gate: ${value}` : value
   return (
@@ -37,7 +37,9 @@ function WorkflowCard({ step }: { step: WorkflowStepDto }) {
             {skill}
           </Badge>
         ))}
-        {step.rank ? <StepBadge kind="rank" value={step.rank} /> : null}
+        {step.ranks.map((rank) => (
+          <StepBadge key={rank} kind="rank" value={rank} />
+        ))}
       </div>
     </article>
   )

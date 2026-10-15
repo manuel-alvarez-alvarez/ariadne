@@ -10,8 +10,20 @@ import { TaskPanel } from "./task-panel"
 it("shows workflow agents by column", async () => {
   const goal = aGoal({
     steps: [
-      { id: "build", title: "Build", description: "Build the change.", skills: ["coding"] },
-      { id: "test", title: "Test", description: "Test the change.", skills: ["testing"] },
+      {
+        id: "build",
+        title: "Build",
+        description: "Build the change.",
+        skills: ["coding"],
+        ranks: [],
+      },
+      {
+        id: "test",
+        title: "Test",
+        description: "Test the change.",
+        skills: ["testing"],
+        ranks: [],
+      },
     ],
   })
   const task = aTask({

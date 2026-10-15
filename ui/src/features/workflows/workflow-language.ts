@@ -34,7 +34,7 @@ const parser: StreamParser<WorkflowState> = {
     if (stream.match(/[^\]]+(?=\])/)) return "string"
     if (stream.match("]")) return "bracket"
 
-    if (stream.match(/(?:skills|rank|gate):/)) {
+    if (stream.match(/(?:skills|ranks|gate):/)) {
       state.metadataValue = true
       return "keyword"
     }

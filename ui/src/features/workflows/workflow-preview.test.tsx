@@ -19,7 +19,7 @@ function twoSteps() {
     id: "review",
     title: "Review",
     skills: ["code-review"],
-    rank: "frontier" as const,
+    ranks: ["frontier"] as const,
     gate: null,
   }
   return { workflow, steps: [workflow.steps[0], review] }
@@ -53,6 +53,21 @@ describe("the workflow preview", () => {
       /Develop[\s\S]*develop[\s\S]*Build the task\.[\s\S]*coding[\s\S]*balanced/,
     )
     expect(within(card).queryByText(/Gate:/)).toBeNull()
+  })
+
+  it("shows every rank of a step's capability band as its own badge", async () => {
+    const { workflow, steps } = twoSteps()
+    const review = { ...steps[1], ranks: ["balanced", "frontier"] as const }
+    daemonFetch.mockImplementation(async () =>
+      jsonResponse({ name: workflow.name, steps: [steps[0], review] }),
+    )
+    renderScreen(<Preview document={workflow.document} />)
+
+    const heading = await screen.findByRole("heading", { name: "Review" })
+    const card = heading.closest("article")
+    if (!card) throw new Error("expected the step to render as a card")
+    expect(within(card).getByText("balanced")).toBeDefined()
+    expect(within(card).getByText("frontier")).toBeDefined()
   })
 
   it("shows a step's gate as a chip on its connector, and none where a step has no gate", async () => {

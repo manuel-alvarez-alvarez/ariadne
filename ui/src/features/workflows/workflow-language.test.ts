@@ -9,7 +9,7 @@ describe("the workflow language", () => {
       "  develop[Develop]",
       "    Build the task.",
       "    skills: coding",
-      "    rank: balanced",
+      "    ranks: balanced",
       "    gate: committed",
     ].join("\n")
     const cursor = workflowLanguage.parser.parse(document).cursor()

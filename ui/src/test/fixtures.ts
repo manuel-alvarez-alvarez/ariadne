@@ -55,7 +55,7 @@ export function aWorkflow(overrides: Partial<WorkflowDto> = {}): WorkflowDto {
         title: "Develop",
         description: "Build the task.",
         skills: ["coding"],
-        rank: "balanced",
+        ranks: ["balanced"],
         gate: "committed",
       },
     ],

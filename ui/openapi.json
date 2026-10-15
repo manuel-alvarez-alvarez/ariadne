@@ -9726,7 +9726,8 @@
           "id",
           "title",
           "description",
-          "skills"
+          "skills",
+          "ranks"
         ],
         "properties": {
           "description": {
@@ -9748,16 +9749,12 @@
             "description": "Kebab-case, unique within the workflow.",
             "example": "develop"
           },
-          "rank": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ModelRank",
-                "description": "The model rank the step prefers, where the document named one."
-              }
-            ]
+          "ranks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelRank"
+            },
+            "description": "The capability band the step allows: every `ModelRank` planning may\nstaff it on, unordered. Empty where the document named none."
           },
           "skills": {
             "type": "array",
