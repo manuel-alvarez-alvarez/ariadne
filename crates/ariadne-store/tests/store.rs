@@ -5139,10 +5139,10 @@ async fn the_last_fetch_error_is_written_only_when_it_changes() {
 }
 
 /// A brand-new database starts the tunnel switch off (027), though 0001's
-/// own seed still writes it on and never changes: `Store::open` turns it
-/// off itself, only the first time a path has never been opened before.
-/// Reopening the same file afterward is an upgrade, not a fresh install, so
-/// whichever choice it already holds — on or off — survives untouched.
+/// own seed still writes it on and never changes: migration 0009 turns it
+/// off, once, the first time a path is ever opened. Reopening the same file
+/// afterward runs no migration again, so whichever choice it already
+/// holds — on or off — survives untouched.
 #[tokio::test]
 async fn a_fresh_database_starts_the_tunnel_off_and_an_existing_one_keeps_its_choice() {
     let dir = tempfile::tempdir().unwrap();
@@ -5170,9 +5170,9 @@ async fn a_fresh_database_starts_the_tunnel_off_and_an_existing_one_keeps_its_ch
 
 /// sqlx creates `_sqlx_migrations` before it applies the first migration, so
 /// a run killed between that create and 0001's own commit leaves the table
-/// standing with no row in it. Reading only whether the table exists would
-/// take that for an upgrade already at some version, and skip the off
-/// override `Store::open` owes a database no migration ever finished on.
+/// standing with no row in it. Reopening such a database still runs every
+/// migration from 0001 on, 0009's own tunnel-off update included, rather
+/// than mistaking the empty table for an upgrade already at some version.
 #[tokio::test]
 async fn a_database_with_an_empty_migrations_table_still_counts_as_fresh() {
     let dir = tempfile::tempdir().unwrap();
