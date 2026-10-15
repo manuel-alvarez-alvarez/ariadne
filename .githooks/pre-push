@@ -85,6 +85,7 @@ if [ "$run_rust" = 1 ]; then
     githooks_run cargo clippy --workspace --all-targets -- -D warnings
     githooks_run cargo fmt --all -- --check
     githooks_run scripts/check-unused-rust
+    githooks_run scripts/check-migrations.sh
 fi
 
 if [ "$run_ui" = 1 ]; then

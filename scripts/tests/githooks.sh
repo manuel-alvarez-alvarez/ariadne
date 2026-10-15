@@ -34,6 +34,8 @@ setup_repo() {
     chmod 755 "$TEST_ROOT/repo/scripts/install-githooks.sh"
     cp "$REPO_DIR/scripts/tests/githooks-command.sh" "$TEST_ROOT/repo/scripts/check-unused-rust"
     chmod 755 "$TEST_ROOT/repo/scripts/check-unused-rust"
+    cp "$REPO_DIR/scripts/tests/githooks-command.sh" "$TEST_ROOT/repo/scripts/check-migrations.sh"
+    chmod 755 "$TEST_ROOT/repo/scripts/check-migrations.sh"
     printf 'pub fn seeded() {}\n' > "$TEST_ROOT/repo/crates/ariadne-core/src/lib.rs"
     printf 'export const seeded = 1\n' > "$TEST_ROOT/repo/ui/src/seeded.ts"
     printf 'fn seeded() {}\n' > "$TEST_ROOT/repo/ui/src-tauri/seeded.rs"
@@ -162,7 +164,7 @@ case "$test_case" in
         for cmd in 'cargo machete .' 'cargo build --workspace --bins' \
             'cargo nextest run --workspace --profile ci' 'cargo test --doc --workspace' \
             'cargo clippy --workspace --all-targets -- -D warnings' 'cargo fmt --all -- --check' \
-            'check-unused-rust'; do
+            'check-unused-rust' 'check-migrations.sh'; do
             grep -Fx "$cmd" "$TEST_ROOT/commands"
         done
         no_command_matching npm
