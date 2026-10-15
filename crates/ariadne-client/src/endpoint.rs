@@ -90,9 +90,6 @@ pub struct FileConfig {
     /// The `gh` the GitHub integration runs (025; default: `gh` on the
     /// daemon's PATH).
     pub gh_bin: Option<String>,
-    /// The `glab` the GitLab integration runs (025; default: `glab` on the
-    /// daemon's PATH).
-    pub glab_bin: Option<String>,
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,

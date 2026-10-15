@@ -28,7 +28,7 @@ The CLI and desktop conventions are in 014 and 015.
 
 1. `GET /v1/repositories/{id}/issues` reads open issues from the forge each time. `assigned=me` is the default and filters by the stored forge login. `assigned=all` reads all open issues. No issue is stored locally.
 2. `GET /v1/repositories/{id}/issues/{number}` reads one issue. Both routes refuse a repository whose forge integration is off with 409.
-3. Each issue has its number, title, body, URL, labels, assignees, and update time. Both are read through the forge's API on the integration's own host, every page of them, a hundred a page: GitHub with `gh api --paginate repos/<owner>/<name>/issues?state=open` (with `assignee`), leaving out the pull requests that endpoint lists too; GitLab with `glab api --paginate projects/<group%2Fname>/issues?state=opened` (with `assignee_username`). One issue is `.../issues/<number>`. The CLIs' own `issue list` reads one page and, without a host, the default one.
+3. Each issue has its number, title, body, URL, labels, assignees, and update time. It is read through `gh api` on the integration's own host, every page of them, a hundred a page: `gh api --paginate repos/<owner>/<name>/issues?state=open` (with `assignee`), leaving out the pull requests that endpoint lists too. One issue is `.../issues/<number>`. The CLI's own `issue list` reads one page and, without a host, the default one.
 4. A goal can store a nullable `issue_url`. Its DTO carries the URL. An orchestrator briefing for such a goal names the issue and requires every author request body to say `Closes <url>`.
 5. `ariadne issue ls --repo <id|path> [--all]` reads the issue list. `ariadne goal create --from-issue <url> --model ...` reads the issue detail and uses its title and body when `--title` and `-d` are absent. `ariadne goal inspect` prints the issue URL.
 6. The Issues tab of the Forge screen, at `#/forge/issues`, lists issues from enabled repositories. It filters by repository and has an Assigned to me switch on by default, both kept in the URL. Each row shows the linked issue number and title with the repository under it, the labels as pills, the assignees, and the update age.
@@ -39,7 +39,6 @@ The CLI and desktop conventions are in 014 and 015.
 ## Acceptance criteria
 
 - The live route reads every page of an enterprise host's issues through `gh api --hostname`, leaves out a pull request, passes the login for `me`, and refuses an integration that is off (`issues.rs::open_issues_are_live_on_every_page_of_the_integrations_host`).
-- GitLab issue reads go through `glab api` on every page, with the group path and login (`issues.rs::gitlab_issues_read_every_page_through_glab_api_and_the_group_path`).
 - A goal stores and returns `issue_url`, and its orchestrator briefing names the issue and `Closes` line (`prompts.rs::an_issue_goal_keeps_its_url_and_briefs_the_orchestrator_to_close_it`).
 - The CLI creates a goal using the issue title and body (`goal.rs::create_from_issue_reads_its_title_and_body_through_the_route`).
 - The CLI issue list selects the repository and assignment filter (`issue.rs::issue_ls_uses_the_repository_and_assignment_filter`).

@@ -20,13 +20,19 @@ Which forge a repository's remote is on, and whether Ariadne works with it.
 The daemon reads the forge off the checkout's remote. The user enables the
 integration; every review of a request starts manually, on a pin asked
 directly on its own row (029), never on a repository setting. Ariadne
-speaks to the forge only through the forge's own CLI, `gh` for GitHub and
-`glab` for GitLab.
+speaks to the forge only through its own CLI, `gh`.
+
+Ariadne supports GitHub alone today. `ForgeKind` and `ForgeClient` stay
+enums of one variant rather than a hardcoded type or an open string, so
+that a later forge is added as a new variant every match arm must answer
+for, not a string a caller could mistype (`ariadne-core`'s `ForgeKind` doc
+comment). Everything below that reads "GitHub" or "`gh`" is this release's
+one forge, not a ceiling on the next.
 
 ## Scope
 
 In: the detection of the remote, the `forge_integrations` row, the switch,
-the forge CLI client, the `gh_bin` and `glab_bin` keys, and the
+the forge CLI client, the `gh_bin` key, and the
 command-line and desktop surfaces over them.
 
 Out: what a repository is (002), how a task ends and the forge it publishes
@@ -37,7 +43,7 @@ the desktop app as a whole (015).
 
 1. A repository has at most one forge row, in the table
    `forge_integrations`, keyed by `repository_id`. The row holds `kind`
-   (`github` or `gitlab`), `host`, `owner`, `name`, `remote`, `enabled`,
+   (`github`), `host`, `owner`, `name`, `remote`, `enabled`,
    `login`, `detected_at` and `updated_at`. There is no pin of any kind on
    this row: the current task-column agent keeps its request under the
    workflow rule in [030](030-workflows.md), and a review's pin lives on the
@@ -45,6 +51,17 @@ the desktop app as a whole (015).
    `name` are stored lower-cased. A repository with no usable remote has no
    row. Deleting the repository deletes its row.
    Hook metadata and the nested DTO block follow [027](027-webhooks-and-tunnel.md).
+1a. `0001_init.sql`'s `kind` column is `CHECK (kind IN ('github'))`: this
+   release allows only the one value its own `ForgeClient` can speak to,
+   narrower than an earlier release's constraint, which also allowed a
+   second forge kind this release no longer builds a client for.
+   A migration already shipped is immutable (016 rule 9), so a database
+   that ran that earlier, wider-checked `0001_init.sql` carries a
+   `_sqlx_migrations` checksum for version 1 that does not match this
+   release's, and `Store::open` refuses it with the pre-squash message: it
+   names the database file and says to delete it and start again. Pre-1.0,
+   this is the expected consequence of narrowing the constraint, not a
+   migration path Ariadne owes an upgrade for.
 2. The remote is `origin`. Where there is no `origin` and the checkout has
    exactly one remote, that remote stands in. Any other checkout has no
    usable remote.
@@ -52,11 +69,12 @@ the desktop app as a whole (015).
    SSH form (`git@host:owner/name`, `ssh://git@host[:port]/owner/name`) and
    the HTTPS form (`https://host/owner/name`), with or without `.git` and a
    trailing slash. The last path segment is `name`; the segments before it
-   are `owner`, so a GitLab group path such as `group/sub` is one owner. A
-   local path or a `file://` URL names no forge.
-4. Host `github.com` is `github`, and host `gitlab.com` is `gitlab`. Another
-   host is `github` when `gh auth status --hostname <host>` exits 0, else
-   `gitlab` when `glab auth status --hostname <host>` exits 0, else the
+   are `owner` whole, so a nested group path such as `group/sub` still
+   parses as one owner — a forge that nests repositories under a group
+   path this way would parse here too, even though GitHub does not use one
+   today. A local path or a `file://` URL names no forge.
+4. Host `github.com` is `github`. Another
+   host is `github` when `gh auth status --hostname <host>` exits 0, else the
    repository has no forge.
 5. The daemon detects the forge at registration, on every
    `PUT /v1/repositories/{id}`, and once for every repository at daemon
@@ -81,7 +99,7 @@ the desktop app as a whole (015).
    CLI that is not installed, or not signed in to the host, refuses the
    enable with 409 `forge_unauthenticated` and the probe's own message. On
    success the daemon stores the login: `gh api user --jq .login --hostname
-   <host>`, or the `username` of `glab api user --hostname <host>`.
+   <host>`.
    Disabling clears the login. One forge repository is
    enabled on one repository row at a time. The same checkout can be
    registered once per base branch (002), so an enable on a second row that
@@ -90,15 +108,17 @@ the desktop app as a whole (015).
    probe. A partial unique index enforces it again inside the transaction of
    rule 8, so of two enables at once one is refused and changes nothing: no
    repository field, and no row on a registration.
-10. `gh_bin` and `glab_bin` are keys of `<home>/config.toml`, listed by
-    `ariadned --help`. Each is a path taken as it stands, or a bare name
+10. `gh_bin` is a key of `<home>/config.toml`, listed by
+    `ariadned --help`. It is a path taken as it stands, or a bare name
     looked up on the daemon's own `PATH`, as `python_bin` is (022). `None` is
-    `gh` or `glab` on that `PATH`. The client runs the CLI as a child process
+    `gh` on that `PATH`. The client runs the CLI as a child process
     with no stdin, and gives it 30 seconds.
 11. The forge client is `crates/ariadne-daemon/src/forge/`: `mod.rs` holds
     `ForgeKind`, the `Remote` parser, the detection and
-    `ForgeClient::for_repository`; `github/` and `gitlab/` each hold one
-    forge's CLI calls.
+    `ForgeClient::for_repository`; `github/` holds GitHub's own CLI calls,
+    behind the one variant `ForgeClient::Github` matches today. A later
+    forge adds a sibling directory and a new variant beside it, not a
+    rewrite of this layout.
 12. `POST /v1/forge/detect` reads a checkout's remote the same way
     registration does, without registering or writing anything: `{path}` in,
     a `ForgeDetectionDto` (`kind`, `host`, `owner`, `name`, `remote`) out, or
@@ -124,13 +144,13 @@ the desktop app as a whole (015).
 15. The repositories table has a Forge column over two lines: the kind,
     with `· off` where the integration is disabled, then `owner/name`; or
     `none` (015).
-16. The repository dialog shows one switch, "GitHub integration" or "GitLab
-    integration": while editing, for a repository with a forge row, described
+16. The repository dialog shows one switch, "GitHub integration": while
+    editing, for a repository with a forge row, described
     by the detected `host/owner/name`, the CLI it goes through, and the
     login; while registering, for a path rule 12's probe finds one for,
     fired off the path field losing focus and off typing settling there,
     off by default since nothing is enabled yet. A repository with no row, a
-    path with no remote on either forge, and a path not yet probed show no
+    path with no forge remote, and a path not yet probed show no
     switch. The dialog sends `forge.enabled` on an edit only when the switch
     moved, and on a registration only when the probe found a forge; a
     refusal to enable lands on the switch in the daemon's words, either way.
@@ -152,12 +172,11 @@ the desktop app as a whole (015).
   `forge/mod.rs::tests::a_remote_url_is_read_in_its_ssh_and_https_forms`).
 - A checkout with no remote has `forge = null`, and a forge change there is
   refused with `forge_unavailable`
-  (`forge_integration.rs::a_checkout_with_no_remote_has_no_forge`). The only
-  remote stands in for a missing `origin`, and two remotes with no `origin`
-  name none (`::the_only_remote_stands_in_for_a_missing_origin`).
-- Another host is the forge whose CLI is signed in to it, and `glab`'s
-  `username` is the login
-  (`forge_integration.rs::another_host_is_the_forge_whose_cli_is_signed_in_to_it`).
+  (`forge_integration.rs::a_checkout_with_no_remote_has_no_forge`).
+- Another host is GitHub Enterprise where `gh` is signed in to it, and an
+  unknown host `gh` is not signed in to has no forge
+  (`forge_integration.rs::another_host_is_github_enterprise_where_gh_is_signed_in_to_it`,
+  `::an_unknown_host_gh_is_not_signed_in_to_has_no_forge`).
 - Enabling with the stub's `auth status` at exit 1 is refused with 409 and
   the probe's message. With exit 0, the stub's login is stored and one
   `repository_updated` carries `forge.enabled = true` and `forge.login`
@@ -176,8 +195,12 @@ the desktop app as a whole (015).
 - A changed remote URL is detected on the next edit and at daemon start, and
   a remote that went away leaves no forge
   (`forge_integration.rs::a_changed_remote_is_detected_on_the_next_edit_and_at_daemon_start`).
-- `gh_bin` and `glab_bin` are read from `config.toml`
-  (`config.rs::tests::the_forge_cli_keys_are_read`).
+- `gh_bin` is read from `config.toml`
+  (`config.rs::tests::the_forge_cli_key_is_read`).
+- `0001_init.sql`'s `kind` CHECK allows only `github`; a database carrying an
+  earlier, wider-checked migration's checksum for version 1 is refused
+  with the pre-squash message naming the file to delete
+  (`store.rs::a_database_on_the_old_chain_is_refused_with_the_pre_squash_message`).
 - `repo add` and `repo update` take `--forge` and reject `--review-model`
   and `--review-effort` as unknown flags
   (`repo.rs::tests::repo_add_and_update_take_the_forge_flag_and_reject_the_review_pin_flags`),

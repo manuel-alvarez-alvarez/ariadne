@@ -95,8 +95,8 @@ and the integration with it (025).
 13. `supervise_posts` says whether this repository's agents hold what they
     post to the forge for a person's approval before the forge ever sees it:
     every pull request a task opens is forced to a draft, and every reply,
-    review and resolve lands in the person's own pending GitHub review or
-    GitLab draft notes instead of posting directly ([026](026-pull-requests.md)
+    review and resolve lands in the person's own pending GitHub review
+    instead of posting directly ([026](026-pull-requests.md)
     rules 23 and 24). It defaults to `true`, is set when the repository is
     registered and changed by editing it, from the CLI and the desktop app
     alike, and an edit that does not name it keeps it. The CLI and the

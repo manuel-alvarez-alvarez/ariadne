@@ -118,7 +118,7 @@ pub(super) fn daemon_environment(
     // A forge CLI is judged by the same two questions wherever it is reported
     // from, and neither of them stops a session being spawned.
     checks.extend(daemon.tools.iter().map(|tool| {
-        match tool.authenticated.is_some() || matches!(tool.name.as_str(), "gh" | "glab") {
+        match tool.authenticated.is_some() || tool.name == "gh" {
             true => forge_check(tool, THERE),
             false => required_tool(tool, THERE),
         }
@@ -297,11 +297,7 @@ mod tests {
             home: "/home/me/.ariadne".into(),
             socket_path: "/home/me/.ariadne/ariadned.sock".into(),
             acp_agents: Vec::new(),
-            tools: vec![
-                binary("git", false, None),
-                binary("gh", true, Some(false)),
-                binary("glab", false, None),
-            ],
+            tools: vec![binary("git", false, None), binary("gh", true, Some(false))],
             python: ariadne_api::permissions::PythonDto {
                 path: Some("/usr/bin/python3".into()),
                 version: Some("3.12.1".into()),
@@ -317,9 +313,6 @@ mod tests {
         assert_eq!(by_name(&checks, "git").status, Status::Fail);
         assert_eq!(by_name(&checks, "gh").status, Status::Warn);
         assert!(by_name(&checks, "gh").detail.contains("not signed in"));
-        let glab = by_name(&checks, "glab");
-        assert_eq!(glab.status, Status::Warn);
-        assert!(glab.detail.contains("not found on the daemon's PATH"));
         assert_eq!(by_name(&checks, "python").status, Status::Ok);
         assert_eq!(by_name(&checks, "ai permissions").status, Status::Ok);
 

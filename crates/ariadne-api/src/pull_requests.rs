@@ -135,17 +135,15 @@ pub struct PullRequestCommentDto {
 
 /// What the reply route answers instead of a posted comment, where the
 /// repository holds agent posts for the user's approval (002, 026 rule 24):
-/// the reply waits, unposted, as a pending review (GitHub) or a draft note
-/// (GitLab) in the user's own forge drafts, until the user publishes it
-/// there.
+/// the reply waits, unposted, as a pending review in the user's own forge
+/// drafts, until the user publishes it there.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PendingReplyDto {
     /// Always true: a posted reply never takes this shape.
     pub pending: bool,
     /// The forge id of the pending item: the pending review's own id for a
     /// reply to a top-level conversation comment, the new draft comment's
-    /// for a reply inside a review thread (GitHub); the draft note's id
-    /// (GitLab).
+    /// for a reply inside a review thread.
     pub id: String,
 }
 
@@ -173,8 +171,7 @@ pub struct ReplyCommentRequest {
 
 /// Body of `POST /v1/pull-requests/{id}/comments/edit` (026 rule 25): change the
 /// body of one of the viewer's own pending forge posts — a pending review
-/// comment (GitHub) or a draft note (GitLab) — while it still waits in the
-/// user's forge drafts.
+/// comment — while it still waits in the user's forge drafts.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EditPendingCommentRequest {
@@ -191,9 +188,7 @@ pub struct DeletePendingCommentRequest {
     pub forge_id: String,
 }
 
-/// Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25): GitHub
-/// only, since GitLab holds no pending review body apart from its draft
-/// notes.
+/// Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EditPendingReviewBodyRequest {
@@ -206,8 +201,8 @@ pub struct EditPendingReviewBodyRequest {
 pub struct PendingEditDto {
     /// The forge id of the item that changed.
     pub id: String,
-    /// What changed: "the pending GitHub review comment", "the GitHub
-    /// pending review body" or "the GitLab draft note".
+    /// What changed: "the pending GitHub review comment" or "the GitHub
+    /// pending review body".
     pub changed: String,
 }
 
@@ -241,8 +236,8 @@ pub struct PullRequestDiffQuery {
 
 /// What `POST .../reviews` answers where the repository holds posts back
 /// (026 rule 24 / 029 rule 13a): the review's findings wait, unposted, in
-/// the viewer's own pending review (GitHub) or draft notes (GitLab), in
-/// place of the posted comments the route otherwise answers with.
+/// the viewer's own pending review, in place of the posted comments the
+/// route otherwise answers with.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PendingReviewDto {
     /// Always true: a posted review never takes this shape.

@@ -29,8 +29,6 @@ tests:
   - crates/ariadne-daemon/src/forge/poll.rs
   - crates/ariadne-daemon/src/forge/github/pulls.rs
   - crates/ariadne-daemon/src/forge/github/details.rs
-  - crates/ariadne-daemon/src/forge/gitlab/pulls.rs
-  - crates/ariadne-daemon/src/forge/gitlab/reviews.rs
   - ui/src/features/goals/attention.test.tsx
   - ui/src/features/goals/attention-strip.test.tsx
   - ui/src/features/goals/attention-alerts.test.tsx
@@ -587,17 +585,11 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
     reading `UNSTABLE` as `clean` here never lets a non-passing check
     through on its own; `UNKNOWN`, or no field at all, is `unknown`; every
     other named state — `BEHIND`, `BLOCKED`, `DIRTY`, `DRAFT` — is
-    `blocked`, each for its own reason. GitLab's `detailed_merge_status`
-    answers `clean` for `mergeable`; `unknown` for `unchecked`, `checking`,
-    `preparing`, `ci_still_running`, or no field at all — the forge still
-    computing it, or simply not telling us, never a guessed `clean`; every
-    other named status is `blocked`. `unknown` is never read as `clean`: a
+    `blocked`, each for its own reason. `unknown` is never read as `clean`: a
     readiness item answers for a confirmed mergeability, not an
     unevaluated one
     (`forge/github/pulls.rs::tests::mergeable_reads_every_merge_state_status_by_its_documented_meaning`,
-    `::a_read_naming_no_merge_state_status_is_unknown`,
-    `forge/gitlab/pulls.rs::tests::mergeable_reads_every_detailed_merge_status_by_its_documented_meaning`,
-    `::a_read_naming_no_detailed_merge_status_is_unknown`).
+    `::a_read_naming_no_merge_state_status_is_unknown`).
 
 ## Acceptance criteria
 
@@ -951,7 +943,6 @@ give-up branch), `crates/ariadne-store/src/goals.rs`
 `crates/ariadne-daemon/src/forge/poll.rs` (`FORGE_SIGNED_OUT`, `wants_session`),
 `crates/ariadne-daemon/src/forge/pulls.rs` (`ForgePullRequest::mergeable`),
 `crates/ariadne-daemon/src/forge/github/pulls.rs`,
-`crates/ariadne-daemon/src/forge/gitlab/pulls.rs`,
 `crates/ariadne-daemon/src/http/pull_requests.rs` (`ask_review`, `report`),
 `crates/ariadne-cli/src/commands/attention.rs` (including `relevant`),
 `crates/ariadne-cli/src/commands/attention/board.rs`,
@@ -962,8 +953,8 @@ give-up branch), `crates/ariadne-store/src/goals.rs`
 `ui/src/features/command-palette/entries.ts`,
 `ui/src/features/command-palette/command-palette.tsx`.
 
-The viewer's own pending review (GitHub) or draft notes (GitLab) are
+The viewer's own pending review is
 filtered from the live comment list and the news at the forge read itself
 (026 rule 9: `crates/ariadne-daemon/src/forge/github/details.rs`'s
-`pending_review_ids`, `crates/ariadne-daemon/src/forge/gitlab/details.rs`),
-never surfaced here: this list raises no item for either.
+`pending_review_ids`),
+never surfaced here: this list raises no item for it.

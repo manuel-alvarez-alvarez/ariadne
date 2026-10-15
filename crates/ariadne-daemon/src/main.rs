@@ -63,8 +63,6 @@ unknown key stops the daemon rather than being ignored):
                            probe runs to find a GPU (default: nvidia-smi on this daemon's PATH)
   gh_bin                   the `gh` the GitHub integration runs (default: gh on
                            this daemon's PATH)
-  glab_bin                 the `glab` the GitLab integration runs (default: glab
-                           on this daemon's PATH)
   [[acp_agents]]           add an ACP command with a stable `id` and `command` array
 
   ariadned --check-config reads that file and exits.\

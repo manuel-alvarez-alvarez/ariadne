@@ -1,13 +1,12 @@
 //! The forge a repository's remote is on, and the CLI that speaks to it (025).
 //!
-//! Ariadne talks to a forge only through its own CLI, `gh` for GitHub and
-//! `glab` for GitLab, run as a child process: the user signs in once, with the
-//! tool they already have, and Ariadne holds no token of its own. Each forge
-//! is a directory of its own, so what a later change teaches one forge goes
-//! beside the rest of it.
+//! Ariadne talks to a forge only through its own CLI, `gh` for GitHub, run as
+//! a child process: the user signs in once, with the tool they already have,
+//! and Ariadne holds no token of its own. Each forge is a directory of its
+//! own, so a later forge is added beside `github`, and what it teaches that
+//! forge never reaches this one.
 
 pub mod github;
-pub mod gitlab;
 pub mod hooks;
 pub mod live;
 pub mod news;
@@ -38,8 +37,10 @@ const CLI_TIMEOUT: Duration = Duration::from_secs(30);
 /// The remote Ariadne reads, where the checkout has it.
 const ORIGIN: &str = "origin";
 
-/// A forge repository, as a remote URL names it: lower-cased throughout. On
-/// GitLab the owner can be a group path, `group/subgroup`.
+/// A forge repository, as a remote URL names it: lower-cased throughout. A
+/// nested owner, `group/subgroup`, reads as one `owner` whole: a forge that
+/// nests repositories under a group path still parses here, even though
+/// GitHub does not use one today.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remote {
     pub host: String,
@@ -140,10 +141,6 @@ impl PullRequestRef {
         let path = url.path().trim_end_matches('/');
         let (repository, number) = match integration.kind() {
             ForgeKind::Github => path.rsplit_once("/pull/")?,
-            ForgeKind::Gitlab => {
-                let (repository, number) = path.rsplit_once("/merge_requests/")?;
-                (repository.strip_suffix("/-").unwrap_or(repository), number)
-            }
         };
         if !repository.eq_ignore_ascii_case(&format!("/{}/{}", integration.owner, integration.name))
             || number.is_empty()
@@ -169,32 +166,21 @@ pub struct Detected {
 }
 
 /// Read the forge off a checkout: `origin`, or the one remote where there is
-/// no `origin`. `github.com` is GitHub and `gitlab.com` GitLab; another host
-/// is whichever CLI is signed in to it, `gh` first. None where there is no
-/// such remote, its URL names no repository, or neither CLI knows the host.
+/// no `origin`. `github.com` is GitHub; another host is GitHub Enterprise if
+/// `gh` is signed in to it. None where there is no such remote, its URL names
+/// no repository, or `gh` does not know the host.
 pub async fn detect(cfg: &Config, checkout: &Path) -> Option<Detected> {
     let remote = remote_name(checkout).await?;
     let url = git(checkout, &["remote", "get-url", &remote]).await?;
     let repo = Remote::parse(&url)?;
     let kind = match repo.host.as_str() {
         "github.com" => ForgeKind::Github,
-        "gitlab.com" => ForgeKind::Gitlab,
         host => {
-            if ForgeClient::new(cfg, ForgeKind::Github)
+            ForgeClient::new(cfg, ForgeKind::Github)
                 .auth_status(host)
                 .await
-                .is_ok()
-            {
-                ForgeKind::Github
-            } else if ForgeClient::new(cfg, ForgeKind::Gitlab)
-                .auth_status(host)
-                .await
-                .is_ok()
-            {
-                ForgeKind::Gitlab
-            } else {
-                return None;
-            }
+                .ok()?;
+            ForgeKind::Github
         }
     };
     Some(Detected { kind, remote, repo })
@@ -348,7 +334,6 @@ async fn git(checkout: &Path, args: &[&str]) -> Option<String> {
 #[derive(Debug, Clone)]
 pub enum ForgeClient {
     Github(github::Github),
-    Gitlab(gitlab::Gitlab),
 }
 
 impl ForgeClient {
@@ -361,7 +346,6 @@ impl ForgeClient {
     ) -> Result<pulls::Listed, String> {
         let listed = match self {
             Self::Github(cli) => cli.list_open_pull_requests(repository, login).await,
-            Self::Gitlab(cli) => cli.list_open_pull_requests(repository, login).await,
         };
         self.cli()
             .remember_list_rate_limit(listed.as_ref().err().map(String::as_str));
@@ -374,7 +358,6 @@ impl ForgeClient {
     ) -> Result<pulls::ForgePullRequest, String> {
         match self {
             Self::Github(cli) => cli.pull_request(repository, number).await,
-            Self::Gitlab(cli) => cli.pull_request(repository, number).await,
         }
     }
     pub async fn search_pull_requests(
@@ -384,7 +367,6 @@ impl ForgeClient {
     ) -> Result<Vec<pulls::ForgePullRequest>, String> {
         match self {
             Self::Github(cli) => cli.search_pull_requests(repository, query).await,
-            Self::Gitlab(cli) => cli.search_pull_requests(repository, query).await,
         }
     }
 
@@ -403,7 +385,6 @@ impl ForgeClient {
         let read = async {
             match self {
                 Self::Github(cli) => cli.details(repository, number, login).await,
-                Self::Gitlab(cli) => cli.details(repository, number, login).await,
             }
         };
         tokio::time::timeout(within, read)
@@ -427,15 +408,13 @@ impl ForgeClient {
     ) -> Result<String, String> {
         match self {
             Self::Github(cli) => cli.reply(repository, number, comment, body).await,
-            Self::Gitlab(cli) => cli.reply(repository, number, comment, body).await,
         }
     }
 
     /// Reply to one stored comment of request `number` with `body`, held
     /// back, unposted, in the user's own forge drafts rather than posted
     /// (026 rule 24): a pending review on GitHub, under `login`, which it
-    /// finds or creates; a draft note on GitLab. Answers the forge id of
-    /// the pending item.
+    /// finds or creates. Answers the forge id of the pending item.
     pub async fn reply_pending(
         &self,
         repository: &str,
@@ -449,7 +428,6 @@ impl ForgeClient {
                 cli.reply_pending(repository, number, login, comment, body)
                     .await
             }
-            Self::Gitlab(cli) => cli.reply_pending(repository, number, comment, body).await,
         }
     }
 
@@ -463,7 +441,6 @@ impl ForgeClient {
     ) -> Result<(), String> {
         match self {
             Self::Github(cli) => cli.resolve(repository, number, comment).await,
-            Self::Gitlab(cli) => cli.resolve(repository, number, comment).await,
         }
     }
 
@@ -479,17 +456,15 @@ impl ForgeClient {
     ) -> Result<Vec<ariadne_store::NewPullRequestComment>, String> {
         match self {
             Self::Github(cli) => cli.submit_review(repository, number, review, login).await,
-            Self::Gitlab(cli) => cli.submit_review(repository, number, review, login).await,
         }
     }
 
     /// Post one review of request `number` in the name of `login`, held
     /// unposted in the user's own forge drafts rather than submitted (026
-    /// rule 24 / 029 rule 13a, where the repository holds posts back):
-    /// each inline comment is added to GitHub's one pending review, or
-    /// GitLab's own draft note of it. Nothing here submits a review or
-    /// posts a note outside the user's drafts. Answers what it held, as
-    /// comments of `login`.
+    /// rule 24 / 029 rule 13a, where the repository holds posts back): each
+    /// inline comment is added to GitHub's one pending review. Nothing here
+    /// submits a review or posts a note outside the user's drafts. Answers
+    /// what it held, as comments of `login`.
     pub async fn submit_review_pending(
         &self,
         repository: &str,
@@ -502,18 +477,13 @@ impl ForgeClient {
                 cli.submit_review_pending(repository, number, review, login)
                     .await
             }
-            Self::Gitlab(cli) => {
-                cli.submit_review_pending(repository, number, review, login)
-                    .await
-            }
         }
     }
 
-    /// Edit the body of one of the viewer's own pending forge posts: a
-    /// pending review comment (GitHub) or a draft note (GitLab), by its
-    /// own forge id (026 rule 25). Answers the same forge id, or
-    /// [`PendingEditError::NotPending`] where the user already submitted
-    /// the review it was in, or published the draft note.
+    /// Edit the body of one of the viewer's own pending forge posts, a
+    /// pending review comment, by its own forge id (026 rule 25). Answers
+    /// the same forge id, or [`PendingEditError::NotPending`] where the user
+    /// already submitted the review it was in.
     pub(crate) async fn edit_pending_comment(
         &self,
         repository: &str,
@@ -525,10 +495,6 @@ impl ForgeClient {
         match self {
             Self::Github(cli) => {
                 cli.edit_pending_comment(repository, number, login, forge_id, body)
-                    .await
-            }
-            Self::Gitlab(cli) => {
-                cli.edit_pending_comment(repository, number, forge_id, body)
                     .await
             }
         }
@@ -549,18 +515,13 @@ impl ForgeClient {
                 cli.delete_pending_comment(repository, number, login, forge_id)
                     .await
             }
-            Self::Gitlab(cli) => {
-                cli.delete_pending_comment(repository, number, forge_id)
-                    .await
-            }
         }
     }
 
-    /// Replace the body of the viewer's own pending review outright (026 rule 25):
-    /// GitHub only, since GitLab holds no review body of its own apart
-    /// from its draft notes. Answers the pending review's own forge id, or
-    /// [`PendingEditError::NotPending`] where the user already submitted
-    /// it, or where there is none.
+    /// Replace the body of the viewer's own pending review outright (026
+    /// rule 25). Answers the pending review's own forge id, or
+    /// [`PendingEditError::NotPending`] where the user already submitted it,
+    /// or where there is none.
     pub(crate) async fn edit_pending_review_body(
         &self,
         repository: &str,
@@ -573,16 +534,11 @@ impl ForgeClient {
                 cli.replace_pending_review_body(repository, number, login, body)
                     .await
             }
-            Self::Gitlab(_) => Err(PendingEditError::Forge(
-                "GitLab holds no pending review body of its own".into(),
-            )),
         }
     }
 
     /// The current body of the viewer's own pending review, with its own
-    /// forge id, read fresh: GitHub only, since GitLab's draft notes hold
-    /// no body shared the way a reply or a resolve folds into GitHub's
-    /// (026 rule 25).
+    /// forge id, read fresh (026 rule 25).
     pub(crate) async fn pending_review_body(
         &self,
         repository: &str,
@@ -591,15 +547,12 @@ impl ForgeClient {
     ) -> Result<Option<(String, String)>, String> {
         match self {
             Self::Github(cli) => cli.pending_review_body(repository, number, login).await,
-            Self::Gitlab(_) => Ok(None),
         }
     }
 
     /// Whether request `number`, which no list holds now, still asks for
     /// the review of `login` (029). GitHub reads the request's timeline,
     /// since it stops listing a request once the reviewer reviewed it.
-    /// GitLab keeps a reviewer listed after a review, so its list is the
-    /// whole answer, and a request it does not list asks for nothing.
     pub async fn review_still_requested(
         &self,
         repository: &str,
@@ -608,7 +561,6 @@ impl ForgeClient {
     ) -> Result<bool, String> {
         match self {
             Self::Github(cli) => cli.review_still_requested(repository, number, login).await,
-            Self::Gitlab(_) => Ok(false),
         }
     }
 
@@ -619,14 +571,12 @@ impl ForgeClient {
     ) -> Result<Vec<IssueDto>, String> {
         match self {
             Self::Github(cli) => cli.list_open_issues(repository, assignee).await,
-            Self::Gitlab(cli) => cli.list_open_issues(repository, assignee).await,
         }
     }
 
     pub async fn issue(&self, repository: &str, number: i64) -> Result<IssueDto, String> {
         match self {
             Self::Github(cli) => cli.issue(repository, number).await,
-            Self::Gitlab(cli) => cli.issue(repository, number).await,
         }
     }
     /// The CLI of a kind of forge, as the config names it.
@@ -635,10 +585,6 @@ impl ForgeClient {
             ForgeKind::Github => {
                 ForgeClient::Github(github::Github::new(Cli::new(cfg.gh_bin.as_deref(), "gh")))
             }
-            ForgeKind::Gitlab => ForgeClient::Gitlab(gitlab::Gitlab::new(Cli::new(
-                cfg.glab_bin.as_deref(),
-                "glab",
-            ))),
         }
     }
 
@@ -652,7 +598,6 @@ impl ForgeClient {
     pub async fn auth_status(&self, host: &str) -> Result<(), String> {
         match self {
             ForgeClient::Github(cli) => cli.auth_status(host).await,
-            ForgeClient::Gitlab(cli) => cli.auth_status(host).await,
         }
     }
 
@@ -663,9 +608,8 @@ impl ForgeClient {
     /// the forge, not `auth status`'s own composite of config and SSO
     /// checks that can fail before ever reaching the forge) and asks only
     /// whether the forge's own answer was `HTTP 401` or `HTTP 403`
-    /// (`Refusal::is_unauthorized`) — the same deterministic convention
-    /// [`Refusal::is_missing`] already reads for a 404. A missing binary,
-    /// a spawn or write failure, a timeout, or a network or server error
+    /// (`Refusal::is_unauthorized`). A missing binary, a spawn or write
+    /// failure, a timeout, or a network or server error
     /// of the forge's own answers nothing about the credentials
     /// themselves, and stays `false`: read reactively, after a fetch has
     /// already failed (`forge/poll.rs`), so this can tell the two apart
@@ -683,15 +627,13 @@ impl ForgeClient {
 
     /// When the forge's rate limit resets, read with no quota of its own
     /// (GitHub's `gh api rate_limit`) — the latest reset of a resource with
-    /// no remaining calls. `None` where the read itself failed, every
-    /// resource has calls left, or the forge offers no such read (GitLab):
-    /// the caller falls back to
+    /// no remaining calls. `None` where the read itself failed, or every
+    /// resource has calls left: the caller falls back to
     /// [`crate::timeouts::Timeouts::forge_rate_limit_pause`] from now
     /// (`forge/poll.rs::worker`).
     pub(crate) async fn rate_limit_reset(&self, host: &str) -> Option<DateTime<Utc>> {
         match self {
             ForgeClient::Github(cli) => cli.rate_limit_reset(host).await,
-            ForgeClient::Gitlab(_) => None,
         }
     }
 
@@ -699,12 +641,11 @@ impl ForgeClient {
     pub async fn whoami(&self, host: &str) -> Result<String, String> {
         match self {
             ForgeClient::Github(cli) => cli.whoami(host).await,
-            ForgeClient::Gitlab(cli) => cli.whoami(host).await,
         }
     }
 
-    /// Open a pull or merge request from `head` onto `base` in `owner/name`,
-    /// titled and bodied as asked, and answer its URL.
+    /// Open a pull request from `head` onto `base` in `owner/name`, titled
+    /// and bodied as asked, and answer its URL.
     pub async fn open(
         &self,
         repo: &str,
@@ -716,14 +657,12 @@ impl ForgeClient {
     ) -> Result<String, String> {
         match self {
             ForgeClient::Github(cli) => cli.open(repo, head, base, title, body, draft).await,
-            ForgeClient::Gitlab(cli) => cli.open(repo, head, base, title, body, draft).await,
         }
     }
 
     fn cli(&self) -> &Cli {
         match self {
             Self::Github(client) => &client.cli,
-            Self::Gitlab(client) => &client.cli,
         }
     }
 }
@@ -934,23 +873,13 @@ impl Refusal {
         }
     }
 
-    /// Whether the forge answered that what the call named is not there:
-    /// `gh` and `glab` both say "404" for it. A server error, a timeout or a
-    /// lost answer is no proof the thing is gone.
-    pub(crate) fn is_missing(&self) -> bool {
-        self.said
-            .as_deref()
-            .is_some_and(|said| said.contains("HTTP 404") || said.contains("404 Not Found"))
-    }
-
     /// Whether the forge itself answered that the credentials are no
     /// good — positive evidence of exactly that, not merely a forbidden
     /// response: `HTTP 401` is unambiguous (the API never answers it for
     /// anything else), and `Bad credentials` is the forge's own fixed
-    /// words for a rejected or revoked token, the same deterministic
-    /// convention [`Self::is_missing`] reads for a 404. A network
-    /// failure, a timeout, or a server error of its own is neither, and
-    /// proves nothing about the credentials themselves.
+    /// words for a rejected or revoked token. A network failure, a
+    /// timeout, or a server error of its own is neither, and proves
+    /// nothing about the credentials themselves.
     ///
     /// A bare `HTTP 403` is deliberately *not* read as a sign-out: GitHub
     /// answers the same `HTTP 403` for primary and secondary rate
@@ -958,11 +887,11 @@ impl Refusal {
     /// rate-limit documentation), and for restrictions an authenticated
     /// user can still be caught by — an IP allow list, SAML enforcement
     /// (GitHub's own network access restriction documentation) — neither
-    /// of which a sign-in answers for. `is_missing`'s own 404 is a single,
-    /// unambiguous case the forge means one thing by; `403` is not, so it
-    /// takes no action here on its own, leaving a 403 with no positive
-    /// credential evidence to raise nothing at all (`configuration`'s own
-    /// cause, or silence, rather than a guessed one).
+    /// of which a sign-in answers for. `401` is a single, unambiguous case
+    /// the forge means one thing by; `403` is not, so it takes no action
+    /// here on its own, leaving a 403 with no positive credential evidence
+    /// to raise nothing at all (`configuration`'s own cause, or silence,
+    /// rather than a guessed one).
     pub(crate) fn is_unauthorized(&self) -> bool {
         self.said
             .as_deref()
@@ -972,9 +901,9 @@ impl Refusal {
     /// Whether the forge answered that its rate limit was hit: GitHub's
     /// primary and secondary rate limiting both say "rate limit" — in the
     /// REST (`gh api`) and GraphQL (`gh api graphql`) answers alike, the
-    /// secondary wording being a superset of the primary's — and GitLab
-    /// answers `429`. Read for positive evidence, the same convention
-    /// [`Self::is_missing`] and [`Self::is_unauthorized`] already follow.
+    /// secondary wording being a superset of the primary's. Read for
+    /// positive evidence, the same convention [`Self::is_unauthorized`]
+    /// already follows.
     pub(crate) fn is_rate_limited(&self) -> bool {
         self.said.as_deref().is_some_and(|said| {
             let said = said.to_ascii_lowercase();
@@ -1245,24 +1174,8 @@ exit \"$(cat \"$dir/exit\")\"\n";
         assert!(!never_ran.ran());
     }
 
-    #[test]
-    fn a_refusal_is_missing_only_where_the_forge_said_404() {
-        // What a refused edit of a summary titled "P1: Handle HTTP 404
-        // responses" carries: the title is in the message, never in `said`.
-        let refusal = |said: Option<&str>| Refusal {
-            said: said.map(str::to_string),
-            answer: None,
-            executed: said.is_some(),
-            message: "`gh api -f body=P1: Handle HTTP 404 responses`".into(),
-        };
-        assert!(!refusal(Some("gh: Server Error (HTTP 502)")).is_missing());
-        assert!(!refusal(None).is_missing(), "a timeout is no 404");
-        assert!(refusal(Some("gh: Not Found (HTTP 404)")).is_missing());
-        assert!(refusal(Some("404 Not Found")).is_missing());
-    }
-
-    /// GitHub's primary limit, its secondary limit, and GitLab's `429` all
-    /// read as a rate limit; a 404 and a timeout read as none of them.
+    /// GitHub's primary limit and its secondary limit both read as a rate
+    /// limit; a 404 and a timeout read as neither.
     #[test]
     fn a_refusal_is_rate_limited_on_either_forges_own_words() {
         let refusal = |said: Option<&str>| Refusal {
@@ -1284,7 +1197,6 @@ exit \"$(cat \"$dir/exit\")\"\n";
             ))
             .is_rate_limited()
         );
-        assert!(refusal(Some("glab: 429 Too Many Requests")).is_rate_limited());
         assert!(!refusal(Some("gh: Not Found (HTTP 404)")).is_rate_limited());
         assert!(
             !refusal(None).is_rate_limited(),
@@ -1294,7 +1206,7 @@ exit \"$(cat \"$dir/exit\")\"\n";
 
     #[test]
     fn pull_request_urls_share_the_repository_and_number_only() {
-        let mut integration = ForgeIntegration {
+        let integration = ForgeIntegration {
             webhook_id: None,
             webhook_secret: None,
             webhook_url: None,
@@ -1334,15 +1246,6 @@ exit \"$(cat \"$dir/exit\")\"\n";
         ] {
             assert_eq!(PullRequestRef::parse(url, &integration), None, "{url}");
         }
-        integration.kind = "gitlab".into();
-        integration.host = "gitlab.example".into();
-        integration.owner = "group/sub".into();
-        for url in [
-            "https://gitlab.example/group/sub/widgets/merge_requests/42",
-            "http://GITLAB.example/GROUP/Sub/Widgets/-/merge_requests/42/?a=b#note",
-        ] {
-            assert_eq!(PullRequestRef::parse(url, &integration), expected, "{url}");
-        }
     }
 
     fn remote(host: &str, owner: &str, name: &str) -> Option<Remote> {
@@ -1372,8 +1275,8 @@ exit \"$(cat \"$dir/exit\")\"\n";
             assert_eq!(Remote::parse(url), ariadne, "{url}");
         }
         assert_eq!(
-            Remote::parse("git@gitlab.example.com:group/sub/proj.git"),
-            remote("gitlab.example.com", "group/sub", "proj")
+            Remote::parse("git@forge.example.com:group/sub/proj.git"),
+            remote("forge.example.com", "group/sub", "proj")
         );
         for url in [
             "/srv/git/ariadne.git",

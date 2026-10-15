@@ -427,8 +427,8 @@ ariadne repo update <repo-id> --permission-mode ask
 ```
 
 A repository's `supervise_posts` flag is on by default: it puts agent
-replies, reviews and resolves in your pending GitHub review or GitLab draft
-notes, and opens pull requests as drafts. See [Repositories, branches and
+replies, reviews and resolves in your pending GitHub review, and opens pull
+requests as drafts. See [Repositories, branches and
 worktrees](../specs/002-repositories-branches-and-worktrees.md), rule 13, for
 the rule. The desktop app and `repo inspect` show it only once the
 repository's forge integration is on — see [Forge
@@ -516,7 +516,7 @@ ariadne repo update <repo-id> --forge off
 ```
 
 `repo add` and `repo update` take `--forge on` or `--forge off` to work with
-the forge a repository's remote is on, once `gh` or `glab` is signed in to
+the forge a repository's remote is on, once `gh` is signed in to
 its host. No `--forge` flag sends no change to it. There is no repository
 setting that pins a review: every review's model and effort are picked on
 the request itself, by `pr review` below. A request a task opens needs no
@@ -598,7 +598,7 @@ ariadne forge tunnel off
 bound listener address; `on` and `off` set the switch. See [The forge
 integration](forge.md) for enabling a repository's integration, how an
 author keeps its request, what a `pr-reviewer` session does, and the tunnel's fallback
-to polling; see [Configuration](configuration.md) for `gh_bin`, `glab_bin`
+to polling; see [Configuration](configuration.md) for `gh_bin`
 and the webhook keys.
 
 ## Custom workflows

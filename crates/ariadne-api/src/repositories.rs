@@ -21,8 +21,8 @@ pub struct RepositoryDto {
     /// How the ACP permission requests of every session in this checkout are
     /// answered.
     pub permission_mode: PermissionMode,
-    /// Put agent replies, reviews and resolves in your pending GitHub review
-    /// or GitLab draft notes, and open pull requests as drafts.
+    /// Put agent replies, reviews and resolves in your pending GitHub
+    /// review, and open pull requests as drafts.
     pub supervise_posts: bool,
     /// The forge its remote is on, or null where the checkout has no usable
     /// remote (025).
@@ -110,7 +110,7 @@ pub struct DetectForgeRequest {
 
 /// What `POST /v1/forge/detect` answers: the forge a checkout's remote
 /// names, read the same way registration reads it. Null for a checkout with
-/// no usable GitHub or GitLab remote.
+/// no usable forge remote.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ForgeDetectionDto {
     pub kind: ForgeKind,
@@ -147,9 +147,8 @@ pub struct CreateRepositoryRequest {
     /// Omit for `auto`.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
-    /// Put agent replies, reviews and resolves in your pending GitHub review
-    /// or GitLab draft notes, and open pull requests as drafts. Omit for
-    /// `true`.
+    /// Put agent replies, reviews and resolves in your pending GitHub
+    /// review, and open pull requests as drafts. Omit for `true`.
     #[serde(default)]
     pub supervise_posts: Option<bool>,
     /// The forge integration to set up once the remote is detected.
@@ -171,9 +170,8 @@ pub struct UpdateRepositoryRequest {
     /// Absent = unchanged.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
-    /// Put agent replies, reviews and resolves in your pending GitHub review
-    /// or GitLab draft notes, and open pull requests as drafts. Absent =
-    /// unchanged.
+    /// Put agent replies, reviews and resolves in your pending GitHub
+    /// review, and open pull requests as drafts. Absent = unchanged.
     #[serde(default)]
     pub supervise_posts: Option<bool>,
     /// Absent = unchanged.

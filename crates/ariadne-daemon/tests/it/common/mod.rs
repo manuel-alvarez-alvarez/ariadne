@@ -148,7 +148,6 @@ pub(crate) struct HarnessBuilder {
     python_bin: Option<String>,
     nvidia_smi_bin: Option<String>,
     gh_bin: Option<String>,
-    glab_bin: Option<String>,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -194,7 +193,6 @@ pub(crate) fn harness() -> HarnessBuilder {
         python_bin: None,
         nvidia_smi_bin: None,
         gh_bin: None,
-        glab_bin: None,
     }
 }
 
@@ -331,11 +329,10 @@ impl HarnessBuilder {
         self
     }
 
-    /// Run `stub` as `gh` and `glab` rather than whatever the machine
-    /// running the tests has (025).
+    /// Run `stub` as `gh` rather than whatever the machine running the
+    /// tests has (025).
     pub(crate) fn forge_cli(mut self, stub: &forge::StubForgeCli) -> Self {
         self.gh_bin = Some(stub.gh.clone());
-        self.glab_bin = Some(stub.glab.clone());
         self
     }
 
@@ -389,9 +386,6 @@ impl HarnessBuilder {
         }
         if let Some(gh_bin) = self.gh_bin {
             config.gh_bin = Some(gh_bin);
-        }
-        if let Some(glab_bin) = self.glab_bin {
-            config.glab_bin = Some(glab_bin);
         }
         let manager_homes = self.manager_homes.unwrap_or_else(|| ManagerHomes {
             volta: dir.path().join("no-volta-home"),

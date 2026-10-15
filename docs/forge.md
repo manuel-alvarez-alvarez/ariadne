@@ -1,7 +1,7 @@
 # The forge integration
 
-Ariadne works with the forge a repository's remote is on — GitHub through
-`gh`, GitLab through `glab` — once you enable it. Enabled, a request a
+Ariadne works with a repository's forge — GitHub, through `gh` — once you
+enable it. Enabled, a request a
 task's `pr` column opens is kept by that column's agent until a human
 merges it, a request asking for your review is yours to start Ariadne's
 review of, by hand, whenever you choose, and a request of your own that no
@@ -15,25 +15,24 @@ ariadne repo update <repo-id> --forge on
 ```
 
 or on registration, with `ariadne repo add <path> --forge on`. Enabling
-needs the forge's CLI signed in to the remote's host already — `gh auth
-login` for GitHub, `glab auth login` for GitLab — and probes it with `auth
-status`; a CLI that is not installed or not signed in refuses the enable
-with 409 `forge_unauthenticated` and the CLI's own message. With no remote
-Ariadne can read a forge off, the enable is refused with 409
-`forge_unavailable`.
+needs `gh` signed in to the remote's host already — `gh auth
+login` — and probes it with `auth status`; `gh` not installed, or not
+signed in, refuses the enable with 409 `forge_unauthenticated` and its own
+message. A remote on `github.com` is GitHub; another host is GitHub
+Enterprise once `gh` is signed in to it. With no remote Ariadne can read
+as GitHub, the enable is refused with 409 `forge_unavailable`.
 
-On success Ariadne stores the login the CLI is signed in as: `gh api user
---jq .login`, or the `username` `glab api user` answers. Every comment and
-every review Ariadne posts from here on is posted as that account, never as
-you. `ariadne repo inspect <repo-id>` prints the detected remote, whether
-the integration is on, and the stored login; `ariadne repo ls` has a FORGE
-column, `<kind> <owner>/<name> on|off`. The desktop app's repository dialog
-has one switch, "GitHub integration" or "GitLab integration", once a remote
-was detected — while editing, off the repository's own stored row, and
-while registering, off a probe of the path field itself, since nothing is
-stored yet — with the detected repository, the CLI and the login beside
-it. "Supervise posts" sits right below that switch and only while it is on,
-in both dialogs.
+On success Ariadne stores the login `gh` is signed in as: `gh api user
+--jq .login`. Every comment and every review Ariadne posts from here on is
+posted as that account, never as you. `ariadne repo inspect <repo-id>`
+prints the detected remote, whether the integration is on, and the stored
+login; `ariadne repo ls` has a FORGE column, `<kind> <owner>/<name> on|off`.
+The desktop app's repository dialog has one switch, "GitHub integration",
+once a remote was detected — while editing, off the repository's own stored
+row, and while registering, off a probe of the path field itself, since
+nothing is stored yet — with the detected repository, the CLI and the
+login beside it. "Supervise posts" sits right below that switch and only
+while it is on, in both dialogs.
 
 The same checkout — the same host, owner and repository name — can only be
 enabled on one registered repository row at a time, even registered twice
@@ -54,10 +53,10 @@ the task that opened it keeps it, on that agent's own model.
 
 ## The daemon talks to the forge, never the agent
 
-Every call to `gh` or `glab` — opening a request, reading its comments and
+Every call to `gh` — opening a request, reading its comments and
 checks, posting a reply or a review, registering a webhook — is the
-daemon's own, run as a child process on `gh_bin` or `glab_bin` (see
-[Configuration](configuration.md)). No agent ever runs the forge's CLI
+daemon's own, run as a child process on `gh_bin` (see
+[Configuration](configuration.md)). No agent ever runs `gh`
 itself: the briefing that opens a request names no forge command, and the
 agent keeping its request, or a `pr-reviewer` session, reaches the forge
 only through the tools its session lists — never a shell.
@@ -156,9 +155,7 @@ replaces the commented line alone, the comment carries a `suggestion`
 block, holding the new text of that one line, the author can apply
 directly; a fix across lines, across files, or one that needs a test,
 stays prose. A change request whose P0 or P1 findings are not on their lines is
-refused. On GitHub that is one API call carrying every inline comment; on
-GitLab, which has no review verdict of its own, one discussion per
-comment.
+refused. This is one API call carrying every inline comment.
 
 The review posts no generated summary, status table, summary comment, or
 summary draft. A round with no new finding publishes nothing.
@@ -246,14 +243,12 @@ panel:
 
 Every daemon runs a webhook listener, bound to `webhook_listen` (default a
 random free loopback port) and separate from the REST API: it serves only
-`POST /webhooks/github/<repository-id>` and
-`POST /webhooks/gitlab/<repository-id>`, and nothing else — no `/v1`, no
+`POST /webhooks/github/<repository-id>`, and nothing else — no `/v1`, no
 documentation. Each delivery is checked against the integration's own
-secret, constant-time: GitHub's `X-Hub-Signature-256`, GitLab's
-`X-Gitlab-Token`. A missing or wrong one gets 401 and triggers nothing. An
-authenticated delivery gets 202; one that is not a connectivity-check `ping`
-wakes one fetch of the repository — it never applies the delivery's payload
-directly, so GitHub and GitLab wake the same way.
+secret, constant-time, with GitHub's `X-Hub-Signature-256`. A missing or
+wrong one gets 401 and triggers nothing. An authenticated delivery gets
+202; one that is not a connectivity-check `ping` wakes one fetch of the
+repository — it never applies the delivery's payload directly.
 
 Ariadne registers the hook itself, once it has a public URL to give the
 forge: `webhook_public_url` in `config.toml`, or the tunnel below.
@@ -283,8 +278,8 @@ ask for your review, and the open issues too: where the issues moved since
 the last read, the desktop app reads them again on its own.
 
 Ariadne never asks one forge host for more than two fetches at once: every
-repository on the same host — `github.com`, a GitHub Enterprise host, a
-self-hosted GitLab — shares that cap, whether its fetch started at startup,
+repository on the same host — `github.com`, or a GitHub Enterprise host —
+shares that cap, whether its fetch started at startup,
 on the five-minute timer, or on an explicit wake. A repository whose fetch
 would push past the cap simply waits its turn, and runs the moment one of
 the other two finishes, fails, or is cancelled by turning its integration
@@ -424,9 +419,9 @@ Issues row opens the same goal dialog, already filled in.
 ## Troubleshooting
 
 **Enabling, or a later edit, is refused with `forge_unauthenticated`.**
-The forge's CLI is not installed, or not signed in to the remote's host.
-Run `gh auth login` or `glab auth login` for that host, then enable again;
-the refusal carries the CLI's own message, not a generic one.
+`gh` is not installed, or not signed in to the remote's host.
+Run `gh auth login` for that host, then enable again;
+the refusal carries `gh`'s own message, not a generic one.
 
 **The webhook reads `polling` or `failed`, with an `error` about rights.**
 Registering a webhook needs admin rights on the repository — a broader

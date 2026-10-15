@@ -2,8 +2,8 @@
 //!
 //! The daemon reads the forge off the checkout's remote at registration, on
 //! every edit and once at start, and the user enables the integration.
-//! `gh` and `glab` are the stub of [`common::forge`], so nothing here needs
-//! either CLI installed.
+//! `gh` is the stub of [`common::forge`], so nothing here needs the CLI
+//! installed.
 
 use crate::common;
 
@@ -94,25 +94,6 @@ async fn a_checkout_with_no_remote_has_no_forge() {
         )
         .await;
     assert_eq!(refused.error.code, "forge_unavailable");
-}
-
-#[tokio::test]
-async fn the_only_remote_stands_in_for_a_missing_origin() {
-    let h = harness().await;
-    let repo = h.git_repo("repo");
-    sh(&repo, "git remote add upstream git@gitlab.com:team/app.git");
-    let registered = register(&h, &repo.display().to_string(), "main").await;
-    let forge = registered.forge.expect("the one remote is read");
-    assert_eq!(forge.kind, ForgeKind::Gitlab);
-    assert_eq!(forge.remote, "upstream");
-    assert_eq!((forge.owner.as_str(), forge.name.as_str()), ("team", "app"));
-
-    // Two remotes and no `origin` name no forge.
-    sh(&repo, "git remote add fork git@gitlab.com:me/app.git");
-    let edited: RepositoryDto = h
-        .json(edit(&registered.id, json!({})), StatusCode::OK)
-        .await;
-    assert!(edited.forge.is_none());
 }
 
 #[tokio::test]
@@ -277,13 +258,13 @@ async fn a_changed_remote_is_detected_on_the_next_edit_and_at_daemon_start() {
     assert_eq!(edited.forge.unwrap().name, "two");
 
     // The sweep the daemon runs once at start.
-    set_url("https://gitlab.com/acme/three.git");
+    set_url("https://github.com/acme/three.git");
     ariadne_daemon::forge::detect_all(&h.store, &h.launcher.cfg).await;
     let read: RepositoryDto = h.get(&format!("/v1/repositories/{}", repo.id)).await;
     let forge = read.forge.unwrap();
     assert_eq!(
         (forge.kind, forge.name.as_str()),
-        (ForgeKind::Gitlab, "three")
+        (ForgeKind::Github, "three")
     );
 
     sh(Path::new(&path), "git remote remove origin");
@@ -295,19 +276,18 @@ async fn a_changed_remote_is_detected_on_the_next_edit_and_at_daemon_start() {
     );
 }
 
+/// An unknown host is GitHub Enterprise if `gh` is signed in to it.
 #[tokio::test]
-async fn another_host_is_the_forge_whose_cli_is_signed_in_to_it() {
+async fn another_host_is_github_enterprise_where_gh_is_signed_in_to_it() {
     let cli = stub_forge_cli(json!([
-        {"program": "gh", "args": ["auth", "status"], "exit": 1, "stdout": ""},
-        {"program": "glab", "args": ["auth", "status"], "exit": 0, "stdout": ""},
-        {"program": "glab", "args": ["api", "user"], "exit": 0,
-         "stdout": "{\"id\": 7, \"username\": \"tanuki\"}"},
+        {"program": "gh", "args": ["auth", "status"], "exit": 0, "stdout": ""},
+        {"program": "gh", "args": ["api", "user"], "exit": 0, "stdout": "octocat\n"},
     ]));
     let h = harness().forge_cli(&cli).await;
     let path = checkout_with_origin(&h, "repo", "git@git.corp.example:team/app.git");
     let repo = register(&h, &path, "main").await;
-    let forge = repo.forge.clone().expect("glab is signed in to the host");
-    assert_eq!(forge.kind, ForgeKind::Gitlab);
+    let forge = repo.forge.clone().expect("gh is signed in to the host");
+    assert_eq!(forge.kind, ForgeKind::Github);
     assert_eq!(forge.host, "git.corp.example");
 
     let enabled: RepositoryDto = h
@@ -316,11 +296,17 @@ async fn another_host_is_the_forge_whose_cli_is_signed_in_to_it() {
             StatusCode::OK,
         )
         .await;
-    assert_eq!(enabled.forge.unwrap().login.as_deref(), Some("tanuki"));
+    assert_eq!(enabled.forge.unwrap().login.as_deref(), Some("octocat"));
+}
 
-    // A host neither CLI is signed in to has no forge.
-    cli.reprogram(json!([]));
-    let path = checkout_with_origin(&h, "other", "git@git.unknown.example:team/app.git");
+/// An unknown host `gh` is not signed in to has no forge.
+#[tokio::test]
+async fn an_unknown_host_gh_is_not_signed_in_to_has_no_forge() {
+    let cli = stub_forge_cli(json!([
+        {"program": "gh", "args": ["auth", "status"], "exit": 1, "stdout": ""},
+    ]));
+    let h = harness().forge_cli(&cli).await;
+    let path = checkout_with_origin(&h, "repo", "git@git.unknown.example:team/app.git");
     assert!(register(&h, &path, "main").await.forge.is_none());
 }
 

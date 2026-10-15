@@ -130,7 +130,7 @@ CREATE TABLE repositories (
 -- reads the same whichever URL spelled it.
 CREATE TABLE forge_integrations (
     repository_id            TEXT PRIMARY KEY REFERENCES repositories (id) ON DELETE CASCADE,
-    kind                     TEXT NOT NULL CHECK (kind IN ('github', 'gitlab')),
+    kind                     TEXT NOT NULL CHECK (kind IN ('github')),
     host                     TEXT NOT NULL,
     owner                    TEXT NOT NULL,
     name                     TEXT NOT NULL,

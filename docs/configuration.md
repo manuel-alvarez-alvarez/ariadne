@@ -55,8 +55,6 @@ ai_failure_diagnosis = true        # ask the AI permission model's local Kev
                                     # exhausted_patterns; see Failure diagnosis.
 gh_bin = "/opt/homebrew/bin/gh"    # the `gh` the GitHub integration runs
                                    # (default: gh on this daemon's PATH)
-glab_bin = "/opt/homebrew/bin/glab" # the `glab` the GitLab integration runs
-                                   # (default: glab on this daemon's PATH)
 webhook_listen = "127.0.0.1:7677"  # the signed webhook listener's address
                                    # (default: 127.0.0.1:0, a random free port)
 webhook_public_url = "https://hooks.example.com"
@@ -109,10 +107,10 @@ switches models, or needs you, which stays exactly what `auto_switch` and
 `exhausted_patterns` above decide. See [Following what happens](following-events.md)
 for where the result shows up.
 
-`gh_bin` and `glab_bin` are each a path taken as it stands, or a bare name
-looked up on the daemon's own `PATH`, as `python_bin` is above — the `gh` and
-`glab` the daemon itself runs for a repository's forge integration; no agent
-ever runs either. `webhook_listen` is the address the signed webhook listener
+`gh_bin` is a path taken as it stands, or a bare name
+looked up on the daemon's own `PATH`, as `python_bin` is above — the `gh`
+the daemon itself runs for a repository's forge integration; no agent
+ever runs it. `webhook_listen` is the address the signed webhook listener
 binds; left unset, the daemon binds a random free loopback port. With no
 `webhook_public_url` configured, Ariadne opens a tunnel to that listener on
 `tunnel_host`, asking for `tunnel_subdomain` where one is set. See [The forge

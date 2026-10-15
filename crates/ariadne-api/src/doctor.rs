@@ -25,8 +25,8 @@ pub struct DaemonReportDto {
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentDto>,
     /// The other binaries the daemon runs: git, without which no worktree can
-    /// be cut at all, and the forge CLIs `gh` and `glab`, which are what a
-    /// published task is watched through.
+    /// be cut at all, and the forge CLI `gh`, which is what a published
+    /// task is watched through.
     pub tools: Vec<BinaryDto>,
     /// The Python interpreter the model's install runs on (022). It is reported
     /// apart from `tools` because it answers a question of its own: not
@@ -48,8 +48,8 @@ pub struct BinaryDto {
     /// that is found but does not answer keeps its path and no version.
     pub version: Option<String>,
     /// Whether it holds credentials for the service it speaks to, for the
-    /// binaries that hold any: `gh auth status` and `glab auth status`, asked
-    /// of the daemon's own environment because that is where the polling
+    /// binaries that hold any: `gh auth status`, asked of the daemon's own
+    /// environment because that is where the polling
     /// runs. `None` for a binary with nothing to sign in to — git — and for
     /// one that was not found to ask.
     ///

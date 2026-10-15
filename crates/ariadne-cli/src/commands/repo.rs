@@ -43,8 +43,8 @@ pub(crate) enum Switch {
 /// The forge integration of a repository (025): the switch.
 #[derive(Args, Debug, Default)]
 pub(crate) struct ForgeArgs {
-    /// Work with the forge the repository's remote is on: on needs `gh` or
-    /// `glab` signed in to its host
+    /// Work with the forge the repository's remote is on: on needs `gh`
+    /// signed in to its host
     #[arg(long, value_enum)]
     forge: Option<Switch>,
 }
@@ -77,8 +77,7 @@ pub(crate) enum RepoCommand {
         #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
         permission_mode: Option<PermissionMode>,
         /// Put agent replies, reviews and resolves in your pending GitHub
-        /// review or GitLab draft notes, and open pull requests as drafts
-        /// (default: on)
+        /// review, and open pull requests as drafts (default: on)
         #[arg(long = "supervise-posts", value_enum)]
         supervise_posts: Option<Switch>,
         /// Run new goals through this workflow by default, where their own
@@ -115,7 +114,7 @@ pub(crate) enum RepoCommand {
         #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
         permission_mode: Option<PermissionMode>,
         /// Put agent replies, reviews and resolves in your pending GitHub
-        /// review or GitLab draft notes, and open pull requests as drafts
+        /// review, and open pull requests as drafts
         #[arg(long = "supervise-posts", value_enum)]
         supervise_posts: Option<Switch>,
         /// New default workflow for the goals created in it from now on

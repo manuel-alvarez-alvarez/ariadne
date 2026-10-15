@@ -171,10 +171,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     it, since all three post under the one integration login (026 rule
     24). `edit_pending_comment` takes `forge_id` and `body`;
     `delete_pending_comment` takes `forge_id` alone;
-    `edit_pending_review_body` takes `body` alone, and answers 400 off a
-    GitLab repository, which holds no pending review body of its own. Each
+    `edit_pending_review_body` takes `body` alone. Each
     answers 409 once its target is no longer pending — the user already
-    submitted the review it was in, or published the draft note. Use
+    submitted the review it was in. Use
     these tools only on a user's ask in the console for a change; no skill
     calls them on its own.
 

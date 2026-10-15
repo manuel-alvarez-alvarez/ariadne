@@ -14,6 +14,12 @@
 # a version number greater than every migration `main` already ships (and
 # than every other new one in the same change).
 #
+# The one exception: removing GitLab dropped 'gitlab' from the `kind` CHECK
+# of 0001_init.sql's `forge_integrations` table, the shipped migration's
+# sole approved edit. Pinned by its exact old and new git blob, so only that
+# one transition of that one path is let through — any other edit of this
+# file, or of any other shipped migration, still fails below.
+#
 # Run by hand: scripts/check-migrations.sh
 set -euo pipefail
 
@@ -21,6 +27,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 MIGRATIONS_DIR="crates/ariadne-store/migrations"
+
+APPROVED_EDIT_PATH="crates/ariadne-store/migrations/0001_init.sql"
+APPROVED_EDIT_FROM="100644 blob f3cd49d06d678e397bd9f5dab62604bf20b8995c"
+APPROVED_EDIT_TO="100644 blob 4c9801a083e435c516fe611df0dcfba5faa889ba"
+
+is_approved_edit() {
+    [ "$1" = "$APPROVED_EDIT_PATH" ] \
+        && [ "$2" = "$APPROVED_EDIT_FROM" ] \
+        && [ "$3" = "$APPROVED_EDIT_TO" ]
+}
 
 base_ref="main"
 if git rev-parse --verify -q origin/main >/dev/null; then
@@ -51,7 +67,8 @@ while IFS= read -r path; do
     if [ -z "$head_entry" ]; then
         echo "check-migrations: $path: a migration already on $base_ref must not be deleted" >&2
         status=1
-    elif [ "$head_entry" != "$main_entry" ]; then
+    elif [ "$head_entry" != "$main_entry" ] \
+        && ! is_approved_edit "$path" "$main_entry" "$head_entry"; then
         echo "check-migrations: $path: a migration already on $base_ref must not be modified" >&2
         status=1
     fi

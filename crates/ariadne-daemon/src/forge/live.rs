@@ -148,10 +148,10 @@ pub struct Details {
     /// attention producer must never read as "no open comment" for a head
     /// it was never actually read on.
     pub head_sha: String,
-    /// Whether this same read still finds a pending review (GitHub) or a
-    /// draft note (GitLab) of the viewer's own (`ForgeDetails::has_pending_posts`):
-    /// internal bookkeeping for `merge_fresh_details` alone, never shown
-    /// to a user or exposed as an attention item.
+    /// Whether this same read still finds a pending review of the viewer's
+    /// own (`ForgeDetails::has_pending_posts`): internal bookkeeping for
+    /// `merge_fresh_details` alone, never shown to a user or exposed as an
+    /// attention item.
     pub has_pending_posts: bool,
 }
 
@@ -402,8 +402,7 @@ impl LivePulls {
     /// Hold the new body of one of Ariadne's own local additions after a
     /// successful edit (026 rule 25): the forge call already succeeded, so
     /// this is an echo of it, the same as `add_comments`'. GitHub never
-    /// lists a pending review's own comments among a request's, and
-    /// GitLab never lists a draft note among a discussion's, until the
+    /// lists a pending review's own comments among a request's until the
     /// user publishes it (`merge_fresh_details`), so no detail fetch ever
     /// reads this edit back on its own: without this write, the held body
     /// would stay the one the comment was posted with, forever.
@@ -566,12 +565,11 @@ impl LivePulls {
 /// have seen it, so its absence here says nothing of the forge deleting
 /// it — or where `local_additions` still names it at all, it is a review's
 /// own finding or verdict, and this same fresh read still finds a pending
-/// review or draft note of the viewer's own (`has_pending_posts`):
-/// GitHub's and GitLab's own detail reads both filter a pending review's
-/// or a draft note's own content out of the conversation on purpose (026
-/// rule 9), so a missing read says nothing of the forge dropping an
-/// unpublished one either, for as long as the pending set it belongs to
-/// is still there. `local_additions` is what tells such an unpublished
+/// review of the viewer's own (`has_pending_posts`): GitHub's own detail
+/// read filters a pending review's own content out of the conversation on
+/// purpose (026 rule 9), so a missing read says nothing of the forge
+/// dropping an unpublished one either, for as long as the pending set it
+/// belongs to is still there. `local_additions` is what tells such an unpublished
 /// one apart from a finding this route once added, long since confirmed
 /// and dropped from it, that a forge user later deleted for real: a
 /// pending set open for another, unrelated round must never resurrect
