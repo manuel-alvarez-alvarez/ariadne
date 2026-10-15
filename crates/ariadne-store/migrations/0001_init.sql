@@ -117,6 +117,9 @@ CREATE TABLE repositories (
     permission_mode TEXT NOT NULL DEFAULT 'auto'
                     CHECK (permission_mode IN ('auto', 'ask', 'learn', 'ai')),
     default_workflow TEXT NOT NULL DEFAULT 'develop-review-merge' REFERENCES workflows (name),
+    -- Whether this repository's agents hold what they post to the forge for
+    -- a person's approval, pull requests opened as drafts included (002, 026).
+    supervise_posts INTEGER NOT NULL DEFAULT 1 CHECK (supervise_posts IN (0, 1)),
     -- The same checkout can be registered once per base branch.
     UNIQUE (path, base_branch)
 );
@@ -134,8 +137,6 @@ CREATE TABLE forge_integrations (
     remote                   TEXT NOT NULL,       -- the remote's name, `origin`
     enabled                  INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
     login                    TEXT,                -- NULL until enabled
-    review_model             TEXT,
-    review_effort            TEXT,
     detected_at              TEXT NOT NULL,
     updated_at               TEXT NOT NULL,
     webhook_id               INTEGER,
@@ -160,7 +161,8 @@ CREATE UNIQUE INDEX idx_forge_integrations_enabled
 -- grants it again.
 CREATE TABLE forge_settings (
     id               INTEGER PRIMARY KEY CHECK (id = 1),
-    tunnel_enabled   INTEGER NOT NULL DEFAULT 1 CHECK (tunnel_enabled IN (0, 1)),
+    -- Off by default: a fresh install polls until the user turns it on (027).
+    tunnel_enabled   INTEGER NOT NULL DEFAULT 0 CHECK (tunnel_enabled IN (0, 1)),
     -- NULL until the first tunnel picks one.
     tunnel_subdomain TEXT,
     updated_at       TEXT NOT NULL
@@ -286,6 +288,13 @@ CREATE TABLE pull_requests (
     origin_task_id        TEXT REFERENCES tasks (id) ON DELETE SET NULL,
     role                  TEXT NOT NULL CHECK (role IN ('author', 'reviewer')),
     ready                 INTEGER NOT NULL CHECK (ready IN (0, 1)),
+    -- The live head a session read when it last reported `ready`.
+    -- `ready_confirmed_at` moves only the first time `ready` flips true
+    -- after being false, so repeated reports on a still-ready request keep
+    -- the `since` of when it first became ready rather than resetting it on
+    -- every poll (pull_requests.rs::set_pull_request_ready).
+    ready_confirmed_at    TEXT,
+    ready_head_sha        TEXT,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL,
     -- What the request's session was last told, so each change is told
@@ -315,6 +324,18 @@ CREATE TABLE pull_requests (
     -- forge id, written when the review first posts it, and edited in place
     -- on every later round. NULL until the first review of the request.
     summary_comment_id    TEXT,
+    -- Babysitting a request of the user's own by hand (032): a session of
+    -- seat `keeper` sits on one open request, no goal and no task, and
+    -- keeps it the way a task's `pr` column agent does.
+    babysit_asked         INTEGER NOT NULL DEFAULT 0 CHECK (babysit_asked IN (0, 1)),
+    babysit_model         TEXT,
+    babysit_effort        TEXT,
+    babysit_skills        TEXT NOT NULL DEFAULT '[]',
+    -- Who wants a request moves by a counter (026): every write of a review
+    -- ask (029), a keeper ask (032) or a task adopting the request adds
+    -- one, so a pass that stops working on a request can tell an ask that
+    -- landed since its read, even one that leaves the asks as they were.
+    asks_revision         INTEGER NOT NULL DEFAULT 0,
     -- When `scheduler::pull_requests::start_pull_request_session` gave up
     -- on this request's reviewer session: its spawn-retry budget ran out,
     -- not merely a crash the liveness sweep is about to retry. Cleared the
@@ -335,6 +356,11 @@ CREATE TABLE pull_request_comment_marks (
     forge_id        TEXT NOT NULL,
     told_at         TEXT,
     from_review     INTEGER NOT NULL DEFAULT 0 CHECK (from_review IN (0, 1)),
+    -- Whether a comment's reply is held, unposted, in the user's own forge
+    -- drafts (026 rule 24): a one-way local mark, never read back off the
+    -- forge, so a draft deleted there before the user publishes it leaves
+    -- the comment answered all the same.
+    pending_reply   INTEGER NOT NULL DEFAULT 0 CHECK (pending_reply IN (0, 1)),
     PRIMARY KEY (pull_request_id, forge_id)
 );
 
@@ -461,7 +487,7 @@ CREATE TABLE agent_sessions (
     id                  TEXT PRIMARY KEY,       -- == ARIADNE_SESSION_ID env of the agent
     goal_id             TEXT REFERENCES goals (id) ON DELETE CASCADE,
     task_id             TEXT REFERENCES tasks (id) ON DELETE CASCADE,  -- NULL = orchestrator or loose session
-    seat                TEXT CHECK (seat IN ('orchestrator', 'agent', 'reviewer')),
+    seat                TEXT CHECK (seat IN ('orchestrator', 'agent', 'reviewer', 'keeper')),
     -- Which staffed agent this session runs; NULL for an orchestrator,
     -- which is the one agent type Ariadne defines rather than one a task
     -- staffs.
@@ -503,6 +529,22 @@ CREATE INDEX idx_sessions_attention ON agent_sessions (attention_reason);
 -- this index, and the second is refused.
 CREATE UNIQUE INDEX idx_sessions_switched_from ON agent_sessions (switched_from);
 CREATE INDEX agent_sessions_pull_request ON agent_sessions (pull_request_id);
+
+-- A question an agent addressed to the user directly, distinct from an ACP
+-- permission prompt: the session that raised it stalls until somebody
+-- answers. The unique index keeps one open row per exact wording per
+-- session, so asking the same question twice while waiting raises one
+-- request rather than two.
+CREATE TABLE agent_requests (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL REFERENCES agent_sessions (id) ON DELETE CASCADE,
+    summary     TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    answered_at TEXT
+);
+CREATE INDEX idx_agent_requests_pending ON agent_requests (session_id, answered_at);
+CREATE UNIQUE INDEX idx_agent_requests_pending_summary
+    ON agent_requests (session_id, summary) WHERE answered_at IS NULL;
 
 -- What each agent session has spent, as the transcripts under it report it.
 --

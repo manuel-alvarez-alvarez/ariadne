@@ -127,13 +127,18 @@ daemon that is already running. `ariadned --help` lists every key above but
 
 ## The database of an earlier release
 
-`db_path` has to be deleted before this version is started for the first time:
-the schema's 23 migrations are squashed into one, so a database written by an
-earlier release records migrations this one no longer ships and cannot be
-opened. There is no upgrade from it — Ariadne is pre-1.0, and a database is
-recreated rather than migrated. Delete it (with its `-wal` and `-shm` files)
-and the daemon writes a fresh one on its next start; `ariadned` and `ariadne
-doctor` both say so, by name, if it is still there.
+`db_path` has to be deleted before this version is started for the first time.
+This release squashes the eight migrations that had accumulated since the
+previous squash back into the one shipped migration, as a final, one-time
+reset of the pre-1.0 schema: a database written by an earlier release
+records migrations this one no longer ships and cannot be opened. There is
+no upgrade from it — Ariadne is pre-1.0, and a database is recreated rather
+than migrated; that loss of history is accepted. From here on, a schema
+change ships as a new migration file rather than another squash — see
+[Install, service and release](../specs/016-install-service-and-release.md),
+rule 9. Delete the old database (with its `-wal` and `-shm` files) and the
+daemon writes a fresh one on its next start; `ariadned` and `ariadne doctor`
+both say so, by name, if it is still there.
 
 ## Keys the daemon refuses
 

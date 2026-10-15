@@ -1,7 +1,7 @@
 ---
 id: forge-integration
 status: current
-updated: 2026-10-14
+updated: 2026-10-15
 areas: [core, api, store, daemon, cli, ui]
 commits: []
 tests:
@@ -158,9 +158,6 @@ the desktop app as a whole (015).
 - Another host is the forge whose CLI is signed in to it, and `glab`'s
   `username` is the login
   (`forge_integration.rs::another_host_is_the_forge_whose_cli_is_signed_in_to_it`).
-- A database at migration 0003, still carrying `forge_integrations.review_model`
-  and `review_effort`, migrates to 0004, which drops both columns, with no
-  error (`store.rs::an_existing_database_drops_the_forge_review_pin_columns`).
 - Enabling with the stub's `auth status` at exit 1 is refused with 409 and
   the probe's message. With exit 0, the stub's login is stored and one
   `repository_updated` carries `forge.enabled = true` and `forge.login`
@@ -218,7 +215,6 @@ the desktop app as a whole (015).
 ## Sources
 
 `crates/ariadne-store/migrations/0001_init.sql`,
-`crates/ariadne-store/migrations/0004_drop_forge_review_pin.sql`,
 `crates/ariadne-store/src/forge.rs`, `crates/ariadne-daemon/src/forge/`,
 `crates/ariadne-daemon/src/http/repositories.rs`,
 `crates/ariadne-daemon/src/http/forge.rs`,

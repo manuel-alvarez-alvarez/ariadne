@@ -1,7 +1,7 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-10-14
+updated: 2026-10-15
 areas: [store, api, daemon, cli, ui]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
@@ -99,8 +99,7 @@ and the integration with it (025).
     GitLab draft notes instead of posting directly ([026](026-pull-requests.md)
     rules 23 and 24). It defaults to `true`, is set when the repository is
     registered and changed by editing it, from the CLI and the desktop app
-    alike, and an edit that does not name it keeps it. A repository
-    registered before the flag existed reads it as `true`. The CLI and the
+    alike, and an edit that does not name it keeps it. The CLI and the
     desktop app show it only once the repository's forge integration is on
     (025 rule 16): with nothing to post to, there is nothing for it to hold
     back.
@@ -126,11 +125,11 @@ and the integration with it (025).
   `store.rs::a_repository_takes_the_ai_permission_mode`).
 - A repository supervises its posts until told otherwise, a registration
   that names no flag starts supervised, an edit that names only the flag
-  moves only the flag, and a repository registered before the flag existed
-  reads it as `true` once the migration backfills the column
+  moves only the flag, and the column's own schema default starts every
+  fresh repository supervised
   (`repositories.rs::a_repository_carries_its_supervise_posts_flag`,
   `store.rs::repository_crud_and_unique_path_branch`,
-  `store.rs::an_existing_repository_is_supervised_after_the_migration`).
+  `store.rs::a_fresh_database_already_has_every_column_the_old_chain_added`).
 - The flag is set from the CLI, on `repo add` and `repo update` alike, and
   from the desktop app's repository form
   (`repo.rs::tests::repo_add_and_update_take_the_supervise_posts_flag`,
