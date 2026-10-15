@@ -10,10 +10,11 @@ use ariadne_store::{
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use crate::common::forge::{StubForgeCli, answer, opened_pull, stub_forge_cli};
+use crate::common::forge::{StubForgeCli, answer, check_states, opened_pull, stub_forge_cli};
 use crate::common::{Harness, TIMEOUT, as_session, eventually, harness, sh, test_pin, with_forge};
 
 const URL: &str = "https://github.com/acme/widgets/pull/1";
+const HOST: &str = "github.com";
 
 fn script(state: &str, head: &str, comments: &[Value], failed: &[Value]) -> Value {
     let mut pull = opened_pull(URL, head);
@@ -21,23 +22,23 @@ fn script(state: &str, head: &str, comments: &[Value], failed: &[Value]) -> Valu
     if !comments.is_empty() {
         pull["updatedAt"] = json!("2026-10-02T00:00:00Z");
     }
-    pull["statusCheckRollup"] = json!(
-        failed
-            .iter()
-            .map(|check| {
-                json!({
-                    "status": check["status"],
-                    "conclusion": check["conclusion"].as_str().map(str::to_uppercase),
-                })
-            })
-            .collect::<Vec<_>>()
-    );
+    // `checks` reads `failure` while `failed` names a check, and stays
+    // `none` — never a guessed `success` — where it names none, matching
+    // what an empty `statusCheckRollup` always read before (026): GitHub's
+    // own combined enum, read apart from `pull` through its own
+    // `check_states` answer below.
+    let pairs: Vec<(i64, &str)> = if failed.is_empty() {
+        vec![]
+    } else {
+        vec![(1, "FAILURE")]
+    };
     let threads = json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
         {"id": "T1", "isResolved": false, "comments": {"nodes": [{"databaseId": 101}]}}
     ]}}}}});
     json!([
         answer(&["auth", "status"], 0, ""),
         answer(&["api", "user"], 0, "me"),
+        check_states(HOST, &pairs),
         answer(&["pr", "create"], 0, URL),
         answer(&["pr", "list"], 0, "[]"),
         answer(&["pr", "view"], 0, &pull.to_string()),

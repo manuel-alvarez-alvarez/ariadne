@@ -1,17 +1,19 @@
 //! Pull requests through HTTP and the forge CLI boundary (026): each fetch
 //! holds the forge's list, and requests are kept only while Ariadne works on
 //! them.
-use crate::common::forge::{answer, stub_forge_cli};
+use crate::common::forge::{answer, check_states, stub_forge_cli};
 use crate::common::{delete, get, harness, post_json, sh};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
+
+const HOST: &str = "github.com";
 
 fn github_pull(number: i64, author: &str) -> Value {
     json!({"number": number, "url": format!("https://github.com/acme/widgets/pull/{number}"),
         "title": "Fix widgets", "body": "Fixes widgets.", "author": {"login": author},
         "state": "OPEN", "isDraft": false, "headRefName": "fix", "headRefOid": "abc",
         "headRepository": {"url": "https://github.com/acme/widgets"},
-        "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
+        "baseRefName": "main", "reviewDecision": "",
         // Named here whether `author` is `me` or not: `forge::pulls::role`
         // already keeps a request of mine out of the reviewer path, so
         // this never asks me to review my own request in effect.
@@ -91,6 +93,7 @@ fn script(list: Vec<Value>, view: Value) -> Value {
             0,
             "[]",
         ),
+        check_states(HOST, &[(1, "SUCCESS"), (2, "SUCCESS")]),
     ];
     answers.extend(details(1));
     answers.extend(details(2));

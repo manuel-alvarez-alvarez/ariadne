@@ -1,9 +1,11 @@
 //! Pull requests through the GitHub CLI.
+use std::collections::HashMap;
+
 use super::Github;
-use crate::forge::pulls::ForgePullRequest;
+use crate::forge::pulls::{ForgePullRequest, split_slug};
 use serde::Deserialize;
 
-const FIELDS: &str = "number,url,title,body,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,statusCheckRollup,reviewDecision,mergeStateStatus,createdAt,updatedAt,mergeCommit,reviewRequests";
+const FIELDS: &str = "number,url,title,body,author,state,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner,baseRefName,reviewDecision,mergeStateStatus,createdAt,updatedAt,mergeCommit,reviewRequests";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,7 +23,14 @@ struct Pull {
     head_repository: Option<Repository>,
     head_repository_owner: Option<Login>,
     base_ref_name: String,
-    status_check_rollup: Option<Vec<Check>>,
+    /// The request's combined check state, read apart from this `--json`
+    /// read by [`Github::check_states`] and merged in after: GitHub's own
+    /// `statusCheckRollup` field, taken through `--json`, always carries
+    /// every check's own context too, which grows with the request's own
+    /// check count and is what overruns a large rollup with a GraphQL
+    /// request too large to answer (026).
+    #[serde(skip)]
+    check_state: Option<String>,
     review_decision: Option<String>,
     /// Absent on an older read: unknown mergeability stands for it.
     #[serde(default)]
@@ -57,12 +66,6 @@ struct Repository {
     name: Option<String>,
     url: Option<String>,
 }
-#[derive(Deserialize)]
-struct Check {
-    status: Option<String>,
-    conclusion: Option<String>,
-    state: Option<String>,
-}
 
 impl Pull {
     /// Whether `login` is among this request's requested reviewers. A team
@@ -75,32 +78,16 @@ impl Pull {
         })
     }
     fn normalized(self) -> ForgePullRequest {
-        let checks = self.status_check_rollup.unwrap_or_default();
-        let check_state = if checks.is_empty() {
-            "none"
-        } else if checks.iter().any(|c| {
-            matches!(
-                c.conclusion.as_deref().or(c.state.as_deref()),
-                Some(
-                    "FAILURE"
-                        | "ERROR"
-                        | "TIMED_OUT"
-                        | "CANCELLED"
-                        | "ACTION_REQUIRED"
-                        | "STARTUP_FAILURE"
-                )
-            )
-        }) {
-            "failure"
-        } else if checks.iter().any(|c| {
-            matches!(
-                c.status.as_deref(),
-                Some("QUEUED" | "IN_PROGRESS" | "WAITING" | "PENDING" | "REQUESTED")
-            ) || c.state.as_deref() == Some("PENDING")
-        }) {
-            "pending"
-        } else {
-            "success"
+        // GitHub's own combined enum
+        // (https://docs.github.com/en/graphql/reference/enums#statuscheckrollupstate):
+        // `EXPECTED` and `PENDING` are both still running, `ERROR` and
+        // `FAILURE` both end the rollup failed, and a request with no
+        // rollup at all — nothing has ever run on its head — is `none`.
+        let check_state = match self.check_state.as_deref() {
+            Some("EXPECTED" | "PENDING") => "pending",
+            Some("ERROR" | "FAILURE") => "failure",
+            Some("SUCCESS") => "success",
+            _ => "none",
         };
         let head_repo = self.head_repository.and_then(|repo| {
             repo.url
@@ -165,7 +152,7 @@ impl Github {
         // Increase the limit until the complete result fits. `gh pr list` has
         // no page flag; its limit drives the client's GraphQL pagination.
         let mut limit = 100;
-        loop {
+        let mut rows = loop {
             let size = limit.to_string();
             let mut args = vec![
                 "pr", "list", "--repo", repo, "--state", "open", "--json", FIELDS, "--limit", &size,
@@ -175,10 +162,64 @@ impl Github {
             let rows: Vec<Pull> = serde_json::from_str(&output)
                 .map_err(|e| format!("cannot read GitHub pull requests: {e}"))?;
             if rows.len() < limit {
-                return Ok(rows);
+                break rows;
             }
             limit *= 2;
+        };
+        let numbers: Vec<i64> = rows.iter().map(|p| p.number).collect();
+        let states = self.check_states(repo, &numbers).await?;
+        for row in &mut rows {
+            row.check_state = states.get(&row.number).cloned().flatten();
         }
+        Ok(rows)
+    }
+
+    /// The combined check state of every one of `numbers`, by number, read
+    /// apart from the request's own fields: one `pullRequest(number: …)`
+    /// alias per number, so the one call answers every one of them, and
+    /// each asks GitHub's own combined enum alone
+    /// (https://docs.github.com/en/graphql/reference/enums#statuscheckrollupstate),
+    /// never the context list behind it, which grows with the request's
+    /// own check count and is what overruns a large rollup with a GraphQL
+    /// request too large to answer (026). `None` of a number stands for no
+    /// rollup at all: nothing has ever run on that head.
+    async fn check_states(
+        &self,
+        repo: &str,
+        numbers: &[i64],
+    ) -> Result<HashMap<i64, Option<String>>, String> {
+        if numbers.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let (host, owner, name) = split_slug(repo)?;
+        let query = check_states_query(numbers);
+        let output = self
+            .cli
+            .answer(&[
+                "api",
+                "graphql",
+                "--hostname",
+                host,
+                "-f",
+                &format!("query={query}"),
+                "-F",
+                &format!("owner={owner}"),
+                "-F",
+                &format!("name={name}"),
+            ])
+            .await?;
+        let value: serde_json::Value = serde_json::from_str(&output)
+            .map_err(|e| format!("cannot read GitHub check states: {e}"))?;
+        let repository = &value["data"]["repository"];
+        Ok(numbers
+            .iter()
+            .map(|&n| {
+                let state = repository[format!("pr{n}")]["statusCheckRollup"]["state"]
+                    .as_str()
+                    .map(str::to_owned);
+                (n, state)
+            })
+            .collect())
     }
     async fn pulls(&self, repo: &str, filter: &[&str]) -> Result<Vec<ForgePullRequest>, String> {
         Ok(self
@@ -238,10 +279,31 @@ impl Github {
                 FIELDS,
             ])
             .await?;
-        serde_json::from_str::<Pull>(&output)
-            .map(Pull::normalized)
-            .map_err(|e| format!("cannot read GitHub pull request: {e}"))
+        let mut pull: Pull = serde_json::from_str(&output)
+            .map_err(|e| format!("cannot read GitHub pull request: {e}"))?;
+        pull.check_state = self
+            .check_states(repo, &[number])
+            .await?
+            .remove(&number)
+            .flatten();
+        Ok(pull.normalized())
     }
+}
+
+/// A GraphQL query asking the combined check state alone of one
+/// `pullRequest(number: …)` per `numbers`, aliased by number so the one
+/// response answers every one of them: `statusCheckRollup { state }`, never
+/// its own context list (`Github::check_states`).
+fn check_states_query(numbers: &[i64]) -> String {
+    let aliases: String = numbers
+        .iter()
+        .map(|n| {
+            format!("    pr{n}: pullRequest(number: {n}) {{ statusCheckRollup {{ state }} }}\n")
+        })
+        .collect();
+    format!(
+        "query($owner: String!, $name: String!) {{\n  repository(owner: $owner, name: $name) {{\n{aliases}  }}\n}}"
+    )
 }
 
 #[cfg(test)]
@@ -269,7 +331,6 @@ mod tests {
             "headRefOid": "abc",
             "headRepository": {"url": "https://github.com/acme/widgets"},
             "baseRefName": "main",
-            "statusCheckRollup": [],
             "reviewDecision": "APPROVED",
             "mergeStateStatus": "CLEAN",
             "createdAt": "2026-10-01T00:00:00Z",
@@ -313,7 +374,6 @@ mod tests {
             "headRefOid": "abc",
             "headRepository": {"url": "https://github.com/acme/widgets"},
             "baseRefName": "main",
-            "statusCheckRollup": [],
             "reviewDecision": "APPROVED",
             "createdAt": "2026-10-01T00:00:00Z",
         });
@@ -343,5 +403,113 @@ mod tests {
     fn a_read_naming_no_review_requests_asks_for_nobody() {
         let pull = provider_shaped(json!({}));
         assert!(!pull.requests_review("me"));
+    }
+
+    /// `checks` reads GitHub's own combined rollup state alone
+    /// (https://docs.github.com/en/graphql/reference/enums#statuscheckrollupstate):
+    /// `EXPECTED` and `PENDING` both still running, `ERROR` and `FAILURE`
+    /// both a failed rollup, `SUCCESS` a passing one, and no rollup at all
+    /// — nothing has ever run on the head — `none`.
+    #[test]
+    fn checks_reads_every_rollup_state_by_its_documented_meaning() {
+        for (state, expected) in [
+            (None, "none"),
+            (Some("EXPECTED"), "pending"),
+            (Some("PENDING"), "pending"),
+            (Some("ERROR"), "failure"),
+            (Some("FAILURE"), "failure"),
+            (Some("SUCCESS"), "success"),
+        ] {
+            let mut pull = provider_shaped(json!({}));
+            pull.check_state = state.map(str::to_owned);
+            assert_eq!(Pull::normalized(pull).checks, expected, "{state:?}");
+        }
+    }
+
+    /// The combined-state query selects `statusCheckRollup { state }`
+    /// alone, one aliased `pullRequest` per number, never a check's own
+    /// context list.
+    #[test]
+    fn check_states_query_selects_only_the_rollup_state() {
+        let query = super::check_states_query(&[1, 42]);
+        assert!(query.contains("pr1: pullRequest(number: 1) { statusCheckRollup { state } }"));
+        assert!(query.contains("pr42: pullRequest(number: 42) { statusCheckRollup { state } }"));
+        assert!(!query.contains("contexts"));
+    }
+}
+
+#[cfg(test)]
+mod check_state_fetch_tests {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+
+    use serde_json::json;
+
+    use super::Github;
+    use crate::forge::Cli;
+
+    const STUB: &str = r#"#!/usr/bin/env python3
+import json, os, sys
+here = os.path.dirname(os.path.abspath(sys.argv[0]))
+args = sys.argv[1:]
+answers = json.load(open(os.path.join(here, "answers.json")))
+for entry in answers:
+    prefix = entry["args"]
+    if args[:len(prefix)] == prefix:
+        sys.stdout.write(entry["stdout"])
+        sys.exit(0)
+sys.stderr.write(f"no entry for {args}")
+sys.exit(1)
+"#;
+
+    fn fake_gh(dir: &std::path::Path, answers: &[(&[&str], &str)]) -> String {
+        let path = dir.join("gh");
+        std::fs::write(&path, STUB).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let answers: Vec<_> = answers
+            .iter()
+            .map(|(args, stdout)| json!({"args": args, "stdout": stdout}))
+            .collect();
+        std::fs::write(
+            dir.join("answers.json"),
+            serde_json::to_string(&answers).unwrap(),
+        )
+        .unwrap();
+        path.display().to_string()
+    }
+
+    fn github(dir: &std::path::Path, answers: &[(&[&str], &str)]) -> Github {
+        Github::new(Cli {
+            timeout: Duration::from_secs(5),
+            ..Cli::new(Some(&fake_gh(dir, answers)), "gh")
+        })
+    }
+
+    /// A single-pull read asks `pr view` for no `statusCheckRollup`, then
+    /// merges in the combined state a separate, aliased GraphQL call
+    /// answers: the shape `gh pr view --json statusCheckRollup` would
+    /// otherwise carry, every check's own context, never crosses the wire.
+    #[tokio::test]
+    async fn a_single_pull_read_merges_the_combined_state_from_its_own_graphql_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let pull = r#"{"number":7,"url":"https://github.com/acme/widgets/pull/7",
+            "title":"Fix widgets","author":{"login":"someone"},"state":"OPEN","isDraft":false,
+            "headRefName":"fix","headRefOid":"abc",
+            "headRepository":{"url":"https://github.com/acme/widgets"},
+            "baseRefName":"main","reviewDecision":"",
+            "createdAt":"2026-10-01T00:00:00Z"}"#;
+        let rollup = json!({"data": {"repository": {
+            "pr7": {"statusCheckRollup": {"state": "FAILURE"}},
+        }}})
+        .to_string();
+        let github = github(
+            dir.path(),
+            &[(&["pr", "view"], pull), (&["api", "graphql"], &rollup)],
+        );
+        let read = github
+            .pull_request("github.com/acme/widgets", 7)
+            .await
+            .unwrap();
+        assert_eq!(read.checks, "failure");
     }
 }

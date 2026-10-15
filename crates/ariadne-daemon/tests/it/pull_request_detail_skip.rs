@@ -5,24 +5,28 @@
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
+use crate::common::forge::{StubForgeCli, answer, check_states, stub_forge_cli};
 use crate::common::{Harness, TIMEOUT, eventually, harness, post_json, sh};
 use ariadne_daemon::forge::poll::Mode;
+
+const HOST: &str = "github.com";
 
 fn github_pull(head_sha: &str, updated_at: &str) -> Value {
     json!({"number": 1, "url": "https://github.com/acme/widgets/pull/1",
         "title": "Fix widgets", "body": "Fixes widgets.", "author": {"login": "other"},
         "state": "OPEN", "isDraft": false, "headRefName": "fix", "headRefOid": head_sha,
         "headRepository": {"url": "https://github.com/acme/widgets"},
-        "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
+        "baseRefName": "main", "reviewDecision": "",
         "reviewRequests": [{"login": "me"}],
-        "createdAt": "2026-10-01T00:00:00Z", "updatedAt": updated_at})
+        "createdAt": "2026-10-01T00:00:00Z", "updatedAt": updated_at,
+        "checkState": "SUCCESS"})
 }
 
-/// `pull`, with the list's own check state changed: GitHub returns the
-/// same check rollup from the list and a single-request read.
-fn with_checks(mut pull: Value, checks: Value) -> Value {
-    pull["statusCheckRollup"] = checks;
+/// `pull`, with its own combined check state changed to `state`, GitHub's
+/// own combined enum (026): read apart from the list and a single-request
+/// read alike, through `script`'s own [`check_states`] answer.
+fn with_checks(mut pull: Value, state: &str) -> Value {
+    pull["checkState"] = json!(state);
     pull
 }
 
@@ -62,12 +66,16 @@ fn details(graphql_exit: i32) -> Vec<Value> {
 
 /// The stub with `pull` as the one open request, asking for my review, and
 /// its detail read's own `graphql` call exiting `graphql_exit`.
-fn script(pull: Value, graphql_exit: i32) -> Value {
+fn script(mut pull: Value, graphql_exit: i32) -> Value {
+    let number = pull["number"].as_i64().unwrap();
+    let state = pull["checkState"].as_str().unwrap_or("SUCCESS").to_owned();
+    pull.as_object_mut().unwrap().remove("checkState");
     let mut answers = vec![
         answer(&["auth", "status"], 0, ""),
         answer(&["api", "user"], 0, "me"),
         answer(&["pr", "list"], 0, &json!([pull.clone()]).to_string()),
         answer(&["pr", "view"], 0, &pull.to_string()),
+        check_states(HOST, &[(number, &state)]),
         answer(
             &["api", "repos/acme/widgets/issues?state=open&per_page=100"],
             0,
@@ -96,14 +104,20 @@ async fn enabled_repository(h: &Harness) -> String {
     repo["id"].as_str().unwrap().into()
 }
 
-/// How many detail reads the stub has actually run: its `graphql` call is
-/// asked only from inside `ForgeClient::details`, never from a list read or
-/// a single read of the request, so a count of it is a count of detail
-/// reads, skipped or not.
+/// How many detail reads the stub has actually run: the review threads
+/// read is asked only from inside `ForgeClient::details`, never from a list
+/// read or a single read of the request, so a count of its own paginated
+/// `graphql` call is a count of detail reads, skipped or not — never the
+/// combined check state's own `graphql` call, which a list read and a
+/// single-request read ask too (026), and which carries no `--paginate` of
+/// its own to tell it apart by.
 fn detail_reads(stub: &StubForgeCli) -> usize {
     stub.invocations()
         .iter()
-        .filter(|i| i.args.get(1).is_some_and(|a| a == "graphql"))
+        .filter(|i| {
+            i.args.get(1).is_some_and(|a| a == "graphql")
+                && i.args.iter().any(|a| a == "--paginate")
+        })
         .count()
 }
 
@@ -181,10 +195,7 @@ async fn a_fetch_whose_list_read_field_moved_runs_the_detail_read() {
     })
     .await;
 
-    let moved = with_checks(
-        github_pull("def", "2026-10-02T00:00:00Z"),
-        json!([{"status": "COMPLETED", "conclusion": "FAILURE"}]),
-    );
+    let moved = with_checks(github_pull("def", "2026-10-02T00:00:00Z"), "FAILURE");
     stub.reprogram(script(moved, 0));
     h.state.forge_poll.wake(&id);
     eventually(TIMEOUT, "the fourth detail read", async || {

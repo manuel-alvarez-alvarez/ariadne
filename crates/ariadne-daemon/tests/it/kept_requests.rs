@@ -9,7 +9,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::{Value, json};
 
-use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
+use crate::common::forge::{StubForgeCli, answer, check_states, stub_forge_cli};
 use crate::common::{
     Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, post_json, sh, with_forge,
 };
@@ -24,12 +24,16 @@ use ariadne_store::{AgentSession, SessionFilter, Task};
 /// Where `pr create` says the task's request is.
 const URL: &str = "https://github.com/acme/widgets/pull/1";
 
+/// The host `script_of`'s own check-states answer is keyed on: every
+/// fixture here names `acme/widgets` on `github.com`.
+const HOST: &str = "github.com";
+
 fn pull(state: &str, sha: &str) -> Value {
     json!({"number": 1, "url": URL,
         "title": "Fix widgets", "author": {"login": "me"}, "state": state, "isDraft": false,
         "headRefName": "fix", "headRefOid": sha,
         "headRepository": {"url": "https://github.com/acme/widgets"},
-        "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
+        "baseRefName": "main", "reviewDecision": "",
         "createdAt": "2026-10-01T00:00:00Z"})
 }
 
@@ -42,18 +46,16 @@ fn review_comment(id: i64, login: &str, reply_to: Option<i64>, at: &str) -> Valu
 /// What the stub forge answers: the request in `state` on its own read, its
 /// review comments in one thread, and its check runs. No list holds it: a
 /// fetch's open list is empty, and reads the request on its own.
-/// The pull's own `statusCheckRollup` repeats `check_runs`' own conclusions
-/// (`rollup`): the request read and its detailed check read agree on a
-/// check's outcome, so a fetch comparing the two (`Live::unmoved`) sees the
-/// move a real forge read would too.
+/// `script_of`'s own check-states answer repeats `check_runs`' own
+/// conclusions (`combined_state`): the request read and its detailed check
+/// read agree on a check's outcome, so a fetch comparing the two
+/// (`Live::unmoved`) sees the move a real forge read would too.
 fn script(state: &str, comments: &[Value], check_runs: Value) -> Value {
     let threads = json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
         {"id": "T1", "isResolved": false, "comments": {"nodes": [{"databaseId": 101}]}}
     ]}}}}});
-    let mut read = pull(state, "abc");
-    read["statusCheckRollup"] = rollup(&check_runs);
     script_of(
-        read,
+        pull(state, "abc"),
         &[],
         comments,
         &json!({"check_runs": check_runs}).to_string(),
@@ -62,24 +64,28 @@ fn script(state: &str, comments: &[Value], check_runs: Value) -> Value {
     )
 }
 
-/// `check_runs`' own REST conclusions, lowercase, as the forge's list read
-/// names the same outcome in its GraphQL enum, uppercase: what a pull's
-/// `statusCheckRollup` must repeat for `checks` to move the way a detail
-/// read of the same check runs also does.
-fn rollup(check_runs: &Value) -> Value {
-    json!(
-        check_runs
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|mut run| {
-                if let Some(conclusion) = run["conclusion"].as_str() {
-                    run["conclusion"] = json!(conclusion.to_uppercase());
-                }
-                run
-            })
-            .collect::<Vec<_>>()
+/// `check_runs`' own REST conclusions, lowercase, read as GitHub's own
+/// combined enum, uppercase (026): what `script_of`'s own check-states
+/// answer must repeat for `checks` to move the way a detail read of the
+/// same check runs also does. `None` of an empty list: no rollup at all.
+fn combined_state(check_runs: &Value) -> Option<&'static str> {
+    let runs = check_runs.as_array().cloned().unwrap_or_default();
+    if runs.is_empty() {
+        return None;
+    }
+    Some(
+        if runs.iter().any(|r| {
+            matches!(
+                r["conclusion"].as_str(),
+                Some("failure" | "timed_out" | "cancelled" | "action_required" | "startup_failure")
+            )
+        }) {
+            "FAILURE"
+        } else if runs.iter().any(|r| r["conclusion"].as_str().is_none()) {
+            "PENDING"
+        } else {
+            "SUCCESS"
+        },
     )
 }
 
@@ -100,7 +106,8 @@ fn moved_at(mut script: Value, at: &str) -> Value {
 
 /// The same, for a request read as `read` and lists that hold `listed`, with
 /// the check runs and the review threads as `gh api --paginate` writes them:
-/// one JSON value per page, back to back.
+/// one JSON value per page, back to back. The combined check state
+/// (`check_states`) is `combined_state(check_runs)`, read apart from both.
 fn script_of(
     read: Value,
     listed: &[Value],
@@ -109,22 +116,32 @@ fn script_of(
     reviews: &str,
     threads: &str,
 ) -> Value {
+    let number = read["number"].as_i64().unwrap();
+    let runs: Value = serde_json::from_str(check_runs)
+        .ok()
+        .and_then(|v: Value| v.get("check_runs").cloned())
+        .unwrap_or_else(|| json!([]));
+    let pairs: Vec<(i64, &str)> = match combined_state(&runs) {
+        Some(state) => vec![(number, state)],
+        None => vec![],
+    };
     let read = read.to_string();
-    json!([
+    let answers = vec![
         answer(&["auth", "status"], 0, ""),
         answer(&["api", "user"], 0, "me"),
         answer(&["pr", "create"], 0, URL),
         answer(&["pr", "list"], 0, &json!(listed).to_string()),
         answer(&["pr", "view"], 0, &read),
+        check_states(HOST, &pairs),
         answer(
             &["pr", "comment"],
             0,
-            "https://github.com/acme/widgets/pull/1#issuecomment-301"
+            "https://github.com/acme/widgets/pull/1#issuecomment-301",
         ),
         answer(
             &["api", "repos/acme/widgets/pulls/1/comments"],
             0,
-            &json!(comments).to_string()
+            &json!(comments).to_string(),
         ),
         // The review's one summary comment: posted once, then edited.
         answer(
@@ -134,35 +151,36 @@ fn script_of(
                 "--hostname",
                 "github.com",
                 "--method",
-                "POST"
+                "POST",
             ],
             0,
-            r#"{"id": 301, "created_at": "2026-10-02T00:00:00Z"}"#
+            r#"{"id": 301, "created_at": "2026-10-02T00:00:00Z"}"#,
         ),
         answer(
             &["api", "repos/acme/widgets/issues/comments/301"],
             0,
-            r#"{"id": 301, "created_at": "2026-10-02T00:00:00Z"}"#
+            r#"{"id": 301, "created_at": "2026-10-02T00:00:00Z"}"#,
         ),
         answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
         answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, reviews),
         answer(
             &["api", "repos/acme/widgets/pulls/1/comments/101/replies"],
             0,
-            r#"{"id": 201}"#
+            r#"{"id": 201}"#,
         ),
         answer(&["api", "graphql"], 0, threads),
         answer(
             &["api", "repos/acme/widgets/commits/abc/check-runs"],
             0,
-            check_runs
+            check_runs,
         ),
         answer(
             &["api", "repos/acme/widgets/compare/main...abc"],
             0,
-            r#"{"behind_by": 0}"#
+            r#"{"behind_by": 0}"#,
         ),
-    ])
+    ];
+    json!(answers)
 }
 
 fn quiet_script() -> Value {
@@ -1720,7 +1738,6 @@ fn ready_pull(head: &str) -> Value {
     let mut ready = pull("OPEN", head);
     ready["reviewDecision"] = json!("APPROVED");
     ready["mergeStateStatus"] = json!("CLEAN");
-    ready["statusCheckRollup"] = json!([{"conclusion": "SUCCESS", "status": "COMPLETED"}]);
     ready
 }
 
@@ -1728,16 +1745,20 @@ fn ready_pull(head: &str) -> Value {
 /// than built in: every other entry — the comments, the reviews, the
 /// threads, the checks and the comparison — stays the one a ready
 /// request needs, so only what `read` itself says about the request can
-/// differ between two scripts built this way.
+/// differ between two scripts built this way. `checks` reads `SUCCESS`,
+/// through its own check-states answer (`check_states`), the same every
+/// one of those readiness scripts needs.
 fn script_with_read(head: &str, read: &Value) -> Value {
     let threads =
         json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let number = read["number"].as_i64().unwrap();
     json!([
         answer(&["auth", "status"], 0, ""),
         answer(&["api", "user"], 0, "me"),
         answer(&["pr", "create"], 0, URL),
         answer(&["pr", "list"], 0, "[]"),
         answer(&["pr", "view"], 0, &read.to_string()),
+        check_states(HOST, &[(number, "SUCCESS")]),
         answer(&["api", "repos/acme/widgets/pulls/1/comments"], 0, "[]"),
         answer(&["api", "repos/acme/widgets/issues/1/comments"], 0, "[]"),
         answer(&["api", "repos/acme/widgets/pulls/1/reviews"], 0, "[]"),
@@ -2672,10 +2693,16 @@ async fn the_detail_fetch_reads_every_page_of_threads_and_check_runs() {
     assert_eq!(bob["thread_id"], "T2");
     assert_eq!(bob["resolved"], true);
     for call in stub.invocations() {
-        let paged = call
-            .args
-            .get(1)
-            .is_some_and(|a| a == "graphql" || a.ends_with("/check-runs"));
+        // The combined check state's own `graphql` call (026) never
+        // paginates: one aliased read answers every number at once, unlike
+        // the review threads read it shares the program and the subcommand
+        // with.
+        let is_check_states = call.args.get(4).is_some_and(|a| a == "-f");
+        let paged = !is_check_states
+            && call
+                .args
+                .get(1)
+                .is_some_and(|a| a == "graphql" || a.ends_with("/check-runs"));
         if paged {
             assert!(call.args.contains(&"--paginate".to_string()), "{call:?}");
         }

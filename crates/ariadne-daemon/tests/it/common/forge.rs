@@ -142,15 +142,36 @@ pub(crate) fn answer(args: &[&str], exit: i32, stdout: &str) -> Value {
 }
 
 /// The request a task opened at `url`, as `gh pr view --json` answers it:
-/// open, by the integration login `me`, from `head` onto `main`.
+/// open, by the integration login `me`, from `head` onto `main`, with no
+/// rollup of its own (026): `checks` is seeded apart from this, through
+/// [`check_states`].
 pub(crate) fn opened_pull(url: &str, head: &str) -> Value {
     let number: i64 = url.rsplit('/').next().unwrap().parse().unwrap();
     json!({"number": number, "url": url, "title": "feat: ship it",
         "author": {"login": "me"}, "state": "OPEN", "isDraft": false,
         "headRefName": head, "headRefOid": "abc",
         "headRepository": {"url": "https://github.com/acme/widgets"},
-        "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
+        "baseRefName": "main", "reviewDecision": "",
         "createdAt": "2026-10-01T00:00:00Z"})
+}
+
+/// A script entry answering `Github::check_states`'s own aliased GraphQL
+/// read of the combined check state of each `(number, state)` of `pairs`,
+/// `state` GitHub's own combined enum
+/// (https://docs.github.com/en/graphql/reference/enums#statuscheckrollupstate)
+/// (026). Matched by `-f` rather than `--paginate`, the review threads
+/// read's own flag (`Github::threads`), so a script that stubs both
+/// answers each from an entry of its own.
+pub(crate) fn check_states(host: &str, pairs: &[(i64, &str)]) -> Value {
+    let mut repository = serde_json::Map::new();
+    for &(number, state) in pairs {
+        repository.insert(
+            format!("pr{number}"),
+            json!({"statusCheckRollup": {"state": state}}),
+        );
+    }
+    let body = json!({"data": {"repository": repository}}).to_string();
+    answer(&["api", "graphql", "--hostname", host, "-f"], 0, &body)
 }
 
 /// Write the stub into a directory of its own, answering from `script`.
