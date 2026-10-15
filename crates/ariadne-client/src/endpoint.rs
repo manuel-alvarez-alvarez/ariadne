@@ -90,10 +90,6 @@ pub struct FileConfig {
     /// The `gh` the GitHub integration runs (025; default: `gh` on the
     /// daemon's PATH).
     pub gh_bin: Option<String>,
-    /// Retired GitLab CLI location (025). Accepted and ignored, never read:
-    /// an old config.toml naming it must still parse, so the daemon reaches
-    /// the database's own reset guidance instead of failing on an unknown key.
-    pub glab_bin: Option<String>,
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,
@@ -289,16 +285,6 @@ mod tests {
         assert_eq!(config.acp_agents.len(), 1);
         assert_eq!(config.acp_agents[0].id, "my-agent");
         assert_eq!(config.acp_agents[0].command, ["my-agent", "acp"]);
-    }
-
-    /// A config.toml set up before 025 dropped GitLab must still parse, so
-    /// the daemon reaches the database's reset guidance instead of dying on
-    /// a key this crate no longer acts on.
-    #[test]
-    fn a_retired_glab_bin_key_still_parses() {
-        let dir = tempfile::tempdir().unwrap();
-        write_config(dir.path(), "glab_bin = \"/opt/bin/glab\"\n");
-        assert!(parse_config(dir.path()).unwrap().is_some());
     }
 
     /// A misspelled key is the whole point of parsing strictly: it would

@@ -197,9 +197,9 @@ the desktop app as a whole (015).
   (`forge_integration.rs::a_changed_remote_is_detected_on_the_next_edit_and_at_daemon_start`).
 - `gh_bin` is read from `config.toml`
   (`config.rs::tests::the_forge_cli_key_is_read`).
-- `0001_init.sql`'s `kind` CHECK accepts `github` and refuses `gitlab` at
-  the database itself
-  (`store.rs::the_forge_integrations_kind_check_accepts_github_and_rejects_gitlab`).
+- `0001_init.sql`'s `kind` CHECK accepts `github` and refuses any other kind
+  at the database itself
+  (`store.rs::the_forge_integrations_kind_check_accepts_github_and_rejects_other_kinds`).
   A database carrying an earlier, wider-checked migration's checksum for
   version 1 is refused with the pre-squash message naming the file to
   delete

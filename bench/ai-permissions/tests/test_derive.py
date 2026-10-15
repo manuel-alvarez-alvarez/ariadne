@@ -252,7 +252,7 @@ class DerivedTagsTests(unittest.TestCase):
         changed = (
             "/repo/project/.github/workflows/ci.yml",
             "/repo/project/.github/dependabot.yml",
-            "/repo/project/.gitlab-ci.yml",
+            "/repo/project/.pre-commit-config.yaml",
             "/repo/project/.claude/settings.json",
             "/repo/project/.mcp.json",
             "/repo/project/.vscode/tasks.json",

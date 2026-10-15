@@ -14,12 +14,13 @@
 # a version number greater than every migration `main` already ships (and
 # than every other new one in the same change).
 #
-# The one exception: removing GitLab dropped 'gitlab' from the `kind` CHECK
-# of 0001_init.sql's `forge_integrations` table, the shipped migration's
-# sole approved edit (016, rule 9). Pinned below by its exact old and new
-# git blob — fixed values, read from no environment or argument — so only
-# that one transition of that one path is let through — any other edit of
-# this file, or of any other shipped migration, still fails below.
+# The one exception: narrowing the forge integration to GitHub alone
+# tightened the `kind` CHECK of 0001_init.sql's `forge_integrations` table
+# to 'github' alone, the shipped migration's sole approved edit (016, rule
+# 9). Pinned below by its exact old and new git blob — fixed values, read
+# from no environment or argument — so only that one transition of that one
+# path is let through — any other edit of this file, or of any other
+# shipped migration, still fails below.
 #
 # Run by hand: scripts/check-migrations.sh
 set -euo pipefail
