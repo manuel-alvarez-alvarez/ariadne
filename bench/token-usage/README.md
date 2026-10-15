@@ -51,6 +51,44 @@ Use `--codex-transcripts` and `--claude-transcripts` to point the analyzer at
 that preserved external copy. `transcript-manifest.csv` contains stable
 hashed file identities and filtered content hashes for matched evidence.
 
+## Request-level follow-up
+
+`FOLLOWUP-REPORT.md` records the separate request-level study. It preserves
+the baseline artifacts and canonical cumulative accounting in `REPORT.md`.
+The follow-up only sums one retained native request record per supported
+format; it never adds that sum to session counters.
+
+Create a fresh SQLite backup as above, then run:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 bench/token-usage/followup.py \
+  --database /tmp/ariadne-token-usage-snapshot.db \
+  --baseline-database /tmp/ariadne-token-usage-snapshot.XXXXXX.db \
+  --output /tmp/ariadne-token-usage-followup \
+  --revision "$(git rev-parse HEAD)" \
+  --snapshot-location /tmp/ariadne-token-usage-snapshot.db \
+  --source-label 'refreshed SQLite backup of ~/.ariadne/ariadne.db'
+PYTHONDONTWRITEBYTECODE=1 python3 bench/token-usage/test_followup.py
+```
+
+`followup-snapshot.json` records the cutoff, source hash, analyzer source
+hash, requested source revision, format inventory, and partial coverage.
+`followup-transcript-manifest.csv` records a stable hashed source identity and
+retained-content SHA-256 for every parsed source. The committed
+request-level rows include only sessions with a native Ariadne mapping. They
+contain identifiers and aggregate counters, never raw prompt or tool text.
+Codex `token_usage_record.usage` is a per-response evidence layer. Its
+cumulative `token_count` records and overlapping turn/thread totals are
+excluded from request totals. Claude records are deduplicated by native
+request ID. OpenCode is inventoried as unsupported because this installation
+does not retain a native Ariadne join or validated deduplication rule.
+
+The committed follow-up was generated from the external snapshot
+`/tmp/token-followup.db`, SHA-256
+`adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a`.
+Reproduce it only with that database and transcript roots that match the
+follow-up manifest. The frozen baseline has separate, documented inputs.
+
 ## Checks
 
 Run these commands from the repository root. Use a fresh output directory.
@@ -78,6 +116,7 @@ assert not list(root.rglob('*.db'))
 print('artifact checks: ok')
 PY
 git diff --check
+PYTHONDONTWRITEBYTECODE=1 python3 bench/token-usage/test_followup.py
 ```
 
 ## Artifacts
