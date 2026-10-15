@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-14
+updated: 2026-10-15
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-daemon/src/forge/news.rs
   - crates/ariadne-daemon/src/forge/live.rs
   - crates/ariadne-daemon/src/forge/pulls.rs
+  - crates/ariadne-daemon/src/forge/poll.rs
   - crates/ariadne-daemon/src/forge/github/pulls.rs
   - crates/ariadne-daemon/src/forge/github/comments.rs
   - crates/ariadne-daemon/src/forge/github/reviews.rs
@@ -21,6 +22,7 @@ tests:
   - crates/ariadne-daemon/tests/it/pull_request_detail_skip.rs
   - crates/ariadne-daemon/tests/it/pull_request_lists.rs
   - crates/ariadne-daemon/tests/it/forge_rate_limit.rs
+  - crates/ariadne-daemon/tests/it/forge_host_limit.rs
   - crates/ariadne-daemon/tests/it/tunnel.rs
   - crates/ariadne-daemon/tests/it/kept_requests.rs
   - crates/ariadne-daemon/tests/it/pull_request_keep_retry.rs
@@ -97,6 +99,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    GitHub names a team's own request by a slug or a name, never a login, so a review asked of a team the login belongs to is read as asking nobody (Known gap).
 6. `ForgePoll::wake(repository_id)` schedules one fetch.
    Each repository has one worker, so fetches of that repository never overlap.
+   One forge host answers at most `forge::poll::FORGE_HOST_FETCH_LIMIT` (2) fetches at once, across every repository on it and whichever of startup, the timer or an explicit wake started each one; a fetch past that cap waits for a permit of a host-keyed semaphore before it calls the forge at all, so a third repository on a busy host makes no call of its own until one of the first two's own fetch ends. The permit is acquired on the very integration read the fetch itself then calls the forge with, inside that one fetch, never on a host a worker's own loop captured earlier: a repository's remote can move it to another host between one fetch and the next, well before `sync`'s own `integration_changed` tears the old worker down and starts the new one, and the cap means nothing if a stale host still decided which semaphore a fetch waited on while its own call already reached the new one. A different host's own cap is a semaphore of its own, so it never waits on another's. Whatever ends the fetch that held the permit — the read finishing, its own error, or the worker's task aborted by disabling the integration mid-fetch — drops the permit at that same point, so a queued fetch runs the moment capacity frees rather than waiting on a slot a fetch that is no longer running still held.
    Wakes during a fetch coalesce into one following fetch.
    A wake outside a fetch starts one `Timeouts::forge_wake_debounce` window before it fetches, folding every further wake that arrives before that fixed deadline into the same one fetch: a burst of webhook deliveries for one push costs one fetch, not one per delivery, even if the deliveries continue through the window.
    `set_mode(repository_id, Mode::Timer)` enables the fallback timer.
@@ -343,6 +346,20 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `pull_requests.rs::timer_wake_only_and_disable_control_repository_fetches`.
 - Wakes coalesce without concurrent fetches:
   `pull_requests.rs::wakes_during_a_fetch_coalesce_into_one_following_fetch`.
+- One forge host runs at most two fetches at once across its repositories,
+  whatever started each one, and a third waits for a permit until one of the
+  first two's own fetch ends:
+  `forge_host_limit.rs::at_most_two_fetches_run_at_once_against_one_forge_host_and_a_third_waits_for_capacity`.
+  A different host never waits on another's own cap:
+  `forge_host_limit.rs::a_different_forge_host_has_its_own_independent_capacity`.
+  A fetch that fails, or one cancelled by disabling its integration
+  mid-fetch, drops its permit at once, so a queued fetch runs on the freed
+  slot rather than waiting on one a stopped fetch still held:
+  `forge_host_limit.rs::a_failed_fetch_releases_its_hosts_capacity_for_a_queued_one`,
+  `forge_host_limit.rs::a_cancelled_fetch_releases_its_hosts_capacity_for_a_queued_one`.
+  A repository moved to another, already full host waits for that host's
+  own capacity, never the spare capacity of the host its worker started on:
+  `forge_host_limit.rs::a_repository_moved_to_a_full_host_waits_for_that_hosts_capacity`.
 - Rate-limited Timer and WakeOnly fetches each pause the worker until the
   forge's reset time; a wake inside either pause fetches nothing, one fetch
   runs at the end, `fetch_error` reads the pause and then clears, and neither

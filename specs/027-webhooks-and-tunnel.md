@@ -1,14 +1,16 @@
 ---
 id: webhooks-and-tunnel
 status: current
-updated: 2026-10-13
+updated: 2026-10-15
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/webhooks.rs
   - crates/ariadne-daemon/tests/it/forge_rate_limit.rs
+  - crates/ariadne-daemon/tests/it/forge_host_limit.rs
   - crates/ariadne-daemon/tests/it/tunnel.rs
   - crates/ariadne-daemon/src/config.rs
+  - crates/ariadne-store/src/lib.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/repo.rs
   - crates/ariadne-cli/src/commands/forge.rs
@@ -121,7 +123,8 @@ A disabled integration has no worker, regardless of its retained hook status.
 ### The tunnel
 
 11. The one `forge_settings` row holds `tunnel_enabled` (0 or 1, default 1) and `tunnel_subdomain` (NULL until first use).
-    The schema seeds it.
+    The schema seeds it, and its own default never changes: migration 0001's checksum is fixed once shipped.
+    Migration 0009 turns `tunnel_enabled` off instead, unconditionally, the one time it ever runs on a database — a migration applies exactly once, ever, so this moves a fresh database and one already at an earlier version alike, and later `open`s of the same database never run it again. `PUT /v1/forge/tunnel` is the only other place that writes the column. So every installation starts polling, by default, once it has run 0009.
     `config.toml` adds `tunnel_host` (default `https://localtunnel.me`) and `tunnel_subdomain`.
     The configured subdomain wins over the stored one.
 12. The tunnel runs when `tunnel_enabled` holds, at least one integration is enabled, and `webhook_public_url` is unset.
@@ -218,6 +221,17 @@ A disabled integration has no worker, regardless of its retained hook status.
   `repositories-page.test.tsx::shows polling with the tunnel off: green with how to turn it on, red with the fetch error`.
 - The last fetch error is written only when it changes:
   `store.rs::the_last_fetch_error_is_written_only_when_it_changes`.
+- A fresh database starts the tunnel switch off; reopening it afterward,
+  whichever choice it already holds, on or off, keeps it untouched, since
+  0009 never runs a second time:
+  `store.rs::a_fresh_database_starts_the_tunnel_off_and_an_existing_one_keeps_its_choice`.
+  A database left with an empty `_sqlx_migrations` table by a run killed
+  before 0001 ever committed still runs every migration, 0009's own
+  tunnel-off update included:
+  `store.rs::a_database_with_an_empty_migrations_table_still_runs_every_migration`.
+  A fresh installation, polling by default, still fetches its enabled
+  repositories by timer, unaffected by the switch:
+  `pull_requests.rs::timer_wake_only_and_disable_control_repository_fetches`.
 - With one enabled integration, the switch on and no public URL, the tunnel opens to the stand-in at the random
   listener port, and the hook is created with the stand-in's URL. A signed delivery to that URL reaches the listener
   and triggers one fetch:

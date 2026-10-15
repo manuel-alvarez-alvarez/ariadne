@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, Instant as StdInstant},
 };
-use tokio::sync::{Notify, mpsc, oneshot, watch};
+use tokio::sync::{Notify, Semaphore, mpsc, oneshot, watch};
 use tokio::time::{Instant, sleep_until};
 use tracing::warn;
 
@@ -27,6 +27,29 @@ pub const FORGE_SIGNED_OUT: &str = "the forge CLI is not signed in";
 /// appended in RFC 3339, while a rate limit pauses the worker: the
 /// deterministic words a test, and the desktop, read it by.
 pub const FORGE_RATE_LIMITED: &str = "rate limited until";
+
+/// How many repository fetches may run at once against one forge host —
+/// `github.com`, a GitHub Enterprise host, a self-hosted GitLab — whatever
+/// started them: startup, the timer, or an explicit wake. Every repository
+/// on that host shares the same cap; a different host never waits on it.
+pub const FORGE_HOST_FETCH_LIMIT: usize = 2;
+
+/// One [`Semaphore`] per forge host, lazily created with
+/// [`FORGE_HOST_FETCH_LIMIT`] permits the first time a worker on that host
+/// asks for it, and shared by every repository worker on it from then on.
+#[derive(Clone, Default)]
+struct HostFetchLimits(Arc<std::sync::Mutex<HashMap<String, Arc<Semaphore>>>>);
+
+impl HostFetchLimits {
+    fn semaphore(&self, host: &str) -> Arc<Semaphore> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(host.to_string())
+            .or_insert_with(|| Arc::new(Semaphore::new(FORGE_HOST_FETCH_LIMIT)))
+            .clone()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -80,6 +103,8 @@ struct Handoff {
     pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>>,
     /// Where each read of a request Ariadne works on is left (026).
     live: LivePulls,
+    /// Caps how many of this fetch's host's repositories run at once.
+    host_limits: HostFetchLimits,
 }
 struct Worker {
     identity: (String, String, String, String),
@@ -157,6 +182,7 @@ pub fn start(
         issues_seen: Arc::default(),
         pulls_seen: pulls_seen.clone(),
         live,
+        host_limits: HostFetchLimits::default(),
     };
     let webhook_url = crate::webhooks::WebhookUrl::new(cfg.webhook_public_url.clone());
     let mut urls = webhook_url.subscribe();
@@ -383,6 +409,11 @@ async fn worker(
 ) {
     let mut backoff = timeouts.forge_poll;
     loop {
+        // `fetch` itself acquires its host's permit, on the integration it
+        // rereads there and then — never on a host captured here, which a
+        // repository's own remote can move past between one call and the
+        // next, well before this worker is torn down and respawned under
+        // its new identity (`sync`'s own `integration_changed`).
         let fetched = fetch(&store, &cfg, &handoff, &id).await;
         if let Err(error) = &fetched
             && Refusal::of(error.clone()).is_rate_limited()
@@ -487,6 +518,17 @@ async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Resu
     else {
         return Ok(());
     };
+    // Acquired on this same read, not on a host captured when the worker
+    // started: a repository's remote can change its host between one fetch
+    // and the next, and the cap means nothing if a stale host still decides
+    // which semaphore a fetch waits on. Held for the rest of this call, on
+    // every exit path, by nothing more than this binding's own scope.
+    let _permit = handoff
+        .host_limits
+        .semaphore(&integration.host)
+        .acquire_owned()
+        .await
+        .expect("the host semaphore is never closed");
     let client = ForgeClient::for_repository(cfg, &integration);
     let slug = format!(
         "{}/{}/{}",

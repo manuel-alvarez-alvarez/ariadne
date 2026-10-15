@@ -5138,6 +5138,76 @@ async fn the_last_fetch_error_is_written_only_when_it_changes() {
     assert_eq!(read.fetch_error, None);
 }
 
+/// A brand-new database starts the tunnel switch off (027), though 0001's
+/// own seed still writes it on and never changes: migration 0009 turns it
+/// off, once. A migration never runs twice on the same database, so a
+/// later open of the same path leaves whichever choice it holds — on or
+/// off — exactly as the caller last set it.
+#[tokio::test]
+async fn a_fresh_database_starts_the_tunnel_off_and_an_existing_one_keeps_its_choice() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let store = Store::open(&path).await.unwrap();
+    assert!(!store.forge_settings().await.unwrap().tunnel_enabled);
+    store.set_tunnel_enabled(true).await.unwrap();
+    store.close().await;
+
+    let reopened = Store::open(&path).await.unwrap();
+    assert!(
+        reopened.forge_settings().await.unwrap().tunnel_enabled,
+        "reopening an existing database must not reset a stored choice"
+    );
+    reopened.set_tunnel_enabled(false).await.unwrap();
+    reopened.close().await;
+
+    let restarted = Store::open(&path).await.unwrap();
+    assert!(
+        !restarted.forge_settings().await.unwrap().tunnel_enabled,
+        "an existing database keeps an off choice too"
+    );
+}
+
+/// sqlx creates `_sqlx_migrations` before it applies the first migration, so
+/// a run killed between that create and 0001's own commit leaves the table
+/// standing with no row in it. Reopening such a database still runs every
+/// migration from 0001 on, 0009's own tunnel-off update included, rather
+/// than mistaking the empty table for one already at some version.
+#[tokio::test]
+async fn a_database_with_an_empty_migrations_table_still_runs_every_migration() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
+    let interrupted = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TABLE _sqlx_migrations (
+            version BIGINT PRIMARY KEY,
+            description TEXT NOT NULL,
+            installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            success BOOLEAN NOT NULL,
+            checksum BLOB NOT NULL,
+            execution_time BIGINT NOT NULL
+        )",
+    )
+    .execute(&interrupted)
+    .await
+    .unwrap();
+    interrupted.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    assert!(
+        !store.forge_settings().await.unwrap().tunnel_enabled,
+        "an empty migrations table still lets every migration, 0009 included, run"
+    );
+}
+
 /// The forge row is read with its repository, lower-cased, in every list a
 /// repository is read through, and goes with the repository.
 #[tokio::test]

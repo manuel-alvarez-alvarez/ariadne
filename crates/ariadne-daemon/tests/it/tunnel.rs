@@ -310,6 +310,16 @@ async fn daemon(home: &Path, stub: &StubForgeCli, timeouts: Timeouts) -> (Harnes
             .await
             .unwrap();
     h.state.tunnel.start(&listener);
+    // A fresh database starts the switch off (027 rule 11); this file is
+    // about the tunnel itself, so every test starts the way a user who
+    // wants one would, by turning it on, and a test proving the off default
+    // flips it back itself.
+    let _: ForgeTunnelDto = h
+        .json(
+            put_json("/v1/forge/tunnel", json!({"enabled": true})),
+            StatusCode::OK,
+        )
+        .await;
     (h, listener)
 }
 
@@ -1101,6 +1111,15 @@ async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds
         .await
         .unwrap();
     assert_eq!(created.status(), StatusCode::CREATED);
+    // A fresh database starts the switch off (027 rule 11).
+    let switched = client
+        .put(format!("{api}/v1/forge/tunnel"))
+        .header("Content-Type", "application/json")
+        .body(json!({"enabled": true}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(switched.status(), StatusCode::OK);
     let mut listen = None;
     eventually(TIMEOUT, "the tunnel to come up", async || {
         let body = client
