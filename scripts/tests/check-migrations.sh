@@ -27,6 +27,18 @@ run_guard() {
     fi
 }
 
+# `run_guard`, with the guard's own approved-edit pin overridden to `$1`
+# (path), `$2` (old entry) and `$3` (new entry): the real pin is the real
+# repository's own blobs, which this throwaway repository's synthetic
+# `0001_init.sql` never shares, so the exception logic itself needs its own
+# pin to exercise against a case built here.
+run_guard_as_approved() {
+    CHECK_MIGRATIONS_APPROVED_EDIT_PATH="$1" \
+    CHECK_MIGRATIONS_APPROVED_EDIT_FROM="$2" \
+    CHECK_MIGRATIONS_APPROVED_EDIT_TO="$3" \
+        run_guard
+}
+
 # `main` has moved on since a branch forked from it: set up an `origin`
 # remote whose `main` has already landed a migration (through a squash
 # commit the branch never descends from), and leave the caller on a new
@@ -54,6 +66,34 @@ case "$test_case" in
         printf -- '-- edited\n' >> "$TEST_ROOT/crates/ariadne-store/migrations/0001_init.sql"
         git -C "$TEST_ROOT" commit -q -am "test: edit the shipped migration"
         [ "$(run_guard)" = 1 ]
+        grep -Fq "0001_init.sql: a migration already on main must not be modified" \
+            "$TEST_ROOT/output"
+        ;;
+    accept-approved-edit)
+        git -C "$TEST_ROOT" checkout -q -b change
+        before="$(git -C "$TEST_ROOT" ls-tree main -- \
+            crates/ariadne-store/migrations/0001_init.sql | cut -f1)"
+        printf 'CREATE TABLE a (id INTEGER); -- the one approved edit\n' \
+            > "$TEST_ROOT/crates/ariadne-store/migrations/0001_init.sql"
+        git -C "$TEST_ROOT" commit -q -am "test: make exactly the pinned edit"
+        after="$(git -C "$TEST_ROOT" ls-tree HEAD -- \
+            crates/ariadne-store/migrations/0001_init.sql | cut -f1)"
+        [ "$(run_guard_as_approved \
+            crates/ariadne-store/migrations/0001_init.sql "$before" "$after")" = 0 ]
+        ;;
+    reject-near-miss-edit)
+        # The pin names this exact edit's own "from" blob but a "to" blob
+        # the branch never produces: a different edit of the same migration
+        # still fails, proving the pin accepts only its one exact pair.
+        git -C "$TEST_ROOT" checkout -q -b change
+        before="$(git -C "$TEST_ROOT" ls-tree main -- \
+            crates/ariadne-store/migrations/0001_init.sql | cut -f1)"
+        printf 'CREATE TABLE a (id INTEGER); -- a different edit\n' \
+            > "$TEST_ROOT/crates/ariadne-store/migrations/0001_init.sql"
+        git -C "$TEST_ROOT" commit -q -am "test: make a different edit than the one pinned"
+        unrelated_to="100644 blob 0000000000000000000000000000000000000000"
+        [ "$(run_guard_as_approved \
+            crates/ariadne-store/migrations/0001_init.sql "$before" "$unrelated_to")" = 1 ]
         grep -Fq "0001_init.sql: a migration already on main must not be modified" \
             "$TEST_ROOT/output"
         ;;

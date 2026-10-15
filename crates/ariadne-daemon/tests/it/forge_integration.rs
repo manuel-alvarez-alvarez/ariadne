@@ -97,6 +97,25 @@ async fn a_checkout_with_no_remote_has_no_forge() {
 }
 
 #[tokio::test]
+async fn the_only_remote_stands_in_for_a_missing_origin() {
+    let h = harness().await;
+    let repo = h.git_repo("repo");
+    sh(&repo, "git remote add upstream git@github.com:team/app.git");
+    let registered = register(&h, &repo.display().to_string(), "main").await;
+    let forge = registered.forge.expect("the one remote is read");
+    assert_eq!(forge.kind, ForgeKind::Github);
+    assert_eq!(forge.remote, "upstream");
+    assert_eq!((forge.owner.as_str(), forge.name.as_str()), ("team", "app"));
+
+    // Two remotes and no `origin` name no forge.
+    sh(&repo, "git remote add fork git@github.com:me/app.git");
+    let edited: RepositoryDto = h
+        .json(edit(&registered.id, json!({})), StatusCode::OK)
+        .await;
+    assert!(edited.forge.is_none());
+}
+
+#[tokio::test]
 async fn enabling_needs_the_cli_signed_in_and_stores_its_login() {
     let cli = stub_forge_cli(json!([{
         "args": ["auth", "status"], "exit": 1, "stdout": "",

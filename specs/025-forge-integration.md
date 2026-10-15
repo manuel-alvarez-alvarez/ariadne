@@ -54,14 +54,11 @@ the desktop app as a whole (015).
 1a. `0001_init.sql`'s `kind` column is `CHECK (kind IN ('github'))`: this
    release allows only the one value its own `ForgeClient` can speak to,
    narrower than an earlier release's constraint, which also allowed a
-   second forge kind this release no longer builds a client for.
-   A migration already shipped is immutable (016 rule 9), so a database
-   that ran that earlier, wider-checked `0001_init.sql` carries a
-   `_sqlx_migrations` checksum for version 1 that does not match this
-   release's, and `Store::open` refuses it with the pre-squash message: it
-   names the database file and says to delete it and start again. Pre-1.0,
-   this is the expected consequence of narrowing the constraint, not a
-   migration path Ariadne owes an upgrade for.
+   second forge kind this release no longer builds a client for. Narrowing
+   it in place, on the migration itself, is 016 rule 9's one named
+   exception to a shipped migration's immutability; what a database that
+   ran the earlier, wider-checked `0001_init.sql` fails with at open, and
+   why, is that same rule's to say.
 2. The remote is `origin`. Where there is no `origin` and the checkout has
    exactly one remote, that remote stands in. Any other checkout has no
    usable remote.
@@ -172,7 +169,10 @@ the desktop app as a whole (015).
   `forge/mod.rs::tests::a_remote_url_is_read_in_its_ssh_and_https_forms`).
 - A checkout with no remote has `forge = null`, and a forge change there is
   refused with `forge_unavailable`
-  (`forge_integration.rs::a_checkout_with_no_remote_has_no_forge`).
+  (`forge_integration.rs::a_checkout_with_no_remote_has_no_forge`). The
+  only remote stands in for a missing `origin`, and two remotes with
+  neither named `origin` name no forge
+  (`forge_integration.rs::the_only_remote_stands_in_for_a_missing_origin`).
 - Another host is GitHub Enterprise where `gh` is signed in to it, and an
   unknown host `gh` is not signed in to has no forge
   (`forge_integration.rs::another_host_is_github_enterprise_where_gh_is_signed_in_to_it`,
@@ -197,9 +197,12 @@ the desktop app as a whole (015).
   (`forge_integration.rs::a_changed_remote_is_detected_on_the_next_edit_and_at_daemon_start`).
 - `gh_bin` is read from `config.toml`
   (`config.rs::tests::the_forge_cli_key_is_read`).
-- `0001_init.sql`'s `kind` CHECK allows only `github`; a database carrying an
-  earlier, wider-checked migration's checksum for version 1 is refused
-  with the pre-squash message naming the file to delete
+- `0001_init.sql`'s `kind` CHECK accepts `github` and refuses `gitlab` at
+  the database itself
+  (`store.rs::the_forge_integrations_kind_check_accepts_github_and_rejects_gitlab`).
+  A database carrying an earlier, wider-checked migration's checksum for
+  version 1 is refused with the pre-squash message naming the file to
+  delete
   (`store.rs::a_database_on_the_old_chain_is_refused_with_the_pre_squash_message`).
 - `repo add` and `repo update` take `--forge` and reject `--review-model`
   and `--review-effort` as unknown flags

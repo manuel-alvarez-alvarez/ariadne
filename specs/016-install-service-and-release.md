@@ -98,7 +98,16 @@ Out: what the daemon does once running (009, 012).
    database written anywhere on that chain, or on the chain before it, is
    refused the same way, and that loss is accepted. From this reset on,
    every schema change adds a new migration file: `0001` is not edited
-   again.
+   again, with one named exception. Removing GitLab (025) narrowed
+   `forge_integrations.kind`'s `CHECK` from `('github', 'gitlab')` to
+   `('github')` alone, in place, on `0001` itself.
+   `scripts/check-migrations.sh` pins that edit's exact old and new git
+   blob, so it is the one transition of the one file this rule ever lets
+   through a second time; every other edit of `0001`, or of any other
+   migration already shipped, still fails the guard the same as before. A
+   database whose recorded checksum for version 1 is the pre-edit blob is
+   refused at open the same way, naming the file to delete; that loss,
+   too, is accepted.
 10. `ariadne doctor` is the only thing still running when that happens, so it
     is what explains it (014).
 11. At startup, the daemon raises its soft open-file limit towards the hard
@@ -236,7 +245,15 @@ Out: what the daemon does once running (009, 012).
   (`scripts/tests/check-migrations.sh`: `reject-edit`, `reject-delete`,
   `accept-add`, `reject-low-number`, `reject-bad-name`,
   `reject-symlink-replace`, `reject-new-symlink`,
-  `reject-landed-after-squash`, `reject-version-collision`).
+  `reject-landed-after-squash`, `reject-version-collision`). The one named
+  exception in rule 9 is pinned by `0001_init.sql`'s exact pre- and
+  post-edit git blob hash in `scripts/check-migrations.sh`'s own
+  `APPROVED_EDIT_FROM`/`APPROVED_EDIT_TO`; a pin an environment override
+  can replace only for a test, which proves the exception logic generically
+  against a throwaway repository's own synthetic edit — exactly that pin
+  passes, and the same "from" paired with any other "to" still fails
+  (`scripts/tests/check-migrations.sh`: `accept-approved-edit`,
+  `reject-near-miss-edit`).
 
 ## Known gap
 

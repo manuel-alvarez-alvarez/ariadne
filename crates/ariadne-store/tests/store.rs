@@ -3222,6 +3222,64 @@ async fn a_database_on_the_old_chain_is_refused_with_the_pre_squash_message() {
     );
 }
 
+/// `0001_init.sql`'s own `CHECK (kind IN ('github'))` on `forge_integrations`
+/// is what a fresh database's schema actually enforces, not merely what the
+/// typed `SetForgeIntegration::kind: ForgeKind` the ordinary write path
+/// takes can construct — `ForgeKind` has one variant today, so nothing
+/// through that path could ever name `gitlab` to prove the column refuses
+/// it. A raw insert does: `github` is accepted, and `gitlab`, the value an
+/// earlier release's wider `CHECK` once also allowed (025 rule 1a), is
+/// refused by the database itself.
+///
+/// Connected by path, after the migrating `Store` is dropped, the same way
+/// the checksum test above reaches `_sqlx_migrations` directly: this is a
+/// probe of the schema itself, not of anything `Store`'s own API exposes.
+#[tokio::test]
+async fn the_forge_integrations_kind_check_accepts_github_and_rejects_gitlab() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("forge-kind.db");
+    drop(Store::open(&path).await.unwrap());
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+
+    // A real `repositories` row for each, distinct from one another: the
+    // `kind` CHECK is what this test means to probe, not the unrelated
+    // foreign key `forge_integrations.repository_id` also carries.
+    sqlx::query(
+        "INSERT INTO repositories (id, path, base_branch, created_at, updated_at)
+         VALUES ('r1', '/repo-1', 'main', '', ''), ('r2', '/repo-2', 'main', '', '')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO forge_integrations
+            (repository_id, kind, host, owner, name, remote, detected_at, updated_at)
+         VALUES ('r1', 'github', 'github.com', 'acme', 'widgets', 'origin', '', '')",
+    )
+    .execute(&pool)
+    .await
+    .expect("github is an accepted kind");
+
+    let rejected = sqlx::query(
+        "INSERT INTO forge_integrations
+            (repository_id, kind, host, owner, name, remote, detected_at, updated_at)
+         VALUES ('r2', 'gitlab', 'gitlab.com', 'acme', 'widgets', 'origin', '', '')",
+    )
+    .execute(&pool)
+    .await
+    .expect_err("gitlab is no longer an accepted kind");
+    assert!(
+        rejected.to_string().contains("CHECK constraint failed"),
+        "refused for the kind CHECK, not some other reason: {rejected}"
+    );
+
+    pool.close().await;
+}
+
 /// A fresh database already carries every column the old incremental chain
 /// used to add after the first squash — pull-request readiness, the
 /// babysitting and asks-revision columns, a repository's `supervise_posts`

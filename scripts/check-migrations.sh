@@ -16,9 +16,13 @@
 #
 # The one exception: removing GitLab dropped 'gitlab' from the `kind` CHECK
 # of 0001_init.sql's `forge_integrations` table, the shipped migration's
-# sole approved edit. Pinned by its exact old and new git blob, so only that
-# one transition of that one path is let through — any other edit of this
-# file, or of any other shipped migration, still fails below.
+# sole approved edit (016, rule 9). Pinned by its exact old and new git
+# blob, so only that one transition of that one path is let through — any
+# other edit of this file, or of any other shipped migration, still fails
+# below. The three CHECK_MIGRATIONS_APPROVED_EDIT_* variables below read an
+# environment override only so scripts/tests/check-migrations.sh can prove
+# this exception logic against its own throwaway repository; every real
+# run leaves them unset and gets the real, hardcoded pin.
 #
 # Run by hand: scripts/check-migrations.sh
 set -euo pipefail
@@ -28,9 +32,14 @@ cd "$ROOT"
 
 MIGRATIONS_DIR="crates/ariadne-store/migrations"
 
-APPROVED_EDIT_PATH="crates/ariadne-store/migrations/0001_init.sql"
-APPROVED_EDIT_FROM="100644 blob f3cd49d06d678e397bd9f5dab62604bf20b8995c"
-APPROVED_EDIT_TO="100644 blob 4c9801a083e435c516fe611df0dcfba5faa889ba"
+# Overridable only so scripts/tests/check-migrations.sh can prove the
+# exception logic itself, generically, against its own throwaway repository
+# — whose synthetic 0001_init.sql never shares a blob with the real one.
+# Unset in every real run, hand or hook alike, which is what leaves these at
+# their real, hardcoded values.
+APPROVED_EDIT_PATH="${CHECK_MIGRATIONS_APPROVED_EDIT_PATH:-crates/ariadne-store/migrations/0001_init.sql}"
+APPROVED_EDIT_FROM="${CHECK_MIGRATIONS_APPROVED_EDIT_FROM:-100644 blob f3cd49d06d678e397bd9f5dab62604bf20b8995c}"
+APPROVED_EDIT_TO="${CHECK_MIGRATIONS_APPROVED_EDIT_TO:-100644 blob 4c9801a083e435c516fe611df0dcfba5faa889ba}"
 
 is_approved_edit() {
     [ "$1" = "$APPROVED_EDIT_PATH" ] \

@@ -132,11 +132,19 @@ reset of the pre-1.0 schema: a database written by an earlier release
 records migrations this one no longer ships and cannot be opened. There is
 no upgrade from it — Ariadne is pre-1.0, and a database is recreated rather
 than migrated; that loss of history is accepted. From here on, a schema
-change ships as a new migration file rather than another squash — see
-[Install, service and release](../specs/016-install-service-and-release.md),
-rule 9. Delete the old database (with its `-wal` and `-shm` files) and the
-daemon writes a fresh one on its next start; `ariadned` and `ariadne doctor`
-both say so, by name, if it is still there.
+change ships as a new migration file rather than another squash, with one
+named exception — see [Install, service and
+release](../specs/016-install-service-and-release.md), rule 9.
+
+That exception is removing GitLab: it narrowed the one shipped migration's
+`kind` check to `github` alone, in place, on the migration itself, rather
+than adding a new one. A database written by a release that still shipped
+the wider check carries a checksum this one does not recognize either, and
+is refused at open the same way, by the same rule — every goal, task and
+session it held is lost, the same loss rule 9 already accepts, for the same
+pre-1.0 reason. Delete the old database (with its `-wal` and `-shm` files)
+and the daemon writes a fresh one on its next start; `ariadned` and `ariadne
+doctor` both say so, by name, if it is still there.
 
 ## Keys the daemon refuses
 
