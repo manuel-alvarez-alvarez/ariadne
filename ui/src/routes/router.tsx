@@ -50,8 +50,9 @@ function TaskPanelRedirect() {
 const routes: RouteObject[] = [
   { index: true, element: <Navigate to={paths.goals()} replace /> },
   { path: "goals", element: <GoalsListPage />, handle: { title: "Goals" } satisfies PageHandle },
-  // Forge: what the GitHub or GitLab integration of an enabled repository
-  // reads, one screen with a tab each. The screen's title is the parent's.
+  // Forge: what the forge integration (GitHub today) of an enabled
+  // repository reads, one screen with a tab each. The screen's title is the
+  // parent's.
   {
     path: "forge",
     element: <ForgePage />,

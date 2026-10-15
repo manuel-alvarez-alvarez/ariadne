@@ -61,9 +61,9 @@ export function TunnelSettings({ open }: { open: boolean }) {
         />
       </div>
       <FieldDescription>
-        Opens a public URL that forwards to the daemon, so GitHub and GitLab can push pull request
-        and issue changes the moment they happen. Off, each repository with its forge enabled checks
-        for changes every 5 minutes instead. Applies at once.
+        Opens a public URL that forwards to the daemon, so GitHub can push pull request and issue
+        changes the moment they happen. Off, each repository with its forge enabled checks for
+        changes every 5 minutes instead. Applies at once.
       </FieldDescription>
       {current ? <TunnelState tunnel={current} /> : null}
       {tunnel.isError ? (

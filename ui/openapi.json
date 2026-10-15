@@ -338,7 +338,7 @@
         "tags": [
           "repositories"
         ],
-        "summary": "Detect the forge a checkout's remote is on, the same way registration\ndoes. Null for a checkout with no GitHub or GitLab remote.",
+        "summary": "Detect the forge a checkout's remote is on, the same way registration\ndoes. Null for a checkout with no usable forge remote.",
         "operationId": "detect",
         "requestBody": {
           "content": {
@@ -1585,7 +1585,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Edit the body of one of the viewer's own pending forge posts: a pending\nreview comment (GitHub) or a draft note (GitLab), by its own forge id\n(026 rule 25). Refused with 409 once the user submits or publishes it.",
+        "summary": "Edit the body of one of the viewer's own pending forge posts: a pending\nreview comment, by its own forge id (026 rule 25). Refused with 409 once\nthe user submits or publishes it.",
         "operationId": "edit_pending_comment",
         "parameters": [
           {
@@ -1856,7 +1856,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Replace the body of the viewer's own pending review outright (026 rule 25):\nGitHub only, since GitLab holds no pending review body apart from its\ndraft notes. Refused with 409 once the user submits it, or where there\nis none.",
+        "summary": "Replace the body of the viewer's own pending review outright (026 rule\n25). Refused with 409 once the user submits it, or where there is none.",
         "operationId": "edit_pending_review_body",
         "parameters": [
           {
@@ -3937,8 +3937,8 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Open the pull or merge request a task lands by, through the repository's\nown forge CLI, and answer its URL.",
-        "description": "The daemon runs the forge call, never the agent: `gh` or `glab` only ever\nrun here, with the authentication the user already set up for them\n([`crate::forge`]). The current column's agent supplies only what the\ndaemon cannot read off the task or the repository — the title and the\nbody — and gets the URL back to show the user.\n\nOne request per task: a task that already has a `pr_url` answers it again\nand opens nothing, so a retried call never opens a second request.",
+        "summary": "Open the pull request a task lands by, through the repository's own\nforge CLI, and answer its URL.",
+        "description": "The daemon runs the forge call, never the agent: `gh` only ever runs\nhere, with the authentication the user already set up for it\n([`crate::forge`]). The current column's agent supplies only what the\ndaemon cannot read off the task or the repository — the title and the\nbody — and gets the URL back to show the user.\n\nOne request per task: a task that already has a `pr_url` answers it again\nand opens nothing, so a retried call never opens a second request.",
         "operationId": "open_pull_request",
         "parameters": [
           {
@@ -5283,7 +5283,7 @@
               "boolean",
               "null"
             ],
-            "description": "Whether it holds credentials for the service it speaks to, for the\nbinaries that hold any: `gh auth status` and `glab auth status`, asked\nof the daemon's own environment because that is where the polling\nruns. `None` for a binary with nothing to sign in to — git — and for\none that was not found to ask.\n\nThe distinction it exists for is the one that used to be invisible: a\n`gh` that is installed and signed out answers every poll of a pull\nrequest with a failure, and a task published to a forge is then\nwatched by nothing."
+            "description": "Whether it holds credentials for the service it speaks to, for the\nbinaries that hold any: `gh auth status`, asked of the daemon's own\nenvironment because that is where the polling\nruns. `None` for a binary with nothing to sign in to — git — and for\none that was not found to ask.\n\nThe distinction it exists for is the one that used to be invisible: a\n`gh` that is installed and signed out answers every poll of a pull\nrequest with a failure, and a task published to a forge is then\nwatched by nothing."
           },
           "name": {
             "type": "string",
@@ -5475,7 +5475,7 @@
               "boolean",
               "null"
             ],
-            "description": "Put agent replies, reviews and resolves in your pending GitHub review\nor GitLab draft notes, and open pull requests as drafts. Omit for\n`true`."
+            "description": "Put agent replies, reviews and resolves in your pending GitHub\nreview, and open pull requests as drafts. Omit for `true`."
           }
         },
         "additionalProperties": false
@@ -5601,7 +5601,7 @@
             "items": {
               "$ref": "#/components/schemas/BinaryDto"
             },
-            "description": "The other binaries the daemon runs: git, without which no worktree can\nbe cut at all, and the forge CLIs `gh` and `glab`, which are what a\npublished task is watched through."
+            "description": "The other binaries the daemon runs: git, without which no worktree can\nbe cut at all, and the forge CLI `gh`, which is what a published\ntask is watched through."
           },
           "version": {
             "type": "string",
@@ -6186,7 +6186,7 @@
       },
       "EditPendingCommentRequest": {
         "type": "object",
-        "description": "Body of `POST /v1/pull-requests/{id}/comments/edit` (026 rule 25): change the\nbody of one of the viewer's own pending forge posts — a pending review\ncomment (GitHub) or a draft note (GitLab) — while it still waits in the\nuser's forge drafts.",
+        "description": "Body of `POST /v1/pull-requests/{id}/comments/edit` (026 rule 25): change the\nbody of one of the viewer's own pending forge posts — a pending review\ncomment — while it still waits in the user's forge drafts.",
         "required": [
           "forge_id",
           "body"
@@ -6204,7 +6204,7 @@
       },
       "EditPendingReviewBodyRequest": {
         "type": "object",
-        "description": "Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25): GitHub\nonly, since GitLab holds no pending review body apart from its draft\nnotes.",
+        "description": "Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25).",
         "required": [
           "body"
         ],
@@ -6320,7 +6320,7 @@
       },
       "ForgeDetectionDto": {
         "type": "object",
-        "description": "What `POST /v1/forge/detect` answers: the forge a checkout's remote\nnames, read the same way registration reads it. Null for a checkout with\nno usable GitHub or GitLab remote.",
+        "description": "What `POST /v1/forge/detect` answers: the forge a checkout's remote\nnames, read the same way registration reads it. Null for a checkout with\nno usable forge remote.",
         "required": [
           "kind",
           "host",
@@ -6397,10 +6397,9 @@
       },
       "ForgeKind": {
         "type": "string",
-        "description": "The forge a repository's remote is on (025): which CLI speaks to it.",
+        "description": "The forge a repository's remote is on (025): which CLI speaks to it. An\nenum, rather than an open string, so that a later forge is added as a new\nvariant every match arm must answer for, not a string a caller could\nmistype.",
         "enum": [
-          "github",
-          "gitlab"
+          "github"
         ]
       },
       "ForgeTunnelDto": {
@@ -7269,7 +7268,7 @@
         "properties": {
           "changed": {
             "type": "string",
-            "description": "What changed: \"the pending GitHub review comment\", \"the GitHub\npending review body\" or \"the GitLab draft note\"."
+            "description": "What changed: \"the pending GitHub review comment\" or \"the GitHub\npending review body\"."
           },
           "id": {
             "type": "string",
@@ -7279,7 +7278,7 @@
       },
       "PendingReplyDto": {
         "type": "object",
-        "description": "What the reply route answers instead of a posted comment, where the\nrepository holds agent posts for the user's approval (002, 026 rule 24):\nthe reply waits, unposted, as a pending review (GitHub) or a draft note\n(GitLab) in the user's own forge drafts, until the user publishes it\nthere.",
+        "description": "What the reply route answers instead of a posted comment, where the\nrepository holds agent posts for the user's approval (002, 026 rule 24):\nthe reply waits, unposted, as a pending review in the user's own forge\ndrafts, until the user publishes it there.",
         "required": [
           "pending",
           "id"
@@ -7287,7 +7286,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "The forge id of the pending item: the pending review's own id for a\nreply to a top-level conversation comment, the new draft comment's\nfor a reply inside a review thread (GitHub); the draft note's id\n(GitLab)."
+            "description": "The forge id of the pending item: the pending review's own id for a\nreply to a top-level conversation comment, the new draft comment's\nfor a reply inside a review thread."
           },
           "pending": {
             "type": "boolean",
@@ -7297,7 +7296,7 @@
       },
       "PendingReviewDto": {
         "type": "object",
-        "description": "What `POST .../reviews` answers where the repository holds posts back\n(026 rule 24 / 029 rule 13a): the review's findings wait, unposted, in\nthe viewer's own pending review (GitHub) or draft notes (GitLab), in\nplace of the posted comments the route otherwise answers with.",
+        "description": "What `POST .../reviews` answers where the repository holds posts back\n(026 rule 24 / 029 rule 13a): the review's findings wait, unposted, in\nthe viewer's own pending review, in place of the posted comments the\nroute otherwise answers with.",
         "required": [
           "pending"
         ],
@@ -7979,7 +7978,7 @@
           },
           "supervise_posts": {
             "type": "boolean",
-            "description": "Put agent replies, reviews and resolves in your pending GitHub review\nor GitLab draft notes, and open pull requests as drafts."
+            "description": "Put agent replies, reviews and resolves in your pending GitHub\nreview, and open pull requests as drafts."
           },
           "updated_at": {
             "type": "string"
@@ -9434,7 +9433,7 @@
               "boolean",
               "null"
             ],
-            "description": "Put agent replies, reviews and resolves in your pending GitHub review\nor GitLab draft notes, and open pull requests as drafts. Absent =\nunchanged."
+            "description": "Put agent replies, reviews and resolves in your pending GitHub\nreview, and open pull requests as drafts. Absent = unchanged."
           }
         },
         "additionalProperties": false

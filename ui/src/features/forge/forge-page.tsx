@@ -1,5 +1,5 @@
 /**
- * The Forge screen: what the GitHub or GitLab integration of an enabled
+ * The Forge screen: what the forge integration (GitHub today) of an enabled
  * repository reads, in two tabs — the pull requests that ask for the user's
  * review (029) and the open issues a goal can start from (028).
  *

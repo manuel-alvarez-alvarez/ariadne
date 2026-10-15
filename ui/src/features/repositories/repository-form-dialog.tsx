@@ -8,9 +8,10 @@
  * agreed with the user there, not here — this is only the default that choice
  * starts from.
  *
- * A repository whose remote is on GitHub or GitLab also shows one switch for
- * the integration with that forge (spec 025). Editing sends it only when it
- * moved, since an absent field is one the daemon leaves alone. Registering
+ * A repository whose remote is on a forge Ariadne supports (GitHub today)
+ * also shows one switch for the integration with that forge (spec 025).
+ * Editing sends it only when it moved, since an absent field is one the
+ * daemon leaves alone. Registering
  * probes `POST /v1/forge/detect` itself, off the path field, and sends it
  * only once that probe actually found one; a checkout with no such remote
  * shows neither there nor once registered. "Supervise posts" sits right
@@ -448,8 +449,8 @@ export function RepositoryFormDialog({
                 <FieldLabel htmlFor="repository-supervise-posts">Supervise posts</FieldLabel>
               </div>
               <FieldDescription>
-                Put agent replies, reviews and resolves in your pending GitHub review or GitLab
-                draft notes, and open pull requests as drafts.
+                Put agent replies, reviews and resolves in your pending GitHub review, and open pull
+                requests as drafts.
               </FieldDescription>
             </Field>
           ) : null}

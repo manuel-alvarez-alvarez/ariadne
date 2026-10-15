@@ -18,10 +18,10 @@
  * twice on purpose rather than derived from the route table, because a sidebar
  * entry and a route are not the same list: not every route belongs here.
  *
- * Forge is one entry for what the GitHub or GitLab integration of an enabled
- * repository reads — the pull requests that ask for a review and the open
- * issues — each a tab of its screen. Its link is the screen's own address,
- * so it stays active on either tab.
+ * Forge is one entry for what the forge integration (GitHub today) of an
+ * enabled repository reads — the pull requests that ask for a review and the
+ * open issues — each a tab of its screen. Its link is the screen's own
+ * address, so it stays active on either tab.
  *
  * Folded down to a rail ({@link AppSidebar.collapsed}) it is the same list with
  * the labels taken off the screen but not out of the accessibility tree: each

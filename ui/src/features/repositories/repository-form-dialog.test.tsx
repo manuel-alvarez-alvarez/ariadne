@@ -91,7 +91,7 @@ it("shows the forge switch, off, once a path with a forge is entered", async () 
   expect(screen.getByTestId("forge-remote").textContent).toContain("github.com/acme/widgets")
 })
 
-/** A checkout with no GitHub or GitLab remote shows no switch at all. */
+/** A checkout with no forge remote Ariadne supports shows no switch at all. */
 it("shows no forge switch for a path with no forge", async () => {
   const user = userEvent.setup()
   stubDaemon(null)
