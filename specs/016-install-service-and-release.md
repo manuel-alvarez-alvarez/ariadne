@@ -90,14 +90,14 @@ Out: what the daemon does once running (009, 012).
 9. The schema is one squashed init migration, `0001`. A database whose
    `_sqlx_migrations` records a version or a checksum this release does not
    ship is refused at open, with a sentence naming the file to delete: Ariadne
-   is pre-1.0, so a database is recreated rather than migrated. Nine
+   is pre-1.0, so a database is recreated rather than migrated. The eight
    migrations that had accumulated since the previous squash (`0002` through
-   `0009`) were folded back into `0001` as a one-time, deliberate reset; a
-   database written on that nine-file chain, or on the chain before it, is
-   refused the same way, and that loss is accepted. From this reset on, a
-   schema change adds a new migration file rather than editing `0001` again,
-   so a squash stays a rare, deliberate event rather than something a routine
-   change forces.
+   `0009`) were folded back into `0001`, completing the final, one-time
+   squash of that nine-file chain (`0001` through `0009`) before 1.0; a
+   database written anywhere on that chain, or on the chain before it, is
+   refused the same way, and that loss is accepted. From this reset on,
+   every schema change adds a new migration file: `0001` is not edited
+   again.
 10. `ariadne doctor` is the only thing still running when that happens, so it
     is what explains it (014).
 11. At startup, the daemon raises its soft open-file limit towards the hard
@@ -218,12 +218,13 @@ Out: what the daemon does once running (009, 012).
 
 ## Known gap
 
-A squash of the migration chain invalidates every existing database, and the
-built-in advice is to delete it. That is cheap for a fresh install and
-expensive for a machine holding real goal history — which is why rule 9 now
-asks for a new migration file instead, and reserves a squash for a rare,
-deliberate reset. Teaching `doctor` to repair the checksum in place, so an
-existing database survives a squash too, is not implemented.
+The squash this reset performed invalidated every existing database, and the
+built-in advice was to delete it. That was cheap for a fresh install and
+expensive for a machine holding real goal history, which is why rule 9 now
+retires squashing for good: every later schema change adds a new migration
+file instead of touching `0001` again. Teaching `doctor` to repair the
+checksum in place is not implemented, and rule 9 ending future squashes
+removes most of the reason to build it.
 
 The installer fails late and unprompted on an unsupported OS, showing the log
 tail. No script test covers that path; it is proven only by the commits that
