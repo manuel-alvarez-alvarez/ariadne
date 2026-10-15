@@ -99,8 +99,7 @@ and the integration with it (025).
     GitLab draft notes instead of posting directly ([026](026-pull-requests.md)
     rules 23 and 24). It defaults to `true`, is set when the repository is
     registered and changed by editing it, from the CLI and the desktop app
-    alike, and an edit that does not name it keeps it. A repository
-    registered before the flag existed reads it as `true`. The CLI and the
+    alike, and an edit that does not name it keeps it. The CLI and the
     desktop app show it only once the repository's forge integration is on
     (025 rule 16): with nothing to post to, there is nothing for it to hold
     back.
