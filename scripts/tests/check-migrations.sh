@@ -27,17 +27,18 @@ run_guard() {
     fi
 }
 
-# `run_guard`, with the guard's own approved-edit pin overridden to `$1`
-# (path), `$2` (old entry) and `$3` (new entry): the real pin is the real
-# repository's own blobs, which this throwaway repository's synthetic
-# `0001_init.sql` never shares, so the exception logic itself needs its own
-# pin to exercise against a case built here.
-run_guard_as_approved() {
-    CHECK_MIGRATIONS_APPROVED_EDIT_PATH="$1" \
-    CHECK_MIGRATIONS_APPROVED_EDIT_FROM="$2" \
-    CHECK_MIGRATIONS_APPROVED_EDIT_TO="$3" \
-        run_guard
+# A git blob hash is a pure function of its content, never of which
+# repository holds it: writing this real repository's own pre- and
+# post-edit `0001_init.sql` bytes into the throwaway one, verbatim,
+# reproduces the exact same two blobs `check-migrations.sh` pins, so its
+# real, fixed, hardcoded values are what these two cases exercise — no
+# override of any kind, in the script or the environment.
+real_blob() {
+    git -C "$REPO_DIR" cat-file blob "$1" \
+        > "$TEST_ROOT/crates/ariadne-store/migrations/0001_init.sql"
 }
+REAL_EDIT_FROM=f3cd49d06d678e397bd9f5dab62604bf20b8995c
+REAL_EDIT_TO=4c9801a083e435c516fe611df0dcfba5faa889ba
 
 # `main` has moved on since a branch forked from it: set up an `origin`
 # remote whose `main` has already landed a migration (through a squash
@@ -70,30 +71,29 @@ case "$test_case" in
             "$TEST_ROOT/output"
         ;;
     accept-approved-edit)
+        # `main` ships the real pre-edit file, blob for blob, and the
+        # branch makes the real post-edit one, blob for blob: the guard's
+        # own hardcoded pin names exactly this pair, with no override.
+        real_blob "$REAL_EDIT_FROM"
+        git -C "$TEST_ROOT" commit -q -am "test: main ships the real pre-edit 0001_init.sql"
         git -C "$TEST_ROOT" checkout -q -b change
-        before="$(git -C "$TEST_ROOT" ls-tree main -- \
-            crates/ariadne-store/migrations/0001_init.sql | cut -f1)"
-        printf 'CREATE TABLE a (id INTEGER); -- the one approved edit\n' \
-            > "$TEST_ROOT/crates/ariadne-store/migrations/0001_init.sql"
-        git -C "$TEST_ROOT" commit -q -am "test: make exactly the pinned edit"
-        after="$(git -C "$TEST_ROOT" ls-tree HEAD -- \
-            crates/ariadne-store/migrations/0001_init.sql | cut -f1)"
-        [ "$(run_guard_as_approved \
-            crates/ariadne-store/migrations/0001_init.sql "$before" "$after")" = 0 ]
+        real_blob "$REAL_EDIT_TO"
+        git -C "$TEST_ROOT" commit -q -am "test: make exactly the one approved edit"
+        [ "$(run_guard)" = 0 ]
         ;;
     reject-near-miss-edit)
-        # The pin names this exact edit's own "from" blob but a "to" blob
-        # the branch never produces: a different edit of the same migration
-        # still fails, proving the pin accepts only its one exact pair.
+        # The same real pre-edit file on `main`, but the branch's edit is
+        # the approved one with an extra line, so its blob is neither
+        # pinned blob: a different edit of the same migration still fails,
+        # proving the pin accepts only its one exact pair.
+        real_blob "$REAL_EDIT_FROM"
+        git -C "$TEST_ROOT" commit -q -am "test: main ships the real pre-edit 0001_init.sql"
         git -C "$TEST_ROOT" checkout -q -b change
-        before="$(git -C "$TEST_ROOT" ls-tree main -- \
-            crates/ariadne-store/migrations/0001_init.sql | cut -f1)"
-        printf 'CREATE TABLE a (id INTEGER); -- a different edit\n' \
-            > "$TEST_ROOT/crates/ariadne-store/migrations/0001_init.sql"
+        real_blob "$REAL_EDIT_TO"
+        printf -- '-- a further, unapproved edit\n' \
+            >> "$TEST_ROOT/crates/ariadne-store/migrations/0001_init.sql"
         git -C "$TEST_ROOT" commit -q -am "test: make a different edit than the one pinned"
-        unrelated_to="100644 blob 0000000000000000000000000000000000000000"
-        [ "$(run_guard_as_approved \
-            crates/ariadne-store/migrations/0001_init.sql "$before" "$unrelated_to")" = 1 ]
+        [ "$(run_guard)" = 1 ]
         grep -Fq "0001_init.sql: a migration already on main must not be modified" \
             "$TEST_ROOT/output"
         ;;

@@ -247,11 +247,13 @@ Out: what the daemon does once running (009, 012).
   `reject-symlink-replace`, `reject-new-symlink`,
   `reject-landed-after-squash`, `reject-version-collision`). The one named
   exception in rule 9 is pinned by `0001_init.sql`'s exact pre- and
-  post-edit git blob hash in `scripts/check-migrations.sh`'s own
-  `APPROVED_EDIT_FROM`/`APPROVED_EDIT_TO`; a pin an environment override
-  can replace only for a test, which proves the exception logic generically
-  against a throwaway repository's own synthetic edit — exactly that pin
-  passes, and the same "from" paired with any other "to" still fails
+  post-edit git blob hash in `scripts/check-migrations.sh`'s own fixed
+  `APPROVED_EDIT_FROM`/`APPROVED_EDIT_TO`, read from no environment or
+  argument; a git blob hash is a pure function of its content, never of
+  which repository holds it, so writing this same content, verbatim, into
+  a throwaway repository exercises that real, unmodified pin directly —
+  exactly that pair passes, and the same content with one further edit
+  still fails
   (`scripts/tests/check-migrations.sh`: `accept-approved-edit`,
   `reject-near-miss-edit`).
 
