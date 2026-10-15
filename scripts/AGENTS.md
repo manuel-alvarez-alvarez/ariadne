@@ -25,8 +25,9 @@ in the root [`AGENTS.md`](../AGENTS.md).
 - `check-unused-rust` — lists every `pub` item of a library crate that no
   other file names; see [`crates/AGENTS.md`](../crates/AGENTS.md).
 - `check-migrations.sh` — guards `crates/ariadne-store/migrations/` against
-  an edit or deletion of a migration already on `main`, and checks that a
-  new one is correctly numbered; see [`crates/AGENTS.md`](../crates/AGENTS.md).
+  an edit, a deletion or a type change (such as a symlink swap) of a
+  migration already on `main`, and checks that a new one is a correctly
+  numbered regular file; see [`crates/AGENTS.md`](../crates/AGENTS.md).
 - `install-githooks.sh` — sets `core.hooksPath` to `.githooks` from the
   repository root, so the hooks under `.githooks/` run; a repeat run that
   finds the setting already there changes nothing. See the root
@@ -113,7 +114,13 @@ in the root [`AGENTS.md`](../AGENTS.md).
   already on `main` is modified or deleted), `accept-add` (a new, correctly
   numbered migration), `reject-low-number` (a new migration numbered no
   higher than one already shipped), `reject-bad-name` (a new file with no
-  version prefix), `unrelated-change` (a change outside the migrations
+  version prefix), `reject-symlink-replace` (a shipped migration replaced by
+  a symlink), `reject-new-symlink` (a new migration that is a symlink),
+  `reject-landed-after-squash` (a migration that landed on `main` through a
+  squash, after the branch forked, is then edited on the branch),
+  `reject-version-collision` (a branch's own new migration collides with a
+  different one `main` shipped under the same version number while the
+  branch was forked), `unrelated-change` (a change outside the migrations
   directory). Builds a throwaway repository with one shipped migration on
   `main` and drives `check-migrations.sh` against a branch built for the case.
 

@@ -158,13 +158,17 @@ Out: what the daemon does once running (009, 012).
     bootstrap` that loses that race, up to 5 times, and calls `ui_die` only
     once the last try has also failed.
 16. `scripts/check-migrations.sh` enforces rule 9's last sentence by machine
-    rather than by convention alone. It diffs `crates/ariadne-store/migrations/`
-    between HEAD and the latest commit of `main` it is reachable from, and
-    fails on a migration already there that is modified or deleted. A new
-    file must also pass: named `NNNN_description.sql`, with a version number
-    greater than every migration already shipped and than every other new
-    one in the same change. Pull-request CI and the pre-push hook run the
-    identical command.
+    rather than by convention alone. It compares
+    `crates/ariadne-store/migrations/` on the latest commit of `main`
+    directly against HEAD, never their merge-base, so a branch that forked
+    before a migration landed still sees it as shipped rather than as a
+    fresh addition it is free to overwrite. A path already on `main` must
+    stay at the identical git mode and blob — catching an edit and a type
+    change (a symlink swapped in for the file) alike — and a new path must
+    be a regular file named `NNNN_description.sql`, with a version number
+    greater than every migration `main` already ships and than every other
+    new one in the same change. Pull-request CI and the pre-push hook run
+    the identical command.
 
 ## Acceptance criteria
 
@@ -224,10 +228,15 @@ Out: what the daemon does once running (009, 012).
   still finds the markers and keeps the release-please notes
   (`scripts/tests/release-notes.sh`: `first`, `rerun`, `two-targets`,
   `crlf`).
-- A migration already on `main` cannot be edited or deleted, and a new one
-  must be numbered higher than every migration already there
+- A migration already on `main` cannot be edited, deleted or retyped (for
+  instance replaced by a symlink), and a new one must be a regular file
+  numbered higher than every migration already there — including one that
+  landed through a squash after the checking branch forked, and one that
+  collides with a same-numbered migration shipped under a different name
   (`scripts/tests/check-migrations.sh`: `reject-edit`, `reject-delete`,
-  `accept-add`, `reject-low-number`, `reject-bad-name`).
+  `accept-add`, `reject-low-number`, `reject-bad-name`,
+  `reject-symlink-replace`, `reject-new-symlink`,
+  `reject-landed-after-squash`, `reject-version-collision`).
 
 ## Known gap
 

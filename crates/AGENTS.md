@@ -58,13 +58,20 @@ signature reaches goes in the script's `IGNORED`, with its reason.
 migration already on `main` is immutable once shipped: its checksum is what
 `_sqlx_migrations` recorded in every database that has already run it, and
 `ariadne-store` refuses to open a database whose recorded checksum disagrees
-(016, rule 9). The script diffs `crates/ariadne-store/migrations/` between
-HEAD and the latest commit of `main` it is reachable from, and fails on a
-modified or deleted file already there. A new file must pass too: named
-`NNNN_description.sql`, with a version number greater than every migration
-already shipped (and than every other new one in the same change). Run it
-by hand as `scripts/check-migrations.sh`; `scripts/tests/check-migrations.sh`
-proves both halves — a rejected edit or deletion, and an accepted addition.
+(016, rule 9). The script compares `crates/ariadne-store/migrations/` on the
+latest commit of `main` directly against HEAD — never their merge-base,
+which would let a branch that forked before a migration landed see that
+migration as absent and accept its own, different copy of it as a fresh
+addition. A path already on `main` must still be present on HEAD at the
+identical git mode and blob, which catches a content edit and a type change
+(a symlink swapped in for the file has a different mode) alike. A new path
+must be a regular file named `NNNN_description.sql`, with a version number
+greater than every migration `main` already ships (and than every other new
+one in the same change) — which also catches two branches racing to ship
+the same version number under different names. Run it by hand as
+`scripts/check-migrations.sh`; `scripts/tests/check-migrations.sh` proves
+each half, including a migration that landed through a squash after the
+branch forked.
 
 The daemon's integration tests are one test binary, `it`: every file under
 `crates/ariadne-daemon/tests/it/` is a module that `tests/it/main.rs`
