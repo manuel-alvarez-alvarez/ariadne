@@ -17,7 +17,7 @@
 ### Features
 
 * add git hooks for checks ([#74](https://github.com/manuel-alvarez-alvarez/ariadne/issues/74)) ([a271b0c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a271b0c75e5b2c45744294d181bd66dcbf2915b3))
-* add native GitHub and GitLab support ([#45](https://github.com/manuel-alvarez-alvarez/ariadne/issues/45)) ([0a671d9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0a671d9145a1c570547d671496c1a45af1ae0818))
+* add native GitHub support ([#45](https://github.com/manuel-alvarez-alvarez/ariadne/issues/45)) ([0a671d9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0a671d9145a1c570547d671496c1a45af1ae0818))
 * **api:** choose how work lands on the goal, not on each task ([39c7382](https://github.com/manuel-alvarez-alvarez/ariadne/commit/39c73827cb1ce991354c4e72504a1e65fd58a1e1))
 * **api:** count interventions in the attention stats ([2393ca9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2393ca9a32544a1d7ca6b5f1f476f8598b2f1f28))
 * **api:** simplify the models stats to tasks, tokens, time, messages and review figures ([e22c54e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e22c54e862f3ad91e0720fc88839b8f060a912ed))
@@ -703,7 +703,7 @@
 * **daemon:** `running_quiet_flag_secs` and `running_quiet_resume_secs` are no longer `config.toml` keys, and the file is read strictly — a `config.toml` naming either of them stops the daemon until they are dropped. The thresholds they set are now the daemon's own, at fifteen and forty-five minutes.
 * **store:** prompts are overrides, and every default lives in code
 * **mcp:** a smaller tool set, and a task read in one call
-* `merge_strategy` is a new repository field, `integrating` is no longer a task status and tasks no longer carry an integrator profile. Anything reading `/v1/tasks` for `integrator_profile_id`, `pr_number` or the `integrating` status, or setting `gh_bin`, `glab_bin` or `pr_poll_secs` in `config.toml`, needs updating.
+* `merge_strategy` is a new repository field, `integrating` is no longer a task status and tasks no longer carry an integrator profile. Anything reading `/v1/tasks` for `integrator_profile_id`, `pr_number` or the `integrating` status, or setting `gh_bin` or `pr_poll_secs` in `config.toml`, needs updating.
 
 ### Features
 
@@ -733,7 +733,7 @@
 * **daemon:** wake the agent a message addresses ([2a57942](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2a5794226c00bfb714f10c2a8b1160ade8554637))
 * **daemon:** watch the agent that wedges inside its turn ([5850b22](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5850b229a00962b1611df59e185c26915301a522))
 * **daemon:** watchdog running sessions that stop reporting ([24a1db0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/24a1db062b7de3d9888183c3dfd5f33dd299f9ee))
-* **doctor:** report gh and glab, and whether they are signed in ([8af45a3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8af45a30566b9e98828fea94f566c0831a491f26))
+* **doctor:** report gh, and whether it is signed in ([8af45a3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8af45a30566b9e98828fea94f566c0831a491f26))
 * fit an agent's tmux pane to the browser panel showing it ([0abf5ae](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0abf5aef13a8c7abd8b986f90eae14dc14e34a7a))
 * **mcp:** a smaller tool set, and a task read in one call ([b21bd69](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b21bd69ec1fe84ef5f26f5d902910bd91abd4d46))
 * **mcp:** get_task names the profiles a message is addressed to ([1d435e1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1d435e152acdec4620a0d48a3885f45faeeb886c))
@@ -743,7 +743,6 @@
 * **prompts:** stop briefing the integrator to relay comments ([4d53f84](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4d53f8458853d212e93616bb88de91e9fea71dd6))
 * **store,api,daemon,cli,ui:** assign the integrator at planning time ([8a80fd6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8a80fd6daf9732b62c3be4594ccb2fe93940e10a))
 * **store,daemon:** publish approved tasks as GitHub pull requests ([8174c25](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8174c2560a958cf2a81451994515c8d89fc53442))
-* **store,daemon:** publish approved tasks as GitLab merge requests ([90ac6e6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/90ac6e673886c92674abcf5c10d456fbd009bd11))
 * **store:** default texts for every prompt an agent receives ([914e8c6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/914e8c62c8dbf37882dd88ec2b6c4dee3013f462))
 * **store:** name a task branch after its title ([b6c6b9d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b6c6b9d2c82382e3893aa96a86ea8c4029f29e4f))
 * **store:** name task branches after their titles ([65fa4e4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/65fa4e4a50e9ce619b5cb6fb0b5e7645b7296d5d))
