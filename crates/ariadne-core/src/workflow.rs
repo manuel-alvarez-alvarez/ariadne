@@ -62,8 +62,9 @@ pub struct WorkflowStep {
     pub description: String,
     /// The skills an agent on this step loads.
     pub skills: Vec<String>,
-    /// The model rank the step prefers, where the document named one.
-    pub rank: Option<ModelRank>,
+    /// The capability band the step allows: every `ModelRank` planning may
+    /// staff it on, unordered. Empty where the document named none.
+    pub ranks: Vec<ModelRank>,
     /// What the step waits for before the next one starts, where the
     /// document named one.
     pub gate: Option<StepGate>,
@@ -154,7 +155,7 @@ struct ColumnBuilder {
     title: String,
     description: Vec<String>,
     skills: Option<Vec<String>>,
-    rank: Option<ModelRank>,
+    ranks: Option<Vec<ModelRank>>,
     gate: Option<StepGate>,
 }
 
@@ -165,7 +166,7 @@ impl ColumnBuilder {
             title: title.to_string(),
             description: Vec::new(),
             skills: None,
-            rank: None,
+            ranks: None,
             gate: None,
         }
     }
@@ -188,15 +189,34 @@ impl ColumnBuilder {
             );
             return Ok(());
         }
-        if let Some(value) = key_value(line, "rank") {
-            if self.rank.is_some() {
-                return Err(fail(at, format!("column {} repeats the rank key", self.id)));
+        if let Some(value) = key_value(line, "ranks") {
+            if self.ranks.is_some() {
+                return Err(fail(
+                    at,
+                    format!("column {} repeats the ranks key", self.id),
+                ));
             }
-            self.rank = Some(
-                value
+            let mut ranks = Vec::new();
+            for part in value.split(',') {
+                let part = part.trim();
+                if part.is_empty() {
+                    return Err(fail(
+                        at,
+                        format!("column {} needs a nonempty ranks list", self.id),
+                    ));
+                }
+                let rank: ModelRank = part
                     .parse()
-                    .map_err(|e: String| fail(at, format!("column {}: {e}", self.id)))?,
-            );
+                    .map_err(|e: String| fail(at, format!("column {}: {e}", self.id)))?;
+                if ranks.contains(&rank) {
+                    return Err(fail(
+                        at,
+                        format!("column {} repeats rank {part} in its ranks list", self.id),
+                    ));
+                }
+                ranks.push(rank);
+            }
+            self.ranks = Some(ranks);
             return Ok(());
         }
         if let Some(value) = key_value(line, "gate") {
@@ -221,7 +241,7 @@ impl ColumnBuilder {
             title: self.title,
             description: self.description.join(" "),
             skills: self.skills.unwrap_or_default(),
-            rank: self.rank,
+            ranks: self.ranks.unwrap_or_default(),
             gate: self.gate,
         }
     }
@@ -293,17 +313,17 @@ mod tests {
   develop[Develop]
     Build the task on its branch and commit it.
     skills: coding
-    rank: balanced
+    ranks: balanced
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
     Fail the step with the changes to make.
     skills: code-review
-    rank: frontier
+    ranks: balanced, frontier
   merge[Merge]
     Rebase onto the base branch, squash, fast-forward and push.
     skills: merge
-    rank: fast
+    ranks: fast
     gate: merged
 "#;
 
@@ -321,7 +341,7 @@ mod tests {
             "Build the task on its branch and commit it."
         );
         assert_eq!(develop.skills, vec!["coding".to_string()]);
-        assert_eq!(develop.rank, Some(ModelRank::Balanced));
+        assert_eq!(develop.ranks, vec![ModelRank::Balanced]);
         assert_eq!(develop.gate, Some(StepGate::Committed));
 
         let review = &workflow.steps[1];
@@ -330,7 +350,7 @@ mod tests {
             "Judge the change against the task and the repository rules. Fail the step with \
              the changes to make."
         );
-        assert_eq!(review.rank, Some(ModelRank::Frontier));
+        assert_eq!(review.ranks, vec![ModelRank::Balanced, ModelRank::Frontier]);
         assert_eq!(review.gate, None);
 
         let merge = &workflow.steps[2];
@@ -344,17 +364,17 @@ mod tests {
   develop[Develop]
     Build the task on its branch and commit it.
     skills: coding
-    rank: balanced
+    ranks: balanced
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
     Fail the step with the changes to make.
     skills: code-review
-    rank: frontier
+    ranks: balanced, frontier
   pr[Pull request]
     Push the branch, open the request and keep it until it merges or closes.
     skills: pr-babysit
-    rank: balanced
+    ranks: balanced
     gate: request-merged
 "#;
         let workflow = parse(text).unwrap();
@@ -393,10 +413,57 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_rank_is_refused_naming_its_line() {
-        let text = "workflow x\n  a[A]\n    rank: speedy\n";
+    fn an_unknown_rank_in_the_ranks_list_is_refused_naming_its_line() {
+        let text = "workflow x\n  a[A]\n    ranks: speedy\n";
         let err = parse(text).unwrap_err();
         assert_eq!(err.line, 3);
+        assert!(
+            err.message.contains("unknown model rank"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn a_blank_ranks_list_is_refused_naming_its_line() {
+        let text = "workflow x\n  a[A]\n    ranks:\n";
+        let err = parse(text).unwrap_err();
+        assert_eq!(err.line, 3);
+        assert!(err.message.contains("nonempty"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_duplicate_rank_in_the_ranks_list_is_refused_naming_its_line() {
+        let text = "workflow x\n  a[A]\n    ranks: balanced, balanced\n";
+        let err = parse(text).unwrap_err();
+        assert_eq!(err.line, 3);
+        assert!(err.message.contains("repeats rank"), "{}", err.message);
+    }
+
+    #[test]
+    fn rank_order_in_the_ranks_list_does_not_matter() {
+        let forward = parse("workflow x\n  a[A]\n    ranks: balanced, frontier\n").unwrap();
+        let backward = parse("workflow x\n  a[A]\n    ranks: frontier, balanced\n").unwrap();
+        let as_set = |ranks: &[ModelRank]| {
+            let mut set = ranks.to_vec();
+            set.sort_by_key(|r| r.as_str());
+            set
+        };
+        assert_eq!(
+            as_set(&forward.steps[0].ranks),
+            as_set(&backward.steps[0].ranks)
+        );
+    }
+
+    /// `rank:` named one rank before capability bands; it is not a
+    /// compatibility alias for `ranks:` and falls through to a plain
+    /// description line instead.
+    #[test]
+    fn a_rank_key_is_not_a_compatibility_alias_for_ranks() {
+        let text = "workflow x\n  a[A]\n    rank: balanced\n";
+        let workflow = parse(text).unwrap();
+        assert_eq!(workflow.steps[0].ranks, Vec::new());
+        assert_eq!(workflow.steps[0].description, "rank: balanced");
     }
 
     #[test]

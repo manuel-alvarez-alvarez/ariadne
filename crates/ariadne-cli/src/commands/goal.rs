@@ -16,7 +16,7 @@ use ariadne_core::GoalStatus;
 use super::follow;
 use super::query_path;
 use super::resolve::{self, Kind};
-use super::{Subject, confirm, parse_effort, parse_model};
+use super::{Subject, confirm, parse_effort, parse_model, ranks_label};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, dash, empty_state, moment, ok_id_line, print, print_kv,
@@ -612,9 +612,10 @@ fn goal_repo_label(repo: &RepositoryDto) -> String {
 }
 
 /// A goal's workflow columns, one line each, in column order: the id and the
-/// title, then the rank and the gate the document named it — a dash for
-/// either where the column left it to the default. A goal whose columns the
-/// daemon did not send reads as a dash rather than an empty line.
+/// title, then the capability band and the gate the document named it — a
+/// dash for either where the column left it to the default. A goal whose
+/// columns the daemon did not send reads as a dash rather than an empty
+/// line.
 fn workflow_columns(steps: &[ariadne_api::workflows::WorkflowStepDto], indent: &str) -> String {
     if steps.is_empty() {
         return "-".to_string();
@@ -623,10 +624,10 @@ fn workflow_columns(steps: &[ariadne_api::workflows::WorkflowStepDto], indent: &
         .iter()
         .map(|s| {
             format!(
-                "{} [{}] rank={} gate={}",
+                "{} [{}] ranks={} gate={}",
                 s.id,
                 s.title,
-                dash(s.rank.map(|r| r.as_str())),
+                ranks_label(&s.ranks),
                 dash(s.gate.map(|g| g.as_str())),
             )
         })
@@ -955,7 +956,7 @@ mod tests {
     /// document named it, with a dash for either it left to the default; a
     /// goal with no columns to show is a dash and not an empty line.
     #[test]
-    fn workflow_columns_reads_the_rank_and_the_gate() {
+    fn workflow_columns_reads_the_ranks_and_the_gate() {
         use ariadne_api::workflows::WorkflowStepDto;
         use ariadne_core::models::ModelRank;
         use ariadne_core::workflow::StepGate;
@@ -967,7 +968,7 @@ mod tests {
                 title: "Develop".into(),
                 description: String::new(),
                 skills: vec!["coding".into()],
-                rank: Some(ModelRank::Balanced),
+                ranks: vec![ModelRank::Balanced],
                 gate: Some(StepGate::Committed),
             },
             WorkflowStepDto {
@@ -975,16 +976,19 @@ mod tests {
                 title: "Review".into(),
                 description: String::new(),
                 skills: vec!["code-review".into()],
-                rank: None,
+                ranks: vec![ModelRank::Balanced, ModelRank::Frontier],
                 gate: None,
             },
         ];
         let lines = workflow_columns(&steps, "\n  ");
         assert!(
-            lines.contains("develop [Develop] rank=balanced gate=committed"),
+            lines.contains("develop [Develop] ranks=balanced gate=committed"),
             "{lines}"
         );
-        assert!(lines.contains("review [Review] rank=- gate=-"), "{lines}");
+        assert!(
+            lines.contains("review [Review] ranks=balanced, frontier gate=-"),
+            "{lines}"
+        );
     }
 
     #[test]

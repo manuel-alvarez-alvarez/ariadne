@@ -169,18 +169,20 @@ pub(crate) fn orchestrator_briefing(
 }
 
 /// One line per column of a goal's workflow, in column order: its id, its
-/// title, what it does, and the skills and rank its agent is staffed on.
+/// title, what it does, and the skills and capability band its agent may be
+/// staffed on.
 fn column_lines(steps: &[GoalStep]) -> String {
     steps
         .iter()
         .map(|s| {
             let skills: Vec<String> = serde_json::from_str(&s.skills).unwrap_or_default();
+            let ranks: Vec<String> = serde_json::from_str(&s.ranks).unwrap_or_default();
             let mut line = format!("- {} [{}]: {}", s.id, s.title, s.description);
             if !skills.is_empty() {
                 line.push_str(&format!(" Skills: {}.", skills.join(", ")));
             }
-            if let Some(rank) = &s.rank {
-                line.push_str(&format!(" Rank: {rank}."));
+            if !ranks.is_empty() {
+                line.push_str(&format!(" Ranks: {}.", ranks.join(", ")));
             }
             line
         })
@@ -447,7 +449,7 @@ mod tests {
         }
     }
 
-    fn step(ordinal: i64, id: &str, title: &str, skills: &str, rank: Option<&str>) -> GoalStep {
+    fn step(ordinal: i64, id: &str, title: &str, skills: &str, ranks: &str) -> GoalStep {
         GoalStep {
             goal_id: goal().id,
             ordinal,
@@ -455,22 +457,22 @@ mod tests {
             title: title.into(),
             description: format!("{title} the change."),
             skills: skills.into(),
-            rank: rank.map(str::to_string),
+            ranks: ranks.into(),
             gate: None,
         }
     }
 
     fn steps() -> Vec<GoalStep> {
         vec![
-            step(0, "develop", "Develop", r#"["coding"]"#, Some("balanced")),
+            step(0, "develop", "Develop", r#"["coding"]"#, r#"["balanced"]"#),
             step(
                 1,
                 "review",
                 "Review",
                 r#"["code-review"]"#,
-                Some("frontier"),
+                r#"["frontier"]"#,
             ),
-            step(2, "merge", "Merge", r#"["merge"]"#, None),
+            step(2, "merge", "Merge", r#"["merge"]"#, "[]"),
         ]
     }
 
@@ -900,13 +902,13 @@ mod tests {
         );
         assert!(
             briefing.contains(
-                "- develop [Develop]: Develop the change. Skills: coding. Rank: balanced."
+                "- develop [Develop]: Develop the change. Skills: coding. Ranks: balanced."
             ),
             "{briefing}"
         );
         assert!(
             briefing.contains("- merge [Merge]: Merge the change. Skills: merge."),
-            "a column with no rank names none: {briefing}"
+            "a column with no ranks names none: {briefing}"
         );
         assert!(!briefing.contains("Landing"), "{briefing}");
         assert!(!briefing.contains('{'), "{briefing}");

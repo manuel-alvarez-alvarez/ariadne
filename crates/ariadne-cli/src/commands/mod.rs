@@ -178,6 +178,19 @@ pub(crate) fn agent_label(skills: &[String]) -> String {
     }
 }
 
+/// A column's capability band, as `workflow check` and `goal inspect` show
+/// it: every rank it named, joined, or a dash where it named none.
+pub(crate) fn ranks_label(ranks: &[ariadne_core::models::ModelRank]) -> String {
+    match ranks.is_empty() {
+        true => "-".to_string(),
+        false => ranks
+            .iter()
+            .map(|r| r.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
+}
+
 /// `skills · model @ effort`: what an agent knows, and what it runs on.
 ///
 /// An effort that was never pinned says nothing at all rather than a word for

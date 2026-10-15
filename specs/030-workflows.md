@@ -1,8 +1,8 @@
 ---
 id: workflows
 status: current
-updated: 2026-10-14
-areas: [core, store, api, daemon, prompts]
+updated: 2026-10-15
+areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
   - crates/ariadne-core/src/workflow.rs
@@ -17,6 +17,7 @@ tests:
   - crates/ariadne-daemon/tests/it/plan_finalize.rs
   - crates/ariadne-daemon/tests/it/repositories.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
+  - crates/ariadne-cli/src/commands/doctor/checks.rs
 ---
 
 # Workflows
@@ -51,17 +52,17 @@ workflow develop-review-merge
   develop[Develop]
     Build the task on its branch and commit it.
     skills: coding
-    rank: balanced
+    ranks: balanced
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
     Fail the step with the changes to make.
     skills: code-review
-    rank: frontier
+    ranks: balanced, frontier
   merge[Merge]
     Rebase onto the base branch, squash, fast-forward and push.
     skills: merge
-    rank: fast
+    ranks: fast
     gate: merged
 ```
 
@@ -70,12 +71,18 @@ workflow develop-review-merge
    one document.
 3. Every non-blank line after a column line and before the next column line
    belongs to that column.
-4. A body line `skills: a, b` names the skills, comma-separated. `rank:
-   <word>` names one of `fast`, `balanced`, `frontier`, `local`. `gate:
-   <word>` names one of `committed`, `pushed`, `merged`, `request-merged`.
-   Each key appears at most once per column. Every other body line is a
-   description line. The description joins its lines with one space.
-   Skills, rank, gate and description are all optional.
+4. A body line `skills: a, b` names the skills, comma-separated. `ranks:
+   a, b` names the column's capability band: one or more of `fast`,
+   `balanced`, `frontier`, `local`, comma-separated, unordered, each at most
+   once — a column that lists more than one lets planning staff it on any
+   rank it named. `ranks:` with no word, or a word that repeats another in
+   the same list or that names none of the four, is refused naming the
+   line. `gate: <word>` names one of `committed`, `pushed`, `merged`,
+   `request-merged`. Each key appears at most once per column. Every other
+   body line is a description line. The description joins its lines with
+   one space. Skills, ranks, gate and description are all optional; `rank:`
+   (singular) is not read as a compatibility alias for `ranks:` and falls
+   through to a description line instead.
 5. Blank lines are ignored. Indentation is ignored. At least one column is
    required.
 6. A document that breaks a rule is refused with the line number and one
@@ -83,11 +90,12 @@ workflow develop-review-merge
 
 `ariadne_core::workflow::parse` reads this syntax into a `Workflow { name,
 steps: Vec<WorkflowStep> }`, each step carrying its `id`, `title`,
-`description`, `skills`, an optional `rank` (`ariadne_core::models::ModelRank`)
-and an optional `gate` (`ariadne_core::workflow::StepGate`). The document
-spells a gate's fourth word with a hyphen, `request-merged`, like every other
-kebab-case word in it; the wire spells the same gate `request_merged`, like
-every other wire enum (011).
+`description`, `skills`, its capability band `ranks`
+(`Vec<ariadne_core::models::ModelRank>`, empty where the document named
+none) and an optional `gate` (`ariadne_core::workflow::StepGate`). The
+document spells a gate's fourth word with a hyphen, `request-merged`, like
+every other kebab-case word in it; the wire spells the same gate
+`request_merged`, like every other wire enum (011).
 
 ## The catalog
 
@@ -157,10 +165,11 @@ every other wire enum (011).
    (`repositories.default_workflow`, `develop-review-merge` where none was
    set). `goals.workflow` is never null. The first repository follows the
    existing path and base branch ordering. Creation copies each column into
-   `goal_steps` in order — id, title, description, skills, rank, gate — so
-   later catalog edits affect later goals only. `GoalDto.workflow` and
-   `GoalDto.steps` carry the snapshot; `RepositoryDto.default_workflow` the
-   default. A repository's default changes no existing goal.
+   `goal_steps` in order — id, title, description, skills, ranks, gate,
+   every listed rank snapshotted whole — so later catalog edits affect
+   later goals only. `GoalDto.workflow` and `GoalDto.steps` carry the
+   snapshot; `RepositoryDto.default_workflow` the default. A repository's
+   default changes no existing goal.
 2. A task is staffed one `agent` per column, each with its own model, effort,
    skills and brief (`AgentAssignment { step, skills, model, effort, brief
    }`; `CreateTaskRequest.agents`, `UpdateTaskRequest.agents`). An agent
@@ -234,8 +243,9 @@ every other wire enum (011).
    task uses the configured worktree cleanup; a failed or cancelled task
    keeps its worktree, so the work is recoverable.
 8. The orchestrator briefing names the workflow and one line per column — its
-   id, title, skills, rank and gate — where it named the landing before
-   (003 rule 1, `ORCHESTRATOR_BRIEFING`'s `{workflow}` and `{columns}`).
+   id, title, skills, capability band and gate — where it named the landing
+   before (003 rule 1, `ORCHESTRATOR_BRIEFING`'s `{workflow}` and
+   `{columns}`).
    Step sessions carry seat `agent`, share the task branch, and load their
    assigned skill documents. `TaskUsageDto { total, agents }` names each
    agent's column; `GoalUsageDto { total, orchestrator, agents }` splits the
@@ -253,7 +263,13 @@ every other wire enum (011).
    author/reviewer/landing pipeline this spec replaced included — is
    refused at open with the pre-squash message, naming the file to delete:
    Ariadne is pre-1.0, so such a database is recreated rather than migrated
-   (016 rule 9).
+   (016 rule 9). `goal_steps.ranks` (`NOT NULL`, a JSON array, added by
+   migration `0002`) replaced the single, nullable `goal_steps.rank`: a
+   snapshotted column's one-time single rank cannot become a nonempty
+   capability band without guessing, so `ariadne_store::Store::open` checks
+   for the superseded `rank` column before any migration runs and refuses
+   such a database the same way, naming the file to delete, rather than
+   letting a migration rebuild the table out from under it.
 10. The `pr` column of `develop-review-pr` stages `pr-babysit`. Its agent
     pushes the branch and opens the request through `open_pull_request`
     once; a repeat returns the same URL, and a session that starts with
@@ -300,17 +316,24 @@ every other wire enum (011).
 ## Acceptance criteria
 
 - The parser accepts the two shipped documents and refuses a document with
-  no `workflow` line, a duplicate column id, a repeated key, an unknown
-  rank, an unknown gate, or no column, each refusal naming its line
+  no `workflow` line, a duplicate column id, a repeated key, a blank,
+  duplicated or unknown rank in a `ranks:` list, an unknown gate, or no
+  column, each refusal naming its line
   (`workflow.rs::the_shipped_develop_review_merge_document_parses`,
   `::the_shipped_develop_review_pr_document_parses`,
   `::a_document_with_no_workflow_line_is_refused_naming_its_line`,
   `::a_duplicate_column_id_is_refused_naming_its_line`,
   `::a_repeated_key_is_refused_naming_its_line`,
-  `::an_unknown_rank_is_refused_naming_its_line`,
+  `::an_unknown_rank_in_the_ranks_list_is_refused_naming_its_line`,
+  `::a_blank_ranks_list_is_refused_naming_its_line`,
+  `::a_duplicate_rank_in_the_ranks_list_is_refused_naming_its_line`,
   `::an_unknown_gate_is_refused_naming_its_line`,
   `::a_document_with_no_column_is_refused`,
   `::blank_lines_and_indentation_are_ignored`).
+- A `ranks:` list's order makes no difference to the capability band it
+  defines, and `rank:` is not read as a compatibility alias for it
+  (`workflow.rs::rank_order_in_the_ranks_list_does_not_matter`,
+  `::a_rank_key_is_not_a_compatibility_alias_for_ranks`).
 - `request-merged` is spelled with a hyphen in the document and
   `request_merged` on the wire
   (`workflow.rs::request_merged_is_spelled_with_a_hyphen_in_the_document_and_an_underscore_on_the_wire`).
@@ -409,14 +432,20 @@ every other wire enum (011).
 - The orchestrator sees each column, and agents load their assigned models
   and skill documents
   (`workflow_steps.rs::the_orchestrator_reads_the_workflow_and_agents_load_their_own_skills`).
-- OpenAPI exposes both step routes, their responses, and every workflow
-  field, and nothing of a landing, an author, a reviewer or a pick
+- OpenAPI exposes both step routes, their responses, every workflow field —
+  `WorkflowStepDto.ranks` as a `ModelRank` array, and no `rank` field at all
+  — and nothing of a landing, an author, a reviewer or a pick
   (`workflow_steps.rs::openapi_describes_the_step_routes_and_workflow_fields`).
 - Invalid stored skills, ranks and gates return errors without panics or
   step changes
   (`store.rs::invalid_stored_column_skills_refuse_staffing_without_writing_a_task`,
   `workflow_steps.rs::an_invalid_stored_gate_refuses_completion_without_moving_the_task`,
   `::invalid_stored_columns_return_goal_errors`).
+- A database whose `goal_steps` still carries the single `rank` column is
+  refused at open with a message naming the file to delete, and `doctor`
+  reports it the same way
+  (`store.rs::a_database_that_still_carries_the_single_rank_column_is_refused_with_a_reset_message`,
+  `checks.rs::a_pre_ranks_database_fails_the_check`).
 - The orchestrator briefing names the workflow and one line per column
   (`prompts.rs::the_orchestrator_is_briefed_with_the_workflow_and_its_columns`,
   `defaults.rs::the_orchestrator_briefing_names_the_workflow_and_its_columns`).
@@ -449,5 +478,8 @@ every other wire enum (011).
 `crates/ariadne-daemon/src/scheduler/tasks.rs`,
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
 `crates/ariadne-daemon/src/launcher.rs`,
+`crates/ariadne-store/src/lib.rs` (`pre_ranks_database`),
+`crates/ariadne-cli/src/commands/doctor/checks.rs`,
 `crates/ariadne-daemon/src/agents/prompts.rs`,
-`crates/ariadne-store/migrations/0001_init.sql`.
+`crates/ariadne-store/migrations/0001_init.sql`,
+`crates/ariadne-store/migrations/0002_workflow_rank_bands.sql`.

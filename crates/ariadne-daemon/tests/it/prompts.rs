@@ -117,12 +117,13 @@ async fn the_orchestrator_briefing_names_the_workflow_and_its_columns_and_no_lan
         .iter()
         .map(|s| {
             let skills: Vec<String> = serde_json::from_str(&s.skills).unwrap();
+            let ranks: Vec<String> = serde_json::from_str(&s.ranks).unwrap();
             let mut line = format!("- {} [{}]: {}", s.id, s.title, s.description);
             if !skills.is_empty() {
                 line.push_str(&format!(" Skills: {}.", skills.join(", ")));
             }
-            if let Some(rank) = &s.rank {
-                line.push_str(&format!(" Rank: {rank}."));
+            if !ranks.is_empty() {
+                line.push_str(&format!(" Ranks: {}.", ranks.join(", ")));
             }
             line
         })
@@ -157,6 +158,54 @@ async fn the_orchestrator_briefing_names_the_workflow_and_its_columns_and_no_lan
         );
     }
     assert!(!briefing.contains("Landing"), "{briefing}");
+
+    // Independent of `columns` above, which recomputes the same way the
+    // daemon does: a snapshot that silently dropped a rank would still
+    // match it. These two lines are the shipped document's own ranks,
+    // typed out here rather than read back off the row.
+    assert!(
+        briefing.lines().any(|line| line
+            == "- develop [Develop]: Build the task on its branch and commit \
+                                   it. Skills: coding. Ranks: balanced."),
+        "{briefing}"
+    );
+    assert!(
+        briefing.lines().any(|line| line
+            == "- review [Review]: Judge the change against the task and the repository \
+                rules. Fail the step with the changes to make. Skills: code-review. Ranks: \
+                balanced, frontier."),
+        "{briefing}"
+    );
+
+    // And a goal started after the catalog is edited snapshots the edit,
+    // not a value this test or the assembler hardcoded elsewhere: proof
+    // the line above tracks the document rather than a constant the two
+    // happen to share.
+    let edited = ariadne_store::defaults::default_workflow_document(&goal.workflow)
+        .unwrap()
+        .replacen("ranks: fast", "ranks: local", 1);
+    h.store
+        .set_workflow_document(&goal.workflow, &edited)
+        .await
+        .unwrap();
+    let repo2 = h.repository(&h.at("repo2")).await;
+    let edited_goal = h.goal_on(&repo2, test_pin()).await;
+    let edited_session = h
+        .launcher
+        .spawn_orchestrator(&edited_goal.id)
+        .await
+        .unwrap();
+    let edited_briefing = h
+        .launch_file(&edited_session.id)
+        .unwrap()
+        .initial_prompt
+        .unwrap();
+    assert!(
+        edited_briefing
+            .lines()
+            .any(|line| line.starts_with("- merge [Merge]:") && line.contains("Ranks: local.")),
+        "{edited_briefing}"
+    );
 }
 
 /// The first briefing of a column is the built-in template with every

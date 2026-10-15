@@ -1198,7 +1198,7 @@ mod tests {
             title: id.into(),
             description: String::new(),
             skills: "[]".into(),
-            rank: None,
+            ranks: "[]".into(),
             gate: None,
         };
         let steps = [step(0, "develop"), step(1, "review"), step(2, "pr")];

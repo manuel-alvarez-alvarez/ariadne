@@ -1008,6 +1008,9 @@ pub struct GoalStep {
     pub title: String,
     pub description: String,
     pub skills: String,
-    pub rank: Option<String>,
+    /// JSON array of the capability band the column named: every
+    /// `ModelRank` planning may staff it on. `"[]"` where the document
+    /// named none.
+    pub ranks: String,
     pub gate: Option<String>,
 }

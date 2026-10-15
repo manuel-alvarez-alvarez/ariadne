@@ -1187,6 +1187,7 @@ async fn openapi_describes_the_step_routes_and_workflow_fields() {
     }
     for (schema, fields) in [
         ("GoalDto", vec!["workflow", "steps"]),
+        ("WorkflowStepDto", vec!["ranks"]),
         ("CreateGoalRequest", vec!["workflow"]),
         ("RepositoryDto", vec!["default_workflow"]),
         ("CreateRepositoryRequest", vec!["default_workflow"]),
@@ -1214,6 +1215,17 @@ async fn openapi_describes_the_step_routes_and_workflow_fields() {
             .as_array()
             .unwrap()
             .contains(&json!("agent"))
+    );
+    assert!(
+        doc["components"]["schemas"]["WorkflowStepDto"]["properties"]["rank"].is_null(),
+        "capability bands replaced the single rank field"
+    );
+    let ranks = &doc["components"]["schemas"]["WorkflowStepDto"]["properties"]["ranks"];
+    assert_eq!(ranks["type"], json!("array"), "{ranks}");
+    assert_eq!(
+        ranks["items"]["$ref"],
+        json!("#/components/schemas/ModelRank"),
+        "{ranks}"
     );
 }
 
@@ -1324,13 +1336,13 @@ async fn invalid_stored_columns_return_goal_errors() {
     ))
     .await
     .unwrap();
-    for (skills, rank, gate, field) in [
-        ("{}", "fast", "committed", "skills"),
-        ("[]", "unknown", "committed", "rank"),
-        ("[]", "fast", "unknown", "gate"),
+    for (skills, ranks, gate, field) in [
+        ("{}", r#"["fast"]"#, "committed", "skills"),
+        ("[]", r#"["unknown"]"#, "committed", "ranks"),
+        ("[]", r#"["fast"]"#, "unknown", "gate"),
     ] {
-        sqlx::query("UPDATE goal_steps SET skills = ?, rank = ?, gate = ? WHERE goal_id = ? AND id = 'develop'")
-            .bind(skills).bind(rank).bind(gate).bind(&task.goal_id).execute(&mut db).await.unwrap();
+        sqlx::query("UPDATE goal_steps SET skills = ?, ranks = ?, gate = ? WHERE goal_id = ? AND id = 'develop'")
+            .bind(skills).bind(ranks).bind(gate).bind(&task.goal_id).execute(&mut db).await.unwrap();
         let refused = h
             .error(
                 crate::common::get(&format!("/v1/goals/{}", task.goal_id)),

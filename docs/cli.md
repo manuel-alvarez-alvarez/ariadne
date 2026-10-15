@@ -657,7 +657,7 @@ Leaving the `:SKILLS` half out stages the column's own skills. `task update
 column, and one line per column — its skills, its pin, and its session.
 `task history` paints the column a move left and the one it entered beside
 the statuses. `goal inspect` prints the workflow and its columns, each with
-its rank and its gate:
+its capability band — every rank it lists — and its gate:
 
 ```sh
 ariadne task ls --step review

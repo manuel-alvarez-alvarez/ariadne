@@ -1528,7 +1528,7 @@ mod tests {
         "Split the goal into tracer tasks.",
         "Write each ticket in STE",
         "Staff one agent on every column with `create_task`.",
-        "Give each agent one model from `list_models`, at the column's rank.",
+        "Give each agent one model from `list_models`, at one of the column's ranks.",
         "Show the user the tasks and the models.",
         "Revise until the user writes an explicit yes.",
         "Call `finalize_plan`.",
@@ -1684,13 +1684,13 @@ mod tests {
         );
     }
 
-    /// The orchestrator staffs each column on the rank the column prefers,
-    /// and where a column names none, the lowest rank and the lowest effort
-    /// that finish the work.
+    /// The orchestrator staffs each column on one of the ranks its
+    /// capability band allows, and where a column names none, the lowest
+    /// rank and the lowest effort that finish the work.
     ///
     /// A model description says what a model can do and nothing about what it
     /// costs, so an orchestrator sized on the description alone staffed a
-    /// frontier model on a one-line fix. A workflow column carries the rank
+    /// frontier model on a one-line fix. A workflow column carries the band
     /// its work earns. `local` is off the ladder: a local model runs on the
     /// user's own machine, so it is a choice the user makes rather than a
     /// cheaper rung.
@@ -1699,8 +1699,8 @@ mod tests {
         // Read on one line, so where the document wraps holds nothing.
         let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
         for sentence in [
-            "Give each agent one model from `list_models`, at the column's rank.",
-            "Where a column names no rank, take the lowest rank and effort that finish the work.",
+            "Give each agent one model from `list_models`, at one of the column's ranks.",
+            "Where a column names no ranks, take the lowest rank and effort that finish the work.",
             "Staff `local` only where the user names it.",
             "State a reason for each step up.",
         ] {

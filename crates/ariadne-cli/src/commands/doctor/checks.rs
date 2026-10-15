@@ -152,19 +152,24 @@ pub(super) async fn home(
                 "no daemon has listened on this home yet",
             )
         },
-        // A database from before the schema was squashed is why a daemon that
-        // used to start does not, and nothing else in the report would say so:
-        // the daemon refuses to open it, so it is not running to be asked and
-        // this shell reads the file itself.
+        // A database from before the schema was squashed, or one that still
+        // carries the single-rank schema workflow capability bands
+        // replaced, is why a daemon that used to start does not, and
+        // nothing else in the report would say so: the daemon refuses to
+        // open it, so it is not running to be asked and this shell reads
+        // the file itself.
         match ariadne_store::pre_squash_database(&db).await {
             Some(why) => Check::fail("database", why).hint(format!("rm {}", db.display())),
-            None => there(
-                "database",
-                &db,
-                db.is_file(),
-                "does not exist yet",
-                FIRST_START,
-            ),
+            None => match ariadne_store::pre_ranks_database(&db).await {
+                Some(why) => Check::fail("database", why).hint(format!("rm {}", db.display())),
+                None => there(
+                    "database",
+                    &db,
+                    db.is_file(),
+                    "does not exist yet",
+                    FIRST_START,
+                ),
+            },
         },
         {
             let pid_file = endpoint::pid_file(home);
@@ -472,6 +477,44 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        pool.close().await;
+
+        let checks = home(Some(dir.path()), Some(endpoint::parse_config(dir.path()))).await;
+        let check = by_name(&checks, "database");
+        assert_eq!(check.status, Status::Fail, "{check:?}");
+        assert!(
+            check.detail.contains(&db.display().to_string()),
+            "{check:?}"
+        );
+        assert!(
+            check.hint.as_deref().is_some_and(|h| h.contains("rm ")),
+            "and says what to do about it: {check:?}"
+        );
+    }
+
+    /// A database that still carries the single `rank` column fails the
+    /// check by the name of the file to delete, the same as a pre-squash
+    /// one: there is no way to turn one snapshotted rank into a capability
+    /// band without guessing, so `ariadne_store::Store::open` refuses it
+    /// before migration `0002` ever runs.
+    #[tokio::test]
+    async fn a_pre_ranks_database_fails_the_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ariadne.db");
+        drop(ariadne_store::Store::open(&db).await.unwrap());
+
+        let checks = home(Some(dir.path()), Some(endpoint::parse_config(dir.path()))).await;
+        assert_eq!(by_name(&checks, "database").status, Status::Ok);
+
+        // The column workflow capability bands replaced is what every
+        // database of that era still has.
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", db.display()))
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE goal_steps ADD COLUMN rank TEXT")
+            .execute(&pool)
+            .await
+            .unwrap();
         pool.close().await;
 
         let checks = home(Some(dir.path()), Some(endpoint::parse_config(dir.path()))).await;
