@@ -9,8 +9,9 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   every pull request: `fmt` checks `cargo fmt` on the workspace and on
   `ui/src-tauri`; `rust` runs `cargo machete .`, `cargo build --workspace
   --bins`, `cargo nextest run --workspace`, `cargo test --doc --workspace`,
-  `cargo clippy --workspace --all-targets -- -D warnings` and
-  `scripts/check-unused-rust`, on Ubuntu and macOS; `ui` runs `npm run lint`,
+  `cargo clippy --workspace --all-targets -- -D warnings`,
+  `scripts/check-unused-rust` and `scripts/check-migrations.sh`, on Ubuntu
+  and macOS; `ui` runs `npm run lint`,
   `npm run typecheck`, `npm run check:unused` and `npm test` under `ui/`;
   `tauri` runs `cargo check` under `ui/src-tauri` on Ubuntu and macOS.
 - [`workflows/release-please.yml`](workflows/release-please.yml) — runs on

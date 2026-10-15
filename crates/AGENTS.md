@@ -54,6 +54,18 @@ other crate uses: to rustc, that is the library's interface.
 item, or make it private. An item that a derive, serde, utoipa or a public
 signature reaches goes in the script's `IGNORED`, with its reason.
 
+`scripts/check-migrations.sh` guards `ariadne-store`'s migration files. A
+migration already on `main` is immutable once shipped: its checksum is what
+`_sqlx_migrations` recorded in every database that has already run it, and
+`ariadne-store` refuses to open a database whose recorded checksum disagrees
+(016, rule 9). The script diffs `crates/ariadne-store/migrations/` between
+HEAD and the latest commit of `main` it is reachable from, and fails on a
+modified or deleted file already there. A new file must pass too: named
+`NNNN_description.sql`, with a version number greater than every migration
+already shipped (and than every other new one in the same change). Run it
+by hand as `scripts/check-migrations.sh`; `scripts/tests/check-migrations.sh`
+proves both halves — a rejected edit or deletion, and an accepted addition.
+
 The daemon's integration tests are one test binary, `it`: every file under
 `crates/ariadne-daemon/tests/it/` is a module that `tests/it/main.rs`
 declares, and a new file runs only once it is declared there. Keep one binary
@@ -123,6 +135,7 @@ cargo test --doc --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 scripts/check-unused-rust
+scripts/check-migrations.sh
 ```
 
 `cargo build --workspace --bins` links every shipped binary.

@@ -16,6 +16,7 @@ tests:
   - scripts/tests/release-please-config.sh
   - scripts/tests/release-notes.sh
   - scripts/tests/githooks.sh
+  - scripts/tests/check-migrations.sh
   - .github/workflows/release-please.yml
 ---
 
@@ -156,6 +157,14 @@ Out: what the daemon does once running (009, 012).
     old process is actually gone. `install.sh` retries a `launchctl
     bootstrap` that loses that race, up to 5 times, and calls `ui_die` only
     once the last try has also failed.
+16. `scripts/check-migrations.sh` enforces rule 9's last sentence by machine
+    rather than by convention alone. It diffs `crates/ariadne-store/migrations/`
+    between HEAD and the latest commit of `main` it is reachable from, and
+    fails on a migration already there that is modified or deleted. A new
+    file must also pass: named `NNNN_description.sql`, with a version number
+    greater than every migration already shipped and than every other new
+    one in the same change. Pull-request CI and the pre-push hook run the
+    identical command.
 
 ## Acceptance criteria
 
@@ -215,6 +224,10 @@ Out: what the daemon does once running (009, 012).
   still finds the markers and keeps the release-please notes
   (`scripts/tests/release-notes.sh`: `first`, `rerun`, `two-targets`,
   `crlf`).
+- A migration already on `main` cannot be edited or deleted, and a new one
+  must be numbered higher than every migration already there
+  (`scripts/tests/check-migrations.sh`: `reject-edit`, `reject-delete`,
+  `accept-add`, `reject-low-number`, `reject-bad-name`).
 
 ## Known gap
 
@@ -236,6 +249,7 @@ fails the service step`).
 
 `scripts/install.sh`, `scripts/lib.sh`, `scripts/uninstall.sh`,
 `scripts/make-signing-cert.sh`, `scripts/release-notes.sh`,
+`scripts/check-migrations.sh`, `scripts/tests/check-migrations.sh`,
 `scripts/tests/release-please-config.sh`,
 `.github/workflows/release.yml`, `.github/RELEASING.md`,
 `crates/ariadne-store/src/lib.rs`,

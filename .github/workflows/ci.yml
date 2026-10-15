@@ -49,7 +49,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
+      # The migrations guard below diffs against `origin/main`, which a
+      # shallow, single-ref checkout never fetches.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       # Edition 2024 needs stable >= 1.85. The action has no version tags of
       # its own: `@stable` is its released toolchain channel.
@@ -111,6 +115,11 @@ jobs:
       # fails on one that no other file names.
       - name: Unused pub items
         run: scripts/check-unused-rust
+
+      # A migration already on `main` is immutable, and a new one must
+      # outrank every one already there (016, rule 9).
+      - name: Migrations guard
+        run: scripts/check-migrations.sh
 
       # Name the failed test in the run summary and as an annotation, rather
       # than leaving it to a dig through the raw log. Runs even when a test

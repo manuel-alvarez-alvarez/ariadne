@@ -24,6 +24,9 @@ in the root [`AGENTS.md`](../AGENTS.md).
   captured to a log and shown only on failure. Sourced, never executed.
 - `check-unused-rust` — lists every `pub` item of a library crate that no
   other file names; see [`crates/AGENTS.md`](../crates/AGENTS.md).
+- `check-migrations.sh` — guards `crates/ariadne-store/migrations/` against
+  an edit or deletion of a migration already on `main`, and checks that a
+  new one is correctly numbered; see [`crates/AGENTS.md`](../crates/AGENTS.md).
 - `install-githooks.sh` — sets `core.hooksPath` to `.githooks` from the
   repository root, so the hooks under `.githooks/` run; a repeat run that
   finds the setting already there changes nothing. See the root
@@ -105,6 +108,14 @@ in the root [`AGENTS.md`](../AGENTS.md).
   invocation and exits 1 only when `TEST_FAIL` names it exactly. With
   `TEST_GIT_PROBE=1`, its cargo clippy and nextest calls use Git in a
   separate repository to prove the hooks clear Git routing variables.
+- `tests/check-migrations.sh` — run as `bash scripts/tests/check-migrations.sh
+  CASE` for one of its cases: `reject-edit`, `reject-delete` (a migration
+  already on `main` is modified or deleted), `accept-add` (a new, correctly
+  numbered migration), `reject-low-number` (a new migration numbered no
+  higher than one already shipped), `reject-bad-name` (a new file with no
+  version prefix), `unrelated-change` (a change outside the migrations
+  directory). Builds a throwaway repository with one shipped migration on
+  `main` and drives `check-migrations.sh` against a branch built for the case.
 
 ## Conventions
 
@@ -131,8 +142,8 @@ shellcheck .githooks/*
 case above, since it exercises the systemd and GNOME paths `ci.yml` does not
 cover. `tests/install-sign-macos.sh`, `tests/install-service-macos.sh` and
 `tests/make-signing-cert-scenarios.sh` are the same, on macOS, for each of
-their cases. `tests/githooks.sh` and `tests/release-notes.sh` are the same,
-for each of their cases, on any OS. `tests/install-command.sh`,
-`tests/make-signing-cert-command.sh` and `tests/githooks-command.sh` need no
-direct invocation; the scenario scripts put them on `PATH` for the tools they
-stand in for.
+their cases. `tests/githooks.sh`, `tests/release-notes.sh` and
+`tests/check-migrations.sh` are the same, for each of their cases, on any OS.
+`tests/install-command.sh`, `tests/make-signing-cert-command.sh` and
+`tests/githooks-command.sh` need no direct invocation; the scenario scripts
+put them on `PATH` for the tools they stand in for.
