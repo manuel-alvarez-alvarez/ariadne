@@ -876,7 +876,7 @@ async fn the_push_gate_requires_the_current_tip_on_the_remote() {
 
 #[tokio::test]
 async fn a_step_agent_opens_its_request_and_completion_reads_the_forge_now() {
-    use crate::common::forge::{answer, opened_pull, stub_forge_cli};
+    use crate::common::forge::{answer, check_states, opened_pull, stub_forge_cli};
     let url = "https://github.com/acme/widgets/pull/1";
     let forge = stub_forge_cli(json!([]));
     let h = harness().forge_cli(&forge).await;
@@ -891,7 +891,8 @@ async fn a_step_agent_opens_its_request_and_completion_reads_the_forge_now() {
     forge.reprogram(json!([
         answer(&["auth", "status"], 0, ""),
         answer(&["pr", "create"], 0, url),
-        answer(&["pr", "view"], 0, &pull.to_string())
+        answer(&["pr", "view"], 0, &pull.to_string()),
+        check_states("github.com", &[(1, "SUCCESS")]),
     ]));
     let opened: Value = h
         .json(
@@ -916,7 +917,10 @@ async fn a_step_agent_opens_its_request_and_completion_reads_the_forge_now() {
         .await;
     assert_eq!(refused.error.code, "step_gate_failed");
     pull["state"] = json!("MERGED");
-    forge.reprogram(json!([answer(&["pr", "view"], 0, &pull.to_string())]));
+    forge.reprogram(json!([
+        answer(&["pr", "view"], 0, &pull.to_string()),
+        check_states("github.com", &[(1, "SUCCESS")]),
+    ]));
     assert_eq!(
         call(&h, &task, &session, "complete", "The request merged.").await["status"],
         "finished"
@@ -937,7 +941,7 @@ async fn a_step_agent_opens_its_request_and_completion_reads_the_forge_now() {
 /// has deleted the branch.
 #[tokio::test]
 async fn completing_the_request_column_without_a_merge_commit_records_the_forges() {
-    use crate::common::forge::{answer, opened_pull, stub_forge_cli};
+    use crate::common::forge::{answer, check_states, opened_pull, stub_forge_cli};
     let url = "https://github.com/acme/widgets/pull/1";
     let forge = stub_forge_cli(json!([]));
     let h = harness().forge_cli(&forge).await;
@@ -952,7 +956,8 @@ async fn completing_the_request_column_without_a_merge_commit_records_the_forges
     forge.reprogram(json!([
         answer(&["auth", "status"], 0, ""),
         answer(&["pr", "create"], 0, url),
-        answer(&["pr", "view"], 0, &pull.to_string())
+        answer(&["pr", "view"], 0, &pull.to_string()),
+        check_states("github.com", &[(1, "SUCCESS")]),
     ]));
     h.json::<Value>(
         as_session(
@@ -965,7 +970,10 @@ async fn completing_the_request_column_without_a_merge_commit_records_the_forges
     .await;
     pull["state"] = json!("MERGED");
     pull["mergeCommit"] = json!({"oid": "merge-sha-123"});
-    forge.reprogram(json!([answer(&["pr", "view"], 0, &pull.to_string())]));
+    forge.reprogram(json!([
+        answer(&["pr", "view"], 0, &pull.to_string()),
+        check_states("github.com", &[(1, "SUCCESS")]),
+    ]));
 
     let finished = call(&h, &task, &session, "complete", "The request merged.").await;
     assert_eq!(finished["status"], "finished");
