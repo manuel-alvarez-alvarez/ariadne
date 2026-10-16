@@ -117,12 +117,12 @@ Out: what the daemon does once running (009, 012).
     reports an unlimited hard limit. The installed launchd and systemd
     services set the same soft limit, so reinstalling also protects an older
     daemon binary.
-13. The launchd service is installed with `ProcessType` `Interactive`. A
+12. The launchd service is installed with `ProcessType` `Interactive`. A
     job without one is throttled to the utility level, which every agent the
     daemon starts inherits and cannot leave, so its builds and tests run on
     the efficiency cores. The systemd service needs no setting: a user
     service runs at the same weight as the user's own session.
-12. `scripts/make-signing-cert.sh` creates the self-signed "Ariadne Code
+13. `scripts/make-signing-cert.sh` creates the self-signed "Ariadne Code
     Signing" identity, Darwin only: a key and a code-signing certificate made
     with `openssl`, imported into the login keychain with `security import`
     and trusted for code signing with `security add-trusted-cert` - which

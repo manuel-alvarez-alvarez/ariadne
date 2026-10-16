@@ -1,8 +1,10 @@
 # Installing Ariadne
 
 Install Ariadne, then make at least one ACP agent available. The installer
-adds the CLI, daemon service, shell completions, and desktop app. Re-run it to
-upgrade; it is idempotent.
+adds the CLI, daemon service, desktop app, and shell-completion registrations
+for existing Bash or Zsh startup files. Re-run it to upgrade; it is
+idempotent. See [Shell completion](shell-completion.md) to register another
+shell or a shell whose startup file does not exist yet.
 
 ```sh
 scripts/install.sh                         # latest release
