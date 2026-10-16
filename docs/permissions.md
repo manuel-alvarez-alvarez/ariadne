@@ -128,9 +128,24 @@ family. For `Bash`, that call must hold one simple command, apart from a
 trailing output filter that the key stripped. A family row does not answer a
 command with `&&`, `||`, `;`, a newline, command substitution, or another
 pipe. It also does not answer a command with a `NAME=value` assignment before
-its program, including one for `env`, or a Git command with `-c`,
-`--config-env` or `--exec-path`. Both require the same tool name and a row
-from this repository, or a row widened to all repositories. A `once` row never
+its program, including one for `env`, or an option that selects a program or
+an output file:
+
+- Git rejects `-c`, `--config-env` and `--exec-path` before its subcommand.
+  It rejects `-O` and `--open-files-in-pager` for `grep`, `--output` for
+  `diff`, `log` and `format-patch`, `-o` for `format-patch`, `--upload-pack`,
+  `--receive-pack` and `-u` for `fetch`, `clone` and `ls-remote`,
+  `--receive-pack` for `push`, `-x` and `--exec` for `rebase`, and `-x` and
+  `--extcmd` for `difftool`.
+- Cargo rejects `--config`; Go rejects `-exec` and `-toolexec`; Make rejects
+  `NAME=value`, `--eval`, `-f`, `--file` and `--makefile`; npm, pnpm and Yarn
+  reject `--script-shell` and `--node-options`.
+
+Each rule rejects a bare option, a `--option=value` form, and an attached
+short-option value.
+
+Both require the same tool name and a row from this repository, or a row
+widened to all repositories. A `once` row never
 answers a later request. Every risk tag of the later request must also be on
 the answering row. For example, an approval for the `git push` family from
 `git push origin main` does not answer `git push --force origin main`: the

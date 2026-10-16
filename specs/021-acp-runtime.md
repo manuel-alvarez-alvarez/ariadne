@@ -259,7 +259,18 @@ outside half) opens no session either: it asks only `initialize` and
    command with `&&`, `||`, `;`, a newline, command substitution, or a pipe
    that the key did not strip. It also does not answer a command with a
    `NAME=value` assignment before its program, including one `env` takes, or
-   a Git command with `-c`, `--config-env` or `--exec-path`.
+   an option that selects a program or an output file:
+   - Git rejects `-c`, `--config-env` and `--exec-path` before its subcommand.
+     It rejects `-O` and `--open-files-in-pager` for `grep`, `--output` for
+     `diff`, `log` and `format-patch`, `-o` for `format-patch`, `--upload-pack`,
+     `--receive-pack` and `-u` for `fetch`, `clone` and `ls-remote`,
+     `--receive-pack` for `push`, `-x` and `--exec` for `rebase`, and `-x` and
+     `--extcmd` for `difftool`.
+   - Cargo rejects `--config`; Go rejects `-exec` and `-toolexec`; Make rejects
+     `NAME=value`, `--eval`, `-f`, `--file` and `--makefile`; npm, pnpm and Yarn
+     reject `--script-shell` and `--node-options`.
+   Each rule rejects a bare option, a `--option=value` form, and an attached
+   short-option value.
    The level is `once`, `command` or `family`, and the scope `repository` or
    `all`. Each row keeps the key, the level, the family, the request's
    derived risk tags (022) in `derive` order, the scope, the whole `toolCall`

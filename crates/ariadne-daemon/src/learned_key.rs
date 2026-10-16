@@ -47,6 +47,30 @@ const SUBCOMMANDS: [&str; 14] = [
     "git", "cargo", "npm", "npx", "pnpm", "yarn", "go", "docker", "gh", "make", "kubectl", "pip",
     "pip3", "brew",
 ];
+/// Options that select a program or change output for each program.
+const PROGRAM_SETUP_OPTIONS: [(&str, &[&str]); 6] = [
+    ("cargo", &["--config"]),
+    ("go", &["-exec", "-toolexec"]),
+    ("make", &["--eval", "-f", "--file", "--makefile"]),
+    ("npm", &["--script-shell", "--node-options"]),
+    ("pnpm", &["--script-shell", "--node-options"]),
+    ("yarn", &["--script-shell", "--node-options"]),
+];
+/// Unsafe Git options before the subcommand.
+const GIT_GLOBAL_SETUP_OPTIONS: [&str; 3] = ["-c", "--config-env", "--exec-path"];
+/// Unsafe Git options after the named subcommand.
+const GIT_SUBCOMMAND_SETUP_OPTIONS: [(&[&str], &[&str]); 7] = [
+    (&["grep"], &["-O", "--open-files-in-pager"]),
+    (&["diff", "log"], &["--output"]),
+    (&["format-patch"], &["-o", "--output"]),
+    (
+        &["fetch", "clone", "ls-remote"],
+        &["--upload-pack", "--receive-pack", "-u"],
+    ),
+    (&["push"], &["--receive-pack"]),
+    (&["rebase"], &["-x", "--exec"]),
+    (&["difftool"], &["-x", "--extcmd"]),
+];
 
 /// The key and the family of a request for `tool_name` with `raw_input`.
 pub(crate) fn normalize(tool_name: &str, raw_input: &Value, facts: &Facts) -> Key {
@@ -387,7 +411,7 @@ fn first_command_has_no_program_setup(command: &str) -> bool {
             }
             continue;
         }
-        return word != "git" || !git_option_selects_a_program(&words[1..]);
+        return !program_option_selects_a_program(word, &words[1..]);
     }
     false
 }
@@ -398,14 +422,51 @@ fn is_assignment(word: &str) -> bool {
     word.contains('=') && !word.starts_with(['-', '/', '.'])
 }
 
-/// Git options that can select code to run make a family approval unsafe.
+/// Options that select a program or output file make a family approval unsafe.
+fn program_option_selects_a_program(program: &str, arguments: &[&str]) -> bool {
+    if program == "git" {
+        return git_option_selects_a_program(arguments);
+    }
+    if program == "make" && arguments.iter().any(|argument| is_assignment(argument)) {
+        return true;
+    }
+    PROGRAM_SETUP_OPTIONS
+        .iter()
+        .find(|(name, _)| *name == program)
+        .is_some_and(|(_, options)| contains_setup_option(arguments, options))
+}
+
+/// Git has separate global and subcommand options that can select code.
 fn git_option_selects_a_program(arguments: &[&str]) -> bool {
+    let subcommand_and_arguments = git_words(arguments);
+    let globals = &arguments[..arguments.len() - subcommand_and_arguments.len()];
+    if contains_setup_option(globals, &GIT_GLOBAL_SETUP_OPTIONS) {
+        return true;
+    }
+    let Some((&subcommand, arguments)) = subcommand_and_arguments.split_first() else {
+        return false;
+    };
+    GIT_SUBCOMMAND_SETUP_OPTIONS
+        .iter()
+        .find(|(subcommands, _)| subcommands.contains(&subcommand))
+        .is_some_and(|(_, options)| contains_setup_option(arguments, options))
+}
+
+/// The option can appear alone, as `--option=value`, or as an attached short
+/// option value.
+fn contains_setup_option(arguments: &[&str], options: &[&str]) -> bool {
     arguments.iter().any(|argument| {
-        *argument == "-c"
-            || argument.starts_with("-c")
-            || matches!(*argument, "--config-env" | "--exec-path")
-            || argument.starts_with("--config-env=")
-            || argument.starts_with("--exec-path=")
+        options.iter().any(|option| {
+            *argument == *option
+                || (option.starts_with("--")
+                    && argument
+                        .strip_prefix(option)
+                        .is_some_and(|value| value.starts_with('=')))
+                || (!option.starts_with("--")
+                    && argument
+                        .strip_prefix(option)
+                        .is_some_and(|value| !value.is_empty()))
+        })
     })
 }
 
@@ -721,11 +782,15 @@ mod tests {
         );
     }
 
-    /// A family skips only trailing filters that the key stripped, never a
-    /// second shell command or an unsafe pipe.
+    /// A family allows a simple command with safe output filters, but rejects
+    /// unsafe shell or program setup.
     #[test]
     fn a_family_covers_one_command_and_safe_output_filters() {
-        for command in ["git status", "git status 2>&1 | head -n 20"] {
+        for command in [
+            "git status",
+            "git status 2>&1 | head -n 20",
+            "git commit -c HEAD",
+        ] {
             assert!(
                 normalize("Bash", &json!({"command": command}), &facts()).family_safe,
                 "{command}"
@@ -749,6 +814,25 @@ mod tests {
             "GIT_PAGER=./payload git -p status",
             "env GIT_EXTERNAL_DIFF=./payload git diff",
             "env -S 'GIT_PAGER=./payload git -p status'",
+            "git grep -O./payload TODO",
+            "git grep --open-files-in-pager=./payload TODO",
+            "git diff --output=src/lib.rs",
+            "git log --output=src/lib.rs",
+            "git ls-remote --upload-pack=./payload .",
+            "git fetch --upload-pack=./payload .",
+            "git rebase -x ./payload main",
+            "git rebase --exec ./payload main",
+            "git difftool -x ./payload",
+            "git difftool --extcmd=./payload",
+            "cargo build --config build.rustc-wrapper=./payload",
+            "cargo --config=build.rustc-wrapper=./payload build",
+            "go test -exec ./payload",
+            "go build -toolexec=./payload",
+            "make SHELL=./payload build",
+            "make --eval=./payload",
+            "npm test --script-shell=./payload",
+            "pnpm test --script-shell=./payload",
+            "yarn test --node-options=./payload",
         ] {
             assert!(
                 !normalize("Bash", &json!({"command": command}), &facts()).family_safe,

@@ -1348,6 +1348,12 @@ async fn a_family_row_does_not_answer_a_chained_command() {
             "Environment assignment",
             "GIT_PAGER=./payload git -p status",
         ),
+        ("Git program option", "git grep -O./payload TODO"),
+        (
+            "Cargo program option",
+            "cargo build --config build.rustc-wrapper=./payload",
+        ),
+        ("Make assignment", "make SHELL=./payload build"),
     ] {
         stub.reprogram(permission_script_for(bash_call(command)));
         let task = h
