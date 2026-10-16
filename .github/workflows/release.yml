@@ -160,10 +160,9 @@ jobs:
       # Compiles the frontend (`beforeBuildCommand`) and the Tauri shell's
       # Rust, with no bundle and so no signing attempt, while the signing
       # keychain does not exist yet: every install script `npm ci` above ran,
-      # and every `build.rs`, ran with no certificate in reach. `--bundles
-      # app` below repeats this same command once the certificate is
-      # imported; Cargo and Vite's own caches make that second run skip
-      # straight to bundling, rather than rebuilding, since nothing changed.
+      # and every `build.rs`, ran with no certificate in reach. `tauri
+      # bundle` below packages what this step already built, rather than
+      # compiling again, once the certificate is imported.
       - name: Compile Ariadne Desktop
         if: matrix.platform == 'macos'
         working-directory: ui
@@ -205,14 +204,18 @@ jobs:
           echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
           echo "SIGNING_AVAILABLE=true" >> "$GITHUB_ENV"
 
-      # `--bundles app` skips the dmg: the release ships the .app tarball only.
-      - name: Build Ariadne Desktop (.app)
+      # `tauri bundle` packages and signs what `Compile Ariadne Desktop`
+      # above already built — unlike `tauri build`, it does not compile or
+      # run `beforeBuildCommand` again, so nothing runs a second time while
+      # the keychain below is unlocked. `--bundles app` skips the dmg: the
+      # release ships the .app tarball only.
+      - name: Bundle and sign Ariadne Desktop (.app)
         if: matrix.platform == 'macos'
         working-directory: ui
         # The import step exports the identity only after it succeeds. Tauri
         # finds it in that keychain; passing the p12 values would make Tauri
         # create and remove a second keychain the CLI signing cannot use.
-        run: npm run tauri build -- --bundles app
+        run: npm run tauri bundle -- --bundles app
 
       - name: Sign the macOS command-line binaries
         if: matrix.platform == 'macos' && env.SIGNING_AVAILABLE == 'true'
