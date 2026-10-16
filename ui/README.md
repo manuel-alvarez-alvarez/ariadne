@@ -8,8 +8,9 @@ your own, each with a document editor and a live kanban preview.
 The UI is a **pure REST/SSE client of the daemon's TCP listener** — exactly what
 the CLI is, over HTTP instead of a unix socket. It never links against the
 daemon crates and there are no Tauri commands: everything it shows comes from
-`http://<tcp_listen>/v1/...` and the live event stream. That is what makes the
-same code work in a browser tab and in the packaged app.
+`http://<tcp_listen>/v1/...` and the live event stream. The listener stays on
+loopback. The packaged app and Vite development tab are allowed by default;
+add another browser tab's origin to `tcp_allowed_origins`.
 
 Changing code here? See [`AGENTS.md`](AGENTS.md) for the layout and engineering
 conventions.
@@ -21,6 +22,7 @@ The daemon must be listening on TCP, which is off by default. Add it to
 
 ```toml
 tcp_listen = "127.0.0.1:7676"
+# tcp_allowed_origins = ["https://console.example"]
 ```
 
 Then, from `ui/`:

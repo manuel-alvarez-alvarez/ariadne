@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-10-13
+updated: 2026-10-16
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -18,6 +18,7 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-daemon/src/config.rs
+  - crates/ariadne-daemon/src/socket.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/events.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
@@ -44,8 +45,15 @@ and the ACP runtime that reports the agent events (021).
 
 ## Behavior
 
-1. The daemon listens on a unix socket (`~/.ariadne/ariadne.sock`) and,
-   optionally, on a TCP address for the desktop app.
+1. The daemon listens on a unix socket (`~/.ariadne/ariadne.sock`) with mode
+   `0600` from creation and, optionally, on a loopback TCP address for the
+   desktop app. A non-loopback `tcp_listen` is refused at startup and by
+   `ariadned --check-config`, directing the user to an SSH tunnel. TCP
+   requests must carry a loopback Host (`localhost`, `127.0.0.1`, or `[::1]`,
+   each optionally with a port), and may carry no Origin or only an allowed
+   Origin. The allowed origins are the packaged app, the development server,
+   and the exact values in `tcp_allowed_origins`. The unix socket has none of
+   these HTTP checks.
 2. DTOs and the error shape live in one crate (`ariadne-api`) and are the
    single source of truth for the OpenAPI document every client generates
    from. Every API endpoint appears in that document.
@@ -65,7 +73,10 @@ and the ACP runtime that reports the agent events (021).
 5. The stream is SSE. It opens with a heartbeat, honours per-client filters,
    and signals a resync and closes when a client lags rather than silently
    dropping events.
-6. CORS allows the preflight and cross-origin calls the desktop app makes.
+6. TCP CORS allows only the app's allowed origins, its HTTP methods, and its
+   request headers. A refused Host or Origin answers `403` in the normal
+   `forbidden` envelope and includes no CORS allow headers, for every route,
+   event stream, and terminal WebSocket.
 7. Session events reach the stream too: launches, ingested agent events,
    attention raised and cleared, and a task branch's head moving (002). An
    agent event on the domain stream is the exception to the fat event (rule
@@ -349,8 +360,11 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   (`events.rs::sse_stream_opens_with_a_heartbeat`,
   `::sse_stream_frames_events_and_honours_its_filters`,
   `::sse_stream_signals_resync_and_closes_when_a_client_lags`).
-- CORS allows preflight and cross-origin calls
-  (`events.rs::cors_allows_preflight_and_cross_origin_calls`).
+- Loopback TCP configuration, Host and Origin checks, CORS, streams, terminal
+  upgrades, and unchanged unix-socket headers are covered by
+  (`config.rs::tcp_listener_requires_a_loopback_address_at_start_and_check`,
+  `socket.rs::socket_is_owner_only_when_created`, and
+  `events.rs::cors_allows_preflight_and_cross_origin_calls`).
 - A body with a field its DTO does not declare is refused, and the refusal
   names the field
   (`unknown_fields.rs::an_unknown_field_is_refused_and_named`).

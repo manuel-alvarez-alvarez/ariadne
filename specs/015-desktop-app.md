@@ -17,7 +17,10 @@ tests:
 # Desktop app
 
 Ariadne Desktop: the same daemon, driven from a window. A Tauri shell around
-a React app that talks to the daemon over HTTP and follows one SSE stream.
+a React app that talks to the daemon over HTTP and follows one SSE stream. It
+reaches only a loopback TCP listener: the Tauri origins and Vite origins are
+allowed by default, and another browser origin needs `tcp_allowed_origins`
+under 012.
 
 ## Scope
 

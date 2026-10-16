@@ -49,6 +49,9 @@ pub struct FileConfig {
     pub skills_dir: Option<PathBuf>,
     /// e.g. "127.0.0.1:7676" — TCP listener is disabled unless set.
     pub tcp_listen: Option<SocketAddr>,
+    /// Extra browser origins allowed to use the loopback TCP listener.
+    #[serde(default)]
+    pub tcp_allowed_origins: Vec<String>,
     pub webhook_listen: Option<SocketAddr>,
     pub webhook_public_url: Option<String>,
     /// The localtunnel server the webhook tunnel registers with.

@@ -34,17 +34,20 @@ mod workflows;
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::extract::State;
+use axum::extract::{Request, State};
+use axum::http::{HeaderName, HeaderValue, Method, header};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, SecondsFormat, Utc};
 use tokio::sync::mpsc;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use ariadne_api::stream::HeartbeatDto;
-use ariadne_api::{HealthResponse, VersionResponse};
+use ariadne_api::{HealthResponse, SESSION_HEADER, VersionResponse};
 use ariadne_store::Store;
 
 use crate::acp_discovery::AgentRegistry;
@@ -411,12 +414,87 @@ pub fn router(state: AppState) -> Router {
         .route("/internal/spawn", post(sessions::debug_spawn))
         // docs (SwaggerUi also serves the spec at /api-docs/openapi.json)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", api_doc()))
-        // Wide open on purpose: the trust boundary is the unix socket / the
-        // loopback bind (see auth.rs), not the browser origin. Without this a
-        // webview (`tauri://localhost`, `http://localhost:*`) cannot call the
-        // TCP listener at all.
-        .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+/// Build the TCP router. The unix socket serves the unwrapped [`router`].
+pub fn tcp_router(state: AppState, configured_origins: &[String]) -> Router {
+    let allowed_origins = tcp_origins(configured_origins);
+    let cors_origins = allowed_origins.clone();
+
+    router(state)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::list(cors_origins))
+                .allow_methods([
+                    Method::GET,
+                    Method::POST,
+                    Method::PUT,
+                    Method::PATCH,
+                    Method::DELETE,
+                ])
+                .allow_headers([
+                    header::CONTENT_TYPE,
+                    HeaderName::from_static(SESSION_HEADER),
+                ]),
+        )
+        .layer(middleware::from_fn(move |request: Request, next: Next| {
+            let allowed_origins = allowed_origins.clone();
+            async move { guard_tcp_request(request, next, &allowed_origins).await }
+        }))
+}
+
+const BUILTIN_TCP_ORIGINS: &[&str] = &[
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+];
+
+fn tcp_origins(configured_origins: &[String]) -> Vec<HeaderValue> {
+    BUILTIN_TCP_ORIGINS
+        .iter()
+        .copied()
+        .chain(configured_origins.iter().map(String::as_str))
+        .map(|origin| origin.parse().expect("Config validates TCP origins"))
+        .collect()
+}
+
+async fn guard_tcp_request(
+    request: Request,
+    next: Next,
+    allowed_origins: &[HeaderValue],
+) -> Response {
+    if !request
+        .headers()
+        .get(header::HOST)
+        .is_some_and(is_loopback_host)
+    {
+        return error::ApiError::forbidden("the TCP listener only serves loopback Host headers")
+            .into_response();
+    }
+
+    if let Some(origin) = request.headers().get(header::ORIGIN)
+        && !allowed_origins.iter().any(|allowed| allowed == origin)
+    {
+        return error::ApiError::forbidden("the TCP listener does not allow this Origin")
+            .into_response();
+    }
+
+    next.run(request).await
+}
+
+fn is_loopback_host(host: &HeaderValue) -> bool {
+    let Ok(host) = host.to_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    ["localhost", "127.0.0.1", "[::1]"].into_iter().any(|name| {
+        host == name
+            || host
+                .strip_prefix(&format!("{name}:"))
+                .is_some_and(|port| port.parse::<u16>().is_ok())
+    })
 }
 
 /// Daemon liveness probe.
