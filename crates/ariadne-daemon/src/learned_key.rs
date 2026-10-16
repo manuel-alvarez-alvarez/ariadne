@@ -399,13 +399,18 @@ fn is_safe_family_command(command: &str) -> bool {
 }
 
 /// The first command uses a known safe program without environment or program
-/// setup.
+/// setup. The caller only reaches this once `is_single_family_command` has
+/// found the same string to be one simple command, so this reads its words
+/// straight off it rather than through [`simple_commands`], which redacts a
+/// quoted span to a placeholder and would hide a quoted option from the
+/// checks below.
 fn first_command_has_no_program_setup(command: &str) -> bool {
     let command = without_filters(command).trim();
-    let Some(first) = simple_commands(command).into_iter().next() else {
+    if command.is_empty() {
         return false;
-    };
-    let words: Vec<_> = first.split_whitespace().collect();
+    }
+    let owned_words = shell_words(command);
+    let words: Vec<&str> = owned_words.iter().map(String::as_str).collect();
     let mut words = words.as_slice();
     while let Some(&word) = words.first() {
         if is_assignment(word) {
@@ -555,6 +560,75 @@ fn is_single_family_command(command: &str) -> bool {
         index += 1;
     }
     quote.is_none()
+}
+
+/// The words of one simple command, with quotes and backslash escapes
+/// resolved the way a shell resolves them before Git or another program ever
+/// sees its arguments. `is_single_family_command` already rejects a
+/// backtick, an unescaped `$(`, `$'` or `$"`, and every unquoted chaining or
+/// redirection character, so a quote or an escape here can only hide an
+/// option's own literal text, never a second command.
+fn shell_words(command: &str) -> Vec<String> {
+    let bytes = command.as_bytes();
+    let mut words = Vec::new();
+    let mut current = Vec::new();
+    let mut in_word = false;
+    let mut quote: Option<u8> = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        match quote {
+            Some(b'\'') => {
+                if byte == b'\'' {
+                    quote = None;
+                } else {
+                    current.push(byte);
+                }
+            }
+            Some(b'"') => {
+                if byte == b'"' {
+                    quote = None;
+                } else if byte == b'\\'
+                    && bytes
+                        .get(index + 1)
+                        .is_some_and(|next| matches!(next, b'"' | b'\\' | b'$' | b'`'))
+                {
+                    index += 1;
+                    current.push(bytes[index]);
+                } else {
+                    current.push(byte);
+                }
+            }
+            Some(_) => unreachable!(),
+            None => match byte {
+                b' ' | b'\t' | b'\n' => {
+                    if in_word {
+                        words.push(String::from_utf8_lossy(&current).into_owned());
+                        current.clear();
+                        in_word = false;
+                    }
+                }
+                b'\'' | b'"' => {
+                    quote = Some(byte);
+                    in_word = true;
+                }
+                b'\\' if index + 1 < bytes.len() => {
+                    index += 1;
+                    current.push(bytes[index]);
+                    in_word = true;
+                }
+                _ => {
+                    current.push(byte);
+                    in_word = true;
+                }
+            },
+        }
+        index += 1;
+    }
+    if in_word {
+        words.push(String::from_utf8_lossy(&current).into_owned());
+    }
+    words
 }
 
 /// Every string of the value with this session's paths and names, then the
@@ -880,6 +954,10 @@ mod tests {
             "git rebase --exec ./payload main",
             "git difftool -x ./payload",
             "git difftool --extcmd=./payload",
+            "git difftool \"--extcmd=./payload\"",
+            "git difftool '--extcmd=./payload'",
+            "git difftool --ext\"cmd\"=./payload",
+            "git -\"c\" core.fsmonitor=./payload status",
             "git grep -nO./payload TODO",
             "git rebase -kx ./payload main",
             "make -kf evil.mk",
