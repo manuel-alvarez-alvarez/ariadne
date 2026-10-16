@@ -1,6 +1,6 @@
 /**
  * The autocomplete and hover-help logic for the workflow document: a column's
- * key line (`skills:`, `rank:`, `gate:`), a rank or gate value, and a skill
+ * key line (`skills:`, `ranks:`, `gate:`), a rank or gate value, and a skill
  * name. Kept pure and independent of CodeMirror so each rule is a function on
  * plain text, provable without a browser; `workflow-help-extensions.ts` is
  * the thin adapter that wires these into the editor.
@@ -18,6 +18,7 @@ interface WorkflowCompletionOption {
 
 interface WorkflowCompletionMatch {
   from: number
+  to: number
   options: WorkflowCompletionOption[]
 }
 
@@ -27,7 +28,7 @@ interface WorkflowHoverMatch {
   text: string
 }
 
-const KEYS = ["skills", "rank", "gate"] as const
+const KEYS = ["skills", "ranks", "gate"] as const
 const RANK_VALUES = ["fast", "balanced", "frontier", "local"] as const
 const GATE_VALUES = ["committed", "pushed", "merged", "request-merged"] as const
 
@@ -36,7 +37,8 @@ const FORBIDDEN_SKILLS = new Set(["orchestration", "pr-reviewer"])
 
 const KEY_HELP: Record<(typeof KEYS)[number], string> = {
   skills: "Names the skills this column's agent loads, comma-separated, from the skill catalog.",
-  rank: "Names the model rank for this column: fast, balanced, frontier or local.",
+  ranks:
+    "Names the capability band for this column: fast, balanced, frontier and local, comma-separated and unordered.",
   gate: "Names the work state required before this column completes: committed, pushed, merged or request-merged.",
 }
 
@@ -67,12 +69,17 @@ function trailingWord(text: string): string {
   return /[a-z0-9-]*$/i.exec(text)?.[0] ?? ""
 }
 
+function leadingWord(text: string): string {
+  return /^[a-z0-9-]*/i.exec(text)?.[0] ?? ""
+}
+
 /**
- * Every skill named on a `skills:` line's value text, except the one in the
- * segment the cursor sits in — that segment is being typed, not finished,
- * so it is a candidate rather than something already claimed.
+ * Every value named on a comma-separated line's value text (`skills:` or
+ * `ranks:`), except the one in the segment the cursor sits in — that segment
+ * is being typed, not finished, so it is a candidate rather than something
+ * already claimed.
  */
-function skillsNamedElsewhere(value: string, cursor: number): Set<string> {
+function namedElsewhere(value: string, cursor: number): Set<string> {
   const names = new Set<string>()
   let start = 0
   for (let i = 0; i <= value.length; i++) {
@@ -93,7 +100,9 @@ function skillsNamedElsewhere(value: string, cursor: number): Set<string> {
  * document's first line (the `workflow <name>` line, where none of this
  * applies). The line's text past the cursor matters too: a skill named later
  * on the same line, as when a new entry is inserted before or between
- * existing ones, must not be offered again.
+ * existing ones, must not be offered again, and a cursor that sits inside an
+ * existing token — not only at its end — replaces that token whole, through
+ * `to`, rather than inserting in front of what follows it.
  */
 export function workflowCompletionsAt(
   lineText: string,
@@ -106,38 +115,42 @@ export function workflowCompletionsAt(
   const partial = trailingWord(before).toLowerCase()
   const from = before.length - partial.length
   const prefix = before.slice(0, from)
+  const to = cursor + leadingWord(lineText.slice(cursor)).length
 
   if (/^\s*$/.test(prefix)) {
     const options = KEYS.filter((key) => key.startsWith(partial)).map((key) => ({
       label: `${key}:`,
     }))
-    return options.length ? { from, options } : null
+    return options.length ? { from, to, options } : null
   }
 
-  if (/^\s*rank:\s*$/.test(prefix)) {
-    const options = RANK_VALUES.filter((value) => value.startsWith(partial)).map((value) => ({
-      label: value,
-    }))
-    return options.length ? { from, options } : null
+  const ranksList = /^\s*ranks:\s*((?:[a-z][a-z0-9-]*\s*,\s*)*)$/i.exec(prefix)
+  if (ranksList) {
+    const valueStart = /^\s*ranks:\s*/i.exec(lineText)?.[0].length ?? 0
+    const already = namedElsewhere(lineText.slice(valueStart), cursor - valueStart)
+    const options = RANK_VALUES.filter((value) => !already.has(value))
+      .filter((value) => value.startsWith(partial))
+      .map((value) => ({ label: value }))
+    return options.length ? { from, to, options } : null
   }
 
   if (/^\s*gate:\s*$/.test(prefix)) {
     const options = GATE_VALUES.filter((value) => value.startsWith(partial)).map((value) => ({
       label: value,
     }))
-    return options.length ? { from, options } : null
+    return options.length ? { from, to, options } : null
   }
 
   const skillsList = /^\s*skills:\s*((?:[a-z][a-z0-9-]*\s*,\s*)*)$/i.exec(prefix)
   if (skillsList) {
     const valueStart = /^\s*skills:\s*/i.exec(lineText)?.[0].length ?? 0
-    const already = skillsNamedElsewhere(lineText.slice(valueStart), cursor - valueStart)
+    const already = namedElsewhere(lineText.slice(valueStart), cursor - valueStart)
     const options = skills
       .filter((skill) => !FORBIDDEN_SKILLS.has(skill.name))
       .filter((skill) => !already.has(skill.name))
       .filter((skill) => skill.name.toLowerCase().startsWith(partial))
       .map((skill) => ({ label: skill.name, detail: skill.summary }))
-    return options.length ? { from, options } : null
+    return options.length ? { from, to, options } : null
   }
 
   return null
@@ -155,7 +168,7 @@ export function workflowHoverAt(
 ): WorkflowHoverMatch | null {
   if (firstLine) return null
 
-  const keyMatch = /^(\s*)(skills|rank|gate):/.exec(lineText)
+  const keyMatch = /^(\s*)(skills|ranks|gate):/.exec(lineText)
   if (keyMatch) {
     const indent = keyMatch[1] ?? ""
     const key = (keyMatch[2] ?? "") as (typeof KEYS)[number]
@@ -166,13 +179,15 @@ export function workflowHoverAt(
     }
   }
 
-  const rankMatch = /^\s*rank:\s*/.exec(lineText)
-  if (rankMatch) {
-    const from = rankMatch[0].length
-    const value = /^[a-z-]*/i.exec(lineText.slice(from))?.[0] ?? ""
-    const to = from + value.length
-    if (ch >= from && ch <= to && isRankValue(value)) {
-      return { from, to, text: RANK_HELP[value] }
+  const ranksLine = /^\s*ranks:\s*/.exec(lineText)
+  if (ranksLine) {
+    const listStart = ranksLine[0].length
+    for (const token of lineText.slice(listStart).matchAll(/[a-z][a-z0-9-]*/gi)) {
+      const from = listStart + (token.index ?? 0)
+      const to = from + token[0].length
+      if (ch >= from && ch <= to && isRankValue(token[0])) {
+        return { from, to, text: RANK_HELP[token[0]] }
+      }
     }
   }
 

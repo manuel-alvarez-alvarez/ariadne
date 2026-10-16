@@ -16,8 +16,8 @@ it("renders one staffing row for each workflow column", async () => {
   })
   const goal = aGoal({
     steps: [
-      { id: "build", title: "Build", description: "", skills: ["coding"] },
-      { id: "test", title: "Test", description: "", skills: ["testing"] },
+      { id: "build", title: "Build", description: "", skills: ["coding"], ranks: [] },
+      { id: "test", title: "Test", description: "", skills: ["testing"], ranks: [] },
     ],
   })
   renderScreen(<CreateTaskDialog goal={goal} open onOpenChange={vi.fn()} />)

@@ -16,6 +16,7 @@ function completionSource(skills: SkillOption[]) {
     if (!match) return null
     return {
       from: line.from + match.from,
+      to: line.from + match.to,
       options: match.options.map((option) => ({
         label: option.label,
         detail: option.detail,
@@ -48,7 +49,7 @@ export function workflowAutocomplete(skills: SkillOption[]): Extension {
   return autocompletion({ override: [completionSource(skills)] })
 }
 
-/** Hover help for a workflow document's keys, rank and gate words, and skill names. */
+/** Hover help for a workflow document's keys, rank band and gate words, and skill names. */
 export function workflowHover(skills: SkillOption[]): Extension {
   return hoverTooltip(hoverSource(skills))
 }

@@ -4238,7 +4238,11 @@ export interface components {
              * @example develop
              */
             id: string;
-            rank?: null | components["schemas"]["ModelRank"];
+            /**
+             * @description The capability band the step allows: every `ModelRank` planning may
+             *     staff it on, unordered. Empty where the document named none.
+             */
+            ranks: components["schemas"]["ModelRank"][];
             /** @description The skills an agent on this step loads. */
             skills: string[];
             /**

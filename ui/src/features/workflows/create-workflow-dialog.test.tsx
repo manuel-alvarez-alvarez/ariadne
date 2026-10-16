@@ -41,7 +41,7 @@ const PARSED_STEPS = [
     title: "Develop",
     description: "Build the task on its branch and commit it.",
     skills: ["coding"],
-    rank: "balanced" as const,
+    ranks: ["balanced"] as const,
     gate: "committed",
   },
   {
@@ -50,7 +50,7 @@ const PARSED_STEPS = [
     description:
       "Judge the change against the task and the repository rules. Fail the step with the changes to make.",
     skills: ["code-review"],
-    rank: "frontier" as const,
+    ranks: ["balanced", "frontier"] as const,
     gate: null,
   },
   {
@@ -58,7 +58,7 @@ const PARSED_STEPS = [
     title: "Merge",
     description: "Rebase onto the base branch, squash, fast-forward and push.",
     skills: ["merge"],
-    rank: "fast" as const,
+    ranks: ["fast"] as const,
     gate: "merged",
   },
 ]
@@ -139,7 +139,7 @@ describe("the editor and the preview", () => {
                 title: "Mine",
                 description: "A step of my own.",
                 skills: [],
-                rank: null,
+                ranks: [],
                 gate: null,
               },
             ]

@@ -9,8 +9,8 @@ import { GoalSwimlanes } from "./goal-swimlanes"
 it("draws each goal workflow columns", async () => {
   const goal = aGoal({
     steps: [
-      { id: "build", title: "Build", description: "", skills: ["coding"] },
-      { id: "test", title: "Test", description: "", skills: ["testing"] },
+      { id: "build", title: "Build", description: "", skills: ["coding"], ranks: [] },
+      { id: "test", title: "Test", description: "", skills: ["testing"], ranks: [] },
     ],
   })
   daemonFetch.mockResolvedValue(jsonResponse([aTask({ goal_id: goal.id, step: "build" })]))

@@ -18,26 +18,61 @@ function completionsAt(before: string, after = "", firstLine = false) {
 describe("workflowCompletionsAt", () => {
   it("offers the body keys at the start of a body line", () => {
     const match = completionsAt("    ")
-    expect(match?.options.map((o) => o.label)).toEqual(["skills:", "rank:", "gate:"])
+    expect(match?.options.map((o) => o.label)).toEqual(["skills:", "ranks:", "gate:"])
   })
 
   it("filters the body keys by what is already typed", () => {
     const match = completionsAt("    ra")
-    expect(match?.options.map((o) => o.label)).toEqual(["rank:"])
+    expect(match?.options.map((o) => o.label)).toEqual(["ranks:"])
   })
 
   it("offers nothing on the workflow line", () => {
     expect(completionsAt("", "", true)).toBeNull()
   })
 
-  it("offers the rank words after rank:", () => {
-    const match = completionsAt("    rank: ")
+  it("offers the rank words after ranks:", () => {
+    const match = completionsAt("    ranks: ")
     expect(match?.options.map((o) => o.label)).toEqual(["fast", "balanced", "frontier", "local"])
   })
 
   it("filters rank words by what is already typed", () => {
-    const match = completionsAt("    rank: fa")
+    const match = completionsAt("    ranks: fa")
     expect(match?.options.map((o) => o.label)).toEqual(["fast"])
+  })
+
+  it("offers rank words after a comma, excluding the one the line already names", () => {
+    const match = completionsAt("    ranks: balanced, ")
+    const labels = match?.options.map((o) => o.label) ?? []
+    expect(labels).not.toContain("balanced")
+    expect(labels).toContain("frontier")
+  })
+
+  it("excludes a rank already named later on the line, inserting before it", () => {
+    const match = completionsAt("    ranks: ", ", balanced")
+    const labels = match?.options.map((o) => o.label) ?? []
+    expect(labels).not.toContain("balanced")
+    expect(labels).toContain("frontier")
+  })
+
+  it("ends a rank completion at the end of the token the cursor sits inside, in the first segment", () => {
+    const line = "    ranks: frontier, local"
+    const match = completionsAt("    ranks: fr", "ontier, local")
+    expect(match?.options.map((o) => o.label)).toEqual(["frontier"])
+    expect(`${line.slice(0, match?.from)}frontier${line.slice(match?.to)}`).toBe(line)
+  })
+
+  it("ends a rank completion at the end of the token the cursor sits inside, in a middle segment", () => {
+    const line = "    ranks: balanced, frontier, local"
+    const match = completionsAt("    ranks: balanced, fr", "ontier, local")
+    expect(match?.options.map((o) => o.label)).toEqual(["frontier"])
+    expect(`${line.slice(0, match?.from)}frontier${line.slice(match?.to)}`).toBe(line)
+  })
+
+  it("ends a rank completion at the end of the token the cursor sits inside, in the last segment", () => {
+    const line = "    ranks: balanced, frontier, local"
+    const match = completionsAt("    ranks: balanced, frontier, lo", "cal")
+    expect(match?.options.map((o) => o.label)).toEqual(["local"])
+    expect(`${line.slice(0, match?.from)}local${line.slice(match?.to)}`).toBe(line)
   })
 
   it("offers the gate words after gate:", () => {
@@ -107,10 +142,10 @@ describe("workflowHoverAt", () => {
     )
   })
 
-  it("explains the rank key", () => {
-    const line = "    rank: balanced"
-    const match = workflowHoverAt(line, line.indexOf("rank"), false, skills)
-    expect(match?.text).toContain("fast, balanced, frontier or local")
+  it("explains the ranks key", () => {
+    const line = "    ranks: balanced"
+    const match = workflowHoverAt(line, line.indexOf("ranks"), false, skills)
+    expect(match?.text).toContain("fast, balanced, frontier and local")
   })
 
   it("explains the gate key", () => {
@@ -125,9 +160,15 @@ describe("workflowHoverAt", () => {
     ["fast", "Fast means the cheapest model that still earns a task."],
     ["local", "Local means off the ladder, staffed only where a task names it."],
   ])("explains the rank value %s", (value, text) => {
-    const line = `    rank: ${value}`
+    const line = `    ranks: ${value}`
     const match = workflowHoverAt(line, line.indexOf(value), false, skills)
     expect(match?.text).toBe(text)
+  })
+
+  it("explains a rank value named among others on the same ranks: line", () => {
+    const line = "    ranks: balanced, frontier"
+    const match = workflowHoverAt(line, line.indexOf("frontier"), false, skills)
+    expect(match?.text).toBe("Frontier means the strongest model, when a task earns it.")
   })
 
   it.each([
@@ -145,7 +186,7 @@ describe("workflowHoverAt", () => {
   })
 
   it("explains a rank value directly after the colon, with no space", () => {
-    const line = "    rank:fast"
+    const line = "    ranks:fast"
     const match = workflowHoverAt(line, line.indexOf("fast"), false, skills)
     expect(match?.text).toBe("Fast means the cheapest model that still earns a task.")
   })

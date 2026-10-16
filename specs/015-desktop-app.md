@@ -1,9 +1,9 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-10-10
+updated: 2026-10-16
 areas: [ui]
-commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10]
+commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
   - ui/src/features/**/*.test.tsx
   - ui/src/features/**/*.test.ts
@@ -98,43 +98,53 @@ Out: the daemon endpoints themselves (012).
    workflow names, columns, metadata, and descriptions`). The editor also
    completes and explains the document as it is typed: at the start of a
    column's body line it offers
-   `skills:`, `rank:` and `gate:`; after `rank:` it offers `fast`, `balanced`,
-   `frontier` and `local`; after `gate:` it offers `committed`, `pushed`,
-   `merged` and `request-merged`; and after `skills:`, or after a comma in
-   its list, it offers the skill catalog's names with each one's summary as
-   the detail, leaving out `orchestration`, `pr-reviewer` and a skill named
-   anywhere else on the same line, on either side of the cursor. Hovering a
-   key, or a rank or gate value, shows one sentence on what it means, right
-   up to the character before the value starts even with no space after the
-   colon; hovering a skill name shows its summary, or that the catalog has
-   none by that name
+   `skills:`, `ranks:` and `gate:`; after `ranks:`, or after a comma in its
+   capability band, it offers each eligible `fast`, `balanced`, `frontier` or
+   `local` rank that the line does not already name. A capability band has no
+   preference order. After `gate:` it offers `committed`, `pushed`, `merged`
+   and `request-merged`; and after `skills:`, or after a comma in its list, it
+   offers the skill catalog's names with each one's summary as the detail,
+   leaving out `orchestration`, `pr-reviewer` and a skill named anywhere else
+   on the same line, on either side of the cursor. Hovering a key, or a rank
+   or gate value, shows one sentence on what it means, right up to the
+   character before the value starts even with no space after the colon;
+   hovering a skill name shows its summary, or that the catalog has none by
+   that name
    (`workflow-help.test.ts::offers the body keys at the start of a body
-   line`, `::offers the rank words after rank:`, `::offers the gate words
-   after gate:`, `::offers skill names after skills:, with each summary as
-   the detail`, `::never offers orchestration or pr-reviewer`, `::offers
-   skill names after a comma, excluding the one the line already names`,
-   `::excludes a skill already named later on the line, inserting before
-   it`, `::excludes skills named on both sides, inserting between them`,
-   `::explains the skills key`, `::explains the rank key`, `::explains the
-   gate key`, `::explains the rank value frontier`, `::explains the rank
-   value balanced`, `::explains the rank value fast`, `::explains the rank
-   value local`, `::explains the gate value committed`, `::explains the
-   gate value pushed`, `::explains the gate value merged`, `::explains the
-   gate value request-merged`, `::explains a rank value directly after the
-   colon, with no space`, `::explains a gate value directly after the
-   colon, with no space`, `::explains a skill name directly after the
-   colon, with no space`, `::shows a known skill's summary`, `::says when
-   the catalog has no such skill`). The preview draws
+   line`, `::offers the rank words after ranks:`, `::offers rank words after
+   a comma, excluding the one the line already names`, `::excludes a rank
+   already named later on the line, inserting before it`, `::ends a rank
+   completion at the end of the token the cursor sits inside, in the first
+   segment`, `::ends a rank completion at the end of the token the cursor
+   sits inside, in a middle segment`, `::ends a rank completion at the end
+   of the token the cursor sits inside, in the last segment`, `::offers the
+   gate words after gate:`, `::offers skill names after skills:, with each
+   summary as the detail`, `::never offers orchestration or pr-reviewer`,
+   `::offers skill names after a comma, excluding the one the line already
+   names`, `::excludes a skill already named later on the line, inserting
+   before it`, `::excludes skills named on both sides, inserting between
+   them`, `::explains the skills key`, `::explains the ranks key`,
+   `::explains the gate key`, `::explains the rank value frontier`,
+   `::explains the rank value balanced`, `::explains the rank value fast`,
+   `::explains the rank value local`, `::explains a rank value named among
+   others on the same ranks: line`, `::explains the gate value committed`,
+   `::explains the gate value pushed`, `::explains the gate value merged`,
+   `::explains the gate value request-merged`, `::explains a rank value
+   directly after the colon, with no space`, `::explains a gate value
+   directly after the colon, with no space`, `::explains a skill name
+   directly after the colon, with no space`, `::shows a known skill's
+   summary`, `::says when the catalog has no such skill`). The preview draws
    each column as a numbered step on a vertical rail, a card holding its
-   title, id, description, skills and rank in that order, and ends the rail
-   with a marker for the end of the task; a step's gate shows as a labelled
-   chip on the connector below it, and a step with no gate leaves that
-   connector bare (`workflow-preview.test.tsx::draws the steps as a numbered
-   pipeline, in order, ending with a marker`,
-   `::shows a card's title, id, description, skills and rank, in that
-   order`, `::shows a step's gate as a chip on its connector, and none
-   where a step has no gate`, and `::shows a parser refusal at its line,
-   and dims the last good preview`). `skills-page.test.tsx` proves the
+   title, id, description, skills and every eligible rank in its capability
+   band in that order, and ends the rail with a marker for the end of the
+   task; a step's gate shows as a labelled chip on the connector below it,
+   and a step with no gate leaves that connector bare
+   (`workflow-preview.test.tsx::draws the steps as a numbered pipeline, in
+   order, ending with a marker`, `::shows a card's title, id, description,
+   skills and rank, in that order`, `::shows every rank of a step's
+   capability band as its own badge`, `::shows a step's gate as a chip on
+   its connector, and none where a step has no gate`, and `::shows a parser
+   refusal at its line, and dims the last good preview`). `skills-page.test.tsx` proves the
    combobox rules the skills screen shares with it. The New workflow dialog
    gives its document the same editor and a live preview beside it, two
    columns wide: a parser refusal marks its line in the editor the same way,
@@ -668,6 +678,15 @@ Out: the daemon endpoints themselves (012).
 
 ## Acceptance criteria
 
+- The workflow editor completes each comma-separated `ranks:` segment with
+  every rank absent from its unordered capability band. The preview identifies
+  every listed rank as an eligible model capability
+  (`ui/src/features/workflows/workflow-help.test.ts::offers rank words after a comma, excluding the one the line already names`,
+  `::excludes a rank already named later on the line, inserting before it`,
+  `::ends a rank completion at the end of the token the cursor sits inside, in the first segment`,
+  `::ends a rank completion at the end of the token the cursor sits inside, in a middle segment`,
+  `::ends a rank completion at the end of the token the cursor sits inside, in the last segment`, and
+  `ui/src/features/workflows/workflow-preview.test.tsx::shows every rank of a step's capability band as its own badge`).
 - Goal details float over the board without a modal dialog, a click on the
   scrim closes them, and another `?goal=` swaps the open goal for that goal
   in the one pane
