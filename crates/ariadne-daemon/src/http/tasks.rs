@@ -195,6 +195,22 @@ pub(super) async fn transition(
     Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
+/// Whether `sha` could name a commit: hex digits only, 7 to 64 characters —
+/// a short sha up through a full one. Checked before a `merge_commit` ever
+/// reaches a git command as data: a value git could read as an option, or
+/// anything that is not a sha, is refused here instead.
+pub(super) fn valid_merge_commit(sha: &str) -> bool {
+    (7..=64).contains(&sha.len()) && sha.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+pub(super) fn invalid_merge_commit(sha: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "invalid_request",
+        format!("merge_commit must be a hex sha of 7 to 64 characters (got `{sha}`)"),
+    )
+}
+
 /// The one status move an agent makes through this route is to give its task
 /// up; every other move of a task is a step call, or the daemon's.
 pub(crate) async fn apply_transition(
@@ -207,6 +223,11 @@ pub(crate) async fn apply_transition(
         return Err(ApiError::forbidden(
             "use the step route to complete a column",
         ));
+    }
+    if let Some(sha) = req.merge_commit.as_deref()
+        && !valid_merge_commit(sha)
+    {
+        return Err(invalid_merge_commit(sha));
     }
     // A retry starts the task on its first column again, and runs it through
     // every column: one with nobody on it is named now, not met later with

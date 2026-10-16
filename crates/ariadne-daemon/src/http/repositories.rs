@@ -197,6 +197,11 @@ async fn resolve_base_branch(path: &FsPath, branch: Option<&str>) -> Result<Stri
     git.validate_repo(path).await.map_err(bad)?;
     match branch {
         Some(b) => {
+            if !git.is_valid_branch_name(path, b).await.map_err(bad)? {
+                return Err(ApiError::bad_request(format!(
+                    "{b} is not a valid branch name"
+                )));
+            }
             let known = git.branch_exists(path, b).await.map_err(bad)?
                 || git.current_branch(path).await.ok().as_deref() == Some(b);
             if !known {

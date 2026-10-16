@@ -24,6 +24,27 @@ pub struct NewSkill {
     pub document: String,
 }
 
+/// Whether `name` is a kebab-case slug: lowercase ASCII letters, digits and
+/// single hyphens, 1 to 64 characters, with no leading or trailing hyphen.
+///
+/// `sync_skills` writes `SKILL.md` under `skills_dir.join(name)`; a name
+/// outside this shape — `../etc`, an absolute path, an uppercase letter — is
+/// never a directory component Ariadne meant to write.
+pub fn is_skill_slug(name: &str) -> bool {
+    if name.is_empty() || name.len() > 64 || name.starts_with('-') || name.ends_with('-') {
+        return false;
+    }
+    let mut previous_hyphen = false;
+    for byte in name.bytes() {
+        match byte {
+            b'a'..=b'z' | b'0'..=b'9' => previous_hyphen = false,
+            b'-' if !previous_hyphen => previous_hyphen = true,
+            _ => return false,
+        }
+    }
+    true
+}
+
 impl Store {
     /// Seed the shipped skills, by name: a skill the database lacks is
     /// inserted with a NULL document, and no document the database holds is
@@ -139,6 +160,13 @@ impl Store {
     /// Create a skill of the user's own. It carries its own document: nothing
     /// ships under its name for it to fall back to.
     pub async fn create_skill(&self, new: NewSkill) -> Result<Skill> {
+        if !is_skill_slug(&new.name) {
+            return Err(StoreError::Invalid(format!(
+                "skill name must be a kebab-case slug: lowercase letters, digits and single \
+                 hyphens, 1 to 64 characters, no leading or trailing hyphen (got `{}`)",
+                new.name
+            )));
+        }
         let ts = now();
         sqlx::query(
             "INSERT INTO skills (name, document, builtin, created_at, updated_at)

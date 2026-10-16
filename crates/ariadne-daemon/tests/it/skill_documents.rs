@@ -122,6 +122,39 @@ async fn a_skill_of_your_own_is_deleted_rather_than_reset() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// A name with `/`, `..`, an uppercase letter, a space or a leading hyphen is
+/// not a kebab-case slug, and `sync_skills` writes `SKILL.md` under
+/// `skills_dir.join(name)`: accepting one of these would write outside the
+/// skills directory.
+#[tokio::test]
+async fn a_skill_name_outside_the_kebab_case_shape_is_refused() {
+    let h = harness().await;
+    for name in ["../escape", "a/b", "Api-Design", "api design", "-leading"] {
+        let err = h
+            .error(
+                post_json(
+                    "/v1/skills",
+                    serde_json::json!({
+                        "name": name,
+                        "document": "---\nname: x\ndescription: x\n---\n",
+                    }),
+                ),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await;
+        assert!(
+            err.error.message.contains("kebab-case"),
+            "{name:?}: {}",
+            err.error.message
+        );
+    }
+    let escaped = h.launcher.cfg.skills_dir.parent().unwrap().join("escape");
+    assert!(
+        !escaped.exists(),
+        "a name with `..` wrote outside the skills directory"
+    );
+}
+
 /// And the other way round: a shipped skill is reset rather than deleted, so
 /// the catalog cannot be emptied by mistake.
 #[tokio::test]

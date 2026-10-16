@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-10-14
+updated: 2026-10-16
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -36,7 +36,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
 
 1. A **skill** is one document — a `SKILL.md`, YAML frontmatter and a body —
    that tells a generic agent how to do one kind of work. It is named in
-   kebab-case, and the name is how a task loads it.
+   kebab-case, and the name is how a task loads it. A skill of the user's own
+   is created under a name that is a kebab-case slug alone — lowercase ASCII
+   letters, digits and single hyphens, 1 to 64 characters, no leading or
+   trailing hyphen — checked on the route and in the store, since the name
+   becomes a directory under the shared skills directory: anything else,
+   `../etc` or an absolute path included, is refused with 422 rather than
+   written.
 2. An **agent** has no identity: it is a registry agent, a model, an
    effort, a brief and a set of skills. Its pin is one string,
    `<agent>:<model>`, where `<agent>` is the id of an agent in the daemon's
@@ -152,7 +158,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `orchestration` and `pr-reviewer`, and removes folders for names the
     store no longer has without removing `skills_dir` itself. It syncs after
     the store seeds shipped skills at startup and after every skill create,
-    document set, reset or delete.
+    document set, reset or delete. A stored name that is not a kebab-case
+    slug (rule 1) is logged and skipped rather than written.
 
 ## Acceptance criteria
 
@@ -166,6 +173,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`store.rs::skill_crud_and_the_two_refusals_that_tell_them_apart`,
   `skill_documents.rs::a_skill_of_your_own_is_deleted_rather_than_reset`,
   `::a_shipped_skill_cannot_be_deleted`).
+- A name with `/`, `..`, an uppercase letter, a space or a leading hyphen is
+  refused with 422 rather than written under the skills directory:
+  `skill_documents.rs::a_skill_name_outside_the_kebab_case_shape_is_refused`.
 - A skill an agent still loads cannot be deleted
   (`store.rs::a_skill_an_agent_still_loads_cannot_be_deleted`), and an agent
   cannot be staffed on a skill nothing answers to

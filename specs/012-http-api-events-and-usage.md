@@ -17,6 +17,9 @@ tests:
   - crates/ariadne-daemon/tests/it/agents.rs
   - crates/ariadne-daemon/tests/it/models.rs
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
+  - crates/ariadne-daemon/src/acp_discovery.rs
+  - crates/ariadne-daemon/src/acp_index.rs
+  - crates/ariadne-daemon/tests/it/task_failure.rs
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-daemon/src/config.rs
   - crates/ariadne-daemon/src/socket.rs
@@ -69,7 +72,11 @@ and the ACP runtime that reports the agent events (021).
    `CreateGoalRequest` takes the goal's `workflow` and `GoalDto` carries it
    with the columns it snapshotted (030). The task requests take `agents`,
    one per column, and `TaskDto.step` is the column the task is in; neither
-   carries a landing.
+   carries a landing. A `merge_commit` a request carries — on
+   `POST /v1/tasks/{id}/transitions` and on `POST /v1/tasks/{id}/step/complete`
+   alike — is accepted only as a hex sha of 7 to 64 characters and refused
+   otherwise with 422 `invalid_request`, since a later call hands it to git as
+   the commit a `merged` or `request-merged` gate verifies (030).
 4. Every write emits a **fat event**: the changed entity, whole, so a client
    can apply it without a re-fetch. A task transition carries the transition
    that caused it, whether it came through HTTP or from the scheduler.
@@ -232,7 +239,14 @@ and the ACP runtime that reports the agent events (021).
     index. Refresh still searches `PATH`, probes agents, and answers the
     agent list. Both
     responses include status, measured capabilities, degradation flags, and
-    a rejection reason when discovery failed.
+    a rejection reason when discovery failed. `acp_registry_url` is fetched
+    only over `https`, with one exception: `http` to a loopback host, which a
+    test's own stand-in server is and which no network path could sit on.
+    Any other scheme is refused and logs a warning, the same as a download
+    failure. An index entry whose command names a shell interpreter (`sh`,
+    `bash`, `zsh`, `dash`, `fish`, `cmd`, `powershell`, `pwsh`) or whose
+    arguments hold `-c` is refused by id, logged, and left out of what `PATH`
+    search and probing consider; the rest of the index still installs.
 21. `GET /v1/events` answers one page of the recorded events. `order=asc` is
     the default and answers the oldest of them, oldest first, which is what a
     client sweeping forward reads. `order=desc` answers the newest, newest
@@ -342,6 +356,11 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   `SwitchSessionRequest`, and answers a `SessionDto` that carries
   `switched_from`
   (`switch.rs::the_switch_endpoint_is_in_the_openapi_document`).
+- A `merge_commit` that starts with `-` or holds a non-hex character is
+  refused with 422 on the step-complete route
+  (`workflow_steps.rs::a_task_walks_develop_review_merge_with_one_agent_per_column`)
+  and on the transitions route
+  (`task_failure.rs::a_malformed_merge_commit_is_refused_on_the_transitions_route`).
 
 - Learned permission routes list, get, delete and widen or narrow by `PUT`,
   refuse `POST` with 405, publish complete events for a create, an update by
@@ -526,7 +545,13 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   (`::refresh_downloads_the_configured_index_and_registers_its_installed_agent`)
   and still returns the agent list after failed downloads or refused documents
   (`::a_failed_download_keeps_the_index_and_still_rescans_and_reprobes`,
-  `::a_refused_document_keeps_the_index_and_still_rescans_and_reprobes`).
+  `::a_refused_document_keeps_the_index_and_still_rescans_and_reprobes`). A
+  plain `http` registry URL is refused, and `http` to a loopback host is
+  still accepted
+  (`acp_discovery.rs::tests::a_plain_http_registry_url_is_refused`,
+  `::http_to_a_loopback_host_is_accepted`). An index entry naming a shell
+  interpreter, directly or behind `-c`, is refused by id and the rest of the
+  index still installs (`acp_index.rs::tests::an_index_entry_naming_a_shell_is_refused_and_the_rest_of_the_index_still_installs`).
 - A descending page is the events recorded last, newest first
   (`events.rs::the_newest_page_is_the_events_recorded_last`,
   `store.rs::a_descending_page_answers_the_newest_events_newest_first`), and a

@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 
 use ariadne_core::Seat;
 use ariadne_core::acp::LaunchConfig;
-use ariadne_store::Store;
+use ariadne_store::{Store, is_skill_slug};
 
 pub use acp::{plan_resume, plan_spawn};
 #[allow(unused_imports)] // the session-switch task wires handoff_text to its endpoint
@@ -201,6 +201,10 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
     }
 
     for skill in skills {
+        if !is_skill_slug(&skill.name) {
+            tracing::error!(name = %skill.name, "a stored skill name is not a kebab-case slug; not writing it");
+            continue;
+        }
         let dir = skills_dir.join(&skill.name);
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         std::fs::write(dir.join("SKILL.md"), skill.document_text())

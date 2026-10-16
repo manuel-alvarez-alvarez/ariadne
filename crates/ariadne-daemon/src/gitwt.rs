@@ -34,7 +34,9 @@ impl GitManager {
             true => format!("{base}..{branch}"),
             false => branch.to_string(),
         };
-        let ahead = self.git(repo, &["rev-list", "--count", &range]).await?;
+        let ahead = self
+            .git(repo, &["rev-list", "--count", "--end-of-options", &range])
+            .await?;
         let status = self.git(worktree, &["status", "--porcelain"]).await?;
         Ok(ahead.trim().parse::<u64>()? > 0 && status.trim().is_empty())
     }
@@ -162,11 +164,23 @@ impl GitManager {
             .await
     }
 
+    /// Whether `branch` is a valid branch name (`git check-ref-format
+    /// --branch`), rather than revision syntax such as `main~1` or `HEAD`
+    /// that `rev-parse --verify refs/heads/<branch>` would otherwise accept
+    /// as if it named a branch.
+    pub(crate) async fn is_valid_branch_name(&self, repo: &Path, branch: &str) -> Result<bool> {
+        Ok(self
+            .git(repo, &["check-ref-format", "--branch", branch])
+            .await
+            .is_ok())
+    }
+
     pub async fn branch_exists(&self, repo: &Path, branch: &str) -> Result<bool> {
         let args = [
             "rev-parse",
             "--verify",
             "--quiet",
+            "--end-of-options",
             &format!("refs/heads/{branch}"),
         ];
         let output = Command::new("git")
@@ -198,6 +212,7 @@ impl GitManager {
                 "rev-parse",
                 "--verify",
                 "--quiet",
+                "--end-of-options",
                 &format!("refs/heads/{branch}"),
             ],
         )
@@ -263,8 +278,16 @@ impl GitManager {
     /// `FETCH_HEAD` alone: the head of a request the user reviews, which may
     /// share its name with a branch of the checkout (029).
     pub(crate) async fn fetch_head_of(&self, repo: &Path, from: &str, branch: &str) -> Result<()> {
-        self.git(repo, &["fetch", from, &format!("refs/heads/{branch}")])
-            .await?;
+        self.git(
+            repo,
+            &[
+                "fetch",
+                "--end-of-options",
+                from,
+                &format!("refs/heads/{branch}"),
+            ],
+        )
+        .await?;
         Ok(())
     }
 
@@ -293,8 +316,16 @@ impl GitManager {
     pub(crate) async fn fast_forward(&self, repo: &Path, branch: &str, to: &str) -> Result<()> {
         if !self.branch_exists(repo, branch).await? {
             // No local branch yet: it starts where the remote's is.
-            self.git(repo, &["update-ref", &format!("refs/heads/{branch}"), to])
-                .await?;
+            self.git(
+                repo,
+                &[
+                    "update-ref",
+                    "--end-of-options",
+                    &format!("refs/heads/{branch}"),
+                    to,
+                ],
+            )
+            .await?;
             return Ok(());
         }
         let tip = self.branch_tip(repo, branch).await?;
@@ -317,13 +348,22 @@ impl GitManager {
         }
         match checked_out {
             Some(worktree) => {
-                self.git(Path::new(&worktree), &["merge", "--ff-only", "--quiet", to])
-                    .await?;
+                self.git(
+                    Path::new(&worktree),
+                    &["merge", "--ff-only", "--quiet", "--end-of-options", to],
+                )
+                .await?;
             }
             None => {
                 self.git(
                     repo,
-                    &["update-ref", &format!("refs/heads/{branch}"), to, &tip],
+                    &[
+                        "update-ref",
+                        "--end-of-options",
+                        &format!("refs/heads/{branch}"),
+                        to,
+                        &tip,
+                    ],
                 )
                 .await?;
             }
@@ -334,12 +374,16 @@ impl GitManager {
     /// The diff of `HEAD` in `worktree` from the commit `since`:
     /// `git diff <since>..HEAD` (029).
     pub(crate) async fn diff_since(&self, worktree: &Path, since: &str) -> Result<String> {
-        self.git(worktree, &["diff", &format!("{since}..HEAD")])
-            .await
+        self.git(
+            worktree,
+            &["diff", "--end-of-options", &format!("{since}..HEAD")],
+        )
+        .await
     }
 
     pub async fn delete_branch(&self, repo: &Path, branch: &str) -> Result<()> {
-        self.git(repo, &["branch", "-D", branch]).await?;
+        self.git(repo, &["branch", "-D", "--end-of-options", branch])
+            .await?;
         Ok(())
     }
 
@@ -353,9 +397,14 @@ impl GitManager {
         remote: &str,
         branch: &str,
     ) -> Result<bool> {
-        let local = self.git(repo, &["rev-parse", branch]).await?;
+        let local = self
+            .git(repo, &["rev-parse", "--verify", "--end-of-options", branch])
+            .await?;
         let refs = self
-            .git(repo, &["ls-remote", "--heads", remote, branch])
+            .git(
+                repo,
+                &["ls-remote", "--heads", "--end-of-options", remote, branch],
+            )
             .await?;
         Ok(refs
             .lines()
@@ -374,7 +423,10 @@ impl GitManager {
         branch: &str,
     ) -> Result<Option<String>> {
         let refs = self
-            .git(repo, &["ls-remote", "--heads", remote, branch])
+            .git(
+                repo,
+                &["ls-remote", "--heads", "--end-of-options", remote, branch],
+            )
             .await?;
         Ok(refs
             .lines()
@@ -397,7 +449,13 @@ impl GitManager {
         let output = Command::new("git")
             .arg("-C")
             .arg(repo)
-            .args(["merge-base", "--is-ancestor", ancestor, descendant])
+            .args([
+                "merge-base",
+                "--is-ancestor",
+                "--end-of-options",
+                ancestor,
+                descendant,
+            ])
             .output()
             .await
             .context("running git merge-base")?;
@@ -412,11 +470,20 @@ impl GitManager {
     /// from it. Then the whole branch is the change, and the empty tree is
     /// what it is read against.
     pub async fn diff(&self, repo: &Path, base: &str, branch: &str) -> Result<String> {
-        if self.git(repo, &["merge-base", base, branch]).await.is_err() {
-            return self.git(repo, &["diff", EMPTY_TREE, branch]).await;
-        }
-        self.git(repo, &["diff", &format!("{base}...{branch}")])
+        if self
+            .git(repo, &["merge-base", "--end-of-options", base, branch])
             .await
+            .is_err()
+        {
+            return self
+                .git(repo, &["diff", "--end-of-options", EMPTY_TREE, branch])
+                .await;
+        }
+        self.git(
+            repo,
+            &["diff", "--end-of-options", &format!("{base}...{branch}")],
+        )
+        .await
     }
 
     /// What `commit` brought into the branch it landed on: the diff against
@@ -437,12 +504,22 @@ impl GitManager {
         // answer is no: a root commit is not an error to report, it is the
         // other branch of this method.
         let before = match self
-            .git(repo, &["rev-parse", "--verify", "--quiet", &parent])
+            .git(
+                repo,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    "--end-of-options",
+                    &parent,
+                ],
+            )
             .await
         {
             Ok(_) => parent,
             Err(_) => EMPTY_TREE.to_string(),
         };
-        self.git(repo, &["diff", &before, commit]).await
+        self.git(repo, &["diff", "--end-of-options", &before, commit])
+            .await
     }
 }

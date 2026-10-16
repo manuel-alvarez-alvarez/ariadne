@@ -16,13 +16,17 @@ pub(crate) const GITHUB_EVENTS: &[&str] = &[
 ];
 
 /// The CLI's error without arguments: hook arguments can contain a secret.
+///
+/// `body` goes to the CLI on standard input rather than as an argument, so a
+/// secret inside it never shows up in the process list.
 pub(super) async fn request(
     cli: &Cli,
     args: &[String],
+    body: Option<&str>,
     secret: Option<&str>,
 ) -> Result<String, String> {
     let refs: Vec<_> = args.iter().map(String::as_str).collect();
-    let result = match cli.run(&refs, None).await {
+    let result = match cli.run(&refs, body).await {
         Ok(output) if output.status.success() => {
             Ok(String::from_utf8_lossy(&output.stdout).trim().into())
         }

@@ -17,6 +17,7 @@ use ariadne_core::probe::which;
 
 /// One agent of the index that this machine holds: its registry id, the
 /// command it is run and listed by, and the file the `PATH` search found.
+#[derive(Debug)]
 pub(crate) struct Installed {
     pub(crate) id: String,
     pub(crate) command: Vec<String>,
@@ -102,7 +103,43 @@ pub(crate) fn installed(index: &str, path: &OsStr, homes: &ManagerHomes) -> Vec<
         .agents
         .iter()
         .filter_map(|agent| found(agent, &path, homes))
+        .filter(|installed| {
+            let refuse = names_a_shell(&installed.command);
+            if refuse {
+                tracing::warn!(
+                    agent = installed.id,
+                    command = installed.command.join(" "),
+                    "the index names a shell interpreter as this agent's command; refusing the entry"
+                );
+            }
+            !refuse
+        })
         .collect()
+}
+
+/// Program names of a shell interpreter: an index entry naming one as its
+/// command runs whatever its arguments say rather than speaking ACP, so it
+/// is refused whatever distribution it claims.
+const SHELL_INTERPRETERS: &[&str] = &[
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "fish",
+    "cmd",
+    "powershell",
+    "pwsh",
+];
+
+/// Whether `command` names a shell interpreter, or carries `-c` among its
+/// arguments — the flag every one of them runs a string of as a command.
+fn names_a_shell(command: &[String]) -> bool {
+    let Some(program) = command.first() else {
+        return false;
+    };
+    let base = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let base = base.strip_suffix(".exe").unwrap_or(base);
+    SHELL_INTERPRETERS.contains(&base) || command[1..].iter().any(|arg| arg == "-c")
 }
 
 /// The entries of `path` that name a directory outright, in their own order.
@@ -445,4 +482,44 @@ struct Package {
     package: String,
     #[serde(default)]
     args: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file on `dir` that `which` accepts: present, and executable.
+    fn executable(dir: &Path, name: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// An index can name a shell as an agent's command — directly, as its
+    /// own id, or hidden behind `-c` among its arguments. Either is refused,
+    /// and an entry beside it that names neither still registers: refusing
+    /// one program the `PATH` holds is not reason to distrust the rest of
+    /// the index.
+    #[test]
+    fn an_index_entry_naming_a_shell_is_refused_and_the_rest_of_the_index_still_installs() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "sh");
+        executable(dir.path(), "innocuous");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+
+        let index = serde_json::json!({"agents": [
+            {"id": "sh", "distribution": {"npx": {"package": "evil-cli@1"}}},
+            {"id": "dash-c", "distribution": {
+                "npx": {"package": "innocuous@1", "args": ["-c", "rm -rf /"]}
+            }},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
 }

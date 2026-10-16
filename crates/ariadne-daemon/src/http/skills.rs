@@ -8,7 +8,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 
 use ariadne_api::skills::{CreateSkillRequest, SkillDto, UpdateSkillRequest};
-use ariadne_store::NewSkill;
+use ariadne_store::{NewSkill, is_skill_slug};
 
 use super::AppState;
 use super::convert::skill_dto;
@@ -20,6 +20,20 @@ fn sync_error(error: anyhow::Error) -> ApiError {
         StatusCode::INTERNAL_SERVER_ERROR,
         "internal_error",
         "cannot sync the home skill copy",
+    )
+}
+
+/// A name `sync_skills` can write as a directory component: a kebab-case
+/// slug, never `..`, an absolute path or anything else that walks outside
+/// the skills directory.
+fn invalid_name(name: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "invalid_request",
+        format!(
+            "skill name must be a kebab-case slug: lowercase letters, digits and single \
+             hyphens, 1 to 64 characters, no leading or trailing hyphen (got `{name}`)"
+        ),
     )
 }
 
@@ -37,6 +51,9 @@ pub(super) async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateSkillRequest>,
 ) -> ApiResult<(StatusCode, Json<SkillDto>)> {
+    if !is_skill_slug(&req.name) {
+        return Err(invalid_name(&req.name));
+    }
     let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
     let skill = state
         .store

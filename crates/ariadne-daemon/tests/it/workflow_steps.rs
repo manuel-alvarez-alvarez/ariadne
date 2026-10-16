@@ -285,6 +285,17 @@ async fn a_task_walks_develop_review_merge_with_one_agent_per_column() {
         h.store.get_task(&task.id).await.unwrap().step.as_deref(),
         Some("merge")
     );
+    let refused = h
+        .error(
+            as_session(
+                &format!("/v1/tasks/{}/step/complete", task.id),
+                &merge.id,
+                json!({"reason":"Landed.", "merge_commit":"-oops"}),
+            ),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    assert_eq!(refused.error.code, "invalid_request");
     sh(
         std::path::Path::new(&repo.path),
         &format!("git merge --ff-only {}", task.branch),

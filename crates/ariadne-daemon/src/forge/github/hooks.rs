@@ -22,20 +22,20 @@ impl Github {
         events: &[&str],
     ) -> Result<i64, String> {
         let mut args = args(row, "", "POST");
-        for field in [
-            "name=web".into(),
-            format!("config[url]={url}"),
-            "config[content_type]=json".into(),
-            format!("config[secret]={secret}"),
-            "config[insecure_ssl]=0".into(),
-        ] {
-            args.extend(["-f".into(), field]);
-        }
-        args.extend(["-F".into(), "active=true".into()]);
-        for event in events {
-            args.extend(["-f".into(), format!("events[]={event}")]);
-        }
-        hook_id(&request(&self.cli, &args, Some(secret)).await?)
+        args.extend(["--input".into(), "-".into()]);
+        let body = serde_json::json!({
+            "name": "web",
+            "config": {
+                "url": url,
+                "content_type": "json",
+                "secret": secret,
+                "insecure_ssl": "0",
+            },
+            "active": true,
+            "events": events,
+        })
+        .to_string();
+        hook_id(&request(&self.cli, &args, Some(&body), Some(secret)).await?)
     }
     pub(crate) async fn update_hook_url(
         &self,
@@ -45,8 +45,9 @@ impl Github {
     ) -> Result<(), String> {
         // The config endpoint changes only URL and preserves the existing secret.
         let mut args = args(row, &format!("/{id}/config"), "PATCH");
-        args.extend(["-f".into(), format!("url={url}")]);
-        request(&self.cli, &args, row.webhook_secret.as_deref())
+        args.extend(["--input".into(), "-".into()]);
+        let body = serde_json::json!({ "url": url }).to_string();
+        request(&self.cli, &args, Some(&body), row.webhook_secret.as_deref())
             .await
             .map(drop)
     }
@@ -54,6 +55,7 @@ impl Github {
         request(
             &self.cli,
             &args(row, &format!("/{id}"), "DELETE"),
+            None,
             row.webhook_secret.as_deref(),
         )
         .await
@@ -63,6 +65,7 @@ impl Github {
         request(
             &self.cli,
             &args(row, &format!("/{id}"), "GET"),
+            None,
             row.webhook_secret.as_deref(),
         )
         .await

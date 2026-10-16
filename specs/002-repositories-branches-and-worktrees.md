@@ -1,7 +1,7 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-10-15
+updated: 2026-10-16
 areas: [store, api, daemon, cli, ui]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
@@ -42,6 +42,9 @@ and the integration with it (025).
 3. A path and branch pair is unique: the same one cannot be registered twice.
    A path or branch the daemon cannot use is refused at creation. A checkout
    with no commits is usable: its base branch is the unborn one HEAD names.
+   A base branch is checked against `git check-ref-format --branch` before it
+   is looked up: revision syntax such as `main~1` or `HEAD` is refused rather
+   than resolved as if it named a branch.
 4. A repository a goal references cannot be deleted.
 5. Editing the base branch changes what *new* tasks branch from, and nothing
    about tasks already under way.
@@ -110,7 +113,8 @@ and the integration with it (025).
   (`repositories.rs::crud_round_trip_emits_a_fat_event_per_write`).
 - The base branch defaults to the checked-out branch
   (`repositories.rs::base_branch_defaults_to_the_current_branch`), a path or
-  branch that cannot be used is refused
+  branch that cannot be used is refused, revision syntax such as `main~1` or
+  `HEAD` included
   (`::create_refuses_a_path_or_branch_it_cannot_use`), a checkout with no
   commits registers on its unborn branch
   (`::a_repository_with_no_commits_can_be_registered`), and the same pair

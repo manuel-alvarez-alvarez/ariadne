@@ -309,6 +309,7 @@ impl AgentRegistry {
     }
 
     async fn download_index(&self, url: &str) -> Result<String> {
+        refuse_insecure_registry_url(url)?;
         let bytes = reqwest::Client::builder()
             .timeout(self.timeouts.registry_download)
             .build()?
@@ -610,6 +611,27 @@ impl AgentRegistry {
             })
             .collect()
     }
+}
+
+/// Refuse a registry index URL that is not `https`, with one exception: a
+/// loopback host, which a test's own stand-in server runs as and which no
+/// network path between here and there could ever sit on. Anything else —
+/// a real registry a user points `acp_registry_url` at — must be `https`,
+/// since the index names the command every ACP agent on this machine is
+/// started with.
+fn refuse_insecure_registry_url(url: &str) -> Result<()> {
+    let parsed =
+        reqwest::Url::parse(url).with_context(|| format!("invalid registry URL: {url}"))?;
+    let loopback = parsed.host_str().is_some_and(|host| {
+        host == "localhost"
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    if parsed.scheme() != "https" && !(parsed.scheme() == "http" && loopback) {
+        bail!("the ACP registry index must be fetched over https: {url}");
+    }
+    Ok(())
 }
 
 fn not_probed(entry: &RegistryEntry) -> Discovery {
@@ -1079,4 +1101,25 @@ fn choices(option: &v1::SessionConfigOption) -> Vec<Choice> {
         });
     }
     choices
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_https_registry_url_is_accepted() {
+        refuse_insecure_registry_url("https://cdn.agentclientprotocol.com/registry.json").unwrap();
+    }
+
+    #[test]
+    fn a_plain_http_registry_url_is_refused() {
+        assert!(refuse_insecure_registry_url("http://evil.example/registry.json").is_err());
+    }
+
+    #[test]
+    fn http_to_a_loopback_host_is_accepted() {
+        refuse_insecure_registry_url("http://127.0.0.1:4000/index.json").unwrap();
+        refuse_insecure_registry_url("http://localhost:4000/index.json").unwrap();
+    }
 }
