@@ -50,7 +50,7 @@ hex = "0.4"
 getrandom = "0.4"
 
 # openapi
-utoipa = { version = "5", features = ["axum_extras"] }
+utoipa = { version = "6", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
 
 # Turns tokio's child pipes into the `futures` streams the ACP SDK's
