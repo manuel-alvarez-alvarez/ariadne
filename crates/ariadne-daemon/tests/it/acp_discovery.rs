@@ -239,6 +239,41 @@ async fn a_kept_index_no_newer_than_the_snapshot_does_not_replace_it() {
     assert_eq!(server.requests(), 1);
 }
 
+#[tokio::test]
+async fn a_kept_index_fetched_without_https_provenance_is_not_trusted() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with(&["downloaded-agent", "goose"]);
+    let server = IndexServer::new(downloaded_index());
+    let home = empty_home(dir.path());
+    server.configure(&home);
+    let h = harness()
+        .home(home.clone())
+        .index_fetch(Arc::new(server.clone()))
+        .agents_on_path(path.clone())
+        .await;
+    let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
+    // A daemon upgraded from a version with no https check may still hold a
+    // row an earlier download left over `http`; the kept row is checked
+    // again on every read, not only when it is written.
+    sqlx::query("UPDATE acp_registry_index SET url = ?")
+        .bind("http://stub-registry.test/index.json")
+        .execute(&index_db(&h))
+        .await
+        .unwrap();
+    let store = ariadne_store::Store::open(h.dir.path().join("test.db"))
+        .await
+        .unwrap();
+    let registry = ariadne_daemon::acp_discovery::AgentRegistry::new(&[], home, store, &path);
+    let agents = registry.discover().await;
+    assert_eq!(
+        agents.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
+        ["goose"],
+        "a kept index with no https provenance must not be trusted"
+    );
+    assert_eq!(server.requests(), 1, "the restart must not download");
+}
+
 async fn failed_index_refresh(status: StatusCode, document: &str) {
     use tracing_subscriber::layer::SubscriberExt;
 

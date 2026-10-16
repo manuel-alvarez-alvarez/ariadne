@@ -347,10 +347,14 @@ impl AgentRegistry {
             let snapshot = chrono::DateTime::parse_from_rfc3339(SHIPPED_INDEX_DATE)
                 .expect("the shipped index date is valid");
             if fetched.is_ok_and(|fetched| fetched > snapshot) {
-                match acp_index::validate(&kept.document) {
-                    Ok(()) => return kept.document,
-                    Err(error) => {
-                        tracing::warn!(error = %error, "reading the kept ACP registry index failed");
+                if let Err(error) = refuse_insecure_registry_url(&kept.url) {
+                    tracing::warn!(error = %error, "the kept ACP registry index has no https provenance");
+                } else {
+                    match acp_index::validate(&kept.document) {
+                        Ok(()) => return kept.document,
+                        Err(error) => {
+                            tracing::warn!(error = %error, "reading the kept ACP registry index failed");
+                        }
                     }
                 }
             }

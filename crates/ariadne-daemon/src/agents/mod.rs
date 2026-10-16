@@ -189,10 +189,10 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
 
     let names: std::collections::HashSet<_> =
         skills.iter().map(|skill| skill.name.as_str()).collect();
-    for entry in std::fs::read_dir(skills_dir)
-        .with_context(|| format!("reading {}", skills_dir.display()))?
+    for entry in std::fs::read_dir(&canonical_skills_dir)
+        .with_context(|| format!("reading {}", canonical_skills_dir.display()))?
     {
-        let entry = entry.with_context(|| format!("reading {}", skills_dir.display()))?;
+        let entry = entry.with_context(|| format!("reading {}", canonical_skills_dir.display()))?;
         let file_type = entry
             .file_type()
             .with_context(|| format!("reading {}", entry.path().display()))?;
@@ -224,7 +224,7 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
             continue;
         }
         if let Err(error) =
-            symlink_safe::write_skill(skills_dir, &skill.name, skill.document_text())
+            symlink_safe::write_skill(&canonical_skills_dir, &skill.name, skill.document_text())
         {
             tracing::error!(name = %skill.name, error = %error, "writing the skill failed");
             failed.push(skill.name);

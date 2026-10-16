@@ -316,6 +316,28 @@ async fn a_symlinked_skill_md_is_never_written_through() {
     );
 }
 
+/// A configured `skills_dir` that is itself a symlink — a home moved onto
+/// another volume, say — is resolved once up front, so every write and
+/// every stale-entry read goes through its real target. Opening the
+/// symlink path itself with `O_NOFOLLOW`, as a skill's own write does,
+/// would refuse it outright and fail the sync for every skill.
+#[tokio::test]
+async fn a_symlinked_skills_root_still_syncs_through_its_target() {
+    let h = harness().await;
+    let real_skills_dir = h.launcher.cfg.skills_dir.clone();
+    let link = real_skills_dir.parent().unwrap().join("skills-link");
+    std::os::unix::fs::symlink(&real_skills_dir, &link).unwrap();
+
+    ariadne_daemon::agents::sync_skills(&h.store, &link)
+        .await
+        .unwrap();
+
+    assert!(
+        std::fs::read_to_string(link.join("coding").join("SKILL.md")).is_ok(),
+        "a skills_dir that is itself a symlink must still sync through its target"
+    );
+}
+
 /// A write that keeps failing is reported by `sync_skills` itself: a
 /// skill's own directory refusing new entries fails every attempt at a
 /// temporary file, and the function answers `Err` for it rather than

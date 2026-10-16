@@ -137,6 +137,16 @@ const SHELL_INTERPRETERS: &[&str] = &[
     "pwsh",
 ];
 
+/// `base` with a trailing `.exe` removed, compared ASCII-case-insensitively:
+/// `PWSH.EXE` names the same program `pwsh.exe` does.
+fn strip_exe_suffix(base: &str) -> &str {
+    if base.len() >= 4 && base[base.len() - 4..].eq_ignore_ascii_case(".exe") {
+        &base[..base.len() - 4]
+    } else {
+        base
+    }
+}
+
 /// Every word of every element of `command`, split and quote-removed the
 /// way a shell — and `env -S`, documented as using "the same syntax as the
 /// shell" — reads a line: `s''h -'c'` is the two words `sh` and `-c` to
@@ -166,7 +176,7 @@ fn names_a_shell(command: &[String]) -> bool {
     let words = words(command);
     words.iter().any(|word| {
         let base = word.rsplit(['/', '\\']).next().unwrap_or(word);
-        let base = base.strip_suffix(".exe").unwrap_or(base);
+        let base = strip_exe_suffix(base);
         SHELL_INTERPRETERS
             .iter()
             .any(|interpreter| base.eq_ignore_ascii_case(interpreter))
@@ -202,7 +212,7 @@ fn names_a_shell(command: &[String]) -> bool {
 fn uses_env_split_string(command: &[String]) -> bool {
     let names_env = command.iter().any(|part| {
         let base = part.rsplit(['/', '\\']).next().unwrap_or(part);
-        let base = base.strip_suffix(".exe").unwrap_or(base);
+        let base = strip_exe_suffix(base);
         base.eq_ignore_ascii_case("env")
     });
     names_env
@@ -784,6 +794,34 @@ mod tests {
         // executable this test made under that exact name.
         let index = serde_json::json!({"agents": [
             {"id": "SH", "distribution": {"npx": {"package": "evil-cli@1"}}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// The `.exe` suffix is stripped the same way whatever case it is
+    /// spelled in: `PWSH.EXE -File payload.ps1` runs the same shell
+    /// `pwsh.exe` does.
+    #[test]
+    fn an_uppercase_exe_suffix_on_a_shell_name_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "PWSH.EXE");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            // No binary distribution reaches this machine's platform; the
+            // claim this test proves does not apply here.
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "pwsh-shell", "distribution": {"binary": {
+                key: {"cmd": "PWSH.EXE", "args": ["-File", "payload.ps1"]}
+            }}},
             {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
         ]})
         .to_string();
