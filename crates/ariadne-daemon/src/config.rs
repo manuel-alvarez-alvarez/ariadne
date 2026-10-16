@@ -8,6 +8,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use axum::http::HeaderValue;
+use url::Url;
 
 use ariadne_client::endpoint::{self, AcpAgentConfig};
 
@@ -24,6 +26,7 @@ pub struct Config {
     pub skills_dir: PathBuf,
     pub pid_file: PathBuf,
     pub tcp_listen: Option<SocketAddr>,
+    pub tcp_allowed_origins: Vec<String>,
     /// Separate signed ingress. None binds loopback on an operating-system port.
     pub webhook_listen: Option<SocketAddr>,
     pub webhook_public_url: Option<String>,
@@ -110,6 +113,7 @@ impl Config {
             skills_dir: file.skills_dir.unwrap_or_else(|| root.join("skills")),
             pid_file: endpoint::pid_file(&root),
             tcp_listen: file.tcp_listen,
+            tcp_allowed_origins: file.tcp_allowed_origins,
             webhook_listen: file.webhook_listen,
             webhook_public_url: file.webhook_public_url,
             tunnel_host: file
@@ -140,6 +144,8 @@ impl Config {
             root,
         };
 
+        validate_tcp_config(&config)?;
+
         for dir in [
             &config.root,
             &config.worktree_root,
@@ -166,17 +172,55 @@ impl Config {
             .context("cannot determine home directory; pass --home")?;
         let path = endpoint::config_file(&root);
         let file = endpoint::parse_config(&root)?;
+        let has_file = file.is_some();
+        let file = file.unwrap_or_default();
+        validate_tcp_file_config(&file)?;
         let skills_dir = file
+            .skills_dir
             .as_ref()
-            .and_then(|config| config.skills_dir.as_ref())
             .cloned()
             .unwrap_or_else(|| root.join("skills"));
-        let verdict = match file {
-            Some(_) => format!("{}: ok", path.display()),
-            None => format!("{}: none — every default applies", path.display()),
+        let verdict = if has_file {
+            format!("{}: ok", path.display())
+        } else {
+            format!("{}: none — every default applies", path.display())
         };
         Ok(format!("{verdict}\nskills_dir = {}", skills_dir.display()))
     }
+}
+
+const TCP_LISTEN_LOOPBACK_ERROR: &str = "tcp_listen must use a loopback address; use an SSH tunnel to reach the daemon from another host";
+
+fn validate_tcp_config(config: &Config) -> Result<()> {
+    validate_tcp_listen(config.tcp_listen)?;
+    validate_tcp_allowed_origins(&config.tcp_allowed_origins)
+}
+
+fn validate_tcp_file_config(config: &endpoint::FileConfig) -> Result<()> {
+    validate_tcp_listen(config.tcp_listen)?;
+    validate_tcp_allowed_origins(&config.tcp_allowed_origins)
+}
+
+fn validate_tcp_listen(tcp_listen: Option<SocketAddr>) -> Result<()> {
+    if tcp_listen.is_some_and(|address| !address.ip().is_loopback()) {
+        anyhow::bail!(TCP_LISTEN_LOOPBACK_ERROR);
+    }
+    Ok(())
+}
+
+fn validate_tcp_allowed_origins(origins: &[String]) -> Result<()> {
+    for origin in origins {
+        origin
+            .parse::<HeaderValue>()
+            .with_context(|| format!("tcp_allowed_origins has an invalid origin: {origin}"))?;
+        let parsed = Url::parse(origin).ok();
+        if parsed.is_none_or(|parsed| parsed.origin().ascii_serialization() != *origin) {
+            anyhow::bail!(
+                "tcp_allowed_origins must contain a serialized origin (scheme://host[:port], without a path or trailing slash): {origin}"
+            );
+        }
+    }
+    Ok(())
 }
 
 pub fn default_exhausted_patterns() -> Vec<String> {
@@ -359,6 +403,50 @@ mod tests {
             format!("{:#}", error).contains("prevent_slep"),
             "and says which key it could not read: {error:#}"
         );
+    }
+
+    #[test]
+    fn tcp_listener_requires_a_loopback_address_at_start_and_check() {
+        for address in ["0.0.0.0:7676", "192.168.1.10:7676"] {
+            let dir = home_with(&format!("tcp_listen = \"{address}\"\n"));
+            let start = Config::load(Some(dir.path().join("home")))
+                .expect_err("a non-loopback listener must stop startup");
+            let check = Config::check(Some(dir.path().join("home")))
+                .expect_err("the config check must report the startup refusal");
+            assert_eq!(start.to_string(), check.to_string());
+            assert!(start.to_string().contains("SSH tunnel"));
+        }
+
+        for address in ["127.0.0.1:7676", "[::1]:7676"] {
+            let dir = home_with(&format!("tcp_listen = \"{address}\"\n"));
+            assert!(Config::load(Some(dir.path().join("home"))).is_ok());
+            assert!(Config::check(Some(dir.path().join("home"))).is_ok());
+        }
+    }
+
+    #[test]
+    fn tcp_allowed_origins_are_read_from_config() {
+        let dir = home_with("tcp_allowed_origins = [\"https://console.example\"]\n");
+        let config = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert_eq!(config.tcp_allowed_origins, ["https://console.example"]);
+    }
+
+    #[test]
+    fn tcp_allowed_origins_require_serialized_origins() {
+        for origin in [
+            "*",
+            "null",
+            "https://console.example/path",
+            "https://console.example/",
+        ] {
+            let dir = home_with(&format!("tcp_allowed_origins = [\"{origin}\"]\n"));
+            let start = Config::load(Some(dir.path().join("home")))
+                .expect_err("an origin that a browser cannot send must stop startup");
+            let check = Config::check(Some(dir.path().join("home")))
+                .expect_err("the config check must report the startup refusal");
+            assert_eq!(start.to_string(), check.to_string());
+            assert!(start.to_string().contains("tcp_allowed_origins"));
+        }
     }
 
     #[test]

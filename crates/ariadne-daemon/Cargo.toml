@@ -61,6 +61,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
+url = { workspace = true }
 
 # Sleep inhibition (see `src/sleep.rs`), per target because neither dependency
 # means anything anywhere else — platforms with no backend get the stub.

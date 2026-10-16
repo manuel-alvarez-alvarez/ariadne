@@ -8,6 +8,7 @@ use crate::common;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 
+use ariadne_api::error::ErrorBody;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::SessionDto;
@@ -318,16 +319,20 @@ async fn sse_stream_signals_resync_and_closes_when_a_client_lags() {
 #[tokio::test]
 async fn cors_allows_preflight_and_cross_origin_calls() {
     let h = harness().await;
+    let app = http::tcp_router(h.state.clone(), &["https://console.example".into()]);
 
     let preflight = Request::builder()
         .method(Method::OPTIONS)
         .uri("/v1/skills")
+        .header(header::HOST, "localhost:7676")
         .header(header::ORIGIN, "tauri://localhost")
-        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "PATCH")
         .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type")
         .body(Body::empty())
         .unwrap();
-    let response = h.response(preflight).await;
+    let response = tower::ServiceExt::oneshot(app.clone(), preflight)
+        .await
+        .unwrap();
     assert!(
         response.status().is_success(),
         "preflight rejected: {}",
@@ -336,7 +341,7 @@ async fn cors_allows_preflight_and_cross_origin_calls() {
     let headers = response.headers().clone();
     assert_eq!(
         headers.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
-        "*"
+        "tauri://localhost"
     );
     assert!(headers.contains_key(header::ACCESS_CONTROL_ALLOW_METHODS));
     assert!(headers.contains_key(header::ACCESS_CONTROL_ALLOW_HEADERS));
@@ -345,16 +350,162 @@ async fn cors_allows_preflight_and_cross_origin_calls() {
     let mut request = get("/v1/events/stream");
     request
         .headers_mut()
+        .insert(header::HOST, "127.0.0.1:7676".parse().unwrap());
+    request
+        .headers_mut()
         .insert(header::ORIGIN, "http://localhost:1420".parse().unwrap());
-    let response = h.response(request).await;
+    let response = tower::ServiceExt::oneshot(app.clone(), request)
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
             .headers()
             .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
             .unwrap(),
-        "*"
+        "http://localhost:1420"
     );
+
+    for origin in ["http://tauri.localhost", "http://127.0.0.1:1420"] {
+        let request = Request::builder()
+            .uri("/v1/health")
+            .header(header::HOST, "localhost")
+            .header(header::ORIGIN, origin)
+            .body(Body::empty())
+            .unwrap();
+        let response = tower::ServiceExt::oneshot(app.clone(), request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{origin}");
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            origin
+        );
+    }
+
+    let configured = Request::builder()
+        .uri("/v1/health")
+        .header(header::HOST, "[::1]:7676")
+        .header(header::ORIGIN, "https://console.example")
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app.clone(), configured)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .unwrap(),
+        "https://console.example"
+    );
+
+    let refused_origin = Request::builder()
+        .uri("/v1/events/stream")
+        .header(header::HOST, "localhost")
+        .header(header::ORIGIN, "https://evil.example")
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app.clone(), refused_origin)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(
+        !response
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+    );
+    let body = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    let error: ErrorBody = serde_json::from_slice(&body).unwrap();
+    assert_eq!(error.error.code, "forbidden");
+
+    let refused_stream_host = Request::builder()
+        .uri("/v1/events/stream")
+        .header(header::HOST, "attacker.example")
+        .header(header::ORIGIN, "tauri://localhost")
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app.clone(), refused_stream_host)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    let error: ErrorBody = serde_json::from_slice(&body).unwrap();
+    assert_eq!(error.error.code, "forbidden");
+
+    let refused_terminal_origin = Request::builder()
+        .uri("/v1/sessions/missing/console/terminal")
+        .header(header::HOST, "localhost")
+        .header(header::UPGRADE, "websocket")
+        .header(header::ORIGIN, "https://evil.example")
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app.clone(), refused_terminal_origin)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let refused_host = Request::builder()
+        .uri("/v1/sessions/missing/console/terminal")
+        .header(header::HOST, "attacker.example")
+        .header(header::UPGRADE, "websocket")
+        .header(header::ORIGIN, "tauri://localhost")
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app.clone(), refused_host)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    let error: ErrorBody = serde_json::from_slice(&body).unwrap();
+    assert_eq!(error.error.code, "forbidden");
+
+    let refused_preflight = Request::builder()
+        .method(Method::OPTIONS)
+        .uri("/v1/skills")
+        .header(header::HOST, "localhost")
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app.clone(), refused_preflight)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(
+        !response
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+    );
+
+    let no_origin = Request::builder()
+        .uri("/v1/health")
+        .header(header::HOST, "localhost")
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app, no_origin).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let unix_request = Request::builder()
+        .uri("/v1/health")
+        .header(header::HOST, "attacker.example")
+        .header(header::ORIGIN, "https://evil.example")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(h.response(unix_request).await.status(), StatusCode::OK);
 }
 
 /// The launcher writes session rows through the same store, so its spawns

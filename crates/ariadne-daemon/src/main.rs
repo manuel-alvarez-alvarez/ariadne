@@ -3,7 +3,6 @@
 //! Serves the REST API on a unix socket (docker-style) and optionally on a
 //! TCP listener for web/desktop frontends.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -39,6 +38,7 @@ unknown key stops the daemon rather than being ignored):
                            (default: <home>/skills)
   tcp_listen               extra TCP listener for web/desktop UIs, e.g.
                            \"127.0.0.1:7676\" (default: unix socket only)
+  tcp_allowed_origins      browser origins allowed to use tcp_listen (default: [])
   webhook_listen           signed webhook listener (default: 127.0.0.1:0)
   webhook_public_url       public URL forwarded to the webhook listener; set, it
                            opens no tunnel
@@ -224,7 +224,7 @@ async fn main() -> Result<()> {
         reply_locks: Default::default(),
     };
     let ai_permissions_shutdown = state.ai_permissions.clone();
-    let app = http::router(state);
+    let unix_app = http::router(state.clone());
 
     // The public ingress stops when shutdown starts: an open event stream
     // can hold the HTTP drain below for as long as its client stays.
@@ -241,13 +241,14 @@ async fn main() -> Result<()> {
                 .await
                 .with_context(|| format!("binding tcp {addr}"))?;
             info!(%addr, "tcp listener enabled");
+            let tcp_app = http::tcp_router(state, &config.tcp_allowed_origins);
             let unix_srv =
-                axum::serve(unix_listener, app.clone()).with_graceful_shutdown(shutdown_signal());
-            let tcp_srv = axum::serve(tcp_listener, app).with_graceful_shutdown(shutdown);
+                axum::serve(unix_listener, unix_app).with_graceful_shutdown(shutdown_signal());
+            let tcp_srv = axum::serve(tcp_listener, tcp_app).with_graceful_shutdown(shutdown);
             tokio::try_join!(unix_srv.into_future(), tcp_srv.into_future()).map(|_| ())
         }
         None => {
-            axum::serve(unix_listener, app)
+            axum::serve(unix_listener, unix_app)
                 .with_graceful_shutdown(shutdown)
                 .await
         }
@@ -283,11 +284,8 @@ async fn bind_unix_socket(config: &Config) -> Result<UnixListener> {
             .with_context(|| format!("removing stale socket {}", path.display()))?;
     }
 
-    let listener = UnixListener::bind(path)
+    let listener = ariadne_daemon::socket::bind_owner_only(path)
         .with_context(|| format!("binding unix socket {}", path.display()))?;
-    // Owner-only: the socket is the local trust boundary.
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .with_context(|| format!("chmod 600 {}", path.display()))?;
     info!(socket = %path.display(), "listening");
     Ok(listener)
 }

@@ -10,6 +10,8 @@ run_dir = "/Users/me/.ariadne/run"                # (default: <home>/run)
 skills_dir = "/Users/me/.ariadne/skills"          # (default: <home>/skills)
 tcp_listen = "127.0.0.1:7676"     # enables the TCP listener (for web/desktop UIs)
                                    # (default: unix socket only, no TCP listener)
+tcp_allowed_origins = ["https://console.example"]
+                                   # extra browser origins allowed on the TCP listener
 log_filter = "info,ariadne_daemon=debug"
                                    # the tracing filter the daemon logs at
                                    # (default: "info"); RUST_LOG overrides it
@@ -116,6 +118,19 @@ binds; left unset, the daemon binds a random free loopback port. With no
 `tunnel_host`, asking for `tunnel_subdomain` where one is set. See [The forge
 integration](forge.md) for enabling a repository's integration and what each
 of these keys is for.
+
+`tcp_listen` must use a loopback address: `127.0.0.1` or `[::1]`. The daemon
+refuses a wildcard or LAN address at startup, and `ariadned --check-config`
+reports the same refusal. Use an SSH tunnel to reach the daemon from another
+host.
+
+The TCP listener accepts only `Host` values for `localhost`, `127.0.0.1`, or
+`[::1]`, with an optional port. It also accepts a request without an `Origin`
+header, or one from the packaged Tauri app, the development server, or an
+exact serialized origin in `tcp_allowed_origins`: `scheme://host[:port]`,
+without a path or trailing slash. Other Host and Origin values receive a `403
+forbidden` envelope, including event streams and terminal WebSockets. The unix
+socket ignores these TCP checks.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the
