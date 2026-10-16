@@ -504,17 +504,63 @@ mod symlink_safe {
     }
 }
 
-/// The same contract on a platform with no `openat`: a symlink refused on a
-/// path-based check just before the matching path-based write, which closes
-/// the gap enough to catch every ordinary mistake, if not one timed to land
-/// inside it.
+/// The same contract on a platform with no `openat`: a symlink at a skill
+/// directory is refused on a path-based check, then a fresh document replaces
+/// `SKILL.md`. This catches every ordinary mistake, if not one timed between
+/// the path check and directory write.
 #[cfg(not(unix))]
 mod symlink_safe {
-    use std::io;
+    use std::fs::OpenOptions;
+    use std::io::{self, Write};
     use std::path::Path;
 
     fn is_symlink(path: &Path) -> bool {
         std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    }
+
+    /// A temporary name must not be predictable: another process could
+    /// otherwise plant it first and stop the skill write with no further
+    /// access to the directory.
+    fn random_suffix() -> String {
+        let mut bytes = [0u8; 8];
+        getrandom::fill(&mut bytes).expect("the OS random source is available");
+        hex::encode(bytes)
+    }
+
+    const TEMP_NAME_ATTEMPTS: u32 = 8;
+
+    /// Write a fresh document and replace the old name in one rename. This
+    /// never opens the prior entry, so a hard link cannot change the file it
+    /// aliases outside the skills directory.
+    fn write_document_atomically(dir: &Path, document: &str) -> io::Result<()> {
+        for _ in 0..TEMP_NAME_ATTEMPTS {
+            let temporary = dir.join(format!(".skill-{}.tmp", random_suffix()));
+            let mut file = match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+            {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            };
+            if let Err(error) = file.write_all(document.as_bytes()) {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(error);
+            }
+            drop(file);
+            return match std::fs::rename(&temporary, dir.join("SKILL.md")) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let _ = std::fs::remove_file(&temporary);
+                    Err(error)
+                }
+            };
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not find an unused name for the skill document's temporary file",
+        ))
     }
 
     pub(super) fn write_skill(skills_dir: &Path, name: &str, document: &str) -> io::Result<()> {
@@ -523,11 +569,33 @@ mod symlink_safe {
             std::fs::remove_file(&dir)?;
         }
         std::fs::create_dir_all(&dir)?;
-        let file = dir.join("SKILL.md");
-        if is_symlink(&file) {
-            std::fs::remove_file(&file)?;
+        write_document_atomically(&dir, document)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::write_skill;
+
+        /// The replacement write does not open the existing hard link. The
+        /// linked file stays unchanged and the skill receives a fresh file.
+        #[test]
+        fn a_hard_linked_skill_md_is_replaced_rather_than_written_through() {
+            let root = tempfile::tempdir().unwrap();
+            let skills_dir = root.path().join("skills");
+            let dir = skills_dir.join("safe");
+            std::fs::create_dir_all(&dir).unwrap();
+            let shared = root.path().join("shared.md");
+            std::fs::write(&shared, "not a skill").unwrap();
+            std::fs::hard_link(&shared, dir.join("SKILL.md")).unwrap();
+
+            write_skill(&skills_dir, "safe", "the real skill text").unwrap();
+
+            assert_eq!(std::fs::read_to_string(&shared).unwrap(), "not a skill");
+            assert_eq!(
+                std::fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+                "the real skill text"
+            );
         }
-        std::fs::write(file, document)
     }
 }
 
