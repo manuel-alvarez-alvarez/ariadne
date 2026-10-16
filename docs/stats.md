@@ -5,6 +5,11 @@ session that ended, each task that ended, each switch, review and
 permission answer. The daemon writes one record of each such event to a
 ledger in its database, and every stat adds up those records.
 
+This page reports recorded work. It does not change daemon settings or answer
+permission requests. Use [Configuration](configuration.md) to configure the
+daemon and [Permission modes](permissions.md) to choose how repositories
+handle tool requests. Then start with `ariadne stats work` to review results.
+
 The stats come in five families, and each one answers one question:
 
 | Family | Question |
@@ -159,3 +164,8 @@ your mean wait, questions asked and stalled sessions. The charts break down
 permission answers by decider and attention flags by reason. In the CLI,
 `ariadne stats attention` prints those session figures followed by the two
 tables; `--format json` returns the full response.
+
+Use this report to adjust a repository's [permission mode](permissions.md) if
+people answer too many prompts or wait too long. Use
+[Configuration](configuration.md) when the report points to daemon behaviour
+rather than a permission decision.

@@ -1,5 +1,10 @@
 # Configuration
 
+Configure daemon-wide paths, listeners, dependencies, and runtime policies on
+this page. It does not select a repository's permission mode or report work.
+Use [Permission modes](permissions.md) to control tool requests, then use
+[Stats](stats.md) to review completed work.
+
 `~/.ariadne/config.toml` (all optional):
 
 ```toml
@@ -76,8 +81,8 @@ command = ["my-agent", "acp"]      # program followed by its arguments
 An `[[acp_agents]]` entry adds an ACP agent the shipped registry snapshot
 does not name, or replaces one it does name, command and all, by reusing its
 id. See [Installing Ariadne](install.md) for how the daemon discovers and
-probes agents, and [Permission modes](permissions.md) to choose, per
-repository, how it handles tool requests.
+probes agents. Then use [Permission modes](permissions.md) to choose how each
+repository handles an agent's tool requests.
 
 `POST /v1/acp-agents/refresh` downloads the index from `acp_registry_url`,
 then searches `PATH` again and probes every agent. The download has a
@@ -119,9 +124,10 @@ of these keys is for.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the
-daemon that is already running. `ariadned --help` lists every key above but
-`ai_failure_diagnosis`, and the two environment variables (`ARIADNE_HOME`,
-`RUST_LOG`) with a line each.
+daemon that is already running. Run it after every edit, then start or restart
+the daemon. `ariadned --help` lists every key above but `ai_failure_diagnosis`,
+and the two environment variables (`ARIADNE_HOME`, `RUST_LOG`) with a line
+each.
 
 ## The database of an earlier release
 

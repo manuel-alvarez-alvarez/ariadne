@@ -1,12 +1,16 @@
 # Permission modes
 
-Choose how Ariadne handles an ACP agent's tool-permission questions. The mode
-belongs to a repository, and every agent that works in it follows it. The
-default is `auto`, which keeps routine work moving. Choose `ask` when you want
-to decide each request, or `learn` when repeated approved requests in one
-repository should stop interrupting you. Choose `ai` to have the AI permission
-model, which runs on your own machine, answer each request — see [The AI
-permission model](#the-ai-permission-model) below.
+Choose how Ariadne handles an ACP agent's tool-permission questions. This page
+controls repository permission modes and learned approvals. It does not
+configure daemon paths or listeners; use [Configuration](configuration.md) for
+those. It does not report work; use [Stats](stats.md#attention) to review
+permission prompts and waits.
+
+The mode belongs to a repository, and every agent that works in it follows it.
+The default is `auto`, which keeps routine work moving. Choose `ask` when you
+want to decide each request, `learn` when repeated approved requests in one
+repository should stop interrupting you, or `ai` to have the local AI
+permission model answer requests.
 
 ## Set a repository's mode
 
@@ -24,8 +28,8 @@ repository's mode, and so does `ariadne repo ls`.
 The accepted values are `auto`, `ask`, `learn`, and `ai`. A repository
 registered without one uses `auto`. The change applies to the next agent
 launched in the repository; an agent already running keeps the mode it started
-with. `ai` is accepted only once the AI permission model is enabled; a repository set to it
-before that is refused, and the refusal says to enable the model first.
+with. `ai` is accepted only after the AI permission model is enabled; a
+repository set to it before then is refused.
 
 Which repository applies:
 
@@ -37,6 +41,10 @@ Which repository applies:
 The mode cannot be set per task or in `~/.ariadne/config.toml`. A
 `permission_mode` key left in `config.toml` stops the daemon from starting, so
 remove it.
+
+After you choose a mode, start or resume work in that repository. Use
+[Attention stats](stats.md#attention) to see how often people answered prompts
+and how long they waited.
 
 ## What each mode does
 
@@ -153,18 +161,18 @@ offered options, the selected option, the permission mode at the time
 was called. The AI permission model always reads the original input, not the
 key.
 
-Manage these rows with `ariadne permissions learned list`, `show`, and `rm`,
-or in the desktop app's **Permissions** screen. Its Learned tab shows each
-row's tool, level, family, normalized key and scope. Open a row to see its
-risk tags, selected option, target, model output and raw input. Change Scope
-there between **This repository** and **All repositories** to widen or narrow
-the row. You cannot add or edit a row by hand.
+Use `ariadne permissions learned list` to find a row, then `show`, `scope`, or
+`rm` to inspect, widen, narrow, or remove it. In the desktop app, use the
+**Permissions** screen and its Learned tab. It shows each row's tool, level,
+family, normalized key, and scope. Open a row to see its risk tags, selected
+option, target, model output, and raw input. You cannot add or edit a row by
+hand.
 
 ## The AI permission model
 
-The AI permission model is the model behind the `ai` mode. It runs on your own machine: nothing
-about a permission request leaves it. It is a Python package, and Ariadne
-installs it for you.
+The AI permission model is the model behind the `ai` mode. It runs on your own
+machine, so nothing about a permission request leaves it. Ariadne installs the
+Python package for you.
 
 For each request, Ariadne derives an operation and ordered risk tags from the
 complete tool call. The model sees the workspace, the tool call's title and
@@ -366,12 +374,12 @@ stops that child when you disable the model or the daemon exits, and starts it
 again after a refresh. Turning the model off keeps every file. Turning it back on
 reinstalls the same pins and repairs the model.
 
-Set the AI permission model up before you point a repository at it. A repository set to `ai`
-while the model is off is refused:
+Set the AI permission model up before you point a repository at it. A
+repository set to `ai` while the model is off is refused:
 
 ```
 the `ai` permission mode needs the AI permission model; turn it on with
-`ariadne permissions enable` first
+`ariadne permissions ai enable` first
 ```
 
 `enable` and `refresh` answer at once, with the install running in the
