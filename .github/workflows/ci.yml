@@ -44,6 +44,13 @@ jobs:
   rust:
     name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_INCREMENTAL: '0'
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: 'true'
+      # PRs read main's compiler cache without filling the quota with copies
+      # that only that PR can restore.
+      SCCACHE_GHA_RW_MODE: ${{ github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +68,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+
+      # rust-cache keeps dependency artifacts; sccache also reuses unchanged
+      # workspace library compilations after a fresh checkout. Its post step
+      # reports hits and misses so the benefit is visible in the job log.
+      - name: Cache Rust compilation
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.16.0
 
       # nextest's JUnit output is what the report step at the end of this job
       # turns into named annotations; plain `cargo test` has no such report.
@@ -87,6 +102,8 @@ jobs:
           # One cache per OS; the matrix legs must not share a target dir.
           key: ${{ matrix.os }}
           cache-on-failure: true
+          # Main's caches are available to every PR; PR caches are not shared.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Exits non-zero on any dependency that no source file names. It reads
       # the source and builds nothing, so it runs before the build. It
@@ -214,6 +231,7 @@ jobs:
           key: tauri-${{ matrix.os }}
           workspaces: ui/src-tauri
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Tauri v2's documented Linux prerequisites: the -sys crates' build
       # scripts ask pkg-config for these headers, so even a `cargo check`
