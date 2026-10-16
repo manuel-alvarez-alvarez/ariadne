@@ -1,7 +1,7 @@
 ---
 id: needs-attention
 status: current
-updated: 2026-10-14
+updated: 2026-10-16
 areas: [api, daemon, cli, ui]
 commits: []
 tests:
@@ -30,7 +30,6 @@ tests:
   - crates/ariadne-daemon/src/forge/github/pulls.rs
   - crates/ariadne-daemon/src/forge/github/details.rs
   - ui/src/features/goals/attention.test.tsx
-  - ui/src/features/goals/attention-strip.test.tsx
   - ui/src/features/goals/attention-alerts.test.tsx
   - ui/src/events/dispatch.test.ts
   - ui/src/features/pull-requests/pull-request-panel.test.tsx
