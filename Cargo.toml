@@ -61,7 +61,7 @@ tokio-util = { version = "0.7", features = ["compat"] }
 # `session/*` method the daemon speaks. Stable features only — nothing the
 # daemon needs is behind an `unstable_` flag, so an SDK release cannot take
 # one out from under it.
-agent-client-protocol = "2.2"
+agent-client-protocol = "3.3"
 
 # database
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate"] }
