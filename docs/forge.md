@@ -91,15 +91,18 @@ finding that carries a suggestion block the agent accepts is applied as
 given, and rewritten only where it fails to compile or pass; one it does
 not accept keeps the code, with a reply that says why. It **resolves no
 thread**: resolving a thread, once its reply satisfies you, is yours to
-do. A moved base branch is merged in rather than rebased onto, and the
-branch is never amended, rebased or force-pushed. It reports the request
-ready once every required approval and check reads green, and takes the
-readiness back down the moment a later change turns one back. Once you
-merge the request, the agent brings the base branch up to date and
-completes the column, which finishes the task when nothing follows it,
-or hands on to the next column; a request closed unmerged fails the
-task. Should the agent fall quiet once it has read the merge, the daemon
-advances or finishes the task itself and stops the agent.
+do. Before it runs the affected checks, it integrates a moved base branch
+as the repository's history rules require. Where those rules require a
+linear history, it rebases and pushes with `--force-with-lease`; otherwise
+it merges where those rules allow it. It keeps every commit others added,
+never uses an unguarded force push, and never amends a pushed commit outside
+that rebase. It reports the request ready once every required approval and
+check reads green, and takes the readiness back down the moment a later
+change turns one back. Once you merge the request, the agent brings the base
+branch up to date and completes the column, which finishes the task when
+nothing follows it, or hands on to the next column; a request closed unmerged
+fails the task. Should the agent fall quiet once it has read the merge, the
+daemon advances or finishes the task itself and stops the agent.
 
 A request of yours that no task opened — one you opened by hand — is listed
 too, and nobody keeps it until you ask Ariadne to babysit it; see [What a
@@ -354,10 +357,11 @@ click on it opens the request's panel — its state and checks, its facts with
 links to the forge and to each failed check, its description rendered, and
 its sessions — where **Start review** and **Stop review** are, and, on a
 request of yours that no task keeps, **Start babysit** and **Stop
-babysit**. The list and the panel are read live off the forge, and read
-again on their own as each fetch finds a change. While a repository in
-view polls, or its webhook is down, **Refresh** asks for a fetch now; with
-every webhook live there is nothing to refresh, and the button is gone.
+babysit**. The list uses each repository's last fetch. Opening a request
+reads its panel from the forge. Both update as a fetch finds a change. While
+a repository in view polls, or its webhook is down, **Refresh** asks for a
+fetch now; with every webhook live there is nothing to refresh, and the
+button is gone.
 
 ```sh
 ariadne pr ls --repo <repo-id>
@@ -372,15 +376,15 @@ three choices do, and `ariadne pr inspect` reads one whole.
 
 ## What Ariadne keeps of a request
 
-Ariadne stores nothing the forge holds: the title, the description, the
-branches, the checks and the comments are read off the forge every time,
-so nothing it shows or hands an agent is an old copy. The agents read them
-the same way — `get_pull_request`, `list_comments` and `get_comment` ask the
-forge at the call.
+Ariadne stores no forge content permanently. It holds titles, descriptions,
+branches, checks and comments in memory from a fetch, and discards them on a
+restart. Request lists use that last fetch; opening a request and the agent
+tools `get_pull_request`, `list_comments` and `get_comment` read the forge at
+the call.
 
-It keeps a small record of a request only while it works on it: the
-request a task opened, a request that asks for your review, and one of
-yours you asked it to review. The record is
+It keeps a small record of a request only while it works on it: the request
+a task opened, a request that asks for your review, and one of yours you
+asked it to review or babysit. The record is
 its own bookkeeping — which task keeps the request, what each agent was
 told, the head last reviewed and a mark per comment it told or its review posted. Once the request merges or closes
 and its work is taken down, the record goes, so an ended request takes no
