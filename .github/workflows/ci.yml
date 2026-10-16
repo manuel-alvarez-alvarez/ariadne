@@ -25,7 +25,7 @@ jobs:
     name: Rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install the Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -51,7 +51,7 @@ jobs:
     steps:
       # The migrations guard below diffs against `origin/main`, which a
       # shallow, single-ref checkout never fetches.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -153,7 +153,7 @@ jobs:
       run:
         working-directory: ui
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v5
         with:
@@ -203,7 +203,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install the Rust toolchain
         uses: dtolnay/rust-toolchain@stable
