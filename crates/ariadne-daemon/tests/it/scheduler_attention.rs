@@ -3162,6 +3162,110 @@ async fn a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref
     );
 }
 
+/// Once the guard gives up on a keeper for an unusable head branch, a
+/// later push that makes the branch usable again lets the keeper recover:
+/// `start_babysit_session`'s own successful-launch branch once cleared no
+/// mark at all, unlike the reviewer's own, so a recovered keeper request
+/// kept a stale recovery item.
+#[tokio::test]
+async fn a_keeper_recovers_once_its_head_branch_turns_valid_again() {
+    let h = harness().await;
+    let repo_path = h.git_repo("widgets");
+    let repo = h.repository(&repo_path).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_babysit_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    let next_sha = sh(&repo_path, "git rev-parse next");
+    crate::common::forge::seed_live(&h, &pull, "me", "fix evil", &next_sha, false);
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the request given up on for its unusable head branch",
+        async || {
+            h.store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    // The head branch turns usable: a real branch of the checkout, at a
+    // commit the checkout already holds, so the keeper's worktree needs
+    // no fetch to cut its own branch from it.
+    crate::common::forge::seed_live(&h, &pull, "me", "next", &next_sha, false);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the keeper to recover once its head branch is usable again",
+        async || {
+            h.store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_none()
+        },
+    )
+    .await;
+
+    assert!(
+        !h.store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty(),
+        "a keeper session starts once the head branch is usable again"
+    );
+}
+
 /// The same guard holds on a relaunch, not only a fresh spawn:
 /// `resume_pull_request_session` once bypassed `assert_valid_head_branch`
 /// for a request with a session already on its row, so a head branch that

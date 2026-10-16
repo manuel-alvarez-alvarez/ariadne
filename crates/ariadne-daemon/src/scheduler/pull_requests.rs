@@ -791,6 +791,10 @@ impl super::Scheduler {
         match self.launcher.resume_keeper_session(pull, pin).await {
             Ok(session) => {
                 info!(pull_request = %pull.id, session = %session.id, "the request's keeper session is up");
+                let _ = self
+                    .store
+                    .clear_pull_request_reviewer_given_up(&pull.id)
+                    .await;
                 Ok(())
             }
             Err(e) => {

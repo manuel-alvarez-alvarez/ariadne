@@ -228,10 +228,14 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     guard sits before a fresh spawn and before a relaunch of a session
     already on the row alike, since a branch read as unusable only after
     that session went quiet must refuse the relaunch the same way a
-    fresh spawn would have refused it. Nothing between the forge's own
-    read of a branch name and a real `git` call ever runs a shell over
-    it: `GitManager` always passes it as its own argument, and the
-    keeper's own push command (032 rule 4) quotes it into one.
+    fresh spawn would have refused it. A later push that makes the head
+    branch usable again clears the mark on the launch that follows,
+    whether that launch answers for a reviewer or for a keeper, so a
+    recovered request carries no stale recovery item. Nothing between
+    the forge's own read of a branch name and a real `git` call ever
+    runs a shell over it: `GitManager` always passes it as its own
+    argument, and the keeper's own push command (032 rule 4) quotes it
+    into one.
 
 ## HTTP
 
@@ -625,6 +629,9 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   The same guard holds on a relaunch of a session already on the row, not
   only a fresh spawn
   (`::a_reviewer_session_refuses_to_restart_on_a_head_branch_that_turned_invalid`).
+  A keeper recovers once its head branch turns usable again, with no
+  stale recovery item left on the row
+  (`::a_keeper_recovers_once_its_head_branch_turns_valid_again`).
 
 ## Known gap
 
