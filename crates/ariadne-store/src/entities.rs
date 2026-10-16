@@ -708,8 +708,12 @@ pub struct PullRequestRow {
     pub updated_at: String,
     /// When `scheduler::pull_requests::start_pull_request_session` gave up
     /// on this request's reviewer session: its spawn-retry budget ran out,
-    /// distinct from a crash the liveness sweep is about to retry. `None`
-    /// while automatic recovery still owns it.
+    /// distinct from a crash the liveness sweep is about to retry. Also
+    /// written the moment a reviewer or a keeper spawn refuses the
+    /// request's own head branch as a git ref — the same automatic
+    /// recovery giving up, on sight rather than after a budget, and on
+    /// either seat, since an unusable branch fails both the same way.
+    /// `None` while automatic recovery still owns it.
     pub reviewer_given_up_at: Option<String>,
     /// Whether that give-up was the watchdog's own exhausted-relaunch
     /// decision rather than `start_pull_request_session`'s own

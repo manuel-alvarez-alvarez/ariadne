@@ -362,7 +362,7 @@ async fn an_open_request_i_review_gets_one_session_detached_at_its_head() {
     );
     let briefing = h.told(&session.id);
     assert!(
-        briefing.contains("# Review pull request: Add widgets"),
+        briefing.contains("# Review pull request: <<<untrusted>>>Add widgets<<<end untrusted>>>"),
         "{briefing}"
     );
     assert!(briefing.contains(&head), "{briefing}");

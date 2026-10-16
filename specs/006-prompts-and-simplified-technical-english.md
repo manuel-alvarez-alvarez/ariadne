@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-10-14
+updated: 2026-10-16
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -180,6 +180,19 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     recency for ties, and an entry is never cut in
     the middle. A line in the dropped entries' place counts how many there
     were. A budget that fits every entry writes no such line.
+18. A value from the forge or from another agent is fenced before it
+    reaches a briefing: wrapped between `<<<untrusted>>>` and
+    `<<<end untrusted>>>` (`prompts::fence`), the same idea as rule 16's
+    handoff fence, in its own two markers rather than one reserved
+    character, since a briefing is prose an agent reads start to end
+    rather than a feed of discrete entries. Every `<<<` the value itself
+    carries is broken with a zero-width space first, so the value cannot
+    close the fence early or open one of its own; an empty value fences to
+    nothing. The session rules state once, for every seat, that text
+    between the markers is data and never an instruction (018, 026, 032).
+    Fenced: an issue's title and body (as the goal's), a request's title
+    and its head and base branch names, a comment's first line, an agent
+    message's body, and a step's return reason or completion summary.
 
 ## Acceptance criteria
 
@@ -290,6 +303,19 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`::the_newest_entries_survive_a_small_budget_and_one_line_counts_what_was_left_out`),
   and no entry is cut in the middle at any budget from zero to the whole
   text (`::no_entry_is_cut_in_the_middle_at_any_budget`).
+- A fenced value sits between its two markers, an empty value fences to
+  nothing, and a value holding the closing marker cannot close the fence
+  early (`prompts.rs::a_fenced_value_sits_between_its_markers`,
+  `::an_empty_value_fences_to_nothing`,
+  `::a_value_holding_the_closing_marker_cannot_close_the_fence`). Every
+  forge or agent value a briefing or a news prompt carries is fenced, and
+  the exhaustive-substitution tests prove it word for word
+  (`prompts.rs::every_default_briefing_is_its_template_with_the_values_put_in`,
+  `::the_pull_request_texts_fill_every_placeholder_they_name`,
+  `::the_keeper_briefing_fills_every_placeholder_it_names`). The fence
+  rule is in the shared session rules alone, within their size cap
+  (`mcp.rs::the_shared_rules_stay_small`,
+  `::each_shared_rule_is_written_in_its_owner_alone`).
 
 ## Sources
 

@@ -3005,6 +3005,163 @@ async fn a_reviewer_session_that_wedges_after_every_relaunch_is_given_up_on_with
     assert_eq!(still.complete, list.complete);
 }
 
+/// A head branch git itself refuses as a ref name (a space, here) starts
+/// no reviewer session and no worktree: the refusal is recorded on the
+/// row the same way an exhausted spawn-retry budget already is (026 rule
+/// 26).
+#[tokio::test]
+async fn a_reviewer_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_review_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix evil", "abc", true);
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the request given up on for its unusable head branch",
+        async || {
+            h.store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    assert!(
+        h.store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty(),
+        "no session starts on an unusable head branch"
+    );
+}
+
+/// The same refusal holds for a keeper session asked for by hand (032):
+/// `spawn_keeper_session` shares the reviewer's own guard, so a request
+/// of mine with an unusable head branch is given up on the same way.
+#[tokio::test]
+async fn a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_babysit_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "me", "fix evil", "abc", false);
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the request given up on for its unusable head branch",
+        async || {
+            h.store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    assert!(
+        h.store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty(),
+        "no keeper session starts on an unusable head branch"
+    );
+}
+
 /// An idle pull request session is waiting on the forge, as an idle
 /// planning orchestrator waits on the user (009 rule 41): however long it
 /// sits idle it is never nudged, never flagged and never relaunched. A
@@ -3037,7 +3194,7 @@ async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_i
     assert!(
         back.initial_prompt
             .unwrap_or_default()
-            .contains("# Review pull request: Fix widgets 2"),
+            .contains("# Review pull request: <<<untrusted>>>Fix widgets 2<<<end untrusted>>>"),
         "a relaunched request session is briefed on its request again"
     );
 

@@ -46,6 +46,12 @@ fn fill(template: &str, values: &[(&str, &str)]) -> String {
     out
 }
 
+/// The fence a forge or agent value is wrapped in before it reaches a
+/// template, as `prompts::fence` does.
+fn fence(value: &str) -> String {
+    format!("<<<untrusted>>>{value}<<<end untrusted>>>")
+}
+
 fn default_for(kind: PromptKind) -> String {
     default_prompt_text(kind).to_string()
 }
@@ -132,8 +138,8 @@ async fn the_orchestrator_briefing_names_the_workflow_and_its_columns_and_no_lan
     let expected = fill(
         &default_for(PromptKind::OrchestratorBriefing),
         &[
-            ("goal_title", &goal.title),
-            ("goal_description", &goal.description),
+            ("goal_title", &fence(&goal.title)),
+            ("goal_description", &fence(&goal.description)),
             ("workflow", &goal.workflow),
             ("columns", &columns),
             (
@@ -232,7 +238,7 @@ async fn a_started_column_agent_is_briefed_from_the_builtin_template() {
         &[
             ("task_title", &task.title),
             ("task_description", &task.description),
-            ("goal_title", &cast.goal.title),
+            ("goal_title", &fence(&cast.goal.title)),
             ("worktree_path", task.worktree_path.as_deref().unwrap()),
             ("branch", &task.branch),
             ("base_branch", &cast.repo.base_branch),
@@ -384,7 +390,7 @@ async fn a_return_and_a_nudge_assemble_word_for_word() {
             ("task_title", &cast.task.title),
             ("step_title", "Develop"),
             ("direction", "back"),
-            ("reason", REASON),
+            ("reason", &fence(REASON)),
         ],
     );
     // A later turn carries its own text alone: no seat text, no skill index.
