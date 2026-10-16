@@ -21,13 +21,18 @@ missing). For a staged file under `ui/src-tauri`: `cargo fmt --all -- --check`
 from inside `ui/src-tauri`.
 
 The pre-push hook (`.githooks/pre-push`) runs the whole suite for a push that
-touches `ui/`: `npm run check` in `ui/` (`npm ci` first when
-`ui/node_modules` is missing) — that is `npm test`, `npm run typecheck`, `npm
-run lint`, `npm run check:unused` and `npm run check:audit` together. For a
-push that touches `ui/src-tauri`: `cargo fmt --all -- --check` and `cargo
+touches `ui/`: `npm run check:audit`, then `npm run check` in `ui/` (`npm ci`
+first when `ui/node_modules` is missing) — `npm run check` is `npm test`,
+`npm run typecheck`, `npm run lint` and `npm run check:unused` together. For
+a push that touches `ui/src-tauri`: `cargo fmt --all -- --check` and `cargo
 check`, both from inside `ui/src-tauri`.
 
 ### Dependency advisories
+
+The bar for `ui/` is `npm run check:audit` exiting 0, not the bare `npm
+audit --audit-level=high` — that still exits 1 on the one allowlisted
+advisory below, by design, so run the wrapper, never the bare command, to
+judge whether a change is clean.
 
 `npm run check:audit` (`scripts/check-audit.mjs`) wraps `npm audit
 --audit-level=high`, which reads `package-lock.json` alone, against the
@@ -61,13 +66,28 @@ is far below the advisory's own severity.
 Plain `npm audit` has no per-advisory ignore list the way `.cargo/audit.toml`
 does for Rust, so `scripts/check-audit.mjs` is one: it runs the bare command,
 and where that fails, parses its JSON report and passes anyway only when
-every high or critical finding is this exact chain (`ALLOWED_PACKAGES`) on
-this exact advisory (`ALLOWED_ADVISORY`) — a high finding anywhere else, or a
-second advisory on one of these packages, still fails the same way the bare
-command would. `scripts/check-audit.test.mjs` drives that decision directly,
-against a fixed, made-up report, so it needs no live advisory data and does
-not change behavior if the real one ever does. Revisit (narrow or drop the
-allowlist) when `braces` ships a fix, or when `shadcn` drops the dependency.
+every high or critical finding in it carries an advisory id in its
+`ALLOWLIST` — a high finding on any other id, anywhere in the tree, still
+fails the same way the bare command would. Each `ALLOWLIST` entry carries
+the advisory id, the package, the reason, and the date it was added:
+
+```js
+{
+  id: "GHSA-vfj7-8cjw-p6xm",
+  package: "braces",
+  reason: "a stack-exhaustion denial of service in the shadcn codemod " +
+    "chain (ts-morph, fast-glob), reached only by a developer's own " +
+    "local `npx shadcn add` command, never by the shipped app; every " +
+    "published braces release is vulnerable, so there is no version " +
+    "to pin an override to",
+  added: "2026-10-16",
+}
+```
+
+`scripts/check-audit.test.mjs` drives that decision directly, against a
+fixed, made-up report, so it needs no live advisory data and does not change
+behavior if the real one ever does. Revisit (narrow or drop the entry) when
+`braces` ships a fix, or when `shadcn` drops the dependency.
 
 `ui/src-tauri` is excluded from the root cargo workspace (see
 [Layout](#layout)), so [`crates/AGENTS.md`](../crates/AGENTS.md)'s cargo
