@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-10-15
+updated: 2026-10-16
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -329,8 +329,8 @@ same binary also serves (013).
     out, `task attach`, `ariadne attach` and `task logs` resolve the task's
     current column first and pick that column's agent's session, live or
     revived, however the sessions of the columns the task has left are
-    listed. `--seat` takes `orchestrator`,
-    `agent` or `reviewer` wherever a seat is, and `session ls --seat agent`
+    listed. `--seat` takes `orchestrator`, `agent`, `reviewer` or `keeper`
+    wherever a seat is, and `session ls --seat agent`
     lists every column session. A status filter takes the six statuses of
     001 and no other word.
 42. `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
@@ -344,15 +344,19 @@ same binary also serves (013).
     false}` alone and conflicts with `--model`, `--effort`, `--skill` and
     `--attach`. It prints one styled mutation line, the request id with
     `-q`, and the DTO with `--format json`.
-42a. `pr search --repo <repo> <query>` searches the open requests of that
-    enabled repository that are not yours; `pr refresh [--repo <repo>]`
-    fetches that repository's requests, or every enabled repository's where
-    none is named.
+42a. `pr search --repo <repo> <query>` searches the last fetched open
+    requests of that enabled repository that are not yours; `pr refresh
+    [--repo <repo>]` requests a fetch for that repository's requests, or
+    every enabled repository's where none is named.
 
 ## Known gap
 
 Live agent events contain no payload. `ariadne events -f` therefore cannot
 derive a tool detail when their summary is empty.
+
+The CLI test for `--seat` parses `orchestrator`, `agent` and `reviewer`, but
+does not parse `keeper`. `Seat::Keeper` is a valid value. The core seat test
+lists all four values. Add a CLI parser test before relying on this coverage.
 
 ## Acceptance criteria
 
@@ -555,11 +559,13 @@ derive a tool detail when their summary is empty.
 - `task attach --step` resolves the named column's session whether or not it
   is the task's current one; without it, attach, logs and the revive pick
   the current column's session with the sessions of two columns live and
-  the left column listed first; `--seat` parses the three seats and no other
-  word
+  the left column listed first; `--seat` parses `orchestrator`, `agent` and
+  `reviewer`, while the core seat test also lists `keeper`; no CLI parser test
+  covers `keeper` yet
   (`commands/attach.rs::resolve_step_finds_the_named_columns_session`,
   `::resolve_live_and_revive_pick_the_current_columns_session`,
-  `cli/tests.rs::a_filter_takes_only_the_values_the_daemon_knows`).
+  `cli/tests.rs::a_filter_takes_only_the_values_the_daemon_knows`,
+  `ariadne-core/src/lib.rs::the_seats_are_the_orchestrator_the_agent_the_pull_request_reviewer_and_the_keeper`).
 - `--watch` is advertised on exactly `task ls`, `goal ls`, `session ls` and
   `attention`, and nowhere else
   (`cli/tests.rs::the_watch_flag_is_advertised_exactly_where_it_is_honored`,
