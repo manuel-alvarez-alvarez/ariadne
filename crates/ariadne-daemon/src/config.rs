@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use axum::http::HeaderValue;
+use url::Url;
 
 use ariadne_client::endpoint::{self, AcpAgentConfig};
 
@@ -212,6 +213,12 @@ fn validate_tcp_allowed_origins(origins: &[String]) -> Result<()> {
         origin
             .parse::<HeaderValue>()
             .with_context(|| format!("tcp_allowed_origins has an invalid origin: {origin}"))?;
+        let parsed = Url::parse(origin).ok();
+        if parsed.is_none_or(|parsed| parsed.origin().ascii_serialization() != *origin) {
+            anyhow::bail!(
+                "tcp_allowed_origins must contain a serialized origin (scheme://host[:port], without a path or trailing slash): {origin}"
+            );
+        }
     }
     Ok(())
 }
@@ -422,6 +429,24 @@ mod tests {
         let dir = home_with("tcp_allowed_origins = [\"https://console.example\"]\n");
         let config = Config::load(Some(dir.path().join("home"))).unwrap();
         assert_eq!(config.tcp_allowed_origins, ["https://console.example"]);
+    }
+
+    #[test]
+    fn tcp_allowed_origins_require_serialized_origins() {
+        for origin in [
+            "*",
+            "null",
+            "https://console.example/path",
+            "https://console.example/",
+        ] {
+            let dir = home_with(&format!("tcp_allowed_origins = [\"{origin}\"]\n"));
+            let start = Config::load(Some(dir.path().join("home")))
+                .expect_err("an origin that a browser cannot send must stop startup");
+            let check = Config::check(Some(dir.path().join("home")))
+                .expect_err("the config check must report the startup refusal");
+            assert_eq!(start.to_string(), check.to_string());
+            assert!(start.to_string().contains("tcp_allowed_origins"));
+        }
     }
 
     #[test]

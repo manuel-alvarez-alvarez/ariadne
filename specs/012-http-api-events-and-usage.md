@@ -52,8 +52,8 @@ and the ACP runtime that reports the agent events (021).
    requests must carry a loopback Host (`localhost`, `127.0.0.1`, or `[::1]`,
    each optionally with a port), and may carry no Origin or only an allowed
    Origin. The allowed origins are the packaged app, the development server,
-   and the exact values in `tcp_allowed_origins`. The unix socket has none of
-   these HTTP checks.
+   and serialized `scheme://host[:port]` values in `tcp_allowed_origins`. The
+   unix socket has none of these HTTP checks.
 2. DTOs and the error shape live in one crate (`ariadne-api`) and are the
    single source of truth for the OpenAPI document every client generates
    from. Every API endpoint appears in that document.
@@ -363,6 +363,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
 - Loopback TCP configuration, Host and Origin checks, CORS, streams, terminal
   upgrades, and unchanged unix-socket headers are covered by
   (`config.rs::tcp_listener_requires_a_loopback_address_at_start_and_check`,
+  `config.rs::tcp_allowed_origins_require_serialized_origins`,
   `socket.rs::socket_is_owner_only_when_created`, and
   `events.rs::cors_allows_preflight_and_cross_origin_calls`).
 - A body with a field its DTO does not declare is refused, and the refusal

@@ -127,9 +127,10 @@ host.
 The TCP listener accepts only `Host` values for `localhost`, `127.0.0.1`, or
 `[::1]`, with an optional port. It also accepts a request without an `Origin`
 header, or one from the packaged Tauri app, the development server, or an
-exact origin in `tcp_allowed_origins`. Other Host and Origin values receive a
-`403 forbidden` envelope, including event streams and terminal WebSockets.
-The unix socket ignores these TCP checks.
+exact serialized origin in `tcp_allowed_origins`: `scheme://host[:port]`,
+without a path or trailing slash. Other Host and Origin values receive a `403
+forbidden` envelope, including event streams and terminal WebSockets. The unix
+socket ignores these TCP checks.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the

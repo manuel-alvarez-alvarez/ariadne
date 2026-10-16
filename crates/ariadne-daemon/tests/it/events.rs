@@ -426,6 +426,23 @@ async fn cors_allows_preflight_and_cross_origin_calls() {
     let error: ErrorBody = serde_json::from_slice(&body).unwrap();
     assert_eq!(error.error.code, "forbidden");
 
+    let refused_stream_host = Request::builder()
+        .uri("/v1/events/stream")
+        .header(header::HOST, "attacker.example")
+        .header(header::ORIGIN, "tauri://localhost")
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(app.clone(), refused_stream_host)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    let error: ErrorBody = serde_json::from_slice(&body).unwrap();
+    assert_eq!(error.error.code, "forbidden");
+
     let refused_terminal_origin = Request::builder()
         .uri("/v1/sessions/missing/console/terminal")
         .header(header::HOST, "localhost")
