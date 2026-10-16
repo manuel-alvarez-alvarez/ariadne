@@ -247,15 +247,20 @@ and the ACP runtime that reports the agent events (021).
     hop to `http` is refused there too, rather than silently taken. An index
     entry is refused by id, logged, and left out of what `PATH` search and
     probing consider when any word of its command names a shell interpreter
-    (`sh`, `bash`, `zsh`, `dash`, `fish`, `cmd`, `powershell`, `pwsh`) or is a
-    flag shaped like `-c` (bundled short options included, as `-lc` bundles
-    `-l` with it). A word is read out of every element of the command, not
-    only out of its own element, split and quote-removed the way a shell —
-    and `env -S STRING` (and `env --split-string=STRING`) — reads a line:
-    `env -S STRING` splits `STRING` the same way and execs the first word of
-    it, folding what would otherwise be two elements — `sh` and `-c` — into
-    the one argument `-S` takes, quoting such as `s''h -'c'` included. The
-    rest of the index still installs.
+    (`sh`, `bash`, `zsh`, `dash`, `fish`, `cmd`, `powershell`, `pwsh`),
+    compared without case — a case-insensitive volume answers `SH` the same
+    file `sh` names — or is a flag shaped like `-c` (bundled short options
+    included, as `-lc` bundles `-l` with it). A word is read out of every
+    element of the command, not only out of its own element, split and
+    quote-removed the way a shell reads a line: `s''h -'c'` is the two words
+    `sh` and `-c` to a shell, not the literal text a plain whitespace split
+    would see. `env -S STRING` (and `env --split-string=STRING`) folds what
+    would otherwise be two elements — `sh` and `-c` — into the one argument
+    `-S` takes, but reads its own escapes doing it — `\_` a literal,
+    non-splitting space among them — which are `env`'s own grammar, not a
+    shell's. Rather than parse that grammar, the flag is refused outright,
+    wherever `env` carries it and whatever it holds. The rest of the index
+    still installs.
 21. `GET /v1/events` answers one page of the recorded events. `order=asc` is
     the default and answers the oldest of them, oldest first, which is what a
     client sweeping forward reads. `order=desc` answers the newest, newest
@@ -561,13 +566,16 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   `::http_to_a_loopback_host_is_still_refused`,
   `::https_fetch_refuses_a_redirect_to_a_plain_http_location`). An index
   entry naming a shell interpreter — directly, behind a launcher such as
-  `env`, or split out of one combined argument by `env -S` — or carrying a
-  bundled `-c`-shaped flag such as `-lc`, is refused by id and the rest of
-  the index still installs
+  `env`, or in any case — or carrying a bundled `-c`-shaped flag such as
+  `-lc`, is refused by id and the rest of the index still installs
   (`acp_index.rs::tests::an_index_entry_naming_a_shell_is_refused_and_the_rest_of_the_index_still_installs`,
   `::a_shell_behind_env_and_a_bundled_dash_c_is_refused`,
-  `::env_dash_cap_s_splitting_a_shell_command_is_refused`,
-  `::env_dash_cap_s_with_shell_quoting_is_refused`).
+  `::an_uppercase_shell_name_is_refused_the_same_as_lowercase`). `env -S`
+  and `--split-string` are refused outright, a string this check cannot
+  promise to parse correctly included
+  (`::env_dash_cap_s_splitting_a_shell_command_is_refused`,
+  `::env_dash_cap_s_with_shell_quoting_is_refused`,
+  `::env_dash_cap_s_is_refused_outright_whatever_it_holds`).
 - A descending page is the events recorded last, newest first
   (`events.rs::the_newest_page_is_the_events_recorded_last`,
   `store.rs::a_descending_page_answers_the_newest_events_newest_first`), and a

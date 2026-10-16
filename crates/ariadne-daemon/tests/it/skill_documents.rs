@@ -184,6 +184,45 @@ async fn a_mixed_case_name_with_an_underscore_and_a_digit_is_accepted() {
     assert_eq!(created.name, "My_Skill2");
 }
 
+/// A case-insensitive volume — the macOS default, and Windows's own —
+/// writes `Demo` and `demo` to one directory: distinct rows by the exact
+/// name the database compares would still collide the moment the sync
+/// wrote both, one document silently overwriting the other. The second
+/// name is refused before either ever reaches the filesystem.
+#[tokio::test]
+async fn a_name_differing_only_in_case_from_an_existing_skill_is_refused() {
+    let h = harness().await;
+    let _: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "Demo",
+                    "document": "---\nname: x\ndescription: x\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let (status, _) = h
+        .send(post_json(
+            "/v1/skills",
+            serde_json::json!({
+                "name": "demo",
+                "document": "---\nname: x\ndescription: y\n---\n",
+            }),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let kept: SkillDto = h.json(get("/v1/skills/Demo"), StatusCode::OK).await;
+    assert_eq!(
+        kept.summary, "x",
+        "the first skill's document was overwritten"
+    );
+}
+
 /// A name that passes the slug check is still refused the write where a
 /// symlink already sits at its directory: `sync_skills` never follows one,
 /// to decide a name is stale or to write through it, so nothing lands

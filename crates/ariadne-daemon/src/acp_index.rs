@@ -104,15 +104,21 @@ pub(crate) fn installed(index: &str, path: &OsStr, homes: &ManagerHomes) -> Vec<
         .iter()
         .filter_map(|agent| found(agent, &path, homes))
         .filter(|installed| {
-            let refuse = names_a_shell(&installed.command);
-            if refuse {
+            let shell = names_a_shell(&installed.command);
+            let split = uses_env_split_string(&installed.command);
+            if shell || split {
                 tracing::warn!(
                     agent = installed.id,
                     command = installed.command.join(" "),
-                    "the index names a shell interpreter as this agent's command; refusing the entry"
+                    reason = if shell {
+                        "names a shell interpreter"
+                    } else {
+                        "uses env -S or --split-string"
+                    },
+                    "refusing the entry"
                 );
             }
-            !refuse
+            !(shell || split)
         })
         .collect()
 }
@@ -150,22 +156,43 @@ fn words(command: &[String]) -> Vec<String> {
 /// A shell is refused by name wherever it sits, not only at the start of
 /// `command`: `env sh -lc payload` runs the shell exactly as `sh -lc
 /// payload` does, with `env` — a program of its own, never refused by name
-/// — as the one `PATH` answers for. `env -S` (and `env --split-string`)
-/// re-splits one combined argument into words the same way, quoting
-/// included, which is why `words` parses quotes rather than only
-/// whitespace. Every shell takes its command string on `-c`, which getopt
-/// lets a caller bundle behind other single-letter flags (`-lc`, `-ic`): a
-/// short option that is not `--` and ends the bundle on `c` is refused the
-/// same as a bare `-c`.
+/// — as the one `PATH` answers for. The name is compared case-insensitively:
+/// a volume that answers `SH` the same file `sh` names does not make it a
+/// different program. Every shell takes its command string on `-c`, which
+/// getopt lets a caller bundle behind other single-letter flags (`-lc`,
+/// `-ic`): a short option that is not `--` and ends the bundle on `c` is
+/// refused the same as a bare `-c`.
 fn names_a_shell(command: &[String]) -> bool {
     let words = words(command);
     words.iter().any(|word| {
         let base = word.rsplit(['/', '\\']).next().unwrap_or(word);
         let base = base.strip_suffix(".exe").unwrap_or(base);
-        SHELL_INTERPRETERS.contains(&base)
+        SHELL_INTERPRETERS
+            .iter()
+            .any(|interpreter| base.eq_ignore_ascii_case(interpreter))
     }) || words
         .iter()
         .any(|word| word.starts_with('-') && !word.starts_with("--") && word.ends_with('c'))
+}
+
+/// Whether `command` runs `env` with `-S` or `--split-string`: the flag a
+/// shebang line uses to pass several arguments through one interpreter
+/// line, which re-splits its own argument with escapes of its own —
+/// `\_` a literal, non-splitting space among them — that are `env`'s own
+/// grammar, not a shell's, and not one this check promises to read
+/// correctly. A registry entry's `args` array already says whatever it
+/// would otherwise pack into one split string, so the flag is refused
+/// outright, whatever it holds, rather than parsed.
+fn uses_env_split_string(command: &[String]) -> bool {
+    let names_env = command.iter().any(|part| {
+        let base = part.rsplit(['/', '\\']).next().unwrap_or(part);
+        let base = base.strip_suffix(".exe").unwrap_or(base);
+        base.eq_ignore_ascii_case("env")
+    });
+    names_env
+        && command
+            .iter()
+            .any(|arg| arg == "-S" || arg.starts_with("--split-string"))
 }
 
 /// The entries of `path` that name a directory outright, in their own order.
@@ -627,6 +654,61 @@ mod tests {
             {"id": "env-split-quoted-shell", "distribution": {"binary": {
                 key: {"cmd": "env", "args": ["-S", "s''h -'c' 'printf marker'"]}
             }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// `env -S` reads its own escapes — `\_` a literal, non-splitting space
+    /// among them — which is `env`'s own grammar, not a shell's: a check
+    /// that only reads shell quoting does not promise to read this
+    /// correctly, so `-S` and `--split-string` are refused outright,
+    /// whatever they hold.
+    #[test]
+    fn env_dash_cap_s_is_refused_outright_whatever_it_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-split-escaped", "distribution": {"binary": {
+                key.clone(): {"cmd": "env", "args": ["-S", "sh\\_-c\\_'printf marker'"]}
+            }}},
+            {"id": "env-split-string-long-form", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["--split-string=harmless --flag"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// The shell name is matched without case: a case-insensitive volume —
+    /// the macOS default — answers `SH` the same file `sh` names, so the
+    /// index must not tell them apart either.
+    #[test]
+    fn an_uppercase_shell_name_is_refused_the_same_as_lowercase() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "SH");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+
+        // The agent's own id is its first candidate name for an `npx`
+        // distribution, so naming it `SH` has `which` resolve the
+        // executable this test made under that exact name.
+        let index = serde_json::json!({"agents": [
+            {"id": "SH", "distribution": {"npx": {"package": "evil-cli@1"}}},
             {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
         ]})
         .to_string();

@@ -8,6 +8,7 @@ tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
+  - crates/ariadne-daemon/src/agents/mod.rs
   - crates/ariadne-daemon/tests/it/home_skills.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
@@ -45,7 +46,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
    it must stay a direct entry of it, both its parent and its file name
    unchanged by the join — which a name holding a separator, or naming `.`
    or `..`, never does. A name that fails either part is refused with 422
-   rather than written, `../etc` or an absolute path included.
+   rather than written, `../etc` or an absolute path included. A third check
+   compares the name, case-insensitively, against every name already there,
+   shipped skills included: a case-insensitive volume — the macOS default,
+   and Windows's own — writes `Demo` and `demo` to the one directory, so the
+   second of them is refused with 409 rather than silently overwriting the
+   first's document on the next sync.
 2. An **agent** has no identity: it is a registry agent, a model, an
    effort, a brief and a set of skills. Its pin is one string,
    `<agent>:<model>`, where `<agent>` is the id of an agent in the daemon's
@@ -161,18 +167,28 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `orchestration` and `pr-reviewer`, and removes folders for names the
     store no longer has without removing `skills_dir` itself. It syncs after
     the store seeds shipped skills at startup and after every skill create,
-    document set, reset or delete. A stored name that fails either part of
+    document set, reset or delete. A stored name that fails any part of
     rule 1, checked here against the skills directory itself canonicalized,
-    is logged and skipped rather than written. A name's own
-    directory, and its `SKILL.md` once the directory is real, are never
-    followed as a symlink: every one of those is a plain directory and a
-    plain file the sync itself made, so a symlink found at either is never
-    a skill's own, named or not, and is removed outright rather than
-    written through — the one path by which a name this sync never rejects
-    could still reach outside `skills_dir`. On Unix each is opened directly
-    off a directory already held open by its descriptor, with the name
-    resolved once and never again, so a path swapped for a symlink after
-    this sync already checked it is still refused, not raced.
+    is logged and skipped rather than written. A name's own directory is
+    never a symlink, and its `SKILL.md` is never a symlink or a hard link
+    sharing its data with a file of some other name entirely: every one of
+    those is a plain directory and a plain file the sync itself made, so a
+    name holding either instead is never a skill's own, and is replaced
+    with a fresh one — never opened, followed, or written through.
+
+    On Unix each is opened directly off a directory already held open by
+    its descriptor, with the name resolved once and never again, so a path
+    swapped for a symlink after this sync already checked it is still
+    refused, not raced. The directory's own open, with `O_DIRECTORY` and no
+    `O_NOFOLLOW` match, answers `ELOOP` on Linux for a symlink there and
+    `ENOTDIR` on macOS for the same one — the two kernels disagree on which
+    error it is, not on refusing it — and either answer clears the entry
+    and makes a fresh directory in its place. `SKILL.md` is never opened by
+    its own name at all: the document is written to a fresh file under a
+    name of its own, directly under the skill's directory, and that file is
+    renamed onto `SKILL.md` in one step, which replaces whatever was there
+    — symlink, hard link or a plain file — without the old entry, or
+    whatever else holds the same data a hard link would, ever being opened.
 
 ## Acceptance criteria
 
@@ -193,11 +209,23 @@ written into the system prompt (006), and the lifecycle the seats sit in
   `skill_documents.rs::a_skill_name_outside_the_shape_is_refused`,
   `::a_mixed_case_name_with_an_underscore_and_a_digit_is_accepted`,
   `store.rs::a_skill_name_must_be_shaped_right_and_stay_under_the_skills_directory`.
+- A name differing only in case from an existing one, shipped or the user's
+  own, is refused with 409, so the first name's document is never
+  overwritten:
+  `skill_documents.rs::a_name_differing_only_in_case_from_an_existing_skill_is_refused`,
+  `store.rs::a_skill_name_differing_only_in_case_from_an_existing_one_is_refused`.
 - A name that passes the shape and path check is still never written through a
   symlink already sitting at its directory, and lands at its own, now real,
   directory once the symlink is cleared:
   `skill_documents.rs::a_symlinked_skill_directory_is_never_written_through`,
   `::a_symlinked_skill_md_is_never_written_through`.
+- A hard-linked `SKILL.md` is replaced by a fresh file rather than written
+  through, leaving the data it shared with another name untouched, and a
+  directory symlink left at a skill's own name at write time is replaced
+  with a real directory on both of `ELOOP`'s and `ENOTDIR`'s own answer to
+  the same open:
+  `agents::symlink_safe::tests::a_hard_linked_skill_md_is_replaced_rather_than_written_through`,
+  `::a_directory_symlink_left_at_write_time_is_replaced_rather_than_followed`.
 - A skill an agent still loads cannot be deleted
   (`store.rs::a_skill_an_agent_still_loads_cannot_be_deleted`), and an agent
   cannot be staffed on a skill nothing answers to

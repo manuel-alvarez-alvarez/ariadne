@@ -3762,6 +3762,42 @@ async fn a_skill_name_must_be_shaped_right_and_stay_under_the_skills_directory()
     }
 }
 
+/// A case-insensitive volume maps `Demo` and `demo` to one directory: the
+/// store refuses the second name outright, before `sync_skills` could ever
+/// write both and have one overwrite the other. Checked against a shipped
+/// name too, not only another of the user's own.
+#[tokio::test]
+async fn a_skill_name_differing_only_in_case_from_an_existing_one_is_refused() {
+    let (store, _dir) = test_store().await;
+
+    store
+        .create_skill(NewSkill {
+            name: "Demo".into(),
+            document: "---\nname: x\n---\n".into(),
+        })
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        store
+            .create_skill(NewSkill {
+                name: "demo".into(),
+                document: "---\nname: x\n---\n".into(),
+            })
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+    assert!(matches!(
+        store
+            .create_skill(NewSkill {
+                name: "Coding".into(),
+                document: "---\nname: x\n---\n".into(),
+            })
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+}
+
 /// Every shipped skill is seeded into a fresh database on the text Ariadne
 /// ships, storing none of it — so a reworded default reaches a database
 /// nobody has touched, and a reset drops what was written rather than copying

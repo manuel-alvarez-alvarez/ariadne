@@ -244,7 +244,7 @@ mod symlink_safe {
     use std::os::fd::OwnedFd;
     use std::path::Path;
 
-    use rustix::fs::{AtFlags, Mode, OFlags, mkdirat, openat, unlinkat};
+    use rustix::fs::{AtFlags, Mode, OFlags, mkdirat, openat, renameat, unlinkat};
     use rustix::io::Errno;
 
     /// Open `path` itself as a directory, refusing a symlink at it.
@@ -268,46 +268,138 @@ mod symlink_safe {
         )
     }
 
-    /// Open `name` directly under `parent`, making it first if there is
-    /// nothing there, and starting over once — unlinking `name` first —
-    /// where `open` found a symlink instead: the entry this sync leaves
-    /// behind under that name is never one, so one found there is removed
-    /// outright, the same as a stray one `sync_skills`'s own cleanup pass
-    /// removes.
-    fn open_or_recreate(
-        parent: &OwnedFd,
-        name: &str,
-        flags: OFlags,
-        make: bool,
-    ) -> Result<OwnedFd, Errno> {
+    /// Open `name` as a directory directly under `parent`, making it first
+    /// if there is nothing there, and clearing it first where something
+    /// that is not a plain directory sits there instead — the same entry
+    /// `sync_skills`'s own cleanup pass would already have removed, had it
+    /// arrived before this call rather than after it.
+    ///
+    /// `O_DIRECTORY | O_NOFOLLOW` against a symlink answers `ELOOP` on
+    /// Linux; on macOS the same open answers `ENOTDIR` instead, even where
+    /// the symlink's own target is a directory — the two kernels disagree
+    /// on which error a refused symlink gets, not on refusing it. `ENOTDIR`
+    /// is also what a plain file at `name` answers, which this clears the
+    /// same way: neither is ever what a skill's own directory should hold.
+    fn open_or_recreate_dir(parent: &OwnedFd, name: &str) -> Result<OwnedFd, Errno> {
+        let flags = OFlags::DIRECTORY;
         match openat_no_follow(parent, name, flags) {
-            Err(Errno::LOOP) => {
+            Ok(fd) => Ok(fd),
+            Err(Errno::LOOP | Errno::NOTDIR) => {
                 unlinkat(parent, name, AtFlags::empty())?;
-                openat_no_follow(parent, name, flags)
-            }
-            Err(Errno::NOENT) if make => {
                 mkdirat(parent, name, Mode::from_raw_mode(0o755))?;
                 openat_no_follow(parent, name, flags)
             }
-            other => other,
+            Err(Errno::NOENT) => {
+                mkdirat(parent, name, Mode::from_raw_mode(0o755))?;
+                openat_no_follow(parent, name, flags)
+            }
+            Err(e) => Err(e),
         }
     }
 
-    /// Write `document` as `skills_dir/name/SKILL.md`, making the directory
-    /// first if it does not exist, with neither step ever opening through a
-    /// symlink.
-    pub(super) fn write_skill(skills_dir: &Path, name: &str, document: &str) -> io::Result<()> {
-        let root = open_dir_no_follow(skills_dir).map_err(io::Error::from)?;
-        let dir =
-            open_or_recreate(&root, name, OFlags::DIRECTORY, true).map_err(io::Error::from)?;
-        let file = open_or_recreate(
-            &dir,
-            "SKILL.md",
-            OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC,
-            false,
+    /// Write `document` as a file of its own directly under `dir`, then
+    /// `renameat` it onto `SKILL.md`, replacing whatever was there in one
+    /// step rather than opening that name at all.
+    ///
+    /// `SKILL.md` existing as a hard link — sharing its data with some
+    /// other name entirely, outside `skills_dir` as easily as in it — is
+    /// not a symlink, and `O_NOFOLLOW` does nothing for it: opening it
+    /// with `O_TRUNC` would empty the data every one of its names shares,
+    /// written outside `skills_dir` from a name inside it. Writing a fresh
+    /// file under a name of its own first, then swapping it onto
+    /// `SKILL.md` by name alone, never opens the old entry either way —
+    /// hard link, symlink or a plain file already there — so nothing of
+    /// its data is ever touched.
+    fn write_document_atomically(dir: &OwnedFd, document: &str) -> io::Result<()> {
+        let temp_name = format!(".skill-{}.tmp", std::process::id());
+        let temp = openat_no_follow(
+            dir,
+            &temp_name,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
         )
         .map_err(io::Error::from)?;
-        File::from(file).write_all(document.as_bytes())
+        if let Err(error) = File::from(temp).write_all(document.as_bytes()) {
+            let _ = unlinkat(dir, &temp_name, AtFlags::empty());
+            return Err(error);
+        }
+        renameat(dir, temp_name.as_str(), dir, "SKILL.md").map_err(io::Error::from)
+    }
+
+    /// Create and write a skill's directory and `SKILL.md`, a symlink or a
+    /// hard link at either refused rather than followed or written
+    /// through.
+    pub(super) fn write_skill(skills_dir: &Path, name: &str, document: &str) -> io::Result<()> {
+        let root = open_dir_no_follow(skills_dir).map_err(io::Error::from)?;
+        let dir = open_or_recreate_dir(&root, name).map_err(io::Error::from)?;
+        write_document_atomically(&dir, document)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::write_skill;
+
+        /// A hard link shares its data with every name that holds it, `SKILL.md`
+        /// included: opening it with `O_TRUNC` would empty that data from
+        /// outside `skills_dir` as easily as from in it. `write_skill` never
+        /// opens the old entry at all, so the file the link's other name reads
+        /// is untouched, and the skill's own text lands at its own directory,
+        /// now a fresh file under the same name.
+        #[test]
+        fn a_hard_linked_skill_md_is_replaced_rather_than_written_through() {
+            let root = tempfile::tempdir().unwrap();
+            let skills_dir = root.path().join("skills");
+            let dir = skills_dir.join("safe");
+            std::fs::create_dir_all(&dir).unwrap();
+            let shared = root.path().join("shared.md");
+            std::fs::write(&shared, "not a skill").unwrap();
+            std::fs::hard_link(&shared, dir.join("SKILL.md")).unwrap();
+
+            write_skill(&skills_dir, "safe", "the real skill text").unwrap();
+
+            assert_eq!(
+                std::fs::read_to_string(&shared).unwrap(),
+                "not a skill",
+                "wrote through the hard link to the file it shares data with"
+            );
+            assert_eq!(
+                std::fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+                "the real skill text"
+            );
+        }
+
+        /// A directory symlink at a skill's own name — placed after whatever
+        /// earlier pass might have cleared one, before this write ever runs —
+        /// answers `ELOOP` on Linux and `ENOTDIR` on macOS for the same
+        /// `O_DIRECTORY | O_NOFOLLOW` open; both are cleared and replaced
+        /// with a real directory of the same name, and the document lands
+        /// there, never through the symlink.
+        #[test]
+        fn a_directory_symlink_left_at_write_time_is_replaced_rather_than_followed() {
+            let root = tempfile::tempdir().unwrap();
+            let skills_dir = root.path().join("skills");
+            std::fs::create_dir_all(&skills_dir).unwrap();
+            let outside = root.path().join("outside");
+            std::fs::create_dir_all(&outside).unwrap();
+            std::os::unix::fs::symlink(&outside, skills_dir.join("safe")).unwrap();
+
+            write_skill(&skills_dir, "safe", "the real skill text").unwrap();
+
+            assert!(
+                !outside.join("SKILL.md").exists(),
+                "wrote through the directory symlink to outside the skills directory"
+            );
+            assert!(
+                !std::fs::symlink_metadata(skills_dir.join("safe"))
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "the directory symlink survived the write"
+            );
+            assert_eq!(
+                std::fs::read_to_string(skills_dir.join("safe").join("SKILL.md")).unwrap(),
+                "the real skill text"
+            );
+        }
     }
 }
 

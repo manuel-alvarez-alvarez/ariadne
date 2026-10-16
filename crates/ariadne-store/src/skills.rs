@@ -194,6 +194,25 @@ impl Store {
                 new.name
             )));
         }
+        // A case-insensitive volume — the macOS default, and Windows's own —
+        // maps `Demo` and `demo` to one directory: two rows the exact
+        // `UNIQUE` constraint below sees as distinct would still collide the
+        // moment `sync_skills` wrote both, one document overwriting the
+        // other with no error either side could see. Checked against every
+        // name already here, shipped skills included, not only the user's
+        // own.
+        if let Some(existing) = self
+            .list_skills()
+            .await?
+            .into_iter()
+            .find(|skill| skill.name != new.name && skill.name.eq_ignore_ascii_case(&new.name))
+        {
+            return Err(StoreError::Conflict(format!(
+                "skill name `{}` differs only in case from `{}`, which a case-insensitive \
+                 filesystem would write to the same directory",
+                new.name, existing.name
+            )));
+        }
         let ts = now();
         sqlx::query(
             "INSERT INTO skills (name, document, builtin, created_at, updated_at)
