@@ -226,10 +226,12 @@ outside half) opens no session either: it asks only `initialize` and
      directory under one of them; a relative path without `..` counts as
      under the worktree. Every `2>&1` goes. A trailing pipe chain goes where
      every program in it is `tail`, `head`, `wc`, `cat`, `sort` or `uniq`,
-     and every argument after the program is a value-free flag or a number.
-     A pipe remains where a filter redirects, substitutes, names a file or a
-     program (`-o`, `--output`, `--compress-program`, `-T` or
-     `--files0-from`), has a bare operand or has an option with `=`.
+     and every argument after the program is a value-free flag or an accepted
+     count. `tail` and `head` accept `-40`, or a number immediately after
+     `-n`, `-c`, `--lines` or `--bytes`. A pipe remains where a filter
+     redirects, substitutes, names a file or a program (`-o`, `--output`,
+     `--compress-program`, `-T` or `--files0-from`), has a bare operand or
+     has an option with `=`.
    - The placeholders, in every string value. The repository path becomes
      `<REPO>`, the worktree `<WORKTREE>` and the session's branch
      `<BRANCH>`, the longest first, then the home directory `<HOME>`. Then

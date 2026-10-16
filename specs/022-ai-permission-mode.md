@@ -59,7 +59,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 10. Refresh reinstalls the pinned selected flavour and device only while the model is enabled and idle, and it never runs on a schedule.
 11. The daemon reports the Python probe through the AI status and doctor routes, accepts only documented AI configuration keys, and rejects retired AI routes.
 12. A ready enabled model starts a loopback `kev.serve` child from the installed virtual environment, health-checks it, stops it on disable or shutdown, and restarts it after refresh or exit.
-13. The model request has one built-in three-level `score` question, a normalized permission state without the derived operation hint, ordered risk tags, and a five-second decision timeout. Its input keeps the same fields in agent order after its operative field: `command` for `Bash`, `file_path` or `path` for a file call, and `url` for `WebFetch`; this field comes first before the 2,000-character cut.
+13. The model request has one built-in three-level `score` question, a normalized permission state without the derived operation hint, ordered risk tags, and a five-second decision timeout. It resolves the tool name from the name, Claude tool-name metadata, then title. Its input keeps the same fields in agent order after its operative field: `command` for `Bash`, `file_path` or `path` for a file call, and `url` for `WebFetch`; this field comes first before the 2,000-character cut. An unnamed `execute`, `edit`, `read`, `write` or `fetch` call chooses the same field from its kind.
 14. A danger score selects an allowed or rejected option only when the matching option exists and no cap applies, otherwise it uses the shared console or learned-approval fallback.
 15. AI decisions keep their label, danger, thresholds, probabilities, derived facts, and error on the permission events and test response, while a model allow writes no learned row.
 16. `POST /v1/permissions/ai/test` scores one supplied request without selecting an option, publishing an event, or learning a permission.
@@ -96,7 +96,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   the same tool call; without the location the tag is absent
   (`ai_permissions_decisions.rs::a_test_request_with_locations_derives_what_the_live_request_does`).
 - The bounded input keeps every field and puts its operative field before the
-  cut (`ai_permissions::decide::tests::the_operative_input_field_precedes_the_cut`);
+  cut (`ai_permissions::decide::tests::the_operative_input_field_precedes_the_cut`,
+  `::the_kind_identifies_an_unnamed_operative_input_field`);
   the model receives a complete long `Bash` command and the unchanged request
   state shape (`ai_permissions_decisions.rs::the_model_receives_the_raw_input_and_not_the_learned_key`).
 - `ariadne permissions ai test` accepts `--location` more than once and sends

@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
+use crate::acp::tool_name_of;
+
 use super::AiPermissionsLive;
 use super::derive::{Derived, derive};
 
@@ -297,25 +299,8 @@ fn ordered_input(tool_call: &Value) -> Value {
     let Value::Object(fields) = input else {
         return input.clone();
     };
-    let tool = tool_call
-        .get("name")
-        .or_else(|| tool_call.get("title"))
-        .and_then(Value::as_str);
-    let field = match tool {
-        Some("Bash") if fields.contains_key("command") => Some("command"),
-        Some("WebFetch") if fields.contains_key("url") => Some("url"),
-        Some("Edit" | "Write" | "Read" | "MultiEdit" | "NotebookEdit")
-            if fields.contains_key("file_path") =>
-        {
-            Some("file_path")
-        }
-        Some("Edit" | "Write" | "Read" | "MultiEdit" | "NotebookEdit")
-            if fields.contains_key("path") =>
-        {
-            Some("path")
-        }
-        _ => None,
-    };
+    let tool = tool_name_of(tool_call);
+    let field = operative_field(&tool, tool_call.get("kind").and_then(Value::as_str), fields);
     let Some(field) = field else {
         return input.clone();
     };
@@ -328,6 +313,31 @@ fn ordered_input(tool_call: &Value) -> Value {
             .map(|(name, value)| (name.clone(), value.clone())),
     );
     Value::Object(ordered)
+}
+
+/// The field that identifies the operation for a known tool or ACP kind.
+fn operative_field<'a>(
+    tool: &str,
+    kind: Option<&str>,
+    fields: &'a Map<String, Value>,
+) -> Option<&'a str> {
+    let file_field = || {
+        fields
+            .contains_key("file_path")
+            .then_some("file_path")
+            .or_else(|| fields.contains_key("path").then_some("path"))
+    };
+    match tool {
+        "Bash" if fields.contains_key("command") => Some("command"),
+        "WebFetch" if fields.contains_key("url") => Some("url"),
+        "Edit" | "Write" | "Read" | "MultiEdit" | "NotebookEdit" => file_field(),
+        _ => match kind {
+            Some("execute") if fields.contains_key("command") => Some("command"),
+            Some("fetch") if fields.contains_key("url") => Some("url"),
+            Some("edit" | "read" | "write") => file_field(),
+            _ => None,
+        },
+    }
 }
 
 #[cfg(test)]
@@ -387,6 +397,27 @@ mod tests {
             assert!(
                 compact_json(&ordered, INPUT_CUT).starts_with(&format!(r#"{{"{field}":"{value}""#)),
                 "{tool}: order"
+            );
+        }
+    }
+
+    /// ACP kinds still identify the operation where an agent does not name its
+    /// tool.
+    #[test]
+    fn the_kind_identifies_an_unnamed_operative_input_field() {
+        for (kind, field, value) in [
+            ("execute", "command", "git status"),
+            ("read", "file_path", "src/lib.rs"),
+            ("edit", "path", "docs/permissions.md"),
+            ("fetch", "url", "https://example.test/docs"),
+        ] {
+            let raw = json!({"description": "x".repeat(INPUT_CUT), field: value});
+            let tool_call = json!({"title": "request", "kind": kind, "rawInput": raw});
+            let ordered = ordered_input(&tool_call);
+            assert_eq!(ordered, tool_call["rawInput"], "{kind}: fields");
+            assert!(
+                compact_json(&ordered, INPUT_CUT).starts_with(&format!(r#"{{"{field}":"{value}""#)),
+                "{kind}: order"
             );
         }
     }

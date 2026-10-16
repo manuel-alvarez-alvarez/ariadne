@@ -3167,7 +3167,7 @@ fn terminal_tool_status(update: &Value) -> bool {
 /// The agent's own name for the tool: `/name`, `/_meta/claudeCode/toolName`,
 /// `/title`, `/toolCallId`, in order; `"ACP tool"` where the call names none.
 /// Used by [`permission_signature`] to name a tool consistently.
-fn tool_name_of(tool_call: &Value) -> String {
+pub(crate) fn tool_name_of(tool_call: &Value) -> String {
     [
         "/name",
         "/_meta/claudeCode/toolName",

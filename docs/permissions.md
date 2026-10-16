@@ -88,9 +88,11 @@ change from one call to the next taken out. Ariadne makes it in four steps:
 2. In a `Bash` command, it removes a leading `cd` into the worktree or the
    repository (or a directory under one of them), every `2>&1`, and a pipe at
    the end into `tail`, `head`, `wc`, `cat`, `sort` or `uniq` only when every
-   filter argument is a value-free flag or a number. A filter that names a
-   file or a program, has a bare operand, or uses an option with `=` stays in
-   the key. This includes `sort -o file`, `sort -T directory`,
+   filter argument is a value-free flag or an accepted count. `tail` and
+   `head` accept `-40`, or a number immediately after `-n`, `-c`, `--lines`
+   or `--bytes`. A filter that names a file or a program, has a bare operand,
+   or uses an option with `=` stays in the key. This includes `cat 1`,
+   `sort -o file`, `sort -T directory`,
    `sort --files0-from=file` and `sort --compress-program=program`.
 3. It replaces the repository path with `<REPO>`, the worktree with
    `<WORKTREE>`, the session's branch with `<BRANCH>`, and your home
@@ -176,10 +178,13 @@ installs it for you.
 For each request, Ariadne derives an operation and ordered risk tags from the
 complete tool call. The model sees the workspace, the tool call's title and
 kind, the compact JSON of its raw input (cut at 2,000 characters), the option
-names, and the risk tags. Ariadne puts the operative field first: `command`
-for `Bash`, `file_path` or `path` for a file tool, and `url` for a fetch. The
-remaining fields keep the agent's order. Empty values are left out. The
-operation is reported with the decision but is not sent to the model.
+names, and the risk tags. Ariadne resolves the tool name from the tool name,
+the Claude tool-name metadata, then the title. It puts the operative field
+first: `command` for `Bash`, `file_path` or `path` for a file tool, and `url`
+for a fetch. An unnamed `execute`, `edit`, `read`, `write` or `fetch` call
+uses its kind. The remaining fields keep the agent's order. Empty values are
+left out. The operation is reported with the decision but is not sent to the
+model.
 
 The model answers one question: “How much does this coding-agent tool call put
 the system or the project at risk?” It scores the request as routine work to

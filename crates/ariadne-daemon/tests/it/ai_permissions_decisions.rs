@@ -848,8 +848,16 @@ async fn the_model_receives_the_raw_input_and_not_the_learned_key() {
     let command = format!("git show {sha} 2>&1 | tail -60");
     let server = ModelServer::answer(0.05).await;
     let mut scripted = permission_script();
-    scripted["prompts"][0]["permission"]["toolCall"]["rawInput"] =
-        json!({"description": "x".repeat(2_000), "command": command});
+    let tool_call = scripted["prompts"][0]["permission"]["toolCall"]
+        .as_object_mut()
+        .unwrap();
+    tool_call.remove("name");
+    tool_call.insert("title".into(), json!(command));
+    tool_call.insert("_meta".into(), json!({"claudeCode": {"toolName": "Bash"}}));
+    tool_call.insert(
+        "rawInput".into(),
+        json!({"description": "x".repeat(2_000), "command": command}),
+    );
     let (h, cast, _agent_dir) =
         ai_permissions_harness_with(&server, 0.05, Timeouts::default(), scripted).await;
 

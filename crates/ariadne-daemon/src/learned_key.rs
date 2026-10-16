@@ -177,6 +177,12 @@ fn without_filters(command: &str) -> &str {
             Some(_) => {}
             None => match byte {
                 b'\\' => index += 1,
+                b'$' if bytes
+                    .get(index + 1)
+                    .is_some_and(|next| matches!(*next, b'\'' | b'"')) =>
+                {
+                    return command;
+                }
                 b'\'' | b'"' => quote = Some(byte),
                 b'`' => backtick = !backtick,
                 b'(' => depth += 1,
@@ -193,6 +199,9 @@ fn without_filters(command: &str) -> &str {
         }
         index += 1;
     }
+    if quote.is_some() || depth > 0 || backtick {
+        return command;
+    }
     let mut cut = command.len();
     for &pipe in pipes.iter().rev() {
         if last_other.is_some_and(|other| other > pipe) {
@@ -202,9 +211,8 @@ fn without_filters(command: &str) -> &str {
         let plain = !filter.contains(['>', '<', '$', '`', '(', '&', '|']);
         let mut words = filter.split_whitespace();
         let program = words.next().unwrap_or_default();
-        if !plain
-            || !FILTERS.contains(&program)
-            || !words.all(|argument| filter_argument_is_inert(program, argument))
+        let arguments: Vec<_> = words.collect();
+        if !plain || !FILTERS.contains(&program) || !filter_arguments_are_inert(program, &arguments)
         {
             break;
         }
@@ -213,16 +221,39 @@ fn without_filters(command: &str) -> &str {
     &command[..cut]
 }
 
-/// Whether `argument` changes only how a filter renders its input. The lists
-/// intentionally exclude every option that can name a file or program.
-fn filter_argument_is_inert(program: &str, argument: &str) -> bool {
-    if argument.bytes().all(|byte| byte.is_ascii_digit())
-        || argument.strip_prefix('-').is_some_and(|number| {
-            !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
-        })
-    {
-        return true;
+/// Whether the filter arguments change only how it renders its input.
+fn filter_arguments_are_inert(program: &str, arguments: &[&str]) -> bool {
+    let counts_lines_or_bytes = matches!(program, "tail" | "head");
+    let mut needs_number = false;
+    for &argument in arguments {
+        if needs_number {
+            if is_number(argument) {
+                needs_number = false;
+                continue;
+            }
+            return false;
+        }
+        if counts_lines_or_bytes && argument.strip_prefix('-').is_some_and(is_number) {
+            continue;
+        }
+        if counts_lines_or_bytes && matches!(argument, "-n" | "-c" | "--lines" | "--bytes") {
+            needs_number = true;
+            continue;
+        }
+        if is_number(argument) || !filter_flag_is_inert(program, argument) {
+            return false;
+        }
     }
+    !needs_number
+}
+
+fn is_number(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Whether `argument` is a flag that changes only how a filter renders input.
+/// The lists intentionally exclude every option that can name a file or program.
+fn filter_flag_is_inert(program: &str, argument: &str) -> bool {
     let flags = match program {
         "tail" | "head" => &[
             "-c",
@@ -337,6 +368,12 @@ fn is_single_family_command(command: &str) -> bool {
             Some(_) => unreachable!(),
             None => match byte {
                 b'\\' => index += 1,
+                b'$' if bytes
+                    .get(index + 1)
+                    .is_some_and(|next| matches!(*next, b'\'' | b'"')) =>
+                {
+                    return false;
+                }
                 b'\'' | b'"' => quote = Some(byte),
                 b'`' | b'(' | b')' | b';' | b'&' | b'|' | b'\n' => return false,
                 b'$' if bytes.get(index + 1) == Some(&b'(') => return false,
@@ -345,7 +382,7 @@ fn is_single_family_command(command: &str) -> bool {
         }
         index += 1;
     }
-    true
+    quote.is_none()
 }
 
 /// Every string of the value with this session's paths and names, then the
@@ -613,6 +650,14 @@ mod tests {
             ),
             r#"{"command":"git status | sort -S1 --compress-program=payload"}"#
         );
+        assert_eq!(
+            key("Bash", json!({"command": "git status | cat 1"})),
+            r#"{"command":"git status | cat 1"}"#
+        );
+        assert_eq!(
+            key("Bash", json!({"command": "git status | head -n 5 1"})),
+            r#"{"command":"git status | head -n 5 1"}"#
+        );
     }
 
     /// A family skips only trailing filters that the key stripped, never a
@@ -632,6 +677,7 @@ mod tests {
             "git status $(./payload)",
             "git status <(./payload)",
             "git status `./payload`",
+            "git status x$'\\'' ; ./payload ; : x$'\\''",
             "git status | grep clean",
         ] {
             assert!(
