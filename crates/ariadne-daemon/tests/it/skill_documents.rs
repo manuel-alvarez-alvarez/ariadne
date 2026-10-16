@@ -122,14 +122,22 @@ async fn a_skill_of_your_own_is_deleted_rather_than_reset() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-/// A name with `/`, `..`, an uppercase letter, a space or a leading hyphen is
-/// not a kebab-case slug, and `sync_skills` writes `SKILL.md` under
-/// `skills_dir.join(name)`: accepting one of these would write outside the
-/// skills directory.
+/// A name with `/`, `\`, `..`, a space, a leading dot or a leading hyphen is
+/// not shaped as a skill name, or does not stay a direct entry under the
+/// skills directory once joined onto it: `sync_skills` writes `SKILL.md`
+/// under `skills_dir.join(name)`, and accepting one of these would write
+/// outside it.
 #[tokio::test]
-async fn a_skill_name_outside_the_kebab_case_shape_is_refused() {
+async fn a_skill_name_outside_the_shape_is_refused() {
     let h = harness().await;
-    for name in ["../escape", "a/b", "Api-Design", "api design", "-leading"] {
+    for name in [
+        "../escape",
+        "a/b",
+        "a\\b",
+        "api design",
+        ".hidden",
+        "-leading",
+    ] {
         let err = h
             .error(
                 post_json(
@@ -143,7 +151,7 @@ async fn a_skill_name_outside_the_kebab_case_shape_is_refused() {
             )
             .await;
         assert!(
-            err.error.message.contains("kebab-case"),
+            err.error.message.contains("skill name"),
             "{name:?}: {}",
             err.error.message
         );
@@ -153,6 +161,27 @@ async fn a_skill_name_outside_the_kebab_case_shape_is_refused() {
         !escaped.exists(),
         "a name with `..` wrote outside the skills directory"
     );
+}
+
+/// The looser rule: ASCII letters in either case, digits, hyphens and
+/// underscores, not leading with a hyphen — wider than kebab-case, and
+/// still shaped enough to stay one entry under the skills directory.
+#[tokio::test]
+async fn a_mixed_case_name_with_an_underscore_and_a_digit_is_accepted() {
+    let h = harness().await;
+    let created: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "My_Skill2",
+                    "document": "---\nname: x\ndescription: x\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(created.name, "My_Skill2");
 }
 
 /// A name that passes the slug check is still refused the write where a

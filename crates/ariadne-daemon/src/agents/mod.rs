@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 
 use ariadne_core::Seat;
 use ariadne_core::acp::LaunchConfig;
-use ariadne_store::{Store, is_skill_slug};
+use ariadne_store::{Store, skill_name_rejection};
 
 pub use acp::{plan_resume, plan_spawn};
 #[allow(unused_imports)] // the session-switch task wires handoff_text to its endpoint
@@ -182,6 +182,10 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
     let skills = store.list_skills().await?;
     std::fs::create_dir_all(skills_dir)
         .with_context(|| format!("creating {}", skills_dir.display()))?;
+    // Resolved once: a symlink in `skills_dir` itself is settled before any
+    // name's own path is checked against it, rather than on every check.
+    let canonical_skills_dir = std::fs::canonicalize(skills_dir)
+        .with_context(|| format!("resolving {}", skills_dir.display()))?;
 
     let names: std::collections::HashSet<_> =
         skills.iter().map(|skill| skill.name.as_str()).collect();
@@ -209,8 +213,8 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
     }
 
     for skill in skills {
-        if !is_skill_slug(&skill.name) {
-            tracing::error!(name = %skill.name, "a stored skill name is not a kebab-case slug; not writing it");
+        if let Some(reason) = skill_name_rejection(&skill.name, &canonical_skills_dir) {
+            tracing::error!(name = %skill.name, reason, "a stored skill name is invalid; not writing it");
             continue;
         }
         if let Err(error) =

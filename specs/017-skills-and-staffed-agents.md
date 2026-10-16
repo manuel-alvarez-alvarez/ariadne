@@ -35,14 +35,17 @@ written into the system prompt (006), and the lifecycle the seats sit in
 ## Behavior
 
 1. A **skill** is one document — a `SKILL.md`, YAML frontmatter and a body —
-   that tells a generic agent how to do one kind of work. It is named in
-   kebab-case, and the name is how a task loads it. A skill of the user's own
-   is created under a name that is a kebab-case slug alone — lowercase ASCII
-   letters, digits and single hyphens, 1 to 64 characters, no leading or
-   trailing hyphen — checked on the route and in the store, since the name
-   becomes a directory under the shared skills directory: anything else,
-   `../etc` or an absolute path included, is refused with 422 rather than
-   written.
+   that tells a generic agent how to do one kind of work, and the name is
+   how a task loads it. A skill of the user's own is created under a name
+   checked in two parts, on the route and in the store, since the name
+   becomes a directory under the shared skills directory. First, its shape:
+   1 to 64 characters of ASCII letters in either case, digits, hyphens and
+   underscores, not leading with a hyphen or a dot. Second, its path: joined
+   onto the skills directory (canonicalized, where a real one is on hand)
+   it must stay a direct entry of it, both its parent and its file name
+   unchanged by the join — which a name holding a separator, or naming `.`
+   or `..`, never does. A name that fails either part is refused with 422
+   rather than written, `../etc` or an absolute path included.
 2. An **agent** has no identity: it is a registry agent, a model, an
    effort, a brief and a set of skills. Its pin is one string,
    `<agent>:<model>`, where `<agent>` is the id of an agent in the daemon's
@@ -158,8 +161,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `orchestration` and `pr-reviewer`, and removes folders for names the
     store no longer has without removing `skills_dir` itself. It syncs after
     the store seeds shipped skills at startup and after every skill create,
-    document set, reset or delete. A stored name that is not a kebab-case
-    slug (rule 1) is logged and skipped rather than written. A name's own
+    document set, reset or delete. A stored name that fails either part of
+    rule 1, checked here against the skills directory itself canonicalized,
+    is logged and skipped rather than written. A name's own
     directory, and its `SKILL.md` once the directory is real, are never
     followed as a symlink: every one of those is a plain directory and a
     plain file the sync itself made, so a symlink found at either is never
@@ -182,10 +186,14 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`store.rs::skill_crud_and_the_two_refusals_that_tell_them_apart`,
   `skill_documents.rs::a_skill_of_your_own_is_deleted_rather_than_reset`,
   `::a_shipped_skill_cannot_be_deleted`).
-- A name with `/`, `..`, an uppercase letter, a space or a leading hyphen is
-  refused with 422 rather than written under the skills directory:
-  `skill_documents.rs::a_skill_name_outside_the_kebab_case_shape_is_refused`.
-- A name that passes the slug check is still never written through a
+- A name with `/`, `\`, `..`, a space, a leading dot or a leading hyphen is
+  refused with 422 rather than written under the skills directory, a mixed-case
+  name with a digit and an underscore is accepted, and the store refuses the
+  same names the route does:
+  `skill_documents.rs::a_skill_name_outside_the_shape_is_refused`,
+  `::a_mixed_case_name_with_an_underscore_and_a_digit_is_accepted`,
+  `store.rs::a_skill_name_must_be_shaped_right_and_stay_under_the_skills_directory`.
+- A name that passes the shape and path check is still never written through a
   symlink already sitting at its directory, and lands at its own, now real,
   directory once the symlink is cleared:
   `skill_documents.rs::a_symlinked_skill_directory_is_never_written_through`,

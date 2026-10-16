@@ -12,37 +12,65 @@
 //! open, and a skill the catalog loses is taken out of them on the same
 //! open, the same way.
 
+use std::ffi::OsStr;
+use std::path::Path;
+
 use crate::defaults::{BUILTIN_SKILLS, MERGED_SKILLS};
 use crate::query::Filtered;
 use crate::{Change, Result, Skill, Store, StoreError, now};
 
 #[derive(Debug, Clone)]
 pub struct NewSkill {
-    /// Kebab-case; how an agent loads the skill and how a task names it.
+    /// 1 to 64 characters of ASCII letters, digits, hyphens and underscores,
+    /// not leading with a hyphen or a dot: how an agent loads the skill and
+    /// how a task names it.
     pub name: String,
     /// The whole `SKILL.md`, frontmatter included.
     pub document: String,
 }
 
-/// Whether `name` is a kebab-case slug: lowercase ASCII letters, digits and
-/// single hyphens, 1 to 64 characters, with no leading or trailing hyphen.
-///
-/// `sync_skills` writes `SKILL.md` under `skills_dir.join(name)`; a name
-/// outside this shape — `../etc`, an absolute path, an uppercase letter — is
-/// never a directory component Ariadne meant to write.
-pub fn is_skill_slug(name: &str) -> bool {
-    if name.is_empty() || name.len() > 64 || name.starts_with('-') || name.ends_with('-') {
+/// Whether `name` is shaped as a skill name: 1 to 64 characters of ASCII
+/// letters in either case, digits, hyphens and underscores, not leading
+/// with a hyphen or a dot.
+fn is_skill_name_shape(name: &str) -> bool {
+    if name.is_empty() || name.len() > 64 {
         return false;
     }
-    let mut previous_hyphen = false;
-    for byte in name.bytes() {
-        match byte {
-            b'a'..=b'z' | b'0'..=b'9' => previous_hyphen = false,
-            b'-' if !previous_hyphen => previous_hyphen = true,
-            _ => return false,
-        }
+    if name.starts_with('-') || name.starts_with('.') {
+        return false;
     }
-    true
+    name.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Whether `name`, joined onto `root`, stays a direct child of it: the
+/// join's parent is `root` itself, and its file name is `name` unchanged.
+///
+/// A name holding a separator, or naming `.` or `..`, walks the join
+/// somewhere else instead — `..` has no file name of its own at all, and
+/// the rest leave a parent or a file name the join's own does not match.
+/// `sync_skills` calls this with the skills directory canonicalized, so a
+/// symlink in it is resolved before the comparison; a caller with no real
+/// directory on hand — the store — calls it with the empty path instead,
+/// since the property it tests is `name`'s alone and holds the same way
+/// under any root.
+fn stays_in(root: &Path, name: &str) -> bool {
+    let candidate = root.join(name);
+    candidate.parent() == Some(root) && candidate.file_name() == Some(OsStr::new(name))
+}
+
+/// Why `name` is not an acceptable skill name, or `None` where it is.
+pub fn skill_name_rejection(name: &str, root: &Path) -> Option<&'static str> {
+    if !is_skill_name_shape(name) {
+        return Some(
+            "skill name must be 1 to 64 characters of ASCII letters, digits, hyphens or \
+             underscores, and must not start with a hyphen or a dot",
+        );
+    }
+    if !stays_in(root, name) {
+        return Some("skill name must name one entry directly under the skills directory");
+    }
+    None
 }
 
 impl Store {
@@ -160,10 +188,9 @@ impl Store {
     /// Create a skill of the user's own. It carries its own document: nothing
     /// ships under its name for it to fall back to.
     pub async fn create_skill(&self, new: NewSkill) -> Result<Skill> {
-        if !is_skill_slug(&new.name) {
+        if let Some(reason) = skill_name_rejection(&new.name, Path::new("")) {
             return Err(StoreError::Invalid(format!(
-                "skill name must be a kebab-case slug: lowercase letters, digits and single \
-                 hyphens, 1 to 64 characters, no leading or trailing hyphen (got `{}`)",
+                "{reason} (got `{}`)",
                 new.name
             )));
         }

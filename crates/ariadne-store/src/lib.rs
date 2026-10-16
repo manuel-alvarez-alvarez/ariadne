@@ -47,7 +47,7 @@ pub use pull_request_comments::NewPullRequestComment;
 pub use pull_requests::{NewPullRequest, PullRequestFilter, PullRequestTold};
 pub use repositories::{NewRepository, RepositoryUpdate};
 pub use sessions::{NewSession, SessionFilter};
-pub use skills::{NewSkill, is_skill_slug};
+pub use skills::{NewSkill, skill_name_rejection};
 pub use stats::{
     AttentionStats, Bucket, LeadTime, ModelSpend, ModelStat, ModelStats, NewStatFact,
     PerFinishedTask, PersonWait, SpendBucket, SpendStats, SpendTotals, StatsFilter, StatusTime,

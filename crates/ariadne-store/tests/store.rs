@@ -3730,6 +3730,38 @@ async fn skill_crud_and_the_two_refusals_that_tell_them_apart() {
     ));
 }
 
+/// The name's shape: ASCII letters in either case, digits, hyphens and
+/// underscores, 1 to 64 characters, not leading with a hyphen or a dot. The
+/// store checks the same rule as the route, since nothing names a skill
+/// without going through one or the other.
+#[tokio::test]
+async fn a_skill_name_must_be_shaped_right_and_stay_under_the_skills_directory() {
+    let (store, _dir) = test_store().await;
+
+    store
+        .create_skill(NewSkill {
+            name: "My_Skill2".into(),
+            document: "---\nname: x\n---\n".into(),
+        })
+        .await
+        .unwrap();
+
+    for name in ["-leading", ".hidden", "a/b", "a\\b", "", "api design"] {
+        assert!(
+            matches!(
+                store
+                    .create_skill(NewSkill {
+                        name: name.into(),
+                        document: "---\nname: x\n---\n".into(),
+                    })
+                    .await,
+                Err(StoreError::Invalid(_))
+            ),
+            "{name:?} should be refused"
+        );
+    }
+}
+
 /// Every shipped skill is seeded into a fresh database on the text Ariadne
 /// ships, storing none of it — so a reworded default reaches a database
 /// nobody has touched, and a reset drops what was written rather than copying
