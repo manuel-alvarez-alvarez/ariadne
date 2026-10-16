@@ -189,12 +189,20 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
         .with_context(|| format!("reading {}", skills_dir.display()))?
     {
         let entry = entry.with_context(|| format!("reading {}", skills_dir.display()))?;
-        if entry
+        let file_type = entry
             .file_type()
-            .with_context(|| format!("reading {}", entry.path().display()))?
-            .is_dir()
-            && !names.contains(entry.file_name().to_string_lossy().as_ref())
-        {
+            .with_context(|| format!("reading {}", entry.path().display()))?;
+        // A symlink is never a skill's own directory: every one of those is
+        // made by `create_dir_all` below, which never makes one. Whatever
+        // put a symlink here instead, following it — to decide whether its
+        // name is still a skill's, or to write through it below — would
+        // reach wherever it points, outside `skills_dir` included. It is
+        // removed on sight, named or not; `remove_dir_all` on a symlink
+        // unlinks the symlink alone, never descends into its target.
+        let stale = file_type.is_symlink()
+            || (file_type.is_dir()
+                && !names.contains(entry.file_name().to_string_lossy().as_ref()));
+        if stale {
             std::fs::remove_dir_all(entry.path())
                 .with_context(|| format!("removing {}", entry.path().display()))?;
         }
@@ -206,11 +214,30 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
             continue;
         }
         let dir = skills_dir.join(&skill.name);
+        // The cleanup above already took out a symlink under this name; this
+        // guards the window between that check and this write, and a link
+        // placed back in it since.
+        if is_symlink(&dir) {
+            tracing::error!(name = %skill.name, path = %dir.display(), "a skill's directory is a symlink; not writing through it");
+            continue;
+        }
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-        std::fs::write(dir.join("SKILL.md"), skill.document_text())
+        let document = dir.join("SKILL.md");
+        if is_symlink(&document) {
+            tracing::error!(name = %skill.name, path = %document.display(), "a skill's SKILL.md is a symlink; not writing through it");
+            continue;
+        }
+        std::fs::write(&document, skill.document_text())
             .with_context(|| format!("writing the {} skill", skill.name))?;
     }
     Ok(())
+}
+
+/// Whether `path` is itself a symlink, without following it: `fs::metadata`
+/// resolves a symlink to what it points at, which is exactly what a check
+/// against following one must not do.
+fn is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
 }
 
 /// A fully planned launch of one ACP agent.

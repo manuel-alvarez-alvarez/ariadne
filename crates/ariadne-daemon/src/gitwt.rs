@@ -575,39 +575,54 @@ mod tests {
     /// `git worktree add` would read it as an unrecognized flag rather than
     /// the directory to create. The path is data at every call that takes
     /// one, not only here.
+    ///
+    /// The path must be relative, and it must be the git argument itself
+    /// that starts with `-`: `repo.path().join("--force")` is absolute, so
+    /// it never starts with `-` and would pass even the unguarded call this
+    /// test is written to catch. Resolved against `repo` by git's own
+    /// `-C`, a relative `--force/pr-example` is what `worktree_root`
+    /// actually hands `add_worktree` once joined onto a task's own
+    /// branch-named tail.
     #[tokio::test]
     async fn a_worktree_path_that_looks_like_a_flag_is_still_created() {
         let repo = tempfile::tempdir().unwrap();
         init_repo(repo.path());
         let git = GitManager;
         let base = git.current_branch(repo.path()).await.unwrap();
-        let worktree = repo.path().join("--force").join("pr-example");
+        let relative = Path::new("--force/pr-example");
+        let created = repo.path().join(relative);
 
-        git.add_worktree(repo.path(), &worktree, "feature", &base)
+        git.add_worktree(repo.path(), relative, "feature", &base)
             .await
             .unwrap();
-        assert!(worktree.join(".git").exists(), "{}", worktree.display());
+        assert!(created.join(".git").exists(), "{}", created.display());
 
-        git.remove_worktree(repo.path(), &worktree).await.unwrap();
-        assert!(!worktree.exists());
+        git.remove_worktree(repo.path(), relative).await.unwrap();
+        assert!(!created.exists());
     }
 
     /// The same path shape reaches a detached worktree the same way (029).
+    /// `checkout_detached` and the closing `remove_worktree` take the real
+    /// path once the worktree exists — `-C`'s own argument is already safe
+    /// regardless of a leading `-`, since a required-argument flag consumes
+    /// whatever follows it as data — so only `add_detached_worktree`'s own
+    /// path is what this test is written to catch, the same way as above.
     #[tokio::test]
     async fn a_detached_worktree_path_that_looks_like_a_flag_is_still_created() {
         let repo = tempfile::tempdir().unwrap();
         init_repo(repo.path());
         let git = GitManager;
         let base = git.current_branch(repo.path()).await.unwrap();
-        let worktree = repo.path().join("--detach").join("review");
+        let relative = Path::new("--detach/review");
+        let created = repo.path().join(relative);
 
-        git.add_detached_worktree(repo.path(), &worktree, &base)
+        git.add_detached_worktree(repo.path(), relative, &base)
             .await
             .unwrap();
-        assert!(worktree.join(".git").exists(), "{}", worktree.display());
+        assert!(created.join(".git").exists(), "{}", created.display());
 
-        git.checkout_detached(&worktree, &base).await.unwrap();
-        git.remove_worktree(repo.path(), &worktree).await.unwrap();
-        assert!(!worktree.exists());
+        git.checkout_detached(&created, &base).await.unwrap();
+        git.remove_worktree(repo.path(), relative).await.unwrap();
+        assert!(!created.exists());
     }
 }

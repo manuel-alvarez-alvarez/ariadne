@@ -155,6 +155,52 @@ async fn a_skill_name_outside_the_kebab_case_shape_is_refused() {
     );
 }
 
+/// A name that passes the slug check is still refused the write where a
+/// symlink already sits at its directory: `sync_skills` never follows one,
+/// to decide a name is stale or to write through it, so nothing lands
+/// outside the skills directory and the create still leaves the skill
+/// readable at its own, now real, directory.
+#[tokio::test]
+async fn a_symlinked_skill_directory_is_never_written_through() {
+    let h = harness().await;
+    let outside = tempfile::tempdir().unwrap();
+    let skills_dir = &h.launcher.cfg.skills_dir;
+    std::fs::create_dir_all(skills_dir).unwrap();
+    let link = skills_dir.join("safe");
+    std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+
+    let created: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "safe",
+                    "document": "---\nname: safe\ndescription: safe\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(created.name, "safe");
+
+    assert!(
+        !outside.path().join("SKILL.md").exists(),
+        "wrote through the symlink to outside the skills directory"
+    );
+    assert!(
+        !std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the symlink at the skill's own directory survived the sync"
+    );
+    assert_eq!(
+        std::fs::read_to_string(link.join("SKILL.md")).unwrap(),
+        created.document,
+        "the skill was not written to its own, now real, directory"
+    );
+}
+
 /// And the other way round: a shipped skill is reset rather than deleted, so
 /// the catalog cannot be emptied by mistake.
 #[tokio::test]

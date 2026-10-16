@@ -131,25 +131,39 @@ const SHELL_INTERPRETERS: &[&str] = &[
     "pwsh",
 ];
 
+/// Every whitespace-separated word of every element of `command`.
+///
+/// `env -S STRING` (and its long form, `--split-string=STRING`) splits
+/// `STRING` on whitespace itself and execs the first word of it, the
+/// shebang line of a script with arguments uses the same flag for the same
+/// reason — so a shell name or a `-c`-shaped flag can ride into `command`
+/// one word inside a single combined argument, `["env", "-S", "sh -c
+/// payload"]`, rather than as an element of its own. Splitting every
+/// element the same way `env` would catches that without a special case
+/// for `env`, or for whatever else might be made to do the same split.
+fn words(command: &[String]) -> impl Iterator<Item = &str> {
+    command.iter().flat_map(|part| part.split_whitespace())
+}
+
 /// Whether `command` names a shell interpreter anywhere in it, or carries a
-/// `-c`-shaped flag among its arguments — the flag every one of them runs a
+/// `-c`-shaped flag among its words — the flag every one of them runs a
 /// string of as a command.
 ///
-/// A shell is refused by name wherever it sits in `command`, not only at
-/// index 0: `env sh -lc payload` runs the shell exactly as `sh -lc payload`
-/// does, with `env` — a program of its own, never refused by name — as the
-/// one `PATH` answers for. Every shell takes its command string on `-c`,
-/// which getopt lets a caller bundle behind other single-letter flags
+/// A shell is refused by name wherever it sits, not only at the start of
+/// `command`: `env sh -lc payload` runs the shell exactly as `sh -lc
+/// payload` does, with `env` — a program of its own, never refused by name
+/// — as the one `PATH` answers for. Every shell takes its command string on
+/// `-c`, which getopt lets a caller bundle behind other single-letter flags
 /// (`-lc`, `-ic`): a short option that is not `--` and ends the bundle on
 /// `c` is refused the same as a bare `-c`.
 fn names_a_shell(command: &[String]) -> bool {
-    command.iter().any(|part| {
-        let base = part.rsplit(['/', '\\']).next().unwrap_or(part);
+    words(command).any(|word| {
+        let base = word.rsplit(['/', '\\']).next().unwrap_or(word);
+        let base = base.trim_matches(['\'', '"']);
         let base = base.strip_suffix(".exe").unwrap_or(base);
         SHELL_INTERPRETERS.contains(&base)
-    }) || command
-        .iter()
-        .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg.ends_with('c'))
+    }) || words(command)
+        .any(|word| word.starts_with('-') && !word.starts_with("--") && word.ends_with('c'))
 }
 
 /// The entries of `path` that name a directory outright, in their own order.
@@ -552,6 +566,36 @@ mod tests {
         let index = serde_json::json!({"agents": [
             {"id": "env-shell", "distribution": {"binary": {
                 key: {"cmd": "env", "args": ["sh", "-lc", "payload"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// `env -S STRING` re-splits `STRING` on whitespace and execs the first
+    /// word of it: `env -S "sh -c 'printf marker'"` runs `sh` with `-c` and
+    /// `printf marker` exactly as if they had been separate elements of
+    /// `command` to begin with. Neither word stands as its own element of
+    /// `command` here — both ride inside the one argument `-S` takes — so
+    /// catching this needs the words of every element, not just the
+    /// elements themselves.
+    #[test]
+    fn env_dash_cap_s_splitting_a_shell_command_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-split-shell", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["-S", "sh -c 'printf marker'"]}
             }}},
             {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
         ]})

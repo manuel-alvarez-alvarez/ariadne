@@ -159,7 +159,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
     store no longer has without removing `skills_dir` itself. It syncs after
     the store seeds shipped skills at startup and after every skill create,
     document set, reset or delete. A stored name that is not a kebab-case
-    slug (rule 1) is logged and skipped rather than written.
+    slug (rule 1) is logged and skipped rather than written. A name's own
+    directory, and its `SKILL.md` once the directory is real, are never
+    followed as a symlink: every one of those is a plain directory and a
+    plain file the sync itself made, so a symlink found at either is never
+    a skill's own, named or not, and is removed outright rather than
+    written through — the one path by which a name this sync never rejects
+    could still reach outside `skills_dir`.
 
 ## Acceptance criteria
 
@@ -176,6 +182,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - A name with `/`, `..`, an uppercase letter, a space or a leading hyphen is
   refused with 422 rather than written under the skills directory:
   `skill_documents.rs::a_skill_name_outside_the_kebab_case_shape_is_refused`.
+- A name that passes the slug check is still never written through a
+  symlink already sitting at its directory, and lands at its own, now real,
+  directory once the symlink is cleared:
+  `skill_documents.rs::a_symlinked_skill_directory_is_never_written_through`.
 - A skill an agent still loads cannot be deleted
   (`store.rs::a_skill_an_agent_still_loads_cannot_be_deleted`), and an agent
   cannot be staffed on a skill nothing answers to
