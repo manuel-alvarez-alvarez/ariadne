@@ -420,8 +420,8 @@ impl ServerHandler for AriadneMcp {
     /// After the rules come the seat text and the skill index (006). No
     /// adapter is proven to keep these in its system prompt, so the runtime
     /// sends both in a turn too, after a launch and after a model switch.
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::default();
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::default();
         let scope = [
             self.goal_id.as_ref().map(|goal| format!("goal {goal}")),
             self.task_id.as_ref().map(|task| format!("task {task}")),

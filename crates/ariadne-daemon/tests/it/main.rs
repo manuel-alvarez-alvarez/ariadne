@@ -24,6 +24,7 @@ mod ai_permissions_flavours;
 mod ai_permissions_server;
 mod attention;
 mod auto_switch;
+mod docs;
 mod doctor;
 mod events;
 mod failure_diagnosis;
