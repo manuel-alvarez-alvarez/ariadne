@@ -61,9 +61,12 @@ in the root [`AGENTS.md`](../AGENTS.md).
 - `tests/install-linux.sh` — a Linux installer scenario, run as `bash
   scripts/tests/install-linux.sh CASE [host|present|missing]` for one of its
   cases: `missing`, `source-missing`, `release`, `source`, `rejected`,
-  `no-ui`. It builds a throwaway `$TEST_ROOT` (repo copy, fake `PATH`, fake
-  `HOME`), runs the installer and the uninstaller against it, and never
-  touches the caller's own `HOME`.
+  `workflow-rejected`, `tag-rejected`, `gh-missing-attestation-flags`,
+  `gh-outdated-attestation-verifier`, `manifest-shell`,
+  `manifest-unexpected`, `manifest-paths`, `app-path`, `purge-home`, `purge-root`,
+  `pid-invalid`, `uninstall-log`, `no-ui`. It builds a throwaway `$TEST_ROOT`
+  (repo copy, fake `PATH`, fake `HOME`), runs the installer and the
+  uninstaller against it, and never touches the caller's own `HOME`.
 - `tests/install-sign-macos.sh` — a macOS installer scenario, run as `bash
   scripts/tests/install-sign-macos.sh CASE` for one of its cases: `present`
   or `missing` (an "Ariadne Code Signing" identity is or is not in the login
@@ -72,7 +75,13 @@ in the root [`AGENTS.md`](../AGENTS.md).
   failing the install — when it is not; `desktop-present` or
   `desktop-missing` prove the identity reaches `npm run tauri build` as
   `APPLE_SIGNING_IDENTITY` the same way, stopping right after — ditto'ing
-  the bundle to `/Applications` is a system path no sandboxed test may touch.
+  the bundle to `/Applications` is a system path no sandboxed test may touch;
+  `app-path` proves the uninstaller refuses an app outside the two approved
+  application directories; `legacy-app-path` proves a legacy `Ariadne
+  Desktop.app` bundle under `~/Applications` is removed during an installer
+  migration; `prefix-change` proves an installer refuses a changed prefix;
+  `manifest-unsafe` proves the installer refuses a manifest value containing
+  shell syntax before writing `install.env`.
 - `tests/install-service-macos.sh` — a macOS installer scenario, run as
   `bash scripts/tests/install-service-macos.sh`. The fake `launchctl` above
   keeps the old daemon's label present for a couple of polls after

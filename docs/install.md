@@ -104,10 +104,12 @@ optional capability as a limitation.
 By default the binaries and desktop app come from the GitHub release named by
 `--version` (the latest release when it is omitted), for the target triple the
 machine runs. The downloaded files carry a build provenance attestation. The
-installer verifies each file with `gh attestation verify` before installing it,
-so it requires the [GitHub CLI](https://cli.github.com) and `gh auth login`.
-A failed verification changes nothing. `--build-from-source` compiles this
-checkout instead and needs neither `gh` nor a published release.
+installer verifies each file with `gh attestation verify` before installing it.
+It requires [GitHub CLI](https://cli.github.com) 2.102.0 or later and `gh auth
+login`. Verification pins the checkout's release workflow and the resolved
+`refs/tags/<tag>` source ref, so an asset from another workflow or tag is
+rejected. A failed verification changes nothing. `--build-from-source`
+compiles this checkout instead and needs neither `gh` nor a published release.
 
 On macOS, a `--build-from-source` run signs `ariadne`, `ariadned` and the
 desktop app with the self-signed "Ariadne Code Signing" identity, when
@@ -135,7 +137,7 @@ installs the CLI, daemon service, and completions. Install the runtime, then
 re-run the installer. This check also applies to `--build-from-source`;
 source builds still need the development dependencies.
 
-The app installs to `/Applications/Ariadne Desktop.app` on macOS
+The app installs to `/Applications/Ariadne.app` on macOS
 (`~/Applications` when needed), and to `$PREFIX/ariadne-desktop` on Linux.
 Linux releases supply the binary and GNOME icon in
 `ariadne-desktop-<target>.tar.gz`. Source builds install the plain binary
@@ -143,6 +145,21 @@ without a bundle and take the icon from `ui/src-tauri/icons/`.
 Its TCP connection is off by default; set `tcp_listen` in
 `~/.ariadne/config.toml` before connecting the app. See
 [Configuration](configuration.md).
+
+## Removing Ariadne
+
+The uninstaller reads `~/.ariadne/install.env` as fixed `KEY=value` data; it
+does not execute it. It refuses a manifest with an unknown key or a value that
+could be shell syntax. Each recorded path must match its installer-defined
+location, including the chosen `--prefix`; use the same `--prefix` value when
+you uninstall a custom-prefix installation. It removes a macOS app only from
+`/Applications` or `~/Applications`, including the legacy `Ariadne
+Desktop.app` bundle, and a Linux desktop binary only from its installed
+prefix. A later macOS install removes a legacy bundle after its replacement is
+in place. To change a prefix, first run `scripts/uninstall.sh --prefix OLD`;
+the installer refuses the change until the old installation is removed.
+`--purge` refuses an empty home, `/`, or `$HOME`. Its diagnostic log uses a
+unique temporary filename and remains available after a purge.
 
 ## The daemon service
 

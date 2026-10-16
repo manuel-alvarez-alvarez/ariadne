@@ -1,14 +1,17 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-10-15
+updated: 2026-10-16
 areas: [daemon, install, scripts, store, workflows]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
   - crates/ariadne-daemon/src/resource.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/it/agents.rs
+  - crates/ariadne-cli/src/commands/daemon.rs
   - scripts/install.sh
+  - scripts/lib.sh
+  - scripts/uninstall.sh
   - scripts/tests/install-linux.sh
   - scripts/tests/install-sign-macos.sh
   - scripts/tests/install-service-macos.sh
@@ -55,7 +58,11 @@ Out: what the daemon does once running (009, 012).
    entry, the dash has only the window (015).
 2. It is idempotent: safe to re-run after an upgrade or a config change, every
    step replacing what a previous run installed. What was installed where is
-   recorded in `~/.ariadne/install.env`, which `uninstall.sh` reads.
+   recorded in `~/.ariadne/install.env`, which `uninstall.sh` reads as a fixed
+   list of inert `KEY=value` lines. The installer refuses a manifest value
+   containing a quote, dollar sign, backtick or newline; the uninstaller
+   refuses malformed lines, duplicate or unknown keys, and unsafe values
+   before it removes anything.
 3. Binaries come from a GitHub release by default, and from a local build with
    `--build-from-source`. A local build is taken from the directory cargo
    wrote it to, `CARGO_TARGET_DIR` included: a checkout that builds elsewhere
@@ -63,9 +70,12 @@ Out: what the daemon does once running (009, 012).
    holds. macOS release assets are signed with the self-signed `Ariadne Code
    Signing` certificate and all release assets carry a build provenance
    attestation, so every downloaded file is checked with
-   `gh attestation verify` before anything is installed — which makes the
-   GitHub CLI a hard requirement of the default flow — and the macOS quarantine
-   attribute is cleared from what is installed.
+   `gh attestation verify` before anything is installed — which makes GitHub
+   CLI 2.102.0 or later a hard requirement of the default flow — and every
+   verification pins `$RELEASE_REPO/.github/workflows/release.yml` and
+   `refs/tags/$RESOLVED_TAG`. An attestation from another workflow or source
+   ref cannot pass. The macOS quarantine attribute is cleared from what is
+   installed.
 4. Output is a numbered step list; noisy subcommands go to
    `~/.ariadne/install.log` and are shown only when a step fails. `--verbose`
    streams them instead.
@@ -167,7 +177,24 @@ Out: what the daemon does once running (009, 012).
     old process is actually gone. `install.sh` retries a `launchctl
     bootstrap` that loses that race, up to 5 times, and calls `ui_die` only
     once the last try has also failed.
-16. `scripts/check-migrations.sh` enforces rule 9's last sentence by machine
+16. A pidfile is accepted only when it holds decimal digits for a value above
+    one, in both `scripts/lib.sh` and `ariadne daemon stop`. Invalid text is
+    ignored by the scripts and rejected by the CLI before either can construct
+    a `kill` command, so `-1` can never become a process-group signal.
+17. Before an uninstall starts, it validates every manifest path against the
+    installer-defined location. A prefix must match `--prefix`; completions,
+    service files, and GNOME files must match the current user locations. On
+    macOS the desktop target must be a directory named `Ariadne.app` under
+    `/Applications` or `$HOME/Applications`, or one of the fixed legacy
+    `Ariadne Desktop.app` locations there. Once the replacement app is in
+    place, the installer removes a legacy bundle before it replaces the
+    manifest. On Linux the desktop target must be the desktop binary under the
+    expected prefix. An install with a different prefix stops before it writes
+    files, so it cannot leave stale binaries at the old prefix; uninstall the
+    old prefix first. `--purge` refuses an empty, root, home,
+    or relative `ARIADNE_HOME`. The uninstaller creates its log with `mktemp`
+    rather than a predictable filename.
+18. `scripts/check-migrations.sh` enforces rule 9's last sentence by machine
     rather than by convention alone. It compares
     `crates/ariadne-store/migrations/` on the latest commit of `main`
     directly against HEAD, never their merge-base, so a branch that forked
@@ -187,6 +214,18 @@ Out: what the daemon does once running (009, 012).
   requires attestation verification, and uninstall removes the desktop files
   (`scripts/tests/install-linux.sh`: `release`, `source`, `missing`,
   `source-missing`, `rejected`, `no-ui`).
+- Release assets must be attested by the release workflow at the resolved tag;
+  an unavailable verification constraint, a vulnerable GitHub CLI, another
+  workflow, or another tag stops the installer before it installs a file.
+  Manifest shell syntax and unknown keys stop the uninstaller before it
+  removes a file. Manifest paths outside their installer-defined locations,
+  unsafe app and purge roots are refused, invalid pidfiles signal nothing,
+  and the uninstall log has an unpredictable name
+  (`scripts/tests/install-linux.sh`: `workflow-rejected`, `tag-rejected`,
+  `gh-missing-attestation-flags`, `gh-outdated-attestation-verifier`,
+  `manifest-shell`, `manifest-unexpected`, `manifest-paths`, `app-path`, `purge-home`,
+  `purge-root`, `pid-invalid`, `uninstall-log`; `scripts/tests/install-sign-macos.sh`:
+  `app-path`, `legacy-app-path`, `prefix-change`, `manifest-unsafe`; `daemon.rs::a_pidfile_only_accepts_digits_above_one`).
 - A database from before the squash says which file to delete
   (`store.rs::a_database_from_before_the_squash_says_which_file_to_delete`).
 - The shipped skills are seeded into a fresh database, each on the text
@@ -283,4 +322,5 @@ fails the service step`).
 `.github/workflows/release.yml`, `.github/RELEASING.md`,
 `crates/ariadne-store/src/lib.rs`,
 `crates/ariadne-store/migrations/0001_init.sql`,
-`crates/ariadne-daemon/src/resource.rs`, `crates/ariadne-daemon/src/main.rs`.
+`crates/ariadne-daemon/src/resource.rs`, `crates/ariadne-daemon/src/main.rs`,
+`crates/ariadne-cli/src/commands/daemon.rs`.

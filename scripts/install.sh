@@ -154,6 +154,32 @@ require_gh() {
         || ui_die "the GitHub CLI (gh) is required to install a release - install it from https://cli.github.com, or re-run with --build-from-source"
     run_logged gh auth status \
         || ui_die "gh is not logged in - run 'gh auth login', or re-run with --build-from-source"
+    require_attestation_verifier
+}
+
+# `--source-ref` arrived in gh 2.68.0. Release consumers need both it and the
+# signer-workflow check, and 2.102.0 fixes their earlier partial-match bugs.
+require_attestation_verifier() {
+    local help version major minor patch IFS
+    help="$(gh attestation verify --help 2>&1)" \
+        || ui_die "gh 2.102.0 or later is required for attestation verification"
+    case "$help" in
+        *--signer-workflow*--source-ref*) ;;
+        *) ui_die "gh 2.102.0 or later is required for attestation verification (--signer-workflow and --source-ref)" ;;
+    esac
+    version="$(gh --version 2>/dev/null | awk 'NR == 1 { print $3 }')"
+    case "$version" in
+        [0-9]*.[0-9]*.[0-9]*) ;;
+        *) ui_die "gh 2.102.0 or later is required for attestation verification" ;;
+    esac
+    IFS=.
+    read -r major minor patch <<EOF
+$version
+EOF
+    if [ -z "$patch" ] || [ "$major" -lt 2 ] \
+        || { [ "$major" -eq 2 ] && [ "$minor" -lt 102 ]; }; then
+        ui_die "gh 2.102.0 or later is required for attestation verification (found $version)"
+    fi
 }
 
 # owner/repo for `gh release download` and `gh attestation verify`, read off
@@ -200,7 +226,9 @@ install_app_bundle() {
             APP_INSTALL_DIR="/Applications"
             [ -w "$APP_INSTALL_DIR" ] || APP_INSTALL_DIR="$HOME/Applications"
             mkdir -p "$APP_INSTALL_DIR"
-            APP_PATH="$APP_INSTALL_DIR/$APP_NAME.app"
+            # The Tauri bundle remains named "Ariadne Desktop.app", but the
+            # installed application has a fixed safe name for uninstalling.
+            APP_PATH="$APP_INSTALL_DIR/Ariadne.app"
             rm -rf "$APP_PATH"
             # ditto, not cp: it is what copies a bundle whole, extended
             # attributes and code signature included.
@@ -215,6 +243,18 @@ install_app_bundle() {
             ui_die "unsupported OS for the desktop app: $OS (use --no-ui)"
             ;;
     esac
+}
+
+# A successful install replaces the old product name with the fixed current
+# one. The value was checked against the two known legacy locations before any
+# install step began, so this cleanup cannot follow a manifest path elsewhere.
+remove_legacy_desktop_app() {
+    [ "$OS" = Darwin ] || return 0
+    case "$OLD_APP" in
+        /Applications/Ariadne\ Desktop.app|"$HOME/Applications/Ariadne Desktop.app") ;;
+        *) return 0 ;;
+    esac
+    [ "$OLD_APP" = "$APP_PATH" ] || [ ! -d "$OLD_APP" ] || rm -rf "$OLD_APP"
 }
 
 # The Linux binary uses the host's WebKitGTK. User PATHs may omit sbin.
@@ -348,11 +388,23 @@ if [ "$WITH_UI" = 1 ] && [ "$OS" = Linux ] && ! has_webkitgtk; then
     APP_SKIP_REASON="libwebkit2gtk-4.1.so.0 not found"
 fi
 
-# --- previous install (for cross-prefix idempotency) --------------------------
-OLD_PREFIX=""
-if [ -f "$ARIADNE_MANIFEST" ]; then
-    # shellcheck disable=SC1090
-    OLD_PREFIX="$(. "$ARIADNE_MANIFEST" && echo "${ARIADNE_PREFIX:-}")"
+# --- previous install ---------------------------------------------------------
+OLD_APP=""
+OLD_DESKTOP_ICON=""
+if ui_read_install_manifest "$ARIADNE_MANIFEST"; then
+    [ -z "$MANIFEST_PREFIX" ] || [ "$MANIFEST_PREFIX" = "$PREFIX" ] \
+        || ui_die "refusing to change an installed prefix; uninstall before changing --prefix"
+    # A manifest is untrusted input. The old prefix is never removed during an
+    # install because it cannot prove which binaries it owns. The old app and
+    # icon have installer-defined paths, so they are safe after validation.
+    if [ -n "$MANIFEST_APP" ] \
+        && ui_manifest_path_is_expected ARIADNE_APP "$MANIFEST_APP" "$PREFIX"; then
+        OLD_APP="$MANIFEST_APP"
+    fi
+    if [ -n "$MANIFEST_DESKTOP_ICON" ] \
+        && ui_manifest_path_is_expected ARIADNE_DESKTOP_ICON "$MANIFEST_DESKTOP_ICON" "$PREFIX"; then
+        OLD_DESKTOP_ICON="$MANIFEST_DESKTOP_ICON"
+    fi
 fi
 
 # --- build, or download and verify ---------------------------------------------
@@ -404,10 +456,12 @@ else
     step_ok "$RESOLVED_TAG"
 
     # Nothing downloaded is touched until GitHub has confirmed it was built by
-    # the release workflow of this very repository, from this very tag.
+    # this repository's release workflow, from this exact tag.
     step_begin
     for _asset in "$STAGE_DIR"/*; do
         run_logged gh attestation verify "$_asset" --repo "$RELEASE_REPO" \
+            --signer-workflow "$RELEASE_REPO/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$RESOLVED_TAG" \
             || ui_die "$(basename "$_asset") failed attestation verification - nothing was installed"
     done
     step_ok "$RELEASE_REPO"
@@ -432,12 +486,7 @@ mkdir -p "$PREFIX"
 install -m 755 "$BIN_SRC_DIR/ariadne" "$PREFIX/ariadne"
 install -m 755 "$BIN_SRC_DIR/ariadned" "$PREFIX/ariadned"
 [ "$BUILD_FROM_SOURCE" = 1 ] || clear_quarantine "$PREFIX/ariadne" "$PREFIX/ariadned"
-if [ -n "$OLD_PREFIX" ] && [ "$OLD_PREFIX" != "$PREFIX" ]; then
-    rm -f "$OLD_PREFIX/ariadne" "$OLD_PREFIX/ariadned"
-    step_ok "previous prefix $(ui_tilde "$OLD_PREFIX") cleaned"
-else
-    step_ok
-fi
+step_ok
 
 # --- desktop app --------------------------------------------------------------------
 # Downloaded, the app is one more verified asset and installs like the
@@ -473,6 +522,7 @@ elif [ "$WITH_UI" = 1 ] && [ "$BUILD_FROM_SOURCE" = 0 ]; then
             ;;
     esac
     install_app_bundle "$APP_BUNDLE"
+    remove_legacy_desktop_app
     clear_quarantine "$APP_PATH"
     APP_STATE="$(ui_tilde "$APP_PATH")"
     step_ok "$(ui_tilde "$APP_PATH")"
@@ -527,6 +577,7 @@ elif [ "$WITH_UI" = 1 ]; then
             *) APP_BUNDLE="" ;;
         esac
         install_app_bundle "$APP_BUNDLE"
+        remove_legacy_desktop_app
         APP_STATE="$(ui_tilde "$APP_PATH")"
         step_ok "$(ui_tilde "$APP_PATH")"
     fi
@@ -537,15 +588,8 @@ GNOME_STATE=""
 if [ "$WITH_UI" = 1 ] && [ "$OS" = Linux ]; then
     step_begin
     if [ -n "$APP_PATH" ]; then
-        # Cross-run idempotency, the same way OLD_PREFIX works for the
-        # binaries: an icon size that changed since the last run would
-        # otherwise leave the old one behind alongside the new one.
-        OLD_DESKTOP_ICON=""
-        if [ -f "$ARIADNE_MANIFEST" ]; then
-            # shellcheck disable=SC1090
-            OLD_DESKTOP_ICON="$(. "$ARIADNE_MANIFEST" && echo "${ARIADNE_DESKTOP_ICON:-}")"
-        fi
-
+        # Cross-run idempotency: an icon size that changed since the last run
+        # would otherwise leave the old one behind alongside the new one.
         if [ "$BUILD_FROM_SOURCE" = 1 ]; then
             ICON_SRC="$APP_SRC_DIR/src-tauri/icons/icon.png"
         else
@@ -701,22 +745,32 @@ fi
 # --- manifest (read by uninstall.sh) ---------------------------------------------------
 step_begin
 mkdir -p "$ARIADNE_HOME"
-cat > "$ARIADNE_MANIFEST" <<EOF
-# Written by scripts/install.sh — read by scripts/uninstall.sh.
-ARIADNE_PREFIX="$PREFIX"
-ARIADNE_BASH_COMPLETION="$ARIADNE_BASH_COMPLETION"
-ARIADNE_ZSH_COMPLETION="$ARIADNE_ZSH_COMPLETION"
-ARIADNE_PLIST="$ARIADNE_PLIST"
-ARIADNE_UNIT="$ARIADNE_UNIT"
-EOF
+ui_validate_install_manifest_value ARIADNE_PREFIX "$PREFIX"
+ui_validate_install_manifest_value ARIADNE_BASH_COMPLETION "$ARIADNE_BASH_COMPLETION"
+ui_validate_install_manifest_value ARIADNE_ZSH_COMPLETION "$ARIADNE_ZSH_COMPLETION"
+ui_validate_install_manifest_value ARIADNE_PLIST "$ARIADNE_PLIST"
+ui_validate_install_manifest_value ARIADNE_UNIT "$ARIADNE_UNIT"
+[ -z "$APP_PATH" ] || ui_validate_install_manifest_value ARIADNE_APP "$APP_PATH"
+if [ -n "$GNOME_STATE" ] && [ -n "$APP_PATH" ] && [ "$OS" = Linux ]; then
+    ui_validate_install_manifest_value ARIADNE_DESKTOP_ENTRY "$ARIADNE_DESKTOP_ENTRY"
+    [ -z "$ARIADNE_DESKTOP_ICON" ] \
+        || ui_validate_install_manifest_value ARIADNE_DESKTOP_ICON "$ARIADNE_DESKTOP_ICON"
+fi
+printf '%s\n' '# Written by scripts/install.sh — read by scripts/uninstall.sh as data.' > "$ARIADNE_MANIFEST"
+ui_write_install_manifest_value "$ARIADNE_MANIFEST" ARIADNE_PREFIX "$PREFIX"
+ui_write_install_manifest_value "$ARIADNE_MANIFEST" ARIADNE_BASH_COMPLETION "$ARIADNE_BASH_COMPLETION"
+ui_write_install_manifest_value "$ARIADNE_MANIFEST" ARIADNE_ZSH_COMPLETION "$ARIADNE_ZSH_COMPLETION"
+ui_write_install_manifest_value "$ARIADNE_MANIFEST" ARIADNE_PLIST "$ARIADNE_PLIST"
+ui_write_install_manifest_value "$ARIADNE_MANIFEST" ARIADNE_UNIT "$ARIADNE_UNIT"
 # Absent when the app was skipped; uninstall.sh then has nothing to remove.
-[ -n "$APP_PATH" ] && printf 'ARIADNE_APP="%s"\n' "$APP_PATH" >> "$ARIADNE_MANIFEST"
+[ -n "$APP_PATH" ] \
+    && ui_write_install_manifest_value "$ARIADNE_MANIFEST" ARIADNE_APP "$APP_PATH"
 # Absent unless this run registered the GNOME entry; the icon line is only
 # added once one was actually found and installed.
 if [ -n "$GNOME_STATE" ] && [ -n "$APP_PATH" ] && [ "$OS" = Linux ]; then
-    printf 'ARIADNE_DESKTOP_ENTRY="%s"\n' "$ARIADNE_DESKTOP_ENTRY" >> "$ARIADNE_MANIFEST"
+    ui_write_install_manifest_value "$ARIADNE_MANIFEST" ARIADNE_DESKTOP_ENTRY "$ARIADNE_DESKTOP_ENTRY"
     [ -n "$ARIADNE_DESKTOP_ICON" ] \
-        && printf 'ARIADNE_DESKTOP_ICON="%s"\n' "$ARIADNE_DESKTOP_ICON" >> "$ARIADNE_MANIFEST"
+        && ui_write_install_manifest_value "$ARIADNE_MANIFEST" ARIADNE_DESKTOP_ICON "$ARIADNE_DESKTOP_ICON"
 fi
 step_ok
 
