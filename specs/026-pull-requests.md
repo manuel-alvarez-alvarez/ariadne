@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-10-16
+updated: 2026-10-17
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -58,8 +58,8 @@ The agent of the task's `pr` column keeps its request until a human merges or cl
 In: request identity, the rows Ariadne keeps, forge reads, fetch modes, HTTP, events, CLI, and desktop views.
 Also in: the agent who keeps a request, its comments and checks, the detail read, the news, the tools, and the cleanup.
 
-Out: webhook delivery, and review sessions, on a request that asks for the user's review or one of theirs they asked Ariadne to review ([029](029-reviewing-a-request.md)).
-Also out: the keeper session on a request of the user's own asked for by hand, and its worktree and branch ([032](032-babysitting-a-request-by-hand.md)).
+Out: webhook delivery, and review sessions, on any request explicitly asked for ([029](029-reviewing-a-request.md)).
+Also out: the keeper session on a request asked for by hand, and its worktree and branch ([032](032-babysitting-a-request-by-hand.md)).
 Forge detection and integration settings belong to [025](025-forge-integration.md).
 The `pr` column, its gate and how its task ends belong to [030](030-workflows.md).
 
@@ -80,9 +80,9 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    might start it working by hand, and only then:
    - the request a task opened: `open_pull_request` writes it, with the task as origin (030 rule 10);
    - a request that asks for the user's review, out of draft: the first fetch that finds it writes it — nothing starts a session on it on its own, but the row is what lets a human start one by hand (029, 031);
-   - a request of the user's they asked Ariadne to review: the ask writes it (029);
-   - a request of the user's own, opened by no task, they asked Ariadne to keep by hand: the ask writes it (032).
-   A request nobody works on, and nobody could start work on by asking, has no row, whatever the lists hold.
+   - any request they asked Ariadne to review: the ask writes it (029);
+   - any request, opened by no task, they asked Ariadne to keep by hand: the ask writes it (032).
+   A request nobody works on and with no outstanding review assignment has no row until an explicit ask, whatever the lists hold.
 4. What the forge says of a request Ariadne works on is read on every fetch and held in memory alone (`forge::live::LivePulls`, by row id): the request's own read, whether it asks for the user's review, and, while it is open, its details.
    The scheduler and the routes join the row to that read (`PullRequest`, the view). A daemon that restarts holds nothing until its first fetch, which runs at once; until a request has been read, the scheduler does nothing for it.
    Each fetch also holds its repository's whole list the same way (`forge::live::LivePulls`, by repository id): every open request and which of them ask for the user's review, as the fetch itself read them, when, and the forge identity that supplied them.
@@ -249,8 +249,8 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `GET /v1/pull-requests/{id}` | A request Ariadne works on, as the last fetch found it, or read off the forge now where nothing has read it yet. |
 | `GET /v1/repositories/{id}/pull-requests/{number}` | One request of a repository, read off the forge now with its checks and comments, joined to its row where there is one. What the desktop's panel reads. |
 | `GET /v1/repositories/{id}/pull-requests/search?q=` | Search the repository's last fetched list by number, title, or author, the user's own left out. Each match says with `tracked` whether Ariadne works on it. A repository with no fetch yet matches nothing. |
-| `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review` | Take `{asked}`: ask Ariadne to review a request of the user's own, which starts its work on it, or stop asking (029). |
-| `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit` | Take `{asked}`: ask Ariadne to keep a request of the user's own, opened by no task, by hand, which starts its work on it, or stop asking (032). |
+| `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review` | Take `{asked}`: ask Ariadne to review any open request, which starts its work on it, or stop asking (029). |
+| `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit` | Take `{asked}`: ask Ariadne to keep any open request, opened by no task, by hand, which starts its work on it, or stop asking (032). |
 | `POST /v1/pull-requests/refresh?repo=` | Wake one repository or every enabled repository. Return 202. |
 | `GET /v1/pull-requests/{id}/comments?unanswered_only=` | The comments, read off the forge now, with their marks; or the threads that wait on the login. |
 | `GET /v1/pull-requests/{id}/comments/{comment_id}` | One comment, read off the forge now. |
@@ -285,7 +285,7 @@ A row opens the floating pane through `?pr=<repository>:<number>` and `paths.pul
 The panel reads the request off the forge by its repository and number. Its header carries the number and title, pills for the state, the checks, the review decision, an Ariadne review and Ariadne babysitting, Ariadne's id where it works on it, and when it opened and moved.
 Under it are the facts by name — a link to the request on the forge, the repository, the author, the branches, the head, the unanswered comments, the base, what Ariadne does with it, the task that keeps it and each failed check linked to its run — then two tabs: Description, the body rendered as Markdown, and Sessions, the request's review and keeper sessions and the task's keeping agent.
 Picking a session drills into it in the panel, as `?session=` beside `?pr=`, with a way back to the request.
-The panel offers Start review and Stop review on a request of the user's own or one that asks for their review (029), and, on a request of the user's own that no task keeps, Start babysit and Stop babysit (032). Nothing on the screen adds or removes a request.
+The panel offers Start review and Stop review on any open request (029), and, on any open request that no task keeps, Start babysit and Stop babysit (032), regardless of its author. Nothing on the screen adds or removes a request.
 `pull_requests_changed` invalidates every pull request key; no screen polls.
 A `502` whose body names `forge_error` is not retried: the forge itself refused or rate-limited the daemon's own call, which a quick retry would only repeat, and a request a fetch rate-limits is still answered from its last fetch.
 A row and the panel link to the request's session. The panel shows the failed checks and `behind_base`.

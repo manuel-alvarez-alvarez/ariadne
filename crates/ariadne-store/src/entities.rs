@@ -665,8 +665,7 @@ pub struct PullRequestRow {
     pub repository_id: String,
     pub number: i64,
     pub url: String,
-    /// `author` for a request of the user's, `reviewer` for one that asks
-    /// for their review.
+    /// `author` for a request of the user's, `reviewer` for another author's.
     pub role: String,
     /// The task that opened the request: the agent of its `pr` column keeps
     /// it (030).

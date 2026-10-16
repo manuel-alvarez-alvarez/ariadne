@@ -11,8 +11,7 @@ pub struct NewPullRequest {
     pub repository_id: String,
     pub number: i64,
     pub url: String,
-    /// `author` for a request of the user's, `reviewer` for one that asks
-    /// for their review.
+    /// `author` for a request of the user's, `reviewer` for another author's.
     pub role: String,
     pub origin_task_id: Option<String>,
 }
@@ -49,7 +48,7 @@ impl Store {
     pub async fn upsert_pull_request(&self, new: NewPullRequest) -> Result<(PullRequestRow, bool)> {
         if !matches!(new.role.as_str(), "author" | "reviewer") {
             return Err(StoreError::Invalid(format!(
-                "a pull request is the user's (author) or asks for their review (reviewer), not {}",
+                "a pull request is the user's (author) or another author's (reviewer), not {}",
                 new.role
             )));
         }
@@ -312,7 +311,7 @@ impl Store {
         Ok(())
     }
 
-    /// Ask Ariadne to review a request of the user's own on `pin` with
+    /// Ask Ariadne to review a request on `pin` with
     /// `skills` beside `pr-reviewer`, or stop asking with None (029).
     pub async fn set_pull_request_review_asked(
         &self,
@@ -338,7 +337,7 @@ impl Store {
         Ok(row)
     }
 
-    /// Ask Ariadne to keep a request of the user's own by hand on `pin`
+    /// Ask Ariadne to keep a request by hand on `pin`
     /// with `skills` beside `pr-babysit`, or stop asking with None (032).
     pub async fn set_pull_request_babysit_asked(
         &self,

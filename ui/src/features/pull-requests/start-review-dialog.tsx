@@ -1,5 +1,5 @@
 /**
- * What an Ariadne review of a request of the user's own runs on (029): the
+ * What an Ariadne review of any open request runs on (029): the
  * model and effort, and the skills beside `pr-reviewer`, picked by the user
  * rather than taken off the repository — the review is theirs to ask for.
  *

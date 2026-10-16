@@ -660,12 +660,9 @@ fn attention_fingerprint(live: &Live) -> u64 {
 /// comments.
 pub fn view(row: PullRequestRow, live: &Live, marks: &[CommentMark], login: &str) -> PullRequest {
     let details = live.details.clone().unwrap_or_default();
-    let comments = answered(
-        comments(&row.id, &details.comments, marks),
-        &row.role,
-        login,
-    );
-    let unanswered = waiting_threads(&comments, &row.role, login).len() as i64;
+    let role = comment_role(&row.role, row.babysit_asked);
+    let comments = answered(comments(&row.id, &details.comments, marks), role, login);
+    let unanswered = waiting_threads(&comments, role, login).len() as i64;
     let pull = &live.pull;
     PullRequest::of(
         row,
@@ -745,9 +742,16 @@ pub fn comments(
     all
 }
 
+/// A keeper answers review findings on the author's side even when the
+/// request was opened by another login. Keep this separate from the row's
+/// actual authorship, which still determines how a review is posted.
+pub(crate) fn comment_role(role: &str, babysit_asked: bool) -> &str {
+    if babysit_asked { "author" } else { role }
+}
+
 /// Whether a comment is the integration login's own side: written under
-/// the login, and on a request of the user's own not by an Ariadne review,
-/// whose findings are the task author's to answer (029).
+/// the login, except for review findings the task or keeper must answer
+/// on the author's side (029, 032).
 fn is_mine(comment: &PullRequestComment, role: &str, login: &str) -> bool {
     comment.author_login.eq_ignore_ascii_case(login) && !(comment.from_review && role == "author")
 }
@@ -925,7 +929,7 @@ pub async fn comments_of(
     let login = login_of(store, &pull.repository_id).await?;
     Ok(answered(
         comments(&pull.id, &forge, &marks),
-        &pull.role,
+        comment_role(&pull.role, pull.babysit_asked),
         &login,
     ))
 }
@@ -1064,8 +1068,8 @@ mod tests {
         assert_eq!(every, ["1r", "2"]);
     }
 
-    /// On a request of mine a comment an Ariadne review posted is another
-    /// side's (029): it waits on the task's author, and is the author's
+    /// On my own request or one I babysit, an Ariadne review comment is
+    /// another side's (029, 032): it waits on the task's author, and is the author's
     /// news; the author's reply under my login answers it, and is the
     /// review's news alone.
     #[test]
@@ -1074,26 +1078,21 @@ mod tests {
             comment("f", "t1", "me", "2026-10-02T00:00:00Z"),
             comment("a", "t1", "me", "2026-10-03T00:00:00Z"),
         ];
-        let only_the_finding = answered(
-            comments("p", &forge[..1], &[mark("f", false, true)]),
-            "author",
-            "me",
-        );
-        assert_eq!(
-            ids(&untold(&only_the_finding, "author", "me", false)),
-            ["f"]
-        );
-        assert_eq!(waiting_threads(&only_the_finding, "author", "me").len(), 1);
-        let both = answered(
-            comments("p", &forge, &[mark("f", false, true)]),
-            "author",
-            "me",
-        );
-        assert!(
-            waiting_threads(&both, "author", "me").is_empty(),
-            "the reply answers it"
-        );
-        assert_eq!(ids(&untold_review_replies(&both, "me")), ["a"]);
+        for role in ["author", comment_role("reviewer", true)] {
+            let only_the_finding = answered(
+                comments("p", &forge[..1], &[mark("f", false, true)]),
+                role,
+                "me",
+            );
+            assert_eq!(ids(&untold(&only_the_finding, role, "me", false)), ["f"]);
+            assert_eq!(waiting_threads(&only_the_finding, role, "me").len(), 1);
+            let both = answered(comments("p", &forge, &[mark("f", false, true)]), role, "me");
+            assert!(
+                waiting_threads(&both, role, "me").is_empty(),
+                "the reply answers it"
+            );
+            assert_eq!(ids(&untold_review_replies(&both, "me")), ["a"]);
+        }
         // On a request I review, my own review's comments are mine.
         let theirs = answered(
             comments("p", &forge[..1], &[mark("f", false, true)]),

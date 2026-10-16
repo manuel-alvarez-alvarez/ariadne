@@ -6,7 +6,7 @@
  * that work on it.
  *
  * Everything that can be done to a request is here rather than on its row:
- * ask Ariadne to review a request of the user's own and stop asking (029),
+ * ask Ariadne to review any open request and stop asking (029),
  * or to babysit one by hand and stop that too (032). Nothing adds or
  * removes a request: Ariadne works on one while it reviews it, babysits it
  * or a task keeps it, and lets go of it once it merged or closed.
@@ -210,10 +210,9 @@ function useSessionOpening(pullRequestId: string | null, open: (sessionId: strin
  * merged or closed, the checks, the review decision, an Ariadne review
  * while one is asked, and Ariadne babysitting while a keeper session is.
  *
- * Every review and every babysit start manually (029, 032): a request of
- * the user's own starts and stops either freely, and one that asks for the
- * user's review starts and stops a review the same way — nothing starts
- * either on its own.
+ * Every review and every babysit start manually (029, 032), regardless of
+ * authorship or review assignment. A task's existing keeper takes care of
+ * its request, so that request offers no second keeper here.
  */
 function PullRequestHeader({
   pull,
@@ -229,16 +228,14 @@ function PullRequestHeader({
   const [babysitting, setBabysitting] = useState(false)
   const checks = CHECKS[pull.checks]
   const review = REVIEW[pull.review_decision]
-  const mine = pull.role === "author"
-  const manualStart = pull.role === "reviewer" && pull.review_requested
-  const babysittable = mine && pull.origin_task_id == null
+  const babysittable = pull.origin_task_id == null
   return (
     <>
       <PanelHeader
         title={`#${pull.number} ${pull.title}`}
         actions={
           <div className="flex items-center gap-2">
-            {(mine || manualStart) && pull.state === "open" ? (
+            {pull.state === "open" ? (
               pull.review_asked ? (
                 <Button
                   variant="outline"

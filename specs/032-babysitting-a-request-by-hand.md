@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-10-16
+updated: 2026-10-17
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -23,7 +23,7 @@ tests:
 
 # Babysitting a request by hand
 
-A request of the user's own that no task opened gets a keeper session once
+An open request that no task opened gets a keeper session once
 the user asks Ariadne to keep it: a session on a seat of its own, in a
 worktree on a branch of its own, that commits a fix and pushes it as the
 briefing says.
@@ -41,9 +41,10 @@ reads behind them ([026](026-pull-requests.md)).
 
 ## Behavior
 
-1. Only a request of the user's own that no task opened can be asked for.
-   Asking on a request by another login, or on one a task already keeps
-   (`origin_task_id`), is refused with 409.
+1. Any open request that no task keeps can be asked for, regardless of
+   whether its author is the user, another person or a bot. A request a
+   task already keeps (`origin_task_id`) is refused with 409 to avoid
+   competing keepers. Git push permissions still apply to the head repository.
 2. The session sits on the request alone, on a new seat, `keeper`. It has no
    goal and no task: `agent_sessions.goal_id` and `task_id` are both NULL,
    the same as a reviewer session's.
@@ -70,8 +71,8 @@ reads behind them ([026](026-pull-requests.md)).
    26). Its recovery mark is separate from a reviewer mark on the same
    request, and its recovery clears only that keeper mark, whether a new
    session starts or its keeper reports again. The seat text
-   says what it owes: keep one open request of the
-   user's own, work only in the worktree on its branch, commit a fix and
+   says what it owes: keep one open request the
+   user asked it to keep, work only in the worktree on its branch, commit a fix and
    push it as the briefing says, and that Ariadne wakes it with the news
    and ends it on the merge or the close, then to end its turn.
 6. The session loads `pr-babysit` — the same skill the `pr` column of a
@@ -101,7 +102,7 @@ reads behind them ([026](026-pull-requests.md)).
 
 ## The scheduler
 
-9. A row of mine with `babysit_asked` wants one live keeper session while
+9. A row with `babysit_asked` wants one live keeper session while
    the request is open: started or resumed on the pin asked directly on its
    own row, in the worktree above. A session that went away on its own is
    resumed on its own row and conversation, unless the pin moved since it
@@ -110,12 +111,11 @@ reads behind them ([026](026-pull-requests.md)).
     reaches the agent of a task's `pr` column: comments by another login,
     checks that turn to failure, the rolled-up check state, the review
     decision and the state, each told once.
-11. Unlike a self-review — which only ends on an explicit `asked: false`
-    — babysitting also ends on the merge or the close: the keeper session
+11. Babysitting ends on an explicit stop, merge or close: the keeper session
     is killed, its worktree and its local branch are removed, and Ariadne
     stops working on the request, unless a review is still asked of it.
     Asking again on a later open request starts a fresh keeper session.
-    An ask that lands while a pass is stopping work on a request of mine
+    An ask that lands while a pass is stopping work on a request
     nobody asked anything of is not lost: the row goes only as the pass
     read it (026 rule 19), so the ask stays and the pass it wakes starts
     the keeper session.
@@ -155,8 +155,8 @@ reads behind them ([026](026-pull-requests.md)).
 ## Desktop
 
 16. The Pull requests panel offers Start babysit and Stop babysit beside
-    Start review and Stop review, on a request of the user's own that no
-    task keeps. The dialog asks the model, the effort and the skills beside
+    Start review and Stop review, on any open request that no task keeps.
+    The dialog asks the model, the effort and the skills beside
     `pr-babysit`, which is always loaded and cannot be turned off. Starting
     closes the dialog and, once the daemon has the keeper session up, opens
     its console in the panel, the same way starting a review does (029); an
@@ -165,6 +165,15 @@ reads behind them ([026](026-pull-requests.md)).
     keeper session beside a review's, since both carry the request's id.
 
 ## Acceptance criteria
+
+- Dependabot and human-authored requests start keepers, receive comments
+  and failing-check news, raise readiness attention once backed by forge
+  evidence, and clean up on merge:
+  `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`,
+  `::asking_keeps_another_authors_request_until_the_merge`.
+- Review and babysitting can coexist on a Dependabot request; stopping
+  either preserves the other, and stopping both removes the request row:
+  `pull_request_babysit.rs::a_dependabot_request_can_be_reviewed_and_babysat_independently`.
 
 - Asking on a request of mine starts one keeper session, seat `keeper`,
   with `pr-babysit` indexed, its worktree on `ariadne/keep-<id>`; a comment
@@ -179,7 +188,7 @@ reads behind them ([026](026-pull-requests.md)).
   hands the keeper no further news of it:
   `pull_request_babysit.rs::a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts`.
 - Asking is refused with no model, an unknown one, a skill no task agent
-  loads, a request that is not open, one by another login, or one a task
+  loads, a request that is not open, or one a task
   already keeps — each starting no work:
   `pull_request_babysit.rs::asking_is_refused_with_no_model_an_unknown_one_an_untaskable_skill_or_the_wrong_request`.
 - Asking writes the pin and the skills; asking again moves them; `asked:
@@ -217,11 +226,11 @@ reads behind them ([026](026-pull-requests.md)).
 - The four seats answer to the word the wire spells each with:
   `lib.rs::tests::the_seats_are_the_orchestrator_the_agent_the_pull_request_reviewer_and_the_keeper`.
 - The panel starts a keeper session on the model and skills picked, opens
-  its console, stops it, and offers the buttons on a request of mine that
-  no task keeps alone:
-  `pull-request-panel.test.tsx::starts Ariadne babysitting of a request of mine on the model and skills picked, opens its console, and stops it`,
-  `::offers Start babysit on a request of mine that no task keeps, and on no other request`,
-  `::offers no Start babysit on a request that asks for my review`,
+  its console, stops it, and offers the buttons on any open request that
+  no task keeps:
+  `pull-request-panel.test.tsx::starts and stops babysitting a Dependabot request without a review assignment`,
+  `::offers Start babysit on a request of mine that no task keeps`,
+  `::offers Start babysit on a request that asks for my review`,
   `::offers no Start babysit on a request of mine a task already keeps`.
 - A row shows the Ariadne babysitting pill while a keeper session babysits
   it by hand:

@@ -155,7 +155,7 @@ impl Launcher {
     }
 
     /// What a review session loads (029): `pr-reviewer`, its playbook, and
-    /// on a request of the user's own the skills they picked when asking. A
+    /// the skills the user picked when asking, regardless of authorship. A
     /// skill deleted since is passed over rather than failing the launch.
     async fn review_skills(&self, pull: &PullRequest) -> Result<Vec<ariadne_store::Skill>> {
         let mut skills = vec![
@@ -163,11 +163,9 @@ impl Launcher {
                 .get_skill(ariadne_store::defaults::PR_REVIEWER_SKILL)
                 .await?,
         ];
-        if pull.role == "author" {
-            for name in pull.review_skills() {
-                if let Ok(skill) = self.store.get_skill(&name).await {
-                    skills.push(skill);
-                }
+        for name in pull.review_skills() {
+            if let Ok(skill) = self.store.get_skill(&name).await {
+                skills.push(skill);
             }
         }
         Ok(skills)
@@ -1839,7 +1837,7 @@ impl Launcher {
         )
     }
 
-    /// Start a fresh keeper session on a request of the user's own asked
+    /// Start a fresh keeper session on a request asked
     /// for by hand (032): its worktree on a local branch cut from the
     /// fetched head, a row with no goal, task or staffed agent, titled by
     /// the request, and an agent on `pin` that loads `pr-babysit` and is

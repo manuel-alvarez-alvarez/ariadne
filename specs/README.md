@@ -39,7 +39,7 @@ test that proves it. Conventions for writing and changing one are in
 | 026 | [Pull requests](026-pull-requests.md) | request identity, three births, held fetch lists, ledger, the request session and its news, CLI, and screen |
 | 027 | [Webhooks and tunnel](027-webhooks-and-tunnel.md) | separate signed ingress, hook lifecycle, public URL handle, fetch modes, and the tunnel with its switch |
 | 028 | [Issues and goals](028-issues-and-goals.md) | live forge issues and goals created from them |
-| 029 | [Reviewing a request](029-reviewing-a-request.md) | the reviewer session on a request that asks for the user's review, its detached worktree, its news, one review by priority, asking by hand on any request, and no approval |
+| 029 | [Reviewing a request](029-reviewing-a-request.md) | the reviewer session on any explicitly requested PR, its detached worktree, its news, one review by priority, asking by hand regardless of authorship or review assignment, and no approval |
 | 030 | [Workflows](030-workflows.md) | the workflow every goal runs on: the document, the catalog, the routes, one agent per column, step moves and gates, and the `pr` column |
 | 031 | [Needs attention](031-needs-attention.md) | the shared item shape, `GET /v1/attention`, the producer registry, the recovery producer, the agent-request producer (a turn-scoped `wait_for_user` hint), and the pull-request producer: an unassigned review request and a confirmed-ready request to merge |
-| 032 | [Babysitting a request by hand](032-babysitting-a-request-by-hand.md) | the `keeper` seat, its worktree and branch, asking by hand on a request of the user's own, ending it on the merge or the close, and the desktop panel |
+| 032 | [Babysitting a request by hand](032-babysitting-a-request-by-hand.md) | the `keeper` seat, its worktree and branch, asking by hand on any open request, ending it on the merge or the close, and the desktop panel |

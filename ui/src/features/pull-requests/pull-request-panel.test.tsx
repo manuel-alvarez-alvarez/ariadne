@@ -3,8 +3,8 @@
 /**
  * The panel over one pull request: its facts read as a person reads them,
  * its description rendered, its sessions, and what can be done to it — an
- * Ariadne review of a request of the user's own, on the model and skills
- * they pick, and the removal of one added by hand.
+ * Ariadne review or babysit on any open request, on the model and skills
+ * the user picks, and the removal of one added by hand.
  */
 
 import { screen, waitFor, within } from "@testing-library/react"
@@ -118,9 +118,9 @@ it("links each failed check to its run, and lists the request's review sessions"
   )
 })
 
-it("starts an Ariadne review of a request of mine on the model and skills picked, opens its console, and stops it", async () => {
+it("starts and stops a review of a Dependabot request without a review assignment", async () => {
   const user = userEvent.setup()
-  let row: PullRequestDto = { ...pull, role: "author", author_login: "me" }
+  let row: PullRequestDto = { ...pull, author_login: "dependabot[bot]", review_requested: false }
   const review = aSession({
     id: "01JSESS0000000000000REVIEW",
     seat: "reviewer",
@@ -246,9 +246,9 @@ it("opens the console of a review resumed on the same session", async () => {
   await waitFor(() => expect(location.url).toContain(`session=${ended.id}`), { timeout: 4000 })
 })
 
-it("starts Ariadne babysitting of a request of mine on the model and skills picked, opens its console, and stops it", async () => {
+it("starts and stops babysitting a Dependabot request without a review assignment", async () => {
   const user = userEvent.setup()
-  let row: PullRequestDto = { ...pull, role: "author", author_login: "me" }
+  let row: PullRequestDto = { ...pull, author_login: "dependabot[bot]", review_requested: false }
   const keeper = aSession({
     id: "01JSESS0000000000000KEEPER",
     seat: "keeper",
@@ -319,23 +319,42 @@ it("starts Ariadne babysitting of a request of mine on the model and skills pick
   expect(await writes[1]?.json()).toEqual({ asked: false })
 })
 
-it("offers Start babysit on a request of mine that no task keeps, and on no other request", async () => {
+it("offers Start babysit on a request of mine that no task keeps", async () => {
   daemon(() => ({ ...pull, role: "author", author_login: "me" }))
   renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
   await screen.findByText("#42 Fix widgets")
   expect(screen.getByRole("button", { name: "Start babysit" })).toBeTruthy()
 })
 
-it("offers no Start babysit on a request that asks for my review", async () => {
+it("offers Start babysit on a request that asks for my review", async () => {
   daemon(() => pull)
   renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
   await screen.findByText("#42 Fix widgets")
-  expect(screen.queryByRole("button", { name: "Start babysit" })).toBeNull()
+  expect(screen.getByRole("button", { name: "Start babysit" })).toBeTruthy()
 })
 
 it("offers no Start babysit on a request of mine a task already keeps", async () => {
   daemon(() => ({ ...pull, role: "author", author_login: "me", origin_task_id: "task-1" }))
   renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
   await screen.findByText("#42 Fix widgets")
+  expect(screen.queryByRole("button", { name: "Start babysit" })).toBeNull()
+})
+
+it.each(["alice", "dependabot[bot]"])(
+  "offers both actions on an unassigned PR by %s",
+  async (author) => {
+    daemon(() => ({ ...pull, author_login: author, review_requested: false }))
+    renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+    await screen.findByText("#42 Fix widgets")
+    expect(screen.getByRole("button", { name: "Start review" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Start babysit" })).toBeTruthy()
+  },
+)
+
+it.each(["closed", "merged"] as const)("offers neither start action on a %s PR", async (state) => {
+  daemon(() => ({ ...pull, state }))
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  await screen.findByText("#42 Fix widgets")
+  expect(screen.queryByRole("button", { name: "Start review" })).toBeNull()
   expect(screen.queryByRole("button", { name: "Start babysit" })).toBeNull()
 })

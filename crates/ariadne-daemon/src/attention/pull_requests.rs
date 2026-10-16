@@ -39,17 +39,14 @@ pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<Atte
             .as_ref()
             .map(|i| format!("{}/{}", i.owner, i.name))
             .unwrap_or_else(|| pull.repository_id.clone());
-        match pull.role.as_str() {
-            "reviewer" => {
-                if let Some(item) = review_start_item(&pull, &repo) {
-                    items.push(item);
-                }
-            }
-            "author" if pull.origin_task_id.is_some() || pull.babysit_asked => {
-                let enabled = integration.is_some_and(|i| i.enabled);
-                items.extend(readiness_item(store, launcher, &pull, enabled, &repo).await?);
-            }
-            _ => {}
+        if pull.role == "reviewer"
+            && let Some(item) = review_start_item(&pull, &repo)
+        {
+            items.push(item);
+        }
+        if pull.origin_task_id.is_some() || pull.babysit_asked {
+            let enabled = integration.is_some_and(|i| i.enabled);
+            items.extend(readiness_item(store, launcher, &pull, enabled, &repo).await?);
         }
     }
     Ok(items)
@@ -201,7 +198,13 @@ async fn readiness_item(
         .filter(|c| !live::is_review_summary(c, &login))
         .cloned()
         .collect();
-    if !live::waiting_threads(&actionable, &pull.role, &login).is_empty() {
+    if !live::waiting_threads(
+        &actionable,
+        live::comment_role(&pull.role, pull.babysit_asked),
+        &login,
+    )
+    .is_empty()
+    {
         return Ok(None);
     }
     let since = pull
