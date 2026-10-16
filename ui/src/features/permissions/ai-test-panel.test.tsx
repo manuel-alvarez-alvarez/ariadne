@@ -326,20 +326,18 @@ it("does not run a shortcut while the model is off", () => {
   expect(requests.filter((request) => request.path === "/v1/permissions/ai/test")).toHaveLength(0)
 })
 
-it("sends a typed title, kind, options and locations one per line, edited by hand", async () => {
+it("sends manually edited title, kind, options and locations one per line", async () => {
   const user = userEvent.setup()
   renderPanel(ENABLED)
   await waitForPanelFocus()
 
-  const title = screen.getByLabelText("Title")
-  await user.clear(title)
-  await user.type(title, "ls")
-  await user.clear(screen.getByLabelText("Kind"))
-  const options = screen.getByLabelText("Options")
-  await user.clear(options)
-  await user.type(options, "Yes{Enter}  Yes, always {Enter}{Enter}No")
-  await user.type(screen.getByLabelText("Locations"), "/a{Enter} /b ")
-  await user.clear(screen.getByLabelText("Workspace"))
+  fireEvent.change(screen.getByLabelText("Title"), { target: { value: "ls" } })
+  fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "" } })
+  fireEvent.change(screen.getByLabelText("Options"), {
+    target: { value: "Yes\n  Yes, always \n\nNo" },
+  })
+  fireEvent.change(screen.getByLabelText("Locations"), { target: { value: "/a\n /b " } })
+  fireEvent.change(screen.getByLabelText("Workspace"), { target: { value: "" } })
 
   await user.click(screen.getByRole("button", { name: "Test" }))
 

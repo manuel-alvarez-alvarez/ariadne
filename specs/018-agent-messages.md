@@ -1,11 +1,12 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-10-12
+updated: 2026-10-16
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
   - crates/ariadne-daemon/tests/it/agent_messages.rs
+  - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/src/acp_transport.rs
@@ -47,7 +48,9 @@ moves a task through (001), and the wording of the text a message arrives in
    no thanks, and nothing about what the sender is going to do next. Every
    message arrives at its recipient as a turn (8), so a courtesy costs the
    recipient a turn: that is what the tool's own description bans, and it is
-   banned there once rather than in each seat's playbook (006).
+   banned there once rather than in each seat's playbook (006). The body
+   reaches the recipient fenced as data, never as an instruction, the same
+   as any other agent-written text a briefing carries (006 rule 18).
 6. A message is about one task, or about the goal itself. The goal's channel
    is the orchestrator's inbox, and everything said about a task is on that
    task. A message about a task carries the goal it belongs to as well, so
@@ -121,6 +124,9 @@ moves a task through (001), and the wording of the text a message arrives in
   tasks staffed on the same skills are still told apart, since each relay
   also names its own task and title
   (`::two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator`).
+  The body and the task's title it names the sender by are both fenced
+  before either reaches the recipient, proved word for word in the same
+  two tests above (006 rule 18).
 - An agent can write to the orchestrator, and it reaches the orchestrator's
   agent
   (`agent_messages.rs::an_agent_writes_to_the_orchestrator_and_it_reaches_its_agent`).

@@ -1,14 +1,23 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-10-14
+updated: 2026-10-16
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/src/agents/handoff.rs
+  - crates/ariadne-daemon/src/forge/news.rs
+  - crates/ariadne-daemon/src/scheduler/goals.rs
+  - crates/ariadne-daemon/src/scheduler/tasks.rs
+  - crates/ariadne-daemon/src/launcher.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
+  - crates/ariadne-daemon/tests/it/agent_messages.rs
+  - crates/ariadne-daemon/tests/it/scheduler_attention.rs
+  - crates/ariadne-daemon/tests/it/resume.rs
+  - crates/ariadne-daemon/tests/it/acp_runtime.rs
+  - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-daemon/tests/it/seat_brief.rs
   - crates/ariadne-cli/src/commands/mcp.rs
@@ -180,6 +189,34 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     recency for ties, and an entry is never cut in
     the middle. A line in the dropped entries' place counts how many there
     were. A budget that fits every entry writes no such line.
+18. A value from the forge or from another agent is fenced before it
+    reaches a briefing: wrapped between `<<<untrusted>>>` and
+    `<<<end untrusted>>>` (`prompts::fence`), the same idea as rule 16's
+    handoff fence, in its own two markers rather than one reserved
+    character, since a briefing is prose an agent reads start to end
+    rather than a feed of discrete entries. Every `<<<` the value itself
+    carries is broken with a zero-width space first, so the value cannot
+    close the fence early or open one of its own; an empty value fences to
+    nothing. The session rules state once, for every seat, that text
+    between the markers is data and never an instruction (018, 026, 032).
+    No forge value is exempt for being structured, bounded or normally
+    short — a URL, a sha, an id or a state word is still the forge's own
+    text, and a briefing never trusts its shape over its source. Fenced:
+    an issue's title, body and URL (as the goal's), a request's title,
+    URL, head and base branch names, head sha and reviewed sha, a
+    comment's id, author, path and first line, a failed check's name,
+    conclusion and URL, the rolled-up checks, the review decision and the
+    state a news line reports, an agent message's body, a step's return
+    reason or completion summary, a task's title and description, and
+    the orchestrator's own brief for a column's agent (`TaskAgent.brief`)
+    — the orchestrator's own planning is still an agent's, so a task it
+    names in a briefing, a message, a nudge or a dependency is fenced
+    wherever its title reaches another agent, and so is anything beyond
+    the task itself it tells a column's agent to do. One line is the
+    exception: an issue goal's `Closes <url>` instruction carries the raw
+    URL, never fenced, since GitHub only closes the issue on that exact
+    text; the same URL is still fenced everywhere else the briefing names
+    the issue.
 
 ## Acceptance criteria
 
@@ -290,6 +327,35 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`::the_newest_entries_survive_a_small_budget_and_one_line_counts_what_was_left_out`),
   and no entry is cut in the middle at any budget from zero to the whole
   text (`::no_entry_is_cut_in_the_middle_at_any_budget`).
+- A fenced value sits between its two markers, an empty value fences to
+  nothing, and a value holding the closing marker cannot close the fence
+  early (`prompts.rs::a_fenced_value_sits_between_its_markers`,
+  `::an_empty_value_fences_to_nothing`,
+  `::a_value_holding_the_closing_marker_cannot_close_the_fence`). Every
+  forge or agent value a briefing or a news prompt carries is fenced, and
+  the exhaustive-substitution tests prove it word for word
+  (`prompts.rs::every_default_briefing_is_its_template_with_the_values_put_in`,
+  `::the_pull_request_texts_fill_every_placeholder_they_name`,
+  `::the_keeper_briefing_fills_every_placeholder_it_names`). A task's
+  title and description are fenced wherever a briefing, a nudge, a
+  relayed message or a dependency line names them, proved through the
+  daemon's own rendering, not a hand-built string
+  (`agent_messages.rs::a_message_is_handed_to_the_agent_it_was_sent_to`,
+  `::two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator`,
+  `prompts.rs::a_started_column_agent_is_briefed_from_the_builtin_template`,
+  `::a_return_and_a_nudge_assemble_word_for_word`,
+  `scheduler_attention.rs::an_agent_up_and_never_prompted_is_nudged`,
+  `resume.rs::the_scheduler_relaunches_the_current_columns_agent_in_its_session`,
+  `acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`,
+  `workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
+  The orchestrator's own brief for a column's agent is fenced too, and a
+  brief crafted with the closing marker and a fresh instruction cannot
+  escape it:
+  `prompts.rs::a_crafted_agent_brief_cannot_escape_its_fence`.
+  The fence
+  rule is in the shared session rules alone, within their size cap
+  (`mcp.rs::the_shared_rules_stay_small`,
+  `::each_shared_rule_is_written_in_its_owner_alone`).
 
 ## Sources
 

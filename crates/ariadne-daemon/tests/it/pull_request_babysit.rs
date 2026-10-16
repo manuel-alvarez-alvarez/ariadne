@@ -764,7 +764,7 @@ async fn a_keeper_on_a_fork_is_told_to_push_to_the_forks_own_repository() {
 
     let told = h.told(&session.id);
     assert!(
-        told.contains("git push https://github.com/alice/widgets.git HEAD:fix"),
+        told.contains("git push 'https://github.com/alice/widgets.git' HEAD:'fix'"),
         "{told}"
     );
     assert!(
@@ -797,7 +797,7 @@ async fn a_keeper_on_the_same_repository_pushes_through_the_configured_remote() 
     let session = idle_keeper(&h, &id).await;
 
     let told = h.told(&session.id);
-    assert!(told.contains("git push origin HEAD:fix"), "{told}");
+    assert!(told.contains("git push 'origin' HEAD:'fix'"), "{told}");
 }
 
 /// A merge that deletes its head branch at once still lets teardown clean
@@ -950,7 +950,7 @@ async fn a_keeper_on_a_fork_pushes_through_the_configured_remotes_own_scheme() {
 
     let told = h.told(&session.id);
     assert!(
-        told.contains("git push git@github.com:alice/widgets.git HEAD:fix"),
+        told.contains("git push 'git@github.com:alice/widgets.git' HEAD:'fix'"),
         "{told}"
     );
 }
@@ -988,7 +988,7 @@ async fn a_keeper_on_a_fork_pushes_through_the_configured_remotes_own_push_url()
 
     let told = h.told(&session.id);
     assert!(
-        told.contains("git push git@github.com:alice/widgets.git HEAD:fix"),
+        told.contains("git push 'git@github.com:alice/widgets.git' HEAD:'fix'"),
         "the push command follows the push URL's own scheme: {told}"
     );
 }

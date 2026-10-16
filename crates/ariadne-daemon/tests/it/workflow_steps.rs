@@ -680,7 +680,7 @@ async fn only_the_current_column_is_nudged_and_idle_columns_raise_no_attention()
     );
     assert!(
         h.prompted(&review)
-            .contains("Continue Build the feature at Review.")
+            .contains("Continue <<<untrusted>>>Build the feature<<<end untrusted>>> at Review.")
     );
     assert!(!ariadne_daemon::attention::work_is_active(&h.store, &develop).await);
     let _: Value = h

@@ -228,6 +228,12 @@ impl super::Scheduler {
                             .set_pull_request_reviewer_given_up(pull_request_id, true)
                             .await;
                     }
+                    (Some(Seat::Keeper), _, Some(pull_request_id)) => {
+                        let _ = self
+                            .store
+                            .set_pull_request_keeper_given_up(pull_request_id, true)
+                            .await;
+                    }
                     _ => {}
                 }
                 return Ok(());

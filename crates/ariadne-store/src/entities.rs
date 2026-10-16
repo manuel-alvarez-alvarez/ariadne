@@ -706,10 +706,8 @@ pub struct PullRequestRow {
     pub review_skills_json: String,
     pub created_at: String,
     pub updated_at: String,
-    /// When `scheduler::pull_requests::start_pull_request_session` gave up
-    /// on this request's reviewer session: its spawn-retry budget ran out,
-    /// distinct from a crash the liveness sweep is about to retry. `None`
-    /// while automatic recovery still owns it.
+    /// When automatic recovery gave up on this request's reviewer session.
+    /// `None` while automatic recovery still owns that seat.
     pub reviewer_given_up_at: Option<String>,
     /// Whether that give-up was the watchdog's own exhausted-relaunch
     /// decision rather than `start_pull_request_session`'s own
@@ -717,6 +715,12 @@ pub struct PullRequestRow {
     /// reason, as `Goal::orchestrator_given_up_wedged`. Meaningless while
     /// `reviewer_given_up_at` is `None`.
     pub reviewer_given_up_wedged: bool,
+    /// When automatic recovery gave up on this request's keeper session.
+    /// `None` while automatic recovery still owns that seat.
+    pub keeper_given_up_at: Option<String>,
+    /// Whether the keeper give-up came from an exhausted relaunch.
+    /// Meaningless while `keeper_given_up_at` is `None`.
+    pub keeper_given_up_wedged: bool,
     /// When `ready` last moved from false to true: the babysitting task's
     /// own claim that the request is ready to merge, read as the
     /// `pull_request` attention producer's `since` for the readiness item
@@ -874,6 +878,8 @@ pub struct PullRequest {
     pub review_skills_json: String,
     pub reviewer_given_up_at: Option<String>,
     pub reviewer_given_up_wedged: bool,
+    pub keeper_given_up_at: Option<String>,
+    pub keeper_given_up_wedged: bool,
     pub ready_confirmed_at: Option<String>,
     pub ready_head_sha: Option<String>,
     pub babysit_asked: bool,
@@ -930,6 +936,8 @@ impl PullRequest {
             review_skills_json: row.review_skills_json,
             reviewer_given_up_at: row.reviewer_given_up_at,
             reviewer_given_up_wedged: row.reviewer_given_up_wedged,
+            keeper_given_up_at: row.keeper_given_up_at,
+            keeper_given_up_wedged: row.keeper_given_up_wedged,
             ready_confirmed_at: row.ready_confirmed_at,
             ready_head_sha: row.ready_head_sha,
             babysit_asked: row.babysit_asked,

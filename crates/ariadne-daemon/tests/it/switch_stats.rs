@@ -215,6 +215,13 @@ async fn an_exhausted_session_that_auto_switches_writes_one_switch_fact() {
     })
     .await;
 
+    eventually(
+        TIMEOUT,
+        "the automatic switch fact to be written",
+        || async { h.facts("switch").await.len() == 1 },
+    )
+    .await;
+
     let facts = h.facts("switch").await;
     assert_eq!(facts.len(), 1, "{facts:?}");
     let fact = &facts[0];

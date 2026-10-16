@@ -507,10 +507,11 @@ fn alarm_row(orchestrators: &[AgentSession]) -> Option<&AgentSession> {
 fn goal_attention(tasks: &[Task]) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     for task in tasks {
+        let title = crate::agents::prompts::fence(&task.title);
         match task.status() {
-            TaskStatus::Failed => lines.push(format!("- {} ({}) failed", task.title, task.id)),
+            TaskStatus::Failed => lines.push(format!("- {title} ({}) failed", task.id)),
             _ if task.is_stalled() => {
-                lines.push(format!("- {} ({}) has gone quiet", task.title, task.id));
+                lines.push(format!("- {title} ({}) has gone quiet", task.id));
             }
             _ => {}
         }
@@ -575,9 +576,12 @@ mod tests {
             task("Ship it", "in_progress", false),
         ])
         .expect("two tasks need it");
-        assert!(lines.contains("Build it (01Build it) failed"), "{lines}");
         assert!(
-            lines.contains("Wire it (01Wire it) has gone quiet"),
+            lines.contains("<<<untrusted>>>Build it<<<end untrusted>>> (01Build it) failed"),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("<<<untrusted>>>Wire it<<<end untrusted>>> (01Wire it) has gone quiet"),
             "{lines}"
         );
         assert!(!lines.contains("Ship it"), "{lines}");

@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-10-15
+updated: 2026-10-16
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -56,13 +56,24 @@ reads behind them ([026](026-pull-requests.md)).
    commits there, so only the keeper moves its own branch.
 4. The push target is `<remote> HEAD:<head_branch>`: the keeper pushes its
    local branch onto the request's own head branch, on the repository's
-   remote.
+   remote. The keeper runs this line in its own shell, so the remote and
+   the head branch are each quoted into one argument: git's own ref rules
+   let a branch name hold `$`, `(`, `;`, `|`, `&` or a backtick, none of
+   which the quoting leaves the shell to read as its own (026 rule 26).
 5. The briefing names the request, the worktree, its local branch, the
-   base, the login and the push command. The seat text says what it owes:
-   keep one open request of the user's own, work only in the worktree on
-   its branch, commit a fix and push it as the briefing says, and that
-   Ariadne wakes it with the news and ends it on the merge or the close,
-   then to end its turn.
+   base, the login and the push command. The title, the URL and the base
+   branch name are fenced, the same as a reviewer's own (026 rule 26);
+   the worktree path, the login and the local branch — Ariadne's own
+   name, `ariadne/keep-<id>` — are not. A
+   keeper session refuses to start on a head branch git itself refuses as
+   a ref, the same refusal a reviewer session's own spawn makes (026 rule
+   26). Its recovery mark is separate from a reviewer mark on the same
+   request, and its recovery clears only that keeper mark, whether a new
+   session starts or its keeper reports again. The seat text
+   says what it owes: keep one open request of the
+   user's own, work only in the worktree on its branch, commit a fix and
+   push it as the briefing says, and that Ariadne wakes it with the news
+   and ends it on the merge or the close, then to end its turn.
 6. The session loads `pr-babysit` — the same skill the `pr` column of a
    task stages — and the skills the user picked when asking, each one a task
    agent is staffed on. Its comment batching, branch-update and review-scope
@@ -188,6 +199,21 @@ reads behind them ([026](026-pull-requests.md)).
   `mcp.rs::tests::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`.
 - The keeper briefing fills every placeholder it names:
   `prompts.rs::tests::the_keeper_briefing_fills_every_placeholder_it_names`.
+- The push command quotes the remote and the head branch into one
+  argument each, a real shell reads either back as the exact value
+  whatever it holds, and a branch with shell metacharacters stays one
+  argument of the line a request is actually kept on:
+  `launcher.rs::shell_quote_tests::a_shell_reads_a_quoted_value_back_as_one_argument`,
+  `::a_push_command_keeps_a_metacharacter_laden_branch_as_one_argument`,
+  `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`,
+  `::a_keeper_on_a_fork_is_told_to_push_to_the_forks_own_repository`,
+  `::a_keeper_on_the_same_repository_pushes_through_the_configured_remote`.
+- A keeper head-branch refusal and recovery use the keeper's recovery mark
+  alone, and a keeper recovery cannot clear a reviewer mark on the same row:
+  `scheduler_attention.rs::a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref`,
+  `::a_keeper_recovers_once_its_head_branch_turns_valid_again`,
+  `::a_keeper_that_reports_after_giving_up_clears_its_recovery`,
+  `::a_keeper_recovery_keeps_a_reviewers_give_up_mark`.
 - The four seats answer to the word the wire spells each with:
   `lib.rs::tests::the_seats_are_the_orchestrator_the_agent_the_pull_request_reviewer_and_the_keeper`.
 - The panel starts a keeper session on the model and skills picked, opens
@@ -204,6 +230,7 @@ reads behind them ([026](026-pull-requests.md)).
 ## Sources
 
 `crates/ariadne-store/migrations/0001_init.sql`,
+`crates/ariadne-store/migrations/0003_keeper_recovery.sql`,
 `crates/ariadne-store/src/pull_requests.rs`, `crates/ariadne-store/src/defaults.rs`,
 `crates/ariadne-core/src/lib.rs`,
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,

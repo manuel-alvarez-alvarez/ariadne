@@ -716,6 +716,20 @@ impl super::Scheduler {
             .iter()
             .find(|s| s.seat() == Some(Seat::Keeper) && self.launcher.acp.is_running(&s.id))
             .cloned();
+        // A wedged keeper can recover without a relaunch. Only activity
+        // after its give-up mark proves that recovery; its still-live but
+        // silent process must leave the mark in place.
+        if let (Some(session), Some(given_up)) = (&running, pull.keeper_given_up_at.as_deref())
+            && session
+                .last_activity_at
+                .as_deref()
+                .is_some_and(|at| at > given_up)
+        {
+            let _ = self
+                .store
+                .clear_pull_request_keeper_given_up(&pull.id)
+                .await;
+        }
         let pin = AgentPin {
             model: pull.babysit_model.clone().unwrap_or_default(),
             effort: pull.babysit_effort.clone(),
@@ -786,11 +800,19 @@ impl super::Scheduler {
         }
         if self.spawn_failures.get(&budget).copied().unwrap_or(0) >= SPAWN_RETRY_BUDGET {
             warn!(pull_request = %pull.id, "the keeper session died on arrival too many times, giving up for now");
+            let _ = self
+                .store
+                .set_pull_request_keeper_given_up(&pull.id, false)
+                .await;
             return Ok(());
         }
         match self.launcher.resume_keeper_session(pull, pin).await {
             Ok(session) => {
                 info!(pull_request = %pull.id, session = %session.id, "the request's keeper session is up");
+                let _ = self
+                    .store
+                    .clear_pull_request_keeper_given_up(&pull.id)
+                    .await;
                 Ok(())
             }
             Err(e) => {
@@ -834,6 +856,10 @@ impl super::Scheduler {
         // false`, babysitting ends on the merge or the close too: nothing
         // else keeps a hand-babysat row once this ends, since asking it is
         // refused wherever a task already keeps the request (032).
+        let _ = self
+            .store
+            .clear_pull_request_keeper_given_up(&pull.id)
+            .await;
         let done = pull.origin_task_id.is_none() && !pull.review_asked;
         if live.is_empty() && !self.launcher.keeper_worktree_exists(&pull.id) && !done {
             return Ok(());
