@@ -3798,6 +3798,68 @@ async fn a_skill_name_differing_only_in_case_from_an_existing_one_is_refused() {
     ));
 }
 
+/// The case check and the insert are not two separate reads and writes a
+/// second call could land between: run concurrently, `Demo` and `demo`
+/// still leave exactly one of the two created, never both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_creates_differing_only_in_case_do_not_both_succeed() {
+    use std::sync::Arc;
+    use tokio::sync::Barrier;
+
+    let (store, _dir) = test_store().await;
+    let store = Arc::new(store);
+
+    // Real OS threads, released at the same instant by the barrier, so the
+    // two calls' checks can genuinely land before either call's insert —
+    // `tokio::join!` on one task alone never forces that interleaving.
+    for i in 0..50 {
+        let upper = format!("Demo{i}");
+        let lower = format!("demo{i}");
+        let barrier = Arc::new(Barrier::new(2));
+
+        let a = {
+            let store = Arc::clone(&store);
+            let barrier = Arc::clone(&barrier);
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store
+                    .create_skill(NewSkill {
+                        name: upper,
+                        document: "---\nname: x\n---\n".into(),
+                    })
+                    .await
+            })
+        };
+        let b = {
+            let store = Arc::clone(&store);
+            let barrier = Arc::clone(&barrier);
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store
+                    .create_skill(NewSkill {
+                        name: lower,
+                        document: "---\nname: x\n---\n".into(),
+                    })
+                    .await
+            })
+        };
+
+        let (first, second) = tokio::join!(a, b);
+        let (first, second) = (first.unwrap(), second.unwrap());
+
+        let successes = [&first, &second].into_iter().filter(|r| r.is_ok()).count();
+        assert_eq!(
+            successes, 1,
+            "exactly one of two names differing only in case must be created: {first:?} {second:?}"
+        );
+        let refused = if first.is_err() { first } else { second };
+        assert!(
+            matches!(refused, Err(StoreError::Conflict(_))),
+            "{refused:?}"
+        );
+    }
+}
+
 /// Every shipped skill is seeded into a fresh database on the text Ariadne
 /// ships, storing none of it — so a reworded default reaches a database
 /// nobody has touched, and a reset drops what was written rather than copying

@@ -183,6 +183,15 @@ fn names_a_shell(command: &[String]) -> bool {
 /// correctly. A registry entry's `args` array already says whatever it
 /// would otherwise pack into one split string, so the flag is refused
 /// outright, whatever it holds, rather than parsed.
+///
+/// `-S` takes its argument the way every short option does: attached to
+/// the same token (`-Ssh\_-c\_'printf marker'`), or after other no-argument
+/// short options bundled before it (`-vS...`) — getopt consumes the rest
+/// of the token as `-S`'s own value either way, so a bare `-S` or a long
+/// `--split-string` are not the only shapes this holds. Any short-option
+/// token that carries a capital `S` is refused the same way: `env` has no
+/// other flag that letter could answer for, so refusing one over-eagerly
+/// costs nothing a real agent command would ever need.
 fn uses_env_split_string(command: &[String]) -> bool {
     let names_env = command.iter().any(|part| {
         let base = part.rsplit(['/', '\\']).next().unwrap_or(part);
@@ -190,9 +199,10 @@ fn uses_env_split_string(command: &[String]) -> bool {
         base.eq_ignore_ascii_case("env")
     });
     names_env
-        && command
-            .iter()
-            .any(|arg| arg == "-S" || arg.starts_with("--split-string"))
+        && command.iter().any(|arg| {
+            arg.starts_with("--split-string")
+                || (arg.starts_with('-') && !arg.starts_with("--") && arg.contains('S'))
+        })
 }
 
 /// The entries of `path` that name a directory outright, in their own order.
@@ -684,6 +694,36 @@ mod tests {
             }}},
             {"id": "env-split-string-long-form", "distribution": {"binary": {
                 key: {"cmd": "env", "args": ["--split-string=harmless --flag"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// `-S` takes its value attached to the same token — `-SSTRING`, no
+    /// space — or bundled after other short options with no argument of
+    /// their own — `-vSSTRING`. A check that only matches a bare `-S` or a
+    /// long `--split-string` misses both.
+    #[test]
+    fn env_dash_cap_s_attached_or_bundled_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-split-attached", "distribution": {"binary": {
+                key.clone(): {"cmd": "env", "args": ["-Ssh\\_-c\\_'printf marker'"]}
+            }}},
+            {"id": "env-split-bundled", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["-vSsh\\_-c\\_'printf marker'"]}
             }}},
             {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
         ]})

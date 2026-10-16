@@ -8,7 +8,7 @@ pub mod prompts;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use ariadne_core::Seat;
 use ariadne_core::acp::LaunchConfig;
@@ -212,6 +212,12 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
         }
     }
 
+    // Every skill is attempted whatever an earlier one did: one name's
+    // write failing is no reason to leave the rest unsynced. A failure is
+    // still reported, after every attempt — a sync that answered `Ok` once
+    // is read as "every skill here is on disk", by the HTTP route's own
+    // caller as much as by a later run of this same function.
+    let mut failed = Vec::new();
     for skill in skills {
         if let Some(reason) = skill_name_rejection(&skill.name, &canonical_skills_dir) {
             tracing::error!(name = %skill.name, reason, "a stored skill name is invalid; not writing it");
@@ -220,8 +226,15 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
         if let Err(error) =
             symlink_safe::write_skill(skills_dir, &skill.name, skill.document_text())
         {
-            tracing::error!(name = %skill.name, error = %error, "writing the skill failed, a symlink in its path removed and retried once");
+            tracing::error!(name = %skill.name, error = %error, "writing the skill failed");
+            failed.push(skill.name);
         }
+    }
+    if !failed.is_empty() {
+        bail!(
+            "writing the skill document failed for: {}",
+            failed.join(", ")
+        );
     }
     Ok(())
 }
@@ -297,6 +310,23 @@ mod symlink_safe {
         }
     }
 
+    /// An unpredictable name component for the temporary file below: a
+    /// name built from the daemon's own PID, or any other value an outside
+    /// caller could derive, lets that caller plant a file under the exact
+    /// name first — `O_EXCL` then refuses the write outright, and the
+    /// plant is the whole attack, nothing further needed. Sixteen random
+    /// hex characters are not worth guessing.
+    fn random_suffix() -> String {
+        let mut bytes = [0u8; 8];
+        getrandom::fill(&mut bytes).expect("the OS random source is available");
+        hex::encode(bytes)
+    }
+
+    /// How many unpredictable names `write_document_atomically` tries
+    /// before giving up: one collision is bad luck, this many in a row
+    /// means something else is wrong.
+    const TEMP_NAME_ATTEMPTS: u32 = 8;
+
     /// Write `document` as a file of its own directly under `dir`, then
     /// `renameat` it onto `SKILL.md`, replacing whatever was there in one
     /// step rather than opening that name at all.
@@ -310,19 +340,40 @@ mod symlink_safe {
     /// `SKILL.md` by name alone, never opens the old entry either way —
     /// hard link, symlink or a plain file already there — so nothing of
     /// its data is ever touched.
+    ///
+    /// The temporary name is unpredictable and `O_EXCL`'d, so a name
+    /// planted there first is refused rather than opened; a refusal tries
+    /// a fresh name rather than giving up on the first collision. Every
+    /// error after the temporary file exists unlinks it before returning,
+    /// so a write or a rename that fails never leaves it behind.
     fn write_document_atomically(dir: &OwnedFd, document: &str) -> io::Result<()> {
-        let temp_name = format!(".skill-{}.tmp", std::process::id());
-        let temp = openat_no_follow(
-            dir,
-            &temp_name,
-            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
-        )
-        .map_err(io::Error::from)?;
-        if let Err(error) = File::from(temp).write_all(document.as_bytes()) {
-            let _ = unlinkat(dir, &temp_name, AtFlags::empty());
-            return Err(error);
+        for _ in 0..TEMP_NAME_ATTEMPTS {
+            let temp_name = format!(".skill-{}.tmp", random_suffix());
+            let temp = match openat_no_follow(
+                dir,
+                &temp_name,
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
+            ) {
+                Ok(fd) => fd,
+                Err(Errno::EXIST) => continue,
+                Err(e) => return Err(e.into()),
+            };
+            if let Err(error) = File::from(temp).write_all(document.as_bytes()) {
+                let _ = unlinkat(dir, &temp_name, AtFlags::empty());
+                return Err(error);
+            }
+            return match renameat(dir, temp_name.as_str(), dir, "SKILL.md") {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let _ = unlinkat(dir, &temp_name, AtFlags::empty());
+                    Err(error.into())
+                }
+            };
         }
-        renameat(dir, temp_name.as_str(), dir, "SKILL.md").map_err(io::Error::from)
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not find an unused name for the skill document's temporary file",
+        ))
     }
 
     /// Create and write a skill's directory and `SKILL.md`, a symlink or a
@@ -398,6 +449,56 @@ mod symlink_safe {
             assert_eq!(
                 std::fs::read_to_string(skills_dir.join("safe").join("SKILL.md")).unwrap(),
                 "the real skill text"
+            );
+        }
+
+        /// A temporary file planted under the old, predictable name —
+        /// built from the daemon's own PID, which anything local could
+        /// read — would have `O_EXCL` refuse the write outright before
+        /// this fix, the plant alone enough to keep a skill's document
+        /// from ever being written. An unpredictable name is not worth
+        /// guessing, so the plant here changes nothing.
+        #[test]
+        fn a_file_at_the_old_predictable_temp_name_does_not_block_the_write() {
+            let root = tempfile::tempdir().unwrap();
+            let skills_dir = root.path().join("skills");
+            let dir = skills_dir.join("safe");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(format!(".skill-{}.tmp", std::process::id())),
+                "planted",
+            )
+            .unwrap();
+
+            write_skill(&skills_dir, "safe", "the real skill text").unwrap();
+
+            assert_eq!(
+                std::fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+                "the real skill text"
+            );
+        }
+
+        /// A write that keeps failing is reported, not merely logged: the
+        /// skill's own directory refusing new entries fails every attempt
+        /// at a temporary file the same way a permission refusal or a full
+        /// disk would, and `write_skill` answers `Err` for it rather than
+        /// swallowing the failure the way `sync_skills` used to.
+        #[test]
+        fn a_persistently_failing_write_is_reported() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let root = tempfile::tempdir().unwrap();
+            let skills_dir = root.path().join("skills");
+            let dir = skills_dir.join("safe");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+            let result = write_skill(&skills_dir, "safe", "the real skill text");
+
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(
+                result.is_err(),
+                "a directory that refuses every new entry must fail the write, not succeed silently"
             );
         }
     }

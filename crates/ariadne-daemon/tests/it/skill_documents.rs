@@ -316,6 +316,41 @@ async fn a_symlinked_skill_md_is_never_written_through() {
     );
 }
 
+/// A write that keeps failing is reported by `sync_skills` itself: a
+/// skill's own directory refusing new entries fails every attempt at a
+/// temporary file, and the function answers `Err` for it rather than
+/// logging the failure and still answering `Ok`, which is what a caller —
+/// the create route among them — reads as "every skill is now on disk."
+#[tokio::test]
+async fn sync_skills_reports_a_persistently_failing_write() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let h = harness().await;
+    let skills_dir = h.launcher.cfg.skills_dir.clone();
+    let _: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "broken",
+                    "document": "---\nname: broken\ndescription: broken\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let dir = skills_dir.join("broken");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let result = ariadne_daemon::agents::sync_skills(&h.store, &skills_dir).await;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert!(
+        result.is_err(),
+        "a persistently failing write must not be reported as Ok"
+    );
+}
+
 /// And the other way round: a shipped skill is reset rather than deleted, so
 /// the catalog cannot be emptied by mistake.
 #[tokio::test]

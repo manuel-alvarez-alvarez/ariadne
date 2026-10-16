@@ -194,26 +194,36 @@ impl Store {
                 new.name
             )));
         }
+        let ts = now();
         // A case-insensitive volume — the macOS default, and Windows's own —
         // maps `Demo` and `demo` to one directory: two rows the exact
         // `UNIQUE` constraint below sees as distinct would still collide the
         // moment `sync_skills` wrote both, one document overwriting the
-        // other with no error either side could see. Checked against every
+        // other with no error either side could see.
+        //
+        // The check and the insert run on the one write connection, in the
+        // one transaction, rather than the check reading through the
+        // separate read pool first: the write pool holds a single
+        // connection, so two concurrent calls each do not interleave their
+        // own check and insert here the way they would across two pools —
+        // the second call's check waits for the first's whole transaction,
+        // commit or rollback, before it ever runs. Checked against every
         // name already here, shipped skills included, not only the user's
         // own.
-        if let Some(existing) = self
-            .list_skills()
-            .await?
+        let mut tx = self.w().begin().await?;
+        let existing: Vec<String> = sqlx::query_scalar("SELECT name FROM skills")
+            .fetch_all(&mut *tx)
+            .await?;
+        if let Some(existing) = existing
             .into_iter()
-            .find(|skill| skill.name != new.name && skill.name.eq_ignore_ascii_case(&new.name))
+            .find(|name| name != &new.name && name.eq_ignore_ascii_case(&new.name))
         {
             return Err(StoreError::Conflict(format!(
-                "skill name `{}` differs only in case from `{}`, which a case-insensitive \
-                 filesystem would write to the same directory",
-                new.name, existing.name
+                "skill name `{}` differs only in case from `{existing}`, which a \
+                 case-insensitive filesystem would write to the same directory",
+                new.name
             )));
         }
-        let ts = now();
         sqlx::query(
             "INSERT INTO skills (name, document, builtin, created_at, updated_at)
              VALUES (?, ?, 0, ?, ?)",
@@ -222,9 +232,10 @@ impl Store {
         .bind(&new.document)
         .bind(&ts)
         .bind(&ts)
-        .execute(self.w())
+        .execute(&mut *tx)
         .await
         .map_err(|e| taken(e, &new.name))?;
+        tx.commit().await?;
         let skill = self.get_skill(&new.name).await?;
         self.publish(Change::SkillCreated(skill.clone()));
         Ok(skill)

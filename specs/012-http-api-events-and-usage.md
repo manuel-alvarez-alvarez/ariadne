@@ -259,7 +259,10 @@ and the ACP runtime that reports the agent events (021).
     `-S` takes, but reads its own escapes doing it — `\_` a literal,
     non-splitting space among them — which are `env`'s own grammar, not a
     shell's. Rather than parse that grammar, the flag is refused outright,
-    wherever `env` carries it and whatever it holds. The rest of the index
+    wherever `env` carries it and whatever it holds — spelled long, bare, or
+    short-option attached or bundled with another flag (`-Ssh -c '...'`,
+    `-Ssh\_-c\_'...'`, `-vSsh\_-c\_'...'`) — so the escape grammar is never
+    the thing deciding whether the flag was even seen. The rest of the index
     still installs.
 21. `GET /v1/events` answers one page of the recorded events. `order=asc` is
     the default and answers the oldest of them, oldest first, which is what a
@@ -572,10 +575,12 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   `::a_shell_behind_env_and_a_bundled_dash_c_is_refused`,
   `::an_uppercase_shell_name_is_refused_the_same_as_lowercase`). `env -S`
   and `--split-string` are refused outright, a string this check cannot
-  promise to parse correctly included
+  promise to parse correctly included, and the same whether `-S` stands on
+  its own or is attached to or bundled with another short option
   (`::env_dash_cap_s_splitting_a_shell_command_is_refused`,
   `::env_dash_cap_s_with_shell_quoting_is_refused`,
-  `::env_dash_cap_s_is_refused_outright_whatever_it_holds`).
+  `::env_dash_cap_s_is_refused_outright_whatever_it_holds`,
+  `::env_dash_cap_s_attached_or_bundled_is_refused`).
 - A descending page is the events recorded last, newest first
   (`events.rs::the_newest_page_is_the_events_recorded_last`,
   `store.rs::a_descending_page_answers_the_newest_events_newest_first`), and a
