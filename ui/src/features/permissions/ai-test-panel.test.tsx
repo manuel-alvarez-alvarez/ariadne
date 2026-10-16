@@ -76,6 +76,13 @@ function renderPanel(status: AiPermissionsStatusDto, withToaster = false) {
   return render(tree)
 }
 
+async function waitForPanelFocus() {
+  // Base UI queues the opening focus on an animation frame. Let it reach
+  // Examples before editing, so it cannot take focus midway through typing.
+  const examples = screen.getByRole("button", { name: "Examples" })
+  await waitFor(() => expect(document.activeElement).toBe(examples))
+}
+
 const ENABLED = anAiPermissionsStatus({ enabled: true, allow_threshold: 0.2, deny_threshold: 0.8 })
 
 beforeEach(() => {
@@ -322,6 +329,7 @@ it("does not run a shortcut while the model is off", () => {
 it("sends a typed title, kind, options and locations one per line, edited by hand", async () => {
   const user = userEvent.setup()
   renderPanel(ENABLED)
+  await waitForPanelFocus()
 
   const title = screen.getByLabelText("Title")
   await user.clear(title)
@@ -488,6 +496,7 @@ it("shows 'No answer: <ai_error>' in the footer, with no label", async () => {
 it("shows a field error on invalid JSON and disables Test", async () => {
   const user = userEvent.setup()
   renderPanel(ENABLED)
+  await waitForPanelFocus()
 
   const input = screen.getByLabelText("Input")
   await user.clear(input)

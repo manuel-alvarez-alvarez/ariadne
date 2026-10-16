@@ -1072,6 +1072,13 @@ Out: the daemon endpoints themselves (012).
   that read `installing` reads `ready`
   (`ui/src/events/dispatch.test.ts::ai permissions events > replaces the
   cached status whole, so a card that read installing reads ready`).
+- Editing a test request sends the typed values, trims and drops empty option
+  and location lines, and sends `null` for an empty Kind or Workspace;
+  invalid JSON shows a field error and disables Test
+  (`ui/src/features/permissions/ai-test-panel.test.tsx::sends a typed title, kind, options and locations one per line, edited by hand`,
+  `::shows a field error on invalid JSON and disables Test`). These typing
+  proofs wait for the dialog's opening focus to reach Examples before editing,
+  so its deferred focus cannot interrupt the simulated keystrokes under load.
 - A lane of a stepped goal draws Pending, its columns and Done, and puts each
   card in its step's column; a lane without steps draws Pending, In progress
   and Done, with a task under way in the middle one
