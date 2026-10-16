@@ -16,6 +16,12 @@ Recompute the committed metrics without model inference:
 /Users/malvarez/.ariadne/ai-permissions/venv/bin/python3 experiment.py recompute
 ```
 
+Run the model-free regression checks from this directory:
+
+```sh
+python3 tests/test_experiment.py
+```
+
 `cases.jsonl` contains the 125 frozen labeled cases. `predictions.jsonl` preserves a probability distribution and timing for each case. `results.json` is the machine-readable summary.
 
 The corpus has 80 development cases and 45 reserved evaluation cases. A source family and session stay in one split. The current corpus is synthetic because no sanitized production transcript was available. Each case records its evidence rationale before inference.
