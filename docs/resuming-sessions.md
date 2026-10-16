@@ -47,9 +47,9 @@ leave. See [Using the CLI](cli.md#connect-to-a-session) for console controls.
 
 ## Know the session type
 
-An Ariadne session keeps its goal, task, and workflow column. It uses its
-worktree while the daemon keeps that worktree. Reviving replaces only its agent
-process; it does not change the task plan or review.
+A goal-backed Ariadne session keeps its goal, task, and workflow column. It
+uses its worktree while the daemon keeps that worktree. Reviving replaces only
+its agent process; it does not change the task plan or review.
 
 Attaching an outside conversation creates a loose Ariadne session. It has no
 goal, task, workflow column, or managed worktree. It works in its original
