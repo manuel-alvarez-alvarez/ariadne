@@ -11,6 +11,8 @@ use ariadne_store::Task;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 
+use super::tasks::{invalid_merge_commit, valid_merge_commit};
+
 pub(super) async fn current_agent(state: &AppState, ctx: &CallCtx, task: &Task) -> ApiResult<()> {
     let refused = || ApiError::forbidden("only the current column's agent can make this call");
     let session = ctx.session.as_ref().ok_or_else(refused)?;
@@ -45,6 +47,11 @@ pub(super) async fn complete(
     let task = state.store.get_task(&id).await?;
     current_agent(&state, &ctx, &task).await?;
     working(&task, &req.reason)?;
+    if let Some(sha) = req.merge_commit.as_deref()
+        && !valid_merge_commit(sha)
+    {
+        return Err(invalid_merge_commit(sha));
+    }
     let steps = state.store.goal_steps(&task.goal_id).await?;
     let at = steps
         .iter()

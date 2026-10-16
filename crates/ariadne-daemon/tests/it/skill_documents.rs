@@ -122,6 +122,257 @@ async fn a_skill_of_your_own_is_deleted_rather_than_reset() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// A name with `/`, `\`, `..`, a space, a leading dot or a leading hyphen is
+/// not shaped as a skill name, or does not stay a direct entry under the
+/// skills directory once joined onto it: `sync_skills` writes `SKILL.md`
+/// under `skills_dir.join(name)`, and accepting one of these would write
+/// outside it.
+#[tokio::test]
+async fn a_skill_name_outside_the_shape_is_refused() {
+    let h = harness().await;
+    for name in [
+        "../escape",
+        "a/b",
+        "a\\b",
+        "api design",
+        ".hidden",
+        "-leading",
+    ] {
+        let err = h
+            .error(
+                post_json(
+                    "/v1/skills",
+                    serde_json::json!({
+                        "name": name,
+                        "document": "---\nname: x\ndescription: x\n---\n",
+                    }),
+                ),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await;
+        assert!(
+            err.error.message.contains("skill name"),
+            "{name:?}: {}",
+            err.error.message
+        );
+    }
+    let escaped = h.launcher.cfg.skills_dir.parent().unwrap().join("escape");
+    assert!(
+        !escaped.exists(),
+        "a name with `..` wrote outside the skills directory"
+    );
+}
+
+/// The looser rule: ASCII letters in either case, digits, hyphens and
+/// underscores, not leading with a hyphen — wider than kebab-case, and
+/// still shaped enough to stay one entry under the skills directory.
+#[tokio::test]
+async fn a_mixed_case_name_with_an_underscore_and_a_digit_is_accepted() {
+    let h = harness().await;
+    let created: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "My_Skill2",
+                    "document": "---\nname: x\ndescription: x\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(created.name, "My_Skill2");
+}
+
+/// A case-insensitive volume — the macOS default, and Windows's own —
+/// writes `Demo` and `demo` to one directory: distinct rows by the exact
+/// name the database compares would still collide the moment the sync
+/// wrote both, one document silently overwriting the other. The second
+/// name is refused before either ever reaches the filesystem.
+#[tokio::test]
+async fn a_name_differing_only_in_case_from_an_existing_skill_is_refused() {
+    let h = harness().await;
+    let _: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "Demo",
+                    "document": "---\nname: x\ndescription: x\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let (status, _) = h
+        .send(post_json(
+            "/v1/skills",
+            serde_json::json!({
+                "name": "demo",
+                "document": "---\nname: x\ndescription: y\n---\n",
+            }),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let kept: SkillDto = h.json(get("/v1/skills/Demo"), StatusCode::OK).await;
+    assert_eq!(
+        kept.summary, "x",
+        "the first skill's document was overwritten"
+    );
+}
+
+/// A name that passes the slug check is still refused the write where a
+/// symlink already sits at its directory: `sync_skills` never follows one,
+/// to decide a name is stale or to write through it, so nothing lands
+/// outside the skills directory and the create still leaves the skill
+/// readable at its own, now real, directory.
+#[tokio::test]
+async fn a_symlinked_skill_directory_is_never_written_through() {
+    let h = harness().await;
+    let outside = tempfile::tempdir().unwrap();
+    let skills_dir = &h.launcher.cfg.skills_dir;
+    std::fs::create_dir_all(skills_dir).unwrap();
+    let link = skills_dir.join("safe");
+    std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+
+    let created: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "safe",
+                    "document": "---\nname: safe\ndescription: safe\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(created.name, "safe");
+
+    assert!(
+        !outside.path().join("SKILL.md").exists(),
+        "wrote through the symlink to outside the skills directory"
+    );
+    assert!(
+        !std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the symlink at the skill's own directory survived the sync"
+    );
+    assert_eq!(
+        std::fs::read_to_string(link.join("SKILL.md")).unwrap(),
+        created.document,
+        "the skill was not written to its own, now real, directory"
+    );
+}
+
+/// The same proof one level down: a real directory already at a slug-valid
+/// name, but its `SKILL.md` itself is the symlink. Writing the real document
+/// never goes through it either.
+#[tokio::test]
+async fn a_symlinked_skill_md_is_never_written_through() {
+    let h = harness().await;
+    let outside = tempfile::tempdir().unwrap();
+    let decoy = outside.path().join("decoy.md");
+    std::fs::write(&decoy, "not a skill").unwrap();
+    let skills_dir = &h.launcher.cfg.skills_dir;
+    let dir = skills_dir.join("also-safe");
+    std::fs::create_dir_all(&dir).unwrap();
+    let document_path = dir.join("SKILL.md");
+    std::os::unix::fs::symlink(&decoy, &document_path).unwrap();
+
+    let created: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "also-safe",
+                    "document": "---\nname: also-safe\ndescription: also safe\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    assert_eq!(
+        std::fs::read_to_string(&decoy).unwrap(),
+        "not a skill",
+        "wrote through the symlink to a file outside the skill's own directory"
+    );
+    assert!(
+        !std::fs::symlink_metadata(&document_path)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the symlinked SKILL.md survived the sync"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&document_path).unwrap(),
+        created.document,
+        "the skill was not written to its own, now real, SKILL.md"
+    );
+}
+
+/// A configured `skills_dir` that is itself a symlink — a home moved onto
+/// another volume, say — is resolved once up front, so every write and
+/// every stale-entry read goes through its real target. Opening the
+/// symlink path itself with `O_NOFOLLOW`, as a skill's own write does,
+/// would refuse it outright and fail the sync for every skill.
+#[tokio::test]
+async fn a_symlinked_skills_root_still_syncs_through_its_target() {
+    let h = harness().await;
+    let real_skills_dir = h.launcher.cfg.skills_dir.clone();
+    let link = real_skills_dir.parent().unwrap().join("skills-link");
+    std::os::unix::fs::symlink(&real_skills_dir, &link).unwrap();
+
+    ariadne_daemon::agents::sync_skills(&h.store, &link)
+        .await
+        .unwrap();
+
+    assert!(
+        std::fs::read_to_string(link.join("coding").join("SKILL.md")).is_ok(),
+        "a skills_dir that is itself a symlink must still sync through its target"
+    );
+}
+
+/// A write that keeps failing is reported by `sync_skills` itself: a
+/// skill's own directory refusing new entries fails every attempt at a
+/// temporary file, and the function answers `Err` for it rather than
+/// logging the failure and still answering `Ok`, which is what a caller —
+/// the create route among them — reads as "every skill is now on disk."
+#[tokio::test]
+async fn sync_skills_reports_a_persistently_failing_write() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let h = harness().await;
+    let skills_dir = h.launcher.cfg.skills_dir.clone();
+    let _: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "broken",
+                    "document": "---\nname: broken\ndescription: broken\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let dir = skills_dir.join("broken");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let result = ariadne_daemon::agents::sync_skills(&h.store, &skills_dir).await;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert!(
+        result.is_err(),
+        "a persistently failing write must not be reported as Ok"
+    );
+}
+
 /// And the other way round: a shipped skill is reset rather than deleted, so
 /// the catalog cannot be emptied by mistake.
 #[tokio::test]

@@ -8,7 +8,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 
 use ariadne_api::skills::{CreateSkillRequest, SkillDto, UpdateSkillRequest};
-use ariadne_store::NewSkill;
+use ariadne_store::{NewSkill, skill_name_rejection};
 
 use super::AppState;
 use super::convert::skill_dto;
@@ -21,6 +21,32 @@ fn sync_error(error: anyhow::Error) -> ApiError {
         "internal_error",
         "cannot sync the home skill copy",
     )
+}
+
+/// A name `sync_skills` can write as a directory component: shaped like a
+/// skill name, and one that stays a direct entry under the skills
+/// directory once joined onto it — never `..`, an absolute path or
+/// anything else that walks outside it.
+fn invalid_name(name: &str, reason: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "invalid_request",
+        format!("{reason} (got `{name}`)"),
+    )
+}
+
+/// The skills directory, canonicalized: the real root `skill_name_rejection`
+/// checks a name's path against, a symlink in it resolved first. `Config`
+/// creates the directory itself at load, so this is read, never made.
+fn canonical_skills_dir(state: &AppState) -> ApiResult<std::path::PathBuf> {
+    std::fs::canonicalize(&state.launcher.cfg.skills_dir).map_err(|error| {
+        tracing::error!(error = %error, "cannot resolve the skills directory");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "cannot resolve the skills directory",
+        )
+    })
 }
 
 /// Create a skill of the user's own.
@@ -37,6 +63,9 @@ pub(super) async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateSkillRequest>,
 ) -> ApiResult<(StatusCode, Json<SkillDto>)> {
+    if let Some(reason) = skill_name_rejection(&req.name, &canonical_skills_dir(&state)?) {
+        return Err(invalid_name(&req.name, reason));
+    }
     let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
     let skill = state
         .store

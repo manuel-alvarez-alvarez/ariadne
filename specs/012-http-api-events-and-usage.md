@@ -17,6 +17,9 @@ tests:
   - crates/ariadne-daemon/tests/it/agents.rs
   - crates/ariadne-daemon/tests/it/models.rs
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
+  - crates/ariadne-daemon/src/acp_discovery.rs
+  - crates/ariadne-daemon/src/acp_index.rs
+  - crates/ariadne-daemon/tests/it/task_failure.rs
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-daemon/src/config.rs
   - crates/ariadne-daemon/src/socket.rs
@@ -69,7 +72,11 @@ and the ACP runtime that reports the agent events (021).
    `CreateGoalRequest` takes the goal's `workflow` and `GoalDto` carries it
    with the columns it snapshotted (030). The task requests take `agents`,
    one per column, and `TaskDto.step` is the column the task is in; neither
-   carries a landing.
+   carries a landing. A `merge_commit` a request carries — on
+   `POST /v1/tasks/{id}/transitions` and on `POST /v1/tasks/{id}/step/complete`
+   alike — is accepted only as a hex sha of 7 to 64 characters and refused
+   otherwise with 422 `invalid_request`, since a later call hands it to git as
+   the commit a `merged` or `request-merged` gate verifies (030).
 4. Every write emits a **fat event**: the changed entity, whole, so a client
    can apply it without a re-fetch. A task transition carries the transition
    that caused it, whether it came through HTTP or from the scheduler.
@@ -232,7 +239,34 @@ and the ACP runtime that reports the agent events (021).
     index. Refresh still searches `PATH`, probes agents, and answers the
     agent list. Both
     responses include status, measured capabilities, degradation flags, and
-    a rejection reason when discovery failed.
+    a rejection reason when discovery failed. `acp_registry_url` is fetched
+    only over `https`, with no exception: a plain `http` URL is refused and
+    logs a warning, the same as a download failure, before anything is
+    fetched. A redirect is followed by hand rather than by the HTTP client,
+    and each hop's `Location` is checked the same way the first URL was: a
+    hop to `http` is refused there too, rather than silently taken. An index
+    entry is refused by id, logged, and left out of what `PATH` search and
+    probing consider when any word of its command names a shell interpreter
+    (`sh`, `bash`, `zsh`, `dash`, `fish`, `cmd`, `powershell`, `pwsh`),
+    compared without case — a case-insensitive volume answers `SH` the same
+    file `sh` names — or is a flag shaped like `-c` (bundled short options
+    included, as `-lc` bundles `-l` with it). A word is read out of every
+    element of the command, not only out of its own element, split and
+    quote-removed the way a shell reads a line: `s''h -'c'` is the two words
+    `sh` and `-c` to a shell, not the literal text a plain whitespace split
+    would see. `env -S STRING` (and `env --split-string=STRING`) folds what
+    would otherwise be two elements — `sh` and `-c` — into the one argument
+    `-S` takes, but reads its own escapes doing it — `\_` a literal,
+    non-splitting space among them — which are `env`'s own grammar, not a
+    shell's. Rather than parse that grammar, the flag is refused outright,
+    wherever `env` carries it and whatever it holds — spelled long, bare,
+    short-option attached or bundled with another flag (`-Ssh -c '...'`,
+    `-Ssh\_-c\_'...'`, `-vSsh\_-c\_'...'`), or long and abbreviated to any
+    unambiguous prefix (`--s=...`, `--sp=...`): GNU `env` accepts any of
+    these for `--split-string`, since no other long option of its starts
+    with `s`. So the escape grammar, and the exact spelling, are never the
+    thing deciding whether the flag was even seen. The rest of the index
+    still installs.
 21. `GET /v1/events` answers one page of the recorded events. `order=asc` is
     the default and answers the oldest of them, oldest first, which is what a
     client sweeping forward reads. `order=desc` answers the newest, newest
@@ -342,6 +376,11 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   `SwitchSessionRequest`, and answers a `SessionDto` that carries
   `switched_from`
   (`switch.rs::the_switch_endpoint_is_in_the_openapi_document`).
+- A `merge_commit` that starts with `-` or holds a non-hex character is
+  refused with 422 on the step-complete route
+  (`workflow_steps.rs::a_task_walks_develop_review_merge_with_one_agent_per_column`)
+  and on the transitions route
+  (`task_failure.rs::a_malformed_merge_commit_is_refused_on_the_transitions_route`).
 
 - Learned permission routes list, get, delete and widen or narrow by `PUT`,
   refuse `POST` with 405, publish complete events for a create, an update by
@@ -526,7 +565,26 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   (`::refresh_downloads_the_configured_index_and_registers_its_installed_agent`)
   and still returns the agent list after failed downloads or refused documents
   (`::a_failed_download_keeps_the_index_and_still_rescans_and_reprobes`,
-  `::a_refused_document_keeps_the_index_and_still_rescans_and_reprobes`).
+  `::a_refused_document_keeps_the_index_and_still_rescans_and_reprobes`). A
+  plain `http` registry URL is refused, loopback included, and a redirect to
+  `http` is refused the same way
+  (`acp_discovery.rs::tests::a_plain_http_registry_url_is_refused`,
+  `::http_to_a_loopback_host_is_still_refused`,
+  `::https_fetch_refuses_a_redirect_to_a_plain_http_location`). An index
+  entry naming a shell interpreter — directly, behind a launcher such as
+  `env`, or in any case — or carrying a bundled `-c`-shaped flag such as
+  `-lc`, is refused by id and the rest of the index still installs
+  (`acp_index.rs::tests::an_index_entry_naming_a_shell_is_refused_and_the_rest_of_the_index_still_installs`,
+  `::a_shell_behind_env_and_a_bundled_dash_c_is_refused`,
+  `::an_uppercase_shell_name_is_refused_the_same_as_lowercase`). `env -S`
+  and `--split-string` are refused outright, a string this check cannot
+  promise to parse correctly included, and the same whether `-S` stands on
+  its own or is attached to or bundled with another short option
+  (`::env_dash_cap_s_splitting_a_shell_command_is_refused`,
+  `::env_dash_cap_s_with_shell_quoting_is_refused`,
+  `::env_dash_cap_s_is_refused_outright_whatever_it_holds`,
+  `::env_dash_cap_s_attached_or_bundled_is_refused`,
+  `::env_dash_cap_s_abbreviated_long_form_is_refused`).
 - A descending page is the events recorded last, newest first
   (`events.rs::the_newest_page_is_the_events_recorded_last`,
   `store.rs::a_descending_page_answers_the_newest_events_newest_first`), and a

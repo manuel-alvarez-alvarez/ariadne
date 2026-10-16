@@ -1,13 +1,14 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-10-14
+updated: 2026-10-16
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
+  - crates/ariadne-daemon/src/agents/mod.rs
   - crates/ariadne-daemon/tests/it/home_skills.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
@@ -35,8 +36,27 @@ written into the system prompt (006), and the lifecycle the seats sit in
 ## Behavior
 
 1. A **skill** is one document — a `SKILL.md`, YAML frontmatter and a body —
-   that tells a generic agent how to do one kind of work. It is named in
-   kebab-case, and the name is how a task loads it.
+   that tells a generic agent how to do one kind of work, and the name is
+   how a task loads it. A skill of the user's own is created under a name
+   checked in two parts, on the route and in the store, since the name
+   becomes a directory under the shared skills directory. First, its shape:
+   1 to 64 characters of ASCII letters in either case, digits, hyphens and
+   underscores, not leading with a hyphen or a dot. Second, its path: joined
+   onto the skills directory (canonicalized, where a real one is on hand)
+   it must stay a direct entry of it, both its parent and its file name
+   unchanged by the join — which a name holding a separator, or naming `.`
+   or `..`, never does. A name that fails either part is refused with 422
+   rather than written, `../etc` or an absolute path included. A third check
+   compares the name, case-insensitively, against every name already there,
+   shipped skills included: a case-insensitive volume — the macOS default,
+   and Windows's own — writes `Demo` and `demo` to the one directory, so the
+   second of them is refused with 409 rather than silently overwriting the
+   first's document on the next sync. That check and the row's insert run in
+   one write transaction, on the store's one write connection, rather than
+   the check reading through the separate read pool first: two concurrent
+   creates of names differing only in case cannot both read no conflict and
+   both insert, since the second's check waits for the first's whole
+   transaction, commit or rollback, before it ever runs.
 2. An **agent** has no identity: it is a registry agent, a model, an
    effort, a brief and a set of skills. Its pin is one string,
    `<agent>:<model>`, where `<agent>` is the id of an agent in the daemon's
@@ -152,7 +172,38 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `orchestration` and `pr-reviewer`, and removes folders for names the
     store no longer has without removing `skills_dir` itself. It syncs after
     the store seeds shipped skills at startup and after every skill create,
-    document set, reset or delete.
+    document set, reset or delete. A stored name that fails any part of
+    rule 1, checked here against the skills directory itself canonicalized,
+    is logged and skipped rather than written. A name's own directory is
+    never a symlink, and its `SKILL.md` is never a symlink or a hard link
+    sharing its data with a file of some other name entirely: every one of
+    those is a plain directory and a plain file the sync itself made, so a
+    name holding either instead is never a skill's own, and is replaced
+    with a fresh one — never opened, followed, or written through.
+
+    On Unix each is opened directly off a directory already held open by
+    its descriptor, with the name resolved once and never again, so a path
+    swapped for a symlink after this sync already checked it is still
+    refused, not raced. The directory's own open, with `O_DIRECTORY` and no
+    `O_NOFOLLOW` match, answers `ELOOP` on Linux for a symlink there and
+    `ENOTDIR` on macOS for the same one — the two kernels disagree on which
+    error it is, not on refusing it — and either answer clears the entry
+    and makes a fresh directory in its place. `SKILL.md` is never opened by
+    its own name at all: the document is written to a fresh file under a
+    name of its own, directly under the skill's directory, and that file is
+    renamed onto `SKILL.md` in one step, which replaces whatever was there
+    — symlink, hard link or a plain file — without the old entry, or
+    whatever else holds the same data a hard link would, ever being opened.
+    The fresh file's own name carries eight random bytes, hex-encoded,
+    rather than the daemon's PID: a name anybody could predict and plant
+    ahead of the write would otherwise collide, and the write holds
+    `O_EXCL` on it, so a planted file is skipped and a new random name
+    tried, up to eight times, rather than failing the write there. A write
+    that still fails — every attempt at a fresh name taken, or the rename
+    itself refused — is cleaned up if it was left behind, and is never
+    swallowed: a sync that failed any skill's write fails as a whole,
+    naming every skill it could not write, rather than reporting success
+    with one skill's document stale or missing.
 
 ## Acceptance criteria
 
@@ -166,6 +217,39 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`store.rs::skill_crud_and_the_two_refusals_that_tell_them_apart`,
   `skill_documents.rs::a_skill_of_your_own_is_deleted_rather_than_reset`,
   `::a_shipped_skill_cannot_be_deleted`).
+- A name with `/`, `\`, `..`, a space, a leading dot or a leading hyphen is
+  refused with 422 rather than written under the skills directory, a mixed-case
+  name with a digit and an underscore is accepted, and the store refuses the
+  same names the route does:
+  `skill_documents.rs::a_skill_name_outside_the_shape_is_refused`,
+  `::a_mixed_case_name_with_an_underscore_and_a_digit_is_accepted`,
+  `store.rs::a_skill_name_must_be_shaped_right_and_stay_under_the_skills_directory`.
+- A name differing only in case from an existing one, shipped or the user's
+  own, is refused with 409, so the first name's document is never
+  overwritten, and the same holds when two such creates race: exactly one
+  of two names differing only in case is ever created, never both:
+  `skill_documents.rs::a_name_differing_only_in_case_from_an_existing_skill_is_refused`,
+  `store.rs::a_skill_name_differing_only_in_case_from_an_existing_one_is_refused`,
+  `::concurrent_creates_differing_only_in_case_do_not_both_succeed`.
+- A name that passes the shape and path check is still never written through a
+  symlink already sitting at its directory, and lands at its own, now real,
+  directory once the symlink is cleared:
+  `skill_documents.rs::a_symlinked_skill_directory_is_never_written_through`,
+  `::a_symlinked_skill_md_is_never_written_through`.
+- A hard-linked `SKILL.md` is replaced by a fresh file rather than written
+  through, leaving the data it shared with another name untouched, and a
+  directory symlink left at a skill's own name at write time is replaced
+  with a real directory on both of `ELOOP`'s and `ENOTDIR`'s own answer to
+  the same open:
+  `agents::symlink_safe::tests::a_hard_linked_skill_md_is_replaced_rather_than_written_through`,
+  `::a_directory_symlink_left_at_write_time_is_replaced_rather_than_followed`.
+- A file already sitting at the old, predictable temp name does not block a
+  write, which tries a fresh random name instead, and a write that still
+  fails after every attempt is reported rather than swallowed, the same when
+  `sync_skills` runs the whole catalog:
+  `agents::symlink_safe::tests::a_file_at_the_old_predictable_temp_name_does_not_block_the_write`,
+  `::a_persistently_failing_write_is_reported`,
+  `skill_documents.rs::sync_skills_reports_a_persistently_failing_write`.
 - A skill an agent still loads cannot be deleted
   (`store.rs::a_skill_an_agent_still_loads_cannot_be_deleted`), and an agent
   cannot be staffed on a skill nothing answers to

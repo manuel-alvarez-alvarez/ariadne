@@ -8,11 +8,11 @@ pub mod prompts;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use ariadne_core::Seat;
 use ariadne_core::acp::LaunchConfig;
-use ariadne_store::Store;
+use ariadne_store::{Store, skill_name_rejection};
 
 pub use acp::{plan_resume, plan_spawn};
 #[allow(unused_imports)] // the session-switch task wires handoff_text to its endpoint
@@ -182,31 +182,421 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
     let skills = store.list_skills().await?;
     std::fs::create_dir_all(skills_dir)
         .with_context(|| format!("creating {}", skills_dir.display()))?;
+    // Resolved once: a symlink in `skills_dir` itself is settled before any
+    // name's own path is checked against it, rather than on every check.
+    let canonical_skills_dir = std::fs::canonicalize(skills_dir)
+        .with_context(|| format!("resolving {}", skills_dir.display()))?;
 
     let names: std::collections::HashSet<_> =
         skills.iter().map(|skill| skill.name.as_str()).collect();
-    for entry in std::fs::read_dir(skills_dir)
-        .with_context(|| format!("reading {}", skills_dir.display()))?
+    for entry in std::fs::read_dir(&canonical_skills_dir)
+        .with_context(|| format!("reading {}", canonical_skills_dir.display()))?
     {
-        let entry = entry.with_context(|| format!("reading {}", skills_dir.display()))?;
-        if entry
+        let entry = entry.with_context(|| format!("reading {}", canonical_skills_dir.display()))?;
+        let file_type = entry
             .file_type()
-            .with_context(|| format!("reading {}", entry.path().display()))?
-            .is_dir()
-            && !names.contains(entry.file_name().to_string_lossy().as_ref())
-        {
+            .with_context(|| format!("reading {}", entry.path().display()))?;
+        // A symlink is never a skill's own directory: every one of those is
+        // made by `create_dir_all` below, which never makes one. Whatever
+        // put a symlink here instead, following it — to decide whether its
+        // name is still a skill's, or to write through it below — would
+        // reach wherever it points, outside `skills_dir` included. It is
+        // removed on sight, named or not; `remove_dir_all` on a symlink
+        // unlinks the symlink alone, never descends into its target.
+        let stale = file_type.is_symlink()
+            || (file_type.is_dir()
+                && !names.contains(entry.file_name().to_string_lossy().as_ref()));
+        if stale {
             std::fs::remove_dir_all(entry.path())
                 .with_context(|| format!("removing {}", entry.path().display()))?;
         }
     }
 
+    // Every skill is attempted whatever an earlier one did: one name's
+    // write failing is no reason to leave the rest unsynced. A failure is
+    // still reported, after every attempt — a sync that answered `Ok` once
+    // is read as "every skill here is on disk", by the HTTP route's own
+    // caller as much as by a later run of this same function.
+    let mut failed = Vec::new();
     for skill in skills {
-        let dir = skills_dir.join(&skill.name);
-        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-        std::fs::write(dir.join("SKILL.md"), skill.document_text())
-            .with_context(|| format!("writing the {} skill", skill.name))?;
+        if let Some(reason) = skill_name_rejection(&skill.name, &canonical_skills_dir) {
+            tracing::error!(name = %skill.name, reason, "a stored skill name is invalid; not writing it");
+            continue;
+        }
+        if let Err(error) =
+            symlink_safe::write_skill(&canonical_skills_dir, &skill.name, skill.document_text())
+        {
+            tracing::error!(name = %skill.name, error = %error, "writing the skill failed");
+            failed.push(skill.name);
+        }
+    }
+    if !failed.is_empty() {
+        bail!(
+            "writing the skill document failed for: {}",
+            failed.join(", ")
+        );
     }
     Ok(())
+}
+
+/// Create and write a skill's directory and `SKILL.md`, a symlink at either
+/// refused rather than followed, with no gap between refusing one and
+/// writing: a path-based check followed by a path-based write — `stat`
+/// `skills_dir/name`, then separately open `skills_dir/name/SKILL.md` — reads
+/// `name` off the directory twice, and a symlink dropped in between is
+/// exactly the window the second read falls through. Every step below opens
+/// its own name directly off a directory already held open by its file
+/// descriptor, which a path swap after that cannot redirect: the descriptor
+/// keeps pointing at the entry it was opened for, nothing else sees the open
+/// call that follows it, and `O_NOFOLLOW` refuses a symlink there outright
+/// rather than opening through it.
+#[cfg(unix)]
+mod symlink_safe {
+    use std::fs::File;
+    use std::io::{self, Write};
+    use std::os::fd::OwnedFd;
+    use std::path::Path;
+
+    use rustix::fs::{AtFlags, Mode, OFlags, mkdirat, openat, renameat, unlinkat};
+    use rustix::io::Errno;
+
+    /// Open `path` itself as a directory, refusing a symlink at it.
+    fn open_dir_no_follow(path: &Path) -> Result<OwnedFd, Errno> {
+        rustix::fs::open(
+            path,
+            OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+    }
+
+    /// Open `name` directly under the directory `parent` refers to, never
+    /// resolving `parent`'s own path again: refusing a symlink at `name`,
+    /// rather than following it, is the one purpose of every call site here.
+    fn openat_no_follow(parent: &OwnedFd, name: &str, flags: OFlags) -> Result<OwnedFd, Errno> {
+        openat(
+            parent,
+            name,
+            flags | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o644),
+        )
+    }
+
+    /// Open `name` as a directory directly under `parent`, making it first
+    /// if there is nothing there, and clearing it first where something
+    /// that is not a plain directory sits there instead — the same entry
+    /// `sync_skills`'s own cleanup pass would already have removed, had it
+    /// arrived before this call rather than after it.
+    ///
+    /// `O_DIRECTORY | O_NOFOLLOW` against a symlink answers `ELOOP` on
+    /// Linux; on macOS the same open answers `ENOTDIR` instead, even where
+    /// the symlink's own target is a directory — the two kernels disagree
+    /// on which error a refused symlink gets, not on refusing it. `ENOTDIR`
+    /// is also what a plain file at `name` answers, which this clears the
+    /// same way: neither is ever what a skill's own directory should hold.
+    fn open_or_recreate_dir(parent: &OwnedFd, name: &str) -> Result<OwnedFd, Errno> {
+        let flags = OFlags::DIRECTORY;
+        match openat_no_follow(parent, name, flags) {
+            Ok(fd) => Ok(fd),
+            Err(Errno::LOOP | Errno::NOTDIR) => {
+                unlinkat(parent, name, AtFlags::empty())?;
+                mkdirat(parent, name, Mode::from_raw_mode(0o755))?;
+                openat_no_follow(parent, name, flags)
+            }
+            Err(Errno::NOENT) => {
+                mkdirat(parent, name, Mode::from_raw_mode(0o755))?;
+                openat_no_follow(parent, name, flags)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// An unpredictable name component for the temporary file below: a
+    /// name built from the daemon's own PID, or any other value an outside
+    /// caller could derive, lets that caller plant a file under the exact
+    /// name first — `O_EXCL` then refuses the write outright, and the
+    /// plant is the whole attack, nothing further needed. Sixteen random
+    /// hex characters are not worth guessing.
+    fn random_suffix() -> String {
+        let mut bytes = [0u8; 8];
+        getrandom::fill(&mut bytes).expect("the OS random source is available");
+        hex::encode(bytes)
+    }
+
+    /// How many unpredictable names `write_document_atomically` tries
+    /// before giving up: one collision is bad luck, this many in a row
+    /// means something else is wrong.
+    const TEMP_NAME_ATTEMPTS: u32 = 8;
+
+    /// Write `document` as a file of its own directly under `dir`, then
+    /// `renameat` it onto `SKILL.md`, replacing whatever was there in one
+    /// step rather than opening that name at all.
+    ///
+    /// `SKILL.md` existing as a hard link — sharing its data with some
+    /// other name entirely, outside `skills_dir` as easily as in it — is
+    /// not a symlink, and `O_NOFOLLOW` does nothing for it: opening it
+    /// with `O_TRUNC` would empty the data every one of its names shares,
+    /// written outside `skills_dir` from a name inside it. Writing a fresh
+    /// file under a name of its own first, then swapping it onto
+    /// `SKILL.md` by name alone, never opens the old entry either way —
+    /// hard link, symlink or a plain file already there — so nothing of
+    /// its data is ever touched.
+    ///
+    /// The temporary name is unpredictable and `O_EXCL`'d, so a name
+    /// planted there first is refused rather than opened; a refusal tries
+    /// a fresh name rather than giving up on the first collision. Every
+    /// error after the temporary file exists unlinks it before returning,
+    /// so a write or a rename that fails never leaves it behind.
+    fn write_document_atomically(dir: &OwnedFd, document: &str) -> io::Result<()> {
+        for _ in 0..TEMP_NAME_ATTEMPTS {
+            let temp_name = format!(".skill-{}.tmp", random_suffix());
+            let temp = match openat_no_follow(
+                dir,
+                &temp_name,
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
+            ) {
+                Ok(fd) => fd,
+                Err(Errno::EXIST) => continue,
+                Err(e) => return Err(e.into()),
+            };
+            if let Err(error) = File::from(temp).write_all(document.as_bytes()) {
+                let _ = unlinkat(dir, &temp_name, AtFlags::empty());
+                return Err(error);
+            }
+            return match renameat(dir, temp_name.as_str(), dir, "SKILL.md") {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let _ = unlinkat(dir, &temp_name, AtFlags::empty());
+                    Err(error.into())
+                }
+            };
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not find an unused name for the skill document's temporary file",
+        ))
+    }
+
+    /// Create and write a skill's directory and `SKILL.md`, a symlink or a
+    /// hard link at either refused rather than followed or written
+    /// through.
+    pub(super) fn write_skill(skills_dir: &Path, name: &str, document: &str) -> io::Result<()> {
+        let root = open_dir_no_follow(skills_dir).map_err(io::Error::from)?;
+        let dir = open_or_recreate_dir(&root, name).map_err(io::Error::from)?;
+        write_document_atomically(&dir, document)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::write_skill;
+
+        /// A hard link shares its data with every name that holds it, `SKILL.md`
+        /// included: opening it with `O_TRUNC` would empty that data from
+        /// outside `skills_dir` as easily as from in it. `write_skill` never
+        /// opens the old entry at all, so the file the link's other name reads
+        /// is untouched, and the skill's own text lands at its own directory,
+        /// now a fresh file under the same name.
+        #[test]
+        fn a_hard_linked_skill_md_is_replaced_rather_than_written_through() {
+            let root = tempfile::tempdir().unwrap();
+            let skills_dir = root.path().join("skills");
+            let dir = skills_dir.join("safe");
+            std::fs::create_dir_all(&dir).unwrap();
+            let shared = root.path().join("shared.md");
+            std::fs::write(&shared, "not a skill").unwrap();
+            std::fs::hard_link(&shared, dir.join("SKILL.md")).unwrap();
+
+            write_skill(&skills_dir, "safe", "the real skill text").unwrap();
+
+            assert_eq!(
+                std::fs::read_to_string(&shared).unwrap(),
+                "not a skill",
+                "wrote through the hard link to the file it shares data with"
+            );
+            assert_eq!(
+                std::fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+                "the real skill text"
+            );
+        }
+
+        /// A directory symlink at a skill's own name — placed after whatever
+        /// earlier pass might have cleared one, before this write ever runs —
+        /// answers `ELOOP` on Linux and `ENOTDIR` on macOS for the same
+        /// `O_DIRECTORY | O_NOFOLLOW` open; both are cleared and replaced
+        /// with a real directory of the same name, and the document lands
+        /// there, never through the symlink.
+        #[test]
+        fn a_directory_symlink_left_at_write_time_is_replaced_rather_than_followed() {
+            let root = tempfile::tempdir().unwrap();
+            let skills_dir = root.path().join("skills");
+            std::fs::create_dir_all(&skills_dir).unwrap();
+            let outside = root.path().join("outside");
+            std::fs::create_dir_all(&outside).unwrap();
+            std::os::unix::fs::symlink(&outside, skills_dir.join("safe")).unwrap();
+
+            write_skill(&skills_dir, "safe", "the real skill text").unwrap();
+
+            assert!(
+                !outside.join("SKILL.md").exists(),
+                "wrote through the directory symlink to outside the skills directory"
+            );
+            assert!(
+                !std::fs::symlink_metadata(skills_dir.join("safe"))
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "the directory symlink survived the write"
+            );
+            assert_eq!(
+                std::fs::read_to_string(skills_dir.join("safe").join("SKILL.md")).unwrap(),
+                "the real skill text"
+            );
+        }
+
+        /// A temporary file planted under the old, predictable name —
+        /// built from the daemon's own PID, which anything local could
+        /// read — would have `O_EXCL` refuse the write outright before
+        /// this fix, the plant alone enough to keep a skill's document
+        /// from ever being written. An unpredictable name is not worth
+        /// guessing, so the plant here changes nothing.
+        #[test]
+        fn a_file_at_the_old_predictable_temp_name_does_not_block_the_write() {
+            let root = tempfile::tempdir().unwrap();
+            let skills_dir = root.path().join("skills");
+            let dir = skills_dir.join("safe");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(format!(".skill-{}.tmp", std::process::id())),
+                "planted",
+            )
+            .unwrap();
+
+            write_skill(&skills_dir, "safe", "the real skill text").unwrap();
+
+            assert_eq!(
+                std::fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+                "the real skill text"
+            );
+        }
+
+        /// A write that keeps failing is reported, not merely logged: the
+        /// skill's own directory refusing new entries fails every attempt
+        /// at a temporary file the same way a permission refusal or a full
+        /// disk would, and `write_skill` answers `Err` for it rather than
+        /// swallowing the failure the way `sync_skills` used to.
+        #[test]
+        fn a_persistently_failing_write_is_reported() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let root = tempfile::tempdir().unwrap();
+            let skills_dir = root.path().join("skills");
+            let dir = skills_dir.join("safe");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+            let result = write_skill(&skills_dir, "safe", "the real skill text");
+
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(
+                result.is_err(),
+                "a directory that refuses every new entry must fail the write, not succeed silently"
+            );
+        }
+    }
+}
+
+/// The same contract on a platform with no `openat`: a symlink at a skill
+/// directory is refused on a path-based check, then a fresh document replaces
+/// `SKILL.md`. This catches every ordinary mistake, if not one timed between
+/// the path check and directory write.
+#[cfg(not(unix))]
+mod symlink_safe {
+    use std::fs::OpenOptions;
+    use std::io::{self, Write};
+    use std::path::Path;
+
+    fn is_symlink(path: &Path) -> bool {
+        std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    }
+
+    /// A temporary name must not be predictable: another process could
+    /// otherwise plant it first and stop the skill write with no further
+    /// access to the directory.
+    fn random_suffix() -> String {
+        let mut bytes = [0u8; 8];
+        getrandom::fill(&mut bytes).expect("the OS random source is available");
+        hex::encode(bytes)
+    }
+
+    const TEMP_NAME_ATTEMPTS: u32 = 8;
+
+    /// Write a fresh document and replace the old name in one rename. This
+    /// never opens the prior entry, so a hard link cannot change the file it
+    /// aliases outside the skills directory.
+    fn write_document_atomically(dir: &Path, document: &str) -> io::Result<()> {
+        for _ in 0..TEMP_NAME_ATTEMPTS {
+            let temporary = dir.join(format!(".skill-{}.tmp", random_suffix()));
+            let mut file = match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+            {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            };
+            if let Err(error) = file.write_all(document.as_bytes()) {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(error);
+            }
+            drop(file);
+            return match std::fs::rename(&temporary, dir.join("SKILL.md")) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let _ = std::fs::remove_file(&temporary);
+                    Err(error)
+                }
+            };
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not find an unused name for the skill document's temporary file",
+        ))
+    }
+
+    pub(super) fn write_skill(skills_dir: &Path, name: &str, document: &str) -> io::Result<()> {
+        let dir = skills_dir.join(name);
+        if is_symlink(&dir) {
+            std::fs::remove_file(&dir)?;
+        }
+        std::fs::create_dir_all(&dir)?;
+        write_document_atomically(&dir, document)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::write_skill;
+
+        /// The replacement write does not open the existing hard link. The
+        /// linked file stays unchanged and the skill receives a fresh file.
+        #[test]
+        fn a_hard_linked_skill_md_is_replaced_rather_than_written_through() {
+            let root = tempfile::tempdir().unwrap();
+            let skills_dir = root.path().join("skills");
+            let dir = skills_dir.join("safe");
+            std::fs::create_dir_all(&dir).unwrap();
+            let shared = root.path().join("shared.md");
+            std::fs::write(&shared, "not a skill").unwrap();
+            std::fs::hard_link(&shared, dir.join("SKILL.md")).unwrap();
+
+            write_skill(&skills_dir, "safe", "the real skill text").unwrap();
+
+            assert_eq!(std::fs::read_to_string(&shared).unwrap(), "not a skill");
+            assert_eq!(
+                std::fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+                "the real skill text"
+            );
+        }
+    }
 }
 
 /// A fully planned launch of one ACP agent.

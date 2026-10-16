@@ -201,6 +201,24 @@ async fn create_refuses_a_path_or_branch_it_cannot_use() {
         "the refusal names the branch: {}",
         err.error.message
     );
+
+    // Revision syntax, not a branch name.
+    for revision in ["main~1", "HEAD"] {
+        let err = h
+            .error(
+                post_json(
+                    "/v1/repositories",
+                    serde_json::json!({"path": repo.display().to_string(), "base_branch": revision}),
+                ),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert!(
+            err.error.message.contains("not a valid branch name"),
+            "{revision}: {}",
+            err.error.message
+        );
+    }
 }
 
 /// One registration per checkout and base branch; another branch of the same

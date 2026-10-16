@@ -260,30 +260,27 @@ async fn deliveries() {
         .into_iter()
         .find(|c| c.args.iter().any(|a| a == "POST"))
         .unwrap();
-    assert!(create.args.iter().any(|a| a.contains(&secret)));
+    // The secret travels on standard input, never on the command line a
+    // process list could read.
+    assert!(!create.args.iter().any(|a| a.contains(&secret)));
+    let create_body: Value = serde_json::from_str(create.input.as_deref().unwrap()).unwrap();
+    assert_eq!(create_body["config"]["secret"], secret);
     let expected_events: &[&str] = &[
-        "events[]=pull_request",
-        "events[]=pull_request_review",
-        "events[]=pull_request_review_comment",
-        "events[]=issue_comment",
-        "events[]=check_suite",
-        "events[]=check_run",
-        "events[]=status",
-        "events[]=issues",
+        "pull_request",
+        "pull_request_review",
+        "pull_request_review_comment",
+        "issue_comment",
+        "check_suite",
+        "check_run",
+        "status",
+        "issues",
     ];
-    for event in expected_events {
-        assert!(
-            create.args.iter().any(|a| a == event),
-            "missing event {event}"
-        );
-    }
+    assert_eq!(create_body["events"], json!(expected_events));
     assert_eq!(create.args[1], "repos/acme/widgets/hooks");
 
-    assert!(
-        create
-            .args
-            .iter()
-            .any(|a| a.contains(&format!("https://hooks.example/webhooks/{kind}/{id}")))
+    assert_eq!(
+        create_body["config"]["url"],
+        format!("https://hooks.example/webhooks/{kind}/{id}")
     );
     let _: Value = h
         .json(

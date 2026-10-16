@@ -75,6 +75,9 @@ The session task's tests prove that rule for a prompt.
    GitHub requests `pull_request`, `pull_request_review`, `pull_request_review_comment`, `issue_comment`,
    `check_suite`, `check_run`, `status`, and `issues` events, with TLS verification enabled.
    A GitHub URL update uses the configuration endpoint to preserve the secret.
+   Every hook request — creation and the configuration update alike — sends
+   its JSON body to `gh api` on standard input (`--input -`), the secret
+   included, never as a command-line argument a process list could read.
 7. A successful registration or update stores the hook ID and URL and enters `live`.
    The worker enters `WakeOnly` and fetches once to catch earlier changes.
    Startup and enable also fetch once, without a duplicate registration fetch.
@@ -179,7 +182,9 @@ A disabled integration has no worker, regardless of its retained hook status.
 - Configuration reads both keys and defaults to a random loopback port:
   `config.rs::tests::webhook_configuration_uses_a_random_port_unless_an_address_is_given`.
 - GitHub checks raw body signatures, event selection, secret generation, delivery timestamps, and the body cap,
-  and proves one initial fetch and no timer fetch while live:
+  proves one initial fetch and no timer fetch while live, and proves the
+  secret and the rest of the hook body reach `gh` on standard input rather
+  than as an argument:
   `webhooks.rs::github_signed_deliveries_wake_once_and_bad_signatures_ping_and_large_bodies_do_not`.
 - A burst of wakes folds into one debounce fetch without continued deliveries
   moving its deadline, and a rate-limited fetch remains visible as

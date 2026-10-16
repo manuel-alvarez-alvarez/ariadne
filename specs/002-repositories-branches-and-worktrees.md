@@ -1,11 +1,12 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-10-15
+updated: 2026-10-16
 areas: [store, api, daemon, cli, ui]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
   - crates/ariadne-daemon/src/branch.rs
+  - crates/ariadne-daemon/src/gitwt.rs
   - crates/ariadne-daemon/tests/it/repositories.rs
   - crates/ariadne-daemon/tests/it/ai_permissions.rs
   - crates/ariadne-daemon/tests/it/goal_repositories.rs
@@ -42,6 +43,9 @@ and the integration with it (025).
 3. A path and branch pair is unique: the same one cannot be registered twice.
    A path or branch the daemon cannot use is refused at creation. A checkout
    with no commits is usable: its base branch is the unborn one HEAD names.
+   A base branch is checked against `git check-ref-format --branch` before it
+   is looked up: revision syntax such as `main~1` or `HEAD` is refused rather
+   than resolved as if it named a branch.
 4. A repository a goal references cannot be deleted.
 5. Editing the base branch changes what *new* tasks branch from, and nothing
    about tasks already under way.
@@ -58,7 +62,10 @@ and the integration with it (025).
    because there is no merge base to read it against. It is read against the
    empty tree once it has landed too: that commit is the one the repository
    starts from, so it has no first parent either. Cutting orphan needs
-   git 2.42, which is the floor `ariadne doctor` warns below (014).
+   git 2.42, which is the floor `ariadne doctor` warns below (014). A
+   worktree's own path reaches every `git worktree` call as data, whatever
+   shape it takes: a `worktree_root` that gives it a leading `-` is still
+   created and still removed, rather than read as an unrecognized option.
 8. A review session on a pull request (029) gets a **detached, read-only**
    worktree pinned at the request's head, and it is refreshed to the new tip
    on every push. The refresh discards whatever the session left in the
@@ -110,7 +117,8 @@ and the integration with it (025).
   (`repositories.rs::crud_round_trip_emits_a_fat_event_per_write`).
 - The base branch defaults to the checked-out branch
   (`repositories.rs::base_branch_defaults_to_the_current_branch`), a path or
-  branch that cannot be used is refused
+  branch that cannot be used is refused, revision syntax such as `main~1` or
+  `HEAD` included
   (`::create_refuses_a_path_or_branch_it_cannot_use`), a checkout with no
   commits registers on its unborn branch
   (`::a_repository_with_no_commits_can_be_registered`), and the same pair
@@ -161,6 +169,10 @@ and the integration with it (025).
   commits gives an orphan worktree that has nothing to review until it
   commits, and then diffs, lands, and diffs again as a landed task
   (`::a_worktree_is_cut_from_a_base_branch_with_no_commits`).
+- A worktree path shaped like a flag is still created, checked out detached
+  and removed
+  (`gitwt.rs::tests::a_worktree_path_that_looks_like_a_flag_is_still_created`,
+  `::a_detached_worktree_path_that_looks_like_a_flag_is_still_created`).
 - A commit on a task branch reaches the stream
   (`task_branches.rs::a_commit_on_the_task_branch_reaches_the_stream`), the
   startup sweep follows the worktrees it finds

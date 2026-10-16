@@ -970,7 +970,10 @@ mod tests {
     async fn opening_a_console_on_a_long_session_reads_a_page_of_the_newest_events() {
         let (store, _dir) = test_store().await;
         let session = session_in(&store).await;
-        let recorded = 2_000;
+        // Enough past one page to prove the truncation and the order; ten
+        // pages' worth proves nothing more and only multiplies the commits
+        // this test waits on.
+        let recorded = SNAPSHOT_EVENTS as usize + 50;
         let mut committed = Vec::new();
         for _ in 0..recorded {
             committed.push(commit(&store, &session, "agent_message").await);

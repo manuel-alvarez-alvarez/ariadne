@@ -10,7 +10,7 @@ use std::time::Duration;
 use agent_client_protocol::schema::{ProtocolVersion, v1};
 use agent_client_protocol::{Agent, Client, ConnectionTo};
 use anyhow::{Context, Result, anyhow, bail};
-use futures_util::future::join_all;
+use futures_util::future::{BoxFuture, join_all};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::sync::RwLock;
@@ -51,6 +51,9 @@ pub struct AgentRegistry {
     /// Where each agent's catalog is kept across restarts, under its version.
     store: Store,
     timeouts: Timeouts,
+    /// How a registry index's bytes are fetched: [`HttpsFetch`] outside
+    /// tests.
+    fetch: Arc<dyn IndexFetch>,
 }
 
 #[derive(Clone)]
@@ -216,7 +219,18 @@ impl AgentRegistry {
             probe_cwd: Arc::new(probe_cwd),
             store,
             timeouts: Timeouts::default(),
+            fetch: Arc::new(HttpsFetch),
         }
+    }
+
+    /// The same registry, fetching a registry index over `fetch` rather
+    /// than real HTTPS: a test's own stand-in, which proves this module's
+    /// handling of a downloaded index without opening a socket, let alone a
+    /// TLS one, to prove it.
+    #[doc(hidden)]
+    pub fn with_index_fetch(mut self, fetch: Arc<dyn IndexFetch>) -> Self {
+        self.fetch = fetch;
+        self
     }
 
     fn entries(
@@ -309,16 +323,11 @@ impl AgentRegistry {
     }
 
     async fn download_index(&self, url: &str) -> Result<String> {
-        let bytes = reqwest::Client::builder()
-            .timeout(self.timeouts.registry_download)
-            .build()?
-            .get(url)
-            .send()
-            .await?
-            .error_for_status()?
-            .bytes()
+        refuse_insecure_registry_url(url)?;
+        let document = self
+            .fetch
+            .fetch(url, self.timeouts.registry_download)
             .await?;
-        let document = String::from_utf8(bytes.to_vec())?;
         acp_index::validate(&document)?;
         self.store.put_acp_registry_index(url, &document).await?;
         Ok(document)
@@ -338,10 +347,14 @@ impl AgentRegistry {
             let snapshot = chrono::DateTime::parse_from_rfc3339(SHIPPED_INDEX_DATE)
                 .expect("the shipped index date is valid");
             if fetched.is_ok_and(|fetched| fetched > snapshot) {
-                match acp_index::validate(&kept.document) {
-                    Ok(()) => return kept.document,
-                    Err(error) => {
-                        tracing::warn!(error = %error, "reading the kept ACP registry index failed");
+                if let Err(error) = refuse_insecure_registry_url(&kept.url) {
+                    tracing::warn!(error = %error, "the kept ACP registry index has no https provenance");
+                } else {
+                    match acp_index::validate(&kept.document) {
+                        Ok(()) => return kept.document,
+                        Err(error) => {
+                            tracing::warn!(error = %error, "reading the kept ACP registry index failed");
+                        }
                     }
                 }
             }
@@ -609,6 +622,76 @@ impl AgentRegistry {
                 })
             })
             .collect()
+    }
+}
+
+/// Refuse a registry index URL that is not `https`: the index names the
+/// command every ACP agent on this machine is started with, so a plain
+/// `http` source — on the wire or a redirect's `Location` reached while
+/// following one — is never trusted, loopback included. [`HttpsFetch`]
+/// checks the first hop here and every redirect the same way; a test
+/// substitutes [`IndexFetch`] entirely rather than being let through this
+/// check on a loophole.
+fn refuse_insecure_registry_url(url: &str) -> Result<()> {
+    let parsed =
+        reqwest::Url::parse(url).with_context(|| format!("invalid registry URL: {url}"))?;
+    if parsed.scheme() != "https" {
+        bail!("the ACP registry index must be fetched over https: {url}");
+    }
+    Ok(())
+}
+
+/// How the registry index's bytes are fetched. [`HttpsFetch`] is the only
+/// implementation a daemon ever runs on: real HTTPS, with every redirect
+/// hop checked the same way the first URL is. A test substitutes its own
+/// implementation — one that never opens a socket — so what it proves is
+/// this module's own logic (the scheme refusal, the storage, the fallback
+/// on a failed or refused document), not a second TLS stack built only to
+/// be trusted by a test.
+#[doc(hidden)]
+pub trait IndexFetch: Send + Sync {
+    fn fetch<'a>(&'a self, url: &'a str, timeout: Duration) -> BoxFuture<'a, Result<String>>;
+}
+
+/// The production [`IndexFetch`]: plain `reqwest`, redirects followed by
+/// hand rather than by the client, so a hop to `http` is refused instead of
+/// silently taken — `reqwest` follows a redirect regardless of scheme by
+/// default, which would undo the check on the URL that was configured.
+#[doc(hidden)]
+pub struct HttpsFetch;
+
+/// However many redirects [`HttpsFetch`] follows before it gives up: the
+/// same ceiling `reqwest`'s own default policy uses.
+const MAX_REGISTRY_REDIRECTS: usize = 10;
+
+impl IndexFetch for HttpsFetch {
+    fn fetch<'a>(&'a self, url: &'a str, timeout: Duration) -> BoxFuture<'a, Result<String>> {
+        Box::pin(async move {
+            let client = reqwest::Client::builder()
+                .timeout(timeout)
+                .redirect(reqwest::redirect::Policy::none())
+                .build()?;
+            let mut current = url.to_string();
+            for _ in 0..MAX_REGISTRY_REDIRECTS {
+                let response = client.get(&current).send().await?;
+                if !response.status().is_redirection() {
+                    let bytes = response.error_for_status()?.bytes().await?;
+                    return Ok(String::from_utf8(bytes.to_vec())?);
+                }
+                let location = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                    .ok_or_else(|| anyhow!("redirected from {current} with no Location header"))?;
+                let next = reqwest::Url::parse(&current)
+                    .and_then(|base| base.join(location))
+                    .with_context(|| format!("invalid redirect Location from {current}"))?
+                    .to_string();
+                refuse_insecure_registry_url(&next)?;
+                current = next;
+            }
+            bail!("too many redirects fetching the registry index from {url}");
+        })
     }
 }
 
@@ -1079,4 +1162,57 @@ fn choices(option: &v1::SessionConfigOption) -> Vec<Choice> {
         });
     }
     choices
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_https_registry_url_is_accepted() {
+        refuse_insecure_registry_url("https://cdn.agentclientprotocol.com/registry.json").unwrap();
+    }
+
+    #[test]
+    fn a_plain_http_registry_url_is_refused() {
+        assert!(refuse_insecure_registry_url("http://evil.example/registry.json").is_err());
+    }
+
+    /// `http` is refused even to a loopback host: nothing excuses the
+    /// scheme, and the test stand-in below proves the download logic
+    /// without ever needing such an exception.
+    #[test]
+    fn http_to_a_loopback_host_is_still_refused() {
+        assert!(refuse_insecure_registry_url("http://127.0.0.1:4000/index.json").is_err());
+        assert!(refuse_insecure_registry_url("http://localhost:4000/index.json").is_err());
+    }
+
+    /// `reqwest` follows a redirect regardless of scheme by default, which
+    /// would undo the check on the URL that was configured. `HttpsFetch`
+    /// disables that and checks each hop itself: a redirect from an
+    /// `https` start to an `http` `Location` is refused rather than
+    /// followed. The start here is plain `http` on purpose — proving the
+    /// hop check needs no TLS stand-in of its own, since what it proves
+    /// does not depend on the first request's own scheme, only on what it
+    /// does with the `Location` of a redirect.
+    #[tokio::test]
+    async fn https_fetch_refuses_a_redirect_to_a_plain_http_location() {
+        let app = axum::Router::new().route(
+            "/start",
+            axum::routing::get(|| async {
+                (
+                    axum::http::StatusCode::FOUND,
+                    [(axum::http::header::LOCATION, "http://insecure.example/next")],
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/start", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let result = HttpsFetch.fetch(&url, Duration::from_secs(5)).await;
+        let error = result.expect_err("a redirect to http must be refused");
+        assert!(format!("{error:#}").contains("https"), "{error:#}");
+        server.abort();
+    }
 }

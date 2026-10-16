@@ -2,6 +2,7 @@
 
 use crate::common;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use ariadne_daemon::acp_discovery::ManagerHomes;
@@ -61,51 +62,31 @@ fn choice(value: &str, name: &str) -> Value {
     json!({"value": value, "name": name})
 }
 
+/// A registry index a test controls without a socket of its own: the
+/// `IndexFetch` a test substitutes for `HttpsFetch` (acp_discovery.rs), so
+/// what a test proves is the download logic — the storage, the fallback on
+/// a failure or a refused document, the kept index surviving a restart —
+/// never a second TLS stack built only to be trusted by the test.
+///
+/// `URL` is a fixed, unreachable `https` placeholder: `download_index`
+/// checks the configured URL's scheme before it ever asks `fetch` for
+/// bytes, so the configured value must still read as `https`, even though
+/// nothing here ever dials it.
+#[derive(Clone)]
 struct IndexServer {
-    url: String,
     response: std::sync::Arc<std::sync::Mutex<(StatusCode, String)>>,
     requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     stalled: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    task: tokio::task::JoinHandle<()>,
 }
 
 impl IndexServer {
-    async fn new(document: String) -> Self {
-        let response = std::sync::Arc::new(std::sync::Mutex::new((StatusCode::OK, document)));
-        let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let stalled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let app = axum::Router::new().route(
-            "/index.json",
-            axum::routing::get({
-                let response = response.clone();
-                let requests = requests.clone();
-                let stalled = stalled.clone();
-                move || {
-                    let response = response.lock().unwrap().clone();
-                    requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let stalled = stalled.load(std::sync::atomic::Ordering::SeqCst);
-                    async move {
-                        let body = if stalled {
-                            axum::body::Body::from_stream(futures_util::stream::once(
-                                std::future::pending::<Result<String, std::io::Error>>(),
-                            ))
-                        } else {
-                            axum::body::Body::from(response.1)
-                        };
-                        (response.0, body)
-                    }
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/index.json", listener.local_addr().unwrap());
-        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    const URL: &'static str = "https://stub-registry.test/index.json";
+
+    fn new(document: String) -> Self {
         Self {
-            url,
-            response,
-            requests,
-            stalled,
-            task,
+            response: std::sync::Arc::new(std::sync::Mutex::new((StatusCode::OK, document))),
+            requests: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            stalled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -114,7 +95,7 @@ impl IndexServer {
         let existing = std::fs::read_to_string(&file).unwrap();
         std::fs::write(
             file,
-            format!("acp_registry_url = {:?}\n{existing}", self.url),
+            format!("acp_registry_url = {:?}\n{existing}", Self::URL),
         )
         .unwrap();
     }
@@ -124,9 +105,28 @@ impl IndexServer {
     }
 }
 
-impl Drop for IndexServer {
-    fn drop(&mut self) {
-        self.task.abort();
+impl ariadne_daemon::acp_discovery::IndexFetch for IndexServer {
+    fn fetch<'a>(
+        &'a self,
+        _url: &'a str,
+        timeout: Duration,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<String>> {
+        Box::pin(async move {
+            self.requests
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.stalled.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::time::timeout(timeout, std::future::pending::<()>())
+                    .await
+                    .unwrap_err();
+                anyhow::bail!("stub registry request timed out");
+            }
+            let (status, body) = self.response.lock().unwrap().clone();
+            if status.is_success() {
+                Ok(body)
+            } else {
+                anyhow::bail!("stub registry answered {status}")
+            }
+        })
     }
 }
 
@@ -151,11 +151,12 @@ fn index_db(h: &Harness) -> sqlx::SqlitePool {
 async fn refresh_downloads_the_configured_index_and_registers_its_installed_agent() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
-    let server = IndexServer::new(downloaded_index()).await;
+    let server = IndexServer::new(downloaded_index());
     let home = empty_home(dir.path());
     server.configure(&home);
     let h = harness()
         .home(home)
+        .index_fetch(Arc::new(server.clone()))
         .agents_on_path(agent.path_with(&["downloaded-agent"]))
         .discover_agents()
         .await;
@@ -180,11 +181,12 @@ async fn a_newer_kept_index_survives_a_restart_without_a_download() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
     let path = agent.path_with(&["downloaded-agent", "goose"]);
-    let server = IndexServer::new(downloaded_index()).await;
+    let server = IndexServer::new(downloaded_index());
     let home = empty_home(dir.path());
     server.configure(&home);
     let h = harness()
         .home(home.clone())
+        .index_fetch(Arc::new(server.clone()))
         .agents_on_path(path.clone())
         .await;
     let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
@@ -207,11 +209,12 @@ async fn a_kept_index_no_newer_than_the_snapshot_does_not_replace_it() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
     let path = agent.path_with(&["downloaded-agent", "goose"]);
-    let server = IndexServer::new(downloaded_index()).await;
+    let server = IndexServer::new(downloaded_index());
     let home = empty_home(dir.path());
     server.configure(&home);
     let h = harness()
         .home(home.clone())
+        .index_fetch(Arc::new(server.clone()))
         .agents_on_path(path.clone())
         .await;
     let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
@@ -236,6 +239,41 @@ async fn a_kept_index_no_newer_than_the_snapshot_does_not_replace_it() {
     assert_eq!(server.requests(), 1);
 }
 
+#[tokio::test]
+async fn a_kept_index_fetched_without_https_provenance_is_not_trusted() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with(&["downloaded-agent", "goose"]);
+    let server = IndexServer::new(downloaded_index());
+    let home = empty_home(dir.path());
+    server.configure(&home);
+    let h = harness()
+        .home(home.clone())
+        .index_fetch(Arc::new(server.clone()))
+        .agents_on_path(path.clone())
+        .await;
+    let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
+    // A daemon upgraded from a version with no https check may still hold a
+    // row an earlier download left over `http`; the kept row is checked
+    // again on every read, not only when it is written.
+    sqlx::query("UPDATE acp_registry_index SET url = ?")
+        .bind("http://stub-registry.test/index.json")
+        .execute(&index_db(&h))
+        .await
+        .unwrap();
+    let store = ariadne_store::Store::open(h.dir.path().join("test.db"))
+        .await
+        .unwrap();
+    let registry = ariadne_daemon::acp_discovery::AgentRegistry::new(&[], home, store, &path);
+    let agents = registry.discover().await;
+    assert_eq!(
+        agents.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
+        ["goose"],
+        "a kept index with no https provenance must not be trusted"
+    );
+    assert_eq!(server.requests(), 1, "the restart must not download");
+}
+
 async fn failed_index_refresh(status: StatusCode, document: &str) {
     use tracing_subscriber::layer::SubscriberExt;
 
@@ -246,11 +284,15 @@ async fn failed_index_refresh(status: StatusCode, document: &str) {
         {"id": "added-agent", "distribution": {"npx": {"package": "added-agent@1"}}}
     ]})
     .to_string();
-    let server = IndexServer::new(index).await;
+    let server = IndexServer::new(index);
     let home = empty_home(dir.path());
     server.configure(&home);
     let path = agent.path_with(&["downloaded-agent"]);
-    let h = harness().home(home).agents_on_path(path).await;
+    let h = harness()
+        .home(home)
+        .index_fetch(Arc::new(server.clone()))
+        .agents_on_path(path)
+        .await;
     let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
     let before = h.store.acp_registry_index().await.unwrap().unwrap();
     *server.response.lock().unwrap() = (status, document.into());
@@ -302,10 +344,13 @@ async fn a_refused_document_keeps_the_index_and_still_rescans_and_reprobes() {
 #[tokio::test]
 async fn each_good_download_replaces_the_single_kept_index() {
     let dir = tempfile::tempdir().unwrap();
-    let server = IndexServer::new(downloaded_index()).await;
+    let server = IndexServer::new(downloaded_index());
     let home = empty_home(dir.path());
     server.configure(&home);
-    let h = harness().home(home).await;
+    let h = harness()
+        .home(home)
+        .index_fetch(Arc::new(server.clone()))
+        .await;
     let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
     let replacement = r#"{"agents":[]}"#;
     *server.response.lock().unwrap() = (StatusCode::OK, replacement.into());
@@ -317,7 +362,7 @@ async fn each_good_download_replaces_the_single_kept_index() {
             .await
             .unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].0, server.url);
+    assert_eq!(rows[0].0, IndexServer::URL);
     assert_eq!(rows[0].1, replacement);
     let fetched = chrono::DateTime::parse_from_rfc3339(&rows[0].2).unwrap();
     assert!(fetched.timestamp_millis() >= before.timestamp_millis());
@@ -328,11 +373,12 @@ async fn each_good_download_replaces_the_single_kept_index() {
 async fn a_stalled_index_body_times_out_and_keeps_the_last_good_copy() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
-    let server = IndexServer::new(downloaded_index()).await;
+    let server = IndexServer::new(downloaded_index());
     let home = empty_home(dir.path());
     server.configure(&home);
     let h = harness()
         .home(home)
+        .index_fetch(Arc::new(server.clone()))
         .agents_on_path(agent.path_with(&["downloaded-agent"]))
         .timeouts(Timeouts {
             registry_download: common::RUNS_OUT,
@@ -1343,14 +1389,17 @@ async fn a_timed_out_probe_keeps_the_models_the_store_kept() {
     let agent = stub_acp_agent(dir.path(), setup.clone());
     // An index server of its own, so the refresh below never reaches the
     // real network registry: this test is about the probe timeout alone.
-    let server = IndexServer::new(r#"{"agents":[]}"#.into()).await;
+    let server = IndexServer::new(r#"{"agents":[]}"#.into());
     let home = home_with_agent("busy", &agent.bin);
     server.configure(&home);
     let h = settled(
-        harness().home(home).timeouts(Timeouts {
-            probe: common::RUNS_OUT,
-            ..Timeouts::default()
-        }),
+        harness()
+            .home(home)
+            .index_fetch(Arc::new(server.clone()))
+            .timeouts(Timeouts {
+                probe: common::RUNS_OUT,
+                ..Timeouts::default()
+            }),
         "busy",
     )
     .await;
@@ -1382,10 +1431,14 @@ async fn a_timed_out_probe_keeps_the_models_the_store_kept() {
 async fn discovery_refreshes_on_demand() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
-    let server = IndexServer::new(r#"{"agents":[]}"#.into()).await;
+    let server = IndexServer::new(r#"{"agents":[]}"#.into());
     let home = home_with_agent("refreshable", &agent.bin);
     server.configure(&home);
-    let h = settled(harness().home(home), "refreshable").await;
+    let h = settled(
+        harness().home(home).index_fetch(Arc::new(server.clone())),
+        "refreshable",
+    )
+    .await;
     let initial: Vec<Value> = h.get("/v1/models").await;
     assert!(
         initial
@@ -1742,10 +1795,14 @@ async fn a_catalog_is_read_once_per_agent_version() {
     setup["agent_info"] = json!({"name": "stub", "version": "1.0"});
     setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
     let agent = stub_acp_agent(dir.path(), setup.clone());
-    let server = IndexServer::new(r#"{"agents":[]}"#.into()).await;
+    let server = IndexServer::new(r#"{"agents":[]}"#.into());
     let home = home_with_agent("versioned", &agent.bin);
     server.configure(&home);
-    let h = settled(harness().home(home), "versioned").await;
+    let h = settled(
+        harness().home(home).index_fetch(Arc::new(server.clone())),
+        "versioned",
+    )
+    .await;
     let methods = agent.methods();
     assert!(has(&methods, "session/new"), "{methods:?}");
     assert!(has(&methods, "session/close"), "{methods:?}");

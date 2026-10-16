@@ -12,16 +12,65 @@
 //! open, and a skill the catalog loses is taken out of them on the same
 //! open, the same way.
 
+use std::ffi::OsStr;
+use std::path::Path;
+
 use crate::defaults::{BUILTIN_SKILLS, MERGED_SKILLS};
 use crate::query::Filtered;
 use crate::{Change, Result, Skill, Store, StoreError, now};
 
 #[derive(Debug, Clone)]
 pub struct NewSkill {
-    /// Kebab-case; how an agent loads the skill and how a task names it.
+    /// 1 to 64 characters of ASCII letters, digits, hyphens and underscores,
+    /// not leading with a hyphen or a dot: how an agent loads the skill and
+    /// how a task names it.
     pub name: String,
     /// The whole `SKILL.md`, frontmatter included.
     pub document: String,
+}
+
+/// Whether `name` is shaped as a skill name: 1 to 64 characters of ASCII
+/// letters in either case, digits, hyphens and underscores, not leading
+/// with a hyphen or a dot.
+fn is_skill_name_shape(name: &str) -> bool {
+    if name.is_empty() || name.len() > 64 {
+        return false;
+    }
+    if name.starts_with('-') || name.starts_with('.') {
+        return false;
+    }
+    name.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Whether `name`, joined onto `root`, stays a direct child of it: the
+/// join's parent is `root` itself, and its file name is `name` unchanged.
+///
+/// A name holding a separator, or naming `.` or `..`, walks the join
+/// somewhere else instead — `..` has no file name of its own at all, and
+/// the rest leave a parent or a file name the join's own does not match.
+/// `sync_skills` calls this with the skills directory canonicalized, so a
+/// symlink in it is resolved before the comparison; a caller with no real
+/// directory on hand — the store — calls it with the empty path instead,
+/// since the property it tests is `name`'s alone and holds the same way
+/// under any root.
+fn stays_in(root: &Path, name: &str) -> bool {
+    let candidate = root.join(name);
+    candidate.parent() == Some(root) && candidate.file_name() == Some(OsStr::new(name))
+}
+
+/// Why `name` is not an acceptable skill name, or `None` where it is.
+pub fn skill_name_rejection(name: &str, root: &Path) -> Option<&'static str> {
+    if !is_skill_name_shape(name) {
+        return Some(
+            "skill name must be 1 to 64 characters of ASCII letters, digits, hyphens or \
+             underscores, and must not start with a hyphen or a dot",
+        );
+    }
+    if !stays_in(root, name) {
+        return Some("skill name must name one entry directly under the skills directory");
+    }
+    None
 }
 
 impl Store {
@@ -139,7 +188,42 @@ impl Store {
     /// Create a skill of the user's own. It carries its own document: nothing
     /// ships under its name for it to fall back to.
     pub async fn create_skill(&self, new: NewSkill) -> Result<Skill> {
+        if let Some(reason) = skill_name_rejection(&new.name, Path::new("")) {
+            return Err(StoreError::Invalid(format!(
+                "{reason} (got `{}`)",
+                new.name
+            )));
+        }
         let ts = now();
+        // A case-insensitive volume — the macOS default, and Windows's own —
+        // maps `Demo` and `demo` to one directory: two rows the exact
+        // `UNIQUE` constraint below sees as distinct would still collide the
+        // moment `sync_skills` wrote both, one document overwriting the
+        // other with no error either side could see.
+        //
+        // The check and the insert run on the one write connection, in the
+        // one transaction, rather than the check reading through the
+        // separate read pool first: the write pool holds a single
+        // connection, so two concurrent calls each do not interleave their
+        // own check and insert here the way they would across two pools —
+        // the second call's check waits for the first's whole transaction,
+        // commit or rollback, before it ever runs. Checked against every
+        // name already here, shipped skills included, not only the user's
+        // own.
+        let mut tx = self.w().begin().await?;
+        let existing: Vec<String> = sqlx::query_scalar("SELECT name FROM skills")
+            .fetch_all(&mut *tx)
+            .await?;
+        if let Some(existing) = existing
+            .into_iter()
+            .find(|name| name != &new.name && name.eq_ignore_ascii_case(&new.name))
+        {
+            return Err(StoreError::Conflict(format!(
+                "skill name `{}` differs only in case from `{existing}`, which a \
+                 case-insensitive filesystem would write to the same directory",
+                new.name
+            )));
+        }
         sqlx::query(
             "INSERT INTO skills (name, document, builtin, created_at, updated_at)
              VALUES (?, ?, 0, ?, ?)",
@@ -148,9 +232,10 @@ impl Store {
         .bind(&new.document)
         .bind(&ts)
         .bind(&ts)
-        .execute(self.w())
+        .execute(&mut *tx)
         .await
         .map_err(|e| taken(e, &new.name))?;
+        tx.commit().await?;
         let skill = self.get_skill(&new.name).await?;
         self.publish(Change::SkillCreated(skill.clone()));
         Ok(skill)

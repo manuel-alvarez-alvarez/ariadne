@@ -582,11 +582,10 @@ async fn a_tunnel_to_the_listener_registers_the_hook_and_a_delivery_through_it_f
         .into_iter()
         .find(|c| c.args.iter().any(|a| a == "POST"))
         .unwrap();
-    assert!(
-        create
-            .args
-            .iter()
-            .any(|a| a.contains(&format!("{}/webhooks/github/{id}", server.url(&sub))))
+    let body: Value = serde_json::from_str(create.input.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        body["config"]["url"],
+        format!("{}/webhooks/github/{id}", server.url(&sub))
     );
     let state = tunnel(&h).await;
     assert!(state.enabled);

@@ -53,6 +53,31 @@ async fn a_column_agent_fails_its_own_task_with_the_reason_on_it() {
     assert_eq!(read.reason.as_deref(), Some(REASON));
 }
 
+/// A `merge_commit` that is not a plausible sha — one starting with `-`, or
+/// holding a character no sha does — never reaches a git command: it is
+/// refused on the transitions route before the transition itself runs.
+#[tokio::test]
+async fn a_malformed_merge_commit_is_refused_on_the_transitions_route() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let develop = h.agent_session(&cast, "develop").await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+
+    for sha in ["-oops", "not-hex-at-all-zzzz", "abc"] {
+        let refused = h
+            .error(
+                common::as_session(
+                    &transitions_uri(&cast),
+                    &develop.id,
+                    serde_json::json!({"to": "failed", "reason": "bad sha", "merge_commit": sha}),
+                ),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await;
+        assert_eq!(refused.error.code, "invalid_request", "{sha}");
+    }
+}
+
 /// Giving a task up is its agents' move and the daemon's. The orchestrator
 /// holds the plan and has other answers — cancel it, rewrite it — so the
 /// state machine refuses it the move by name, and the task is left where it
