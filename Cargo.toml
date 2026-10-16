@@ -96,7 +96,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 # The line diff of a tool call's file change: an ACP agent sends the old text
 # and the new text of a file, and the console shows the hunks between them,
 # with context, rather than every old line and then every new one.
-similar = "2"
+similar = "3"
 # The grammars that colour a fenced code block by its language, and nothing
 # else: `parsing` gives the parser that turns a line into scopes,
 # `default-syntaxes` the Sublime Text grammars built into the binary, and
