@@ -347,7 +347,10 @@ same binary also serves (013).
 42a. `pr search --repo <repo> <query>` searches the last fetched open
     requests of that enabled repository that are not yours; `pr refresh
     [--repo <repo>]` requests a fetch for that repository's requests, or
-    every enabled repository's where none is named.
+    every enabled repository's where none is named. It returns after the
+    fetch wakes, so a following `pr ls` can still show the previous list.
+    `pr ls --watch`, started before `pr refresh`, redraws after the fetch
+    reports a change.
 
 ## Known gap
 
