@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-10-12
+updated: 2026-10-16
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
@@ -225,8 +225,11 @@ outside half) opens no session either: it asks only `initialize` and
      newline goes, where the path is the worktree, the repository or a
      directory under one of them; a relative path without `..` counts as
      under the worktree. Every `2>&1` goes. A trailing pipe chain goes where
-     every program in it is `tail`, `head`, `wc`, `cat`, `sort` or `uniq`
-     and none of it redirects or substitutes.
+     every program in it is `tail`, `head`, `wc`, `cat`, `sort` or `uniq`,
+     and every argument after the program is a value-free flag or a number.
+     A pipe remains where a filter redirects, substitutes, names a file or a
+     program (`-o`, `--output`, `--compress-program`, `-T` or
+     `--files0-from`), has a bare operand or has an option with `=`.
    - The placeholders, in every string value. The repository path becomes
      `<REPO>`, the worktree `<WORKTREE>` and the session's branch
      `<BRANCH>`, the longest first, then the home directory `<HOME>`. Then
@@ -249,7 +252,10 @@ outside half) opens no session either: it asks only `initialize` and
    and `brew`, the
    first argument that does not start with `-` follows, after the global
    options of `git`: `git push`, `cargo nextest`, `ls`. The family of every
-   other tool is the tool name.
+   other tool is the tool name. A family row for `Bash` answers only one
+   simple command and its stripped output-filter tail. It does not answer a
+   command with `&&`, `||`, `;`, a newline, command substitution, or a pipe
+   that the key did not strip.
    The level is `once`, `command` or `family`, and the scope `repository` or
    `all`. Each row keeps the key, the level, the family, the request's
    derived risk tags (022) in `derive` order, the scope, the whole `toolCall`
@@ -441,7 +447,8 @@ outside half) opens no session either: it asks only `initialize` and
   and a row whose risk tags lack one of the request's does not answer it
   (`::a_row_without_the_requests_risk_tags_does_not_answer_it`).
 - The key keeps the fields of each tool, drops a `cd` into the worktree, a
-  `2>&1` and an output filter, and replaces one-time values in order
+  `2>&1` and an output filter with only inert flags and numbers, and replaces
+  one-time values in order
   (`learned_key.rs::the_four_forms_of_one_rebase_give_one_key`,
   `::two_complete_step_inputs_with_different_shas_give_one_key`,
   `::two_edits_of_one_file_give_one_key`,
@@ -453,9 +460,16 @@ outside half) opens no session either: it asks only `initialize` and
   `::one_time_values_are_placeholders_and_numbers_are_kept`,
   `::an_uppercase_hash_is_a_placeholder`,
   `::only_the_sessions_own_branch_is_the_branch_placeholder`,
-  `::a_fetch_keys_on_its_host_and_a_search_on_nothing`), and the family is
-  the program and its subcommand
-  (`::the_family_is_the_program_and_its_subcommand`).
+  `::a_fetch_keys_on_its_host_and_a_search_on_nothing`,
+  `::a_filter_with_an_output_or_program_option_stays_in_the_key`), and the
+  family is the program and its subcommand
+  (`::the_family_is_the_program_and_its_subcommand`,
+  `::a_family_covers_one_command_and_safe_output_filters`).
+- A family row asks for a chained Bash command rather than answering it
+  (`acp_console.rs::a_family_row_does_not_answer_a_chained_command`).
+- A command row answers `tail` and `head` output filters, but asks again for
+  filters that can write a file or run a program
+  (`acp_console.rs::a_command_row_answers_only_safe_output_filters`).
 - Two writes with one repository, tool name, level and key keep one row: the
   second keeps the id and `created_at` and sets the scope, and the row
   carries the key, the level, the family, the tags and the scope

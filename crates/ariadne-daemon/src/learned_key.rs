@@ -27,6 +27,7 @@ pub(crate) struct Facts {
 pub(crate) struct Key {
     pub(crate) key: String,
     pub(crate) family: String,
+    pub(crate) family_safe: bool,
 }
 
 /// The tools whose input is a file and its contents: only the file counts.
@@ -55,6 +56,11 @@ pub(crate) fn normalize(tool_name: &str, raw_input: &Value, facts: &Facts) -> Ke
     {
         *command = bash_command(command, facts);
     }
+    let family_safe = tool_name != "Bash"
+        || kept
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(is_single_family_command);
     let kept = placeholders(&kept, facts);
     let family = match (tool_name, kept.get("command")) {
         ("Bash", Some(Value::String(command))) => {
@@ -65,6 +71,7 @@ pub(crate) fn normalize(tool_name: &str, raw_input: &Value, facts: &Facts) -> Ke
     Key {
         key: sorted(&kept).to_string(),
         family,
+        family_safe,
     }
 }
 
@@ -152,7 +159,8 @@ fn without_cd<'a>(command: &'a str, facts: &Facts) -> &'a str {
 }
 
 /// The command without a trailing pipe chain whose every program is an
-/// output filter. A filter that redirects or substitutes is kept.
+/// output filter. A filter that redirects, substitutes or takes a file or
+/// program is kept.
 fn without_filters(command: &str) -> &str {
     let mut pipes = Vec::new();
     let mut last_other = None;
@@ -192,13 +200,152 @@ fn without_filters(command: &str) -> &str {
         }
         let filter = &command[pipe + 1..cut];
         let plain = !filter.contains(['>', '<', '$', '`', '(', '&', '|']);
-        let program = filter.split_whitespace().next().unwrap_or_default();
-        if !plain || !FILTERS.contains(&program) {
+        let mut words = filter.split_whitespace();
+        let program = words.next().unwrap_or_default();
+        if !plain
+            || !FILTERS.contains(&program)
+            || !words.all(|argument| filter_argument_is_inert(program, argument))
+        {
             break;
         }
         cut = pipe;
     }
     &command[..cut]
+}
+
+/// Whether `argument` changes only how a filter renders its input. The lists
+/// intentionally exclude every option that can name a file or program.
+fn filter_argument_is_inert(program: &str, argument: &str) -> bool {
+    if argument.bytes().all(|byte| byte.is_ascii_digit())
+        || argument.strip_prefix('-').is_some_and(|number| {
+            !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    {
+        return true;
+    }
+    let flags = match program {
+        "tail" | "head" => &[
+            "-c",
+            "-n",
+            "-q",
+            "-s",
+            "-v",
+            "-z",
+            "--bytes",
+            "--lines",
+            "--quiet",
+            "--silent",
+            "--verbose",
+            "--zero-terminated",
+        ][..],
+        "wc" => &[
+            "-c",
+            "-m",
+            "-l",
+            "-w",
+            "-L",
+            "--bytes",
+            "--chars",
+            "--lines",
+            "--words",
+            "--max-line-length",
+        ][..],
+        "cat" => &[
+            "-A",
+            "-b",
+            "-e",
+            "-E",
+            "-n",
+            "-s",
+            "-t",
+            "-u",
+            "-v",
+            "--number",
+            "--number-nonblank",
+            "--show-all",
+            "--show-ends",
+            "--show-nonprinting",
+            "--show-tabs",
+            "--squeeze-blank",
+        ][..],
+        "sort" => &[
+            "-b",
+            "-d",
+            "-f",
+            "-g",
+            "-h",
+            "-i",
+            "-M",
+            "-n",
+            "-R",
+            "-r",
+            "-V",
+            "-z",
+            "--check",
+            "--debug",
+            "--dictionary-order",
+            "--general-numeric-sort",
+            "--human-numeric-sort",
+            "--ignore-case",
+            "--ignore-leading-blanks",
+            "--month-sort",
+            "--numeric-sort",
+            "--random-sort",
+            "--reverse",
+            "--stable",
+            "--unique",
+            "--version-sort",
+            "--zero-terminated",
+        ][..],
+        "uniq" => &[
+            "-c",
+            "-d",
+            "-D",
+            "-i",
+            "-u",
+            "-z",
+            "--all-repeated",
+            "--count",
+            "--group",
+            "--ignore-case",
+            "--repeated",
+            "--unique",
+            "--zero-terminated",
+        ][..],
+        _ => return false,
+    };
+    flags.contains(&argument)
+}
+
+/// A family can cover one simple command and its stripped output filters.
+fn is_single_family_command(command: &str) -> bool {
+    let command = without_filters(command).trim();
+    let bytes = command.as_bytes();
+    let mut quote = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        match quote {
+            Some(b'\'') if byte == b'\'' => quote = None,
+            Some(b'\'') => {}
+            Some(b'"') if byte == b'"' => quote = None,
+            Some(b'"') if byte == b'\\' => index += 1,
+            Some(b'"') if byte == b'`' || (byte == b'$' && bytes.get(index + 1) == Some(&b'(')) => {
+                return false;
+            }
+            Some(b'"') => {}
+            Some(_) => unreachable!(),
+            None => match byte {
+                b'\\' => index += 1,
+                b'\'' | b'"' => quote = Some(byte),
+                b'`' | b'(' | b')' | b';' | b'&' | b'|' | b'\n' => return false,
+                b'$' if bytes.get(index + 1) == Some(&b'(') => return false,
+                _ => {}
+            },
+        }
+        index += 1;
+    }
+    true
 }
 
 /// Every string of the value with this session's paths and names, then the
@@ -446,6 +593,52 @@ mod tests {
             key("Bash", json!({"command": "ls | tail -1 && rm a"})),
             r#"{"command":"ls | tail -1 && rm a"}"#
         );
+    }
+
+    /// A trailing filter stays in the key when an option can name a file or
+    /// execute another program.
+    #[test]
+    fn a_filter_with_an_output_or_program_option_stays_in_the_key() {
+        assert_eq!(
+            key(
+                "Bash",
+                json!({"command": "git status | sort -o status.txt"})
+            ),
+            r#"{"command":"git status | sort -o status.txt"}"#
+        );
+        assert_eq!(
+            key(
+                "Bash",
+                json!({"command": "git status | sort -S1 --compress-program=payload"})
+            ),
+            r#"{"command":"git status | sort -S1 --compress-program=payload"}"#
+        );
+    }
+
+    /// A family skips only trailing filters that the key stripped, never a
+    /// second shell command or an unsafe pipe.
+    #[test]
+    fn a_family_covers_one_command_and_safe_output_filters() {
+        for command in ["git status", "git status 2>&1 | head -n 20"] {
+            assert!(
+                normalize("Bash", &json!({"command": command}), &facts()).family_safe,
+                "{command}"
+            );
+        }
+        for command in [
+            "git status && ./payload",
+            "git status; rm payload",
+            "git status\nrm payload",
+            "git status $(./payload)",
+            "git status <(./payload)",
+            "git status `./payload`",
+            "git status | grep clean",
+        ] {
+            assert!(
+                !normalize("Bash", &json!({"command": command}), &facts()).family_safe,
+                "{command}"
+            );
+        }
     }
 
     /// The longest of the repository, the worktree and the branch is

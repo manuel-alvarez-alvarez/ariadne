@@ -234,7 +234,7 @@ fn state(request: &Value, workspace: Option<&str>, derived: &Derived) -> Value {
     let mut call = Map::new();
     insert_nonempty(&mut call, "tool", tool_call.get("title"));
     insert_nonempty(&mut call, "kind", tool_call.get("kind"));
-    let input = compact_json(raw_input(tool_call), INPUT_CUT);
+    let input = compact_json(&ordered_input(tool_call), INPUT_CUT);
     if !input.is_empty() {
         call.insert("input".into(), Value::String(input));
     }
@@ -290,6 +290,46 @@ fn raw_input(tool_call: &Value) -> &Value {
         .unwrap_or(&EMPTY_INPUT)
 }
 
+/// Put the input that describes the request first, before the bounded JSON
+/// representation reaches the model.
+fn ordered_input(tool_call: &Value) -> Value {
+    let input = raw_input(tool_call);
+    let Value::Object(fields) = input else {
+        return input.clone();
+    };
+    let tool = tool_call
+        .get("name")
+        .or_else(|| tool_call.get("title"))
+        .and_then(Value::as_str);
+    let field = match tool {
+        Some("Bash") if fields.contains_key("command") => Some("command"),
+        Some("WebFetch") if fields.contains_key("url") => Some("url"),
+        Some("Edit" | "Write" | "Read" | "MultiEdit" | "NotebookEdit")
+            if fields.contains_key("file_path") =>
+        {
+            Some("file_path")
+        }
+        Some("Edit" | "Write" | "Read" | "MultiEdit" | "NotebookEdit")
+            if fields.contains_key("path") =>
+        {
+            Some("path")
+        }
+        _ => None,
+    };
+    let Some(field) = field else {
+        return input.clone();
+    };
+    let mut ordered = Map::new();
+    ordered.insert(field.into(), fields[field].clone());
+    ordered.extend(
+        fields
+            .iter()
+            .filter(|(name, _)| name.as_str() != field)
+            .map(|(name, value)| (name.clone(), value.clone())),
+    );
+    Value::Object(ordered)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -328,6 +368,27 @@ mod tests {
             checked += 1;
         }
         assert!(checked > 800, "the fixture holds {checked} requests");
+    }
+
+    /// The short input starts with the field that identifies the operation,
+    /// without dropping a field from the state.
+    #[test]
+    fn the_operative_input_field_precedes_the_cut() {
+        for (tool, field, value) in [
+            ("Bash", "command", "git status"),
+            ("Read", "file_path", "src/lib.rs"),
+            ("Write", "path", "docs/permissions.md"),
+            ("WebFetch", "url", "https://example.test/docs"),
+        ] {
+            let raw = json!({"description": "x".repeat(INPUT_CUT), field: value});
+            let tool_call = json!({"name": tool, "rawInput": raw});
+            let ordered = ordered_input(&tool_call);
+            assert_eq!(ordered, tool_call["rawInput"], "{tool}: fields");
+            assert!(
+                compact_json(&ordered, INPUT_CUT).starts_with(&format!(r#"{{"{field}":"{value}""#)),
+                "{tool}: order"
+            );
+        }
     }
 
     /// Four recorded benchmark answers preserve the danger calculation without

@@ -1294,6 +1294,52 @@ async fn a_family_row_keeps_the_force_tag_guard() {
     assert_eq!(request["learned_id"], serde_json::Value::Null);
 }
 
+/// A family approval cannot cover a second command, even when that command
+/// has no derived risk tag of its own.
+#[tokio::test]
+async fn a_family_row_does_not_answer_a_chained_command() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        agent_dir.path(),
+        permission_script_for(bash_call("git status && ./payload")),
+    );
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+    let mut row = bash_row(
+        &cast,
+        "git status",
+        "git status",
+        json!([{"optionId": "yes", "name": "Allow", "kind": "allow_once"}]),
+    );
+    row.key = "git status".into();
+    row.level = "family".into();
+    h.store.record_learned_permission(row).await.unwrap();
+
+    let first = asked(&h, &cast.task.id).await;
+    assert_eq!(
+        permission_event(&h, &first.id, "permission_request").await["learned_id"],
+        serde_json::Value::Null
+    );
+
+    stub.reprogram(permission_script_for(bash_call("git status; rm payload")));
+    let second_task = h
+        .task_on(
+            &cast.goal,
+            &cast.repo,
+            "Semicolon command",
+            common::test_pin(),
+        )
+        .await;
+    let second = asked(&h, &second_task.id).await;
+    assert_eq!(
+        permission_event(&h, &second.id, "permission_request").await["learned_id"],
+        serde_json::Value::Null
+    );
+}
+
 #[tokio::test]
 async fn once_and_reject_choices_record_once_and_ask_again() {
     let root = tempfile::tempdir().unwrap();
@@ -1520,6 +1566,63 @@ async fn learn_answers_a_request_that_differs_only_by_one_time_values() {
     assert_eq!(learned.len(), 1, "a learned answer records nothing");
     assert_eq!(learned[0].key, r#"{"command":"git show --stat <HASH>"}"#);
     assert_eq!(learned[0].family, "git show");
+}
+
+/// A command approval carries over to an inert output filter, but a filter
+/// that can write a file or run a program asks again.
+#[tokio::test]
+async fn a_command_row_answers_only_safe_output_filters() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        agent_dir.path(),
+        permission_script_for(bash_call("git status | tail -40")),
+    );
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
+    allowed_row(&h, &cast, "git status", "git status").await;
+
+    for (title, command) in [
+        ("Tail output", "git status | tail -40"),
+        ("Head output", "git status 2>&1 | head -n 20"),
+    ] {
+        stub.reprogram(permission_script_for(bash_call(command)));
+        let task = h
+            .task_on(&cast.goal, &cast.repo, title, common::test_pin())
+            .await;
+        ready(&h, &task.id).await;
+        let session = h.start_agent(&task, "develop").await;
+        eventually(TIMEOUT, "the learned answer", || async {
+            h.session_status(&session).await == SessionStatus::Idle
+        })
+        .await;
+        assert_eq!(
+            permission_event(&h, &session.id, "permission.replied").await["decided_by"],
+            "learned",
+            "{command}"
+        );
+    }
+
+    for (title, command) in [
+        ("Output option", "git status | sort -o status.txt"),
+        (
+            "Program option",
+            "git status | sort -S1 --compress-program=payload",
+        ),
+    ] {
+        stub.reprogram(permission_script_for(bash_call(command)));
+        let task = h
+            .task_on(&cast.goal, &cast.repo, title, common::test_pin())
+            .await;
+        let session = asked(&h, &task.id).await;
+        assert_eq!(
+            permission_event(&h, &session.id, "permission_request").await["learned_id"],
+            serde_json::Value::Null,
+            "{command}"
+        );
+    }
 }
 
 /// A row answers only a request whose risk tags it holds all of: a row with

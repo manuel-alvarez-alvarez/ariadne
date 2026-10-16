@@ -2282,6 +2282,9 @@ impl RuntimeIncoming {
             return None;
         }
         for (level, row_key) in [("command", &key.key), ("family", &key.family)] {
+            if level == "family" && !key.family_safe {
+                continue;
+            }
             let row = self
                 .sink
                 .runtime
