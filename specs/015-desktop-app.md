@@ -674,8 +674,9 @@ Out: the daemon endpoints themselves (012).
 46. The packaged webview has a content security policy that permits scripts,
     styles, fonts and images from the app. It permits HTTP, HTTPS, WebSocket
     and secure WebSocket connections because the user selects the daemon's
-    host. It permits no objects, bases, embedded ancestors or evaluated
-    script.
+    host. It permits Tauri IPC connections through `ipc:` and
+    `http://ipc.localhost`, so bundled plugins can work. It permits no
+    objects, bases, embedded ancestors or evaluated script.
 47. A click on an external `<a>`, anywhere in the app, opens it in the
     system's default browser instead of the webview, which otherwise ignores
     `target="_blank"` and has no opener wired in. The handler permits only
@@ -1128,7 +1129,8 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/tasks/task-history.test.tsx::renders a transition's
   reason as Markdown`).
 - The Tauri configuration has the restrictive content security policy that
-  permits the configurable daemon connections without evaluated script
+  permits the configurable daemon and Tauri IPC connections without evaluated
+  script
   (`ui/src/lib/tauri-config.test.ts::carries a restrictive content security policy`).
 - The app-root handler permits only the supported external schemes, confirms
   a disguised target before opening it, leaves an in-app link alone, and does
