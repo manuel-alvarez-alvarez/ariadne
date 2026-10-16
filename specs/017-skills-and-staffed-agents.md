@@ -165,7 +165,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
     plain file the sync itself made, so a symlink found at either is never
     a skill's own, named or not, and is removed outright rather than
     written through — the one path by which a name this sync never rejects
-    could still reach outside `skills_dir`.
+    could still reach outside `skills_dir`. On Unix each is opened directly
+    off a directory already held open by its descriptor, with the name
+    resolved once and never again, so a path swapped for a symlink after
+    this sync already checked it is still refused, not raced.
 
 ## Acceptance criteria
 
@@ -185,7 +188,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - A name that passes the slug check is still never written through a
   symlink already sitting at its directory, and lands at its own, now real,
   directory once the symlink is cleared:
-  `skill_documents.rs::a_symlinked_skill_directory_is_never_written_through`.
+  `skill_documents.rs::a_symlinked_skill_directory_is_never_written_through`,
+  `::a_symlinked_skill_md_is_never_written_through`.
 - A skill an agent still loads cannot be deleted
   (`store.rs::a_skill_an_agent_still_loads_cannot_be_deleted`), and an agent
   cannot be staffed on a skill nothing answers to

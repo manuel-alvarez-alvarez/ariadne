@@ -201,6 +201,53 @@ async fn a_symlinked_skill_directory_is_never_written_through() {
     );
 }
 
+/// The same proof one level down: a real directory already at a slug-valid
+/// name, but its `SKILL.md` itself is the symlink. Writing the real document
+/// never goes through it either.
+#[tokio::test]
+async fn a_symlinked_skill_md_is_never_written_through() {
+    let h = harness().await;
+    let outside = tempfile::tempdir().unwrap();
+    let decoy = outside.path().join("decoy.md");
+    std::fs::write(&decoy, "not a skill").unwrap();
+    let skills_dir = &h.launcher.cfg.skills_dir;
+    let dir = skills_dir.join("also-safe");
+    std::fs::create_dir_all(&dir).unwrap();
+    let document_path = dir.join("SKILL.md");
+    std::os::unix::fs::symlink(&decoy, &document_path).unwrap();
+
+    let created: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "also-safe",
+                    "document": "---\nname: also-safe\ndescription: also safe\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    assert_eq!(
+        std::fs::read_to_string(&decoy).unwrap(),
+        "not a skill",
+        "wrote through the symlink to a file outside the skill's own directory"
+    );
+    assert!(
+        !std::fs::symlink_metadata(&document_path)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the symlinked SKILL.md survived the sync"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&document_path).unwrap(),
+        created.document,
+        "the skill was not written to its own, now real, SKILL.md"
+    );
+}
+
 /// And the other way round: a shipped skill is reset rather than deleted, so
 /// the catalog cannot be emptied by mistake.
 #[tokio::test]

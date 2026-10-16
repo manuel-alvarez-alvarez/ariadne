@@ -212,7 +212,7 @@ fn words(text: &str) -> Vec<&str> {
 /// The words of a line as a shell reads them: split at whitespace outside
 /// quotes, with an escaped character kept and the quotes dropped, so
 /// `git -C '/repo/my project' grep` gives `/repo/my project` as one word.
-fn shell_words(text: &str) -> Vec<String> {
+pub(crate) fn shell_words(text: &str) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut words = Vec::new();
     let mut word = String::new();

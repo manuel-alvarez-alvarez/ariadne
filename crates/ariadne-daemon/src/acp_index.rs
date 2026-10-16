@@ -131,18 +131,16 @@ const SHELL_INTERPRETERS: &[&str] = &[
     "pwsh",
 ];
 
-/// Every whitespace-separated word of every element of `command`.
-///
-/// `env -S STRING` (and its long form, `--split-string=STRING`) splits
-/// `STRING` on whitespace itself and execs the first word of it, the
-/// shebang line of a script with arguments uses the same flag for the same
-/// reason — so a shell name or a `-c`-shaped flag can ride into `command`
-/// one word inside a single combined argument, `["env", "-S", "sh -c
-/// payload"]`, rather than as an element of its own. Splitting every
-/// element the same way `env` would catches that without a special case
-/// for `env`, or for whatever else might be made to do the same split.
-fn words(command: &[String]) -> impl Iterator<Item = &str> {
-    command.iter().flat_map(|part| part.split_whitespace())
+/// Every word of every element of `command`, split and quote-removed the
+/// way a shell — and `env -S`, documented as using "the same syntax as the
+/// shell" — reads a line: `s''h -'c'` is the two words `sh` and `-c` to
+/// either, not the literal text `names_a_shell` would see by splitting on
+/// whitespace alone.
+fn words(command: &[String]) -> Vec<String> {
+    command
+        .iter()
+        .flat_map(|part| crate::ai_permissions::derive::shell_words(part))
+        .collect()
 }
 
 /// Whether `command` names a shell interpreter anywhere in it, or carries a
@@ -152,17 +150,21 @@ fn words(command: &[String]) -> impl Iterator<Item = &str> {
 /// A shell is refused by name wherever it sits, not only at the start of
 /// `command`: `env sh -lc payload` runs the shell exactly as `sh -lc
 /// payload` does, with `env` — a program of its own, never refused by name
-/// — as the one `PATH` answers for. Every shell takes its command string on
-/// `-c`, which getopt lets a caller bundle behind other single-letter flags
-/// (`-lc`, `-ic`): a short option that is not `--` and ends the bundle on
-/// `c` is refused the same as a bare `-c`.
+/// — as the one `PATH` answers for. `env -S` (and `env --split-string`)
+/// re-splits one combined argument into words the same way, quoting
+/// included, which is why `words` parses quotes rather than only
+/// whitespace. Every shell takes its command string on `-c`, which getopt
+/// lets a caller bundle behind other single-letter flags (`-lc`, `-ic`): a
+/// short option that is not `--` and ends the bundle on `c` is refused the
+/// same as a bare `-c`.
 fn names_a_shell(command: &[String]) -> bool {
-    words(command).any(|word| {
+    let words = words(command);
+    words.iter().any(|word| {
         let base = word.rsplit(['/', '\\']).next().unwrap_or(word);
-        let base = base.trim_matches(['\'', '"']);
         let base = base.strip_suffix(".exe").unwrap_or(base);
         SHELL_INTERPRETERS.contains(&base)
-    }) || words(command)
+    }) || words
+        .iter()
         .any(|word| word.starts_with('-') && !word.starts_with("--") && word.ends_with('c'))
 }
 
@@ -596,6 +598,34 @@ mod tests {
         let index = serde_json::json!({"agents": [
             {"id": "env-split-shell", "distribution": {"binary": {
                 key: {"cmd": "env", "args": ["-S", "sh -c 'printf marker'"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// `env -S` reads its argument with shell quoting, not only whitespace:
+    /// `s''h` is the one word `sh` once its two empty quotes are dropped,
+    /// and `-'c'` is `-c` the same way. Splitting on whitespace alone would
+    /// see neither as a word that matches a shell name or a `-c`-shaped
+    /// flag; reading the quoting the way `env -S` itself does catches both.
+    #[test]
+    fn env_dash_cap_s_with_shell_quoting_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-split-quoted-shell", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["-S", "s''h -'c' 'printf marker'"]}
             }}},
             {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
         ]})

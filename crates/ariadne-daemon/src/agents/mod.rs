@@ -213,31 +213,125 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
             tracing::error!(name = %skill.name, "a stored skill name is not a kebab-case slug; not writing it");
             continue;
         }
-        let dir = skills_dir.join(&skill.name);
-        // The cleanup above already took out a symlink under this name; this
-        // guards the window between that check and this write, and a link
-        // placed back in it since.
-        if is_symlink(&dir) {
-            tracing::error!(name = %skill.name, path = %dir.display(), "a skill's directory is a symlink; not writing through it");
-            continue;
+        if let Err(error) =
+            symlink_safe::write_skill(skills_dir, &skill.name, skill.document_text())
+        {
+            tracing::error!(name = %skill.name, error = %error, "writing the skill failed, a symlink in its path removed and retried once");
         }
-        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-        let document = dir.join("SKILL.md");
-        if is_symlink(&document) {
-            tracing::error!(name = %skill.name, path = %document.display(), "a skill's SKILL.md is a symlink; not writing through it");
-            continue;
-        }
-        std::fs::write(&document, skill.document_text())
-            .with_context(|| format!("writing the {} skill", skill.name))?;
     }
     Ok(())
 }
 
-/// Whether `path` is itself a symlink, without following it: `fs::metadata`
-/// resolves a symlink to what it points at, which is exactly what a check
-/// against following one must not do.
-fn is_symlink(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+/// Create and write a skill's directory and `SKILL.md`, a symlink at either
+/// refused rather than followed, with no gap between refusing one and
+/// writing: a path-based check followed by a path-based write — `stat`
+/// `skills_dir/name`, then separately open `skills_dir/name/SKILL.md` — reads
+/// `name` off the directory twice, and a symlink dropped in between is
+/// exactly the window the second read falls through. Every step below opens
+/// its own name directly off a directory already held open by its file
+/// descriptor, which a path swap after that cannot redirect: the descriptor
+/// keeps pointing at the entry it was opened for, nothing else sees the open
+/// call that follows it, and `O_NOFOLLOW` refuses a symlink there outright
+/// rather than opening through it.
+#[cfg(unix)]
+mod symlink_safe {
+    use std::fs::File;
+    use std::io::{self, Write};
+    use std::os::fd::OwnedFd;
+    use std::path::Path;
+
+    use rustix::fs::{AtFlags, Mode, OFlags, mkdirat, openat, unlinkat};
+    use rustix::io::Errno;
+
+    /// Open `path` itself as a directory, refusing a symlink at it.
+    fn open_dir_no_follow(path: &Path) -> Result<OwnedFd, Errno> {
+        rustix::fs::open(
+            path,
+            OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+    }
+
+    /// Open `name` directly under the directory `parent` refers to, never
+    /// resolving `parent`'s own path again: refusing a symlink at `name`,
+    /// rather than following it, is the one purpose of every call site here.
+    fn openat_no_follow(parent: &OwnedFd, name: &str, flags: OFlags) -> Result<OwnedFd, Errno> {
+        openat(
+            parent,
+            name,
+            flags | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o644),
+        )
+    }
+
+    /// Open `name` directly under `parent`, making it first if there is
+    /// nothing there, and starting over once — unlinking `name` first —
+    /// where `open` found a symlink instead: the entry this sync leaves
+    /// behind under that name is never one, so one found there is removed
+    /// outright, the same as a stray one `sync_skills`'s own cleanup pass
+    /// removes.
+    fn open_or_recreate(
+        parent: &OwnedFd,
+        name: &str,
+        flags: OFlags,
+        make: bool,
+    ) -> Result<OwnedFd, Errno> {
+        match openat_no_follow(parent, name, flags) {
+            Err(Errno::LOOP) => {
+                unlinkat(parent, name, AtFlags::empty())?;
+                openat_no_follow(parent, name, flags)
+            }
+            Err(Errno::NOENT) if make => {
+                mkdirat(parent, name, Mode::from_raw_mode(0o755))?;
+                openat_no_follow(parent, name, flags)
+            }
+            other => other,
+        }
+    }
+
+    /// Write `document` as `skills_dir/name/SKILL.md`, making the directory
+    /// first if it does not exist, with neither step ever opening through a
+    /// symlink.
+    pub(super) fn write_skill(skills_dir: &Path, name: &str, document: &str) -> io::Result<()> {
+        let root = open_dir_no_follow(skills_dir).map_err(io::Error::from)?;
+        let dir =
+            open_or_recreate(&root, name, OFlags::DIRECTORY, true).map_err(io::Error::from)?;
+        let file = open_or_recreate(
+            &dir,
+            "SKILL.md",
+            OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC,
+            false,
+        )
+        .map_err(io::Error::from)?;
+        File::from(file).write_all(document.as_bytes())
+    }
+}
+
+/// The same contract on a platform with no `openat`: a symlink refused on a
+/// path-based check just before the matching path-based write, which closes
+/// the gap enough to catch every ordinary mistake, if not one timed to land
+/// inside it.
+#[cfg(not(unix))]
+mod symlink_safe {
+    use std::io;
+    use std::path::Path;
+
+    fn is_symlink(path: &Path) -> bool {
+        std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    }
+
+    pub(super) fn write_skill(skills_dir: &Path, name: &str, document: &str) -> io::Result<()> {
+        let dir = skills_dir.join(name);
+        if is_symlink(&dir) {
+            std::fs::remove_file(&dir)?;
+        }
+        std::fs::create_dir_all(&dir)?;
+        let file = dir.join("SKILL.md");
+        if is_symlink(&file) {
+            std::fs::remove_file(&file)?;
+        }
+        std::fs::write(file, document)
+    }
 }
 
 /// A fully planned launch of one ACP agent.
