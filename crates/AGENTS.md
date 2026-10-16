@@ -33,11 +33,14 @@ sets the Git environment for every Cargo process.
 `Cargo.lock` against the RustSec advisory database; install it with `cargo
 install cargo-audit --locked`. It denies no warning category by default, so
 it fails only on an actual vulnerability, never on an unmaintained or yanked
-crate alone. [`../.cargo/audit.toml`](../.cargo/audit.toml) ignores the one
-advisory this branch cannot clear by an upgrade, with a comment that says
-why; a yanked crate with no non-yanked release to move to, such as `zip`
-today, has no such entry, since `cargo audit`'s yanked check allows no
-per-package ignore and does not deny by default either.
+crate alone. [`../.cargo/audit.toml`](../.cargo/audit.toml) documents the
+unmaintained `bincode` exception and three `zip` extraction exceptions:
+`zip` is only a build dependency for the pinned, vendored Swagger UI archive,
+never a runtime archive reader. Reassess those exceptions when the upstream
+build script, bundled archive or enabled features change, and remove them
+when Swagger UI supports a patched `zip`. Yanked crates have no such entry,
+since `cargo audit`'s yanked check allows no per-package ignore and does not
+deny by default either.
 
 On a task branch, run the checks of the crates you changed, and only those:
 
