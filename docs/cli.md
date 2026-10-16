@@ -554,8 +554,7 @@ repository's last fetched open requests, by number, title or author, your
 own left out. `ariadne pr refresh` requests an immediate fetch for one
 repository, or every enabled one. It returns after it wakes the fetch, not
 after the fetch ends, so a following `pr ls` can still show the previous
-list. Start `ariadne pr ls --watch` before `pr refresh` when you need the
-event-driven update after the fetch reports a change.
+list.
 
 `ariadne pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
 S]... [--attach]` asks Ariadne to review a request of your own (029):
