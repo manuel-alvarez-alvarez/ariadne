@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-10-14
+updated: 2026-10-17
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -275,3 +275,6 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 
 `crates/ariadne-cli/src/commands/mcp.rs`,
 `crates/ariadne-cli/src/commands/mcp/tools.rs`.
+
+Initialization uses rmcp's `ServerConfig` for the instructions and tool
+capabilities returned by `get_info`.

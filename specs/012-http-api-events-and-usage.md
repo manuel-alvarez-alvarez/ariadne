@@ -1,10 +1,11 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-10-16
+updated: 2026-10-17
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
+  - crates/ariadne-daemon/tests/it/docs.rs
   - crates/ariadne-daemon/tests/it/events.rs
   - crates/ariadne-daemon/tests/it/session_list.rs
   - crates/ariadne-daemon/tests/it/switch.rs
@@ -57,6 +58,8 @@ and the ACP runtime that reports the agent events (021).
 2. DTOs and the error shape live in one crate (`ariadne-api`) and are the
    single source of truth for the OpenAPI document every client generates
    from. Every API endpoint appears in that document.
+   `/docs` redirects to `/docs/`, which serves the embedded Swagger UI and
+   its assets; its initializer loads `/api-docs/openapi.json` from the daemon.
    The separate forge webhook ingress follows [027](027-webhooks-and-tunnel.md).
 3. A refusal is an envelope with a machine-readable code and one sentence a
    person can act on — the state machine's own explanation where a transition
@@ -503,6 +506,9 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   `::the_tools_a_session_and_a_published_task_need_are_reported`,
   `::the_paths_are_this_daemons_own_and_are_left_as_they_were`,
   `::a_worktree_root_the_daemon_cannot_write_is_reported_as_such`).
+- The documentation page, its CSS and JavaScript assets, and the schema it
+  loads are served by the daemon
+  (`docs.rs::swagger_serves_its_page_assets_and_the_daemons_schema`).
 - Every endpoint is in the OpenAPI document
   (`logs.rs::both_endpoints_are_in_the_openapi_document`,
   `acp_console.rs::the_cancel_endpoint_is_in_the_openapi_document`,

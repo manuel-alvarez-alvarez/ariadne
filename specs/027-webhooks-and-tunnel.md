@@ -1,7 +1,7 @@
 ---
 id: webhooks-and-tunnel
 status: current
-updated: 2026-10-15
+updated: 2026-10-17
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -268,3 +268,7 @@ one HTTPS request answers an id, a URL, a port and a connection count,
 and the client proxies each TCP connection to that port to the local address.
 
 Hook request shapes follow the [GitHub webhook API](https://docs.github.com/en/rest/repos/webhooks).
+
+Signature verification pairs `hmac` 0.13 with `sha2` 0.11, which share the
+`digest` 0.11 traits. The signed-delivery test above generates its signature
+with Python's independent HMAC implementation.

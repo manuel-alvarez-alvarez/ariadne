@@ -44,14 +44,16 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 
 # Signed forge deliveries and per-integration secrets.
+# hmac and sha2 must use the same digest release series.
 hmac = "0.13"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 getrandom = "0.4"
 
 # openapi
+# Swagger UI must use the same utoipa major version as the document builder.
 utoipa = { version = "6", features = ["axum_extras"] }
-utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
+utoipa-swagger-ui = { version = "10", features = ["axum", "vendored"] }
 
 # Turns tokio's child pipes into the `futures` streams the ACP SDK's
 # transport takes, so the daemon keeps owning the process.

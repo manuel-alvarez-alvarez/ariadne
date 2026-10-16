@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-10-16
+updated: 2026-10-17
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -1023,6 +1023,9 @@ Out: the daemon endpoints themselves (012).
   `::positions zone labels at the center of each zone and updates them when
   thresholds move`,
   `::hides only the narrow zone label`).
+  The drag proof fixes the control's border and padding as well as its
+  rectangle: moving from x=60 to x=62 on a 200px track takes 0.3000 to
+  0.3100, independent of jsdom's default computed borders.
 - A handle released at a new value, or a number field left or Entered, sends
   only the field that changed, clamped to 0–1, up to four decimals; neither
   handle can reach or pass the other; each thumb has `aria-valuetext` with the

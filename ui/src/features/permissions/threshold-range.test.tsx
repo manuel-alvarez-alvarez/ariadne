@@ -114,6 +114,17 @@ it("keeps the danger readout inside the card at either end of the track", () => 
 })
 
 it("formats an input to four decimals on first render, after a drag, and after a commit, but not while typing", () => {
+  // The slider reads its control's styles on mount. Pin the horizontal
+  // offsets too: jsdom's default computed border widths vary by version.
+  const readStyle = window.getComputedStyle.bind(window)
+  vi.stubGlobal("getComputedStyle", (element: Element) =>
+    Object.assign(readStyle(element), {
+      borderInlineStartWidth: "0px",
+      borderInlineEndWidth: "0px",
+      paddingInlineStart: "0px",
+      paddingInlineEnd: "0px",
+    }),
+  )
   render(<ThresholdRange allowThreshold={0.3} denyThreshold={0.8} mutate={mutate} />)
 
   const allow = screen.getByRole("spinbutton", { name: "Allow threshold" }) as HTMLInputElement
@@ -126,9 +137,8 @@ it("formats an input to four decimals on first render, after a drag, and after a
   const track = allowThumb.closest('[data-slot="slider-track"]') as HTMLElement
   const control = track.parentElement as HTMLElement
 
-  // jsdom lays nothing out: fake a 200px-wide track and a 10px-wide thumb,
-  // so a pointer press and move against those fixed rects reads as a move
-  // from the value 0.3 to 0.31.
+  // jsdom lays nothing out: fake a 200px-wide track and a 10px-wide thumb.
+  // With no border or padding, a move from x=60 to x=62 takes 0.3 to 0.31.
   vi.spyOn(control, "getBoundingClientRect").mockReturnValue({
     left: 0,
     right: 200,
@@ -158,8 +168,8 @@ it("formats an input to four decimals on first render, after a drag, and after a
   fireEvent.pointerDown(allowThumb, { clientX: 60, clientY: 10, button: 0, pointerId: 1 })
   // buttons: 1 tells the library the primary button is still down during the
   // move; without it the move reads like the button was released elsewhere.
-  fireEvent.pointerMove(document, { clientX: 68, clientY: 10, pointerId: 1, buttons: 1 })
-  fireEvent.pointerUp(document, { clientX: 68, clientY: 10, pointerId: 1 })
+  fireEvent.pointerMove(document, { clientX: 62, clientY: 10, pointerId: 1, buttons: 1 })
+  fireEvent.pointerUp(document, { clientX: 62, clientY: 10, pointerId: 1 })
   expect(allow.value).toBe("0.3100")
 
   fireEvent.change(allow, { target: { value: "0.5" } })

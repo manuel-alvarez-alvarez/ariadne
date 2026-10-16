@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::post,
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{net::TcpListener, sync::watch};
