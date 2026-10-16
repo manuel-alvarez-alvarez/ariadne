@@ -1621,8 +1621,8 @@ async fn metadata_listing_opens_no_session_and_runs_no_delete_for_opencode() {
 /// A real `opencode` binary, if this machine has one on `PATH`, proves the
 /// same claim the stub proves above: `initialize` and `session/list` alone
 /// open no session. A fresh, isolated data directory — of its own, so this
-/// never touches a real one — keeps zero rows in its `session` table
-/// afterward.
+/// never touches a real one — keeps zero rows in its `session` table when
+/// that OpenCode version creates one afterward.
 #[tokio::test]
 async fn real_opencode_metadata_listing_creates_no_session() {
     let path = std::env::var_os("PATH").unwrap_or_default();

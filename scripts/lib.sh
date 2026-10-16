@@ -82,7 +82,7 @@ ui_tilde() {
 # back, so the two scripts have to agree on them exactly. They are resolved
 # here once instead of being spelled out on both sides.
 #
-# Call before sourcing a manifest: an uninstall lets the manifest of the
+# Call before reading a manifest: an uninstall lets the manifest of the
 # install it is undoing override every one of them.
 ui_locations() {
     local _data_dir
@@ -100,6 +100,94 @@ ui_locations() {
     ARIADNE_ICON_BASE="$_data_dir/icons/hicolor"
     ARIADNE_BASHRC="$HOME/.bashrc"
     ARIADNE_ZSHRC="${ZDOTDIR:-$HOME}/.zshrc"
+}
+
+# `install.env` is data, never shell input. These are the only keys the
+# installer writes and the uninstaller may read.
+ui_manifest_key_allowed() {
+    case "$1" in
+        ARIADNE_PREFIX|ARIADNE_BASH_COMPLETION|ARIADNE_ZSH_COMPLETION|ARIADNE_PLIST|ARIADNE_UNIT|ARIADNE_APP|ARIADNE_DESKTOP_ENTRY|ARIADNE_DESKTOP_ICON)
+            return 0
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# Keep manifest values to one inert `KEY=value` line. The reader does not
+# evaluate these characters, but refusing them also prevents a new manifest
+# from becoming executable input to an older installer or uninstaller.
+ui_manifest_value_safe() {
+    case "$1" in
+        *'"'*|*'$'*|*'`'*|*$'\n'*|*$'\r'*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# Read an installer manifest as data. The values are left in MANIFEST_* so a
+# caller chooses which recorded locations it should use. Existing manifests
+# quoted every value; accept that safe legacy form while all new files use raw
+# `KEY=value` lines.
+ui_read_install_manifest() {
+    local _path="$1" _line _key _value _seen
+    MANIFEST_PREFIX=""
+    MANIFEST_BASH_COMPLETION=""
+    MANIFEST_ZSH_COMPLETION=""
+    MANIFEST_PLIST=""
+    MANIFEST_UNIT=""
+    MANIFEST_APP=""
+    MANIFEST_DESKTOP_ENTRY=""
+    MANIFEST_DESKTOP_ICON=""
+    _seen=" "
+
+    [ -f "$_path" ] || return 1
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        case "$_line" in
+            ''|'#'*) continue ;;
+            *=*)
+                _key="${_line%%=*}"
+                _value="${_line#*=}"
+                ;;
+            *) ui_die "invalid line in install manifest $_path" ;;
+        esac
+        ui_manifest_key_allowed "$_key" \
+            || ui_die "unexpected key in install manifest: $_key"
+        case "$_seen" in
+            *" $_key "*) ui_die "duplicate key in install manifest: $_key" ;;
+        esac
+        _seen="$_seen$_key "
+        case "$_value" in
+            \"*\") _value="${_value#\"}"; _value="${_value%\"}" ;;
+        esac
+        ui_manifest_value_safe "$_value" \
+            || ui_die "unsafe value in install manifest: $_key"
+        case "$_key" in
+            ARIADNE_PREFIX) MANIFEST_PREFIX="$_value" ;;
+            ARIADNE_BASH_COMPLETION) MANIFEST_BASH_COMPLETION="$_value" ;;
+            ARIADNE_ZSH_COMPLETION) MANIFEST_ZSH_COMPLETION="$_value" ;;
+            ARIADNE_PLIST) MANIFEST_PLIST="$_value" ;;
+            ARIADNE_UNIT) MANIFEST_UNIT="$_value" ;;
+            ARIADNE_APP) MANIFEST_APP="$_value" ;;
+            ARIADNE_DESKTOP_ENTRY) MANIFEST_DESKTOP_ENTRY="$_value" ;;
+            ARIADNE_DESKTOP_ICON) MANIFEST_DESKTOP_ICON="$_value" ;;
+        esac
+    done < "$_path"
+}
+
+# Refuse a value before the caller replaces an existing manifest with it.
+ui_validate_install_manifest_value() {
+    local _key="$1" _value="$2"
+    ui_manifest_key_allowed "$_key" \
+        || ui_die "cannot write unexpected install manifest key: $_key"
+    ui_manifest_value_safe "$_value" \
+        || ui_die "cannot write install manifest: $_key contains shell syntax"
+}
+
+# Append one verified manifest value. `install.sh` owns the file itself so it
+# can put its comment at the top; this function only writes values.
+ui_write_install_manifest_value() {
+    local _path="$1" _key="$2" _value="$3"
+    ui_validate_install_manifest_value "$_key" "$_value"
+    printf '%s=%s\n' "$_key" "$_value" >> "$_path"
 }
 
 # How the daemon is registered on this OS, for step titles and summaries.
@@ -144,7 +232,7 @@ ui_wait_until_gone() {
 # right behind either one can otherwise land on a label or a pid that has not
 # finished clearing.
 ui_stop_daemon() {
-    local mode="${1:-}" pid
+    local mode="${1:-}" pid pid_extra _pid_extra
     case "$OS" in
         Darwin)
             run_logged launchctl bootout "gui/$(id -u)/$ARIADNE_PLIST_LABEL" || true
@@ -162,10 +250,38 @@ ui_stop_daemon() {
             ;;
     esac
     if [ -f "$ARIADNE_HOME/ariadned.pid" ]; then
-        pid="$(cat "$ARIADNE_HOME/ariadned.pid")"
-        kill "$pid" 2>/dev/null || true
-        ui_wait_until_gone kill -0 "$pid"
+        pid=""
+        pid_extra=0
+        {
+            IFS= read -r pid || true
+            if IFS= read -r _pid_extra || [ -n "${_pid_extra:-}" ]; then
+                pid_extra=1
+            fi
+        } < "$ARIADNE_HOME/ariadned.pid"
+        if [ "$pid_extra" = 0 ] && ui_pid_is_safe "$pid"; then
+            pid="$UI_SAFE_PID"
+            kill "$pid" 2>/dev/null || true
+            ui_wait_until_gone kill -0 "$pid"
+        else
+            ui_warn "ignoring invalid daemon pidfile at $ARIADNE_HOME/ariadned.pid"
+        fi
     fi
+    return 0
+}
+
+# `kill -1` means every process the user may signal, not PID -1. Keep only
+# decimal process ids above one, and normalise leading zeroes before invoking
+# the shell's `kill` builtin.
+ui_pid_is_safe() {
+    local _pid="$1" _zeros
+    case "$_pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    _zeros="${_pid%%[!0]*}"
+    UI_SAFE_PID="${_pid#"$_zeros"}"
+    case "$UI_SAFE_PID" in
+        ''|0|1) return 1 ;;
+    esac
     return 0
 }
 

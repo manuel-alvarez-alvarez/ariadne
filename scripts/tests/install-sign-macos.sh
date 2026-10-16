@@ -10,13 +10,17 @@
 #                      Tauri to sign the .app with.
 #   desktop-missing    no identity: APPLE_SIGNING_IDENTITY reaches npm
 #                       unset, as it always did.
+#   app-path           an app outside the two approved application directories
+#                       is refused before uninstalling anything.
+#   manifest-unsafe    an installer value that carries shell syntax is refused
+#                       before it can be written to install.env.
 # desktop-* stop npm's stub right after it records what reached its own
 # environment (scripts/tests/install-command.sh): the real next step, ditto
 # to /Applications, is a system path no sandboxed test may touch, so these
 # two prove the wiring and go no further. scripts/AGENTS.md.
 set -Eeuo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-test_case="${1:?name a test case: present, missing, desktop-present or desktop-missing}"
+test_case="${1:?name a test case: present, missing, desktop-present, desktop-missing, app-path or manifest-unsafe}"
 [ "$(uname -s)" = Darwin ] || { echo "macOS only" >&2; exit 2; }
 export TEST_ROOT
 TEST_ROOT="$(mktemp -d)"
@@ -25,7 +29,7 @@ trap 'printf "FAIL: %s (line %s)\n" "$test_case" "$LINENO"; cat "$TEST_ROOT/outp
 mkdir -p "$TEST_ROOT"/{repo/scripts,repo/ui,bin,payload,home}
 cp "$REPO_DIR/scripts/"{install.sh,uninstall.sh,lib.sh} "$TEST_ROOT/repo/scripts/"
 cp "$REPO_DIR/ui/package.json" "$TEST_ROOT/repo/ui/"
-for tool in git cargo security codesign npm; do
+for tool in git cargo security codesign npm launchctl; do
     cp "$REPO_DIR/scripts/tests/install-command.sh" "$TEST_ROOT/bin/$tool"
     chmod 755 "$TEST_ROOT/bin/$tool"
 done
@@ -73,6 +77,34 @@ case "$test_case" in
             desktop-present) grep -Fxq 'Ariadne Code Signing' "$TEST_ROOT/apple-signing-identity" ;;
             desktop-missing) [ ! -s "$TEST_ROOT/apple-signing-identity" ] ;;
         esac
+        ;;
+    app-path)
+        app="$TEST_ROOT/outside/Ariadne.app"
+        mkdir -p "$app" "$TEST_ROOT/home/.ariadne"
+        printf '%s\n' "ARIADNE_PREFIX=$TEST_ROOT/home/.local/bin" \
+            "ARIADNE_BASH_COMPLETION=$TEST_ROOT/home/.local/share/bash-completion/completions/ariadne" \
+            "ARIADNE_ZSH_COMPLETION=$TEST_ROOT/home/.local/share/zsh/site-functions/_ariadne" \
+            "ARIADNE_PLIST=$TEST_ROOT/home/Library/LaunchAgents/dev.ariadne.daemon.plist" \
+            "ARIADNE_UNIT=$TEST_ROOT/home/.config/systemd/user/ariadned.service" \
+            "ARIADNE_APP=$app" > "$TEST_ROOT/home/.ariadne/install.env"
+        if env HOME="$TEST_ROOT/home" ARIADNE_HOME="$TEST_ROOT/home/.ariadne" \
+            PREFIX="$TEST_ROOT/home/.local/bin" \
+            bash "$TEST_ROOT/repo/scripts/uninstall.sh" > "$TEST_ROOT/output" 2>&1; then
+            exit 1
+        fi
+        grep -F 'refusing to remove unexpected desktop app path' "$TEST_ROOT/output"
+        [ -d "$app" ]
+        ;;
+    manifest-unsafe)
+        unsafe_prefix="$TEST_ROOT/home/.local/\$unsafe"
+        if env HOME="$TEST_ROOT/home" ARIADNE_HOME="$TEST_ROOT/home/.ariadne" \
+            PREFIX="$unsafe_prefix" \
+            bash "$TEST_ROOT/repo/scripts/install.sh" --build-from-source --no-service \
+                --no-completions --no-ui > "$TEST_ROOT/output" 2>&1; then
+            exit 1
+        fi
+        grep -F 'cannot write install manifest: ARIADNE_PREFIX contains shell syntax' "$TEST_ROOT/output"
+        [ ! -e "$TEST_ROOT/home/.ariadne/install.env" ]
         ;;
     *) exit 2 ;;
 esac

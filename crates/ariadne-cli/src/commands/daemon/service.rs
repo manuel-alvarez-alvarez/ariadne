@@ -220,7 +220,7 @@ impl Service {
     }
 }
 
-/// `install.env` as `scripts/install.sh` writes it: `KEY="value"` lines and
+/// `install.env` as `scripts/install.sh` writes it: `KEY=value` lines and
 /// comments, read as data — nothing is executed. `None` when the home has no
 /// manifest at all, which is what says nothing was installed into it.
 pub(crate) fn manifest(home: &Path) -> Option<BTreeMap<String, String>> {
@@ -316,7 +316,7 @@ mod tests {
         );
     }
 
-    /// The manifest is data, not a script: `KEY="value"` lines, comments and
+    /// The manifest is data, not a script: `KEY=value` lines, comments and
     /// blank lines, and nothing is executed to read them. A home without one
     /// has no manifest at all, which is a different answer from an empty one.
     #[test]
@@ -325,7 +325,7 @@ mod tests {
         assert!(manifest(dir.path()).is_none());
         std::fs::write(
             dir.path().join("install.env"),
-            "# Written by scripts/install.sh\nARIADNE_PREFIX=\"/opt/bin\"\nARIADNE_APP=\"\"\n",
+            "# Written by scripts/install.sh\nARIADNE_PREFIX=/opt/bin\nARIADNE_APP=\n",
         )
         .unwrap();
         let manifest = manifest(dir.path()).unwrap();

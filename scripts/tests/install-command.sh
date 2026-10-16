@@ -5,7 +5,11 @@ tool="$(basename "$0")"
 printf '%s %s\n' "$tool" "$*" >> "$TEST_ROOT/commands"
 case "$tool" in
     gh)
-        case "$1 $2" in
+        if [ "${1:-}" = --version ]; then
+            printf 'gh version %s\n' "${TEST_GH_VERSION:-2.102.0}"
+            exit 0
+        fi
+        case "${1:-} ${2:-}" in
             'auth status') ;;
             'release view') printf 'v0.0.0\n' ;;
             'release download')
@@ -20,10 +24,41 @@ case "$tool" in
                 cp "$TEST_ROOT/assets/$asset" "$dest/$asset"
                 ;;
             'attestation verify')
-                if [ "${TEST_REJECT:-0}" = 1 ] && [[ "$3" = *ariadne-desktop-* ]]; then
+                if [ "${3:-}" = --help ]; then
+                    if [ "${TEST_GH_ATTESTATION_FLAGS:-present}" = missing ]; then
+                        printf '%s\n' 'usage: gh attestation verify [flags]'
+                    else
+                        printf '%s\n' '--signer-workflow string'
+                        printf '%s\n' '--source-ref string'
+                    fi
+                    exit 0
+                fi
+                asset="$3"
+                if [ "${TEST_REJECT:-0}" = 1 ] && [[ "$asset" = *ariadne-desktop-* ]]; then
                     exit 1
                 fi
-                printf '%s\n' "$3" >> "$TEST_ROOT/verified"
+                expected_workflow='test/install/.github/workflows/release.yml'
+                expected_ref='refs/tags/v0.0.0'
+                workflow=''
+                source_ref=''
+                shift 3
+                while [ $# -gt 0 ]; do
+                    case "$1" in
+                        --signer-workflow) workflow="$2"; shift 2 ;;
+                        --source-ref) source_ref="$2"; shift 2 ;;
+                        *) shift ;;
+                    esac
+                done
+                # Without either pin, gh accepts the fixture's other signer
+                # and tag, as the old installer did. With both, it applies
+                # exactly the constraints the real verifier enforces.
+                if [ -n "$workflow$source_ref" ]; then
+                    [ "$workflow" = "$expected_workflow" ] || exit 1
+                    [ "$source_ref" = "$expected_ref" ] || exit 1
+                    [ "${TEST_ATTESTATION_WORKFLOW:-$expected_workflow}" = "$workflow" ] || exit 1
+                    [ "${TEST_ATTESTATION_REF:-$expected_ref}" = "$source_ref" ] || exit 1
+                fi
+                printf '%s\n' "$asset" >> "$TEST_ROOT/verified"
                 ;;
             *) exit 1 ;;
         esac

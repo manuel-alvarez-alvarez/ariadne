@@ -486,15 +486,7 @@ async fn ready(client: &Client, done: &Done) -> Result<()> {
 /// SIGTERM to whatever the pidfile of `root` names, and the pid it named.
 fn signal_pidfile(root: &Path) -> Result<String> {
     let pid_file = endpoint::pid_file(root);
-    let pid = std::fs::read_to_string(&pid_file)
-        .with_context(|| {
-            format!(
-                "no pidfile at {} — is the daemon running?",
-                pid_file.display()
-            )
-        })?
-        .trim()
-        .to_string();
+    let pid = pidfile_pid(&pid_file)?;
 
     let status = Command::new("kill")
         .arg(&pid)
@@ -507,6 +499,41 @@ fn signal_pidfile(root: &Path) -> Result<String> {
         );
     }
     Ok(pid)
+}
+
+/// A process id from a pidfile is only ever an unsigned decimal number above
+/// one. In particular, `kill -1` is a process-group signal, never a daemon
+/// pid, so reject it before constructing a `kill` command.
+fn pidfile_pid(pid_file: &Path) -> Result<String> {
+    let contents = std::fs::read_to_string(pid_file).with_context(|| {
+        format!(
+            "no pidfile at {} — is the daemon running?",
+            pid_file.display()
+        )
+    })?;
+    let raw = contents
+        .strip_suffix("\r\n")
+        .or_else(|| contents.strip_suffix('\n'))
+        .unwrap_or(&contents);
+    if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        bail!(
+            "invalid pidfile at {} — expected digits for a pid above 1",
+            pid_file.display()
+        );
+    }
+    let pid = raw.parse::<u64>().with_context(|| {
+        format!(
+            "invalid pidfile at {} — expected digits for a pid above 1",
+            pid_file.display()
+        )
+    })?;
+    if pid <= 1 {
+        bail!(
+            "invalid pidfile at {} — expected a pid above 1",
+            pid_file.display()
+        );
+    }
+    Ok(pid.to_string())
 }
 
 /// Run a service manager's command, letting it speak for itself: whatever
@@ -748,6 +775,25 @@ mod tests {
             gone_line(Path::new("/tmp/a.sock"), Duration::from_millis(420)),
             "socket /tmp/a.sock gone after 0.4s"
         );
+    }
+
+    /// A pidfile is data from a daemon that may have died or been replaced.
+    /// Invalid text must be rejected before `signal_pidfile` can construct a
+    /// `kill` command from it.
+    #[test]
+    fn a_pidfile_only_accepts_digits_above_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("ariadned.pid");
+        for invalid in ["-1", "word", "", "0", "1", " 2", "2 ", "2\n\n"] {
+            std::fs::write(&pid_file, invalid).unwrap();
+            let error = pidfile_pid(&pid_file).unwrap_err();
+            assert!(
+                error.to_string().contains("pid above 1"),
+                "{invalid:?}: {error:#}"
+            );
+        }
+        std::fs::write(&pid_file, "0002\n").unwrap();
+        assert_eq!(pidfile_pid(&pid_file).unwrap(), "2");
     }
 
     /// The wait asks again until its question turns true, and gives up when
