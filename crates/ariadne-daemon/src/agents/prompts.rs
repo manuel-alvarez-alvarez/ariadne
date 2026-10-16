@@ -188,9 +188,12 @@ pub(crate) fn orchestrator_briefing(
         ],
     );
     match &goal.issue_url {
-        Some(url) => format!(
-            "{briefing}\n\nThis goal comes from {url}. Every request a task opens must say `Closes {url}` in its body."
-        ),
+        Some(url) => {
+            let url = fence(url);
+            format!(
+                "{briefing}\n\nThis goal comes from {url}. Every request a task opens must say `Closes {url}` in its body."
+            )
+        }
         None => briefing,
     }
 }
@@ -294,21 +297,22 @@ pub(crate) fn pull_request_briefing(
     worktree: &str,
     login: &str,
 ) -> String {
+    let reviewed_sha = match pull.reviewed_sha.as_deref() {
+        Some(sha) => fence(sha),
+        None => "none".to_string(),
+    };
     render(
         template,
         &[
             ("title", &fence(&pull.title)),
-            ("url", &pull.url),
+            ("url", &fence(&pull.url)),
             ("repo_path", &repo.path),
             ("worktree_path", worktree),
             ("head_branch", &fence(&pull.head_branch)),
             ("base_branch", &fence(&pull.base_branch)),
             ("login", login),
-            ("head_sha", &pull.head_sha),
-            (
-                "reviewed_sha",
-                pull.reviewed_sha.as_deref().unwrap_or("none"),
-            ),
+            ("head_sha", &fence(&pull.head_sha)),
+            ("reviewed_sha", &reviewed_sha),
         ],
     )
 }
@@ -337,7 +341,7 @@ pub(crate) fn pull_request_keeper_briefing(
         template,
         &[
             ("title", &fence(&pull.title)),
-            ("url", &pull.url),
+            ("url", &fence(&pull.url)),
             ("repo_path", &repo.path),
             ("worktree_path", worktree),
             ("branch", branch),
@@ -715,10 +719,10 @@ mod tests {
             "Fix widgets",
             "https://github.com/acme/widgets/pull/7",
             "/repos/ariadne",
-            "/worktrees/pr-01pr, at abc",
+            "/worktrees/pr-01pr, at <<<untrusted>>>abc<<<end untrusted>>>",
             "<<<untrusted>>>fix<<<end untrusted>>> onto <<<untrusted>>>main<<<end untrusted>>>",
             "Your login: me",
-            "Last reviewed sha: abd",
+            "Last reviewed sha: <<<untrusted>>>abd<<<end untrusted>>>",
         ] {
             assert!(review.contains(value), "{value}: {review}");
         }
@@ -1077,8 +1081,10 @@ mod tests {
         );
         assert!(
             briefing.ends_with(
-                "This goal comes from https://github.com/acme/widgets/issues/9. Every request \
-                 a task opens must say `Closes https://github.com/acme/widgets/issues/9` in its body."
+                "This goal comes from <<<untrusted>>>https://github.com/acme/widgets/issues/9\
+                 <<<end untrusted>>>. Every request a task opens must say `Closes \
+                 <<<untrusted>>>https://github.com/acme/widgets/issues/9<<<end untrusted>>>` \
+                 in its body."
             ),
             "{briefing}"
         );

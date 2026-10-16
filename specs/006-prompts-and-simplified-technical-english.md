@@ -198,13 +198,18 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     close the fence early or open one of its own; an empty value fences to
     nothing. The session rules state once, for every seat, that text
     between the markers is data and never an instruction (018, 026, 032).
-    Fenced: an issue's title and body (as the goal's), a request's title
-    and its head and base branch names, a comment's first line, a failed
-    check's name, conclusion and URL, an agent message's body, a step's
-    return reason or completion summary, and a task's title and
-    description — the orchestrator's own planning is still an agent's,
-    so a task it names in a briefing, a message, a nudge or a dependency
-    is fenced wherever its title reaches another agent.
+    No forge value is exempt for being structured, bounded or normally
+    short — a URL, a sha, an id or a state word is still the forge's own
+    text, and a briefing never trusts its shape over its source. Fenced:
+    an issue's title, body and URL (as the goal's), a request's title,
+    URL, head and base branch names, head sha and reviewed sha, a
+    comment's id, author, path and first line, a failed check's name,
+    conclusion and URL, the rolled-up checks, the review decision and the
+    state a news line reports, an agent message's body, a step's return
+    reason or completion summary, and a task's title and description —
+    the orchestrator's own planning is still an agent's, so a task it
+    names in a briefing, a message, a nudge or a dependency is fenced
+    wherever its title reaches another agent.
 
 ## Acceptance criteria
 

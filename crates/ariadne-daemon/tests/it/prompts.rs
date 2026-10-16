@@ -98,10 +98,15 @@ async fn an_issue_goal_keeps_its_url_and_briefs_the_orchestrator_to_close_it() {
     let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
     let briefing = h.launch_file(&session.id).unwrap().initial_prompt.unwrap();
     assert!(
-        briefing.contains(&format!("This goal comes from {url}")),
+        briefing.contains(&format!(
+            "This goal comes from <<<untrusted>>>{url}<<<end untrusted>>>"
+        )),
         "{briefing}"
     );
-    assert!(briefing.contains(&format!("Closes {url}")), "{briefing}");
+    assert!(
+        briefing.contains(&format!("Closes <<<untrusted>>>{url}<<<end untrusted>>>")),
+        "{briefing}"
+    );
 }
 
 /// The orchestrator is briefed with the goal's workflow and every column of

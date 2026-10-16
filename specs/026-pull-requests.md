@@ -209,12 +209,19 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     - GitHub: `edit_pending_comment` and `delete_pending_comment` read the viewer's still-pending review (rule 24's own finder, split from its create-if-missing form so a caller that means only to look never brings one into existence), then look up the comment's GraphQL node id among that review's own comments — `updatePullRequestReviewComment` and `deletePullRequestReviewComment` take a node id, never the database id `addPullRequestReviewThread` answers. A comment the lookup does not find, because its round was since submitted, answers 409 the same as no pending review at all. `edit_pending_review_body` overwrites the pending review's body through the same `updatePullRequestReview` mutation rule 24 already uses, refused with 409 where there is no pending review to find.
     The three tools are `edit_pending_comment`, `delete_pending_comment` and `edit_pending_review_body` (013), on the agent, pull request reviewer and pull request keeper seats alike.
     A successful edit or delete also writes Ariadne's own held comments at once (`live::LivePulls::edit_comment`, `::remove_comment`): rule 9 already drops the pending review from every detail read of its own, so no detail fetch ever reads either change back on its own while the post stays unpublished. Without this, `list_comments` would answer the body a finding was posted with forever, and a deleted finding would stay in `merge_fresh_details`'s own carry-forward for as long as it remained unconfirmed by a fresh read — read by `submit_review`'s own `open_p0` check as a P0 still open.
-26. A request's title, head branch and base branch reach a briefing or a
-    news prompt fenced as data, never as an instruction (006 rule 18): the
-    reviewer's own briefing and news, and the keeper's (032 rule 5). A
-    comment's first line, as rule 12's news computes it, is fenced the
-    same way, and so is a failed check's name, conclusion and URL,
-    wherever rule 12's news names one. A reviewer or a keeper session refuses to start on a head
+26. A request's title, URL, head branch, base branch, head sha and
+    reviewed sha each reach a briefing or a news prompt fenced as data,
+    never as an instruction (006 rule 18): the reviewer's own briefing
+    and news, and the keeper's (032 rule 5). A comment's id, author,
+    path and first line, as rule 12's news computes it, are each fenced
+    the same way — a path crafted with the closing marker cannot read as
+    though it closed the fence, since every `<<<` the forge's own text
+    carries is broken first. So is a failed check's name, conclusion and
+    URL, and the rolled-up checks, the review decision and the state a
+    news line reports, wherever rule 12's news names one: no field is
+    skipped for being a sha, an id or a normally short word, since a
+    briefing never trusts a forge value's shape over its source. A
+    reviewer or a keeper session refuses to start on a head
     branch git itself refuses as a ref name (`git check-ref-format
     --branch`), and the refusal is recorded on the row the way an
     exhausted spawn-retry budget already is (`reviewer_given_up_at`).
@@ -592,13 +599,21 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - A `502 forge_error` is never retried, while another `502` still gets its retries:
   `queries.test.ts::createQueryClient's retry > never retries a 502 whose body error is forge_error`,
   `::still retries another 502`.
-- A request's title, head and base branch names, a comment's first line,
-  and a failed check's name, conclusion and URL each sit inside the fence
-  where they reach a briefing or news prompt, proved word for word:
+- A request's title, URL, head and base branch names, head sha and
+  reviewed sha, a comment's id, author, path and first line, a failed
+  check's name, conclusion and URL, and the rolled-up checks, review
+  decision and state each sit inside the fence where they reach a
+  briefing or news prompt, proved word for word:
   `prompts.rs::the_pull_request_texts_fill_every_placeholder_they_name`,
   `news.rs::tests::a_comments_first_line_is_fenced_in_its_news_line`,
-  `::each_change_is_told_once` (the check and the "behind the base"
-  lines), and the keeper's own (032).
+  `::each_change_is_told_once` (the check, the decision, the state and
+  the "behind the base" lines),
+  `::a_change_of_the_checks_is_told_for_the_ready_report`,
+  `::a_push_to_a_request_i_review_is_told_once_with_the_last_reviewed_sha`
+  (the head sha and the reviewed sha), and the keeper's own (032). A
+  comment's path crafted with the closing marker and a fresh instruction
+  cannot escape its own fence:
+  `news.rs::tests::a_crafted_comment_path_cannot_escape_its_fence`.
 - A reviewer or a keeper session refuses to start on a head branch git
   refuses as a ref, starting no worktree and no session, and the refusal
   is recorded on the row (032).

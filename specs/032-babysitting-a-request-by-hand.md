@@ -61,9 +61,10 @@ reads behind them ([026](026-pull-requests.md)).
    let a branch name hold `$`, `(`, `;`, `|`, `&` or a backtick, none of
    which the quoting leaves the shell to read as its own (026 rule 26).
 5. The briefing names the request, the worktree, its local branch, the
-   base, the login and the push command. The title and the base branch
-   name are fenced, the same as a reviewer's own (026 rule 26); the local
-   branch is Ariadne's own name, `ariadne/keep-<id>`, and is not. A
+   base, the login and the push command. The title, the URL and the base
+   branch name are fenced, the same as a reviewer's own (026 rule 26);
+   the worktree path, the login and the local branch — Ariadne's own
+   name, `ariadne/keep-<id>` — are not. A
    keeper session refuses to start on a head branch git itself refuses as
    a ref, the same refusal a reviewer session's own spawn makes (026 rule
    26). The seat text says what it owes: keep one open request of the

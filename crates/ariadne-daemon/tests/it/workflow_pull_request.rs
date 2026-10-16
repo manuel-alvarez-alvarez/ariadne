@@ -437,7 +437,7 @@ async fn a_close_is_told_to_the_pr_agent_and_finishes_nothing() {
             .h
             .prompts_to(&request.agent)
             .iter()
-            .any(|p| p.contains("The request is now closed."))
+            .any(|p| p.contains("The request is now <<<untrusted>>>closed<<<end untrusted>>>."))
     })
     .await;
     request.h.flush_scheduler().await;
@@ -469,7 +469,7 @@ async fn a_quiet_pr_agent_is_finished_after_the_merge() {
                 .h
                 .prompts_to(&request.agent)
                 .iter()
-                .any(|p| p.contains("The request is now merged."))
+                .any(|p| p.contains("The request is now <<<untrusted>>>merged<<<end untrusted>>>."))
     })
     .await;
     assert_eq!(
@@ -542,11 +542,9 @@ async fn a_quiet_pr_agent_advances_to_the_column_after_the_merge() {
         "the merge news to reach the request agent",
         async || {
             release.with_extension("reached").exists()
-                && request
-                    .h
-                    .prompts_to(&request.agent)
-                    .iter()
-                    .any(|prompt| prompt.contains("The request is now merged."))
+                && request.h.prompts_to(&request.agent).iter().any(|prompt| {
+                    prompt.contains("The request is now <<<untrusted>>>merged<<<end untrusted>>>.")
+                })
         },
     )
     .await;
