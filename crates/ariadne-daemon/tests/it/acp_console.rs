@@ -1294,8 +1294,8 @@ async fn a_family_row_keeps_the_force_tag_guard() {
     assert_eq!(request["learned_id"], serde_json::Value::Null);
 }
 
-/// A family approval cannot cover a chained command or a command that sets a
-/// program it can run, even when it has no derived risk tag of its own.
+/// A family approval cannot cover a chained command, a redirect, unsafe
+/// program setup or an unknown program, even without a derived risk tag.
 #[tokio::test]
 async fn a_family_row_does_not_answer_a_chained_command() {
     let root = tempfile::tempdir().unwrap();
@@ -1339,22 +1339,45 @@ async fn a_family_row_does_not_answer_a_chained_command() {
         serde_json::Value::Null
     );
 
-    for (title, command) in [
+    for (title, command, family) in [
         (
             "Git configuration command",
             "git -c core.fsmonitor=./payload status",
+            "git status",
         ),
         (
             "Environment assignment",
             "GIT_PAGER=./payload git -p status",
+            "git status",
         ),
-        ("Git program option", "git grep -O./payload TODO"),
+        ("Redirected output", "git status > src/lib.rs", "git status"),
+        (
+            "Git program option",
+            "git grep -O./payload TODO",
+            "git grep",
+        ),
         (
             "Cargo program option",
             "cargo build --config build.rustc-wrapper=./payload",
+            "cargo build",
         ),
-        ("Make assignment", "make SHELL=./payload build"),
+        (
+            "Make assignment",
+            "make SHELL=./payload build",
+            "make build",
+        ),
+        ("Sort output option", "sort -o src/lib.rs x", "sort"),
+        ("Unknown program", "printf safe", "printf"),
     ] {
+        let mut row = bash_row(
+            &cast,
+            family,
+            family,
+            json!([{"optionId": "yes", "name": "Allow", "kind": "allow_once"}]),
+        );
+        row.key = family.into();
+        row.level = "family".into();
+        h.store.record_learned_permission(row).await.unwrap();
         stub.reprogram(permission_script_for(bash_call(command)));
         let task = h
             .task_on(&cast.goal, &cast.repo, title, common::test_pin())

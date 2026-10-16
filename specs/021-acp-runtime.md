@@ -257,9 +257,10 @@ outside half) opens no session either: it asks only `initialize` and
    other tool is the tool name. A family row for `Bash` answers only one
    simple command and its stripped output-filter tail. It does not answer a
    command with `&&`, `||`, `;`, a newline, command substitution, or a pipe
-   that the key did not strip. It also does not answer a command with a
-   `NAME=value` assignment before its program, including one `env` takes, or
-   an option that selects a program or an output file:
+   that the key did not strip. It does not answer a command with an unquoted
+   `>` or `<`, a `NAME=value` assignment before its program, including one
+   `env` takes, or an option that selects a program or an output file. Only
+   these programs can use a Bash family row; every other program asks again:
    - Git rejects `-c`, `--config-env` and `--exec-path` before its subcommand.
      It rejects `-O` and `--open-files-in-pager` for `grep`, `--output` for
      `diff`, `log` and `format-patch`, `-o` for `format-patch`, `--upload-pack`,
@@ -269,8 +270,13 @@ outside half) opens no session either: it asks only `initialize` and
    - Cargo rejects `--config`; Go rejects `-exec` and `-toolexec`; Make rejects
      `NAME=value`, `--eval`, `-f`, `--file` and `--makefile`; npm, pnpm and Yarn
      reject `--script-shell` and `--node-options`.
-   Each rule rejects a bare option, a `--option=value` form, and an attached
-   short-option value.
+   - Find rejects `-exec`, `-execdir`, `-ok`, `-okdir`, `-delete`, `-fprint`,
+     `-fprint0`, `-fprintf` and `-fls`. Ripgrep rejects `--pre`. Sort rejects
+     `-o`, `--output`, `--compress-program`, `-T` and `--files0-from`.
+   A listed one-letter short option is rejected in a one-hyphen option bundle
+   or with an attached value. A long option is rejected as its full name, or as
+   a prefix of at least three letters, with or without `=value`. Go rejects its
+   two options with either one or two hyphens.
    The level is `once`, `command` or `family`, and the scope `repository` or
    `all`. Each row keeps the key, the level, the family, the request's
    derived risk tags (022) in `derive` order, the scope, the whole `toolCall`
@@ -480,7 +486,8 @@ outside half) opens no session either: it asks only `initialize` and
   family is the program and its subcommand
   (`::the_family_is_the_program_and_its_subcommand`,
   `::a_family_covers_one_command_and_safe_output_filters`).
-- A family row asks for a chained Bash command rather than answering it
+- A family row asks for a chained Bash command, a redirect, unsafe program
+  setup or an unlisted program rather than answering it
   (`acp_console.rs::a_family_row_does_not_answer_a_chained_command`).
 - A command row answers `tail` and `head` output filters, but asks again for
   filters that can write a file or run a program

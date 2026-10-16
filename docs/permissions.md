@@ -127,9 +127,13 @@ key. If none answers, an allowing `family` row answers another call in the same
 family. For `Bash`, that call must hold one simple command, apart from a
 trailing output filter that the key stripped. A family row does not answer a
 command with `&&`, `||`, `;`, a newline, command substitution, or another
-pipe. It also does not answer a command with a `NAME=value` assignment before
-its program, including one for `env`, or an option that selects a program or
-an output file:
+pipe. It also does not answer a command with an unquoted `>` or `<`, a
+`NAME=value` assignment before its program, including one for `env`, or an
+option that selects a program or an output file.
+
+Only these programs can use a Bash family row. Every other program asks again,
+so a prior family approval never permits an unlisted program. Each listed
+program rejects these options:
 
 - Git rejects `-c`, `--config-env` and `--exec-path` before its subcommand.
   It rejects `-O` and `--open-files-in-pager` for `grep`, `--output` for
@@ -140,9 +144,14 @@ an output file:
 - Cargo rejects `--config`; Go rejects `-exec` and `-toolexec`; Make rejects
   `NAME=value`, `--eval`, `-f`, `--file` and `--makefile`; npm, pnpm and Yarn
   reject `--script-shell` and `--node-options`.
+- Find rejects `-exec`, `-execdir`, `-ok`, `-okdir`, `-delete`, `-fprint`,
+  `-fprint0`, `-fprintf` and `-fls`. Ripgrep rejects `--pre`. Sort rejects
+  `-o`, `--output`, `--compress-program`, `-T` and `--files0-from`.
 
-Each rule rejects a bare option, a `--option=value` form, and an attached
-short-option value.
+A listed one-letter short option is rejected in a one-hyphen option bundle or
+with an attached value. A long option is rejected as its full name, or as a
+prefix of at least three letters, with or without `=value`. Go rejects its two
+options with either one or two hyphens.
 
 Both require the same tool name and a row from this repository, or a row
 widened to all repositories. A `once` row never

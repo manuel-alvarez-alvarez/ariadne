@@ -47,14 +47,34 @@ const SUBCOMMANDS: [&str; 14] = [
     "git", "cargo", "npm", "npx", "pnpm", "yarn", "go", "docker", "gh", "make", "kubectl", "pip",
     "pip3", "brew",
 ];
-/// Options that select a program or change output for each program.
-const PROGRAM_SETUP_OPTIONS: [(&str, &[&str]); 6] = [
+/// The only programs whose Bash families can answer later requests, and the
+/// options that select a program or change output for each one.
+const FAMILY_PROGRAM_SETUP_OPTIONS: [(&str, &[&str]); 10] = [
+    ("git", &[]),
     ("cargo", &["--config"]),
     ("go", &["-exec", "-toolexec"]),
     ("make", &["--eval", "-f", "--file", "--makefile"]),
     ("npm", &["--script-shell", "--node-options"]),
     ("pnpm", &["--script-shell", "--node-options"]),
     ("yarn", &["--script-shell", "--node-options"]),
+    (
+        "find",
+        &[
+            "-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf",
+            "-fls",
+        ],
+    ),
+    ("rg", &["--pre"]),
+    (
+        "sort",
+        &[
+            "-o",
+            "--output",
+            "--compress-program",
+            "-T",
+            "--files0-from",
+        ],
+    ),
 ];
 /// Unsafe Git options before the subcommand.
 const GIT_GLOBAL_SETUP_OPTIONS: [&str; 3] = ["-c", "--config-env", "--exec-path"];
@@ -378,8 +398,8 @@ fn is_safe_family_command(command: &str) -> bool {
     is_single_family_command(command) && first_command_has_no_program_setup(command)
 }
 
-/// The first command does not set an environment or use a Git option that can
-/// select a program to run.
+/// The first command uses a known safe program without environment or program
+/// setup.
 fn first_command_has_no_program_setup(command: &str) -> bool {
     let command = without_filters(command).trim();
     let Some(first) = simple_commands(command).into_iter().next() else {
@@ -424,23 +444,26 @@ fn is_assignment(word: &str) -> bool {
 
 /// Options that select a program or output file make a family approval unsafe.
 fn program_option_selects_a_program(program: &str, arguments: &[&str]) -> bool {
+    let Some((_, options)) = FAMILY_PROGRAM_SETUP_OPTIONS
+        .iter()
+        .find(|(name, _)| *name == program)
+    else {
+        return true;
+    };
     if program == "git" {
         return git_option_selects_a_program(arguments);
     }
     if program == "make" && arguments.iter().any(|argument| is_assignment(argument)) {
         return true;
     }
-    PROGRAM_SETUP_OPTIONS
-        .iter()
-        .find(|(name, _)| *name == program)
-        .is_some_and(|(_, options)| contains_setup_option(arguments, options))
+    contains_setup_option(program, arguments, options)
 }
 
 /// Git has separate global and subcommand options that can select code.
 fn git_option_selects_a_program(arguments: &[&str]) -> bool {
     let subcommand_and_arguments = git_words(arguments);
     let globals = &arguments[..arguments.len() - subcommand_and_arguments.len()];
-    if contains_setup_option(globals, &GIT_GLOBAL_SETUP_OPTIONS) {
+    if contains_setup_option("git", globals, &GIT_GLOBAL_SETUP_OPTIONS) {
         return true;
     }
     let Some((&subcommand, arguments)) = subcommand_and_arguments.split_first() else {
@@ -449,24 +472,51 @@ fn git_option_selects_a_program(arguments: &[&str]) -> bool {
     GIT_SUBCOMMAND_SETUP_OPTIONS
         .iter()
         .find(|(subcommands, _)| subcommands.contains(&subcommand))
-        .is_some_and(|(_, options)| contains_setup_option(arguments, options))
+        .is_some_and(|(_, options)| contains_setup_option("git", arguments, options))
 }
 
-/// The option can appear alone, as `--option=value`, or as an attached short
-/// option value.
-fn contains_setup_option(arguments: &[&str], options: &[&str]) -> bool {
+/// An option can appear alone, as a long-option prefix with `=`, or in a
+/// short-option bundle.
+fn contains_setup_option(program: &str, arguments: &[&str], options: &[&str]) -> bool {
     arguments.iter().any(|argument| {
-        options.iter().any(|option| {
-            *argument == *option
-                || (option.starts_with("--")
-                    && argument
-                        .strip_prefix(option)
-                        .is_some_and(|value| value.starts_with('=')))
-                || (!option.starts_with("--")
-                    && argument
-                        .strip_prefix(option)
-                        .is_some_and(|value| !value.is_empty()))
-        })
+        options
+            .iter()
+            .any(|option| setup_option_matches(program, argument, option))
+    })
+}
+
+fn setup_option_matches(program: &str, argument: &str, option: &str) -> bool {
+    if program == "go" {
+        return go_option_matches(argument, option);
+    }
+    if option.starts_with("--") {
+        return long_option_matches(argument, option);
+    }
+    if option.len() == 2 {
+        return argument
+            .strip_prefix('-')
+            .filter(|value| !value.starts_with('-'))
+            .is_some_and(|value| value.contains(&option[1..]));
+    }
+    argument == option
+}
+
+/// Long options allow a unique prefix of at least three letters.
+fn long_option_matches(argument: &str, option: &str) -> bool {
+    let name = argument.split_once('=').map_or(argument, |(name, _)| name);
+    name.len() >= 5 && option.starts_with(name)
+}
+
+/// Go accepts its long flags with one or two hyphens.
+fn go_option_matches(argument: &str, option: &str) -> bool {
+    let Some(name) = option.strip_prefix('-') else {
+        return false;
+    };
+    ["-", "--"].into_iter().any(|prefix| {
+        argument
+            .strip_prefix(prefix)
+            .and_then(|value| value.strip_prefix(name))
+            .is_some_and(|value| value.is_empty() || value.starts_with('='))
     })
 }
 
@@ -497,7 +547,7 @@ fn is_single_family_command(command: &str) -> bool {
                     return false;
                 }
                 b'\'' | b'"' => quote = Some(byte),
-                b'`' | b'(' | b')' | b';' | b'&' | b'|' | b'\n' => return false,
+                b'`' | b'(' | b')' | b';' | b'&' | b'|' | b'>' | b'<' | b'\n' => return false,
                 b'$' if bytes.get(index + 1) == Some(&b'(') => return false,
                 _ => {}
             },
@@ -790,6 +840,9 @@ mod tests {
             "git status",
             "git status 2>&1 | head -n 20",
             "git commit -c HEAD",
+            "find . -name Cargo.toml",
+            "rg TODO",
+            "sort -n status",
         ] {
             assert!(
                 normalize("Bash", &json!({"command": command}), &facts()).family_safe,
@@ -804,6 +857,9 @@ mod tests {
             "git status <(./payload)",
             "git status `./payload`",
             "git status x$'\\'' ; ./payload ; : x$'\\''",
+            "git status > src/lib.rs",
+            "git log >> src/lib.rs",
+            "git diff >| src/lib.rs",
             "git status | grep clean",
             "git -c core.fsmonitor=./payload status",
             "git -ccore.fsmonitor=./payload status",
@@ -824,6 +880,18 @@ mod tests {
             "git rebase --exec ./payload main",
             "git difftool -x ./payload",
             "git difftool --extcmd=./payload",
+            "git grep -nO./payload TODO",
+            "git rebase -kx ./payload main",
+            "make -kf evil.mk",
+            "git rebase --exe ./payload main",
+            "git grep --open-files=./payload TODO",
+            "git ls-remote --upload=./payload .",
+            "git difftool --extc=./payload",
+            "make --eva=./payload",
+            "make --fil=evil.mk",
+            "npm test --script-sh=./payload",
+            "go test --exec ./payload",
+            "go build --toolexec=./payload",
             "cargo build --config build.rustc-wrapper=./payload",
             "cargo --config=build.rustc-wrapper=./payload build",
             "go test -exec ./payload",
@@ -833,6 +901,17 @@ mod tests {
             "npm test --script-shell=./payload",
             "pnpm test --script-shell=./payload",
             "yarn test --node-options=./payload",
+            "find . -exec ./payload {} +",
+            "find . -delete",
+            "rg --pre ./payload TODO",
+            "sort -o src/lib.rs x",
+            "sed -i s/a/b/ src/lib.rs",
+            "sed 's/x/id/e' f",
+            "awk 'BEGIN{system(\"./payload\")}'",
+            "xargs ./payload",
+            "tee src/lib.rs",
+            "tar --to-command=./payload -xf a.tar",
+            "printf safe",
         ] {
             assert!(
                 !normalize("Bash", &json!({"command": command}), &facts()).family_safe,
