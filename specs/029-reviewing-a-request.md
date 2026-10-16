@@ -63,9 +63,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    open list says yes where it names the login among the request's own
    requested reviewers (026 rule 5). For an open row that asked on the last
    read and the list no longer names the login, the fetch asks the forge
-   (`ForgeClient::review_still_requested`). A detail read with no fetch
-   before a fetch invents no assignment; an existing observed assignment
-   is preserved until the next fetch. GitHub
+   (`ForgeClient::review_still_requested`). A detail read preserves the
+   cached assignment. With no cached read, a held `reviewer` row still
+   asks until a fetch checks the list and timeline. This default starts
+   no session without an explicit ask. GitHub
    drops the login from `reviewRequests` once the user reviewed it, and
    writes no removal event for that. So it reads the request's timeline: the
    last review request or removed request for the login decides. A review
@@ -304,6 +305,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   by a slug rather than a login, never does:
   `forge/github/pulls.rs::tests::a_user_review_request_names_its_login`,
   `::a_team_review_request_matches_no_login`.
+- A detail read with an empty cache preserves a held review request until
+  the next fetch checks its timeline. A confirmed withdrawal removes the row:
+  `pull_request_reviews.rs::a_detail_read_before_any_fetch_keeps_a_review_request_asking`.
 - The review session resolves its own fixed finding through `resolveReviewThread`
   only when posts are not supervised. A thread someone else opened, a resolve
   from another session, and a supervised resolve are refused without a forge

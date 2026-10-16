@@ -250,13 +250,13 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
         ));
     }
     // A detail read says nothing of whether the request still asks for my
-    // review: preserve the last fetch's word, without inventing an
-    // assignment for a request the user started manually (029).
+    // review: preserve the last fetch's word. With no cached read, keep a
+    // reviewer row asking until a fetch checks the list and timeline (029).
     let review_requested = state
         .launcher
         .live
         .get(&row.id)
-        .is_some_and(|l| l.review_requested);
+        .map_or(row.role == "reviewer", |l| l.review_requested);
     let head_sha = details.pull.head_sha.clone();
     let (before, after) = state.launcher.live.set_details_fingerprinted(
         &row.id,

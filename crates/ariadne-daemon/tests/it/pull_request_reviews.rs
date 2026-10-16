@@ -1494,10 +1494,50 @@ async fn a_detail_read_before_any_fetch_keeps_a_review_request_asking() {
     let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    eventually(TIMEOUT, "the first fetch to finish", async || {
+        stub.fetches() >= 1
+    })
+    .await;
+    stub.reprogram(script(&Shown {
+        listed: false,
+        timeline: &["review_requested", "reviewed"],
+        ..Shown::open(&head)
+    }));
     h.launcher.live.remove(&id);
     let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert!(
         h.launcher.live.get(&id).is_some_and(|l| l.review_requested),
         "a detail read is no withdrawal"
     );
+    h.state
+        .sched_tx
+        .as_ref()
+        .unwrap()
+        .send(ariadne_daemon::scheduler::SchedEvent::PullRequestChanged(
+            id.clone(),
+        ))
+        .unwrap();
+    h.flush_scheduler().await;
+    let row = h.store.get_pull_request(&id).await.unwrap();
+    assert!(!row.review_asked && !row.babysit_asked);
+    assert!(sessions(&h, &id).await.is_empty());
+
+    fetch_again(&h, &stub, &repo).await;
+    assert!(stub.invocations().iter().any(|i| {
+        i.args
+            .starts_with(&["api".into(), "repos/acme/widgets/issues/1/timeline".into()])
+    }));
+    assert!(h.store.get_pull_request(&id).await.is_ok());
+    assert!(
+        h.launcher.live.get(&id).is_some_and(|l| l.review_requested),
+        "the timeline still asks after my review"
+    );
+
+    stub.reprogram(script(&Shown {
+        listed: false,
+        timeline: &["review_requested", "reviewed", "review_request_removed"],
+        ..Shown::open(&head)
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    assert!(no_rows(&h).await, "a confirmed withdrawal removes the row");
 }
