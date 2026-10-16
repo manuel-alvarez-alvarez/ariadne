@@ -13,6 +13,7 @@
     "typecheck": "tsc -b",
     "lint": "biome check .",
     "check:unused": "node scripts/check-unused.mjs",
+    "check:audit": "node scripts/check-audit.mjs",
     "check": "npm run lint && npm run typecheck && npm test && npm run check:unused",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
@@ -77,5 +78,14 @@
     "typescript": "~5.9",
     "vite": "^8.2.0",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "brace-expansion": "^5.0.12",
+    "fast-uri": "^3.1.8",
+    "js-yaml": "^4.3.2",
+    "proxy-addr": "^2.0.8",
+    "source-map-js": "^1.2.2",
+    "undici": "^8.12.2"
   }
 }

@@ -7,12 +7,12 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
 
 - [`workflows/ci.yml`](workflows/ci.yml) — runs on every push to `main` and
   every pull request: `fmt` checks `cargo fmt` on the workspace and on
-  `ui/src-tauri`; `rust` runs `cargo machete .`, `cargo build --workspace
-  --bins`, `cargo nextest run --workspace`, `cargo test --doc --workspace`,
-  `cargo clippy --workspace --all-targets -- -D warnings`,
-  `scripts/check-unused-rust` and `scripts/check-migrations.sh`, on Ubuntu
-  and macOS; `ui` runs `npm run lint`,
-  `npm run typecheck`, `npm run check:unused` and `npm test` under `ui/`;
+  `ui/src-tauri`; `rust` runs `cargo machete .`, `cargo audit`, `cargo build
+  --locked --workspace --bins`, `cargo nextest run --workspace`, `cargo test
+  --doc --workspace`, `cargo clippy --workspace --all-targets -- -D
+  warnings`, `scripts/check-unused-rust` and `scripts/check-migrations.sh`,
+  on Ubuntu and macOS; `ui` runs `npm run lint`, `npm run typecheck`, `npm
+  run check:unused`, `npm run check:audit` and `npm test` under `ui/`;
   `tauri` runs `cargo check` under `ui/src-tauri` on Ubuntu and macOS.
 - [`workflows/release-please.yml`](workflows/release-please.yml) — runs on
   every push to `main`; keeps the single pending release pull request current
@@ -26,6 +26,17 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   release's own current body, and writes the result back with `gh release
   edit --notes-file`, so the Release page gets install steps and an asset
   table in front of the changelog release-please wrote.
+- [`dependabot.yml`](dependabot.yml) — a weekly check of four ecosystems:
+  `cargo` at the repository root, `cargo` in `ui/src-tauri` (its own
+  workspace, outside the root one), `npm` in `ui/`, and `github-actions` at
+  the root. Each ecosystem groups its own minor and patch bumps into one
+  pull request; a major bump still opens its own, since those more often
+  need a manual look. Every commit carries the `chore(deps)` prefix, so
+  release-please ignores it the same as any other `chore` commit (root
+  [`AGENTS.md`](../AGENTS.md#commit-messages)) and a dependency bump alone
+  never triggers a release. Dependabot only proposes; `ci.yml`'s `cargo
+  audit` and `npm run check:audit` are what fail a build on an advisory, and
+  that does not change here.
 
 [`RELEASING.md`](RELEASING.md) is the human explanation of the loop these two
 release workflows drive, the release token, and what to do when it expires.

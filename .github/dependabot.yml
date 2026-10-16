@@ -1,0 +1,53 @@
+# Proposes dependency updates as pull requests; it does not gate anything.
+# `ci.yml`'s `cargo audit` and `npm run check:audit` are what fail a build on
+# an advisory (.github/AGENTS.md, specs/016-install-service-and-release.md).
+#
+# Four ecosystems, one weekly pull request each for every minor and patch
+# bump together; a major bump still opens its own pull request, ungrouped,
+# since those more often need a manual look. Every commit Dependabot writes
+# carries the `chore(deps)` prefix, which release-please ignores the same as
+# any other `chore` commit (root AGENTS.md), so a dependency bump alone never
+# triggers a release.
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # `ui/src-tauri` is its own Cargo workspace, excluded from the root one
+  # (crates/AGENTS.md), so it needs its own `cargo` entry.
+  - package-ecosystem: "cargo"
+    directory: "/ui/src-tauri"
+    schedule:
+      interval: "weekly"
+    groups:
+      tauri-cargo-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "npm"
+    directory: "/ui"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore(deps)"
