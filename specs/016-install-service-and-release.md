@@ -19,6 +19,7 @@ tests:
   - scripts/tests/check-migrations.sh
   - .github/workflows/release-please.yml
   - .github/workflows/release.yml
+  - .github/dependabot.yml
 ---
 
 # Install, service and release
@@ -184,6 +185,16 @@ Out: what the daemon does once running (009, 012).
     greater than every migration `main` already ships and than every other
     new one in the same change. Pull-request CI and the pre-push hook run
     the identical command.
+17. `.github/dependabot.yml` checks four ecosystems weekly: `cargo` at the
+    repository root, `cargo` in `ui/src-tauri`, `npm` in `ui/`, and
+    `github-actions` at the root, each grouping its own minor and patch
+    bumps into one pull request and leaving a major bump its own,
+    ungrouped, pull request. Every commit it writes carries the
+    `chore(deps)` prefix, which rule 6 above already hides from the release
+    notes and keeps from moving the version, so a dependency bump alone
+    never triggers a release. Dependabot only proposes a bump; `ci.yml`'s
+    `cargo audit` and `npm run check:audit` are still what fail a build on
+    an advisory, unchanged by this rule.
 
 ## Acceptance criteria
 
@@ -235,6 +246,11 @@ Out: what the daemon does once running (009, 012).
   macOS signing certificate`; `Delete the temporary macOS signing keychain`
   runs right after `Verify the signed macOS assets`, before staging,
   attesting or uploading any asset (`.github/workflows/release.yml`).
+- `.github/dependabot.yml` defines exactly four `updates` entries —
+  `cargo` at `/`, `cargo` at `/ui/src-tauri`, `npm` at `/ui`, and
+  `github-actions` at `/` — each weekly, each with a `groups` entry
+  covering `minor` and `patch` update types, and each with a
+  `commit-message.prefix` of `chore(deps)` (`.github/dependabot.yml`).
 - `release-please-config.json` defines ✨ Features, 🐛 Bug fixes, ⚡
   Performance, and ⏪ Reverts in that order. It hides the other allowed
   commit types from release notes. The pre-commit hook runs its section test
@@ -292,6 +308,7 @@ fails the service step`).
 `scripts/check-migrations.sh`, `scripts/tests/check-migrations.sh`,
 `scripts/tests/release-please-config.sh`,
 `.github/workflows/release.yml`, `.github/RELEASING.md`,
+`.github/dependabot.yml`,
 `crates/ariadne-store/src/lib.rs`,
 `crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-daemon/src/resource.rs`, `crates/ariadne-daemon/src/main.rs`.
