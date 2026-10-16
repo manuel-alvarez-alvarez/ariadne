@@ -3377,6 +3377,45 @@ async fn a_fresh_database_already_has_every_column_the_old_chain_added() {
     assert!(created);
 }
 
+#[tokio::test]
+async fn answering_a_snapshot_keeps_later_agent_requests_pending() {
+    let (store, _dir, pr) = store_with_my_pull_request().await;
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Keeper),
+            task_agent_id: None,
+            model: "stub:m".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(pr.id.clone()),
+        })
+        .await
+        .unwrap();
+    let (opened, created) = store
+        .create_agent_request(&session.id, "First question", None)
+        .await
+        .unwrap();
+    assert!(created);
+    let snapshot = store.pending_agent_request_ids(&session.id).await.unwrap();
+    assert_eq!(snapshot, [opened.id]);
+
+    let (later, created) = store
+        .create_agent_request(&session.id, "New question", None)
+        .await
+        .unwrap();
+    assert!(created);
+    store
+        .answer_agent_requests(&session.id, &snapshot)
+        .await
+        .unwrap();
+
+    let pending = store.pending_agent_requests().await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, later.id);
+}
+
 // -- token usage ------------------------------------------------------------
 
 fn usage(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> TokenUsage {

@@ -630,6 +630,7 @@ pub(super) async fn take_input(state: &AppState, id: &str, text: String) -> ApiR
     let title = (session.title.is_none() && session.goal_id.is_none() && session.task_id.is_none())
         .then(|| crate::launcher::loose_title(&text))
         .flatten();
+    let requests = state.store.pending_agent_request_ids(id).await?;
     state
         .launcher
         .acp
@@ -639,7 +640,7 @@ pub(super) async fn take_input(state: &AppState, id: &str, text: String) -> ApiR
         state.store.set_session_title_if_unset(id, &title).await?;
     }
     state.store.clear_session_attention(id).await?;
-    state.store.answer_agent_request(id).await?;
+    state.store.answer_agent_requests(id, &requests).await?;
     state.notify_scheduler_session(id);
     Ok(())
 }
