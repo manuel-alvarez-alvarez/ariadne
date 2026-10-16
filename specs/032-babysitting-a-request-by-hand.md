@@ -67,7 +67,9 @@ reads behind them ([026](026-pull-requests.md)).
    name, `ariadne/keep-<id>` — are not. A
    keeper session refuses to start on a head branch git itself refuses as
    a ref, the same refusal a reviewer session's own spawn makes (026 rule
-   26). The seat text says what it owes: keep one open request of the
+   26). Its recovery mark is separate from a reviewer mark on the same
+   request, and its recovery clears only that keeper mark. The seat text
+   says what it owes: keep one open request of the
    user's own, work only in the worktree on its branch, commit a fix and
    push it as the briefing says, and that Ariadne wakes it with the news
    and ends it on the merge or the close, then to end its turn.
@@ -205,6 +207,11 @@ reads behind them ([026](026-pull-requests.md)).
   `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`,
   `::a_keeper_on_a_fork_is_told_to_push_to_the_forks_own_repository`,
   `::a_keeper_on_the_same_repository_pushes_through_the_configured_remote`.
+- A keeper head-branch refusal and recovery use the keeper's recovery mark
+  alone, and a keeper recovery cannot clear a reviewer mark on the same row:
+  `scheduler_attention.rs::a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref`,
+  `::a_keeper_recovers_once_its_head_branch_turns_valid_again`,
+  `::a_keeper_recovery_keeps_a_reviewers_give_up_mark`.
 - The four seats answer to the word the wire spells each with:
   `lib.rs::tests::the_seats_are_the_orchestrator_the_agent_the_pull_request_reviewer_and_the_keeper`.
 - The panel starts a keeper session on the model and skills picked, opens
@@ -221,6 +228,7 @@ reads behind them ([026](026-pull-requests.md)).
 ## Sources
 
 `crates/ariadne-store/migrations/0001_init.sql`,
+`crates/ariadne-store/migrations/0003_keeper_recovery.sql`,
 `crates/ariadne-store/src/pull_requests.rs`, `crates/ariadne-store/src/defaults.rs`,
 `crates/ariadne-core/src/lib.rs`,
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,

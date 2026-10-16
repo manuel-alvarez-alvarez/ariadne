@@ -3084,9 +3084,8 @@ async fn a_reviewer_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_r
     );
 }
 
-/// The same refusal holds for a keeper session asked for by hand (032):
-/// `spawn_keeper_session` shares the reviewer's own guard, so a request
-/// of mine with an unusable head branch is given up on the same way.
+/// The same refusal holds for a keeper session asked for by hand (032).
+/// Its own recovery mark records the failure without affecting a reviewer.
 #[tokio::test]
 async fn a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref() {
     let h = harness().await;
@@ -3143,7 +3142,7 @@ async fn a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref
                 .get_pull_request(&pull.id)
                 .await
                 .unwrap()
-                .reviewer_given_up_at
+                .keeper_given_up_at
                 .is_some()
         },
     )
@@ -3162,11 +3161,9 @@ async fn a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref
     );
 }
 
-/// Once the guard gives up on a keeper for an unusable head branch, a
-/// later push that makes the branch usable again lets the keeper recover:
-/// `start_babysit_session`'s own successful-launch branch once cleared no
-/// mark at all, unlike the reviewer's own, so a recovered keeper request
-/// kept a stale recovery item.
+/// Once the guard gives up on a keeper for an unusable head branch, a later
+/// push that makes the branch usable again lets the keeper recover. The
+/// successful launch clears only the keeper's own recovery mark.
 #[tokio::test]
 async fn a_keeper_recovers_once_its_head_branch_turns_valid_again() {
     let h = harness().await;
@@ -3225,7 +3222,7 @@ async fn a_keeper_recovers_once_its_head_branch_turns_valid_again() {
                 .get_pull_request(&pull.id)
                 .await
                 .unwrap()
-                .reviewer_given_up_at
+                .keeper_given_up_at
                 .is_some()
         },
     )
@@ -3247,7 +3244,7 @@ async fn a_keeper_recovers_once_its_head_branch_turns_valid_again() {
                 .get_pull_request(&pull.id)
                 .await
                 .unwrap()
-                .reviewer_given_up_at
+                .keeper_given_up_at
                 .is_none()
         },
     )
@@ -3263,6 +3260,115 @@ async fn a_keeper_recovers_once_its_head_branch_turns_valid_again() {
             .unwrap()
             .is_empty(),
         "a keeper session starts once the head branch is usable again"
+    );
+}
+
+/// A reviewer and a keeper can run on one row. A keeper recovery does not
+/// answer the reviewer's stale recovery item: only a reviewer can do that.
+#[tokio::test]
+async fn a_keeper_recovery_keeps_a_reviewers_give_up_mark() {
+    let h = harness().await;
+    let repo_path = h.git_repo("widgets");
+    let repo = h.repository(&repo_path).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    let pin = ariadne_store::AgentPin {
+        model: test_pin().model,
+        effort: None,
+    };
+    h.store
+        .set_pull_request_review_asked(&pull.id, Some((&pin, &[])))
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_babysit_asked(&pull.id, Some((&pin, &[])))
+        .await
+        .unwrap();
+    let next_sha = sh(&repo_path, "git rev-parse next");
+    crate::common::forge::seed_live(&h, &pull, "me", "fix", &next_sha, false);
+
+    let reviewer_dir = h.at("reviewer");
+    std::fs::create_dir_all(&reviewer_dir).unwrap();
+    let reviewer = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Reviewer),
+            task_agent_id: None,
+            model: pin.model.clone(),
+            effort: None,
+            worktree_path: Some(reviewer_dir.display().to_string()),
+            pull_request_id: Some(pull.id.clone()),
+        })
+        .await
+        .unwrap();
+    h.agent_runs(&reviewer).await;
+    h.store
+        .set_pull_request_reviewer_given_up(&pull.id, false)
+        .await
+        .unwrap();
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the keeper session to start beside the reviewer",
+        async || {
+            h.store
+                .list_sessions(SessionFilter {
+                    pull_request_id: Some(pull.id.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .iter()
+                .any(|session| session.seat() == Some(Seat::Keeper))
+        },
+    )
+    .await;
+
+    assert!(
+        h.store
+            .get_pull_request(&pull.id)
+            .await
+            .unwrap()
+            .reviewer_given_up_at
+            .is_some(),
+        "a keeper recovery cannot hide the reviewer's recovery item"
+    );
+    let items = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert!(
+        items
+            .items
+            .iter()
+            .any(|item| { item.id == format!("recovery:unknown:pull_request:{}", pull.id) }),
+        "the reviewer recovery item remains after the keeper starts"
     );
 }
 

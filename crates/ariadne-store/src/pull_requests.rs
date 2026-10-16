@@ -277,6 +277,41 @@ impl Store {
         Ok(())
     }
 
+    /// Mark that this request's keeper session has been given up on.
+    /// Keep the first mark so the item keeps its original time and cause.
+    pub async fn set_pull_request_keeper_given_up(&self, id: &str, wedged: bool) -> Result<()> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "UPDATE pull_requests SET keeper_given_up_at = ?, keeper_given_up_wedged = ?
+             WHERE id = ? AND keeper_given_up_at IS NULL
+             RETURNING repository_id",
+        )
+        .bind(now())
+        .bind(wedged)
+        .bind(id)
+        .fetch_optional(self.w())
+        .await?;
+        if let Some((repository_id,)) = row {
+            self.publish(Change::PullRequestsChanged(repository_id));
+        }
+        Ok(())
+    }
+
+    /// Take the keeper's give-up mark down after its recovery succeeds.
+    pub async fn clear_pull_request_keeper_given_up(&self, id: &str) -> Result<()> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "UPDATE pull_requests SET keeper_given_up_at = NULL
+             WHERE id = ? AND keeper_given_up_at IS NOT NULL
+             RETURNING repository_id",
+        )
+        .bind(id)
+        .fetch_optional(self.w())
+        .await?;
+        if let Some((repository_id,)) = row {
+            self.publish(Change::PullRequestsChanged(repository_id));
+        }
+        Ok(())
+    }
+
     /// Ask Ariadne to review a request of the user's own on `pin` with
     /// `skills` beside `pr-reviewer`, or stop asking with None (029).
     pub async fn set_pull_request_review_asked(

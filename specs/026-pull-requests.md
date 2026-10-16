@@ -224,16 +224,16 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     reviewer or a keeper session refuses to start on a head
     branch git itself refuses as a ref name (`git check-ref-format
     --branch`), and the refusal is recorded on the row the way an
-    exhausted spawn-retry budget already is (`reviewer_given_up_at`). The
+    exhausted spawn-retry budget already is. The reviewer and the keeper
+    keep separate recovery marks, because both can run on one row. The
     guard sits before a fresh spawn and before a relaunch of a session
     already on the row alike, since a branch read as unusable only after
     that session went quiet must refuse the relaunch the same way a
     fresh spawn would have refused it. A later push that makes the head
-    branch usable again clears the mark on the launch that follows,
-    whether that launch answers for a reviewer or for a keeper, so a
-    recovered request carries no stale recovery item. Nothing between
-    the forge's own read of a branch name and a real `git` call ever
-    runs a shell over it: `GitManager` always passes it as its own
+    branch usable again clears only the mark for the seat it starts, so
+    a keeper recovery cannot hide the reviewer's recovery item. Nothing
+    between the forge's own read of a branch name and a real `git` call
+    ever runs a shell over it: `GitManager` always passes it as its own
     argument, and the keeper's own push command (032 rule 4) quotes it
     into one.
 
@@ -630,8 +630,10 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   only a fresh spawn
   (`::a_reviewer_session_refuses_to_restart_on_a_head_branch_that_turned_invalid`).
   A keeper recovers once its head branch turns usable again, with no
-  stale recovery item left on the row
-  (`::a_keeper_recovers_once_its_head_branch_turns_valid_again`).
+  stale keeper recovery item left on the row
+  (`::a_keeper_recovers_once_its_head_branch_turns_valid_again`). A
+  keeper recovery leaves a reviewer recovery item on the same row alone
+  (`::a_keeper_recovery_keeps_a_reviewers_give_up_mark`).
 
 ## Known gap
 
@@ -642,6 +644,7 @@ raises no row and starts no session (029).
 ## Sources
 
 `crates/ariadne-store/migrations/0001_init.sql`,
+`crates/ariadne-store/migrations/0003_keeper_recovery.sql`,
 `crates/ariadne-store/src/pull_requests.rs`, `crates/ariadne-store/src/pull_request_comments.rs`,
 `crates/ariadne-store/skills/pr-babysit/SKILL.md`, `crates/ariadne-api/src/pull_requests.rs`,
 `crates/ariadne-daemon/src/launcher.rs`, `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,

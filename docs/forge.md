@@ -125,7 +125,8 @@ it is seen, and Needs attention offers **Review needed**, naming the
 repository and the request, until you ask. A head branch git itself
 refuses as a ref name starts no worktree and no session either: Ariadne
 gives up on it at once, the same way it gives up on a session that never
-comes back, and Needs attention names the request until you look. You ask the same way on a
+comes back, and Needs attention names the request until you look. A review
+and a babysit session keep separate recovery items on the same request. You ask the same way on a
 request of your own, too: open either kind of request in the desktop app's
 Pull requests tab and press **Start review** in its panel. The dialog asks
 what the reviewer runs on — a model and an effort — and which skills it
@@ -208,7 +209,8 @@ branch of its own, `ariadne/keep-<id>`, cut from the request's head, never
 a detached checkout: the keeper commits a fix there and pushes it onto the
 request's own head branch. The same refusal a reviewer's own spawn makes
 holds here too: a head branch git itself refuses as a ref name starts no
-worktree and no keeper session. It hears the same news a task's keeping agent
+worktree and no keeper session. A keeper recovery clears its own item and
+does not clear a reviewer's item on the same request. It hears the same news a task's keeping agent
 does — a new comment, a check that turned to failure or back to green, a
 changed review decision, a merge or a close — replies and fixes the same
 way, and reports the request ready the same way. Unlike a self-review,

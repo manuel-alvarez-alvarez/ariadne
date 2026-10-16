@@ -786,6 +786,10 @@ impl super::Scheduler {
         }
         if self.spawn_failures.get(&budget).copied().unwrap_or(0) >= SPAWN_RETRY_BUDGET {
             warn!(pull_request = %pull.id, "the keeper session died on arrival too many times, giving up for now");
+            let _ = self
+                .store
+                .set_pull_request_keeper_given_up(&pull.id, false)
+                .await;
             return Ok(());
         }
         match self.launcher.resume_keeper_session(pull, pin).await {
@@ -793,7 +797,7 @@ impl super::Scheduler {
                 info!(pull_request = %pull.id, session = %session.id, "the request's keeper session is up");
                 let _ = self
                     .store
-                    .clear_pull_request_reviewer_given_up(&pull.id)
+                    .clear_pull_request_keeper_given_up(&pull.id)
                     .await;
                 Ok(())
             }
@@ -838,6 +842,10 @@ impl super::Scheduler {
         // false`, babysitting ends on the merge or the close too: nothing
         // else keeps a hand-babysat row once this ends, since asking it is
         // refused wherever a task already keeps the request (032).
+        let _ = self
+            .store
+            .clear_pull_request_keeper_given_up(&pull.id)
+            .await;
         let done = pull.origin_task_id.is_none() && !pull.review_asked;
         if live.is_empty() && !self.launcher.keeper_worktree_exists(&pull.id) && !done {
             return Ok(());

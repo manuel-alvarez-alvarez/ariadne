@@ -37,7 +37,7 @@ pub(crate) async fn items(store: &Store, launcher: &Launcher) -> Result<Vec<Atte
     items.extend(configuration_items(store).await?);
     items.extend(access_items(store).await?);
     items.extend(orchestrator_given_up_items(store).await?);
-    items.extend(reviewer_given_up_items(store).await?);
+    items.extend(pull_request_given_up_items(store).await?);
     Ok(items)
 }
 
@@ -169,57 +169,72 @@ async fn orchestrator_given_up_items(store: &Store) -> Result<Vec<AttentionItemD
     Ok(items)
 }
 
-/// Every pull request whose reviewer session
-/// `scheduler::pull_requests::start_pull_request_session` has given up on
-/// (`PullRequestRow::reviewer_given_up_at`): the same "automatic recovery
-/// has given up" evidence as the orchestrator's own, read from the
-/// scheduler's actual decision rather than the generic `disconnected`
-/// flag a mere crash also raises, cleared the moment the request itself
-/// no longer wants a reviewer session (`scheduler::pull_requests::end_review`)
-/// so a request back in draft, or no longer asked for directly on its own
-/// row, does not carry a stale blocker for work nothing is trying any more.
-async fn reviewer_given_up_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
+/// Every request seat automatic recovery has given up on. A reviewer and a
+/// keeper can fail independently, so they keep separate marks and items.
+async fn pull_request_given_up_items(store: &Store) -> Result<Vec<AttentionItemDto>> {
     let mut items = Vec::new();
     for pull in store
         .list_pull_requests(ariadne_store::PullRequestFilter::default())
         .await?
     {
-        let Some(since) = pull.reviewer_given_up_at.clone() else {
-            continue;
-        };
-        let reviewer = store
-            .list_sessions(SessionFilter {
-                pull_request_id: Some(pull.id.clone()),
-                ..Default::default()
-            })
-            .await?
-            .into_iter()
-            .rfind(|s| s.seat() == Some(Seat::Reviewer));
-        let error = match &reviewer {
-            Some(session) => last_session_error(store, &session.id).await?,
-            None => None,
-        };
-        let summary = give_up_summary(
-            "The request's reviewer session",
-            pull.reviewer_given_up_wedged,
-            error.as_deref(),
-        );
-        items.push(AttentionItemDto {
-            id: format!("recovery:unknown:pull_request:{}", pull.id),
-            producer: AttentionProducer::Recovery,
-            reason: AttentionCause::Unknown,
-            summary,
-            required_action: "Read why it will not start, then resume it yourself.".into(),
-            since,
-            affected: vec![AttentionSubjectDto {
-                kind: AttentionSubjectKind::Repository,
-                id: pull.repository_id.clone(),
-                label: format!("pull request #{}", pull.number),
-            }],
-            target: AttentionTarget::PullRequest {
-                pull_request_id: pull.id,
-            },
-        });
+        for (seat, since, wedged) in [
+            (
+                Seat::Reviewer,
+                pull.reviewer_given_up_at.as_deref(),
+                pull.reviewer_given_up_wedged,
+            ),
+            (
+                Seat::Keeper,
+                pull.keeper_given_up_at.as_deref(),
+                pull.keeper_given_up_wedged,
+            ),
+        ] {
+            let Some(since) = since else {
+                continue;
+            };
+            let session = store
+                .list_sessions(SessionFilter {
+                    pull_request_id: Some(pull.id.clone()),
+                    ..Default::default()
+                })
+                .await?
+                .into_iter()
+                .rfind(|session| session.seat() == Some(seat));
+            let error = match &session {
+                Some(session) => last_session_error(store, &session.id).await?,
+                None => None,
+            };
+            let label = match seat {
+                Seat::Reviewer => "reviewer",
+                Seat::Keeper => "keeper",
+                _ => unreachable!("only reviewer and keeper marks reach recovery"),
+            };
+            let id = match seat {
+                Seat::Reviewer => format!("recovery:unknown:pull_request:{}", pull.id),
+                Seat::Keeper => format!("recovery:unknown:pull_request:keeper:{}", pull.id),
+                _ => unreachable!("only reviewer and keeper marks reach recovery"),
+            };
+            items.push(AttentionItemDto {
+                id,
+                producer: AttentionProducer::Recovery,
+                reason: AttentionCause::Unknown,
+                summary: give_up_summary(
+                    &format!("The request's {label} session"),
+                    wedged,
+                    error.as_deref(),
+                ),
+                required_action: "Read why it will not start, then resume it yourself.".into(),
+                since: since.to_string(),
+                affected: vec![AttentionSubjectDto {
+                    kind: AttentionSubjectKind::Repository,
+                    id: pull.repository_id.clone(),
+                    label: format!("pull request #{}", pull.number),
+                }],
+                target: AttentionTarget::PullRequest {
+                    pull_request_id: pull.id.clone(),
+                },
+            });
+        }
     }
     Ok(items)
 }

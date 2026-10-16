@@ -290,6 +290,8 @@ mod tests {
             summary_comment_id: None,
             reviewer_given_up_at: None,
             reviewer_given_up_wedged: false,
+            keeper_given_up_at: None,
+            keeper_given_up_wedged: false,
             ready_confirmed_at: None,
             ready_head_sha: None,
             babysit_asked: false,

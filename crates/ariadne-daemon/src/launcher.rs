@@ -1680,7 +1680,7 @@ impl Launcher {
     /// starts on it. The refusal is recorded on the request the same way a
     /// spawn-retry budget running out already is, since both are automatic
     /// recovery giving up on this row (026).
-    async fn assert_valid_head_branch(&self, pull: &PullRequest) -> Result<()> {
+    async fn assert_valid_head_branch(&self, pull: &PullRequest, seat: Seat) -> Result<()> {
         if ariadne_core::probe::probe_status(
             "git",
             &["check-ref-format", "--branch", &pull.head_branch],
@@ -1689,10 +1689,19 @@ impl Launcher {
         {
             return Ok(());
         }
-        let _ = self
-            .store
-            .set_pull_request_reviewer_given_up(&pull.id, false)
-            .await;
+        let _ = match seat {
+            Seat::Reviewer => {
+                self.store
+                    .set_pull_request_reviewer_given_up(&pull.id, false)
+                    .await
+            }
+            Seat::Keeper => {
+                self.store
+                    .set_pull_request_keeper_given_up(&pull.id, false)
+                    .await
+            }
+            _ => Ok(()),
+        };
         Err(anyhow!(
             "pull request {} names a head branch git refuses as a ref: {:?}",
             pull.id,
@@ -1709,8 +1718,8 @@ impl Launcher {
         pull: &PullRequest,
         pin: AgentPin,
     ) -> Result<AgentSession> {
-        self.assert_valid_head_branch(pull).await?;
         let seat = Seat::Reviewer;
+        self.assert_valid_head_branch(pull, seat).await?;
         self.assert_no_live_pull_request_session(&pull.id, seat)
             .await?;
         let repo = self.store.get_repository(&pull.repository_id).await?;
@@ -1775,8 +1784,8 @@ impl Launcher {
         pull: &PullRequest,
         pin: AgentPin,
     ) -> Result<AgentSession> {
-        self.assert_valid_head_branch(pull).await?;
         let seat = Seat::Reviewer;
+        self.assert_valid_head_branch(pull, seat).await?;
         let previous = self
             .store
             .list_sessions(SessionFilter {
@@ -1840,8 +1849,8 @@ impl Launcher {
         pull: &PullRequest,
         pin: AgentPin,
     ) -> Result<AgentSession> {
-        self.assert_valid_head_branch(pull).await?;
         let seat = Seat::Keeper;
+        self.assert_valid_head_branch(pull, seat).await?;
         self.assert_no_live_pull_request_session(&pull.id, seat)
             .await?;
         let repo = self.store.get_repository(&pull.repository_id).await?;
@@ -1899,8 +1908,8 @@ impl Launcher {
         pull: &PullRequest,
         pin: AgentPin,
     ) -> Result<AgentSession> {
-        self.assert_valid_head_branch(pull).await?;
         let seat = Seat::Keeper;
+        self.assert_valid_head_branch(pull, seat).await?;
         let previous = self
             .store
             .list_sessions(SessionFilter {
