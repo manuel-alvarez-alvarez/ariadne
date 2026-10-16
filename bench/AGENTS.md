@@ -29,9 +29,12 @@ Each experiment's own README names its checks; there is no repository-wide
 one. Today:
 
 - `ai-permissions/` — `python3 -m pytest tests` (its `tests/` directory).
+- `ai-opportunities/failures/` — `python3 tests/test_experiment.py` (from
+  that directory).
 - `ai-opportunities/progress/` — `python3 -m pytest tests/ -q`.
 - `ai-opportunities/handoff/` — `python3 -m pytest
   bench/ai-opportunities/handoff/tests -q`.
+- `token-usage/` — `python3 bench/token-usage/test_followup.py`.
 
 Read the experiment's own README before changing it: a benchmark's cases,
 runner and evaluators are its own convention, not a shared one.
