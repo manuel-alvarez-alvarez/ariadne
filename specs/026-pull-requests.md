@@ -230,8 +230,9 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     already on the row alike, since a branch read as unusable only after
     that session went quiet must refuse the relaunch the same way a
     fresh spawn would have refused it. A later push that makes the head
-    branch usable again clears only the mark for the seat it starts, so
-    a keeper recovery cannot hide the reviewer's recovery item. Nothing
+    branch usable again clears only the mark for the seat it starts. A
+    later report from a still-running seat clears only that seat's mark,
+    so a keeper recovery cannot hide the reviewer's recovery item. Nothing
     between the forge's own read of a branch name and a real `git` call
     ever runs a shell over it: `GitManager` always passes it as its own
     argument, and the keeper's own push command (032 rule 4) quotes it
@@ -632,6 +633,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   A keeper recovers once its head branch turns usable again, with no
   stale keeper recovery item left on the row
   (`::a_keeper_recovers_once_its_head_branch_turns_valid_again`). A
+  keeper that reports after it was given up on clears its own stale item
+  (`::a_keeper_that_reports_after_giving_up_clears_its_recovery`). A
   keeper recovery leaves a reviewer recovery item on the same row alone
   (`::a_keeper_recovery_keeps_a_reviewers_give_up_mark`).
 

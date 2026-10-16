@@ -68,7 +68,8 @@ reads behind them ([026](026-pull-requests.md)).
    keeper session refuses to start on a head branch git itself refuses as
    a ref, the same refusal a reviewer session's own spawn makes (026 rule
    26). Its recovery mark is separate from a reviewer mark on the same
-   request, and its recovery clears only that keeper mark. The seat text
+   request, and its recovery clears only that keeper mark, whether a new
+   session starts or its keeper reports again. The seat text
    says what it owes: keep one open request of the
    user's own, work only in the worktree on its branch, commit a fix and
    push it as the briefing says, and that Ariadne wakes it with the news
@@ -211,6 +212,7 @@ reads behind them ([026](026-pull-requests.md)).
   alone, and a keeper recovery cannot clear a reviewer mark on the same row:
   `scheduler_attention.rs::a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref`,
   `::a_keeper_recovers_once_its_head_branch_turns_valid_again`,
+  `::a_keeper_that_reports_after_giving_up_clears_its_recovery`,
   `::a_keeper_recovery_keeps_a_reviewers_give_up_mark`.
 - The four seats answer to the word the wire spells each with:
   `lib.rs::tests::the_seats_are_the_orchestrator_the_agent_the_pull_request_reviewer_and_the_keeper`.

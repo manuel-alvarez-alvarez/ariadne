@@ -2887,6 +2887,68 @@ async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
     session
 }
 
+/// A request Ariadne keeps, with its keeper session already running.
+async fn keeper_session(h: &Harness, number: i64) -> AgentSession {
+    let repo = h.repository(&h.at("keeper-widgets")).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number,
+            url: format!("https://github.com/acme/widgets/pull/{number}"),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_babysit_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(h, &pull, "me", &format!("fix-{number}"), "abc", false);
+    let worktree = h.at(&format!("wt-keeper-{number}"));
+    std::fs::create_dir_all(&worktree).unwrap();
+    let session = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Keeper),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: Some(worktree.display().to_string()),
+            pull_request_id: Some(pull.id),
+        })
+        .await
+        .unwrap();
+    h.seed_conversation(&session.id, "uuid-1234").await;
+    h.agent_runs(&session).await;
+    session
+}
+
 /// A reviewer session that goes quiet again after every relaunch has no
 /// task to fail either — it sits on no task any more than an orchestrator
 /// does. The same give-up mark the orchestrator's own exhausted-relaunch
@@ -3260,6 +3322,77 @@ async fn a_keeper_recovers_once_its_head_branch_turns_valid_again() {
             .unwrap()
             .is_empty(),
         "a keeper session starts once the head branch is usable again"
+    );
+}
+
+/// A keeper that reports after automatic recovery gave up has recovered in
+/// place. Its later activity clears its own stale recovery item.
+#[tokio::test]
+async fn a_keeper_that_reports_after_giving_up_clears_its_recovery() {
+    let h = harness().await;
+    let keeper = keeper_session(&h, 1).await;
+    let pull_request_id = keeper.pull_request_id.clone().unwrap();
+    h.store
+        .set_pull_request_keeper_given_up(&pull_request_id, true)
+        .await
+        .unwrap();
+    let given_up = h
+        .store
+        .get_pull_request(&pull_request_id)
+        .await
+        .unwrap()
+        .keeper_given_up_at
+        .unwrap();
+
+    let before = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert!(
+        before.items.iter().any(
+            |item| item.id == format!("recovery:unknown:pull_request:keeper:{pull_request_id}")
+        ),
+        "the give-up mark raises the keeper recovery item"
+    );
+
+    eventually(
+        TIMEOUT,
+        "activity after the keeper give-up mark",
+        async || {
+            h.store.touch_session(&keeper.id).await.unwrap();
+            h.store
+                .get_session(&keeper.id)
+                .await
+                .unwrap()
+                .last_activity_at
+                .as_deref()
+                .is_some_and(|at| at > given_up.as_str())
+        },
+    )
+    .await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull_request_id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the keeper activity to clear its recovery mark",
+        async || {
+            h.store
+                .get_pull_request(&pull_request_id)
+                .await
+                .unwrap()
+                .keeper_given_up_at
+                .is_none()
+        },
+    )
+    .await;
+
+    let after = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert!(
+        !after.items.iter().any(
+            |item| item.id == format!("recovery:unknown:pull_request:keeper:{pull_request_id}")
+        ),
+        "the recovered keeper leaves no stale recovery item"
     );
 }
 

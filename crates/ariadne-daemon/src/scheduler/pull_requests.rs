@@ -716,6 +716,20 @@ impl super::Scheduler {
             .iter()
             .find(|s| s.seat() == Some(Seat::Keeper) && self.launcher.acp.is_running(&s.id))
             .cloned();
+        // A wedged keeper can recover without a relaunch. Only activity
+        // after its give-up mark proves that recovery; its still-live but
+        // silent process must leave the mark in place.
+        if let (Some(session), Some(given_up)) = (&running, pull.keeper_given_up_at.as_deref())
+            && session
+                .last_activity_at
+                .as_deref()
+                .is_some_and(|at| at > given_up)
+        {
+            let _ = self
+                .store
+                .clear_pull_request_keeper_given_up(&pull.id)
+                .await;
+        }
         let pin = AgentPin {
             model: pull.babysit_model.clone().unwrap_or_default(),
             effort: pull.babysit_effort.clone(),
