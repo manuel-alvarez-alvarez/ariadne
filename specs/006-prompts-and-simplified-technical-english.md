@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/src/agents/handoff.rs
   - crates/ariadne-daemon/src/forge/news.rs
   - crates/ariadne-daemon/src/scheduler/goals.rs
+  - crates/ariadne-daemon/src/scheduler/tasks.rs
   - crates/ariadne-daemon/src/launcher.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
   - crates/ariadne-daemon/tests/it/agent_messages.rs
@@ -206,10 +207,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     comment's id, author, path and first line, a failed check's name,
     conclusion and URL, the rolled-up checks, the review decision and the
     state a news line reports, an agent message's body, a step's return
-    reason or completion summary, and a task's title and description —
-    the orchestrator's own planning is still an agent's, so a task it
+    reason or completion summary, a task's title and description, and
+    the orchestrator's own brief for a column's agent (`TaskAgent.brief`)
+    — the orchestrator's own planning is still an agent's, so a task it
     names in a briefing, a message, a nudge or a dependency is fenced
-    wherever its title reaches another agent.
+    wherever its title reaches another agent, and so is anything beyond
+    the task itself it tells a column's agent to do.
 
 ## Acceptance criteria
 
@@ -341,6 +344,10 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   `resume.rs::the_scheduler_relaunches_the_current_columns_agent_in_its_session`,
   `acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`,
   `workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
+  The orchestrator's own brief for a column's agent is fenced too, and a
+  brief crafted with the closing marker and a fresh instruction cannot
+  escape it:
+  `prompts.rs::a_crafted_agent_brief_cannot_escape_its_fence`.
   The fence
   rule is in the shared session rules alone, within their size cap
   (`mcp.rs::the_shared_rules_stay_small`,
