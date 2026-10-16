@@ -43,7 +43,7 @@ ariadne session ls --kind outside --agent codex-acp --dir ~/projects/api \
 
 `--kind` limits the table to Ariadne's own sessions or to outside ones,
 `--agent` to one registry agent, `--status` to a session status, `--seat` to
-`orchestrator`, `agent` or `reviewer`, and `--goal` or `--task` to one
+`orchestrator`, `agent`, `reviewer` or `keeper`, and `--goal` or `--task` to one
 goal's or task's sessions. `--attention` keeps only sessions waiting for a
 person. `--dir` matches a working directory and everything under it, and
 `--search` matches part of the title or first prompt, without case
