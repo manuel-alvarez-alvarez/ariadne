@@ -1621,8 +1621,8 @@ async fn metadata_listing_opens_no_session_and_runs_no_delete_for_opencode() {
 /// A real `opencode` binary, if this machine has one on `PATH`, proves the
 /// same claim the stub proves above: `initialize` and `session/list` alone
 /// open no session. A fresh, isolated data directory — of its own, so this
-/// never touches a real one — keeps zero rows in its `session` table
-/// afterward.
+/// never touches a real one — keeps zero rows in its `session` table when
+/// OpenCode creates that table.
 #[tokio::test]
 async fn real_opencode_metadata_listing_creates_no_session() {
     let path = std::env::var_os("PATH").unwrap_or_default();
@@ -1700,14 +1700,22 @@ async fn real_opencode_metadata_listing_creates_no_session() {
             )
             .await
             .expect("opening the real opencode database");
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session")
-            .fetch_one(&pool)
-            .await
-            .expect("counting sessions");
-        assert_eq!(
-            count, 0,
-            "initialize and session/list must open no session in the real OpenCode database"
-        );
+        let session_table: Option<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("checking for the real OpenCode session table");
+        if session_table.is_some() {
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session")
+                .fetch_one(&pool)
+                .await
+                .expect("counting sessions");
+            assert_eq!(
+                count, 0,
+                "initialize and session/list must open no session in the real OpenCode database"
+            );
+        }
     }
 }
 
