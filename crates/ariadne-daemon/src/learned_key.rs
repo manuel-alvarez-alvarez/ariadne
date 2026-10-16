@@ -60,7 +60,7 @@ pub(crate) fn normalize(tool_name: &str, raw_input: &Value, facts: &Facts) -> Ke
         || kept
             .get("command")
             .and_then(Value::as_str)
-            .is_some_and(is_single_family_command);
+            .is_some_and(is_safe_family_command);
     let kept = placeholders(&kept, facts);
     let family = match (tool_name, kept.get("command")) {
         ("Bash", Some(Value::String(command))) => {
@@ -348,7 +348,68 @@ fn filter_flag_is_inert(program: &str, argument: &str) -> bool {
     flags.contains(&argument)
 }
 
-/// A family can cover one simple command and its stripped output filters.
+/// A family can cover one simple command with no program setup and its
+/// stripped output filters.
+fn is_safe_family_command(command: &str) -> bool {
+    is_single_family_command(command) && first_command_has_no_program_setup(command)
+}
+
+/// The first command does not set an environment or use a Git option that can
+/// select a program to run.
+fn first_command_has_no_program_setup(command: &str) -> bool {
+    let command = without_filters(command).trim();
+    let Some(first) = simple_commands(command).into_iter().next() else {
+        return false;
+    };
+    let words: Vec<_> = first.split_whitespace().collect();
+    let mut words = words.as_slice();
+    while let Some(&word) = words.first() {
+        if is_assignment(word) {
+            return false;
+        }
+        if WRAPPERS.contains(&word) {
+            let values = match word {
+                "time" => &TIME_VALUES[..],
+                _ => wrapper_value_options(word),
+            };
+            words = &words[1..];
+            while let Some(&option) = words.first().filter(|word| word.starts_with('-')) {
+                if word == "env"
+                    && (option.starts_with("-S") || option.starts_with("--split-string"))
+                {
+                    return false;
+                }
+                let taken = if values.contains(&option) { 2 } else { 1 };
+                words = words.get(taken..).unwrap_or(&[]);
+            }
+            if word == "timeout" {
+                words = words.get(1..).unwrap_or(&[]);
+            }
+            continue;
+        }
+        return word != "git" || !git_option_selects_a_program(&words[1..]);
+    }
+    false
+}
+
+/// An assignment before the program changes the program environment. This
+/// accepts the same broad assignment shape that [`program`] skips.
+fn is_assignment(word: &str) -> bool {
+    word.contains('=') && !word.starts_with(['-', '/', '.'])
+}
+
+/// Git options that can select code to run make a family approval unsafe.
+fn git_option_selects_a_program(arguments: &[&str]) -> bool {
+    arguments.iter().any(|argument| {
+        *argument == "-c"
+            || argument.starts_with("-c")
+            || matches!(*argument, "--config-env" | "--exec-path")
+            || argument.starts_with("--config-env=")
+            || argument.starts_with("--exec-path=")
+    })
+}
+
+/// A command holds one simple command and its stripped output filters.
 fn is_single_family_command(command: &str) -> bool {
     let command = without_filters(command).trim();
     let bytes = command.as_bytes();
@@ -679,6 +740,15 @@ mod tests {
             "git status `./payload`",
             "git status x$'\\'' ; ./payload ; : x$'\\''",
             "git status | grep clean",
+            "git -c core.fsmonitor=./payload status",
+            "git -ccore.fsmonitor=./payload status",
+            "git --config-env core.fsmonitor=PAYLOAD status",
+            "git --exec-path=./payload status",
+            "LD_PRELOAD=./payload.so git status",
+            "GIT_EXTERNAL_DIFF=./payload git diff",
+            "GIT_PAGER=./payload git -p status",
+            "env GIT_EXTERNAL_DIFF=./payload git diff",
+            "env -S 'GIT_PAGER=./payload git -p status'",
         ] {
             assert!(
                 !normalize("Bash", &json!({"command": command}), &facts()).family_safe,

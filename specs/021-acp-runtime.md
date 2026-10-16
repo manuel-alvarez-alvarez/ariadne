@@ -257,7 +257,9 @@ outside half) opens no session either: it asks only `initialize` and
    other tool is the tool name. A family row for `Bash` answers only one
    simple command and its stripped output-filter tail. It does not answer a
    command with `&&`, `||`, `;`, a newline, command substitution, or a pipe
-   that the key did not strip.
+   that the key did not strip. It also does not answer a command with a
+   `NAME=value` assignment before its program, including one `env` takes, or
+   a Git command with `-c`, `--config-env` or `--exec-path`.
    The level is `once`, `command` or `family`, and the scope `repository` or
    `all`. Each row keeps the key, the level, the family, the request's
    derived risk tags (022) in `derive` order, the scope, the whole `toolCall`

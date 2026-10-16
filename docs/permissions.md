@@ -127,8 +127,10 @@ key. If none answers, an allowing `family` row answers another call in the same
 family. For `Bash`, that call must hold one simple command, apart from a
 trailing output filter that the key stripped. A family row does not answer a
 command with `&&`, `||`, `;`, a newline, command substitution, or another
-pipe. Both require the same tool name and a row from this repository, or a
-row widened to all repositories. A `once` row never
+pipe. It also does not answer a command with a `NAME=value` assignment before
+its program, including one for `env`, or a Git command with `-c`,
+`--config-env` or `--exec-path`. Both require the same tool name and a row
+from this repository, or a row widened to all repositories. A `once` row never
 answers a later request. Every risk tag of the later request must also be on
 the answering row. For example, an approval for the `git push` family from
 `git push origin main` does not answer `git push --force origin main`: the

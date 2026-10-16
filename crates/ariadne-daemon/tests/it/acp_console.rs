@@ -1294,8 +1294,8 @@ async fn a_family_row_keeps_the_force_tag_guard() {
     assert_eq!(request["learned_id"], serde_json::Value::Null);
 }
 
-/// A family approval cannot cover a second command, even when that command
-/// has no derived risk tag of its own.
+/// A family approval cannot cover a chained command or a command that sets a
+/// program it can run, even when it has no derived risk tag of its own.
 #[tokio::test]
 async fn a_family_row_does_not_answer_a_chained_command() {
     let root = tempfile::tempdir().unwrap();
@@ -1338,6 +1338,28 @@ async fn a_family_row_does_not_answer_a_chained_command() {
         permission_event(&h, &second.id, "permission_request").await["learned_id"],
         serde_json::Value::Null
     );
+
+    for (title, command) in [
+        (
+            "Git configuration command",
+            "git -c core.fsmonitor=./payload status",
+        ),
+        (
+            "Environment assignment",
+            "GIT_PAGER=./payload git -p status",
+        ),
+    ] {
+        stub.reprogram(permission_script_for(bash_call(command)));
+        let task = h
+            .task_on(&cast.goal, &cast.repo, title, common::test_pin())
+            .await;
+        let session = asked(&h, &task.id).await;
+        assert_eq!(
+            permission_event(&h, &session.id, "permission_request").await["learned_id"],
+            serde_json::Value::Null,
+            "{command}"
+        );
+    }
 }
 
 #[tokio::test]
