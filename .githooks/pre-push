@@ -79,7 +79,8 @@ if [ "$run_rust" = 1 ] || [ "$run_tauri" = 1 ]; then
 fi
 
 if [ "$run_rust" = 1 ]; then
-    githooks_run cargo build --workspace --bins
+    githooks_run cargo audit
+    githooks_run cargo build --locked --workspace --bins
     githooks_run cargo nextest run --workspace --profile ci
     githooks_run cargo test --doc --workspace
     githooks_run cargo clippy --workspace --all-targets -- -D warnings

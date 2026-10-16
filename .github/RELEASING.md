@@ -86,6 +86,13 @@ desktop app and both command-line binaries with a self-signed certificate so
 an update keeps the identity the operating system recognizes. The assets are
 not notarized; the installer still clears their quarantine attribute.
 
+`npm ci`, the frontend build and the Tauri shell's own Rust compile all run
+before the certificate is imported into a temporary keychain, so no install
+script and no `build.rs` ever runs with that keychain unlocked. The
+certificate is imported only to bundle and sign the already-built app, and
+the temporary keychain is deleted right after signing and verifying, rather
+than deferred to the end of the job.
+
 The release repository needs these three secrets:
 
 | Secret | Value |

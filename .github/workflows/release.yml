@@ -153,6 +153,31 @@ jobs:
       - name: Build ariadne and ariadned
         run: cargo build --release --locked --package ariadne-cli --package ariadne-daemon
 
+      - name: Install the desktop app's dependencies
+        working-directory: ui
+        run: npm ci
+
+      # Compiles the frontend (`beforeBuildCommand`) and the Tauri shell's
+      # Rust, with no bundle and so no signing attempt, while the signing
+      # keychain does not exist yet: every install script `npm ci` above ran,
+      # and every `build.rs`, ran with no certificate in reach. `--bundles
+      # app` below repeats this same command once the certificate is
+      # imported; Cargo and Vite's own caches make that second run skip
+      # straight to bundling, rather than rebuilding, since nothing changed.
+      - name: Compile Ariadne Desktop
+        if: matrix.platform == 'macos'
+        working-directory: ui
+        run: npm run tauri build -- --no-bundle
+
+      # A bundled Linux package carries the runner's own glib and Mesa, and
+      # aborts on a host whose gio module needs a newer glib symbol; the
+      # host's own webkit2gtk works, so ship a plain binary that links it.
+      # Linux never signs, so this, too, runs before any certificate exists.
+      - name: Build Ariadne Desktop (no bundle)
+        if: matrix.platform == 'linux'
+        working-directory: ui
+        run: npm run tauri build -- --no-bundle
+
       - name: Import the macOS signing certificate
         if: matrix.platform == 'macos'
         env:
@@ -180,10 +205,6 @@ jobs:
           echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
           echo "SIGNING_AVAILABLE=true" >> "$GITHUB_ENV"
 
-      - name: Install the desktop app's dependencies
-        working-directory: ui
-        run: npm ci
-
       # `--bundles app` skips the dmg: the release ships the .app tarball only.
       - name: Build Ariadne Desktop (.app)
         if: matrix.platform == 'macos'
@@ -192,14 +213,6 @@ jobs:
         # finds it in that keychain; passing the p12 values would make Tauri
         # create and remove a second keychain the CLI signing cannot use.
         run: npm run tauri build -- --bundles app
-
-      # A bundled Linux package carries the runner's own glib and Mesa, and
-      # aborts on a host whose gio module needs a newer glib symbol; the
-      # host's own webkit2gtk works, so ship a plain binary that links it.
-      - name: Build Ariadne Desktop (no bundle)
-        if: matrix.platform == 'linux'
-        working-directory: ui
-        run: npm run tauri build -- --no-bundle
 
       - name: Sign the macOS command-line binaries
         if: matrix.platform == 'macos' && env.SIGNING_AVAILABLE == 'true'
@@ -217,6 +230,18 @@ jobs:
           codesign --verify --deep --strict "ui/src-tauri/target/release/bundle/macos/Ariadne Desktop.app"
           codesign --verify --deep --strict target/release/ariadne
           codesign --verify --deep --strict target/release/ariadned
+
+      # Right after signing is over, rather than deferred to the end of the
+      # job: nothing past this point (staging, attesting, uploading) touches
+      # the keychain, so nothing past this point should find it unlocked.
+      - name: Delete the temporary macOS signing keychain
+        if: always() && matrix.platform == 'macos'
+        run: |
+          set -euo pipefail
+          if [ -n "${SIGNING_KEYCHAIN:-}" ] && [ -e "$SIGNING_KEYCHAIN" ]; then
+            security delete-keychain "$SIGNING_KEYCHAIN"
+          fi
+          rm -f "$RUNNER_TEMP/ariadne-signing-cert.p12"
 
       - name: Stage the release assets
         env:
@@ -275,15 +300,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: gh release upload "$TAG" dist/* --clobber
-
-      - name: Delete the temporary macOS signing keychain
-        if: always() && matrix.platform == 'macos'
-        run: |
-          set -euo pipefail
-          if [ -n "${SIGNING_KEYCHAIN:-}" ] && [ -e "$SIGNING_KEYCHAIN" ]; then
-            security delete-keychain "$SIGNING_KEYCHAIN"
-          fi
-          rm -f "$RUNNER_TEMP/ariadne-signing-cert.p12"
 
   # Rewrites the Release page itself: the changelog text alone, which is all
   # release-please ever writes there, leaves a reader with no install steps

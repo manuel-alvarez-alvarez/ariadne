@@ -76,6 +76,11 @@ jobs:
         with:
           tool: cargo-machete@0.9.2
 
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -90,11 +95,20 @@ jobs:
       - name: Check for unused dependencies
         run: cargo machete .
 
+      # Reads the lockfile alone, so it runs before the build too. Denies
+      # nothing by default beyond an actual vulnerability: an unmaintained or
+      # yanked crate this branch cannot clear is a warning cargo-audit prints
+      # and `.cargo/audit.toml` explains, never a failure (crates/AGENTS.md).
+      - name: Audit dependencies
+        run: cargo audit
+
       # `ariadne-daemon` sets `test = false` on its `[[bin]]`, so nextest
       # never builds or links `ariadned`, and clippy below type-checks it
-      # without linking. This is the only step that links it.
+      # without linking. This is the only step that links it. `--locked`
+      # refuses a `Cargo.lock` the workspace's own `Cargo.toml` has drifted
+      # from, rather than silently re-resolving one in CI alone.
       - name: Build
-        run: cargo build --workspace --bins
+        run: cargo build --locked --workspace --bins
 
       # Everything, git tests included — nothing is `#[ignore]`d. Every agent
       # a test starts is a stub ACP agent in python3, which both runner
@@ -149,6 +163,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Reads the lockfile `npm ci` above just installed from. `overrides`
+      # in `package.json` carries every transitive fix `npm audit fix` could
+      # not apply on its own; `scripts/check-audit.mjs` wraps the bare
+      # command so the one finding with no such fix does not fail CI on its
+      # own, both explained in `ui/AGENTS.md`.
+      - name: Audit dependencies
+        run: npm run check:audit
 
       - name: Lint
         run: npm run lint

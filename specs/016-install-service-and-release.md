@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-10-15
+updated: 2026-10-16
 areas: [daemon, install, scripts, store, workflows]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
@@ -18,6 +18,7 @@ tests:
   - scripts/tests/githooks.sh
   - scripts/tests/check-migrations.sh
   - .github/workflows/release-please.yml
+  - .github/workflows/release.yml
 ---
 
 # Install, service and release
@@ -73,10 +74,14 @@ Out: what the daemon does once running (009, 012).
    `chore(main): release X.Y.Z` pull request holding the version bump and the
    changelog entry, and merging it tags the version and publishes the release.
    The asset workflow runs on the **tag**, which is what makes the provenance
-   attestation name the tag as the origin of the assets. On macOS, it imports
-   the release signing certificate into a temporary keychain, signs and
-   verifies the desktop app and both command-line binaries, then deletes that
-   keychain whether the job succeeds or fails.
+   attestation name the tag as the origin of the assets. On macOS, `npm ci`,
+   the frontend build and the Tauri shell's own Rust compile all run before
+   the release signing certificate is imported into a temporary keychain, so
+   no install script and no `build.rs` ever runs with that keychain unlocked.
+   The certificate is imported only to bundle and sign the app that is
+   already built, and the workflow signs and verifies the desktop app and
+   both command-line binaries, then deletes that keychain right away —
+   whether the job succeeds or fails — rather than at the end of the job.
 6. Only conventional commits are seen by release-please; anything else is
    silently ignored, neither moving the version nor appearing in the notes.
    The allowed types live in `AGENTS.md` and nowhere else.
@@ -224,6 +229,12 @@ Out: what the daemon does once running (009, 012).
   service registered: `ui_stop_daemon` waits out the slow `print`, and
   `install.sh` retries the failed `bootstrap`, rather than either one
   calling `ui_die` (`scripts/tests/install-service-macos.sh`).
+- In the `build` job of `.github/workflows/release.yml`, `npm ci`, the
+  `Compile Ariadne Desktop` step (or, on Linux, `Build Ariadne Desktop (no
+  bundle)`) and `Build ariadne and ariadned` all run before `Import the
+  macOS signing certificate`; `Delete the temporary macOS signing keychain`
+  runs right after `Verify the signed macOS assets`, before staging,
+  attesting or uploading any asset (`.github/workflows/release.yml`).
 - `release-please-config.json` defines ✨ Features, 🐛 Bug fixes, ⚡
   Performance, and ⏪ Reverts in that order. It hides the other allowed
   commit types from release notes. The pre-commit hook runs its section test

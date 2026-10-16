@@ -11,6 +11,7 @@ npx vitest run <path>          # the test files of the change
 npx biome check <paths>        # the files of the change
 npm run typecheck              # the project's types, always whole
 npm run check:unused           # dependency, export and source reachability
+npm run check:audit            # dependency advisories, always whole
 ```
 
 The pre-commit hook (`.githooks/pre-commit`) runs, for a staged file under
@@ -22,9 +23,51 @@ from inside `ui/src-tauri`.
 The pre-push hook (`.githooks/pre-push`) runs the whole suite for a push that
 touches `ui/`: `npm run check` in `ui/` (`npm ci` first when
 `ui/node_modules` is missing) — that is `npm test`, `npm run typecheck`, `npm
-run lint` and `npm run check:unused` together. For a push that touches
-`ui/src-tauri`: `cargo fmt --all -- --check` and `cargo check`, both from
-inside `ui/src-tauri`.
+run lint`, `npm run check:unused` and `npm run check:audit` together. For a
+push that touches `ui/src-tauri`: `cargo fmt --all -- --check` and `cargo
+check`, both from inside `ui/src-tauri`.
+
+### Dependency advisories
+
+`npm run check:audit` (`scripts/check-audit.mjs`) wraps `npm audit
+--audit-level=high`, which reads `package-lock.json` alone, against the
+GitHub Advisory Database; nothing here raises or lowers that threshold.
+`overrides` in `package.json` forces a transitive dependency past an
+advisory a direct dependency alone cannot clear, each pinned to the lowest
+release that does, so a direct dependency's own declared range still picks
+the newest version its author intended wherever that is enough on its own:
+
+| Override | Why |
+| --- | --- |
+| `@modelcontextprotocol/sdk` | pulled in by `shadcn`'s own MCP server; GHSA-6qxp-vccf-f47h |
+| `brace-expansion` | pulled in at two different majors, by `shadcn` and by `shadcn`'s own `ts-morph`; GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p |
+| `fast-uri` | pulled in by `@redocly/openapi-core`, itself pulled in by `openapi-typescript`; six GHSA ids, all fixed in 3.1.8 |
+| `js-yaml` | pulled in by the same `@redocly/openapi-core`; GHSA-2883-xcg3-v3hh |
+| `proxy-addr` | pulled in by `shadcn`'s own MCP server; GHSA-jqcg-44mw-7w3h |
+| `source-map-js` | pulled in by `tailwindcss`; GHSA-68fv-2mgg-jv7q |
+| `undici` | pulled in by `shadcn`'s own MCP server, and again by `jsdom`; six GHSA ids, all fixed in 8.12.2 |
+
+One high finding has no override: `braces` (GHSA-vfj7-8cjw-p6xm, a
+stack-exhaustion denial of service), reached through `shadcn`'s own
+`ts-morph` and `fast-glob`. Every release of `braces` up to and including its
+latest, `3.0.3`, is listed vulnerable — there is no fixed version to pin an
+override to — and `npm audit`'s own suggested fix is downgrading `shadcn` to
+`1.0.0`, three majors back, before it grew the codemod machinery that pulls
+`ts-morph` and `fast-glob` in at all. That trade was not taken: `braces` is
+exercised only by a human running `npx shadcn@latest add <name>` against a
+trusted local checkout, never by the shipped app, so the realistic exposure
+is far below the advisory's own severity.
+
+Plain `npm audit` has no per-advisory ignore list the way `.cargo/audit.toml`
+does for Rust, so `scripts/check-audit.mjs` is one: it runs the bare command,
+and where that fails, parses its JSON report and passes anyway only when
+every high or critical finding is this exact chain (`ALLOWED_PACKAGES`) on
+this exact advisory (`ALLOWED_ADVISORY`) — a high finding anywhere else, or a
+second advisory on one of these packages, still fails the same way the bare
+command would. `scripts/check-audit.test.mjs` drives that decision directly,
+against a fixed, made-up report, so it needs no live advisory data and does
+not change behavior if the real one ever does. Revisit (narrow or drop the
+allowlist) when `braces` ships a fix, or when `shadcn` drops the dependency.
 
 `ui/src-tauri` is excluded from the root cargo workspace (see
 [Layout](#layout)), so [`crates/AGENTS.md`](../crates/AGENTS.md)'s cargo

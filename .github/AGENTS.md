@@ -7,12 +7,12 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
 
 - [`workflows/ci.yml`](workflows/ci.yml) — runs on every push to `main` and
   every pull request: `fmt` checks `cargo fmt` on the workspace and on
-  `ui/src-tauri`; `rust` runs `cargo machete .`, `cargo build --workspace
-  --bins`, `cargo nextest run --workspace`, `cargo test --doc --workspace`,
-  `cargo clippy --workspace --all-targets -- -D warnings`,
-  `scripts/check-unused-rust` and `scripts/check-migrations.sh`, on Ubuntu
-  and macOS; `ui` runs `npm run lint`,
-  `npm run typecheck`, `npm run check:unused` and `npm test` under `ui/`;
+  `ui/src-tauri`; `rust` runs `cargo machete .`, `cargo audit`, `cargo build
+  --locked --workspace --bins`, `cargo nextest run --workspace`, `cargo test
+  --doc --workspace`, `cargo clippy --workspace --all-targets -- -D
+  warnings`, `scripts/check-unused-rust` and `scripts/check-migrations.sh`,
+  on Ubuntu and macOS; `ui` runs `npm run lint`, `npm run typecheck`, `npm
+  run check:unused`, `npm run check:audit` and `npm test` under `ui/`;
   `tauri` runs `cargo check` under `ui/src-tauri` on Ubuntu and macOS.
 - [`workflows/release-please.yml`](workflows/release-please.yml) — runs on
   every push to `main`; keeps the single pending release pull request current
