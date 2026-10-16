@@ -27,6 +27,7 @@ pub(crate) struct Facts {
 pub(crate) struct Key {
     pub(crate) key: String,
     pub(crate) family: String,
+    pub(crate) family_safe: bool,
 }
 
 /// The tools whose input is a file and its contents: only the file counts.
@@ -40,11 +41,58 @@ const WRAPPERS: [&str; 8] = [
     "sudo", "env", "time", "nohup", "timeout", "nice", "command", "exec",
 ];
 /// The options of `time` that take a value; the operation hints have none.
+/// `-o` and `--output` also take a value, but that value is a file `time`
+/// writes to, so the loop below rejects them before it ever reaches this
+/// list.
 const TIME_VALUES: [&str; 4] = ["-f", "-o", "--format", "--output"];
 /// The programs whose family names their first plain argument too.
 const SUBCOMMANDS: [&str; 14] = [
     "git", "cargo", "npm", "npx", "pnpm", "yarn", "go", "docker", "gh", "make", "kubectl", "pip",
     "pip3", "brew",
+];
+/// The only programs whose Bash families can answer later requests, and the
+/// options that select a program or change output for each one.
+const FAMILY_PROGRAM_SETUP_OPTIONS: [(&str, &[&str]); 10] = [
+    ("git", &[]),
+    ("cargo", &["--config"]),
+    ("go", &["-exec", "-toolexec"]),
+    ("make", &["--eval", "-f", "--file", "--makefile"]),
+    ("npm", &["--script-shell", "--node-options"]),
+    ("pnpm", &["--script-shell", "--node-options"]),
+    ("yarn", &["--script-shell", "--node-options"]),
+    (
+        "find",
+        &[
+            "-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf",
+            "-fls",
+        ],
+    ),
+    ("rg", &["--pre"]),
+    (
+        "sort",
+        &[
+            "-o",
+            "--output",
+            "--compress-program",
+            "-T",
+            "--files0-from",
+        ],
+    ),
+];
+/// Unsafe Git options before the subcommand.
+const GIT_GLOBAL_SETUP_OPTIONS: [&str; 3] = ["-c", "--config-env", "--exec-path"];
+/// Unsafe Git options after the named subcommand.
+const GIT_SUBCOMMAND_SETUP_OPTIONS: [(&[&str], &[&str]); 7] = [
+    (&["grep"], &["-O", "--open-files-in-pager"]),
+    (&["diff", "log"], &["--output"]),
+    (&["format-patch"], &["-o", "--output"]),
+    (
+        &["fetch", "clone", "ls-remote"],
+        &["--upload-pack", "--receive-pack", "-u"],
+    ),
+    (&["push"], &["--receive-pack"]),
+    (&["rebase"], &["-x", "--exec"]),
+    (&["difftool"], &["-x", "--extcmd"]),
 ];
 
 /// The key and the family of a request for `tool_name` with `raw_input`.
@@ -55,6 +103,11 @@ pub(crate) fn normalize(tool_name: &str, raw_input: &Value, facts: &Facts) -> Ke
     {
         *command = bash_command(command, facts);
     }
+    let family_safe = tool_name != "Bash"
+        || kept
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(is_safe_family_command);
     let kept = placeholders(&kept, facts);
     let family = match (tool_name, kept.get("command")) {
         ("Bash", Some(Value::String(command))) => {
@@ -65,6 +118,7 @@ pub(crate) fn normalize(tool_name: &str, raw_input: &Value, facts: &Facts) -> Ke
     Key {
         key: sorted(&kept).to_string(),
         family,
+        family_safe,
     }
 }
 
@@ -152,7 +206,8 @@ fn without_cd<'a>(command: &'a str, facts: &Facts) -> &'a str {
 }
 
 /// The command without a trailing pipe chain whose every program is an
-/// output filter. A filter that redirects or substitutes is kept.
+/// output filter. A filter that redirects, substitutes or takes a file or
+/// program is kept.
 fn without_filters(command: &str) -> &str {
     let mut pipes = Vec::new();
     let mut last_other = None;
@@ -169,6 +224,12 @@ fn without_filters(command: &str) -> &str {
             Some(_) => {}
             None => match byte {
                 b'\\' => index += 1,
+                b'$' if bytes
+                    .get(index + 1)
+                    .is_some_and(|next| matches!(*next, b'\'' | b'"')) =>
+                {
+                    return command;
+                }
                 b'\'' | b'"' => quote = Some(byte),
                 b'`' => backtick = !backtick,
                 b'(' => depth += 1,
@@ -185,6 +246,9 @@ fn without_filters(command: &str) -> &str {
         }
         index += 1;
     }
+    if quote.is_some() || depth > 0 || backtick {
+        return command;
+    }
     let mut cut = command.len();
     for &pipe in pipes.iter().rev() {
         if last_other.is_some_and(|other| other > pipe) {
@@ -192,13 +256,394 @@ fn without_filters(command: &str) -> &str {
         }
         let filter = &command[pipe + 1..cut];
         let plain = !filter.contains(['>', '<', '$', '`', '(', '&', '|']);
-        let program = filter.split_whitespace().next().unwrap_or_default();
-        if !plain || !FILTERS.contains(&program) {
+        let mut words = filter.split_whitespace();
+        let program = words.next().unwrap_or_default();
+        let arguments: Vec<_> = words.collect();
+        if !plain || !FILTERS.contains(&program) || !filter_arguments_are_inert(program, &arguments)
+        {
             break;
         }
         cut = pipe;
     }
     &command[..cut]
+}
+
+/// Whether the filter arguments change only how it renders its input.
+fn filter_arguments_are_inert(program: &str, arguments: &[&str]) -> bool {
+    let counts_lines_or_bytes = matches!(program, "tail" | "head");
+    let mut needs_number = false;
+    for &argument in arguments {
+        if needs_number {
+            if is_number(argument) {
+                needs_number = false;
+                continue;
+            }
+            return false;
+        }
+        if counts_lines_or_bytes && argument.strip_prefix('-').is_some_and(is_number) {
+            continue;
+        }
+        if counts_lines_or_bytes && matches!(argument, "-n" | "-c" | "--lines" | "--bytes") {
+            needs_number = true;
+            continue;
+        }
+        if is_number(argument) || !filter_flag_is_inert(program, argument) {
+            return false;
+        }
+    }
+    !needs_number
+}
+
+fn is_number(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Whether `argument` is a flag that changes only how a filter renders input.
+/// The lists intentionally exclude every option that can name a file or program.
+fn filter_flag_is_inert(program: &str, argument: &str) -> bool {
+    let flags = match program {
+        "tail" | "head" => &[
+            "-c",
+            "-n",
+            "-q",
+            "-s",
+            "-v",
+            "-z",
+            "--bytes",
+            "--lines",
+            "--quiet",
+            "--silent",
+            "--verbose",
+            "--zero-terminated",
+        ][..],
+        "wc" => &[
+            "-c",
+            "-m",
+            "-l",
+            "-w",
+            "-L",
+            "--bytes",
+            "--chars",
+            "--lines",
+            "--words",
+            "--max-line-length",
+        ][..],
+        "cat" => &[
+            "-A",
+            "-b",
+            "-e",
+            "-E",
+            "-n",
+            "-s",
+            "-t",
+            "-u",
+            "-v",
+            "--number",
+            "--number-nonblank",
+            "--show-all",
+            "--show-ends",
+            "--show-nonprinting",
+            "--show-tabs",
+            "--squeeze-blank",
+        ][..],
+        "sort" => &[
+            "-b",
+            "-d",
+            "-f",
+            "-g",
+            "-h",
+            "-i",
+            "-M",
+            "-n",
+            "-R",
+            "-r",
+            "-V",
+            "-z",
+            "--check",
+            "--debug",
+            "--dictionary-order",
+            "--general-numeric-sort",
+            "--human-numeric-sort",
+            "--ignore-case",
+            "--ignore-leading-blanks",
+            "--month-sort",
+            "--numeric-sort",
+            "--random-sort",
+            "--reverse",
+            "--stable",
+            "--unique",
+            "--version-sort",
+            "--zero-terminated",
+        ][..],
+        "uniq" => &[
+            "-c",
+            "-d",
+            "-D",
+            "-i",
+            "-u",
+            "-z",
+            "--all-repeated",
+            "--count",
+            "--group",
+            "--ignore-case",
+            "--repeated",
+            "--unique",
+            "--zero-terminated",
+        ][..],
+        _ => return false,
+    };
+    flags.contains(&argument)
+}
+
+/// A family can cover one simple command with no program setup and its
+/// stripped output filters.
+fn is_safe_family_command(command: &str) -> bool {
+    is_single_family_command(command) && first_command_has_no_program_setup(command)
+}
+
+/// The first command uses a known safe program without environment or program
+/// setup. The caller only reaches this once `is_single_family_command` has
+/// found the same string to be one simple command, so this reads its words
+/// straight off it rather than through [`simple_commands`], which redacts a
+/// quoted span to a placeholder and would hide a quoted option from the
+/// checks below.
+fn first_command_has_no_program_setup(command: &str) -> bool {
+    let command = without_filters(command).trim();
+    if command.is_empty() {
+        return false;
+    }
+    let owned_words = shell_words(command);
+    let words: Vec<&str> = owned_words.iter().map(String::as_str).collect();
+    let mut words = words.as_slice();
+    while let Some(&word) = words.first() {
+        if is_assignment(word) {
+            return false;
+        }
+        if WRAPPERS.contains(&word) {
+            let values = match word {
+                "time" => &TIME_VALUES[..],
+                _ => wrapper_value_options(word),
+            };
+            words = &words[1..];
+            while let Some(&option) = words.first().filter(|word| word.starts_with('-')) {
+                if word == "env"
+                    && (option.starts_with("-S")
+                        || option.starts_with("--split-string")
+                        || option.starts_with("-P")
+                        || option.starts_with("-C")
+                        || option.starts_with("--chdir"))
+                {
+                    return false;
+                }
+                if word == "time" && (option.starts_with("-o") || option.starts_with("--output")) {
+                    return false;
+                }
+                let taken = if values.contains(&option) { 2 } else { 1 };
+                words = words.get(taken..).unwrap_or(&[]);
+            }
+            if word == "timeout" {
+                words = words.get(1..).unwrap_or(&[]);
+            }
+            continue;
+        }
+        return !program_option_selects_a_program(word, &words[1..]);
+    }
+    false
+}
+
+/// An assignment before the program changes the program environment. This
+/// accepts the same broad assignment shape that [`program`] skips.
+fn is_assignment(word: &str) -> bool {
+    word.contains('=') && !word.starts_with(['-', '/', '.'])
+}
+
+/// Options that select a program or output file make a family approval unsafe.
+fn program_option_selects_a_program(program: &str, arguments: &[&str]) -> bool {
+    let Some((_, options)) = FAMILY_PROGRAM_SETUP_OPTIONS
+        .iter()
+        .find(|(name, _)| *name == program)
+    else {
+        return true;
+    };
+    if program == "git" {
+        return git_option_selects_a_program(arguments);
+    }
+    if program == "make" && arguments.iter().any(|argument| is_assignment(argument)) {
+        return true;
+    }
+    contains_setup_option(program, arguments, options)
+}
+
+/// Git has separate global and subcommand options that can select code.
+fn git_option_selects_a_program(arguments: &[&str]) -> bool {
+    let subcommand_and_arguments = git_words(arguments);
+    let globals = &arguments[..arguments.len() - subcommand_and_arguments.len()];
+    if contains_setup_option("git", globals, &GIT_GLOBAL_SETUP_OPTIONS) {
+        return true;
+    }
+    let Some((&subcommand, arguments)) = subcommand_and_arguments.split_first() else {
+        return false;
+    };
+    GIT_SUBCOMMAND_SETUP_OPTIONS
+        .iter()
+        .find(|(subcommands, _)| subcommands.contains(&subcommand))
+        .is_some_and(|(_, options)| contains_setup_option("git", arguments, options))
+}
+
+/// An option can appear alone, as a long-option prefix with `=`, or in a
+/// short-option bundle.
+fn contains_setup_option(program: &str, arguments: &[&str], options: &[&str]) -> bool {
+    arguments.iter().any(|argument| {
+        options
+            .iter()
+            .any(|option| setup_option_matches(program, argument, option))
+    })
+}
+
+fn setup_option_matches(program: &str, argument: &str, option: &str) -> bool {
+    if program == "go" {
+        return go_option_matches(argument, option);
+    }
+    if option.starts_with("--") {
+        return long_option_matches(argument, option);
+    }
+    if option.len() == 2 {
+        return argument
+            .strip_prefix('-')
+            .filter(|value| !value.starts_with('-'))
+            .is_some_and(|value| value.contains(&option[1..]));
+    }
+    argument == option
+}
+
+/// Long options allow a unique prefix of at least three letters.
+fn long_option_matches(argument: &str, option: &str) -> bool {
+    let name = argument.split_once('=').map_or(argument, |(name, _)| name);
+    name.len() >= 5 && option.starts_with(name)
+}
+
+/// Go accepts its long flags with one or two hyphens.
+fn go_option_matches(argument: &str, option: &str) -> bool {
+    let Some(name) = option.strip_prefix('-') else {
+        return false;
+    };
+    ["-", "--"].into_iter().any(|prefix| {
+        argument
+            .strip_prefix(prefix)
+            .and_then(|value| value.strip_prefix(name))
+            .is_some_and(|value| value.is_empty() || value.starts_with('='))
+    })
+}
+
+/// A command holds one simple command and its stripped output filters. An
+/// unquoted `{` or `}` is rejected whole, since Bash's brace expansion runs
+/// before the program ever sees the word and can turn one quiet-looking
+/// argument into an option and a payload.
+fn is_single_family_command(command: &str) -> bool {
+    let command = without_filters(command).trim();
+    let bytes = command.as_bytes();
+    let mut quote = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        match quote {
+            Some(b'\'') if byte == b'\'' => quote = None,
+            Some(b'\'') => {}
+            Some(b'"') if byte == b'"' => quote = None,
+            Some(b'"') if byte == b'\\' => index += 1,
+            Some(b'"') if byte == b'`' || (byte == b'$' && bytes.get(index + 1) == Some(&b'(')) => {
+                return false;
+            }
+            Some(b'"') => {}
+            Some(_) => unreachable!(),
+            None => match byte {
+                b'\\' => index += 1,
+                b'$' if bytes
+                    .get(index + 1)
+                    .is_some_and(|next| matches!(*next, b'\'' | b'"')) =>
+                {
+                    return false;
+                }
+                b'\'' | b'"' => quote = Some(byte),
+                b'`' | b'(' | b')' | b';' | b'&' | b'|' | b'>' | b'<' | b'\n' | b'{' | b'}' => {
+                    return false;
+                }
+                b'$' if bytes.get(index + 1) == Some(&b'(') => return false,
+                _ => {}
+            },
+        }
+        index += 1;
+    }
+    quote.is_none()
+}
+
+/// The words of one simple command, with quotes and backslash escapes
+/// resolved the way a shell resolves them before Git or another program ever
+/// sees its arguments. `is_single_family_command` already rejects a
+/// backtick, an unescaped `$(`, `$'` or `$"`, and every unquoted chaining or
+/// redirection character, so a quote or an escape here can only hide an
+/// option's own literal text, never a second command.
+fn shell_words(command: &str) -> Vec<String> {
+    let bytes = command.as_bytes();
+    let mut words = Vec::new();
+    let mut current = Vec::new();
+    let mut in_word = false;
+    let mut quote: Option<u8> = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        match quote {
+            Some(b'\'') => {
+                if byte == b'\'' {
+                    quote = None;
+                } else {
+                    current.push(byte);
+                }
+            }
+            Some(b'"') => {
+                if byte == b'"' {
+                    quote = None;
+                } else if byte == b'\\'
+                    && bytes
+                        .get(index + 1)
+                        .is_some_and(|next| matches!(next, b'"' | b'\\' | b'$' | b'`'))
+                {
+                    index += 1;
+                    current.push(bytes[index]);
+                } else {
+                    current.push(byte);
+                }
+            }
+            Some(_) => unreachable!(),
+            None => match byte {
+                b' ' | b'\t' | b'\n' => {
+                    if in_word {
+                        words.push(String::from_utf8_lossy(&current).into_owned());
+                        current.clear();
+                        in_word = false;
+                    }
+                }
+                b'\'' | b'"' => {
+                    quote = Some(byte);
+                    in_word = true;
+                }
+                b'\\' if index + 1 < bytes.len() => {
+                    index += 1;
+                    current.push(bytes[index]);
+                    in_word = true;
+                }
+                _ => {
+                    current.push(byte);
+                    in_word = true;
+                }
+            },
+        }
+        index += 1;
+    }
+    if in_word {
+        words.push(String::from_utf8_lossy(&current).into_owned());
+    }
+    words
 }
 
 /// Every string of the value with this session's paths and names, then the
@@ -446,6 +891,132 @@ mod tests {
             key("Bash", json!({"command": "ls | tail -1 && rm a"})),
             r#"{"command":"ls | tail -1 && rm a"}"#
         );
+    }
+
+    /// A trailing filter stays in the key when an option can name a file or
+    /// execute another program.
+    #[test]
+    fn a_filter_with_an_output_or_program_option_stays_in_the_key() {
+        assert_eq!(
+            key(
+                "Bash",
+                json!({"command": "git status | sort -o status.txt"})
+            ),
+            r#"{"command":"git status | sort -o status.txt"}"#
+        );
+        assert_eq!(
+            key(
+                "Bash",
+                json!({"command": "git status | sort -S1 --compress-program=payload"})
+            ),
+            r#"{"command":"git status | sort -S1 --compress-program=payload"}"#
+        );
+        assert_eq!(
+            key("Bash", json!({"command": "git status | cat 1"})),
+            r#"{"command":"git status | cat 1"}"#
+        );
+        assert_eq!(
+            key("Bash", json!({"command": "git status | head -n 5 1"})),
+            r#"{"command":"git status | head -n 5 1"}"#
+        );
+    }
+
+    /// A family allows a simple command with safe output filters, but rejects
+    /// unsafe shell or program setup.
+    #[test]
+    fn a_family_covers_one_command_and_safe_output_filters() {
+        for command in [
+            "git status",
+            "git status 2>&1 | head -n 20",
+            "git commit -c HEAD",
+            "find . -name Cargo.toml",
+            "rg TODO",
+            "sort -n status",
+        ] {
+            assert!(
+                normalize("Bash", &json!({"command": command}), &facts()).family_safe,
+                "{command}"
+            );
+        }
+        for command in [
+            "git status && ./payload",
+            "git status; rm payload",
+            "git status\nrm payload",
+            "git status $(./payload)",
+            "git status <(./payload)",
+            "git status `./payload`",
+            "git status x$'\\'' ; ./payload ; : x$'\\''",
+            "git status > src/lib.rs",
+            "git log >> src/lib.rs",
+            "git diff >| src/lib.rs",
+            "git status | grep clean",
+            "git -c core.fsmonitor=./payload status",
+            "git -ccore.fsmonitor=./payload status",
+            "git --config-env core.fsmonitor=PAYLOAD status",
+            "git --exec-path=./payload status",
+            "LD_PRELOAD=./payload.so git status",
+            "GIT_EXTERNAL_DIFF=./payload git diff",
+            "GIT_PAGER=./payload git -p status",
+            "env GIT_EXTERNAL_DIFF=./payload git diff",
+            "env -S 'GIT_PAGER=./payload git -p status'",
+            "git grep -O./payload TODO",
+            "git grep --open-files-in-pager=./payload TODO",
+            "git diff --output=src/lib.rs",
+            "git log --output=src/lib.rs",
+            "git ls-remote --upload-pack=./payload .",
+            "git fetch --upload-pack=./payload .",
+            "git rebase -x ./payload main",
+            "git rebase --exec ./payload main",
+            "git difftool -x ./payload",
+            "git difftool --extcmd=./payload",
+            "git difftool \"--extcmd=./payload\"",
+            "git difftool '--extcmd=./payload'",
+            "git difftool --ext\"cmd\"=./payload",
+            "git -\"c\" core.fsmonitor=./payload status",
+            "git difftool {-x,./payload}",
+            "time -o note.txt git status",
+            "time --output=note.txt git status",
+            "env -P /tmp/bin git status",
+            "env -C /tmp git status",
+            "env --chdir=/tmp git status",
+            "git grep -nO./payload TODO",
+            "git rebase -kx ./payload main",
+            "make -kf evil.mk",
+            "git rebase --exe ./payload main",
+            "git grep --open-files=./payload TODO",
+            "git ls-remote --upload=./payload .",
+            "git difftool --extc=./payload",
+            "make --eva=./payload",
+            "make --fil=evil.mk",
+            "npm test --script-sh=./payload",
+            "go test --exec ./payload",
+            "go build --toolexec=./payload",
+            "cargo build --config build.rustc-wrapper=./payload",
+            "cargo --config=build.rustc-wrapper=./payload build",
+            "go test -exec ./payload",
+            "go build -toolexec=./payload",
+            "make SHELL=./payload build",
+            "make --eval=./payload",
+            "npm test --script-shell=./payload",
+            "pnpm test --script-shell=./payload",
+            "yarn test --node-options=./payload",
+            "find . -exec ./payload {} +",
+            "find . -delete",
+            "rg --pre ./payload TODO",
+            "sort -o src/lib.rs x",
+            "sed -i s/a/b/ src/lib.rs",
+            "sed 's/x/id/e' f",
+            "awk 'BEGIN{system(\"./payload\")}'",
+            "xargs ./payload",
+            "tee src/lib.rs",
+            "tar --to-command=./payload -xf a.tar",
+            "printf safe",
+        ] {
+            assert!(
+                !normalize("Bash", &json!({"command": command}), &facts()).family_safe,
+                "{command}"
+            );
+        }
     }
 
     /// The longest of the repository, the worktree and the branch is

@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
+use crate::acp::tool_name_of;
+
 use super::AiPermissionsLive;
 use super::derive::{Derived, derive};
 
@@ -234,7 +236,7 @@ fn state(request: &Value, workspace: Option<&str>, derived: &Derived) -> Value {
     let mut call = Map::new();
     insert_nonempty(&mut call, "tool", tool_call.get("title"));
     insert_nonempty(&mut call, "kind", tool_call.get("kind"));
-    let input = compact_json(raw_input(tool_call), INPUT_CUT);
+    let input = compact_json(&ordered_input(tool_call), INPUT_CUT);
     if !input.is_empty() {
         call.insert("input".into(), Value::String(input));
     }
@@ -290,6 +292,54 @@ fn raw_input(tool_call: &Value) -> &Value {
         .unwrap_or(&EMPTY_INPUT)
 }
 
+/// Put the input that describes the request first, before the bounded JSON
+/// representation reaches the model.
+fn ordered_input(tool_call: &Value) -> Value {
+    let input = raw_input(tool_call);
+    let Value::Object(fields) = input else {
+        return input.clone();
+    };
+    let tool = tool_name_of(tool_call);
+    let field = operative_field(&tool, tool_call.get("kind").and_then(Value::as_str), fields);
+    let Some(field) = field else {
+        return input.clone();
+    };
+    let mut ordered = Map::new();
+    ordered.insert(field.into(), fields[field].clone());
+    ordered.extend(
+        fields
+            .iter()
+            .filter(|(name, _)| name.as_str() != field)
+            .map(|(name, value)| (name.clone(), value.clone())),
+    );
+    Value::Object(ordered)
+}
+
+/// The field that identifies the operation for a known tool or ACP kind.
+fn operative_field<'a>(
+    tool: &str,
+    kind: Option<&str>,
+    fields: &'a Map<String, Value>,
+) -> Option<&'a str> {
+    let file_field = || {
+        fields
+            .contains_key("file_path")
+            .then_some("file_path")
+            .or_else(|| fields.contains_key("path").then_some("path"))
+    };
+    match tool {
+        "Bash" if fields.contains_key("command") => Some("command"),
+        "WebFetch" if fields.contains_key("url") => Some("url"),
+        "Edit" | "Write" | "Read" | "MultiEdit" | "NotebookEdit" => file_field(),
+        _ => match kind {
+            Some("execute") if fields.contains_key("command") => Some("command"),
+            Some("fetch") if fields.contains_key("url") => Some("url"),
+            Some("edit" | "read" | "write") => file_field(),
+            _ => None,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -328,6 +378,48 @@ mod tests {
             checked += 1;
         }
         assert!(checked > 800, "the fixture holds {checked} requests");
+    }
+
+    /// The short input starts with the field that identifies the operation,
+    /// without dropping a field from the state.
+    #[test]
+    fn the_operative_input_field_precedes_the_cut() {
+        for (tool, field, value) in [
+            ("Bash", "command", "git status"),
+            ("Read", "file_path", "src/lib.rs"),
+            ("Write", "path", "docs/permissions.md"),
+            ("WebFetch", "url", "https://example.test/docs"),
+        ] {
+            let raw = json!({"description": "x".repeat(INPUT_CUT), field: value});
+            let tool_call = json!({"name": tool, "rawInput": raw});
+            let ordered = ordered_input(&tool_call);
+            assert_eq!(ordered, tool_call["rawInput"], "{tool}: fields");
+            assert!(
+                compact_json(&ordered, INPUT_CUT).starts_with(&format!(r#"{{"{field}":"{value}""#)),
+                "{tool}: order"
+            );
+        }
+    }
+
+    /// ACP kinds still identify the operation where an agent does not name its
+    /// tool.
+    #[test]
+    fn the_kind_identifies_an_unnamed_operative_input_field() {
+        for (kind, field, value) in [
+            ("execute", "command", "git status"),
+            ("read", "file_path", "src/lib.rs"),
+            ("edit", "path", "docs/permissions.md"),
+            ("fetch", "url", "https://example.test/docs"),
+        ] {
+            let raw = json!({"description": "x".repeat(INPUT_CUT), field: value});
+            let tool_call = json!({"title": "request", "kind": kind, "rawInput": raw});
+            let ordered = ordered_input(&tool_call);
+            assert_eq!(ordered, tool_call["rawInput"], "{kind}: fields");
+            assert!(
+                compact_json(&ordered, INPUT_CUT).starts_with(&format!(r#"{{"{field}":"{value}""#)),
+                "{kind}: order"
+            );
+        }
     }
 
     /// Four recorded benchmark answers preserve the danger calculation without

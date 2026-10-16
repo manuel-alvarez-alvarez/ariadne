@@ -87,7 +87,13 @@ change from one call to the next taken out. Ariadne makes it in four steps:
 
 2. In a `Bash` command, it removes a leading `cd` into the worktree or the
    repository (or a directory under one of them), every `2>&1`, and a pipe at
-   the end into `tail`, `head`, `wc`, `cat`, `sort` or `uniq`.
+   the end into `tail`, `head`, `wc`, `cat`, `sort` or `uniq` only when every
+   filter argument is a value-free flag or an accepted count. `tail` and
+   `head` accept `-40`, or a number immediately after `-n`, `-c`, `--lines`
+   or `--bytes`. A filter that names a file or a program, has a bare operand,
+   or uses an option with `=` stays in the key. This includes `cat 1`,
+   `sort -o file`, `sort -T directory`,
+   `sort --files0-from=file` and `sort --compress-program=program`.
 3. It replaces the repository path with `<REPO>`, the worktree with
    `<WORKTREE>`, the session's branch with `<BRANCH>`, and your home
    directory with `<HOME>`. The session's branch is the task's own
@@ -118,8 +124,37 @@ the request was given when it was recorded, such as `recursive` or
 
 In `learn` and `ai` only, an allowing `command` row answers the same normalized
 key. If none answers, an allowing `family` row answers another call in the same
-family. Both require the same tool name and a row from this repository, or a
-row widened to all repositories. A `once` row never
+family. For `Bash`, that call must hold one simple command, apart from a
+trailing output filter that the key stripped. A family row does not answer a
+command with `&&`, `||`, `;`, a newline, command substitution, or another
+pipe. It also does not answer a command with an unquoted `>` or `<`, a
+`NAME=value` assignment before its program, including one for `env`, or an
+option that selects a program or an output file.
+
+Only these programs can use a Bash family row. Every other program asks again,
+so a prior family approval never permits an unlisted program. Each listed
+program rejects these options:
+
+- Git rejects `-c`, `--config-env` and `--exec-path` before its subcommand.
+  It rejects `-O` and `--open-files-in-pager` for `grep`, `--output` for
+  `diff`, `log` and `format-patch`, `-o` for `format-patch`, `--upload-pack`,
+  `--receive-pack` and `-u` for `fetch`, `clone` and `ls-remote`,
+  `--receive-pack` for `push`, `-x` and `--exec` for `rebase`, and `-x` and
+  `--extcmd` for `difftool`.
+- Cargo rejects `--config`; Go rejects `-exec` and `-toolexec`; Make rejects
+  `NAME=value`, `--eval`, `-f`, `--file` and `--makefile`; npm, pnpm and Yarn
+  reject `--script-shell` and `--node-options`.
+- Find rejects `-exec`, `-execdir`, `-ok`, `-okdir`, `-delete`, `-fprint`,
+  `-fprint0`, `-fprintf` and `-fls`. Ripgrep rejects `--pre`. Sort rejects
+  `-o`, `--output`, `--compress-program`, `-T` and `--files0-from`.
+
+A listed one-letter short option is rejected in a one-hyphen option bundle or
+with an attached value. A long option is rejected as its full name, or as a
+prefix of at least three letters, with or without `=value`. Go rejects its two
+options with either one or two hyphens.
+
+Both require the same tool name and a row from this repository, or a row
+widened to all repositories. A `once` row never
 answers a later request. Every risk tag of the later request must also be on
 the answering row. For example, an approval for the `git push` family from
 `git push origin main` does not answer `git push --force origin main`: the
@@ -169,8 +204,13 @@ installs it for you.
 For each request, Ariadne derives an operation and ordered risk tags from the
 complete tool call. The model sees the workspace, the tool call's title and
 kind, the compact JSON of its raw input (cut at 2,000 characters), the option
-names, and the risk tags. Empty values are left out. The operation is reported
-with the decision but is not sent to the model.
+names, and the risk tags. Ariadne resolves the tool name from the tool name,
+the Claude tool-name metadata, then the title. It puts the operative field
+first: `command` for `Bash`, `file_path` or `path` for a file tool, and `url`
+for a fetch. An unnamed `execute`, `edit`, `read`, `write` or `fetch` call
+uses its kind. The remaining fields keep the agent's order. Empty values are
+left out. The operation is reported with the decision but is not sent to the
+model.
 
 The model answers one question: “How much does this coding-agent tool call put
 the system or the project at risk?” It scores the request as routine work to
@@ -355,9 +395,9 @@ On the 2026-10-03 sets, the pair allowed 266 of 645 safe cases and 62 of 300
 real requests. It allowed no elevated or adversarial case. It denied no safe
 or real request.
 
-The real-request sample changes over time.
-The model reads one request at a time and sees at most 2,000 characters of its
-input, so a later command can remain invisible. Scores can vary near a bound
+The real-request sample changes over time. The model reads one request at a
+time and sees at most 2,000 characters of its input. Ariadne puts the field
+that identifies the operation before that cut. Scores can vary near a bound
 with another device or numeric precision.
 
 Once the install is ready, the daemon runs the model's local server on a loopback

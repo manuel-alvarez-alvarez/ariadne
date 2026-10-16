@@ -845,10 +845,19 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
 #[tokio::test]
 async fn the_model_receives_the_raw_input_and_not_the_learned_key() {
     let sha = "94f07c0b878adfa965c6b6438dad1dedb4578e9f";
+    let command = format!("git show {sha} 2>&1 | tail -60");
     let server = ModelServer::answer(0.05).await;
     let mut scripted = permission_script();
-    scripted["prompts"][0]["permission"]["toolCall"]["rawInput"] =
-        json!({"command": format!("git show {sha} 2>&1 | tail -60")});
+    let tool_call = scripted["prompts"][0]["permission"]["toolCall"]
+        .as_object_mut()
+        .unwrap();
+    tool_call.remove("name");
+    tool_call.insert("title".into(), json!(command));
+    tool_call.insert("_meta".into(), json!({"claudeCode": {"toolName": "Bash"}}));
+    tool_call.insert(
+        "rawInput".into(),
+        json!({"description": "x".repeat(2_000), "command": command}),
+    );
     let (h, cast, _agent_dir) =
         ai_permissions_harness_with(&server, 0.05, Timeouts::default(), scripted).await;
 
@@ -859,11 +868,18 @@ async fn the_model_receives_the_raw_input_and_not_the_learned_key() {
     .await;
 
     let requests = server.requests.lock().unwrap();
-    let input = requests[0]["state"]["request"]["input"].as_str().unwrap();
     assert_eq!(
-        input,
-        json!({"command": format!("git show {sha} 2>&1 | tail -60")}).to_string()
+        requests[0]["state"]["request"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["tool", "kind", "input"]
     );
+    let input = requests[0]["state"]["request"]["input"].as_str().unwrap();
+    assert!(input.starts_with(&format!(r#"{{"command":"{command}","#)));
+    assert!(input.contains(&command));
 }
 
 #[tokio::test]
