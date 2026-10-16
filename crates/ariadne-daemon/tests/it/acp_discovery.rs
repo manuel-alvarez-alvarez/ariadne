@@ -1700,14 +1700,34 @@ async fn real_opencode_metadata_listing_creates_no_session() {
             )
             .await
             .expect("opening the real opencode database");
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session")
+        // OpenCode names its session table by schema version — `session`
+        // up to v1, `session_v2` from v2.0 — so the table is found by name
+        // rather than assumed, and every version of it is counted.
+        let tables: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master \
+             WHERE type = 'table' AND (name = 'session' OR name GLOB 'session_v[0-9]*')",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("listing the real opencode session tables");
+        assert!(
+            !tables.is_empty(),
+            "the real OpenCode database has a session table to count"
+        );
+        for table in tables {
+            // The name comes from `sqlite_master` of a database this test
+            // alone made, and it is quoted as an identifier.
+            let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT COUNT(*) FROM `{table}`"
+            )))
             .fetch_one(&pool)
             .await
             .expect("counting sessions");
-        assert_eq!(
-            count, 0,
-            "initialize and session/list must open no session in the real OpenCode database"
-        );
+            assert_eq!(
+                count, 0,
+                "initialize and session/list must open no session in the real OpenCode `{table}` table"
+            );
+        }
     }
 }
 

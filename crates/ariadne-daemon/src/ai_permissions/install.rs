@@ -7,7 +7,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result, anyhow, bail};
 use ariadne_api::permissions::{AiPermissionsStatusDto, Device, Flavour};
@@ -49,22 +48,17 @@ impl AiPermissions {
     /// Start an install in the background, and answer the status it leaves
     /// behind — `installing`, written before this returns, so the caller
     /// hands the client a status the install cannot have moved past yet.
+    ///
+    /// The `installing` flag and the row's state change under one lock, here
+    /// and at the install's end, so a status that reads `ready` was read
+    /// after the flag cleared: a refresh that follows such a read starts an
+    /// install rather than finding the one that just ended still busy.
     pub(crate) async fn install(&self) -> Option<AiPermissionsStatusDto> {
-        if self
-            .installing
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        if !self.claim_install().await {
             return None;
         }
-        let status = self
-            .write(AiPermissionSettingsUpdate {
-                state: Some("installing".into()),
-                state_while_enabled: true,
-                last_error: Some(None),
-                ..Default::default()
-            })
-            .await;
+        let status = self.announce().await;
+        self.notify_server();
         let ai_permissions = self.clone();
         tokio::spawn(async move {
             loop {
@@ -77,7 +71,6 @@ impl AiPermissions {
                     remove_other_flavours(&ai_permissions.home, flavour);
                 }
                 record(&ai_permissions, flavour, device, outcome).await;
-                ai_permissions.installing.store(false, Ordering::Release);
                 // A switch that landed before the flag cleared found this
                 // install busy and only rejoined it, so its pair is installed
                 // here. A switch after the read below claims its own install.
@@ -89,24 +82,33 @@ impl AiPermissions {
                 if !enabled || ai_permissions.chosen().await == (flavour, device) {
                     break;
                 }
-                if ai_permissions
-                    .installing
-                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                    .is_err()
-                {
+                if !ai_permissions.claim_install().await {
                     break;
                 }
-                ai_permissions
-                    .write(AiPermissionSettingsUpdate {
-                        state: Some("installing".into()),
-                        state_while_enabled: true,
-                        last_error: Some(None),
-                        ..Default::default()
-                    })
-                    .await;
+                ai_permissions.announce().await;
+                ai_permissions.notify_server();
             }
         });
         Some(status)
+    }
+
+    /// Take the `installing` flag and write `installing`, as one step: false
+    /// where an install already holds the flag. The announcement is the
+    /// caller's, outside the lock.
+    async fn claim_install(&self) -> bool {
+        let mut installing = self.installing.lock().await;
+        if *installing {
+            return false;
+        }
+        *installing = true;
+        self.store_update(AiPermissionSettingsUpdate {
+            state: Some("installing".into()),
+            state_while_enabled: true,
+            last_error: Some(None),
+            ..Default::default()
+        })
+        .await;
+        true
     }
 
     /// Say again that the install running now is the one the model waits for.
@@ -121,12 +123,17 @@ impl AiPermissions {
 
     /// Write `update` and publish the status it leaves behind.
     pub(crate) async fn write(&self, update: AiPermissionSettingsUpdate) -> AiPermissionsStatusDto {
-        if let Err(error) = self.store.update_ai_permission_settings(update).await {
-            tracing::warn!(error = %error, "writing the AI permission settings failed");
-        }
+        self.store_update(update).await;
         let status = self.announce().await;
         self.notify_server();
         status
+    }
+
+    /// Write `update`, and only log a store that refuses it.
+    async fn store_update(&self, update: AiPermissionSettingsUpdate) {
+        if let Err(error) = self.store.update_ai_permission_settings(update).await {
+            tracing::warn!(error = %error, "writing the AI permission settings failed");
+        }
     }
 }
 
@@ -172,7 +179,13 @@ async fn record(
             }
         }
     };
-    ai_permissions.write(update).await;
+    {
+        let mut installing = ai_permissions.installing.lock().await;
+        ai_permissions.store_update(update).await;
+        *installing = false;
+    }
+    ai_permissions.announce().await;
+    ai_permissions.notify_server();
 }
 
 /// The command that stands in for the virtual environment, package and weights in the suite.

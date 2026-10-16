@@ -19,7 +19,6 @@ pub mod python;
 mod server;
 
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
 
 use tokio::sync::{mpsc, watch};
@@ -75,7 +74,11 @@ pub struct AiPermissions {
     starting: Arc<watch::Sender<bool>>,
     /// Whether an install is running now. Claimed with a compare-and-swap, so
     /// exactly one install runs at a time however many callers ask at once.
-    installing: Arc<AtomicBool>,
+    /// Whether an install runs. Taken around every write of the install's
+    /// state, so a status that reads `ready` is read after the flag cleared,
+    /// and a refresh that follows it is never refused as busy
+    /// (`install::AiPermissions::install`).
+    installing: Arc<tokio::sync::Mutex<bool>>,
     timeouts: Timeouts,
     server_tx: mpsc::UnboundedSender<server::Command>,
     /// The one advisory failure-diagnosis request now reaching this model,
