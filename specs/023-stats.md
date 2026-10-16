@@ -283,18 +283,18 @@ not a change to how they decide it.
 What got done: goals completed, tasks finished, failed and cancelled, and
 changes landed, over time.
 
-37. A goal writes one `goal_ended` fact each time it moves to `completed` or
+38. A goal writes one `goal_ended` fact each time it moves to `completed` or
     `cancelled`. It is written inside `Store::set_goal_status`, in the same
     transaction as the status write, the way `task_ended` is written inside
     `transition_in_tx` (rule 22) — the one place every goal status change
     passes. A move to the same status writes no fact.
-38. Its `data` holds `status` (`completed` or `cancelled`), `lead_time_secs`
+39. Its `data` holds `status` (`completed` or `cancelled`), `lead_time_secs`
     (from the goal's `created_at` to the move), `tasks` (the count of its
     tasks), `tasks_finished` (those `finished`) and `workflow` (the goal's
     own). `goal_id` is the goal's; `repo_id` is the goal's one repository, or
     null where it works in several; `model` and `effort` are the goal's
     orchestrator pin.
-39. `work_stats(filter) -> WorkStats { totals, bucket, buckets }` answers what
+40. `work_stats(filter) -> WorkStats { totals, bucket, buckets }` answers what
     got done. `totals` holds `goals_completed`, `goals_cancelled`,
     `median_goal_lead_time_secs` (over completed goals), `tasks_finished`,
     `tasks_failed`, `tasks_cancelled`, `finish_rate` (`tasks_finished` over
@@ -305,7 +305,7 @@ changes landed, over time.
     included, each with `start`, `tasks_finished`, `tasks_failed`,
     `tasks_cancelled`, `goals_completed` and `landed`. `since` and
     `repo_id` narrow every count, as rule 12 says.
-40. `GET /v1/stats/work` answers `WorkStatsDto`, `work_stats`'s own shape.
+41. `GET /v1/stats/work` answers `WorkStatsDto`, `work_stats`'s own shape.
     `ariadne stats work` prints the totals as `label: value` lines, then a
     table of the buckets, `FROM` (the hour too where the bucket is an hour),
     `FINISHED`, `FAILED`, `CANCELLED`, `GOALS` and `LANDED`; `--format json`
@@ -318,17 +318,17 @@ changes landed, over time.
 
 ### Time
 
-38. `time_stats` reads `task_ended` facts whose status is `finished`. It
+42. `time_stats` reads `task_ended` facts whose status is `finished`. It
     answers their count, median, nearest-rank p90 and mean lead time; a
     missing value is zero. Its status rows follow the lifecycle order:
     `pending`, `ready`, `in_progress`, `under_review`, `changes_requested`
     and `approved`. Each gives total time, median time and its share of the
     status total. A fact without `status_secs` contributes no status time.
-39. The family also counts `permission` facts where `decided_by` is `console`:
+43. The family also counts `permission` facts where `decided_by` is `console`:
     the value the daemon writes for a person who answered. It answers their
     prompt count, total seconds and median seconds from `wait_ms`. Both the
     task and permission reads honour `since` and `repo`.
-40. `ariadne stats time` prints the lead-time and person-waiting figures as
+44. `ariadne stats time` prints the lead-time and person-waiting figures as
     label and value lines, then `STATUS`, `TOTAL`, `MEDIAN` and `SHARE` rows.
     The desktop section shows median and p90 lead time, person wait time and
     prompt count, then a "Where the time goes" status bar chart with each
@@ -339,34 +339,34 @@ changes landed, over time.
 What did it spend? Tokens, never a cost: the ledger holds no price, and
 nothing here converts one.
 
-38. `Store::spend_stats` reads every `session_ended` fact the filter keeps and
+45. `Store::spend_stats` reads every `session_ended` fact the filter keeps and
     answers `SpendStats { totals, per_finished_task, bucket, buckets,
     by_model }`.
-39. `totals` sums every kept fact's `input_tokens`, `cached_input_tokens` and
+46. `totals` sums every kept fact's `input_tokens`, `cached_input_tokens` and
     `output_tokens`, counts the facts as `sessions`, and carries
     `cached_share`: `cached_input_tokens` over `input_tokens`, 0 where
     `input_tokens` is 0.
-40. `per_finished_task` is the tokens of every kept `session_ended` fact whose
+47. `per_finished_task` is the tokens of every kept `session_ended` fact whose
     `task_id` names a task with a kept `task_ended` fact of status
     `finished`, divided by how many such tasks there are — `tasks`,
     `input_tokens` and `output_tokens`. 0 for all three where no task
     finished.
-41. `bucket` is `Bucket::for_span` of the span rule 32 names. `buckets` is
+48. `bucket` is `Bucket::for_span` of the span rule 32 names. `buckets` is
     one row per bucket of that whole span, zeros where a bucket in it holds
     no fact, each with `start`, `input_tokens`, `cached_input_tokens` and
     `output_tokens`.
-42. `by_model` is one row per model named by a kept fact, every seat pooled
+49. `by_model` is one row per model named by a kept fact, every seat pooled
     into it, with `input_tokens`, `cached_input_tokens`, `output_tokens` and
     `share` — `input_tokens + output_tokens` over the same total of every
     model — the heaviest model first. A fact naming no model answers no row.
-43. `GET /v1/stats/spend` answers `SpendStatsDto`, the aggregate's own shape.
-44. `ariadne stats spend` prints the totals and the per-task figures as the
+50. `GET /v1/stats/spend` answers `SpendStatsDto`, the aggregate's own shape.
+51. `ariadne stats spend` prints the totals and the per-task figures as the
     aligned key-value block every family uses (014, rule 35), then a table of
     `by_model` (`MODEL`, `TOKENS` — the usage cell every table prints —
     `SHARE`), then a table of `buckets` (`FROM` — the hour too where the
     bucket is an hour — `INPUT`, `CACHED`, `OUTPUT`), one blank line before
     each table. `--format json` prints the DTO whole.
-45. `SpendSection` draws four tiles with `StatTiles`: input tokens, cache
+52. `SpendSection` draws four tiles with `StatTiles`: input tokens, cache
     share, output tokens, and tokens per finished task (`input_tokens +
     output_tokens` of `per_finished_task`, hinted with the task count). Under
     them, one `StatTimeChart` stacks `input_tokens` and `output_tokens` per
@@ -511,8 +511,12 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   `::filled_buckets_zero_fills_every_bucket_the_facts_do_not_reach`).
 - Each `GET /v1/stats/<family>` answers 200 with its DTO, and is in the API
   document under the `stats` tag
-  (`stats_<family>.rs::the_<family>_stat_answers_and_is_in_the_api_document`,
-  one per family); the reviews, switches and outcomes routes answer 404
+  (`stats_time.rs::the_time_stat_answers_and_is_in_the_api_document`,
+  `stats_spend.rs::the_spend_stat_answers_and_is_in_the_api_document`,
+  `stats_models.rs::the_models_stat_answers_and_is_in_the_api_document`,
+  `stats_attention.rs::the_attention_stat_answers_and_is_in_the_api_document`,
+  `stats_work.rs::the_work_stat_answers_the_totals_and_the_buckets`); the
+  reviews, switches and outcomes routes answer 404
   (`stats.rs::the_old_families_are_gone`).
 - Each `ariadne stats <family> --format json` reads its own route with the
   filters given
