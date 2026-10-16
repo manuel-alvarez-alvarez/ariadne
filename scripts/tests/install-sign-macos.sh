@@ -10,8 +10,10 @@
 #                      Tauri to sign the .app with.
 #   desktop-missing    no identity: APPLE_SIGNING_IDENTITY reaches npm
 #                       unset, as it always did.
-#   app-path           an app outside the two approved application directories
-#                       is refused before uninstalling anything.
+#   app-path           an app outside the approved locations is refused before
+#                       uninstalling anything.
+#   legacy-app-path    a prior Ariadne Desktop.app bundle under ~/Applications
+#                       is accepted and removed during migration.
 #   manifest-unsafe    an installer value that carries shell syntax is refused
 #                       before it can be written to install.env.
 # desktop-* stop npm's stub right after it records what reached its own
@@ -20,7 +22,7 @@
 # two prove the wiring and go no further. scripts/AGENTS.md.
 set -Eeuo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-test_case="${1:?name a test case: present, missing, desktop-present, desktop-missing, app-path or manifest-unsafe}"
+test_case="${1:?name a test case: present, missing, desktop-present, desktop-missing, app-path, legacy-app-path or manifest-unsafe}"
 [ "$(uname -s)" = Darwin ] || { echo "macOS only" >&2; exit 2; }
 export TEST_ROOT
 TEST_ROOT="$(mktemp -d)"
@@ -92,8 +94,23 @@ case "$test_case" in
             bash "$TEST_ROOT/repo/scripts/uninstall.sh" > "$TEST_ROOT/output" 2>&1; then
             exit 1
         fi
-        grep -F 'refusing to remove unexpected desktop app path' "$TEST_ROOT/output"
+        grep -F 'refusing unexpected install manifest path: ARIADNE_APP' "$TEST_ROOT/output"
         [ -d "$app" ]
+        ;;
+    legacy-app-path)
+        app="$TEST_ROOT/home/Applications/Ariadne Desktop.app"
+        mkdir -p "$app" "$TEST_ROOT/home/.ariadne"
+        printf '%s\n' "ARIADNE_APP=$app" > "$TEST_ROOT/home/.ariadne/install.env"
+        env HOME="$TEST_ROOT/home" ARIADNE_HOME="$TEST_ROOT/home/.ariadne" \
+            PREFIX="$TEST_ROOT/home/.local/bin" \
+            bash "$TEST_ROOT/repo/scripts/uninstall.sh" > "$TEST_ROOT/output" 2>&1
+        [ ! -e "$app" ]
+        # The system-wide legacy path is accepted too, without touching it.
+        # shellcheck source=/dev/null
+        . "$TEST_ROOT/repo/scripts/lib.sh"
+        ui_locations
+        ui_manifest_path_is_expected ARIADNE_APP /Applications/Ariadne\ Desktop.app \
+            "$TEST_ROOT/home/.local/bin"
         ;;
     manifest-unsafe)
         unsafe_prefix="$TEST_ROOT/home/.local/\$unsafe"

@@ -181,10 +181,13 @@ Out: what the daemon does once running (009, 012).
     one, in both `scripts/lib.sh` and `ariadne daemon stop`. Invalid text is
     ignored by the scripts and rejected by the CLI before either can construct
     a `kill` command, so `-1` can never become a process-group signal.
-17. Before an uninstall starts, it validates every recursive deletion target.
-    On macOS the desktop target must be a directory named `Ariadne.app` under
-    `/Applications` or `$HOME/Applications`; on Linux it must be the desktop
-    binary under the recorded prefix. `--purge` refuses an empty, root, home,
+17. Before an uninstall starts, it validates every manifest path against the
+    installer-defined location. A prefix must match `--prefix`; completions,
+    service files, and GNOME files must match the current user locations. On
+    macOS the desktop target must be a directory named `Ariadne.app` under
+    `/Applications` or `$HOME/Applications`, or one of the fixed legacy
+    `Ariadne Desktop.app` locations there; on Linux it must be the desktop
+    binary under the expected prefix. `--purge` refuses an empty, root, home,
     or relative `ARIADNE_HOME`. The uninstaller creates its log with `mktemp`
     rather than a predictable filename.
 18. `scripts/check-migrations.sh` enforces rule 9's last sentence by machine
@@ -211,13 +214,14 @@ Out: what the daemon does once running (009, 012).
   an unavailable verification constraint, a vulnerable GitHub CLI, another
   workflow, or another tag stops the installer before it installs a file.
   Manifest shell syntax and unknown keys stop the uninstaller before it
-  removes a file. Unsafe app and purge roots are refused, invalid pidfiles
-  signal nothing, and the uninstall log has an unpredictable name
+  removes a file. Manifest paths outside their installer-defined locations,
+  unsafe app and purge roots are refused, invalid pidfiles signal nothing,
+  and the uninstall log has an unpredictable name
   (`scripts/tests/install-linux.sh`: `workflow-rejected`, `tag-rejected`,
   `gh-missing-attestation-flags`, `gh-outdated-attestation-verifier`,
-  `manifest-shell`, `manifest-unexpected`, `app-path`, `purge-home`,
+  `manifest-shell`, `manifest-unexpected`, `manifest-paths`, `app-path`, `purge-home`,
   `purge-root`, `pid-invalid`, `uninstall-log`; `scripts/tests/install-sign-macos.sh`:
-  `app-path`, `manifest-unsafe`; `daemon.rs::a_pidfile_only_accepts_digits_above_one`).
+  `app-path`, `legacy-app-path`, `manifest-unsafe`; `daemon.rs::a_pidfile_only_accepts_digits_above_one`).
 - A database from before the squash says which file to delete
   (`store.rs::a_database_from_before_the_squash_says_which_file_to_delete`).
 - The shipped skills are seeded into a fresh database, each on the text

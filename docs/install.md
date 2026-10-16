@@ -150,10 +150,13 @@ Its TCP connection is off by default; set `tcp_listen` in
 
 The uninstaller reads `~/.ariadne/install.env` as fixed `KEY=value` data; it
 does not execute it. It refuses a manifest with an unknown key or a value that
-could be shell syntax. It removes a macOS app only from `/Applications` or
-`~/Applications`, and a Linux desktop binary only from its installed prefix.
-`--purge` refuses an empty home, `/`, or `$HOME`. Its diagnostic log uses a
-unique temporary filename and remains available after a purge.
+could be shell syntax. Each recorded path must match its installer-defined
+location, including the chosen `--prefix`; use the same `--prefix` value when
+you uninstall a custom-prefix installation. It removes a macOS app only from
+`/Applications` or `~/Applications`, including the legacy `Ariadne
+Desktop.app` bundle, and a Linux desktop binary only from its installed
+prefix. `--purge` refuses an empty home, `/`, or `$HOME`. Its diagnostic log
+uses a unique temporary filename and remains available after a purge.
 
 ## The daemon service
 

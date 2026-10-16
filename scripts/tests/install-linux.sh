@@ -141,6 +141,22 @@ case "$test_case" in
         printf 'PASS: %s\n' "$test_case"
         exit 0
         ;;
+    manifest-paths)
+        for path_key in ARIADNE_PREFIX ARIADNE_BASH_COMPLETION ARIADNE_ZSH_COMPLETION \
+            ARIADNE_PLIST ARIADNE_UNIT ARIADNE_DESKTOP_ENTRY ARIADNE_DESKTOP_ICON; do
+            run_install
+            keep="$TEST_ROOT/$path_key-keep"
+            : > "$keep"
+            sed -i "s|^$path_key=.*|$path_key=$keep|" "$TEST_ROOT/home/.ariadne/install.env"
+            if run_uninstall; then exit 1; fi
+            grep -F "refusing unexpected install manifest path: $path_key" "$TEST_ROOT/uninstall-output"
+            [ -e "$keep" ]
+            [ -e "$prefix/ariadne" ]
+            rm -f "$TEST_ROOT/home/.ariadne/install.env"
+        done
+        printf 'PASS: %s\n' "$test_case"
+        exit 0
+        ;;
     app-path)
         run_install
         outside="$TEST_ROOT/outside/ariadne-desktop"
@@ -148,7 +164,7 @@ case "$test_case" in
         : > "$outside"
         sed -i "s|^ARIADNE_APP=.*|ARIADNE_APP=$outside|" "$TEST_ROOT/home/.ariadne/install.env"
         if run_uninstall; then exit 1; fi
-        grep -F 'refusing to remove unexpected desktop app path' "$TEST_ROOT/uninstall-output"
+        grep -F 'refusing unexpected install manifest path: ARIADNE_APP' "$TEST_ROOT/uninstall-output"
         [ -e "$outside" ]
         [ -e "$prefix/ariadne" ]
         printf 'PASS: %s\n' "$test_case"

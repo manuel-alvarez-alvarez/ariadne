@@ -376,10 +376,16 @@ if [ "$WITH_UI" = 1 ] && [ "$OS" = Linux ] && ! has_webkitgtk; then
     APP_SKIP_REASON="libwebkit2gtk-4.1.so.0 not found"
 fi
 
-# --- previous install (for cross-prefix idempotency) --------------------------
-OLD_PREFIX=""
+# --- previous install ---------------------------------------------------------
+OLD_DESKTOP_ICON=""
 if ui_read_install_manifest "$ARIADNE_MANIFEST"; then
-    OLD_PREFIX="$MANIFEST_PREFIX"
+    # A manifest is untrusted input. The old prefix is never removed during an
+    # install because it cannot prove which binaries it owns. The icon has an
+    # installer-defined path, so it is safe to remove after validation.
+    if [ -n "$MANIFEST_DESKTOP_ICON" ] \
+        && ui_manifest_path_is_expected ARIADNE_DESKTOP_ICON "$MANIFEST_DESKTOP_ICON" "$PREFIX"; then
+        OLD_DESKTOP_ICON="$MANIFEST_DESKTOP_ICON"
+    fi
 fi
 
 # --- build, or download and verify ---------------------------------------------
@@ -461,12 +467,7 @@ mkdir -p "$PREFIX"
 install -m 755 "$BIN_SRC_DIR/ariadne" "$PREFIX/ariadne"
 install -m 755 "$BIN_SRC_DIR/ariadned" "$PREFIX/ariadned"
 [ "$BUILD_FROM_SOURCE" = 1 ] || clear_quarantine "$PREFIX/ariadne" "$PREFIX/ariadned"
-if [ -n "$OLD_PREFIX" ] && [ "$OLD_PREFIX" != "$PREFIX" ]; then
-    rm -f "$OLD_PREFIX/ariadne" "$OLD_PREFIX/ariadned"
-    step_ok "previous prefix $(ui_tilde "$OLD_PREFIX") cleaned"
-else
-    step_ok
-fi
+step_ok
 
 # --- desktop app --------------------------------------------------------------------
 # Downloaded, the app is one more verified asset and installs like the
@@ -566,14 +567,8 @@ GNOME_STATE=""
 if [ "$WITH_UI" = 1 ] && [ "$OS" = Linux ]; then
     step_begin
     if [ -n "$APP_PATH" ]; then
-        # Cross-run idempotency, the same way OLD_PREFIX works for the
-        # binaries: an icon size that changed since the last run would
-        # otherwise leave the old one behind alongside the new one.
-        OLD_DESKTOP_ICON=""
-        if ui_read_install_manifest "$ARIADNE_MANIFEST"; then
-            OLD_DESKTOP_ICON="$MANIFEST_DESKTOP_ICON"
-        fi
-
+        # Cross-run idempotency: an icon size that changed since the last run
+        # would otherwise leave the old one behind alongside the new one.
         if [ "$BUILD_FROM_SOURCE" = 1 ]; then
             ICON_SRC="$APP_SRC_DIR/src-tauri/icons/icon.png"
         else

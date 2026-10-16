@@ -190,6 +190,67 @@ ui_write_install_manifest_value() {
     printf '%s=%s\n' "$_key" "$_value" >> "$_path"
 }
 
+# Report whether one manifest path is the installer-defined path for its key.
+# The prefix is an explicit uninstall choice; every other base comes from the
+# current environment, never from the manifest itself.
+ui_manifest_path_is_expected() {
+    local _key="$1" _value="$2" _prefix="$3" _rest _size _width _height
+    case "$_key" in
+        ARIADNE_PREFIX) [ "$_value" = "$_prefix" ] ;;
+        ARIADNE_BASH_COMPLETION) [ "$_value" = "$ARIADNE_BASH_COMPLETION" ] ;;
+        ARIADNE_ZSH_COMPLETION) [ "$_value" = "$ARIADNE_ZSH_COMPLETION" ] ;;
+        ARIADNE_PLIST) [ "$_value" = "$ARIADNE_PLIST" ] ;;
+        ARIADNE_UNIT) [ "$_value" = "$ARIADNE_UNIT" ] ;;
+        ARIADNE_DESKTOP_ENTRY) [ "$_value" = "$ARIADNE_DESKTOP_ENTRY" ] ;;
+        ARIADNE_APP)
+            case "$OS" in
+                Darwin)
+                    case "$_value" in
+                        /Applications/Ariadne.app|"$HOME/Applications/Ariadne.app"|\
+                        /Applications/Ariadne\ Desktop.app|"$HOME/Applications/Ariadne Desktop.app")
+                            return 0
+                            ;;
+                        *) return 1 ;;
+                    esac
+                    ;;
+                Linux) [ "$_value" = "$_prefix/ariadne-desktop" ] ;;
+                *) return 1 ;;
+            esac
+            ;;
+        ARIADNE_DESKTOP_ICON)
+            case "$_value" in
+                "$ARIADNE_ICON_BASE"/*) ;;
+                *) return 1 ;;
+            esac
+            _rest="${_value#"$ARIADNE_ICON_BASE"/}"
+            _size="${_rest%%/*}"
+            [ "$_rest" = "$_size/apps/$ARIADNE_DESKTOP_ID.png" ] || return 1
+            case "$_size" in
+                ''|*x*x*|*[!0-9x]*|x*|*x) return 1 ;;
+            esac
+            case "$_size" in
+                *x*) ;;
+                *) return 1 ;;
+            esac
+            _width="${_size%%x*}"
+            _height="${_size#*x}"
+            case "$_width:$_height" in
+                *[!0-9:]*|:*|*:) return 1 ;;
+            esac
+            return 0
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# Stop before any removal when a manifest claims a path that the installer
+# could not have written for this user's current locations.
+ui_validate_manifest_path() {
+    local _key="$1" _value="$2" _prefix="$3"
+    ui_manifest_path_is_expected "$_key" "$_value" "$_prefix" \
+        || ui_die "refusing unexpected install manifest path: $_key"
+}
+
 # How the daemon is registered on this OS, for step titles and summaries.
 # $1 is what to say on an OS Ariadne registers no service for.
 ui_service_desc() {
