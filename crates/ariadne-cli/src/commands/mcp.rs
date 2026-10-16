@@ -291,13 +291,13 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
-            "To ask the user, call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions."
+            "To ask the user, call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
         McpSeat::Agent => {
-            "Ask the user only where the task cannot continue without a user answer. Call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions."
+            "Ask the user only where the task cannot continue without a user answer. Call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
         McpSeat::PullRequestReviewer | McpSeat::PullRequestKeeper => {
-            "Ask the user only where the request cannot continue without a user answer. Call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions."
+            "Ask the user only where the request cannot continue without a user answer. Call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
     }
 }
@@ -968,6 +968,10 @@ pub(crate) mod tests {
                 ),
                 "{seat:?}: the user reads the question in the console: {instructions}"
             );
+            assert!(
+                instructions.contains("A turn that ends without the call ends the wait."),
+                "{seat:?}: a turn that no longer waits closes its request: {instructions}"
+            );
         }
 
         let agent = server_at(
@@ -1158,6 +1162,17 @@ pub(crate) mod tests {
             (
                 "asking the user",
                 &["the question in your reply"][..],
+                &[
+                    "orchestrator session rules",
+                    "agent session rules",
+                    "pull request reviewer session rules",
+                    "pull request keeper session rules",
+                    "wait_for_user description",
+                ][..],
+            ),
+            (
+                "ending a wait",
+                &["A turn that ends without the call ends the wait."][..],
                 &[
                     "orchestrator session rules",
                     "agent session rules",

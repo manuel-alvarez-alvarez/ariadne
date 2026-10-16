@@ -3371,7 +3371,7 @@ async fn a_fresh_database_already_has_every_column_the_old_chain_added() {
         .unwrap();
 
     let (_, created) = store
-        .create_agent_request(&session.id, "pick a model")
+        .create_agent_request(&session.id, "pick a model", None)
         .await
         .unwrap();
     assert!(created);

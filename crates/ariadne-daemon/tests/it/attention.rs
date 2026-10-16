@@ -115,6 +115,261 @@ async fn a_repeated_question_is_one_attention_item() {
     assert_eq!(list.items.len(), 1);
 }
 
+/// A repeated hint belongs to the new turn, so it keeps the pending request
+/// rather than recreating it with a new id or a new waiting time.
+#[tokio::test]
+async fn a_turn_that_repeats_a_wait_keeps_its_request_and_since() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let session = h.agent_session(&cast, "develop").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    let opened: serde_json::Value = h
+        .json(
+            as_session(
+                &path,
+                &session.id,
+                serde_json::json!({"summary": "Choose a branch."}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let before: AttentionListDto = h.get("/v1/attention").await;
+    let since = before.items[0].since.clone();
+
+    let release = h.at("repeated-wait-turn-release");
+    let mut script = crate::common::acp::script();
+    script["prompts"][0]["wait_for"] = serde_json::json!(release.display().to_string());
+    h.agent.reprogram(script);
+    h.agent_runs(&session).await;
+    h.launcher
+        .acp
+        .send_prompt(&session.id, "A daemon prompt.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the repeated-wait turn to start", || async {
+        release.with_extension("reached").exists()
+    })
+    .await;
+
+    let mut events = h.bus.subscribe();
+    let repeated: serde_json::Value = h
+        .json(
+            as_session(
+                &path,
+                &session.id,
+                serde_json::json!({"summary": "Choose a branch."}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    assert_eq!(repeated["id"], opened["id"]);
+    next_event(
+        &mut events,
+        |event| matches!(&event.event, DomainEvent::SessionUpdated(row) if row.id == session.id),
+    )
+    .await;
+
+    std::fs::write(&release, "finish").unwrap();
+    eventually(TIMEOUT, "the repeated-wait turn to end", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let after: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(after.items.len(), 1);
+    assert_eq!(
+        after.items[0].id,
+        format!("agent_request:{}", opened["id"].as_str().unwrap())
+    );
+    assert_eq!(after.items[0].since, since);
+}
+
+/// A new wait supersedes every pending wait from an earlier turn of the same
+/// session, while a turn that raises none ends every one of them.
+#[tokio::test]
+async fn a_turn_keeps_only_its_new_wait_and_ends_an_unraised_wait() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let session = h.agent_session(&cast, "develop").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    let _: serde_json::Value = h
+        .json(
+            as_session(
+                &path,
+                &session.id,
+                serde_json::json!({"summary": "Old question."}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+
+    let first_release = h.at("new-wait-turn-first-release");
+    let second_release = h.at("new-wait-turn-second-release");
+    let mut script = crate::common::acp::script();
+    script["prompts"] = serde_json::json!([
+        {"wait_for": first_release.display().to_string()},
+        {"wait_for": second_release.display().to_string()},
+    ]);
+    h.agent.reprogram(script);
+    h.agent_runs(&session).await;
+    h.launcher
+        .acp
+        .send_prompt(&session.id, "A daemon prompt.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the new-wait turn to start", || async {
+        first_release.with_extension("reached").exists()
+    })
+    .await;
+
+    let opened: serde_json::Value = h
+        .json(
+            as_session(
+                &path,
+                &session.id,
+                serde_json::json!({"summary": "New question."}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let mut events = h.bus.subscribe();
+    std::fs::write(&first_release, "finish").unwrap();
+    next_event(&mut events, |event| {
+        matches!(&event.event, DomainEvent::SessionUpdated(row)
+            if row.id == session.id && row.status == SessionStatus::Running)
+    })
+    .await;
+    eventually(TIMEOUT, "the new-wait turn to end", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let after_new_wait: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(after_new_wait.items.len(), 1, "{after_new_wait:?}");
+    assert_eq!(
+        after_new_wait.items[0].id,
+        format!("agent_request:{}", opened["id"].as_str().unwrap())
+    );
+
+    h.launcher
+        .acp
+        .send_prompt(&session.id, "Another daemon prompt.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the turn without a wait to start", || async {
+        second_release.with_extension("reached").exists()
+    })
+    .await;
+    std::fs::write(&second_release, "finish").unwrap();
+    eventually(TIMEOUT, "the turn without a wait to end", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let after_unraised_wait: AttentionListDto = h.get("/v1/attention").await;
+    assert!(
+        after_unraised_wait.items.is_empty(),
+        "{after_unraised_wait:?}"
+    );
+}
+
+/// Cancelling a turn ends the wait it did not raise again.
+#[tokio::test]
+async fn a_cancelled_turn_ends_an_unraised_wait() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let session = h.agent_session(&cast, "develop").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    let _: serde_json::Value = h
+        .json(
+            as_session(
+                &path,
+                &session.id,
+                serde_json::json!({"summary": "Old question."}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+
+    let release = h.at("cancelled-wait-turn-release");
+    let mut script = crate::common::acp::script();
+    script["prompts"][0]["wait_for"] = serde_json::json!(release.display().to_string());
+    h.agent.reprogram(script);
+    h.agent_runs(&session).await;
+    h.launcher
+        .acp
+        .send_prompt(&session.id, "A daemon prompt.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the cancelled-wait turn to start", || async {
+        release.with_extension("reached").exists()
+    })
+    .await;
+
+    let (status, _) = h
+        .send(crate::common::post(&format!(
+            "/v1/sessions/{}/console/cancel",
+            session.id
+        )))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the cancelled-wait turn to end", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let after: AttentionListDto = h.get("/v1/attention").await;
+    assert!(after.items.is_empty(), "{after:?}");
+}
+
+/// A failed prompt ends the wait too, before the failed session is omitted
+/// from the attention list.
+#[tokio::test]
+async fn an_error_turn_ends_an_unraised_wait() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let session = h.agent_session(&cast, "develop").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    let _: serde_json::Value = h
+        .json(
+            as_session(
+                &path,
+                &session.id,
+                serde_json::json!({"summary": "Old question."}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+
+    let mut script = crate::common::acp::script();
+    script["prompts"][0] = serde_json::json!({
+        "error": {"code": -32603, "message": "the agent stopped"}
+    });
+    h.agent.reprogram(script);
+    h.agent_runs(&session).await;
+    h.launcher
+        .acp
+        .send_prompt(&session.id, "A daemon prompt.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the error turn to end", || async {
+        h.store
+            .list_session_events(&session.id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == "session.error")
+    })
+    .await;
+
+    let pending = h.store.pending_agent_requests().await.unwrap();
+    assert!(
+        !pending
+            .iter()
+            .any(|request| request.session_id == session.id),
+        "the failed turn left a pending request: {pending:?}"
+    );
+}
+
 /// The hint is one line of at most a hundred characters, and the question is
 /// not it: a hint that runs longer, or over a second line, is refused with the
 /// words that send the question to the agent's reply, and nothing is opened.
@@ -227,7 +482,7 @@ async fn agent_messages_and_idle_turns_raise_no_agent_request() {
 }
 
 #[tokio::test]
-async fn answering_or_withdrawing_one_request_keeps_the_others() {
+async fn console_input_answers_every_request_of_its_session() {
     let h = harness().await;
     let first = h.lone_session("first-request").await;
     let second = h.lone_session("second-request").await;
@@ -263,7 +518,8 @@ async fn answering_or_withdrawing_one_request_keeps_the_others() {
         .await;
     assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
     let list: AttentionListDto = h.get("/v1/attention").await;
-    assert_eq!(list.items.len(), 2);
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].summary, "Other session question");
 
     let second_id: serde_json::Value = h
         .json(create(&first, "Third question"), axum::http::StatusCode::OK)
@@ -278,17 +534,8 @@ async fn answering_or_withdrawing_one_request_keeps_the_others() {
         .await;
     assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
     let list: AttentionListDto = h.get("/v1/attention").await;
-    assert_eq!(list.items.len(), 2);
-    assert!(
-        list.items
-            .iter()
-            .any(|item| item.summary == "Second question")
-    );
-    assert!(
-        list.items
-            .iter()
-            .any(|item| item.summary == "Other session question")
-    );
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items[0].summary, "Other session question");
     assert_ne!(first_id["id"], second_id["id"]);
 }
 

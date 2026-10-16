@@ -362,7 +362,10 @@ turn: a numbered list of the open points and their options. The hint is what
 the Needs attention list shows, and the console draws it above the question as
 `waiting for you · <hint>`. The daemon
 refuses a hint over 100 characters or over more than one line, so the question
-is never hidden inside the call. Answer by typing in the console.
+is never hidden inside the call. Answer by typing in the console; that input
+answers every question the session has open. A later turn keeps a question
+only when it calls `wait_for_user` again with its hint. Otherwise, the turn
+ending ends the wait.
 
 ```
 ─ permission ───────────────────────────────────

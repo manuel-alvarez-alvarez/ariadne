@@ -41,7 +41,11 @@ pub(crate) async fn create(
              call `wait_for_user` with a short hint, then write the question in your reply"
         )));
     }
-    let (row, created) = state.store.create_agent_request(&id, hint).await?;
+    let turn_id = state.launcher.acp.agent_request_turn_id(&id).await;
+    let (row, created) = state
+        .store
+        .create_agent_request(&id, hint, turn_id.as_deref())
+        .await?;
     // The wait is shown where the question follows it: one event in the
     // session's own stream, for the row this call opened — a repeat of a
     // pending hint is the same request, and adds no second line.

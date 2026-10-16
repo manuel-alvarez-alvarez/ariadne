@@ -441,7 +441,12 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
     the session's status nor its attention flag (012 rule 9) — the pending
     row is what this list reads. A repeat of a pending hint records no
     second event.
-12. Console input answers the oldest request of that session. Withdrawal
+12. Console input answers every pending request of that session. At the end
+    of a turn, every pending request that `wait_for_user` did not raise or
+    re-raise in that turn is answered too, including where the turn ended by
+    cancellation or error. A repeated hint keeps its request, id and `since`;
+    a new hint that does not re-raise the older one leaves only its new
+    request. Withdrawal
     (`withdraw_wait_for_user`) answers only its named request. A pending
     human permission is an item; an automatic decision is not. Each request
     change publishes `session_updated`.
@@ -603,6 +608,13 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   (`attention.rs::agent_messages_and_idle_turns_raise_no_agent_request`), and
   repeating a pending question remains one item
   (`attention.rs::a_repeated_question_is_one_attention_item`).
+- A request stays while its agent re-raises it in the next turn, and leaves
+  when that turn raises a new hint in its place or none at all; a cancelled
+  or failed turn ends an unraised wait too
+  (`attention.rs::a_turn_that_repeats_a_wait_keeps_its_request_and_since`,
+  `::a_turn_keeps_only_its_new_wait_and_ends_an_unraised_wait`,
+  `::a_cancelled_turn_ends_an_unraised_wait`,
+  `::an_error_turn_ends_an_unraised_wait`).
 - A hint over one line or over 100 characters is refused with the words that
   send the question to the reply, opens nothing, and one of exactly 100 is
   accepted (`attention.rs::a_hint_that_tries_to_carry_the_question_is_refused`).
@@ -619,20 +631,24 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   one on any other tool, keeps its
   (`::an_automatic_permission_on_an_ariadne_tool_leaves_no_block`).
 - The tool is `wait_for_user` with a `hint`, listed to every seat, and every
-  seat's session rules say to call it first and then ask in the reply
+  seat's session rules and its description say that a turn that ends without
+  the call ends the wait, after telling it to call first and ask in the reply
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`,
   `mcp.rs::only_the_orchestrator_is_told_to_ask`).
-- Answering or withdrawing one request preserves independent requests,
-  including one in another session
-  (`attention.rs::answering_or_withdrawing_one_request_keeps_the_others`),
+- Console input answers every request of its session while preserving another
+  session's request, and withdrawal answers its named request alone
+  (`attention.rs::console_input_answers_every_request_of_its_session`),
   and another session cannot create or withdraw its request
   (`attention.rs::another_session_cannot_create_or_withdraw_a_request`).
 - A waiting permission targets its session console, while an automatic
   permission creates no item
   (`attention.rs::permission_events_only_create_items_while_waiting_for_a_person`,
   `classify.rs::an_automatic_permission_request_raises_no_attention`).
-- Creating, answering, and withdrawing a request each publish
-  `session_updated` (`attention.rs::agent_request_changes_publish_session_updated`).
+- Creating, re-raising, answering, withdrawing, and ending a request each
+  publish `session_updated`
+  (`attention.rs::agent_request_changes_publish_session_updated`,
+  `::a_turn_that_repeats_a_wait_keeps_its_request_and_since`,
+  `::a_turn_keeps_only_its_new_wait_and_ends_an_unraised_wait`).
 - A task failed on the descriptor-limit words is a `resource` item naming
   that task (`attention.rs::a_descriptor_limit_failure_is_a_resource_item`),
   two tasks sharing the same words are one grouped item
@@ -917,7 +933,8 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   `::raises one toast per readiness transition, none for a repeat, and none for a withdrawal`).
 ## Sources
 
-`crates/ariadne-api/src/attention.rs`, `crates/ariadne-daemon/src/attention/`
+`crates/ariadne-api/src/attention.rs`, `crates/ariadne-store/src/agent_requests.rs`,
+`crates/ariadne-daemon/src/http/agent_requests.rs`, `crates/ariadne-daemon/src/attention/`
 (`mod`, `recovery` — including `orchestrator_has_answered_for`,
 `access_items`, `orchestrator_given_up_items`, `reviewer_given_up_items`,
 `last_session_error` — `agent_requests`, `pull_requests` —

@@ -323,6 +323,9 @@ struct Turn {
     /// A load replay: keep the first transcript, skip later copies.
     replay: Option<bool>,
     running: bool,
+    /// The prompt this turn represents, while its `wait_for_user` calls can
+    /// mark their requests as current.
+    agent_request_turn_id: Option<String>,
     /// The agent's own session id, as the turn's events name it.
     agent_session: Option<String>,
     /// The run of chunks being written. The next thing the agent reports
@@ -844,6 +847,20 @@ impl AcpRuntime {
                 delivery: None,
             })
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
+    }
+
+    /// The turn whose `wait_for_user` call the session is making now. A
+    /// request outside a live prompt has no turn marker and is closed by the
+    /// next one that ends.
+    pub(crate) async fn agent_request_turn_id(&self, session_id: &str) -> Option<String> {
+        let turn = self
+            .inner
+            .running
+            .lock()
+            .expect("acp registry lock")
+            .get(session_id)
+            .map(|agent| agent.turn.clone())?;
+        turn.lock().await.agent_request_turn_id.clone()
     }
 
     /// Cancel the turn in flight: ACP `session/cancel`, sent while the
@@ -2909,9 +2926,11 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
         Some(brief) => format!("{brief}\n\n{}", prompt.text),
         None => prompt.text.clone(),
     };
+    let turn_id = new_id();
     {
         let mut turn = rpc.turn.lock().await;
         turn.running = true;
+        turn.agent_request_turn_id = Some(turn_id.clone());
         turn.agent_session = Some(session_id.to_string());
         turn.text = None;
         // A call the last turn left open is not this turn's to finish.
@@ -2932,7 +2951,7 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
     // figure moves before its `stop`.
     let (reading, sink) = (rpc.transcript.clone(), rpc.sink.clone());
     let every = sink.runtime.inner.timeouts.transcript_poll;
-    let response = {
+    let response: Result<Value> = async {
         let prompt = v1::PromptRequest::new(
             session_id.to_string(),
             vec![v1::ContentBlock::Text(v1::TextContent::new(full.clone()))],
@@ -2959,7 +2978,8 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
                 }
             }
         }
-    };
+    }
+    .await;
     {
         let mut turn = rpc.turn.lock().await;
         if let Some((kind, payload)) = turn.end_text() {
@@ -2967,6 +2987,13 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
         }
         turn.running = false;
     }
+    rpc.sink
+        .runtime
+        .inner
+        .store
+        .finish_agent_request_turn(&rpc.sink.session_id, &turn_id)
+        .await?;
+    rpc.turn.lock().await.agent_request_turn_id = None;
     let response = response?;
     if response
         .pointer("/_meta/jetbrains/air/sessionFailure/category")

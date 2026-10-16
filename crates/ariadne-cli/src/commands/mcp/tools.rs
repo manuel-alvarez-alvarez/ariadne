@@ -437,7 +437,7 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Flag that you wait for the user. Call it before you ask. `hint` is one line for the Needs attention list, not the question. Then write the question in your reply and end your turn."
+        description = "Flag that you wait for the user. Call it before you ask. `hint` is one line for the Needs attention list, not the question. Then write the question in your reply and end your turn. A turn that ends without the call ends the wait."
     )]
     async fn wait_for_user(
         &self,
