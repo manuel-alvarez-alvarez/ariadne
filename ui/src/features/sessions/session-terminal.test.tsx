@@ -15,6 +15,7 @@
 
 import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import type { ILinkHandler } from "@xterm/xterm"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 import { renderScreen } from "@/test/harness"
@@ -23,9 +24,32 @@ import { FakeWebSocket, latestSocket, stubWebSocket } from "@/test/web-socket"
 import { SessionTerminal } from "./session-terminal"
 
 const SESSION_ID = "01JSESS0000000000000000001"
+const { isTauri, linkHandlers, openUrl } = vi.hoisted(() => ({
+  isTauri: vi.fn(() => true),
+  linkHandlers: [] as Array<ILinkHandler | null>,
+  openUrl: vi.fn(),
+}))
+
+vi.mock("@tauri-apps/api/core", () => ({ isTauri }))
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl }))
+vi.mock("@xterm/xterm", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@xterm/xterm")>()
+
+  class RecordingTerminal extends actual.Terminal {
+    constructor(options: ConstructorParameters<typeof actual.Terminal>[0] = {}) {
+      super(options)
+      linkHandlers.push(options.linkHandler ?? null)
+    }
+  }
+
+  return { ...actual, Terminal: RecordingTerminal }
+})
 
 beforeEach(() => {
   stubWebSocket()
+  linkHandlers.length = 0
+  isTauri.mockReturnValue(true)
+  openUrl.mockClear()
 })
 
 afterEach(() => {
@@ -70,6 +94,28 @@ it("writes the bytes of a binary frame into the terminal", async () => {
   socket.deliver(new TextEncoder().encode("Hello from the \x1b[1mconsole\x1b[0m"))
 
   await waitFor(() => expect(screenText()).toContain("Hello from the console"))
+})
+
+it("confirms an OSC 8 link before opening it outside the app", async () => {
+  const user = userEvent.setup()
+  await renderPane()
+  const handler = linkHandlers[0]
+  if (!handler) throw new Error("the terminal has no external link handler")
+
+  expect(handler.allowNonHttpProtocols).toBe(true)
+  act(() =>
+    handler.activate(new MouseEvent("click"), "https://example.com/console", {
+      start: { x: 1, y: 1 },
+      end: { x: 1, y: 1 },
+    }),
+  )
+
+  expect(openUrl).not.toHaveBeenCalled()
+  const dialog = screen.getByRole("dialog", { name: "Open external link?" })
+  expect(dialog.textContent).toContain("https://example.com/console")
+  await user.click(screen.getByRole("button", { name: "Open link" }))
+
+  expect(openUrl).toHaveBeenCalledWith("https://example.com/console")
 })
 
 it("sends a key press as a key message, and a paste as a paste message", async () => {

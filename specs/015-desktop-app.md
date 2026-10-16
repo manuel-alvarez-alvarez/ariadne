@@ -10,6 +10,7 @@ tests:
   - ui/src/routes/**/*.test.tsx
   - ui/src/api/**/*.test.ts
   - ui/src/components/**/*.test.tsx
+  - ui/src/hooks/**/*.test.tsx
   - ui/src/lib/**/*.test.ts
   - ui/src/lib/tauri-config.test.ts
 ---
@@ -670,14 +671,21 @@ Out: the daemon endpoints themselves (012).
     Markdown, through the same renderer as descriptions and messages, so a
     reason an agent wrote with lists, code or links reads as it does
     everywhere else.
-46. A click on an external `<a>`, anywhere in the app, opens it in the
+46. The packaged webview has a content security policy that permits scripts,
+    styles, fonts and images from the app. It permits HTTP, HTTPS, WebSocket
+    and secure WebSocket connections because the user selects the daemon's
+    host. It permits Tauri IPC connections through `ipc:` and
+    `http://ipc.localhost`, so bundled plugins can work. It permits no
+    objects, bases, embedded ancestors or evaluated script.
+47. A click on an external `<a>`, anywhere in the app, opens it in the
     system's default browser instead of the webview, which otherwise ignores
-    `target="_blank"` and has no opener wired in. One document-level handler
-    at the app root, over `tauri-plugin-opener`, decides this by the anchor's
-    resolved origin rather than its `target`; an in-app link, whose href
-    resolves onto the app's own origin, is left alone. Outside Tauri — the
-    Vite dev server, and every test — the handler does nothing and a plain
-    browser's own link behavior applies.
+    `target="_blank"` and has no opener wired in. The handler permits only
+    `http:`, `https:` and `mailto:` anchors; it stops every other scheme. It
+    shows the full target and asks before opening unless the link text equals
+    the target. The terminal's OSC 8 links use that same handler. An in-app
+    link, whose href resolves onto the app's own origin, is left alone.
+    Outside Tauri — the Vite dev server, and every test — the handler does
+    nothing and a plain browser's own link behavior applies.
 
 ## Acceptance criteria
 
@@ -1120,11 +1128,21 @@ Out: the daemon endpoints themselves (012).
   code and links, a link opening outside the app
   (`ui/src/features/tasks/task-history.test.tsx::renders a transition's
   reason as Markdown`).
-- The app-root handler opens an external link through the opener plugin and
-  leaves an in-app link alone, and does neither outside Tauri
-  (`ui/src/hooks/use-open-external-links.test.tsx::opens an external link
-  through the opener plugin`, `::ignores an internal link`, `::leaves a
-  plain browser's link behavior alone`).
+- The Tauri configuration has the restrictive content security policy that
+  permits the configurable daemon and Tauri IPC connections without evaluated
+  script
+  (`ui/src/lib/tauri-config.test.ts::carries a restrictive content security policy`).
+- The app-root handler permits only the supported external schemes, confirms
+  a disguised target before opening it, leaves an in-app link alone, and does
+  neither outside Tauri
+  (`ui/src/hooks/use-open-external-links.test.tsx::shows the full target before opening a disguised external link`,
+  `::opens an external link directly when its text is its target`,
+  `::allows mailto links through the same confirmation`,
+  `::blocks unsafe link schemes before the webview follows them`,
+  `::ignores an internal link`, `::leaves a same-origin Tauri fragment link alone`,
+  `::leaves a plain browser's link behavior alone`).
+- An OSC 8 console link shows the same target confirmation before opening
+  (`ui/src/features/sessions/session-terminal.test.tsx::confirms an OSC 8 link before opening it outside the app`).
 
 ## Known gap
 

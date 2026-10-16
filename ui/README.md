@@ -47,6 +47,19 @@ daemon version and its uptime, both of which come from the `heartbeat` the
 stream carries; clicking it opens the daemon-logs drawer. Nothing polls: an
 idle window makes no requests at all.
 
+## Security
+
+The packaged webview has a content security policy. It loads scripts, styles,
+fonts and images from the app, and it permits HTTP, HTTPS, WebSocket and secure
+WebSocket connections because the daemon URL is configurable. It permits Tauri
+IPC through `ipc:` and `http://ipc.localhost`, so bundled plugins work. It
+rejects evaluated script, plugins, document base changes and embedded ancestors.
+
+Links to `http:`, `https:` and `mailto:` destinations open in the system
+browser. When a link's visible text does not equal its target, Ariadne first
+shows the complete target URL for confirmation. OSC 8 links in a session
+console use the same confirmation. Other link schemes do not open.
+
 ### Scripts
 
 | Script | What it does |

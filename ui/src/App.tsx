@@ -21,7 +21,7 @@ import { router } from "@/routes/router"
 
 export default function App() {
   const [queryClient] = useState(createQueryClient)
-  useOpenExternalLinks()
+  const { confirmation } = useOpenExternalLinks()
 
   return (
     <ThemeProvider>
@@ -30,6 +30,7 @@ export default function App() {
           <EventStreamProvider>
             <RouterProvider router={router} />
             <Toaster />
+            {confirmation}
           </EventStreamProvider>
         </TooltipProvider>
       </QueryClientProvider>
