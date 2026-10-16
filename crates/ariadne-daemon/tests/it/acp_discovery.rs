@@ -1700,14 +1700,22 @@ async fn real_opencode_metadata_listing_creates_no_session() {
             )
             .await
             .expect("opening the real opencode database");
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session")
-            .fetch_one(&pool)
-            .await
-            .expect("counting sessions");
-        assert_eq!(
-            count, 0,
-            "initialize and session/list must open no session in the real OpenCode database"
-        );
+        let has_session_table: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'session')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("checking for the OpenCode session table");
+        if has_session_table {
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session")
+                .fetch_one(&pool)
+                .await
+                .expect("counting sessions");
+            assert_eq!(
+                count, 0,
+                "initialize and session/list must open no session in the real OpenCode database"
+            );
+        }
     }
 }
 
