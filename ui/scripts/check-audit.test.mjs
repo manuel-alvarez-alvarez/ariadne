@@ -72,4 +72,9 @@ describe("decide", () => {
     }
     expect(decide(report)).toBe(false)
   })
+
+  it("fails an error report with no vulnerabilities object, such as a registry outage", () => {
+    const report = { error: { code: "ETIMEDOUT", summary: "request to the registry timed out" } }
+    expect(decide(report)).toBe(false)
+  })
 })

@@ -22,7 +22,9 @@ export const ALLOWLIST = [
 const ALLOWED_IDS = new Set(ALLOWLIST.map((entry) => entry.id))
 
 export function decide(report) {
-  const vulnerable = Object.values(report.vulnerabilities ?? {}).filter(
+  if (typeof report.vulnerabilities !== "object" || report.vulnerabilities === null) return false
+
+  const vulnerable = Object.values(report.vulnerabilities).filter(
     (entry) => entry.severity === "high" || entry.severity === "critical",
   )
   if (vulnerable.length === 0) return true
