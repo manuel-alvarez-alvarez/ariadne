@@ -1,157 +1,74 @@
 # Resuming a session
 
-Continue a conversation instead of starting one: an Ariadne session that has
-ended, or one you started directly with an ACP agent, outside Ariadne
-entirely. `ariadne session ls` lists both kinds in one table, and `ariadne
-attach` opens either one.
+Use this page when you return to a conversation. While its goal runs, use
+[Following what happens](following-events.md) to watch its tasks and
+attention.
 
 ## Find the session
 
-```sh
-ariadne session ls
-```
-
-lists Ariadne's own sessions — an orchestrator's, a column agent's, a
-reviewer's, a keeper's — next to outside sessions: conversations an ACP agent holds that
-Ariadne never started. Rows come newest activity first. The columns are `id`, `title`,
-`status`, `goal`, `task`, `agent`, `model`, `age` and `tokens`; add `directory` with
-`--columns`. An outside session has no status, goal or task of its own yet,
-so those columns are empty for it.
-
-An outside conversation comes from two places at once. Ariadne asks every
-agent for its own list over ACP, and it reads the files the agent keeps —
-for Claude Code, the transcripts under `$CLAUDE_CONFIG_DIR`, or `~/.claude`
-where that is unset. Each agent answers its list from an index of its own
-that leaves conversations out: on one machine Claude's index held 731 of the
-740 transcripts beside it. A conversation both places hold is one row, under
-the title the agent gave it. A transcript with neither a prompt nor an answer
-in it is no conversation of its own, so it reaches the table only when the
-agent's own list holds it — nothing the files say takes a row of that list
-away. Ariadne reads an agent's files only while that agent is installed and
-working, because a conversation it cannot reopen is one you cannot attach to.
-
-The files are also where an outside row's `tokens` and the model it ran come
-from: an agent's list carries neither. Ariadne reads them for the rows of the
-page it answers, so `--limit` bounds the reading as well as the table.
-
-Narrow the table to the session you want:
+`ariadne session ls` lists Ariadne sessions — for an orchestrator, task
+column, or reviewer — with outside conversations that an ACP agent holds but
+Ariadne did not start. The table is newest first and shows each session's id,
+title, status, goal, task, agent, model, age, and tokens.
 
 ```sh
+ariadne session ls --goal <goal-id> --all
+ariadne session ls --attention
 ariadne session ls --kind outside --agent codex-acp --dir ~/projects/api \
   --since 2026-09-01 --search "rate limit"
 ```
 
-`--kind` limits the table to Ariadne's own sessions or to outside ones,
-`--agent` to one registry agent, `--status` to a session status, `--seat` to
-`orchestrator`, `agent`, `reviewer` or `keeper`, and `--goal` or `--task` to one
-goal's or task's sessions. `--attention` keeps only sessions waiting for a
-person. `--dir` matches a working directory and everything under it, and
-`--search` matches part of the title or first prompt, without case
-sensitivity. `--since` and `--until` bound activity, each an RFC 3339 time or
-a `YYYY-MM-DD` date — the start of its UTC day for `--since`, the end for
-`--until`; without either, the table holds only the last 7 days. `--limit`
-and `--cursor` page the table, `--all` fetches every page into one instead,
-and `--refresh` asks the agents again instead of using the daemon's current
-snapshot.
+The default list covers the previous seven days. `--all` includes ended
+Ariadne sessions and every page. Filter by `--goal`, `--task`, `--seat`, or
+`--attention` to return to work from a goal. Filter by `--kind`, `--agent`,
+`--dir`, or `--search` to find a conversation outside Ariadne. An outside row
+has no status, goal, or task.
 
-## In Ariadne Desktop
+## Continue the conversation
 
-The Sessions screen lists the same two kinds together, in one table, with a
-window control over it: the last 7 days it opens on, the last 30, or all of
-it. An outside row's Agent column names the pin it last ran on, and its
-Tokens column what it has spent, with the detail behind a tooltip, once the
-daemon reports them; until then the Agent column keeps naming the registry
-agent it belongs to, and the Tokens column stays blank rather than showing a
-zero.
-
-## Attach and go
-
-Copy the `id` column into `attach`:
+Use `attach` to open a console. It accepts a session, task, or goal id. A task
+selects its current column's agent and a goal selects its orchestrator.
 
 ```sh
-ariadne attach <id>
-ariadne attach <id> --agent codex-acp   # two agents hold the same internal id
+ariadne attach <session-id>                  # live or ended Ariadne session
+ariadne session resume <session-id>          # revive it without opening a console
+ariadne attach <task-id>                     # the task's current column
+ariadne attach <goal-id>                     # the goal's orchestrator
+ariadne attach <outside-session-id> --agent codex-acp
 ```
 
-`attach` takes a session id, a task id, a goal id, or an outside session's
-internal id — whichever the table showed. Point it at an outside id and
-Ariadne resumes the conversation and opens the console on it in one step, no
-separate command in between. Point it at an Ariadne session that has ended —
-its goal completed, or its worktree already removed — and Ariadne revives it
-the same way: a new agent process picks the stored conversation back up. `id`
-alone is usually enough; `--agent` breaks the tie on the rare internal id two
-agents both happen to hold.
+Attaching an ended Ariadne session revives its agent before the console opens.
+Attaching an outside id creates a loose Ariadne session and opens that
+conversation.
+Use `--agent` only when two agents hold the same outside id.
 
-Either way you land in the console described in [Using the
-CLI](cli.md#connect-to-a-session): read what happened, send the next prompt,
-leave whenever you want. The agent keeps working after you do.
+The console sends each line as the next prompt. The agent continues after you
+leave. See [Using the CLI](cli.md#connect-to-a-session) for console controls.
 
-## What a resumed session is
+## Know the session type
 
-A resumed outside session has no goal, no task and no seat: nobody plans it,
-works it, or reviews it. It has no worktree either, and no workflow column —
-the agent keeps working in the directory the original conversation already
-used, against your checkout as it stands, and nothing it does is merged,
-opened as a pull request, or otherwise placed on your behalf. Resuming does
-not copy
-the conversation or change what the agent already knows; it is the same
-session, reached through Ariadne instead of whatever you used to reach it
-before.
+An Ariadne session keeps its goal, task, and workflow column. It uses its
+worktree while the daemon keeps that worktree. Reviving replaces only its agent
+process; it does not change the task plan or review.
 
-A revived Ariadne session is different: it keeps its goal and task, and its
-worktree if the daemon has not removed it yet. Reviving only replaces the
-agent process behind the session; nothing about the task's plan or review
-changes.
+Attaching an outside conversation creates a loose Ariadne session. It has no
+goal, task, workflow column, or managed worktree. It works in its original
+directory against the checkout as it stands. Ariadne does not merge its
+changes or open a pull request for it.
 
-Once resumed, the session is no longer an outside one. List it again and it
-shows under its own row, not as an outside session a second time; `attach
-<id>` still reaches it, now as the session id rather than the internal id. It keeps the first prompt it was listed with as its title.
-
-## Switching to another agent
-
-Change the agent or model a session uses without stopping the conversation:
+## Switch the model or agent
 
 ```sh
-ariadne session switch <id> --model codex-acp:<model-id>
-ariadne session switch <id> --model claude-acp:<model-id> --effort high
+ariadne session switch <session-id> --model codex-acp:<model-id>
+ariadne session switch <session-id> --model claude-acp:<model-id> --effort high
 ```
 
-Ariadne Desktop shows a Switch button on the session screen.
+Switching agents or models starts a new session on the same seat and carries
+the previous conversation as folded context. Switching to another model of the
+same agent keeps the conversation. The seat then uses the new session for later
+spawns and resumes.
 
-A switch to another agent or a different model ends the conversation and
-starts a new session on the same seat. The new session reads the old
-one's prompts, the agent's messages, and the tool calls, folded up, under a
-240,000-character cap. When the complete folded history fits, it arrives
-unchanged. When it does not, Ariadne keeps whole entries with deterministic
-rules: a real user correction, then a real user prompt, an unfinished plan,
-a blocker or failure, an agent decision, a file change, and a useful completed
-test result. Later entries break a tie, and the selected entries return in
-their original order.
+## When it does not resume
 
-Only the stored transcript role and the visible folded entry provide evidence.
-Text printed by a tool cannot become a user instruction, and daemon prompts
-do not receive user priority. A prompt that cannot fit as one whole entry is
-left out. If several user prompts compete, the later correction or prompt is
-kept. When no entry supplies usable evidence, Ariadne keeps the newest entries
-as before. Omission notes count against the cap and state when omitted entries
-come from more than one gap. These rules use no model inference or generated
-summary. They came from constructed pilot examples; they do not establish
-performance on real session histories.
-
-The seat's pin moves with the new session, so later spawns and resumes reach
-the new one.
-
-A switch to the same agent keeps the conversation: the agent takes the new
-model in place.
-
-## When it refuses
-
-Listing asks every registry agent that advertises `session/list`, and reads
-the files of every agent whose transcripts Ariadne knows where to find. An
-agent that does neither — no such capability, and no reader for its files —
-contributes no sessions to the table, and `ariadne doctor` names the
-capability as missing for that agent — check there before assuming a
-conversation does not exist. Resuming asks the session's own agent to load
-it, over ACP's `loadSession`. An agent that does not support that capability
-cannot resume anything, outside session or ended one: `ariadne doctor` names
-it as missing for that agent too.
+Run `ariadne doctor` when the session is absent or cannot resume. The report
+names agents that lack session listing or loading support.

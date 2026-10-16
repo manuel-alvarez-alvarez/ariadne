@@ -1,55 +1,59 @@
 # Following what happens
 
-Nothing here polls: the daemon streams, and every follow mode below reads that
-stream. Ctrl-C ends any of them and leaves the terminal as it found it.
+Use this page after an orchestrator starts a goal. Start with attention, then
+watch the goal's tasks or event stream. Nothing here polls: the daemon streams,
+and every follow mode reads that stream. Ctrl-C ends any of them.
+
+## Watch a goal
 
 ```sh
-ariadne events                         # the 200 most recent events, oldest first
-ariadne events -f                      # ...and keep printing as it happens
-ariadne events -f --goal <goal-id>     # one goal's; also --task, --session, --kind
-ariadne events -f --format json        # one JSON object per line, for a pipe
-
-ariadne session logs <session-id> -f   # an agent's event transcript, until it ends
-ariadne task logs <task-id> -f         # the same, found by task
-ariadne session logs <id> --tail 20    # only the last twenty transcript blocks
-ariadne task logs <id> --since 10m --kind agent_message
-ariadne daemon logs -f                 # the daemon's own log, over the API
-
-ariadne attention --watch              # redrawn whenever something needs you
-ariadne task ls --watch --goal <id>    # redrawn whenever a task moves
-ariadne goal ls --watch                # redrawn whenever a goal moves
-ariadne session ls --watch --seat agent  # redrawn whenever a session moves
-ariadne pr ls --watch                   # redrawn when tracked requests move
+ariadne attention --watch              # work that needs you, across every goal
+ariadne task ls --watch --goal <goal-id>
+ariadne events --follow --goal <goal-id>
 ```
 
-`ariadne events` opens on the most recent recorded events — the last 200 of
-them, printed oldest first — so `-f` goes on from where that snapshot ends.
-Every filter narrows the snapshot too, `--goal` included.
+`ariadne attention` identifies work that needs a person. Follow its printed
+action. Attach only a goal, task, or session. Attention items can also name
+settings or pull requests. `task ls` shows each task's current workflow column.
+`events` shows the latest 200 recorded events, oldest first, then continues
+from that point. Its `--goal`, `--task`, `--session`, and `--kind` filters
+narrow both the opening list and the stream.
 
-Session and task logs print full transcript blocks. Agent message and thought
-chunks stream as the agent writes them, under one header per item. `--tail`
-and `--since` narrow the opening snapshot, which is the session's 200 newest
-events. Repeat `--kind` to select several event kinds; it also filters new
-events during `-f`. JSON mode keeps each event object unchanged.
+## Follow one agent
 
-`-f` prints as it goes; `--watch` redraws the whole table, `watch(1)`-style,
-when an event says it has changed. `ariadne daemon logs` reads the daemon's own
-ring buffer, so it works under launchd and systemd — where nothing writes
-`~/.ariadne/ariadned.log` — and honours `--endpoint`; the file is the fallback
-for a daemon that is not answering.
+```sh
+ariadne session logs <session-id> --follow
+ariadne task logs <task-id> --follow
+ariadne session logs <session-id> --tail 20
+ariadne task logs <task-id> --since 10m --kind agent_message
+```
+
+Session and task logs print full transcript blocks. Agent messages and
+thoughts stream while the agent writes them. `--tail` and `--since` narrow the
+opening transcript; repeat `--kind` to select several event kinds.
+
+To reply, use [the console](cli.md#connect-to-a-session). To return to an
+ended or outside conversation, use [Resuming a session](resuming-sessions.md).
+
+## Other streams
+
+```sh
+ariadne events --follow --format json   # one JSON object per line, for a pipe
+ariadne daemon logs --follow            # the daemon log, over the API
+ariadne goal ls --watch
+ariadne session ls --watch --seat agent
+ariadne pr ls --watch
+```
+
+`--follow` prints each new item. `--watch` redraws a table when an event
+changes it. `ariadne daemon logs` reads the daemon's ring buffer, so it works
+with launchd and systemd; it uses the local log file only when the daemon does
+not answer.
 
 With `ai_failure_diagnosis` on (see [Configuration](configuration.md)), a
-failed session may later carry a `session.diagnosis` event too: an advisory
-reading of the error — quota exhaustion, a temporary failure, an
-authentication or configuration problem, a task failure, or insufficient
-evidence. It appears in `ariadne events`, in `ariadne session logs` and
-`ariadne task logs` as a line under the `ERROR` block it is about, however
-much later it arrives. It never changes what the error itself says, and
-never decides whether a session retries or switches models.
+failed session may later carry a `session.diagnosis` event. It is advisory and
+does not retry a session or switch its model.
 
-A repository with the forge integration on (see [The forge
-integration](forge.md)) also carries `pull_requests_changed`, subject the
-repository's id, whenever its requests move; and `forge_settings_updated`,
-subject "forge tunnel", whenever the webhook tunnel's switch or state
-changes. Neither belongs to a goal or a task, so `--goal` and `--task` leave
-them out; `--kind` still selects them.
+A repository with [the forge integration](forge.md) also sends
+`pull_requests_changed` and `forge_settings_updated` events. They have no goal
+or task, so `--goal` and `--task` omit them; `--kind` still selects them.

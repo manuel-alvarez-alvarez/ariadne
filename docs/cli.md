@@ -22,6 +22,22 @@ ariadne goal attach <goal-id>
 The final command opens the orchestrator console. Answer its questions there;
 it writes the plan and starts the agreed tasks.
 
+## Run an active goal
+
+After the orchestrator starts the tasks, use attention to find work that needs
+you, task status to see the goal's progress, and events to follow changes:
+
+```sh
+ariadne attention --watch
+ariadne task ls --watch --goal <goal-id>
+ariadne events --follow --goal <goal-id>
+```
+
+Use [Following what happens](following-events.md) to choose the view that fits
+the question. When an item needs a reply, attach to its goal, task, or session.
+Use [Resuming a session](resuming-sessions.md) when you return after leaving
+the console or when its agent has ended.
+
 ## Refresh ACP agents
 
 When an ACP agent is installed or its command changes after the daemon has
@@ -52,29 +68,6 @@ the tool call title the model sees: the command for `Bash`, `Edit <path>` for
 an edit. Repeat `--option` for each offered option; the first represents an
 allowing option. Repeat `--location` for each path the call touches.
 `--input` must be valid JSON. `--format json` prints the full response.
-
-## List every session
-
-`ariadne session ls` lists Ariadne's own sessions — an orchestrator's, a
-column agent's, a reviewer's, a keeper's — next to outside sessions: conversations an ACP
-agent holds that Ariadne never started. Rows come newest activity first.
-
-```sh
-ariadne session ls
-ariadne session ls --kind outside --agent codex-acp --dir ~/projects/api
-ariadne session ls --status running --attention
-```
-
-Its columns are `id`, `title`, `status`, `goal`, `task`, `agent`, `model`,
-`age` and `tokens`; add `directory` with `--columns`. An outside session
-leaves `status`, `goal` and `task` empty. By default, the table holds only the
-last 7 days of activity. Use `--since` or `--until` to set an activity bound.
-Use `--all` to remove the default 7-day window, include ended sessions, and
-fetch every page into one table.
-`--kind`, `--agent`, `--status`, `--seat`, `--goal`, `--task` and `--attention`
-narrow which rows show; `--dir` and `--search` narrow by working directory and
-text; `--limit`, `--cursor` and `--refresh` page the table. See [Resuming a
-session](resuming-sessions.md) for finding and continuing one of these.
 
 ## Start a new session
 
@@ -107,12 +100,10 @@ ariadne attach <session-id>              # one specific session, live or ended
 ariadne attach <internal-id> --agent codex-acp  # an outside session
 ```
 
-Attaching an outside id resumes the conversation and opens the console on it
-in one step. Attaching an ended Ariadne session revives it the same way,
-whether its goal completed or its worktree was already removed. `--agent`
-breaks the tie on the rare internal id two agents both hold; otherwise the id
-alone is enough. [Resuming a session](resuming-sessions.md) says what a
-resumed or revived session can and cannot do.
+An outside id resumes that conversation. An ended Ariadne session revives
+before its console opens. `--agent` breaks a tie when two agents hold one
+outside id. [Resuming a session](resuming-sessions.md) covers finding a
+session and the limits of each kind.
 
 In a terminal the console is an inline pane as tall as the terminal. Its last
 rows are pinned: a status row, the input box, and a footer. So the input box
