@@ -6,10 +6,9 @@
 //! session of its own. The task's own pass starts, resumes and watches the
 //! agent; an idle agent on an open request waits on the forge (009).
 //!
-//! A request that asks for my review wants a reviewer session on the pin
-//! asked directly on its own row (029): one detached at the request's
-//! head, told of each push and of the replies in its own threads, and
-//! taken down once the request is merged, closed, or no longer asks.
+//! Any request explicitly asked for can have a reviewer and a keeper
+//! session (029, 032). Each follows its own ask, independently of authorship
+//! or GitHub review assignments, until stopped, merged or closed.
 
 use std::time::{Duration, Instant};
 
@@ -117,20 +116,14 @@ impl super::Scheduler {
         else {
             return Ok(());
         };
-        // A request the user reviews has a lifecycle of its own (029).
-        if pull.role != "author" {
-            return self.review_pass(&pull).await;
-        }
-        // A request of mine the user asked Ariadne to review has a review
-        // session beside its keeper's (029), taken down the same way.
+        // Review and keeper sessions follow their own explicit asks,
+        // independently of who authored the request (029, 032).
         if pull.review_asked
             || self.launcher.pull_request_worktree_exists(&pull.id)
             || !self.live_reviewer_sessions(&pull.id).await?.is_empty()
         {
             self.review_pass(&pull).await?;
         }
-        // A request of mine asked for by hand has a keeper session of its
-        // own beside a task's, or on no task at all (032).
         if pull.babysit_asked
             || self.launcher.keeper_worktree_exists(&pull.id)
             || !self.live_keeper_sessions(&pull.id).await?.is_empty()
@@ -138,6 +131,10 @@ impl super::Scheduler {
             self.babysit_pass(&pull).await?;
         }
         if pull.origin_task_id.is_none() && !pull.review_asked && !pull.babysit_asked {
+            if pull.state == "open" && pull.role == "reviewer" && pull.review_requested {
+                // Keep an unassigned review request visible in attention.
+                return Ok(());
+            }
             // Nobody keeps it, nobody reviews it and nobody babysits it:
             // nothing to work on.
             return self.stop_working(&pull.id, (&pull).into()).await;
@@ -573,10 +570,9 @@ impl super::Scheduler {
         }
     }
 
-    /// A request that asks for my review (029): one live reviewer session
-    /// while it is open, out of draft, still asks, and was asked for
-    /// directly on its own row; its sessions and worktree taken down
-    /// otherwise.
+    /// A manually asked review (029): one live reviewer session while the
+    /// request is open and out of draft; its session and worktree taken
+    /// down otherwise.
     async fn review_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
         let integration = self.store.forge_integration(&pull.repository_id).await?;
         let live = self.live_reviewer_sessions(&pull.id).await?;
@@ -653,12 +649,9 @@ impl super::Scheduler {
         Ok(())
     }
 
-    /// A request I review that wants no session: merged, closed, back in
-    /// draft, or no longer asking for my review (029). Its sessions are
-    /// killed and its worktree removed; no branch is touched, since none is
-    /// mine. Ariadne then stops working on it, but for a draft, whose review
-    /// waits for it to leave draft. A request of mine ends its review alone:
-    /// its row is its keeper's side to end (`end_kept_request`).
+    /// End only the reviewer session when its ask stops, the request ends,
+    /// or it returns to draft. The outer pass keeps the row for another
+    /// seat or an outstanding GitHub review request.
     async fn end_review(
         &mut self,
         pull: &PullRequest,
@@ -674,8 +667,7 @@ impl super::Scheduler {
             .store
             .clear_pull_request_reviewer_given_up(&pull.id)
             .await;
-        let done = pull.role == "reviewer" && (pull.state != "open" || !pull.review_requested);
-        if live.is_empty() && !self.launcher.pull_request_worktree_exists(&pull.id) && !done {
+        if live.is_empty() && !self.launcher.pull_request_worktree_exists(&pull.id) {
             return Ok(());
         }
         info!(pull_request = %pull.id, state = %pull.state, "the request wants no review, taking its work down");
@@ -686,9 +678,6 @@ impl super::Scheduler {
         {
             Ok(()) => {
                 self.pull_request_cleanup_retry.remove(&pull.id);
-                if done {
-                    self.stop_working(&pull.id, pull.into()).await?;
-                }
                 Ok(())
             }
             Err(e) => {
@@ -699,7 +688,7 @@ impl super::Scheduler {
         }
     }
 
-    /// A request of mine the user asked Ariadne to keep by hand (032): one
+    /// A request the user asked Ariadne to keep by hand (032): one
     /// live keeper session while it is open and still asked for directly on
     /// its own row; its session and worktree taken down otherwise.
     async fn babysit_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
@@ -852,16 +841,13 @@ impl super::Scheduler {
         pull: &PullRequest,
         live: &[AgentSession],
     ) -> anyhow::Result<()> {
-        // Unlike a self-review, which only ends on an explicit `asked:
-        // false`, babysitting ends on the merge or the close too: nothing
-        // else keeps a hand-babysat row once this ends, since asking it is
-        // refused wherever a task already keeps the request (032).
+        // Ending one seat leaves the other alone. The outer pass removes
+        // the row only when no work or outstanding review request remains.
         let _ = self
             .store
             .clear_pull_request_keeper_given_up(&pull.id)
             .await;
-        let done = pull.origin_task_id.is_none() && !pull.review_asked;
-        if live.is_empty() && !self.launcher.keeper_worktree_exists(&pull.id) && !done {
+        if live.is_empty() && !self.launcher.keeper_worktree_exists(&pull.id) {
             return Ok(());
         }
         info!(pull_request = %pull.id, state = %pull.state, "the request wants no keeper, taking its work down");
@@ -872,9 +858,6 @@ impl super::Scheduler {
         {
             Ok(()) => {
                 self.pull_request_cleanup_retry.remove(&pull.id);
-                if done {
-                    self.stop_working(&pull.id, pull.into()).await?;
-                }
                 Ok(())
             }
             Err(e) => {

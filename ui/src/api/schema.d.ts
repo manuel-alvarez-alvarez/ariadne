@@ -1014,14 +1014,11 @@ export interface paths {
         };
         get?: never;
         /**
-         * Ask Ariadne to keep a request of the user's own by hand on the model
-         *     the user picks, or stop asking (032): a keeper session runs on that pin
-         *     while the request is open, beside a task's own keeper where one
-         *     opened it, or alone where none did. Refused on a request that is not
-         *     open, one by another login, or one a task already keeps: those are
-         *     never Ariadne's to babysit by hand. Asking starts Ariadne's work on the
-         *     request; stopping ends the keeper session, where no task and no review
-         *     still keeps the row.
+         * Ask Ariadne to keep any open request by hand on the model the user
+         *     picks, or stop asking (032), regardless of its author. A request a
+         *     task already keeps is refused to avoid competing keepers. Stopping
+         *     ends only the keeper session, preserving an asked review. Pushes use
+         *     the head repository and remain subject to its permissions.
          */
         put: operations["pull-requests_ask_babysit"];
         post?: never;
@@ -1040,15 +1037,12 @@ export interface paths {
         };
         get?: never;
         /**
-         * Ask Ariadne to review a request on the model the user picks, or stop
-         *     asking (029): a review session runs on that pin while the request is
-         *     open and out of draft. A request of the user's own posts each round as
-         *     a comment in the user's name; one that asks for the user's review gets
-         *     the manual start the `pull_request` attention producer offers when
-         *     nobody is assigned to it, and posts as any other review Ariadne runs on
-         *     it would (029). Asking starts Ariadne's work on the request; stopping
-         *     ends it, where no task keeps the request. Every review starts this way:
-         *     nothing starts one on its own.
+         * Ask Ariadne to review any open request on the model the user picks,
+         *     or stop asking (029). Authorship and GitHub review assignments do not
+         *     restrict the ask. The session waits while the request is a draft.
+         *     A review of the user's own request posts as a comment; other reviews
+         *     may request changes. Stopping ends only the reviewer session, keeping
+         *     any task or keeper that also works on the request.
          */
         put: operations["pull-requests_ask_review"];
         post?: never;
@@ -1992,7 +1986,7 @@ export interface components {
         /**
          * @description Body of
          *     `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit`:
-         *     whether Ariadne keeps a request of the user's own by hand (032), the
+         *     whether Ariadne keeps a request by hand (032), the
          *     same shape as [`AskReviewRequest`].
          */
         AskBabysitRequest: {
@@ -2012,8 +2006,7 @@ export interface components {
         };
         /**
          * @description Body of `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review`:
-         *     whether Ariadne
-         *     reviews a request of the user's own (029).
+         *     whether Ariadne reviews a request (029), regardless of its author.
          */
         AskReviewRequest: {
             asked: boolean;

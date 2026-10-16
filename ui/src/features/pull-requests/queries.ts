@@ -62,7 +62,7 @@ export function pullRequestsQueryOptions(filters: {
 
 /**
  * `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review` — ask
- * Ariadne to review a request of the user's own, or stop asking (029).
+ * Ariadne to review any open request, or stop asking (029).
  * Asking starts Ariadne's work on it; the request comes back and lands in
  * the cache.
  */
@@ -96,7 +96,7 @@ export function useAskReview() {
 
 /**
  * `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit` — ask
- * Ariadne to keep a request of the user's own by hand, or stop asking
+ * Ariadne to keep any open request by hand, or stop asking
  * (032). Asking starts a keeper session on it; the request comes back and
  * lands in the cache.
  */

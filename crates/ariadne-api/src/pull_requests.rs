@@ -284,8 +284,7 @@ pub struct ReviewCommentRequest {
 }
 
 /// Body of `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review`:
-/// whether Ariadne
-/// reviews a request of the user's own (029).
+/// whether Ariadne reviews a request (029), regardless of its author.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AskReviewRequest {
@@ -305,7 +304,7 @@ pub struct AskReviewRequest {
 
 /// Body of
 /// `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit`:
-/// whether Ariadne keeps a request of the user's own by hand (032), the
+/// whether Ariadne keeps a request by hand (032), the
 /// same shape as [`AskReviewRequest`].
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

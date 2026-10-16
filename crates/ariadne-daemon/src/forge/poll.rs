@@ -888,20 +888,18 @@ async fn still_enabled(store: &Store, expected: &ForgeIntegration) -> Result<boo
 
 /// Whether the request `row` wants a review session of its own: an open
 /// request out of draft, asked for directly on its own row by an explicit
-/// manual start (029). One that asks for my review also needs the forge's
-/// own timeline to still ask for it — a withdrawal ends the session even
-/// though the ask itself is never un-asked. The author of the task that
-/// opened a request of mine keeps it in its own session (005).
+/// manual start (029). Authorship and GitHub review assignments do not
+/// change that explicit ask.
 pub(crate) fn wants_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
-    let asked = match row.role.as_str() {
-        "reviewer" => row.review_asked && row.review_requested && row.review_model.is_some(),
-        _ => row.review_asked && row.review_model.is_some(),
-    };
-    asked && row.state == "open" && integration.enabled && !row.draft
+    row.review_asked
+        && row.review_model.is_some()
+        && row.state == "open"
+        && integration.enabled
+        && !row.draft
 }
 
 /// Whether the request `row` wants a keeper session of its own (032): a
-/// request of the user's own that no task opened, asked for directly on
+/// request that no task opened, asked for directly on
 /// its own row by an explicit manual start, while it is open.
 pub(crate) fn wants_babysit_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
     row.babysit_asked && row.babysit_model.is_some() && row.state == "open" && integration.enabled
@@ -1096,18 +1094,16 @@ mod tests {
         assert!(wants_session(&row, &integration()));
     }
 
-    /// Withdrawn on the forge's own side, asking never un-asks it, so the
-    /// row keeps `review_asked`; the session still ends, since the forge no
-    /// longer wants it.
+    /// A manual ask stays active independently of GitHub review requests.
     #[test]
-    fn a_reviewer_row_asked_but_no_longer_requested_wants_no_session() {
+    fn a_reviewer_row_asked_without_a_review_request_wants_a_session() {
         let row = PullRequest {
             review_model: Some("stub:test-model".into()),
             review_asked: true,
             review_requested: false,
             ..pull()
         };
-        assert!(!wants_session(&row, &integration()));
+        assert!(wants_session(&row, &integration()));
     }
 
     /// A request of mine never reads `review_requested`: the field is the

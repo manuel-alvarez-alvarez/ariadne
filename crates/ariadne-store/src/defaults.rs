@@ -300,8 +300,8 @@ pub const PULL_REQUEST_PLACEHOLDERS: [&str; 10] = [
     "reviewed_sha",
 ];
 
-/// The system prompt of a session that keeps a request of the user's own
-/// asked for by hand (032): what the seat owes, as [`default_system_prompt`]
+/// The system prompt of a session that keeps a request asked for by hand
+/// (032): what the seat owes, as [`default_system_prompt`]
 /// says it for the task seats. The work itself is the [`PR_BABYSIT_SKILL`]
 /// document, the same one the `pr` column of a task stages (030).
 pub fn pull_request_keeper_system_prompt() -> &'static str {
@@ -403,9 +403,8 @@ const PULL_REQUEST_NEWS: &str = r#"News on "{title}":
 
 Handle each item. Then end your turn."#;
 
-/// Seat text of a session that keeps a request of the user's own asked for
-/// by hand (032).
-const PULL_REQUEST_KEEPER_SYSTEM_PROMPT: &str = r#"You keep one open request of the user's own. Work only in your worktree, on its branch. Commit a fix and push it as the briefing says. Ariadne wakes you with the news. It ends you on the merge or the close. Then end your turn."#;
+/// Seat text of a session that keeps a request asked for by hand (032).
+const PULL_REQUEST_KEEPER_SYSTEM_PROMPT: &str = r#"You keep one open request the user asked you to keep. Work only in your worktree, on its branch. Commit a fix and push it as the briefing says. Ariadne wakes you with the news. It ends you on the merge or the close. Then end your turn."#;
 
 /// Initial briefing of a keeper session (032): the request, the worktree and
 /// branch it works on, and the command that pushes a fix to the request.

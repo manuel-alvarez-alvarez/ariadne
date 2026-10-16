@@ -1064,12 +1064,108 @@ async fn a_closed_request_ends_its_review() {
 }
 
 #[tokio::test]
-async fn a_withdrawn_review_request_ends_its_review() {
-    the_review_ends_when_the_request_shows(|head| Shown {
+async fn a_withdrawn_review_request_keeps_its_manually_asked_review() {
+    let r = reviewed().await;
+    r.stub.reprogram(script(&Shown {
         listed: false,
         timeline: &["review_requested", "review_request_removed"],
-        ..Shown::open(head)
+        ..Shown::open(&r.head)
+    }));
+    assert_review_survives_withdrawal(&r).await;
+}
+
+/// The forge's assignment and the user's explicit ask are independent.
+/// Wait for the withdrawal to be read, then run its scheduler pass before
+/// asserting that it kept the existing session and worktree.
+async fn assert_review_survives_withdrawal(r: &Reviewed) {
+    r.h.state.forge_poll.wake(&r.repo);
+    eventually(TIMEOUT, "the review request to be withdrawn", async || {
+        r.h.launcher
+            .live
+            .get(&r.id)
+            .is_some_and(|live| !live.review_requested)
     })
+    .await;
+    r.h.flush_scheduler().await;
+    assert!(r.h.session_status(&r.session).await.is_live());
+    assert!(r.worktree.exists());
+    assert!(
+        r.h.store
+            .get_pull_request(&r.id)
+            .await
+            .unwrap()
+            .review_asked
+    );
+}
+
+#[tokio::test]
+async fn an_unassigned_dependabot_request_is_reviewed_until_stopped() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    let shown = || Shown {
+        author: "dependabot[bot]",
+        listed: false,
+        timeline: &[],
+        ..Shown::open(&head)
+    };
+    stub.reprogram(script(&shown()));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let route = format!("/v1/repositories/{repo}/pull-requests/1/ariadne-review");
+    let asked: Value = h
+        .json(
+            crate::common::put_json(
+                &route,
+                json!({"asked": true, "model": PIN, "skills": ["code-review"]}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        asked["review_requested"], false,
+        "asking does not invent a GitHub assignment"
+    );
+    let id = asked["id"].as_str().unwrap();
+    let session = idle_session(&h, id).await;
+    let launch = h.launch_file(&session.id).expect("a launch file");
+    for skill in ["- pr-reviewer: ", "- code-review: "] {
+        assert!(
+            launch.system_prompt.contains(skill),
+            "{skill}: {}",
+            launch.system_prompt
+        );
+    }
+    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
+    eventually(
+        TIMEOUT,
+        "unassigned request details to be read",
+        async || {
+            h.launcher
+                .live
+                .get(id)
+                .is_some_and(|live| live.evidence_ok && !live.review_requested)
+        },
+    )
+    .await;
+    h.flush_scheduler().await;
+    assert!(h.session_status(&session).await.is_live());
+    assert!(worktree.exists());
+    let _: Value = h
+        .json(
+            crate::common::put_json(&route, json!({"asked": false})),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(
+        TIMEOUT,
+        "stopping to end the review and its worktree",
+        async || {
+            !h.session_status(&session).await.is_live()
+                && !worktree.exists()
+                && h.store.get_pull_request(id).await.is_err()
+        },
+    )
     .await;
 }
 
@@ -1116,27 +1212,17 @@ async fn reviewed() -> Reviewed {
     }
 }
 
-/// A review posted after a withdrawal does not ask for my review again: the
-/// session ends and its worktree goes.
+/// A posted review does not restore the forge assignment; the manual
+/// review remains active on its own ask.
 #[tokio::test]
-async fn a_review_posted_after_a_withdrawal_does_not_keep_the_review() {
+async fn a_review_posted_after_a_withdrawal_keeps_the_manual_review() {
     let r = reviewed().await;
     r.stub.reprogram(script(&Shown {
         listed: false,
         timeline: &["review_requested", "review_request_removed", "reviewed"],
         ..Shown::open(&r.head)
     }));
-    r.h.state.forge_poll.wake(&r.repo);
-    eventually(
-        TIMEOUT,
-        "the session to end and its worktree to go",
-        async || !r.h.session_status(&r.session).await.is_live() && !r.worktree.exists(),
-    )
-    .await;
-    eventually(TIMEOUT, "Ariadne to stop working on it", async || {
-        r.h.store.get_pull_request(&r.id).await.is_err()
-    })
-    .await;
+    assert_review_survives_withdrawal(&r).await;
 }
 
 /// GitHub stops listing a request as asking for my review once I reviewed
@@ -1162,10 +1248,10 @@ async fn a_request_the_forge_stops_listing_after_my_review_keeps_its_review() {
     assert!(r.worktree.exists());
 }
 
-/// A review request asked again after my review, then withdrawn, ends the
-/// session and removes its worktree: a review of mine keeps nothing alive.
+/// A later assignment and withdrawal leave the explicit manual review
+/// active on its existing session and worktree.
 #[tokio::test]
-async fn a_request_withdrawn_after_my_review_ends_its_review() {
+async fn a_request_withdrawn_after_my_review_keeps_its_manual_review() {
     let r = reviewed().await;
     r.stub.reprogram(script(&Shown {
         listed: false,
@@ -1177,17 +1263,7 @@ async fn a_request_withdrawn_after_my_review_ends_its_review() {
         ],
         ..Shown::open(&r.head)
     }));
-    r.h.state.forge_poll.wake(&r.repo);
-    eventually(
-        TIMEOUT,
-        "the session to end and its worktree to go",
-        async || !r.h.session_status(&r.session).await.is_live() && !r.worktree.exists(),
-    )
-    .await;
-    eventually(TIMEOUT, "Ariadne to stop working on it", async || {
-        r.h.store.get_pull_request(&r.id).await.is_err()
-    })
-    .await;
+    assert_review_survives_withdrawal(&r).await;
 }
 
 /// A request of mine gets no review session until the user asks Ariadne for

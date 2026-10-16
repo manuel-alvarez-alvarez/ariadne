@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-10-14
+updated: 2026-10-17
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -29,16 +29,16 @@ tests:
 
 # Reviewing a request
 
-A request where the user is a requested reviewer, or one of the user's own,
+Any open request, regardless of its author or assigned reviewers,
 gets a review session once the user asks Ariadne for one — never on its
 own. The daemon wakes it with the request and with each push. It posts one
 review in the user's name, and the approval stays the user's.
 
 ## Scope
 
-In: which rows want a review session, the asking on a request of the
-user's own, its worktree, its news, its tools and routes, the verdict
-policy, and the attention it raises.
+In: which rows want a review session, the manual ask on any request, its
+worktree, its news, its tools and routes, the verdict policy, and the
+attention it raises.
 
 Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 ([026](026-pull-requests.md)); the skill catalog and staffing
@@ -47,19 +47,15 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 
 ## Behavior
 
-1. A request that asks for the user's review, out of draft, gets a row with
-   role `reviewer` on the first fetch that finds it (026 rule 3): the row is
-   what lets a human start one by hand, which is the only way one ever
-   starts (031's `pull_request` producer). That row wants one live session
-   while the request is `open`, not a draft, still asks for the user's
-   review, and was asked for directly on its own row (rule 10a). The daemon
-   staffs it on that pin with seat `reviewer` and the `pr-reviewer` skill
-   (017). A row with role `author` wants one where `review_asked` holds: the
-   user asked Ariadne to review a request of their own (rule 10). That
-   session runs on the pin the user picked, `pull_requests.review_model` and
-   `review_effort`, and loads `pr-reviewer` and the skills they picked,
-   `review_skills`. No repository setting ever starts a review: asking,
-   through rule 10, is the one way in, for either role.
+1. Any open request can be reviewed once explicitly asked through rule 10,
+   whether its author is the user, another person or a bot, and whether
+   GitHub assigned the user a review. Its row wants one live session while
+   `review_asked` holds, the request is open and out of draft, and the forge
+   integration is enabled. The session runs on `review_model` and
+   `review_effort`, with seat `reviewer`, `pr-reviewer` and the picked
+   `review_skills`. A GitHub review request still creates a row on the
+   first fetch so attention can offer a manual start (026, 031); it never
+   starts a session by itself.
 2. A draft starts nothing. When the request leaves draft, the next fetch
    starts the session. A request that goes back to draft ends it.
 3. Whether the request still asks for the user's review is read on every
@@ -68,13 +64,15 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    requested reviewers (026 rule 5). For an open row that asked on the last
    read and the list no longer names the login, the fetch asks the forge
    (`ForgeClient::review_still_requested`). A detail read with no fetch
-   before it says the request still asks: only a fetch withdraws it. GitHub
+   before a fetch invents no assignment; an existing observed assignment
+   is preserved until the next fetch. GitHub
    drops the login from `reviewRequests` once the user reviewed it, and
    writes no removal event for that. So it reads the request's timeline: the
    last review request or removed request for the login decides. A review
    decides nothing, so a review posted after a withdrawal does not ask
-   again. A review of the user's own keeps nothing
-   alive. Where the forge cannot answer, the last read stands. A review
+   again. This field controls review-request attention, not the explicit
+   manual review: withdrawing an assignment does not stop that session.
+   Where the forge cannot answer, the last read stands. A review
    asked of a team the user belongs to is never found this way, since
    GitHub names a team by a slug or a name, never a login (026 Known gap).
 4. The worktree is `worktree_root/pr-<id>`, detached at `head_sha`
@@ -98,9 +96,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    A push is a `head_sha` that differs from `told_head_sha`. Its line names
    the new head and the last `reviewed_sha`, and asks for a review of the
    commits since it. Checks, the base, the review decision and the state are
-   no news to a reviewer. On a request of the user's own a push alone is
-   news: its comments are the news of the task's author that keeps it (026),
-   and each is told once.
+   no news to a reviewer. On a request of the user's own or one with a
+   keeper (032), findings are the keeper's news and replies from the integration login
+   in the review's threads are the reviewer's news. Each is told once.
    The viewer's own pending review, its body, its comments and its replies
    give a reviewer row none of this: the detail read drops them from the
    conversation outright (026 rule 9), so neither this row's own news nor
@@ -114,12 +112,13 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    prompt. A fetch with the same head hands nothing. A reply alone needs no
    idle session, since it moves no worktree:
    `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.
-9. A row that turns `merged` or `closed`, goes back to draft, or loses the
-   user's review request has its sessions killed and its worktree removed. No
-   branch is touched. Then Ariadne stops working on it and its row goes,
-   but for a draft, whose review waits for it to leave draft.
-   A request of the user's own leaves its row to its author's side; one
-   whose asking stopped and that no task keeps goes as well.
+9. A request that turns merged or closed, goes back to draft, or whose
+   manual ask is stopped has its reviewer session killed and its detached
+   worktree removed. A draft retains the ask and resumes when ready.
+   Stopping review preserves an active keeper or task; stopping a keeper
+   preserves an asked review. The request's row is removed when no work or
+   outstanding review-request attention remains. GitHub assignment changes
+   alone never stop an explicitly asked review.
 
 ## Asking on a request, by hand
 
@@ -131,19 +130,17 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     missing or unknown one answers 400. Each skill must be one a task agent
     is staffed on (017), else 400; `pr-reviewer` is loaded anyway and is not
     stored. It answers the request, and wakes the fetch and the scheduler.
-    A request of the user's own has its row written with role `author`
-    where asking is the first thing to give it one. A request that asks for
-    the user's review takes the ask exactly as a request of the user's own
-    does: nothing else is ever going to start that session, on either role
-    (031's `pull_request` producer is what tells a human this one wants
-    it). Asking a second time on a request that already has one moves its
-    pin and its skills onto the new ask, rather than refusing it. Asking on
+    Authorship and GitHub review assignments do not restrict the ask.
+    The row keeps its actual authorship role: `author` for the integration
+    login, otherwise `reviewer`; starting a session does not invent a
+    GitHub assignment. Asking a second time on a request that already has
+    one moves its pin and its skills onto the new ask, rather than refusing it. Asking on
     an ended request is refused with 409. `asked: false` clears the pin and
     the skills and takes the session down.
 10a. `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
     S]... [--attach]` and `pr review <repo> <number> --stop` call this route
-    from the CLI (014), on a request of the user's own or on one that asks
-    for the user's review alike: `--model` is required with no `--stop`,
+    from the CLI (014), on any request: `--model` is required with no
+    `--stop`,
     since there is no repository pin to fall back to any more, and names
     the flag when it is missing. `--attach` waits for the review session
     this starts and opens its console.
@@ -193,9 +190,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     (`pull_request_comment_marks`, 026 rule 10), as it marks a review
     session's replies, holds them beside the last read until the next fetch
     reads them back, and answers them with 201. On a request of
-    the user's own a `from_review` comment counts as another login's: it is
-    told once to the task's author, as "by the Ariadne review", and waits
-    on it until the author replies (026 rules 12 to 16). No additional
+    the user's own, or one with a keeper, a `from_review` comment counts as
+    another login's: it is told once to the task's author or keeper, as
+    "by the Ariadne review", and waits on it until that agent replies (026 rules 12 to 16). No additional
     review-level comment is posted: each finding is already inline. The other way, a
     comment under the login that no review posted — the author's answer,
     or the user's — in a thread a review opened is the review session's
@@ -289,6 +286,16 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 
 ## Acceptance criteria
 
+- A Dependabot request without a review assignment starts a reviewer, keeps
+  it after the forge confirms no assignment, loads the picked skills, and
+  stops it on explicit stop:
+  `pull_request_reviews.rs::an_unassigned_dependabot_request_is_reviewed_until_stopped`.
+- Withdrawing a GitHub review request does not cancel a manual review,
+  before or after a review was posted:
+  `pull_request_reviews.rs::a_withdrawn_review_request_keeps_its_manually_asked_review`,
+  `::a_review_posted_after_a_withdrawal_keeps_the_manual_review`,
+  `::a_request_withdrawn_after_my_review_keeps_its_manual_review`.
+
 - An open request out of draft gets one live session on the review pin, seat
   `reviewer`, detached at `head_sha`, with `pr-reviewer` indexed:
   `pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`.
@@ -359,12 +366,12 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 - A review's findings are inline comments titled `[Pn] Title`; a change
   request with no P0 inline and a comment with no title are refused:
   `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
-- The desktop's request panel starts an Ariadne review of a request of mine
+- The desktop's request panel starts an Ariadne review of any open request
   on the model and skills picked in its dialog — `pr-reviewer` always on and
   nothing else picked to start with — closes the dialog and opens the new
   review session's console in the panel once the daemon starts it, stops it,
-  and offers it on no other:
-  `pull-request-panel.test.tsx::starts an Ariadne review of a request of mine on the model and skills picked, opens its console, and stops it`.
+  regardless of its author:
+  `pull-request-panel.test.tsx::starts and stops a review of a Dependabot request without a review assignment`.
   A review resumed on its last session opens that console the same way:
   `::opens the console of a review resumed on the same session`. A request
   that asks for the user's review offers the same manual start as a

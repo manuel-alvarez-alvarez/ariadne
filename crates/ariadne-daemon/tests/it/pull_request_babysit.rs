@@ -1,4 +1,4 @@
-//! A request of the user's own that no task opened gets a keeper session
+//! An open request that no task opened gets a keeper session
 //! once asked for by hand (032): on the worktree and local branch named
 //! above, told of the author's news once, accepting its `ready` report,
 //! and taken down with its worktree and its branch once the request ends
@@ -27,7 +27,7 @@ const PIN: &str = "stub:babysit-model";
 /// the daemon's ordinary five seconds.
 const SWEEPS_SOON: Duration = Duration::from_millis(100);
 
-/// How the stub forge shows one request of mine: its state, the head
+/// How the stub forge shows one request: its state, the head
 /// repository it lives in, and the comments on its conversation, oldest
 /// first.
 struct Shown<'a> {
@@ -37,6 +37,9 @@ struct Shown<'a> {
     updated_at: &'a str,
     head_repo: &'a str,
     comments: Value,
+    checks: &'a str,
+    review_decision: &'a str,
+    mergeable: &'a str,
 }
 
 impl Shown<'_> {
@@ -48,25 +51,29 @@ impl Shown<'_> {
             updated_at: "2026-10-01T00:00:00Z",
             head_repo: "https://github.com/acme/widgets",
             comments: json!([]),
+            checks: "NONE",
+            review_decision: "",
+            mergeable: "UNKNOWN",
         }
     }
 }
 
-/// What the stub forge answers for one request of mine, read for the
+/// What the stub forge answers for one request, read for the
 /// scheduler's own detail fetch.
 fn script(shown: &Shown) -> Value {
     let read = json!({"number": 1, "url": "https://github.com/acme/widgets/pull/1",
         "title": "Add widgets", "author": {"login": shown.author}, "state": shown.state,
         "isDraft": false, "headRefName": "fix", "headRefOid": shown.head,
         "headRepository": {"url": shown.head_repo},
-        "baseRefName": "main", "statusCheckRollup": [], "reviewDecision": "",
+        "baseRefName": "main", "reviewDecision": shown.review_decision,
+        "mergeStateStatus": shown.mergeable,
         "createdAt": "2026-10-01T00:00:00Z", "updatedAt": shown.updated_at});
     let listed = match shown.state == "OPEN" {
         true => json!([read]),
         false => json!([]),
     };
-    let threads =
-        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
+    let threads = json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}},
+            "pr1": {"statusCheckRollup": {"state": shown.checks}}}}});
     json!([
         answer(&["api", "repos/acme/widgets/issues/1/timeline"], 0, "[]"),
         answer(&["auth", "status"], 0, ""),
@@ -190,10 +197,28 @@ async fn idle_keeper(h: &Harness, pull_request_id: &str) -> AgentSession {
 /// worktree and its branch down with it.
 #[tokio::test]
 async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
+    keep_until_merge("me").await;
+}
+
+#[tokio::test]
+async fn asking_keeps_a_dependabot_request_until_the_merge() {
+    keep_until_merge("dependabot[bot]").await;
+}
+
+#[tokio::test]
+async fn asking_keeps_another_authors_request_until_the_merge() {
+    keep_until_merge("alice").await;
+}
+
+async fn keep_until_merge(author: &str) {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
-    stub.reprogram(script(&Shown::open(&head)));
+    let shown = || Shown {
+        author,
+        ..Shown::open(&head)
+    };
+    stub.reprogram(script(&shown()));
     let repo = repository(&h, &path).await;
     // Not about the supervised path (026 rule 24 covers that separately):
     // the reply below posts directly, as it did before that rule existed.
@@ -227,7 +252,10 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
     assert_eq!(asked["babysit_skills"], json!(["coding"]));
     // Asking starts Ariadne's work on the request.
     let id = asked["id"].as_str().expect("a row").to_string();
-    assert_eq!(h.store.get_pull_request(&id).await.unwrap().role, "author");
+    assert_eq!(
+        h.store.get_pull_request(&id).await.unwrap().role,
+        if author == "me" { "author" } else { "reviewer" }
+    );
 
     let session = idle_keeper(&h, &id).await;
     assert_eq!(
@@ -265,11 +293,12 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
     // A comment by another login is the author's news, told once.
     stub.reprogram(script(&Shown {
         updated_at: "2026-10-02T00:00:00Z",
+        checks: "FAILURE",
         comments: json!([
             {"id": 301, "user": {"login": "alice"}, "body": "Looks good but one nit.",
              "created_at": "2026-10-02T00:00:00Z"}
         ]),
-        ..Shown::open(&head)
+        ..shown()
     }));
     h.state.forge_poll.wake(&repo);
     eventually(TIMEOUT, "the news to reach the keeper", async || {
@@ -278,9 +307,16 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
             .is_some_and(|news| news.contains("ic-301"))
     })
     .await;
-    let told = h.prompts_to(&session).len();
     let news = h.prompts_to(&session).pop().unwrap();
     assert!(news.contains("alice"), "{news}");
+    eventually(TIMEOUT, "failed checks to reach the keeper", async || {
+        h.prompts_to(&session)
+            .iter()
+            .any(|news| news.contains("checks now read") && news.contains("failure"))
+    })
+    .await;
+
+    let told = h.prompts_to(&session).len();
 
     // The same comment is told once: a later fetch that reads the same
     // details hands the keeper no second prompt naming it.
@@ -320,12 +356,29 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
         .await;
     assert_eq!(reported["ready"], true);
 
+    // Forge evidence backs the report, regardless of who authored the PR.
+    stub.reprogram(script(&Shown {
+        updated_at: "2026-10-03T00:00:00Z",
+        checks: "SUCCESS",
+        review_decision: "APPROVED",
+        mergeable: "CLEAN",
+        ..shown()
+    }));
+    fetch_again(&h, &stub, &repo).await;
+    eventually(TIMEOUT, "readiness to reach attention", async || {
+        let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+        list.items
+            .iter()
+            .any(|item| item.id == format!("pull_request:ready:{id}"))
+    })
+    .await;
+
     // The merge takes the keeper session, its worktree and its branch
     // down: nothing keeps the row any more, since no task opened it and
     // no review was ever asked of it.
     stub.reprogram(script(&Shown {
         state: "MERGED",
-        ..Shown::open(&head)
+        ..shown()
     }));
     h.state.forge_poll.wake(&repo);
     eventually(
@@ -341,6 +394,89 @@ async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
     eventually(TIMEOUT, "Ariadne to stop working on it", async || {
         h.store.get_pull_request(&id).await.is_err()
     })
+    .await;
+}
+
+/// Each seat follows its own ask on a PR by another author. Ending one
+/// must preserve the other's session, worktree and request row.
+#[tokio::test]
+async fn a_dependabot_request_can_be_reviewed_and_babysat_independently() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown {
+        author: "dependabot[bot]",
+        ..Shown::open(&head)
+    }));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().unwrap();
+    let keeper = idle_keeper(&h, id).await;
+    let review_route = format!("/v1/repositories/{repo}/pull-requests/1/ariadne-review");
+    let mut reviewer = None;
+    for stop_review in [true, false] {
+        let _: Value = h
+            .json(
+                put_json(&review_route, json!({"asked": true, "model": PIN})),
+                StatusCode::OK,
+            )
+            .await;
+        eventually(TIMEOUT, "the reviewer beside the keeper", async || {
+            reviewer = sessions(&h, id).await.into_iter().find(|s| {
+                s.seat() == Some(Seat::Reviewer)
+                    && s.status() == SessionStatus::Idle
+                    && s.launched_at.is_some()
+            });
+            reviewer.is_some()
+        })
+        .await;
+        if stop_review {
+            let _: Value = h
+                .json(
+                    put_json(&review_route, json!({"asked": false})),
+                    StatusCode::OK,
+                )
+                .await;
+            eventually(TIMEOUT, "only the review to stop", async || {
+                !h.session_status(reviewer.as_ref().unwrap()).await.is_live()
+            })
+            .await;
+            h.flush_scheduler().await;
+            assert!(h.session_status(&keeper).await.is_live());
+            assert!(h.store.get_pull_request(id).await.unwrap().babysit_asked);
+        }
+    }
+    let reviewer = reviewer.unwrap();
+    let _: Value = h
+        .json(babysit(&repo, 1, json!({"asked": false})), StatusCode::OK)
+        .await;
+    eventually(TIMEOUT, "only the keeper to stop", async || {
+        !h.session_status(&keeper).await.is_live()
+    })
+    .await;
+    h.flush_scheduler().await;
+    assert!(h.session_status(&reviewer).await.is_live());
+    assert!(h.store.get_pull_request(id).await.unwrap().review_asked);
+    let _: Value = h
+        .json(
+            put_json(&review_route, json!({"asked": false})),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(
+        TIMEOUT,
+        "the last session and its request to end",
+        async || {
+            !h.session_status(&reviewer).await.is_live()
+                && h.store.get_pull_request(id).await.is_err()
+        },
+    )
     .await;
 }
 
@@ -1141,9 +1277,8 @@ async fn a_keeper_whose_agent_dies_the_moment_it_starts_gives_up_after_the_budge
 }
 
 /// Asking needs a model the catalog holds, and a skill a task agent is
-/// staffed on. A refusal starts no work. Only a request of the user's own
-/// that no task opened can be asked for: a request by another login, or
-/// one a task already keeps, is refused with 409.
+/// staffed on. A refusal starts no work. A request that a task already
+/// keeps is refused with 409, regardless of its author.
 #[tokio::test]
 async fn asking_is_refused_with_no_model_an_unknown_one_an_untaskable_skill_or_the_wrong_request() {
     let stub = stub_forge_cli(json!([]));
@@ -1183,17 +1318,6 @@ async fn asking_is_refused_with_no_model_an_unknown_one_an_untaskable_skill_or_t
     // A request not open is refused once asking actually starts work.
     stub.reprogram(script(&Shown {
         state: "CLOSED",
-        ..Shown::open(&head)
-    }));
-    h.error(
-        babysit(&repo, 1, json!({"asked": true, "model": PIN})),
-        StatusCode::CONFLICT,
-    )
-    .await;
-
-    // A request by another login is never Ariadne's to babysit by hand.
-    stub.reprogram(script(&Shown {
-        author: "other",
         ..Shown::open(&head)
     }));
     h.error(

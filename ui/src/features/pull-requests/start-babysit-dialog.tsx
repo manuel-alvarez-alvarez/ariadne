@@ -1,5 +1,5 @@
 /**
- * What Ariadne babysits a request of the user's own by hand on (032): the
+ * What Ariadne babysits any open request by hand on (032): the
  * model and effort, and the skills beside `pr-babysit`, picked by the user
  * rather than taken off the repository — a keeper session starts only when
  * asked for.

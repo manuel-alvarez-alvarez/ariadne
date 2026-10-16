@@ -250,13 +250,13 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
         ));
     }
     // A detail read says nothing of whether the request still asks for my
-    // review: the last fetch's word stands, and with none yet a request I
-    // review still asks until a fetch says otherwise (029).
+    // review: preserve the last fetch's word, without inventing an
+    // assignment for a request the user started manually (029).
     let review_requested = state
         .launcher
         .live
         .get(&row.id)
-        .map_or(row.role == "reviewer", |l| l.review_requested);
+        .is_some_and(|l| l.review_requested);
     let head_sha = details.pull.head_sha.clone();
     let (before, after) = state.launcher.live.set_details_fingerprinted(
         &row.id,
@@ -566,7 +566,11 @@ pub(super) async fn comments(
     let comments = match q.unanswered_only.unwrap_or(false) {
         true => {
             let login = live::login_of(&state.store, &pull.repository_id).await?;
-            live::waiting(&comments, &pull.role, &login)
+            live::waiting(
+                &comments,
+                live::comment_role(&pull.role, pull.babysit_asked),
+                &login,
+            )
         }
         false => comments,
     };
@@ -1348,15 +1352,12 @@ async fn hold_review_comments(
     Ok(())
 }
 
-/// Ask Ariadne to review a request on the model the user picks, or stop
-/// asking (029): a review session runs on that pin while the request is
-/// open and out of draft. A request of the user's own posts each round as
-/// a comment in the user's name; one that asks for the user's review gets
-/// the manual start the `pull_request` attention producer offers when
-/// nobody is assigned to it, and posts as any other review Ariadne runs on
-/// it would (029). Asking starts Ariadne's work on the request; stopping
-/// ends it, where no task keeps the request. Every review starts this way:
-/// nothing starts one on its own.
+/// Ask Ariadne to review any open request on the model the user picks,
+/// or stop asking (029). Authorship and GitHub review assignments do not
+/// restrict the ask. The session waits while the request is a draft.
+/// A review of the user's own request posts as a comment; other reviews
+/// may request changes. Stopping ends only the reviewer session, keeping
+/// any task or keeper that also works on the request.
 #[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-review", tag = "pull-requests",
     params(("id" = String, Path), ("number" = i64, Path)),
     request_body = AskReviewRequest,
@@ -1438,16 +1439,13 @@ pub(super) async fn ask_review(
             pin.as_ref().map(|(pin, skills)| (pin, skills.as_slice())),
         )
         .await?;
-    // A request of mine never asks for my own review, so `false` names it
-    // correctly; a request that asks for mine is exactly this call's own
-    // premise (rule 10: asking it takes the same ask a request of mine
-    // does) — reading it any other way here would read as "no longer
-    // asks" the moment this write lands, through either a stale `false`
-    // this row never actually held or one a row fresh off this very call
-    // never got the chance to hold yet. `review_pass` would then read
-    // `wants_session` false and `end_review` would delete the row as
-    // `done`, before the next fetch could correct it.
-    let review_requested = role == "reviewer";
+    // Starting a session does not assign a review on the forge. Preserve
+    // the last observed assignment until the next fetch confirms it.
+    let review_requested = state
+        .launcher
+        .live
+        .get(&row.id)
+        .is_some_and(|live| live.review_requested);
     state
         .launcher
         .live
@@ -1460,14 +1458,11 @@ pub(super) async fn ask_review(
     Ok(Json(pull_request_dto_of(&state.store, view).await?))
 }
 
-/// Ask Ariadne to keep a request of the user's own by hand on the model
-/// the user picks, or stop asking (032): a keeper session runs on that pin
-/// while the request is open, beside a task's own keeper where one
-/// opened it, or alone where none did. Refused on a request that is not
-/// open, one by another login, or one a task already keeps: those are
-/// never Ariadne's to babysit by hand. Asking starts Ariadne's work on the
-/// request; stopping ends the keeper session, where no task and no review
-/// still keeps the row.
+/// Ask Ariadne to keep any open request by hand on the model the user
+/// picks, or stop asking (032), regardless of its author. A request a
+/// task already keeps is refused to avoid competing keepers. Stopping
+/// ends only the keeper session, preserving an asked review. Pushes use
+/// the head repository and remain subject to its permissions.
 #[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit", tag = "pull-requests",
     params(("id" = String, Path), ("number" = i64, Path)),
     request_body = AskBabysitRequest,
@@ -1488,11 +1483,6 @@ pub(super) async fn ask_babysit(
         ));
     }
     let role = pulls::role(&pull.author_login, &forge);
-    if role != "author" {
-        return Err(ApiError::conflict(
-            "the request is not the user's own: Ariadne keeps only a request of mine by hand",
-        ));
-    }
     let row = state.store.pull_request_by_number(&id, number).await?;
     if row.as_ref().is_some_and(|row| row.origin_task_id.is_some()) {
         return Err(ApiError::conflict("a task already keeps this request"));
@@ -1557,9 +1547,15 @@ pub(super) async fn ask_babysit(
             pin.as_ref().map(|(pin, skills)| (pin, skills.as_slice())),
         )
         .await?;
-    // A request of mine never asks for my own review (role is checked
-    // `author` above), so `false` names it correctly.
-    state.launcher.live.set_pull(&row.id, pull.clone(), false);
+    let review_requested = state
+        .launcher
+        .live
+        .get(&row.id)
+        .is_some_and(|live| live.review_requested);
+    state
+        .launcher
+        .live
+        .set_pull(&row.id, pull.clone(), review_requested);
     state.forge_poll.wake(&row.repository_id);
     state.notify_scheduler_pull_request(&row.id);
     let view = read_held(&state, row).await?;

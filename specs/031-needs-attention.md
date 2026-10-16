@@ -1,13 +1,14 @@
 ---
 id: needs-attention
 status: current
-updated: 2026-10-16
+updated: 2026-10-17
 areas: [api, daemon, cli, ui]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/attention.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
   - crates/ariadne-daemon/tests/it/pull_request_reviews.rs
+  - crates/ariadne-daemon/tests/it/pull_request_babysit.rs
   - crates/ariadne-daemon/tests/it/kept_requests.rs
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/pull_requests.rs
@@ -494,9 +495,10 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
     `created_at`: a review request gets its row the moment the first fetch
     finds it (029 rule 1), which is also the moment nobody was yet
     assigned to it.
-15. A readiness item (`AttentionCause::Unknown`) is raised for an `author`
-    row a task keeps (`origin_task_id`), or one a keeper session keeps by
-    hand (`babysit_asked`, 032), once every one of three pieces of
+15. A readiness item (`AttentionCause::Unknown`) is raised for a row a
+    task keeps (`origin_task_id`), or one a keeper session keeps by hand
+    (`babysit_asked`, 032), regardless of the request's author, once all
+    three pieces of
     the forge's own evidence for the request's current head holds
     together: `review_decision == "approved"` (a current approval, not an
     Ariadne review's own summary, which the forge never counts as one —
@@ -865,14 +867,14 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   user's own
   (`pull_request_reviews.rs::asking_needs_a_model_and_takes_a_review_request_of_anothers`,
   `pull-request-panel.test.tsx::offers a manual Start review on every request that asks for my review`).
-  The manual ask itself survives a scheduler pass that runs before the
-  next forge fetch could ever confirm the request still asks: the live
-  cache's own `review_requested` is written `true` by the ask route
-  itself for exactly this row, not merely held over from an earlier
-  fetch, so `scheduler::pull_requests::end_review` never reads the
-  request as having stopped asking and deletes it out from under the
-  reviewer session the same call just started
-  (`pull_request_reviews.rs::asking_needs_a_model_and_takes_a_review_request_of_anothers`).
+  A manual ask starts a review regardless of GitHub assignment, and never
+  invents one; withdrawing an assignment does not stop a manual session
+  (`pull_request_reviews.rs::an_unassigned_dependabot_request_is_reviewed_until_stopped`,
+  `::a_withdrawn_review_request_keeps_its_manually_asked_review`).
+- A keeper on a Dependabot or another person's request raises readiness
+  attention once the same forge evidence backs its report:
+  `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`,
+  `::asking_keeps_another_authors_request_until_the_merge`.
 - A babysat request's readiness item answers only once approval, no open
   conversation-side comment, every *resolvable* review thread actually
   resolved (not merely answered, and regardless of who opened it), green

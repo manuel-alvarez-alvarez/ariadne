@@ -48,14 +48,8 @@ impl News {
 }
 
 /// The news of `pull`, given the comments its session has not been told of,
-/// for a session signed in as `login`.
+/// for a keeper or task agent signed in as `login`.
 pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> News {
-    // A request the user reviews is told of a push and of the replies in
-    // its own threads alone (029): its checks and its state are the
-    // author's to watch.
-    if pull.role == "reviewer" {
-        return of_review(pull, untold);
-    }
     // The review's own summary restates findings the babysitter was already
     // told of as inline comments (031): a new or edited round of it is
     // never news of its own.
@@ -204,9 +198,9 @@ fn told_before(pull: &PullRequest) -> PullRequestTold {
 /// last read of the forge and the marks: `login` is the integration's,
 /// whose own comments are no news.
 ///
-/// A review session on a request of mine (029) hears of a push and of the
-/// answers in the threads it opened: those are posted under my login, by the
-/// task's author or by me. Every other comment there is its author's news,
+/// A review session beside a task or keeper (029, 032) hears of a push
+/// and of the answers in the threads it opened: those are posted under my
+/// login, by the keeping agent or by me. Every other comment there is its author's news,
 /// and each is told once (005).
 pub async fn untold(
     store: &Store,
@@ -217,12 +211,17 @@ pub async fn untold(
 ) -> ariadne_store::Result<News> {
     let comments = super::live::comments_of(store, live, pull).await?;
     let reviewing = seat == Some(ariadne_core::Seat::Reviewer);
-    if reviewing && pull.role == "author" {
+    let role = super::live::comment_role(&pull.role, pull.babysit_asked);
+    if reviewing && role == "author" {
         let answers = super::live::untold_review_replies(&comments, login);
         return Ok(of_review(pull, &answers));
     }
-    let untold = super::live::untold(&comments, &pull.role, login, pull.role == "reviewer");
-    Ok(of(pull, &untold, login))
+    let untold = super::live::untold(&comments, role, login, reviewing);
+    Ok(if reviewing {
+        of_review(pull, &untold)
+    } else {
+        of(pull, &untold, login)
+    })
 }
 
 /// The first line of a comment, cut short: the session reads the whole of
@@ -392,7 +391,7 @@ mod tests {
             review_decision: "changes_requested".into(),
             ..pull()
         };
-        let news = of(&pushed, &[], "me");
+        let news = of_review(&pushed, &[]);
         assert_eq!(
             news.lines,
             [
@@ -402,7 +401,7 @@ mod tests {
             ]
         );
         assert!(
-            of(&told(&pushed, &news), &[], "me").is_empty(),
+            of_review(&told(&pushed, &news), &[]).is_empty(),
             "a push is told once"
         );
 
@@ -410,7 +409,7 @@ mod tests {
             told_head_sha: None,
             ..pushed
         };
-        let news = of(&unbriefed, &[], "me");
+        let news = of_review(&unbriefed, &[]);
         assert!(news.is_empty(), "a head no session was told of is no news");
         assert_eq!(news.recovered().map(|t| t.head_sha.as_str()), Some("def"));
     }
