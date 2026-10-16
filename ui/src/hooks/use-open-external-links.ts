@@ -31,11 +31,7 @@ interface OpenExternalLinks {
 
 /** An anchor is external when it does not resolve onto the app's own origin. */
 function isExternalAnchor(anchor: HTMLAnchorElement): boolean {
-  if (anchor.protocol === "mailto:") return true
-  return (
-    (anchor.protocol === "http:" || anchor.protocol === "https:") &&
-    anchor.origin !== window.location.origin
-  )
+  return anchor.origin !== window.location.origin
 }
 
 /** Whether the opener is allowed to hand this absolute URL to the operating system. */
@@ -70,11 +66,11 @@ export function useOpenExternalLinks({
       if (event.defaultPrevented) return
       const anchor = (event.target as Element | null)?.closest("a")
       if (!anchor) return
+      if (!isExternalAnchor(anchor)) return
       if (!isAllowedExternalUrl(anchor.href)) {
         event.preventDefault()
         return
       }
-      if (!isExternalAnchor(anchor)) return
 
       event.preventDefault()
       if (event.button === 0) openExternalLink(anchor.href, anchor.textContent ?? undefined)

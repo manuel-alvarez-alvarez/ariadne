@@ -99,6 +99,24 @@ it("ignores an internal link", async () => {
   expect(openUrl).not.toHaveBeenCalled()
 })
 
+it("leaves a same-origin Tauri fragment link alone", () => {
+  mount()
+  const target = document.createElement("span")
+  const anchor = {
+    href: "tauri://localhost/#goals",
+    origin: window.location.origin,
+    protocol: "tauri:",
+    textContent: "Goals",
+  } as HTMLAnchorElement
+  vi.spyOn(target, "closest").mockReturnValue(anchor)
+  document.body.append(target)
+
+  expect(fireEvent.click(target)).toBe(true)
+  expect(openUrl).not.toHaveBeenCalled()
+
+  target.remove()
+})
+
 it("leaves a plain browser's link behavior alone", async () => {
   isTauri.mockReturnValue(false)
   const user = userEvent.setup()

@@ -1137,7 +1137,8 @@ Out: the daemon endpoints themselves (012).
   `::opens an external link directly when its text is its target`,
   `::allows mailto links through the same confirmation`,
   `::blocks unsafe link schemes before the webview follows them`,
-  `::ignores an internal link`, `::leaves a plain browser's link behavior alone`).
+  `::ignores an internal link`, `::leaves a same-origin Tauri fragment link alone`,
+  `::leaves a plain browser's link behavior alone`).
 - An OSC 8 console link shows the same target confirmation before opening
   (`ui/src/features/sessions/session-terminal.test.tsx::confirms an OSC 8 link before opening it outside the app`).
 
