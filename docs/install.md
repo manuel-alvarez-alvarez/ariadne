@@ -155,7 +155,8 @@ location, including the chosen `--prefix`; use the same `--prefix` value when
 you uninstall a custom-prefix installation. It removes a macOS app only from
 `/Applications` or `~/Applications`, including the legacy `Ariadne
 Desktop.app` bundle, and a Linux desktop binary only from its installed
-prefix. `--purge` refuses an empty home, `/`, or `$HOME`. Its diagnostic log
+prefix. A later macOS install removes a legacy bundle after its replacement is
+in place. `--purge` refuses an empty home, `/`, or `$HOME`. Its diagnostic log
 uses a unique temporary filename and remains available after a purge.
 
 ## The daemon service

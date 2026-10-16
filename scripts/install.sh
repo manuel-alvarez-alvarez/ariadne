@@ -245,6 +245,18 @@ install_app_bundle() {
     esac
 }
 
+# A successful install replaces the old product name with the fixed current
+# one. The value was checked against the two known legacy locations before any
+# install step began, so this cleanup cannot follow a manifest path elsewhere.
+remove_legacy_desktop_app() {
+    [ "$OS" = Darwin ] || return 0
+    case "$OLD_APP" in
+        /Applications/Ariadne\ Desktop.app|"$HOME/Applications/Ariadne Desktop.app") ;;
+        *) return 0 ;;
+    esac
+    [ "$OLD_APP" = "$APP_PATH" ] || [ ! -d "$OLD_APP" ] || rm -rf "$OLD_APP"
+}
+
 # The Linux binary uses the host's WebKitGTK. User PATHs may omit sbin.
 has_webkitgtk() {
     local ldconfig_bin
@@ -377,11 +389,16 @@ if [ "$WITH_UI" = 1 ] && [ "$OS" = Linux ] && ! has_webkitgtk; then
 fi
 
 # --- previous install ---------------------------------------------------------
+OLD_APP=""
 OLD_DESKTOP_ICON=""
 if ui_read_install_manifest "$ARIADNE_MANIFEST"; then
     # A manifest is untrusted input. The old prefix is never removed during an
-    # install because it cannot prove which binaries it owns. The icon has an
-    # installer-defined path, so it is safe to remove after validation.
+    # install because it cannot prove which binaries it owns. The old app and
+    # icon have installer-defined paths, so they are safe after validation.
+    if [ -n "$MANIFEST_APP" ] \
+        && ui_manifest_path_is_expected ARIADNE_APP "$MANIFEST_APP" "$PREFIX"; then
+        OLD_APP="$MANIFEST_APP"
+    fi
     if [ -n "$MANIFEST_DESKTOP_ICON" ] \
         && ui_manifest_path_is_expected ARIADNE_DESKTOP_ICON "$MANIFEST_DESKTOP_ICON" "$PREFIX"; then
         OLD_DESKTOP_ICON="$MANIFEST_DESKTOP_ICON"
@@ -503,6 +520,7 @@ elif [ "$WITH_UI" = 1 ] && [ "$BUILD_FROM_SOURCE" = 0 ]; then
             ;;
     esac
     install_app_bundle "$APP_BUNDLE"
+    remove_legacy_desktop_app
     clear_quarantine "$APP_PATH"
     APP_STATE="$(ui_tilde "$APP_PATH")"
     step_ok "$(ui_tilde "$APP_PATH")"
@@ -557,6 +575,7 @@ elif [ "$WITH_UI" = 1 ]; then
             *) APP_BUNDLE="" ;;
         esac
         install_app_bundle "$APP_BUNDLE"
+        remove_legacy_desktop_app
         APP_STATE="$(ui_tilde "$APP_PATH")"
         step_ok "$(ui_tilde "$APP_PATH")"
     fi

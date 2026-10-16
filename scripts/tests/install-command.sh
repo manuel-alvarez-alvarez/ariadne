@@ -102,6 +102,10 @@ case "$tool" in
                     cp "$TEST_ROOT/payload/ariadne-desktop" "$CARGO_TARGET_DIR/release/ariadne-ui"
                     ;;
                 'run tauri build -- --bundles app')
+                    if [ "${TEST_TAURI_APP:-0}" = 1 ]; then
+                        mkdir -p "$CARGO_TARGET_DIR/release/bundle/macos/Ariadne Desktop.app"
+                        exit 0
+                    fi
                     # Real Tauri signs the real .app bundle and install.sh
                     # then ditto's it to /Applications - a system path no
                     # sandboxed test may touch. Recording what reached this
@@ -118,6 +122,16 @@ case "$tool" in
         if [ "${1:-} ${2:-}" = 'completions install' ]; then
             printf '# >>> ariadne >>>\n# completion fixture\n# <<< ariadne <<<\n' >> "$HOME/.${4}rc"
         fi
+        ;;
+    # The macOS scenario replaces host application writes with stand-ins.
+    # Never let a writable /Applications escape an installer boundary test.
+    ditto) ;;
+    rm)
+        for path in "$@"; do
+            case "$path" in
+                "$TEST_ROOT"/*) /bin/rm -rf "$path" ;;
+            esac
+        done
         ;;
     launchctl)
         case "$1" in

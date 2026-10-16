@@ -13,7 +13,7 @@
 #   app-path           an app outside the approved locations is refused before
 #                       uninstalling anything.
 #   legacy-app-path    a prior Ariadne Desktop.app bundle under ~/Applications
-#                       is accepted and removed during migration.
+#                       is removed when the installer places its replacement.
 #   manifest-unsafe    an installer value that carries shell syntax is refused
 #                       before it can be written to install.env.
 # desktop-* stop npm's stub right after it records what reached its own
@@ -31,7 +31,7 @@ trap 'printf "FAIL: %s (line %s)\n" "$test_case" "$LINENO"; cat "$TEST_ROOT/outp
 mkdir -p "$TEST_ROOT"/{repo/scripts,repo/ui,bin,payload,home}
 cp "$REPO_DIR/scripts/"{install.sh,uninstall.sh,lib.sh} "$TEST_ROOT/repo/scripts/"
 cp "$REPO_DIR/ui/package.json" "$TEST_ROOT/repo/ui/"
-for tool in git cargo security codesign npm launchctl; do
+for tool in git cargo security codesign npm launchctl ditto rm; do
     cp "$REPO_DIR/scripts/tests/install-command.sh" "$TEST_ROOT/bin/$tool"
     chmod 755 "$TEST_ROOT/bin/$tool"
 done
@@ -101,10 +101,16 @@ case "$test_case" in
         app="$TEST_ROOT/home/Applications/Ariadne Desktop.app"
         mkdir -p "$app" "$TEST_ROOT/home/.ariadne"
         printf '%s\n' "ARIADNE_APP=$app" > "$TEST_ROOT/home/.ariadne/install.env"
+        export TEST_TAURI_APP=1
         env HOME="$TEST_ROOT/home" ARIADNE_HOME="$TEST_ROOT/home/.ariadne" \
             PREFIX="$TEST_ROOT/home/.local/bin" \
-            bash "$TEST_ROOT/repo/scripts/uninstall.sh" > "$TEST_ROOT/output" 2>&1
+            bash "$TEST_ROOT/repo/scripts/install.sh" --build-from-source --no-service \
+                --no-completions > "$TEST_ROOT/output" 2>&1
         [ ! -e "$app" ]
+        grep -Fx "ditto $TEST_ROOT/build/release/bundle/macos/Ariadne Desktop.app /Applications/Ariadne.app" \
+            "$TEST_ROOT/commands"
+        grep -Fx 'ARIADNE_APP=/Applications/Ariadne.app' \
+            "$TEST_ROOT/home/.ariadne/install.env"
         # The system-wide legacy path is accepted too, without touching it.
         # shellcheck source=/dev/null
         . "$TEST_ROOT/repo/scripts/lib.sh"

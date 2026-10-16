@@ -78,9 +78,9 @@ in the root [`AGENTS.md`](../AGENTS.md).
   the bundle to `/Applications` is a system path no sandboxed test may touch;
   `app-path` proves the uninstaller refuses an app outside the two approved
   application directories; `legacy-app-path` proves a legacy `Ariadne
-  Desktop.app` bundle under `~/Applications` is removed; `manifest-unsafe`
-  proves the installer refuses a manifest value containing shell syntax before
-  writing `install.env`.
+  Desktop.app` bundle under `~/Applications` is removed during an installer
+  migration; `manifest-unsafe` proves the installer refuses a manifest value
+  containing shell syntax before writing `install.env`.
 - `tests/install-service-macos.sh` — a macOS installer scenario, run as
   `bash scripts/tests/install-service-macos.sh`. The fake `launchctl` above
   keeps the old daemon's label present for a couple of polls after

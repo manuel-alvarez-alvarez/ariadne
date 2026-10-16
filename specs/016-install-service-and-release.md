@@ -186,8 +186,10 @@ Out: what the daemon does once running (009, 012).
     service files, and GNOME files must match the current user locations. On
     macOS the desktop target must be a directory named `Ariadne.app` under
     `/Applications` or `$HOME/Applications`, or one of the fixed legacy
-    `Ariadne Desktop.app` locations there; on Linux it must be the desktop
-    binary under the expected prefix. `--purge` refuses an empty, root, home,
+    `Ariadne Desktop.app` locations there. Once the replacement app is in
+    place, the installer removes a legacy bundle before it replaces the
+    manifest. On Linux the desktop target must be the desktop binary under the
+    expected prefix. `--purge` refuses an empty, root, home,
     or relative `ARIADNE_HOME`. The uninstaller creates its log with `mktemp`
     rather than a predictable filename.
 18. `scripts/check-migrations.sh` enforces rule 9's last sentence by machine
