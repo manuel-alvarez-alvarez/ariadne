@@ -236,8 +236,8 @@ async fn a_started_column_agent_is_briefed_from_the_builtin_template() {
     let expected = fill(
         &default_for(PromptKind::StepBriefing),
         &[
-            ("task_title", &task.title),
-            ("task_description", &task.description),
+            ("task_title", &fence(&task.title)),
+            ("task_description", &fence(&task.description)),
             ("goal_title", &fence(&cast.goal.title)),
             ("worktree_path", task.worktree_path.as_deref().unwrap()),
             ("branch", &task.branch),
@@ -387,7 +387,7 @@ async fn a_return_and_a_nudge_assemble_word_for_word() {
     let expected = fill(
         &default_for(PromptKind::StepReturn),
         &[
-            ("task_title", &cast.task.title),
+            ("task_title", &fence(&cast.task.title)),
             ("step_title", "Develop"),
             ("direction", "back"),
             ("reason", &fence(REASON)),
@@ -407,7 +407,10 @@ async fn a_return_and_a_nudge_assemble_word_for_word() {
     .await;
     let expected = fill(
         &default_for(PromptKind::AgentResume),
-        &[("task_title", &cast.task.title), ("step_title", "Develop")],
+        &[
+            ("task_title", &fence(&cast.task.title)),
+            ("step_title", "Develop"),
+        ],
     );
     h.backdate(
         &["last_activity_at", "launched_at"],

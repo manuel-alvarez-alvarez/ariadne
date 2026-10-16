@@ -66,11 +66,12 @@ pub fn of(pull: &PullRequest, untold: &[PullRequestComment], login: &str) -> New
     for check in failed.iter().filter(|c| !told_checks.contains(&c.name)) {
         let at = match check.url.is_empty() {
             true => String::new(),
-            false => format!(": {}", check.url),
+            false => format!(": {}", crate::agents::prompts::fence(&check.url)),
         };
         lines.push(format!(
             "- Check {} turned to {}{at}",
-            check.name, check.conclusion
+            crate::agents::prompts::fence(&check.name),
+            crate::agents::prompts::fence(&check.conclusion)
         ));
     }
     if pull.behind_base && !pull.told_behind_base {
@@ -327,7 +328,9 @@ mod tests {
         assert_eq!(
             news.lines,
             [
-                "- Check lint turned to failure: https://ci/1",
+                "- Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
+                 <<<untrusted>>>failure<<<end untrusted>>>: \
+                 <<<untrusted>>>https://ci/1<<<end untrusted>>>",
                 "- The head is behind <<<untrusted>>>main<<<end untrusted>>>.",
                 "- The review decision is now changes_requested.",
                 "- The request is now merged.",
@@ -355,7 +358,8 @@ mod tests {
         assert_eq!(
             of(&changed, &[], "me").lines,
             [
-                "- Check lint turned to failure",
+                "- Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
+                 <<<untrusted>>>failure<<<end untrusted>>>",
                 "- The head is behind <<<untrusted>>>main<<<end untrusted>>>."
             ],
             "a check that fails again and a head behind again are news again"

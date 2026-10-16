@@ -249,7 +249,7 @@ pub(crate) fn incoming_message_briefing(
 ) -> String {
     let (from, answer_to) = match (&message.task_id, task_title, column) {
         (Some(task_id), Some(title), Some(column)) if message.from_agent_id.is_some() => (
-            format!(r#"the {column} agent of task {task_id} "{title}""#),
+            format!(r#"the {column} agent of task {task_id} "{}""#, fence(title)),
             format!(", with `send_message` to `{column}` and task `{task_id}`"),
         ),
         _ => (format!("your {seat}"), String::new()),
@@ -277,7 +277,7 @@ pub(crate) fn exhausted_switch_notice(
         template,
         &[
             ("column", column),
-            ("task_title", task_title),
+            ("task_title", &fence(task_title)),
             ("old", old),
             ("new", new),
         ],
@@ -361,8 +361,8 @@ pub(crate) fn step_briefing(
     render(
         template,
         &[
-            ("task_title", &task.title),
-            ("task_description", &task.description),
+            ("task_title", &fence(&task.title)),
+            ("task_description", &fence(&task.description)),
             ("goal_title", &fence(&goal.title)),
             ("worktree_path", task.worktree_path.as_deref().unwrap_or("")),
             ("branch", &task.branch),
@@ -389,7 +389,7 @@ pub(crate) fn step_return(
     render(
         template,
         &[
-            ("task_title", &task.title),
+            ("task_title", &fence(&task.title)),
             ("step_title", &step.title),
             ("direction", direction),
             ("reason", &fence(reason)),
@@ -401,7 +401,10 @@ pub(crate) fn step_return(
 pub(crate) fn agent_resume(template: &str, task: &Task, step: &GoalStep) -> String {
     render(
         template,
-        &[("task_title", &task.title), ("step_title", &step.title)],
+        &[
+            ("task_title", &fence(&task.title)),
+            ("step_title", &step.title),
+        ],
     )
 }
 
@@ -842,6 +845,8 @@ mod tests {
         let fenced_goal_description = fence(&goal.description);
         let fenced_previous = fence("The change is committed.");
         let fenced_reason = fence("Add a test.");
+        let fenced_task_title = fence(&task.title);
+        let fenced_task_description = fence(&task.description);
 
         // The values every kind is rendered with, and what the briefing that
         // owns it renders.
@@ -891,8 +896,8 @@ mod tests {
                     "none",
                 ),
                 vec![
-                    ("task_title", &task.title),
-                    ("task_description", &task.description),
+                    ("task_title", &fenced_task_title),
+                    ("task_description", &fenced_task_description),
                     ("goal_title", &fenced_goal_title),
                     ("worktree_path", task.worktree_path.as_deref().unwrap()),
                     ("branch", &task.branch),
@@ -915,7 +920,7 @@ mod tests {
                     "Add a test.",
                 ),
                 vec![
-                    ("task_title", &task.title),
+                    ("task_title", &fenced_task_title),
                     ("step_title", "Develop"),
                     ("direction", "back"),
                     ("reason", &fenced_reason),
@@ -924,7 +929,10 @@ mod tests {
             (
                 PromptKind::AgentResume,
                 agent_resume(default(PromptKind::AgentResume), &task, &steps[0]),
-                vec![("task_title", &task.title), ("step_title", "Develop")],
+                vec![
+                    ("task_title", &fenced_task_title),
+                    ("step_title", "Develop"),
+                ],
             ),
         ];
 

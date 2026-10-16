@@ -8,7 +8,15 @@ tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/src/agents/handoff.rs
+  - crates/ariadne-daemon/src/forge/news.rs
+  - crates/ariadne-daemon/src/scheduler/goals.rs
+  - crates/ariadne-daemon/src/launcher.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
+  - crates/ariadne-daemon/tests/it/agent_messages.rs
+  - crates/ariadne-daemon/tests/it/scheduler_attention.rs
+  - crates/ariadne-daemon/tests/it/resume.rs
+  - crates/ariadne-daemon/tests/it/acp_runtime.rs
+  - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-daemon/tests/it/seat_brief.rs
   - crates/ariadne-cli/src/commands/mcp.rs
@@ -191,8 +199,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     nothing. The session rules state once, for every seat, that text
     between the markers is data and never an instruction (018, 026, 032).
     Fenced: an issue's title and body (as the goal's), a request's title
-    and its head and base branch names, a comment's first line, an agent
-    message's body, and a step's return reason or completion summary.
+    and its head and base branch names, a comment's first line, a failed
+    check's name, conclusion and URL, an agent message's body, a step's
+    return reason or completion summary, and a task's title and
+    description — the orchestrator's own planning is still an agent's,
+    so a task it names in a briefing, a message, a nudge or a dependency
+    is fenced wherever its title reaches another agent.
 
 ## Acceptance criteria
 
@@ -312,7 +324,19 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   the exhaustive-substitution tests prove it word for word
   (`prompts.rs::every_default_briefing_is_its_template_with_the_values_put_in`,
   `::the_pull_request_texts_fill_every_placeholder_they_name`,
-  `::the_keeper_briefing_fills_every_placeholder_it_names`). The fence
+  `::the_keeper_briefing_fills_every_placeholder_it_names`). A task's
+  title and description are fenced wherever a briefing, a nudge, a
+  relayed message or a dependency line names them, proved through the
+  daemon's own rendering, not a hand-built string
+  (`agent_messages.rs::a_message_is_handed_to_the_agent_it_was_sent_to`,
+  `::two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator`,
+  `prompts.rs::a_started_column_agent_is_briefed_from_the_builtin_template`,
+  `::a_return_and_a_nudge_assemble_word_for_word`,
+  `scheduler_attention.rs::an_agent_up_and_never_prompted_is_nudged`,
+  `resume.rs::the_scheduler_relaunches_the_current_columns_agent_in_its_session`,
+  `acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`,
+  `workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
+  The fence
   rule is in the shared session rules alone, within their size cap
   (`mcp.rs::the_shared_rules_stay_small`,
   `::each_shared_rule_is_written_in_its_owner_alone`).

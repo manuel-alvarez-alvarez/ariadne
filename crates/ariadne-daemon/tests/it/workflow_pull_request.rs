@@ -333,10 +333,13 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
         TIMEOUT,
         "the comment and failed check to reach the agent",
         async || {
-            h.prompts_to(agent)
-                .iter()
-                .skip(before)
-                .any(|p| p.contains("rc-101") && p.contains("Check lint turned to failure"))
+            h.prompts_to(agent).iter().skip(before).any(|p| {
+                p.contains("rc-101")
+                    && p.contains(
+                        "Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
+                             <<<untrusted>>>failure<<<end untrusted>>>",
+                    )
+            })
         },
     )
     .await;

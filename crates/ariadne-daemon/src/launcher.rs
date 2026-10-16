@@ -682,7 +682,9 @@ impl Launcher {
             let dep = self.store.get_task(&id).await?;
             deps.push(format!(
                 "{} ({}, branch {})",
-                dep.title, dep.status, dep.branch
+                prompts::fence(&dep.title),
+                dep.status,
+                dep.branch
             ));
         }
         Ok(prompts::step_briefing(

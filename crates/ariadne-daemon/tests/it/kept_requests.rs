@@ -403,7 +403,13 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
     })
     .await;
     let news = h.prompts_to(&agent).pop().unwrap();
-    assert!(news.contains("Check lint turned to failure"), "{news}");
+    assert!(
+        news.contains(
+            "Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
+             <<<untrusted>>>failure<<<end untrusted>>>"
+        ),
+        "{news}"
+    );
     assert!(
         !news.contains(&comment_id),
         "a comment is told once: {news}"
@@ -2612,7 +2618,12 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
     let told_lint = || {
         h.prompts_to(&agent)
             .iter()
-            .filter(|p| p.contains("Check lint turned to failure"))
+            .filter(|p| {
+                p.contains(
+                    "Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
+                     <<<untrusted>>>failure<<<end untrusted>>>",
+                )
+            })
             .count()
     };
 

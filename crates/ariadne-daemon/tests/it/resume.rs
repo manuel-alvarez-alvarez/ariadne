@@ -525,7 +525,8 @@ async fn the_scheduler_relaunches_the_current_columns_agent_in_its_session() {
     );
     assert!(h.prompts_to(&develop).len() > prompts);
     assert!(
-        h.prompted(&develop).contains("Continue task at Develop."),
+        h.prompted(&develop)
+            .contains("Continue <<<untrusted>>>task<<<end untrusted>>> at Develop."),
         "the relaunched agent is told to go on: {}",
         h.prompted(&develop)
     );

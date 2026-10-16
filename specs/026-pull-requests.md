@@ -213,7 +213,8 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     news prompt fenced as data, never as an instruction (006 rule 18): the
     reviewer's own briefing and news, and the keeper's (032 rule 5). A
     comment's first line, as rule 12's news computes it, is fenced the
-    same way. A reviewer or a keeper session refuses to start on a head
+    same way, and so is a failed check's name, conclusion and URL,
+    wherever rule 12's news names one. A reviewer or a keeper session refuses to start on a head
     branch git itself refuses as a ref name (`git check-ref-format
     --branch`), and the refusal is recorded on the row the way an
     exhausted spawn-retry budget already is (`reviewer_given_up_at`).
@@ -591,13 +592,13 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - A `502 forge_error` is never retried, while another `502` still gets its retries:
   `queries.test.ts::createQueryClient's retry > never retries a 502 whose body error is forge_error`,
   `::still retries another 502`.
-- A request's title, head and base branch names, and a comment's first
-  line each sit inside the fence where they reach a briefing or news
-  prompt, proved word for word:
+- A request's title, head and base branch names, a comment's first line,
+  and a failed check's name, conclusion and URL each sit inside the fence
+  where they reach a briefing or news prompt, proved word for word:
   `prompts.rs::the_pull_request_texts_fill_every_placeholder_they_name`,
   `news.rs::tests::a_comments_first_line_is_fenced_in_its_news_line`,
-  `::each_change_is_told_once` (the "behind the base" line), and the
-  keeper's own (032).
+  `::each_change_is_told_once` (the check and the "behind the base"
+  lines), and the keeper's own (032).
 - A reviewer or a keeper session refuses to start on a head branch git
   refuses as a ref, starting no worktree and no session, and the refusal
   is recorded on the row (032).

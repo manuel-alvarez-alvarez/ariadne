@@ -124,8 +124,9 @@ moves a task through (001), and the wording of the text a message arrives in
   tasks staffed on the same skills are still told apart, since each relay
   also names its own task and title
   (`::two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator`).
-  The body is fenced before it reaches the recipient, proved word for word
-  in the same test above (006 rule 18).
+  The body and the task's title it names the sender by are both fenced
+  before either reaches the recipient, proved word for word in the same
+  two tests above (006 rule 18).
 - An agent can write to the orchestrator, and it reaches the orchestrator's
   agent
   (`agent_messages.rs::an_agent_writes_to_the_orchestrator_and_it_reaches_its_agent`).

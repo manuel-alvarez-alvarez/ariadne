@@ -167,7 +167,7 @@ async fn a_message_is_handed_to_the_agent_it_was_sent_to() {
     // is the address the answer goes to.
     assert!(
         pasted.contains(&format!(
-            "Message from the review agent of task {} \"{}\":\n\n\
+            "Message from the review agent of task {} \"<<<untrusted>>>{}<<<end untrusted>>>\":\n\n\
              <<<untrusted>>>The retry loop has no bound and the caller has one.<<<end untrusted>>>\n\n\
              Answer only a question, with `send_message` to `review` and task `{}`. \
              Then go on with your work.",
@@ -334,14 +334,14 @@ async fn two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orch
     let pasted = h.prompted(&orchestrator);
     assert!(
         pasted.contains(&format!(
-            r#"Message from the develop agent of task {} "{}":"#,
+            r#"Message from the develop agent of task {} "<<<untrusted>>>{}<<<end untrusted>>>":"#,
             cast.task.id, cast.task.title
         )),
         "{pasted}"
     );
     assert!(
         pasted.contains(&format!(
-            r#"Message from the develop agent of task {} "{}":"#,
+            r#"Message from the develop agent of task {} "<<<untrusted>>>{}<<<end untrusted>>>":"#,
             second_task.id, second_task.title
         )),
         "{pasted}"
