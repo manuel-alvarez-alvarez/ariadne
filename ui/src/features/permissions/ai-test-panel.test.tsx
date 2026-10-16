@@ -341,6 +341,16 @@ it("sends a typed title, kind, options and locations one per line, edited by han
   await user.type(screen.getByLabelText("Locations"), "/a{Enter} /b ")
   await user.clear(screen.getByLabelText("Workspace"))
 
+  // A loaded CI worker can dispatch the click before React renders the final
+  // controlled input update, so wait for every edited field before submitting.
+  await waitFor(() => {
+    expect(field("Title")).toBe("ls")
+    expect(field("Kind")).toBe("")
+    expect(field("Options")).toBe("Yes\n  Yes, always \n\nNo")
+    expect(field("Locations")).toBe("/a\n /b ")
+    expect(field("Workspace")).toBe("")
+  })
+
   await user.click(screen.getByRole("button", { name: "Test" }))
 
   await waitFor(() => {
