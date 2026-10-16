@@ -156,8 +156,10 @@ you uninstall a custom-prefix installation. It removes a macOS app only from
 `/Applications` or `~/Applications`, including the legacy `Ariadne
 Desktop.app` bundle, and a Linux desktop binary only from its installed
 prefix. A later macOS install removes a legacy bundle after its replacement is
-in place. `--purge` refuses an empty home, `/`, or `$HOME`. Its diagnostic log
-uses a unique temporary filename and remains available after a purge.
+in place. To change a prefix, first run `scripts/uninstall.sh --prefix OLD`;
+the installer refuses the change until the old installation is removed.
+`--purge` refuses an empty home, `/`, or `$HOME`. Its diagnostic log uses a
+unique temporary filename and remains available after a purge.
 
 ## The daemon service
 

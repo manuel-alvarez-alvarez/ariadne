@@ -14,6 +14,8 @@
 #                       uninstalling anything.
 #   legacy-app-path    a prior Ariadne Desktop.app bundle under ~/Applications
 #                       is removed when the installer places its replacement.
+#   prefix-change       a second install at another prefix stops before it
+#                       leaves old binaries on PATH.
 #   manifest-unsafe    an installer value that carries shell syntax is refused
 #                       before it can be written to install.env.
 # desktop-* stop npm's stub right after it records what reached its own
@@ -22,7 +24,7 @@
 # two prove the wiring and go no further. scripts/AGENTS.md.
 set -Eeuo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-test_case="${1:?name a test case: present, missing, desktop-present, desktop-missing, app-path, legacy-app-path or manifest-unsafe}"
+test_case="${1:?name a test case: present, missing, desktop-present, desktop-missing, app-path, legacy-app-path, prefix-change or manifest-unsafe}"
 [ "$(uname -s)" = Darwin ] || { echo "macOS only" >&2; exit 2; }
 export TEST_ROOT
 TEST_ROOT="$(mktemp -d)"
@@ -117,6 +119,23 @@ case "$test_case" in
         ui_locations
         ui_manifest_path_is_expected ARIADNE_APP /Applications/Ariadne\ Desktop.app \
             "$TEST_ROOT/home/.local/bin"
+        ;;
+    prefix-change)
+        old_prefix="$TEST_ROOT/home/.local/bin"
+        new_prefix="$TEST_ROOT/home/other-bin"
+        env HOME="$TEST_ROOT/home" ARIADNE_HOME="$TEST_ROOT/home/.ariadne" \
+            PREFIX="$old_prefix" \
+            bash "$TEST_ROOT/repo/scripts/install.sh" --build-from-source --no-service \
+                --no-completions --no-ui > "$TEST_ROOT/output" 2>&1
+        if env HOME="$TEST_ROOT/home" ARIADNE_HOME="$TEST_ROOT/home/.ariadne" \
+            PREFIX="$new_prefix" \
+            bash "$TEST_ROOT/repo/scripts/install.sh" --build-from-source --no-service \
+                --no-completions --no-ui > "$TEST_ROOT/output" 2>&1; then
+            exit 1
+        fi
+        grep -F 'refusing to change an installed prefix' "$TEST_ROOT/output"
+        [ -x "$old_prefix/ariadne" ]
+        [ ! -e "$new_prefix/ariadne" ]
         ;;
     manifest-unsafe)
         unsafe_prefix="$TEST_ROOT/home/.local/\$unsafe"

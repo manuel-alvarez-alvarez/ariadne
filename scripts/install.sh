@@ -392,6 +392,8 @@ fi
 OLD_APP=""
 OLD_DESKTOP_ICON=""
 if ui_read_install_manifest "$ARIADNE_MANIFEST"; then
+    [ -z "$MANIFEST_PREFIX" ] || [ "$MANIFEST_PREFIX" = "$PREFIX" ] \
+        || ui_die "refusing to change an installed prefix; uninstall before changing --prefix"
     # A manifest is untrusted input. The old prefix is never removed during an
     # install because it cannot prove which binaries it owns. The old app and
     # icon have installer-defined paths, so they are safe after validation.

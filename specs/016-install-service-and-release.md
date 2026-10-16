@@ -189,7 +189,9 @@ Out: what the daemon does once running (009, 012).
     `Ariadne Desktop.app` locations there. Once the replacement app is in
     place, the installer removes a legacy bundle before it replaces the
     manifest. On Linux the desktop target must be the desktop binary under the
-    expected prefix. `--purge` refuses an empty, root, home,
+    expected prefix. An install with a different prefix stops before it writes
+    files, so it cannot leave stale binaries at the old prefix; uninstall the
+    old prefix first. `--purge` refuses an empty, root, home,
     or relative `ARIADNE_HOME`. The uninstaller creates its log with `mktemp`
     rather than a predictable filename.
 18. `scripts/check-migrations.sh` enforces rule 9's last sentence by machine
@@ -223,7 +225,7 @@ Out: what the daemon does once running (009, 012).
   `gh-missing-attestation-flags`, `gh-outdated-attestation-verifier`,
   `manifest-shell`, `manifest-unexpected`, `manifest-paths`, `app-path`, `purge-home`,
   `purge-root`, `pid-invalid`, `uninstall-log`; `scripts/tests/install-sign-macos.sh`:
-  `app-path`, `legacy-app-path`, `manifest-unsafe`; `daemon.rs::a_pidfile_only_accepts_digits_above_one`).
+  `app-path`, `legacy-app-path`, `prefix-change`, `manifest-unsafe`; `daemon.rs::a_pidfile_only_accepts_digits_above_one`).
 - A database from before the squash says which file to delete
   (`store.rs::a_database_from_before_the_squash_says_which_file_to_delete`).
 - The shipped skills are seeded into a fresh database, each on the text
