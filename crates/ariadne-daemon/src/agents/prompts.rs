@@ -189,9 +189,9 @@ pub(crate) fn orchestrator_briefing(
     );
     match &goal.issue_url {
         Some(url) => {
-            let url = fence(url);
+            let fenced_url = fence(url);
             format!(
-                "{briefing}\n\nThis goal comes from {url}. Every request a task opens must say `Closes {url}` in its body."
+                "{briefing}\n\nThis goal comes from {fenced_url}. Every request a task opens must say `Closes {url}` in its body."
             )
         }
         None => briefing,
@@ -1083,8 +1083,7 @@ mod tests {
             briefing.ends_with(
                 "This goal comes from <<<untrusted>>>https://github.com/acme/widgets/issues/9\
                  <<<end untrusted>>>. Every request a task opens must say `Closes \
-                 <<<untrusted>>>https://github.com/acme/widgets/issues/9<<<end untrusted>>>` \
-                 in its body."
+                 https://github.com/acme/widgets/issues/9` in its body."
             ),
             "{briefing}"
         );

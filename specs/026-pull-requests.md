@@ -224,11 +224,14 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     reviewer or a keeper session refuses to start on a head
     branch git itself refuses as a ref name (`git check-ref-format
     --branch`), and the refusal is recorded on the row the way an
-    exhausted spawn-retry budget already is (`reviewer_given_up_at`).
-    Nothing between the forge's own read of a branch name and a real
-    `git` call ever runs a shell over it: `GitManager` always passes it as
-    its own argument, and the keeper's own push command (032 rule 4)
-    quotes it into one.
+    exhausted spawn-retry budget already is (`reviewer_given_up_at`). The
+    guard sits before a fresh spawn and before a relaunch of a session
+    already on the row alike, since a branch read as unusable only after
+    that session went quiet must refuse the relaunch the same way a
+    fresh spawn would have refused it. Nothing between the forge's own
+    read of a branch name and a real `git` call ever runs a shell over
+    it: `GitManager` always passes it as its own argument, and the
+    keeper's own push command (032 rule 4) quotes it into one.
 
 ## HTTP
 
@@ -616,7 +619,12 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `news.rs::tests::a_crafted_comment_path_cannot_escape_its_fence`.
 - A reviewer or a keeper session refuses to start on a head branch git
   refuses as a ref, starting no worktree and no session, and the refusal
-  is recorded on the row (032).
+  is recorded on the row (032)
+  (`scheduler_attention.rs::a_reviewer_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref`,
+  `::a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref`).
+  The same guard holds on a relaunch of a session already on the row, not
+  only a fresh spawn
+  (`::a_reviewer_session_refuses_to_restart_on_a_head_branch_that_turned_invalid`).
 
 ## Known gap
 

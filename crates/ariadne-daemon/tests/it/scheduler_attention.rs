@@ -3162,6 +3162,132 @@ async fn a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref
     );
 }
 
+/// The same guard holds on a relaunch, not only a fresh spawn:
+/// `resume_pull_request_session` once bypassed `assert_valid_head_branch`
+/// for a request with a session already on its row, so a head branch that
+/// turned unusable after that session went quiet could still be relaunched
+/// on it. A row that already heard from its agent once and then went quiet
+/// takes the resume path rather than the fresh-spawn one.
+///
+/// The periodic reconcile is pushed out of the way: without the guard, one
+/// failed relaunch merely spends a turn of the ordinary spawn-retry budget
+/// (026), and enough periodic passes eventually reach the same give-up
+/// this test looks for regardless, hiding the very bypass it proves. One
+/// explicit pass is every chance the scheduler gets here, so the give-up
+/// this test waits for can only be the guard's own, on sight.
+#[tokio::test]
+async fn a_reviewer_session_refuses_to_restart_on_a_head_branch_that_turned_invalid() {
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: Duration::from_secs(3600),
+            ..Timeouts::default()
+        })
+        .await;
+    let repo = h.repository(&h.at("widgets")).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_review_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    // The row's session already heard from its agent once, on the pin the
+    // next ask carries, and then went quiet: the exact shape
+    // `resume_pull_request_session` reuses rather than spawning fresh.
+    let session = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Reviewer),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: Some("/tmp/a-reviewer-session-that-went-quiet".into()),
+            pull_request_id: Some(pull.id.clone()),
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_internal_id(&session.id, "uuid-1234")
+        .await
+        .unwrap();
+    h.store.mark_session_launched(&session.id).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    h.store.touch_session(&session.id).await.unwrap();
+    h.store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+
+    // The head branch arrives unusable only now, with that session already
+    // on the row.
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix evil", "abc", true);
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the request given up on for its unusable head branch",
+        async || {
+            h.store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    assert_eq!(
+        h.store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "the stale session is never restarted on its now-unusable head branch, \
+         and no other session is spawned in its place"
+    );
+}
+
 /// An idle pull request session is waiting on the forge, as an idle
 /// planning orchestrator waits on the user (009 rule 41): however long it
 /// sits idle it is never nudged, never flagged and never relaunched. A

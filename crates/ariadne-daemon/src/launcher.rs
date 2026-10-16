@@ -1775,6 +1775,7 @@ impl Launcher {
         pull: &PullRequest,
         pin: AgentPin,
     ) -> Result<AgentSession> {
+        self.assert_valid_head_branch(pull).await?;
         let seat = Seat::Reviewer;
         let previous = self
             .store
@@ -1898,6 +1899,7 @@ impl Launcher {
         pull: &PullRequest,
         pin: AgentPin,
     ) -> Result<AgentSession> {
+        self.assert_valid_head_branch(pull).await?;
         let seat = Seat::Keeper;
         let previous = self
             .store

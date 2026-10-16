@@ -212,7 +212,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     — the orchestrator's own planning is still an agent's, so a task it
     names in a briefing, a message, a nudge or a dependency is fenced
     wherever its title reaches another agent, and so is anything beyond
-    the task itself it tells a column's agent to do.
+    the task itself it tells a column's agent to do. One line is the
+    exception: an issue goal's `Closes <url>` instruction carries the raw
+    URL, never fenced, since GitHub only closes the issue on that exact
+    text; the same URL is still fenced everywhere else the briefing names
+    the issue.
 
 ## Acceptance criteria
 

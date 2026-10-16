@@ -103,10 +103,7 @@ async fn an_issue_goal_keeps_its_url_and_briefs_the_orchestrator_to_close_it() {
         )),
         "{briefing}"
     );
-    assert!(
-        briefing.contains(&format!("Closes <<<untrusted>>>{url}<<<end untrusted>>>")),
-        "{briefing}"
-    );
+    assert!(briefing.contains(&format!("Closes {url}")), "{briefing}");
 }
 
 /// The orchestrator is briefed with the goal's workflow and every column of
