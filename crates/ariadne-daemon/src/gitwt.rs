@@ -79,13 +79,17 @@ impl GitManager {
         let wt = worktree.display().to_string();
         if self.branch_exists(repo, branch).await? {
             // Respawn after a crash: reuse the existing task branch.
-            self.git(repo, &["worktree", "add", &wt, branch]).await?;
+            self.git(repo, &["worktree", "add", "--", &wt, branch])
+                .await?;
         } else if self.branch_exists(repo, base).await? {
-            self.git(repo, &["worktree", "add", "-b", branch, &wt, base])
+            self.git(repo, &["worktree", "add", "-b", branch, "--", &wt, base])
                 .await?;
         } else {
-            self.git(repo, &["worktree", "add", "--orphan", "-b", branch, &wt])
-                .await?;
+            self.git(
+                repo,
+                &["worktree", "add", "--orphan", "-b", branch, "--", &wt],
+            )
+            .await?;
         }
         Ok(())
     }
@@ -99,7 +103,7 @@ impl GitManager {
         reference: &str,
     ) -> Result<()> {
         let wt = worktree.display().to_string();
-        self.git(repo, &["worktree", "add", "--detach", &wt, reference])
+        self.git(repo, &["worktree", "add", "--detach", "--", &wt, reference])
             .await?;
         Ok(())
     }
@@ -121,7 +125,7 @@ impl GitManager {
         at: &str,
     ) -> Result<()> {
         let wt = worktree.display().to_string();
-        self.git(repo, &["worktree", "add", "-B", branch, &wt, at])
+        self.git(repo, &["worktree", "add", "-B", branch, "--", &wt, at])
             .await?;
         Ok(())
     }
@@ -135,15 +139,27 @@ impl GitManager {
     /// overwrite them: the tree then never moves again, and the session is
     /// never started for the next round. Ignored files — build caches — stay.
     pub async fn checkout_detached(&self, worktree: &Path, reference: &str) -> Result<()> {
-        self.git(worktree, &["checkout", "--force", "--detach", reference])
-            .await?;
+        // `--` means a pathspec to `checkout`, not an end of options, so a
+        // bare `reference` beginning with `-` needs `--end-of-options`
+        // instead: the option `diff` and the others above it use.
+        self.git(
+            worktree,
+            &[
+                "checkout",
+                "--force",
+                "--detach",
+                "--end-of-options",
+                reference,
+            ],
+        )
+        .await?;
         self.git(worktree, &["clean", "-fd"]).await?;
         Ok(())
     }
 
     pub async fn remove_worktree(&self, repo: &Path, worktree: &Path) -> Result<()> {
         let wt = worktree.display().to_string();
-        self.git(repo, &["worktree", "remove", "--force", &wt])
+        self.git(repo, &["worktree", "remove", "--force", "--", &wt])
             .await?;
         Ok(())
     }
@@ -521,5 +537,77 @@ impl GitManager {
         };
         self.git(repo, &["diff", "--end-of-options", &before, commit])
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn init_repo(dir: &Path) {
+        for args in [
+            vec!["init", "-q"],
+            vec![
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "--allow-empty",
+                "-q",
+                "-m",
+                "init",
+            ],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(dir)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+    }
+
+    /// A `worktree_root` of `--force` turns a task's worktree path into
+    /// `--force/pr-example`: without an options terminator before the path,
+    /// `git worktree add` would read it as an unrecognized flag rather than
+    /// the directory to create. The path is data at every call that takes
+    /// one, not only here.
+    #[tokio::test]
+    async fn a_worktree_path_that_looks_like_a_flag_is_still_created() {
+        let repo = tempfile::tempdir().unwrap();
+        init_repo(repo.path());
+        let git = GitManager;
+        let base = git.current_branch(repo.path()).await.unwrap();
+        let worktree = repo.path().join("--force").join("pr-example");
+
+        git.add_worktree(repo.path(), &worktree, "feature", &base)
+            .await
+            .unwrap();
+        assert!(worktree.join(".git").exists(), "{}", worktree.display());
+
+        git.remove_worktree(repo.path(), &worktree).await.unwrap();
+        assert!(!worktree.exists());
+    }
+
+    /// The same path shape reaches a detached worktree the same way (029).
+    #[tokio::test]
+    async fn a_detached_worktree_path_that_looks_like_a_flag_is_still_created() {
+        let repo = tempfile::tempdir().unwrap();
+        init_repo(repo.path());
+        let git = GitManager;
+        let base = git.current_branch(repo.path()).await.unwrap();
+        let worktree = repo.path().join("--detach").join("review");
+
+        git.add_detached_worktree(repo.path(), &worktree, &base)
+            .await
+            .unwrap();
+        assert!(worktree.join(".git").exists(), "{}", worktree.display());
+
+        git.checkout_detached(&worktree, &base).await.unwrap();
+        git.remove_worktree(repo.path(), &worktree).await.unwrap();
+        assert!(!worktree.exists());
     }
 }

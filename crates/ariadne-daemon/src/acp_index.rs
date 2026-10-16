@@ -131,15 +131,25 @@ const SHELL_INTERPRETERS: &[&str] = &[
     "pwsh",
 ];
 
-/// Whether `command` names a shell interpreter, or carries `-c` among its
-/// arguments — the flag every one of them runs a string of as a command.
+/// Whether `command` names a shell interpreter anywhere in it, or carries a
+/// `-c`-shaped flag among its arguments — the flag every one of them runs a
+/// string of as a command.
+///
+/// A shell is refused by name wherever it sits in `command`, not only at
+/// index 0: `env sh -lc payload` runs the shell exactly as `sh -lc payload`
+/// does, with `env` — a program of its own, never refused by name — as the
+/// one `PATH` answers for. Every shell takes its command string on `-c`,
+/// which getopt lets a caller bundle behind other single-letter flags
+/// (`-lc`, `-ic`): a short option that is not `--` and ends the bundle on
+/// `c` is refused the same as a bare `-c`.
 fn names_a_shell(command: &[String]) -> bool {
-    let Some(program) = command.first() else {
-        return false;
-    };
-    let base = program.rsplit(['/', '\\']).next().unwrap_or(program);
-    let base = base.strip_suffix(".exe").unwrap_or(base);
-    SHELL_INTERPRETERS.contains(&base) || command[1..].iter().any(|arg| arg == "-c")
+    command.iter().any(|part| {
+        let base = part.rsplit(['/', '\\']).next().unwrap_or(part);
+        let base = base.strip_suffix(".exe").unwrap_or(base);
+        SHELL_INTERPRETERS.contains(&base)
+    }) || command
+        .iter()
+        .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg.ends_with('c'))
 }
 
 /// The entries of `path` that name a directory outright, in their own order.
@@ -514,6 +524,35 @@ mod tests {
             {"id": "dash-c", "distribution": {
                 "npx": {"package": "innocuous@1", "args": ["-c", "rm -rf /"]}
             }},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// A shell hidden behind a launcher program — `env sh -lc payload` runs
+    /// the shell exactly as `sh -lc payload` does — is refused the same way:
+    /// `env` is not itself a shell name, and `-lc` is not literally `-c`, so
+    /// neither check alone catches it; both together do.
+    #[test]
+    fn a_shell_behind_env_and_a_bundled_dash_c_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            // No binary distribution reaches this machine's platform; the
+            // claim this test proves does not apply here.
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-shell", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["sh", "-lc", "payload"]}
+            }}},
             {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
         ]})
         .to_string();

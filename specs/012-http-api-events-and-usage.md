@@ -240,13 +240,17 @@ and the ACP runtime that reports the agent events (021).
     agent list. Both
     responses include status, measured capabilities, degradation flags, and
     a rejection reason when discovery failed. `acp_registry_url` is fetched
-    only over `https`, with one exception: `http` to a loopback host, which a
-    test's own stand-in server is and which no network path could sit on.
-    Any other scheme is refused and logs a warning, the same as a download
-    failure. An index entry whose command names a shell interpreter (`sh`,
-    `bash`, `zsh`, `dash`, `fish`, `cmd`, `powershell`, `pwsh`) or whose
-    arguments hold `-c` is refused by id, logged, and left out of what `PATH`
-    search and probing consider; the rest of the index still installs.
+    only over `https`, with no exception: a plain `http` URL is refused and
+    logs a warning, the same as a download failure, before anything is
+    fetched. A redirect is followed by hand rather than by the HTTP client,
+    and each hop's `Location` is checked the same way the first URL was: a
+    hop to `http` is refused there too, rather than silently taken. An index
+    entry whose command names a shell interpreter (`sh`, `bash`, `zsh`,
+    `dash`, `fish`, `cmd`, `powershell`, `pwsh`) anywhere in it — directly, or
+    behind a launcher such as `env` — or whose arguments hold a flag shaped
+    like `-c` (bundled short options included, as `-lc` bundles `-l` with
+    it) is refused by id, logged, and left out of what `PATH` search and
+    probing consider; the rest of the index still installs.
 21. `GET /v1/events` answers one page of the recorded events. `order=asc` is
     the default and answers the oldest of them, oldest first, which is what a
     client sweeping forward reads. `order=desc` answers the newest, newest
@@ -546,12 +550,16 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   and still returns the agent list after failed downloads or refused documents
   (`::a_failed_download_keeps_the_index_and_still_rescans_and_reprobes`,
   `::a_refused_document_keeps_the_index_and_still_rescans_and_reprobes`). A
-  plain `http` registry URL is refused, and `http` to a loopback host is
-  still accepted
+  plain `http` registry URL is refused, loopback included, and a redirect to
+  `http` is refused the same way
   (`acp_discovery.rs::tests::a_plain_http_registry_url_is_refused`,
-  `::http_to_a_loopback_host_is_accepted`). An index entry naming a shell
-  interpreter, directly or behind `-c`, is refused by id and the rest of the
-  index still installs (`acp_index.rs::tests::an_index_entry_naming_a_shell_is_refused_and_the_rest_of_the_index_still_installs`).
+  `::http_to_a_loopback_host_is_still_refused`,
+  `::https_fetch_refuses_a_redirect_to_a_plain_http_location`). An index
+  entry naming a shell interpreter — directly, or behind a launcher such as
+  `env` — or carrying a bundled `-c`-shaped flag such as `-lc`, is refused by
+  id and the rest of the index still installs
+  (`acp_index.rs::tests::an_index_entry_naming_a_shell_is_refused_and_the_rest_of_the_index_still_installs`,
+  `::a_shell_behind_env_and_a_bundled_dash_c_is_refused`).
 - A descending page is the events recorded last, newest first
   (`events.rs::the_newest_page_is_the_events_recorded_last`,
   `store.rs::a_descending_page_answers_the_newest_events_newest_first`), and a

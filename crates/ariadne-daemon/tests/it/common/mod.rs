@@ -39,7 +39,7 @@ use ariadne_core::{
     Actor, AttentionReason, ForgeKind, GoalStatus, PermissionMode, Seat, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::acp::AcpLaunch;
-use ariadne_daemon::acp_discovery::ManagerHomes;
+use ariadne_daemon::acp_discovery::{IndexFetch, ManagerHomes};
 use ariadne_daemon::ai_permissions::hardware::HardwareOverride;
 use ariadne_daemon::branch::BranchWatchers;
 use ariadne_daemon::bus::{BusEvent, EventBus};
@@ -148,6 +148,7 @@ pub(crate) struct HarnessBuilder {
     python_bin: Option<String>,
     nvidia_smi_bin: Option<String>,
     gh_bin: Option<String>,
+    index_fetch: Option<Arc<dyn IndexFetch>>,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -193,6 +194,7 @@ pub(crate) fn harness() -> HarnessBuilder {
         python_bin: None,
         nvidia_smi_bin: None,
         gh_bin: None,
+        index_fetch: None,
     }
 }
 
@@ -257,6 +259,14 @@ impl HarnessBuilder {
     /// daemon does: for a test about one of them running out ([`RUNS_OUT`]).
     pub(crate) fn timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
+        self
+    }
+
+    /// Fetch a registry index over `fetch` rather than real HTTPS: a
+    /// stand-in that proves the download logic (the fallback on a failure,
+    /// the keeping of an accepted document) without a socket of its own.
+    pub(crate) fn index_fetch(mut self, fetch: Arc<dyn IndexFetch>) -> Self {
+        self.index_fetch = Some(fetch);
         self
     }
 
@@ -401,6 +411,10 @@ impl HarnessBuilder {
             manager_homes,
         )
         .with_timeouts(self.timeouts);
+        let agent_registry = match self.index_fetch {
+            Some(fetch) => agent_registry.with_index_fetch(fetch),
+            None => agent_registry,
+        };
         // Installed before anything writes, exactly as the daemon does at
         // startup.
         let bus = ariadne_daemon::bus::start(store.clone());
