@@ -64,7 +64,9 @@ the item shape and the producers that fill it.
 When an agent needs a human decision, it flags the wait with a one-line hint,
 then asks in its console, as a turn of the conversation. Needs attention shows
 that hint and the agent console. Run the listed `ariadne attach <session-id>`
-command to read the question and answer it.
+command to read the question and answer it. Your input answers every open
+question of that session. A later turn keeps a question only when it calls
+`wait_for_user` again; otherwise, ending the turn ends the wait.
 
 `attach` also resumes a stored outside conversation and revives an ended
 Ariadne session, each with no separate step first. A resumed outside session

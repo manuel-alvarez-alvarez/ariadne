@@ -57,7 +57,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    which one orchestrator's questions did. Its `hint` is one line for the
    Needs attention list, and the daemon refuses one that is longer than a
    line or than 100 characters (031 rule 11), so the question cannot move
-   into the call. `withdraw_wait_for_user` takes the flag down again.
+    into the call. A turn that ends without `wait_for_user` ends the wait;
+    repeating its hint keeps the same request, while console input answers
+    every pending request of that session (031 rule 12).
+    `withdraw_wait_for_user` takes the flag down again.
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees. There are four seats
    (`McpSeat`): `Orchestrator`, `Agent`, `PullRequestReviewer` and
