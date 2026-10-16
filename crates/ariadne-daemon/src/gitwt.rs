@@ -293,7 +293,18 @@ impl GitManager {
     /// Fetch `branch` from `from` — a remote name or a clone URL — into
     /// `FETCH_HEAD` alone: the head of a request the user reviews, which may
     /// share its name with a branch of the checkout (029).
+    ///
+    /// `branch` is a forge's own report of a pull request's head or base
+    /// name, checked with `check-ref-format --branch` before it is built
+    /// into the refspec below: unchecked, a name holding a colon such as
+    /// `good:refs/heads/injected` is not one ref but two, `src:dst`, and
+    /// git reads `refs/heads/good:refs/heads/injected` as fetching
+    /// `good` into a new local branch `injected` — a ref this call's own
+    /// contract, `FETCH_HEAD` alone, never otherwise writes.
     pub(crate) async fn fetch_head_of(&self, repo: &Path, from: &str, branch: &str) -> Result<()> {
+        if !self.is_valid_branch_name(repo, branch).await? {
+            bail!("not a valid branch name: {branch}");
+        }
         self.git(
             repo,
             &[
@@ -624,5 +635,42 @@ mod tests {
         git.checkout_detached(&created, &base).await.unwrap();
         git.remove_worktree(repo.path(), relative).await.unwrap();
         assert!(!created.exists());
+    }
+
+    /// A forge's own report of a pull request's head branch is not a trusted
+    /// value: `good:refs/heads/injected` is not one branch name but a
+    /// `src:dst` refspec, and unvalidated, `fetch_head_of`'s own
+    /// `refs/heads/{branch}` would hand git exactly that — fetching `good`
+    /// from the remote into a brand new local branch `injected`, despite
+    /// this call's contract of writing `FETCH_HEAD` alone. Checked with
+    /// `check-ref-format --branch` first, the colon refuses the whole name
+    /// before it ever reaches the fetch, and no local ref is created.
+    #[tokio::test]
+    async fn fetch_head_of_refuses_a_branch_name_that_is_really_a_refspec() {
+        let from = tempfile::tempdir().unwrap();
+        init_repo(from.path());
+        assert!(
+            std::process::Command::new("git")
+                .args(["branch", "good"])
+                .current_dir(from.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let repo = tempfile::tempdir().unwrap();
+        init_repo(repo.path());
+        let git = GitManager;
+        let from_path = from.path().display().to_string();
+
+        let result = git
+            .fetch_head_of(repo.path(), &from_path, "good:refs/heads/injected")
+            .await;
+        assert!(result.is_err(), "{result:?}");
+
+        assert!(
+            !git.branch_exists(repo.path(), "injected").await.unwrap(),
+            "a branch name holding a colon must never create a local ref"
+        );
     }
 }

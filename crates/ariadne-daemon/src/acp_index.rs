@@ -192,6 +192,13 @@ fn names_a_shell(command: &[String]) -> bool {
 /// token that carries a capital `S` is refused the same way: `env` has no
 /// other flag that letter could answer for, so refusing one over-eagerly
 /// costs nothing a real agent command would ever need.
+///
+/// GNU getopt_long also accepts any unambiguous prefix of a long option, so
+/// `--s`, `--sp`, and every other prefix of `--split-string` up to the
+/// whole word — `=value` attached or not — name the same flag: no other
+/// long option of `env` starts with `s`, so every one of these prefixes is
+/// unambiguous and accepted. Refusing only the full spelling would let
+/// `--s=sh\_-c\_'...'` straight through.
 fn uses_env_split_string(command: &[String]) -> bool {
     let names_env = command.iter().any(|part| {
         let base = part.rsplit(['/', '\\']).next().unwrap_or(part);
@@ -200,7 +207,8 @@ fn uses_env_split_string(command: &[String]) -> bool {
     });
     names_env
         && command.iter().any(|arg| {
-            arg.starts_with("--split-string")
+            let name = arg.split('=').next().unwrap_or(arg);
+            (name.len() > 2 && "--split-string".starts_with(name))
                 || (arg.starts_with('-') && !arg.starts_with("--") && arg.contains('S'))
         })
 }
@@ -724,6 +732,33 @@ mod tests {
             }}},
             {"id": "env-split-bundled", "distribution": {"binary": {
                 key: {"cmd": "env", "args": ["-vSsh\\_-c\\_'printf marker'"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// GNU `env` accepts any unambiguous prefix of a long option, so `--s`
+    /// is `--split-string` the same as the word spelled out in full — no
+    /// other long option of `env` starts with `s`. A check for only the
+    /// whole spelling would let this abbreviation straight through.
+    #[test]
+    fn env_dash_cap_s_abbreviated_long_form_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-split-abbreviated", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["--s=sh\\_-c\\_'echo marker'"]}
             }}},
             {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
         ]})
