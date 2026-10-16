@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-10-16
+updated: 2026-10-17
 areas: [daemon, install, scripts, store, workflows]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
@@ -20,6 +20,7 @@ tests:
   - scripts/tests/release-notes.sh
   - scripts/tests/githooks.sh
   - scripts/tests/check-migrations.sh
+  - .github/workflows/ci.yml
   - .github/workflows/release-please.yml
   - .github/workflows/release.yml
   - .github/dependabot.yml
@@ -34,7 +35,8 @@ upgrade.
 ## Scope
 
 In: the installer and what it installs, the user service, release
-verification, the release-please loop, and the database migration policy.
+verification, the release-please loop, CI build caches, and the database
+migration policy.
 
 Out: what the daemon does once running (009, 012).
 
@@ -222,9 +224,24 @@ Out: what the daemon does once running (009, 012).
     never triggers a release. Dependabot only proposes a bump; `ci.yml`'s
     `cargo audit` and `npm run check:audit` are still what fail a build on
     an advisory, unchanged by this rule.
+19. CI caches Cargo downloads and dependency artifacts separately for the
+    Rust workspace and the Tauri workspace on each OS. Only `main` saves
+    these caches; pull requests restore them. The Rust job additionally
+    uses `sccache` with the GitHub Actions backend and incremental
+    compilation disabled, reusing unchanged workspace library compilations.
+    Its backend is read-write on `main` and read-only on pull requests;
+    its post step reports hits and misses. Tauri uses only the Cargo cache.
+    The UI caches npm downloads against `ui/package-lock.json` and always
+    runs `npm ci`. A cache hit never skips a build, test, lint or audit step.
 
 ## Acceptance criteria
 
+- Both Rust matrix legs configure `sccache` before any build, with
+  incremental compilation disabled and cache writes restricted to `main`.
+  Both Cargo cache steps save only on `main`, retain separate OS/workspace
+  keys, and restore on pull requests. The UI retains its lockfile-keyed npm
+  cache and unconditional install; all checks run regardless of cache hits
+  (`.github/workflows/ci.yml`).
 - Linux release and source installs use the plain desktop binary and its icon.
   Missing WebKitGTK skips only the app and GNOME registration. Extraction
   requires attestation verification, and uninstall removes the desktop files
@@ -347,6 +364,7 @@ fails the service step`).
 `scripts/check-migrations.sh`, `scripts/tests/check-migrations.sh`,
 `scripts/tests/release-please-config.sh`,
 `.github/workflows/release.yml`, `.github/RELEASING.md`,
+`.github/workflows/ci.yml`,
 `.github/dependabot.yml`,
 `crates/ariadne-store/src/lib.rs`,
 `crates/ariadne-store/migrations/0001_init.sql`,
