@@ -1,12 +1,21 @@
 // @vitest-environment jsdom
 
-import { screen } from "@testing-library/react"
+import {
+  acceptCompletion,
+  autocompletion,
+  completionStatus,
+  startCompletion,
+} from "@codemirror/autocomplete"
+import { EditorState } from "@codemirror/state"
+import { EditorView } from "@codemirror/view"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
 import { aWorkflow } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { WorkflowEditor } from "./workflow-editor"
+import { workflowAutocomplete } from "./workflow-help-extensions"
 
 const rect = () => new DOMRect(0, 0, 0, 0)
 const rects = () =>
@@ -99,5 +108,43 @@ describe("the workflow editor", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("Line 2: Unknown rank")
     expect(document.querySelector(".cm-lintRange-error")).not.toBeNull()
+  })
+})
+
+/**
+ * The autocomplete extension on a bare CodeMirror editor, proving that what
+ * `workflow-help.ts` computes actually reaches `acceptCompletion`: a
+ * pure-function `to` that is right but never forwarded by the adapter would
+ * pass `workflow-help.test.ts` and still corrupt the document here.
+ */
+describe("workflowAutocomplete, applied through CodeMirror", () => {
+  let view: EditorView | undefined
+  afterEach(() => {
+    view?.destroy()
+    view = undefined
+    document.body.innerHTML = ""
+  })
+
+  it("replaces only the rank token the cursor sits inside, keeping the rest of the band", async () => {
+    const text = "workflow develop-review\n    ranks: balanced, frontier, local"
+    const cursor = text.indexOf("frontier") + 2 // "fr|ontier"
+    // `interactionDelay` (CodeMirror's own anti-click-through guard on
+    // `acceptCompletion`) is irrelevant here; the config facet combines
+    // across extensions, so it is turned off rather than waited out.
+    const editor = new EditorView({
+      state: EditorState.create({
+        doc: text,
+        selection: { anchor: cursor },
+        extensions: [workflowAutocomplete([]), autocompletion({ interactionDelay: 0 })],
+      }),
+      parent: document.body,
+    })
+    view = editor
+
+    startCompletion(editor)
+    await waitFor(() => expect(completionStatus(editor.state)).toBe("active"))
+    expect(acceptCompletion(editor)).toBe(true)
+
+    expect(editor.state.doc.toString()).toBe(text)
   })
 })
