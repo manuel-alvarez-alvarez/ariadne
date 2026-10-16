@@ -177,9 +177,10 @@ Most of these are never yours to set: the daemon writes them into the
 environment of the `ariadne mcp serve` process it launches for each
 session, so that session's tool calls scope themselves to the right task
 without asking. `ARIADNE_SESSION_ID` names the session. `ARIADNE_SEAT` is
-`orchestrator`, `agent`, or — beside a pull request session — `reviewer`.
+`orchestrator`, `agent`, or — beside a pull request session — `reviewer` or
+`keeper`.
 An orchestrator's session gets `ARIADNE_GOAL_ID` alone; a task's column
 agent gets `ARIADNE_GOAL_ID` and `ARIADNE_TASK_ID` both.
-`ARIADNE_PULL_REQUEST_ID` is set instead, on a session reviewing a pull
-request. `ARIADNE_STEP` is the odd one out: the MCP server reads it as the
+`ARIADNE_PULL_REQUEST_ID` is set instead, on a session reviewing or keeping a
+pull request. `ARIADNE_STEP` is the odd one out: the MCP server reads it as the
 task's current column if it is set, but no launcher sets it today.

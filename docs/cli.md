@@ -56,7 +56,7 @@ allowing option. Repeat `--location` for each path the call touches.
 ## List every session
 
 `ariadne session ls` lists Ariadne's own sessions — an orchestrator's, a
-column agent's, a reviewer's — next to outside sessions: conversations an ACP
+column agent's, a reviewer's, a keeper's — next to outside sessions: conversations an ACP
 agent holds that Ariadne never started. Rows come newest activity first.
 
 ```sh
@@ -537,8 +537,9 @@ ariadne pr babysit <repo-id> 42 --model claude-acp:<model-id>
 ariadne pr babysit <repo-id> 42 --stop
 ```
 
-`ariadne pr ls` lists every open request of your enabled repositories, read
-live off the forge, as the desktop's **All** does. `--mine` narrows it to
+`ariadne pr ls` lists the open requests from each enabled repository's last
+fetch, as the desktop's **All** does. A repository with no fetch yet has no
+requests in the list. `--mine` narrows it to
 your own, and `--review-requests` to the ones that ask for your review; the
 two do not combine. `--repo` narrows it to one repository, and `--watch`
 redraws it as requests move. The author column reads "you" on a request of
@@ -549,9 +550,11 @@ request's newest session.
 `ariadne pr inspect <repo> <number>` prints every field of one request,
 read off the forge now, as a key-value block in a fixed reading order, the
 body last after a `---` line. `ariadne pr search` searches an enabled
-repository's open requests live, by number, title or author, your own left
-out. `ariadne pr refresh` wakes one repository's fetch, or every enabled
-one.
+repository's last fetched open requests, by number, title or author, your
+own left out. `ariadne pr refresh` requests an immediate fetch for one
+repository, or every enabled one. It returns after it wakes the fetch, not
+after the fetch ends, so a following `pr ls` can still show the previous
+list.
 
 `ariadne pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
 S]... [--attach]` asks Ariadne to review a request of your own (029):
@@ -711,7 +714,7 @@ the built-in help screen.
 | `goal` | `create --model AGENT:MODEL [--title] [-d\|--description] [--from-issue] [--repo]... [--effort] [--workflow]`; `ls [--status STATUS,...] [-a] [--watch]`; `inspect`, `complete`, `cancel [-y]`, `rm [-y]`, and `attach` take an ID. |
 | `task` | `create GOAL --title TEXT --agent STEP[:SKILLS]=MODEL[@EFFORT] [--description] [--depends-on]... [--repo]`; `update ID` accepts `--title`, `--description`, repeatable `--agent` and `--depends-on`, or `--clear-depends-on`; `ls` accepts `--goal`, repeatable `--status`, `-a`, `--step`, and `--watch`; `inspect`, `messages [--full]`, `history`, `cancel [-y]`, `retry`, `diff`, `attach [--seat] [--step]`, and `logs [--seat] [-f] [--tail] [--since] [--kind]...` take an ID. |
 | `session` | `ls` accepts `--kind`, `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `--refresh`, `-a`, and `--watch`; `new --model AGENT:MODEL [--effort] [--dir] [--attach]`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
-| `events`, `attention`, `attach` | `events [-f] [--goal] [--task] [--session] [--kind]...`; `attention [--watch]`; `attach ID [--seat orchestrator\|agent\|reviewer] [--agent AGENT]`. |
+| `events`, `attention`, `attach` | `events [-f] [--goal] [--task] [--session] [--kind]...`; `attention [--watch]`; `attach ID [--seat orchestrator\|agent\|reviewer\|keeper] [--agent AGENT]`. |
 | `stats` | `work`, `time`, `spend`, `models`, and `attention`; each accepts `--since` and `--repo`; `models` also accepts `--seat`. |
 | `pr`, `issue`, `forge` | `pr ls [--repo] [--mine\|--review-requests] [--watch]`, `inspect REPO NUMBER`, `search --repo REPO QUERY`, `refresh [--repo]`, `review REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`, `babysit REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`; `issue ls --repo REPO [--all]`; `forge tunnel [on\|off]`. |
 | `permissions` | `ai show`, `enable [--wait]`, `disable`, `refresh [--wait]`, `set` with `--allow-threshold`, `--deny-threshold`, `--default-thresholds`, `--flavour`, or `--device`, and `test --tool TEXT --input JSON [--kind] [--option]... [--location]... [--workspace]`; `learned list [--repo]`, `show ID`, `rm ID`, and `scope ID all\|repository`. |
