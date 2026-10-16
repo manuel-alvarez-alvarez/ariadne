@@ -41,6 +41,9 @@ const WRAPPERS: [&str; 8] = [
     "sudo", "env", "time", "nohup", "timeout", "nice", "command", "exec",
 ];
 /// The options of `time` that take a value; the operation hints have none.
+/// `-o` and `--output` also take a value, but that value is a file `time`
+/// writes to, so the loop below rejects them before it ever reaches this
+/// list.
 const TIME_VALUES: [&str; 4] = ["-f", "-o", "--format", "--output"];
 /// The programs whose family names their first plain argument too.
 const SUBCOMMANDS: [&str; 14] = [
@@ -424,8 +427,15 @@ fn first_command_has_no_program_setup(command: &str) -> bool {
             words = &words[1..];
             while let Some(&option) = words.first().filter(|word| word.starts_with('-')) {
                 if word == "env"
-                    && (option.starts_with("-S") || option.starts_with("--split-string"))
+                    && (option.starts_with("-S")
+                        || option.starts_with("--split-string")
+                        || option.starts_with("-P")
+                        || option.starts_with("-C")
+                        || option.starts_with("--chdir"))
                 {
+                    return false;
+                }
+                if word == "time" && (option.starts_with("-o") || option.starts_with("--output")) {
                     return false;
                 }
                 let taken = if values.contains(&option) { 2 } else { 1 };
@@ -525,7 +535,10 @@ fn go_option_matches(argument: &str, option: &str) -> bool {
     })
 }
 
-/// A command holds one simple command and its stripped output filters.
+/// A command holds one simple command and its stripped output filters. An
+/// unquoted `{` or `}` is rejected whole, since Bash's brace expansion runs
+/// before the program ever sees the word and can turn one quiet-looking
+/// argument into an option and a payload.
 fn is_single_family_command(command: &str) -> bool {
     let command = without_filters(command).trim();
     let bytes = command.as_bytes();
@@ -552,7 +565,9 @@ fn is_single_family_command(command: &str) -> bool {
                     return false;
                 }
                 b'\'' | b'"' => quote = Some(byte),
-                b'`' | b'(' | b')' | b';' | b'&' | b'|' | b'>' | b'<' | b'\n' => return false,
+                b'`' | b'(' | b')' | b';' | b'&' | b'|' | b'>' | b'<' | b'\n' | b'{' | b'}' => {
+                    return false;
+                }
                 b'$' if bytes.get(index + 1) == Some(&b'(') => return false,
                 _ => {}
             },
@@ -958,6 +973,12 @@ mod tests {
             "git difftool '--extcmd=./payload'",
             "git difftool --ext\"cmd\"=./payload",
             "git -\"c\" core.fsmonitor=./payload status",
+            "git difftool {-x,./payload}",
+            "time -o note.txt git status",
+            "time --output=note.txt git status",
+            "env -P /tmp/bin git status",
+            "env -C /tmp git status",
+            "env --chdir=/tmp git status",
             "git grep -nO./payload TODO",
             "git rebase -kx ./payload main",
             "make -kf evil.mk",
