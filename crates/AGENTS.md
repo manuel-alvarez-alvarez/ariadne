@@ -148,19 +148,21 @@ The pre-commit hook (`.githooks/pre-commit`) runs, for what is staged:
 `cargo machete .` when a `Cargo.toml` is staged.
 
 The pre-push hook (`.githooks/pre-push`) runs the whole workspace, for a push
-that touches `crates/`:
+that touches `crates/`, except the test suite:
 
 ```sh
 cargo machete .
 cargo audit
 cargo build --locked --workspace --bins
-cargo nextest run --workspace --profile ci
 cargo test --doc --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 scripts/check-unused-rust
 scripts/check-migrations.sh
 ```
+
+`cargo nextest run --workspace --profile ci` takes minutes, so the hook
+leaves it to CI. Run it by hand before a push when the change warrants it.
 
 `cargo build --workspace --bins` links every shipped binary.
 `ariadne-daemon` sets `test = false` on its `[[bin]]`, so nextest never

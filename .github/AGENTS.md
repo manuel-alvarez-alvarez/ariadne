@@ -65,7 +65,11 @@ The UI caches npm's downloads through `actions/setup-node`, keyed by
   [`crates/AGENTS.md`](../crates/AGENTS.md) or
   [`ui/AGENTS.md`](../ui/AGENTS.md). A step that runs something neither file
   names is either undocumented there or redundant here. The pre-push hook
-  mirrors `ci.yml`, so a check added to one is added to the other.
+  runs every check `ci.yml` runs except the Rust test suite (`cargo nextest`)
+  and the UI test suite (`npm test`): those take minutes, so CI alone runs
+  them and a contributor runs either by hand before a push the change
+  warrants it. A check added to `ci.yml` outside those two suites is added to
+  the hook too.
 - The project version changes only through `release-please-config.json` (and
   the manifest it points at): nobody edits a version field, `CHANGELOG.md` or
   a tag by hand. See [`RELEASING.md`](RELEASING.md) for what one bump touches.
