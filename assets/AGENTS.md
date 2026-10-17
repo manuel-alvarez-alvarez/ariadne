@@ -67,12 +67,15 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   recording, below. After the goal is created, the tape attaches to its
   orchestrator's console (`ariadne goal attach`), types the answer to the
   stub's question, and detaches with two `Ctrl-C`, the same way a person
-  would — only then, back at the shell, does a hidden step start
-  `seed-demo-goal.py` in the background, redirected: a `Hide`/`Show` pair
-  only skips *capturing* frames, it does not clear the terminal's own
-  scrollback, so a command typed and run between them would still show once
-  `Show` resumes, which is what the `clear` at the end of each hidden block
-  is for.
+  would — only then, back at the shell, does a hidden step run
+  `seed-demo-goal.py`, redirected, to completion: a `Hide`/`Show` pair only
+  skips *capturing* frames, it does not clear the terminal's own scrollback,
+  so a command typed and run between them would still show once `Show`
+  resumes, which is what the `clear` at the end of each hidden block is
+  for — chained after the seeder rather than backgrounded alongside it, so
+  the shell does not reach `clear` until seeding is done. Its own waits are
+  each bounded, so a `Sleep` safely longer than that bound, itself hidden
+  and so free, is what the tape waits out before showing `task ls` ask.
 - `record-demo-ui.mjs`: `node assets/record-demo-ui.mjs`. It builds the
   release binaries, creates an isolated Ariadne home with a two-second inert
   `cli_bin` (the scheduler can create metadata rows for the demo, but it

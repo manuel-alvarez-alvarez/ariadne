@@ -15,11 +15,13 @@
 #     with its REST API on 127.0.0.1:18765 (tcp_listen), and
 #     assets/demo-orchestrator-agent.py registered as the acp agent
 #     `demo-orchestrator` — a hidden step after the console exchange below
-#     seeds the goal's tasks over that REST API, the same way
-#     assets/record-demo-ui.mjs does, only once the stub has accepted the
-#     typed answer: seed-demo-goal.py adds the tasks and finalizes the plan
-#     as soon as it finds the goal, so starting it any earlier would let
-#     the tasks and the finalized plan show up before the answer did
+#     runs to completion before `task ls` asks, seeding the goal's tasks
+#     over that REST API the same way assets/record-demo-ui.mjs does, only
+#     once the stub has accepted the typed answer: seed-demo-goal.py adds
+#     the tasks and finalizes the plan as soon as it finds the goal, so
+#     starting it any earlier, or not waiting it out, would let the tasks
+#     and the finalized plan show up before the answer did, or not show up
+#     at all yet when `task ls` runs
 #   - /tmp/ariadne-demo-repo, a git repository seeded with
 #     assets/seed-demo-repo.sh
 
@@ -78,14 +80,19 @@ Sleep 500ms
 
 Hide
 # Only now, after the console showed the stub accept the typed answer, is
-# the task seeder started: assets/seed-demo-goal.py adds the goal's two
-# tasks and finalizes the plan as soon as it finds the goal, which already
-# exists by this point, so it would race ahead of the answer if it ran any
-# earlier. A second behind a daemon that only answers loopback requests
-# locally is plenty for its REST calls to land before `task ls` below asks.
-Type "(python3 $ARIADNE_REPO_ROOT/assets/seed-demo-goal.py http://127.0.0.1:18765 opencode:opencode/big-pickle >/tmp/ariadne-demo-seed.log 2>&1 &); clear"
+# the task seeder run: assets/seed-demo-goal.py adds the goal's two tasks
+# and finalizes the plan as soon as it finds the goal, which already exists
+# by this point, so it would race ahead of the answer if it ran any
+# earlier. Run in the foreground, never backgrounded, so the shell does not
+# return — and `clear` does not run — until it is done; its own waits are
+# each bounded (the goal and the orchestrator session it looks for already
+# exist, so those resolve at once, and its last, best-effort wait for the
+# first task to leave pending is capped at 10s), so the `Sleep` below,
+# itself hidden and so free, only has to outlast that bound once, not guess
+# at a completion time the way a backgrounded command's fixed pause would.
+Type "python3 $ARIADNE_REPO_ROOT/assets/seed-demo-goal.py http://127.0.0.1:18765 opencode:opencode/big-pickle >/tmp/ariadne-demo-seed.log 2>&1; clear"
 Enter
-Sleep 1s
+Sleep 15s
 Show
 
 Type "ariadne task ls"
