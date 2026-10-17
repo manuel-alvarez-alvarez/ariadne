@@ -600,8 +600,8 @@ Out: the daemon endpoints themselves (012).
     and `?repo=`. The screen is a dashboard. It leads with a `Key figures`
     row: tasks finished, finish rate and median goal lead time off the work
     family, total tokens (input and output) off the spend family, and
-    interventions and person time, the models family's `interventions.total`
-    and `interventions.person_secs` summed over its rows; a figure reads `—`
+    interventions and person time off the attention family's own
+    `interventions.total` and `interventions.person_secs`; a figure reads `—`
     until its answer is in. Under it, the screen passes `{ since, repo }` to
     five sections, in order: Models, Work, Time, Spend and Attention, each
     `src/components/stats/<family>-section.tsx`, laid out as a card grid —
@@ -611,7 +611,9 @@ Out: the daemon endpoints themselves (012).
     read's error or skeleton, and the one muted sentence of an empty family.
     Cards in one grid row share its height; a chart is at least 160px high
     and grows into the room its card leaves, and tiles wrap to fill each of
-    their rows. Each reads
+    their rows. A section that pairs two charts lays them side by side from
+    `md` up and stacked below it, so a narrow window keeps each chart full
+    width rather than shrinking two to fit one row. Each reads
     `GET /v1/stats/<family>` under `qk.stats.<family>(filter)`, and every
     `task_updated` and `session_updated` event invalidates the `stats` group
     — parity with `ariadne stats <family>` (014). A chart is colour-coded by
@@ -619,12 +621,25 @@ Out: the daemon endpoints themselves (012).
     by an `sr-only` table of the same numbers for a screen reader; that
     table's wrapper carries `relative` so the table's own `absolute`
     positioning stays inside it rather than the document, which would
-    otherwise stretch the page past the viewport into a second scrollbar.
-    `SpendSection` draws one `StatTimeChart` of input and output tokens and no
-    by-model chart — the Models section is where a model is compared. Every
-    figure — a key figure, a tile, a table column and a chart series —
-    explains itself in one short sentence, shown on hover and on keyboard
-    focus and wired as its accessible description (023).
+    otherwise stretch the page past the viewport into a second scrollbar. The
+    screen draws its variety of widgets through four chart primitives —
+    `StatTimeChart` (a stacked trend over buckets, an optional `line` series
+    overlaid for a second trend), `StatBarChart` (a ranked or grouped
+    comparison), `StatPieChart` (a composition or a share, a donut summing to
+    its whole) and the plain `StatTable` — rather than one chart type
+    repeated five times: `WorkSection` overlays `landed` as a trend line on
+    its stacked outcome columns; `TimeSection` pairs its duration bars with a
+    share donut and a small visible table of the same statuses; `SpendSection`
+    pairs its token trend with a composition donut, split into fresh input,
+    cached input and output, and a small visible table of the same split;
+    `ModelsSection` replaces a full comparison table per seat with a summary
+    card (`StatTiles` of the seat's totals) and a `StatBarChart` ranking its
+    models, a model's full figures carried in the chart's own tooltip and its
+    `sr-only` table rather than a table column each; `SpendSection` draws no
+    chart of `by_model` there — the Models section is where a model is
+    compared. Every figure — a key figure, a tile, a table column and a chart
+    series — explains itself in one short sentence, shown on hover and on
+    keyboard focus and wired as its accessible description (023).
 38. Toasts show at the bottom left, clear of the header and the pane
     (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
 39. A goal a workflow runs (030) is shown by its columns. Its lane on the
@@ -768,6 +783,22 @@ Out: the daemon endpoints themselves (012).
   session or a goal moves, since any may be a fact`); Stats is the last entry of the
   sidebar (`ui/src/components/app-shell.test.tsx::ends the navigation with
   stats, and lists Forge beside the other screens`).
+- `ModelsSection` draws a summary card and a ranked chart per seat, heaviest
+  model first, and omits a seat with no row
+  (`ui/src/components/stats/models-section.test.tsx::draws a summary card and
+  a ranked chart for each seat, heaviest model first`, `::omits a seat with no
+  row`); `TimeSection` pairs its duration bars with a share donut and a small
+  visible comparison table
+  (`ui/src/components/stats/time-section.test.tsx::draws a share chart and a
+  compact comparison table beside the duration bars`); `SpendSection` pairs
+  its token trend with a composition donut split into fresh input, cached
+  input and output, and a small visible comparison table
+  (`ui/src/components/stats/spend-section.test.tsx::draws the tiles and the
+  time chart from a mocked response, with no by-model chart`);
+  `StatTimeChart` accepts an overlaid trend `line` with no change to its
+  `sr-only` numbers
+  (`ui/src/components/stats/stat-time-chart.test.tsx::accepts a trend line
+  over the same buckets, with no change to its sr-only numbers`).
 - Every key figure on the Stats screen, and every tile and chart series of its
   own Work, Time, Spend and Attention sections, explains itself on hover and
   on keyboard focus, as its accessible description (023)
@@ -777,7 +808,7 @@ Out: the daemon endpoints themselves (012).
   every chart series, on hover`, and the same title in
   `time-section.test.tsx`, `spend-section.test.tsx` and
   `attention-section.test.tsx`).
-- 95 test files cover the features, the API layer and the event stream;
+- 97 test files cover the features, the API layer and the event stream;
   most screens are asserted in their own `*.test.tsx` beside them, though a
   few (noted under Known gap) are exercised only through the panels and
   boards that mount them.

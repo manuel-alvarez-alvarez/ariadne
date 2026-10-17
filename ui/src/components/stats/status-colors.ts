@@ -19,4 +19,10 @@ export const STATUS_COLORS = {
   pending: "var(--color-status-pending)",
   /** A plain count with no status of its own. */
   active: "var(--color-status-active)",
+  /** Work waiting to start, the same meaning the board's Ready column carries. */
+  ready: "var(--color-status-ready)",
+  /** Work out for review. */
+  review: "var(--color-status-review)",
+  /** Work a review approved. */
+  approved: "var(--color-status-approved)",
 } as const

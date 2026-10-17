@@ -1,7 +1,7 @@
 ---
 id: stats
 status: current
-updated: 2026-10-10
+updated: 2026-10-17
 areas: [api, store, daemon, cli, ui]
 commits: []
 tests:
@@ -23,7 +23,10 @@ tests:
   - ui/src/components/stats/work-section.test.tsx
   - ui/src/components/stats/time-section.test.tsx
   - ui/src/components/stats/spend-section.test.tsx
+  - ui/src/components/stats/models-section.test.tsx
   - ui/src/components/stats/stat-time-chart.test.tsx
+  - ui/src/components/stats/stat-bar-chart.test.tsx
+  - ui/src/components/stats/stat-pie-chart.test.tsx
   - ui/src/components/stats/attention-section.test.tsx
   - ui/src/components/stats/status-colors.test.ts
   - ui/src/components/stats/stat-explain.test.tsx
@@ -242,22 +245,36 @@ not a change to how they decide it.
     spans both. Each draws through the shared `StatSection`: its heading
     (`text-sm font-medium`), one sentence of the question it answers, the
     read's error or skeleton, and the one muted sentence of an empty family.
+    A section that pairs a chart with a second, narrower one lays the two out
+    side by side from `md` up, and stacked on a narrower screen
+    (`flex flex-col gap-4 md:flex-row`).
     The other shared pieces are `StatTiles` and `StatTile` (a label, a value
     and an optional hint), `StatTable` (a compact comparison table, numbers
     right-aligned, columns given by the caller), `StatTimeChart` (stacked
     bars per bucket on a time axis, an hour bucket labelled as a time and
     any other as a date, the date added beside an hour's own tooltip and
-    `sr-only` row) and `StatBarChart` (a horizontal bar per row). Every
-    chart keeps an `sr-only` table of the same numbers under it,
-    for a screen reader and for a test, in a `relative` wrapper: `sr-only` is
-    `position: absolute`, and with no ancestor positioned the table would lay
-    out against the document and draw a second scrollbar. A colour carries
+    `sr-only` row, with an optional `line` series overlaid on the same axis
+    as a trend), `StatBarChart` (a horizontal bar per row, ranked by the
+    caller's own order) and `StatPieChart` (a donut of slices that sum to the
+    whole, for a composition or a share a stacked or ranked chart reads less
+    directly). Every chart keeps an `sr-only` table of the same numbers under
+    it, for a screen reader and for a test, in a `relative` wrapper: `sr-only`
+    is `position: absolute`, and with no ancestor positioned the table would
+    lay out against the document and draw a second scrollbar. A chart paired
+    with a small visible `StatTable` of the same rows carries its exact
+    values twice on purpose: once at a glance in the chart's own tooltip and
+    `sr-only` table, and once spelled out beside it for a sighted reader who
+    wants every number without hovering each slice or bar in turn — `TimeSection`
+    and `SpendSection` each pair one chart this way; `ModelsSection` does not,
+    since its own bar chart's tooltip and `sr-only` table already carry a
+    model's full row. A colour carries
     one meaning, off the
     status ramp in `index.css` through the shared `STATUS_COLORS` module —
     finished or ended on `status-done`, failed on `status-danger`, stalled on
     `status-warn`, cancelled on `status-pending`, a neutral count on
-    `status-active` — and each chart's series config lives in
-    `chart-configs.ts`.
+    `status-active`, work waiting to start on `status-ready`, work out for
+    review on `status-review` and work a review approved on `status-approved`
+    — and each chart's series config lives in `chart-configs.ts`.
 36. Each section reads its family under `qk.stats.<family>(filter)`, in
     the query-key group `stats`. Every `task_updated`, `session_updated` and
     `goal_updated` event invalidates the whole group (`qk.stats.all()`),
@@ -312,9 +329,10 @@ changes landed, over time.
     prints the DTO whole. `WorkSection` draws
     `StatTiles` of tasks finished, goals completed, changes landed, finish
     rate and median goal lead time, and one `StatTimeChart` of tasks per
-    bucket, stacked `finished`, `failed` and `cancelled` on `STATUS_COLORS`,
-    with goals completed and landed carried in its tooltip and its `sr-only`
-    table alongside the stacked counts.
+    bucket, stacked `finished`, `failed` and `cancelled` on `STATUS_COLORS`
+    (the outcome columns), with `landed` overlaid on the same bucket axis as
+    a `line` (the trend) and goals completed carried in the tooltip and the
+    `sr-only` table alongside the stacked counts and the trend line.
 
 ### Time
 
@@ -331,8 +349,11 @@ changes landed, over time.
 44. `ariadne stats time` prints the lead-time and person-waiting figures as
     label and value lines, then `STATUS`, `TOTAL`, `MEDIAN` and `SHARE` rows.
     The desktop section shows median and p90 lead time, person wait time and
-    prompt count, then a "Where the time goes" status bar chart with each
-    row's median and share in its tooltip.
+    prompt count, then a "Where the time goes" status bar chart (the duration
+    bars) with each row's median and share in its tooltip, beside a
+    `StatPieChart` of the same statuses' share of the total time (the share
+    chart), each status on the ramp colour rule 35 names for it, and a small
+    visible `StatTable` of status and share beside that chart.
 
 ### Spend
 
@@ -370,9 +391,12 @@ nothing here converts one.
     share, output tokens, and tokens per finished task (`input_tokens +
     output_tokens` of `per_finished_task`, hinted with the task count). Under
     them, one `StatTimeChart` stacks `input_tokens` and `output_tokens` per
-    bucket, the bucket's own cached share added to its tooltip. It draws no
-    chart of `by_model`: `ModelsSection` is where a model is compared. A
-    family with no ended session is empty.
+    bucket, the bucket's own cached share added to its tooltip (the token
+    trend), beside a `StatPieChart` of the span's totals split into fresh
+    input, cached input and output tokens (the composition chart) and a
+    small visible `StatTable` of the same three, their tokens and their
+    share of the span's whole. It draws no chart of `by_model`: `ModelsSection`
+    is where a model is compared. A family with no ended session is empty.
 
 ### Models
 
@@ -402,14 +426,24 @@ The CLI prints one comparison table per seat, headed by the seat.
 `--seat orchestrator|agent` belongs only to `stats models` and limits table output.
 JSON output always contains the complete DTO, regardless of `--seat`.
 A seatless row uses the TASKS columns under `LOOSE SESSIONS` in the CLI and remains available in JSON.
-The desktop section draws the seat tables through `StatTable`, omitting empty seats.
-Responses without rows for the displayed seats use the shared empty state, including responses with only seatless rows.
-Each desktop table sorts by its first count descending, then by model.
 
-| Seat | Columns |
-| --- | --- |
-| Agent | MODEL, TASKS, TOKENS, TIME, MESSAGES, FINISHED |
-| Orchestrator | MODEL, GOALS, TOKENS, TIME, MESSAGES |
+The desktop section draws one summary card per seat instead of the CLI's own
+table: a `StatTiles` row of the seat's totals (its model count and its
+primary figure — agent tasks, orchestrator goals — plus its tokens and its
+time, summed across every model of the seat), then a `StatBarChart` ranking
+that seat's own models by the same primary figure, heaviest first. A model's
+other figures — tokens, time, messages, and an agent's own finished count —
+carry no bar of their own: they ride in the chart's tooltip and its
+`sr-only` table, which is where their exact value lives rather than in a
+column of a visible table (rule 35). `ModelsSection` omits a seat with no
+row, the same as the table it replaced did. Responses without rows for
+either seat use the shared empty state, including responses with only
+seatless rows.
+
+| Seat | Ranked by | Tooltip and `sr-only` table |
+| --- | --- | --- |
+| Agent | TASKS | MODEL, TASKS, TOKENS, TIME, MESSAGES, FINISHED |
+| Orchestrator | GOALS | MODEL, GOALS, TOKENS, TIME, MESSAGES |
 
 TOKENS uses compact notation and TIME the existing duration formatter.
 
@@ -566,7 +600,17 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 - `StatTimeChart` labels an hour bucket as a time, with the date added
   rather than dropped
   (`stat-time-chart.test.tsx` "labels an hour bucket as a time, with the
-  date added, not a bare date").
+  date added, not a bare date"), and an overlaid `line` carries its exact
+  value in the same `sr-only` table with no change to the rest
+  (`stat-time-chart.test.tsx` "accepts a trend line over the same buckets,
+  with no change to its sr-only numbers").
+- `StatBarChart` and `StatPieChart` each give their `sr-only` table a
+  positioned ancestor, and `StatPieChart` labels a slice's row with its
+  `config` label rather than its raw key
+  (`stat-bar-chart.test.tsx` "gives the sr-only table a positioned
+  ancestor", `stat-pie-chart.test.tsx` "gives the sr-only table a positioned
+  ancestor", "labels each slice's row with its own config label, not its raw
+  key").
 - Every key figure, and every tile and chart series in the Work, Time, Spend,
   and Attention sections, explains itself on hover (`stats.test.tsx`
   "explains every key figure, on hover"; `work-section.test.tsx`,
@@ -606,7 +650,9 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   `qk.stats.work`, and says its empty sentence where there is nothing to show
   (`work-section.test.tsx` "asks for its family with the filter, and says its
   empty sentence", "draws the tiles and the chart from what the daemon
-  answers").
+  answers"); `landed`'s trend line changes none of its tooltip or `sr-only`
+  figures (`work-section.test.tsx` "explains every tile and every chart
+  series, on hover").
 - A `goal_updated` event invalidates the stats too (`dispatch.test.ts`
   "refetches every stat when a task, a session or a goal moves, since any
   may be a fact").
@@ -623,6 +669,10 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 - The desktop section renders its tiles and status chart from `qk.stats.time`
   (`time-section.test.tsx` "asks for its family with the filter and draws its
   time figures").
+- The share chart and its visible comparison table draw beside the duration
+  bars, each status's exact share available in both
+  (`time-section.test.tsx` "draws a share chart and a compact comparison
+  table beside the duration bars").
 
 #### Spend
 
@@ -656,7 +706,8 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   and a family with no ended session is empty
   (`commands/stats/spend.rs::tests::a_family_with_no_ended_session_is_empty`).
 - `SpendSection` draws the tiles and the time chart from a mocked response,
-  with no by-model chart
+  with no by-model chart, plus the composition chart and its visible table
+  splitting the totals into fresh input, cached input and output
   (`spend-section.test.tsx` "draws the tiles and the time chart from a
   mocked response, with no by-model chart").
 
@@ -688,6 +739,14 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   its section with the other four families (`stats.test.tsx` "asks every
   family with the filters in its URL, under the key qk names"; "renders the
   five sections in order, under one heading style").
+- `ModelsSection` asks its family with the filter and says its empty sentence
+  for an empty answer and for one with only unrecognized seats
+  (`models-section.test.tsx` "asks for its family with the filter, and says
+  its empty sentence", "says its empty sentence for rows with no recognized
+  seat"); it draws a summary card and a ranked chart per seat, heaviest model
+  first, and omits a seat with no row
+  (`models-section.test.tsx` "draws a summary card and a ranked chart for
+  each seat, heaviest model first", "omits a seat with no row").
 
 #### Attention
 
