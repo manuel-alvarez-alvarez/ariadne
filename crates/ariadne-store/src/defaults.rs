@@ -1512,8 +1512,9 @@ mod tests {
     /// trigger and caps its non-blocking findings at five. A finding with
     /// no nameable trigger is downgraded and marked unverified. The four
     /// task-column review skills also pin their reading to the diff, reuse
-    /// the column report's evidence where it covers the reviewed revision,
-    /// and bound reading outside the diff to a risk the reviewer can name.
+    /// the column report's evidence where it covers the reviewed revision
+    /// (and, for `performance-review`, the same workload too), and bound
+    /// reading outside the diff to a risk the reviewer can name.
     #[test]
     fn every_review_skill_names_a_trigger_and_caps_its_optional_findings() {
         for name in [
@@ -1555,6 +1556,13 @@ mod tests {
             assert!(
                 text.contains("only to judge a risk you can name"),
                 "the {name} skill does not bound reading outside its scope to a named risk"
+            );
+        }
+        for name in ["spec-review", "architecture-review", "performance-review"] {
+            let text = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                text.contains("covers this revision") || text.contains("revision and workload"),
+                "the {name} skill does not bind its reused evidence to the reviewed revision"
             );
         }
     }

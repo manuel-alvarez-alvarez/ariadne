@@ -14,8 +14,8 @@ summary.
 1. Pin the scope to the diff. Find the hot path it changes, and a
    realistic workload.
    Done when the workload names a real input size and operation.
-2. Reuse the column report's measurement if it covers this workload.
-   Else measure: method, environment, result.
+2. Reuse the column report's measurement only if it covers this
+   revision and workload. Else measure: method, environment, result.
    Done when another reviewer can repeat it.
 3. Read the hot path for every cost class below. Read code outside the
    diff only to judge a risk you can name.
