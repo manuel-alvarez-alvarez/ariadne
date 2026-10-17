@@ -620,4 +620,34 @@ mod tests {
             None
         );
     }
+
+    /// Every line `goal_attention` writes is Simplified Technical English
+    /// (006 rule 11).
+    #[test]
+    fn goal_attention_lines_are_simplified_technical_english() {
+        use ariadne_store::defaults::ste;
+
+        let lines = goal_attention(&[
+            task("Build the widget importer", "failed", false),
+            task("Wire up the exporter", "in_progress", true),
+        ])
+        .expect("two tasks need it");
+        let done = goal_attention(&[task("a", "finished", false), task("b", "cancelled", false)])
+            .expect("the goal is over");
+
+        for text in [lines, done] {
+            for sentence in ste::sentences(&text) {
+                let words = sentence.split_whitespace().count();
+                assert!(
+                    words <= ste::MAX_WORDS,
+                    "a goal attention line runs a sentence of {words} words: {sentence}"
+                );
+            }
+            assert_eq!(
+                ste::banned_word(&text),
+                None,
+                "a goal attention line: {text}"
+            );
+        }
+    }
 }

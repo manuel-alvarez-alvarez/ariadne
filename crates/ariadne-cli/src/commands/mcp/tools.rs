@@ -585,10 +585,14 @@ impl AriadneMcp {
         // staff one agent — tens of thousands of characters per call, none of
         // which it chooses between. The agent staffed on the skill is the one
         // that reads the document.
+        //
+        // A skill with no document, shipped or written, is left out: an old
+        // staffing on it keeps its row (017 rule 7), but staffing a new
+        // agent on it would hand that agent an empty document to read.
         json_result(serde_json::Value::Array(
             skills
                 .into_iter()
-                .filter(|skill| skill.seat == SkillSeat::Task)
+                .filter(|skill| skill.seat == SkillSeat::Task && !skill.document.is_empty())
                 .map(|skill| serde_json::json!({"name": skill.name, "summary": skill.summary}))
                 .collect(),
         ))
@@ -1409,6 +1413,144 @@ mod tests {
         assert!(text.text.contains("Continue"), "{}", text.text);
     }
 
+    /// Every refusal a tool builds, and every result string it writes rather
+    /// than passing the daemon's own JSON back, is Simplified Technical
+    /// English (006 rule 11): the same two rules the session rules and the
+    /// tool descriptions hold to.
+    #[tokio::test]
+    async fn every_refusal_and_result_string_is_simplified_technical_english() {
+        use ariadne_store::defaults::ste;
+
+        fn agent_at(endpoint: &str) -> AriadneMcp {
+            server_at(
+                McpSeat::Agent,
+                Client::resolve(Some(endpoint), None).with_session("01SESSION"),
+            )
+        }
+
+        let mut texts: Vec<(&str, String)> = Vec::new();
+
+        let (endpoint, _seen) = recording_daemon().await;
+        let err = orchestrator_at(&endpoint)
+            .switch_session(Parameters(SwitchSessionReq {
+                session_id: "01SESSION2".into(),
+                model: "default".into(),
+                effort: None,
+            }))
+            .await
+            .expect_err("default is no model");
+        texts.push(("switch_session's refusal", err.message.to_string()));
+
+        let (endpoint, _seen) = recording_daemon().await;
+        let err = agent_at(&endpoint)
+            .fail_task(Parameters(FailTaskReq { reason: "".into() }))
+            .await
+            .expect_err("a failure with no reason");
+        texts.push(("fail_task's refusal", err.message.to_string()));
+
+        let (endpoint, _seen) = recording_daemon().await;
+        let err = agent_at(&endpoint)
+            .reply_comment(Parameters(ReplyCommentReq {
+                comment_id: "01C".into(),
+                body: "".into(),
+            }))
+            .await
+            .expect_err("an empty reply");
+        texts.push(("reply_comment's refusal", err.message.to_string()));
+
+        let (endpoint, _seen) = recording_daemon_answering(r#"{"pending": true}"#).await;
+        let answer = server_at(
+            McpSeat::PullRequestKeeper,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        )
+        .reply_comment(Parameters(ReplyCommentReq {
+            comment_id: "01C".into(),
+            body: "Fixed it.".into(),
+        }))
+        .await
+        .expect("a pending reply");
+        let ContentBlock::Text(text) = &answer.content[0] else {
+            panic!("the answer came back as something other than text");
+        };
+        texts.push(("reply_comment's pending result", text.text.clone()));
+
+        let (endpoint, _seen) = recording_daemon().await;
+        let err = agent_at(&endpoint)
+            .edit_pending_comment(Parameters(EditPendingCommentReq {
+                forge_id: "rc-1".into(),
+                body: "".into(),
+            }))
+            .await
+            .expect_err("an empty edit");
+        texts.push(("edit_pending_comment's refusal", err.message.to_string()));
+
+        let (endpoint, _seen) = recording_daemon().await;
+        let err = agent_at(&endpoint)
+            .edit_pending_review_body(Parameters(EditPendingReviewBodyReq { body: "".into() }))
+            .await
+            .expect_err("an empty review body");
+        texts.push((
+            "edit_pending_review_body's refusal",
+            err.message.to_string(),
+        ));
+
+        let (endpoint, _seen) = recording_daemon().await;
+        let err = agent_at(&endpoint)
+            .report_pull_request(Parameters(ReportPullRequestReq {
+                ready: None,
+                head_sha: None,
+                reviewed_sha: None,
+            }))
+            .await
+            .expect_err("neither ready nor reviewed_sha");
+        texts.push((
+            "report_pull_request's empty refusal",
+            err.message.to_string(),
+        ));
+
+        let (endpoint, _seen) = recording_daemon().await;
+        let err = agent_at(&endpoint)
+            .report_pull_request(Parameters(ReportPullRequestReq {
+                ready: Some(true),
+                head_sha: None,
+                reviewed_sha: None,
+            }))
+            .await
+            .expect_err("ready with no head_sha");
+        texts.push((
+            "report_pull_request's head_sha refusal",
+            err.message.to_string(),
+        ));
+
+        let (endpoint, _seen) = recording_daemon_answering(r#"{"pending": true}"#).await;
+        let answer = server_at(
+            McpSeat::PullRequestReviewer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        )
+        .submit_review(Parameters(SubmitReviewReq {
+            event: ReviewEvent::Comment,
+            body: "One P1.".into(),
+            comments: vec![],
+        }))
+        .await
+        .expect("a pending review");
+        let ContentBlock::Text(text) = &answer.content[0] else {
+            panic!("the answer came back as something other than text");
+        };
+        texts.push(("submit_review's pending result", text.text.clone()));
+
+        for (name, text) in texts {
+            for sentence in ste::sentences(&text) {
+                let words = sentence.split_whitespace().count();
+                assert!(
+                    words <= ste::MAX_WORDS,
+                    "{name} runs a sentence of {words} words: {sentence}"
+                );
+            }
+            assert_eq!(ste::banned_word(&text), None, "{name}: {text}");
+        }
+    }
+
     /// The orchestrator is never offered a model it cannot staff an agent on.
     ///
     /// A disabled entry is dropped rather than shown as off: the catalog is
@@ -1580,6 +1722,37 @@ mod tests {
             skills[0],
             serde_json::json!({"name": "coding", "summary": "Write code."}),
             "the catalog is a name and a summary per skill, and nothing else"
+        );
+    }
+
+    /// `pull-request` left the catalog (017), so an old staffing on it reads
+    /// as a row with no document (017 rule 7): the catalog leaves it out
+    /// rather than staff a fresh agent on an empty document, while a skill
+    /// that still has one, shipped or written, still lists.
+    #[tokio::test]
+    async fn the_skill_catalog_excludes_a_skill_with_no_document() {
+        let (endpoint, _seen) = recording_daemon_answering(
+            r#"[
+                {"name":"pull-request","seat":"task","summary":"pull-request","document":"","document_is_default":false,"builtin":true,"created_at":"","updated_at":""},
+                {"name":"coding","seat":"task","summary":"Write code.","document":"Coding\n\nThe whole document of the skill.","document_is_default":true,"builtin":true,"created_at":"","updated_at":""}
+            ]"#,
+        )
+        .await;
+
+        let answered = orchestrator_at(&endpoint)
+            .list_skills(Parameters(Empty {}))
+            .await
+            .expect("list skills");
+
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the skill catalog came back as something other than text");
+        };
+        let skills: Vec<serde_json::Value> =
+            serde_json::from_str(&text.text).expect("the skill catalog is json");
+        assert_eq!(
+            skills,
+            vec![serde_json::json!({"name": "coding", "summary": "Write code."})],
+            "a skill with no document is left out, a skill with one still lists"
         );
     }
 

@@ -1093,6 +1093,38 @@ mod tests {
         );
     }
 
+    /// The line that names the request body closing an issue goal is
+    /// Simplified Technical English (006 rule 11), the same as the rest of
+    /// the briefing it is appended to.
+    #[test]
+    fn the_closes_line_is_simplified_technical_english() {
+        use ariadne_store::defaults::ste;
+
+        let goal = Goal {
+            issue_url: Some("https://github.com/acme/widgets/issues/9".into()),
+            ..goal()
+        };
+        let briefing = orchestrator_briefing(
+            default(PromptKind::OrchestratorBriefing),
+            &goal,
+            &[repo()],
+            &steps(),
+        );
+        let closes = briefing
+            .rsplit("\n\n")
+            .next()
+            .expect("the appended closes paragraph");
+
+        for sentence in ste::sentences(closes) {
+            let words = sentence.split_whitespace().count();
+            assert!(
+                words <= ste::MAX_WORDS,
+                "the closes line runs a sentence of {words} words: {sentence}"
+            );
+        }
+        assert_eq!(ste::banned_word(closes), None, "the closes line: {closes}");
+    }
+
     /// A step briefing with no worktree yet still renders every value: the
     /// fallbacks the daemon used to inline are part of the values now.
     #[test]

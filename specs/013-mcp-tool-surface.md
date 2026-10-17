@@ -145,7 +145,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      the user reaches it through its console. It resolves no thread and
      submits no review: those stay the reviewer seat's alone.
 5. A call to a tool outside the seat's list is refused by name rather than
-   forwarded.
+   forwarded. Its wording, and a tool's own refusal or built result string,
+   hold to the two readable STE rules (006 rule 11).
 6. A tool with no task in scope takes the session's own task, and refuses with
    an instruction to pass one where there is neither.
 7. The daemon's 4xx refusal — a transition the task cannot make, a column a
@@ -159,7 +160,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    is what the agent staffed on the skill reads; an orchestrator choosing
    between skills reads the line. The orchestrator's own skill and the review
    session's stay available through the API and CLI, but are not a task
-   staffing choice.
+   staffing choice. It also leaves out a skill with no document, shipped or
+   written: a dropped skill's row stays for the old staffing that still
+   names it (017 rule 7) and reads as empty, and the catalog never offers it
+   as a fresh choice. A skill with a document, shipped or written, still
+   lists.
 10. `read_messages` reads an inbox, not a transcript: a default read takes
     delivery of what is addressed to this session's own agent, and `all`
     reads the whole thread instead (018). The channel is the session's task,
@@ -269,10 +274,18 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   session's request with the body the agent gave it (rule 13)
   (`tools.rs::the_pending_edit_tools_call_the_routes_of_the_sessions_request`).
 - A refused call reaches the agent in the daemon's words
-  (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`).
+  (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`), and the
+  refusal naming a tool outside the seat's list is itself Simplified
+  Technical English (`mcp.rs::the_seat_refusal_is_simplified_technical_english`).
 - The skill catalog excludes orchestrator-only skills, and gives a name and a
   summary per skill and nothing else
-  (`tools.rs::the_skill_catalog_excludes_orchestrator_only_skills`).
+  (`tools.rs::the_skill_catalog_excludes_orchestrator_only_skills`). It also
+  excludes a skill with no document, shipped or written, while a skill with
+  one still lists
+  (`tools.rs::the_skill_catalog_excludes_a_skill_with_no_document`).
+- Every refusal a tool builds, and every result string it writes in place
+  of the daemon's own JSON, is Simplified Technical English
+  (`tools.rs::every_refusal_and_result_string_is_simplified_technical_english`).
 - A default `read_messages` takes delivery, and `all` reads the whole thread
   (`tools.rs::a_default_read_takes_delivery_and_all_reads_the_whole_thread`);
   a session with no task reads the channel of its goal

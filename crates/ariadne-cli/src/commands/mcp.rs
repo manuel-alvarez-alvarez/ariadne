@@ -480,15 +480,17 @@ impl ServerHandler for AriadneMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         if !self.allows(request.name.as_ref()) {
-            return Err(McpError::invalid_params(
-                format!("tool {} is not available to your seat", request.name),
-                None,
-            ));
+            return Err(McpError::invalid_params(seat_refusal(&request.name), None));
         }
         self.tool_router
             .call(ToolCallContext::new(self, request, context))
             .await
     }
+}
+
+/// The refusal a call outside the seat's list gets, named by `tool`.
+fn seat_refusal(tool: &str) -> String {
+    format!("tool {tool} is not available to your seat")
 }
 
 /// Entry point for `ariadne mcp serve`.
@@ -1291,6 +1293,24 @@ pub(crate) mod tests {
                 "{name} uses a word STE has no room for: {text}"
             );
         }
+    }
+
+    /// The refusal `call_tool` builds for a tool outside the seat's list is
+    /// Simplified Technical English too, the same two rules as every other
+    /// text the server hands an agent.
+    #[test]
+    fn the_seat_refusal_is_simplified_technical_english() {
+        use ariadne_store::defaults::ste;
+
+        let text = seat_refusal("switch_session");
+        for sentence in ste::sentences(&text) {
+            let words = sentence.split_whitespace().count();
+            assert!(
+                words <= ste::MAX_WORDS,
+                "the seat refusal runs a sentence of {words} words: {sentence}"
+            );
+        }
+        assert_eq!(ste::banned_word(&text), None, "the seat refusal: {text}");
     }
 
     /// Every `description` in a JSON schema, at whatever depth it sits: what
