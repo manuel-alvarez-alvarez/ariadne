@@ -365,6 +365,16 @@ async fn keep_until_merge(author: &str) {
     // A reply from the keeper follows the keeping agent's own rule (026
     // rule 16): it answers an inline review comment, the thread of a
     // defect, and a comment of the other side in the conversation too.
+    // The prior fetch completed above, so this version is safe to publish
+    // before the reply-triggered fetch reads it. That round supplies the
+    // forge evidence for the ready report that follows.
+    stub.reprogram(script(&Shown {
+        updated_at: "2026-10-03T00:00:00Z",
+        checks: "SUCCESS",
+        review_decision: "APPROVED",
+        mergeable: "CLEAN",
+        ..shown()
+    }));
     let before = stub.fetches();
     let reply: Value = h
         .json(
@@ -385,9 +395,8 @@ async fn keep_until_merge(author: &str) {
     })
     .await;
 
-    // The keeper reports the request ready, on the head it read. `report`
-    // wakes no fetch of its own, so no further wait is needed before the
-    // merge below.
+    // The completed reply fetch has stored the forge evidence. The keeper
+    // now reports the head it read; `report` wakes no fetch of its own.
     let reported: Value = h
         .json(
             as_session(
@@ -401,14 +410,6 @@ async fn keep_until_merge(author: &str) {
     assert_eq!(reported["ready"], true);
 
     // Forge evidence backs the report, regardless of who authored the PR.
-    stub.reprogram(script(&Shown {
-        updated_at: "2026-10-03T00:00:00Z",
-        checks: "SUCCESS",
-        review_decision: "APPROVED",
-        mergeable: "CLEAN",
-        ..shown()
-    }));
-    fetch_again(&h, &stub, &repo).await;
     eventually(TIMEOUT, "readiness to reach attention", async || {
         let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
         list.items
