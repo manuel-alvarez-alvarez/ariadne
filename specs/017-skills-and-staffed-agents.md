@@ -152,19 +152,23 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `fail_step` (030): `code-review` fails the step on a must-fix finding,
     never on an optional one, and edits no file; `merge` completes it with
     the base branch's sha; each other review skill fails it on a blocking
-    finding. Every review skill — `code-review`, `pr-reviewer`,
-    `spec-review`, `architecture-review` and `performance-review` — marks a
-    blocking or must-fix finding with a trigger, the input or state that
-    causes it, the failure it causes, and the criterion, behavior or
-    written rule it breaks. A finding with no nameable trigger is
-    downgraded to its non-blocking weight and marked unverified, and every
-    non-blocking finding of one review is capped at five. Each scopes its
-    reading to the change under review, reuses evidence that already
-    covers it — the column report's, for the four task-column skills, and
-    its own prior round's, for `pr-reviewer` — rather than re-deriving it,
-    and reads further only to judge a risk it can name. Each writes its
-    verdict first, with no preamble, no process narration and no closing
-    summary.
+    finding. `coding` and every other produce skill that ends its own
+    column — `debugging`, `refactoring`, `migration`,
+    `conflict-resolution`, `documentation`, `research`, `spec-writing` —
+    calls `complete_step` with the column report that tool's description
+    defines, and names it without restating a field (006 rule 5). Every
+    review skill — `code-review`, `pr-reviewer`, `spec-review`,
+    `architecture-review` and `performance-review` — marks a blocking or
+    must-fix finding with a trigger, the input or state that causes it, the
+    failure it causes, and the criterion, behavior or written rule it
+    breaks. A finding with no nameable trigger is downgraded to its
+    non-blocking weight and marked unverified, and every non-blocking
+    finding of one review is capped at five. Each scopes its reading to the
+    change under review, reuses evidence that already covers it — the
+    column report's, for the four task-column skills, and its own prior
+    round's, for `pr-reviewer` — rather than re-deriving it, and reads
+    further only to judge a risk it can name. Each writes its verdict
+    first, with no preamble, no process narration and no closing summary.
 
     A skill document holds one text. The launcher links the run directory's
     `skills` folder onto the shared home copy that holds it (15), for the
@@ -315,6 +319,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   `mcp.rs::each_shared_rule_is_written_in_its_owner_alone`).
 - `coding` ends its search step on what the agent knows
   (`::the_coding_search_step_ends_on_what_the_agent_knows`).
+- `coding` and the other produce skills that end their own column name the
+  column report there and restate no field of it
+  (`::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
 - No shipped skill divides a task, `coding` adds a new commit on a return
   and never amends, and `refactoring` names one commit
   (`defaults.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).

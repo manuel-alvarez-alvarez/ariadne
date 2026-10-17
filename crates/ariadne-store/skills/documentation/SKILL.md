@@ -20,6 +20,7 @@ code.
 6. Link the page where the reader looks for it: the index, the README, or
    the page above it.
    Done when a reader reaches the page without a search.
+7. Call `complete_step` with the column report.
 
 ## Rules
 

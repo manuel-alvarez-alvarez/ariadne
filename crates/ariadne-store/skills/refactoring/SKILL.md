@@ -24,6 +24,7 @@ the proof.
    Done when each move ends green.
 6. Commit the whole refactor once, after every move is green.
    Done when one commit holds every move.
+7. Call `complete_step` with the column report.
 
 ## Rules
 

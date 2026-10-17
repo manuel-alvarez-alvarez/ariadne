@@ -12,7 +12,7 @@ A conflict is two intents that meet in one file. Resolve it by intent.
 1. Read the conflict state. Run `git status` and open every conflicting file.
    Done when you can name each file and the operation in progress.
 2. Find the intent of each side. Read both commit messages, both diffs and the
-   ticket each one names.
+   task each one names.
    Done when you can state each intent in one sentence.
 3. Resolve each hunk. Keep both intents where they fit together.
    Done when no conflict marker is left.
@@ -24,6 +24,7 @@ A conflict is two intents that meet in one file. Resolve it by intent.
 6. Finish the operation. Stage the files, then continue the rebase or commit
    the merge.
    Done when git reports no operation in progress.
+7. Call `complete_step` with the column report.
 
 ## Rules
 

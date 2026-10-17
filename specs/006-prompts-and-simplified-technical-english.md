@@ -136,7 +136,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    report. Evidence never replaces code inspection, acceptance review or
    repository-rule enforcement. What a blocking or must-fix finding must
    name, and the cap on the rest, is 017 rule 11's to state, for all five
-   review skills alike.
+   review skills alike. Each other produce skill that ends its own column —
+   `debugging`, `refactoring`, `migration`, `conflict-resolution`,
+   `documentation`, `research`, `spec-writing` — calls `complete_step` with
+   the column report the same way, naming it and restating none of its
+   fields. `debugging`'s own hypothesis loop ends on the stop rule by name,
+   not a count of its own.
 7. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
    amends nothing, since the merge column squashes. `refactoring` commits
@@ -306,6 +311,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   `::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
   `tools.rs::complete_step_and_fail_step_define_their_reports`).
   No shipped skill names a whole suite.
+  Every other produce skill that ends its own column names the column
+  report the same way, restating none of its fields
+  (`defaults.rs::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
   The merge skill pushes before it fast-forwards, with a squash onto the
   merge base and a guard before the push
   (`::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,

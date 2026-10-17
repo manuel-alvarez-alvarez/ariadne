@@ -24,8 +24,8 @@ shape.
    and the resource use at real size.
    Done when every existing row holds the new shape.
 7. Switch callers to read the new shape.
-8. Leave the contract to a later task. Name it in your `complete_step`
-   reason.
+8. Leave the contract to a later task. Call `complete_step` with the
+   column report, naming the deferred work.
 
 ## Rules
 

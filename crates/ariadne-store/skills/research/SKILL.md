@@ -21,6 +21,7 @@ A finding without a source is an opinion.
    Done when you have hunted the strongest counter-evidence and written
    what you found.
 5. Write the report: question, findings, recommendation, confidence.
+6. Call `complete_step` with the column report.
 
 ## Rules
 
