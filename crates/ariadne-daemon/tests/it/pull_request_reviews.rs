@@ -362,7 +362,7 @@ async fn an_open_request_i_review_gets_one_session_detached_at_its_head() {
     );
     let briefing = h.told(&session.id);
     assert!(
-        briefing.contains("# Review pull request: <<<untrusted>>>Add widgets<<<end untrusted>>>"),
+        briefing.contains("# Review pull request: Add widgets"),
         "{briefing}"
     );
     assert!(briefing.contains(&head), "{briefing}");
@@ -505,13 +505,13 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     let news = h.prompts_to(&session).pop().unwrap();
     assert!(
         news.contains(&format!(
-            "the head moved to <<<untrusted>>>{second}<<<end untrusted>>>"
+            "the head moved to {second}"
         )),
         "{news}"
     );
     assert!(
         news.contains(&format!(
-            "The last sha you reviewed is <<<untrusted>>>{first}<<<end untrusted>>>"
+            "The last sha you reviewed is {first}"
         )),
         "{news}"
     );

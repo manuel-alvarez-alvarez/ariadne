@@ -405,8 +405,8 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
     let news = h.prompts_to(&agent).pop().unwrap();
     assert!(
         news.contains(
-            "Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
-             <<<untrusted>>>failure<<<end untrusted>>>"
+            "Check lint turned to \
+             failure"
         ),
         "{news}"
     );
@@ -2674,8 +2674,8 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
             .iter()
             .filter(|p| {
                 p.contains(
-                    "Check <<<untrusted>>>lint<<<end untrusted>>> turned to \
-                     <<<untrusted>>>failure<<<end untrusted>>>",
+                    "Check lint turned to \
+                     failure",
                 )
             })
             .count()

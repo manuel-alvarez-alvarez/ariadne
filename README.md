@@ -211,6 +211,9 @@ ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the dae
 | [Configuration](docs/configuration.md) | every key of `~/.ariadne/config.toml`, and the environment that addresses a daemon |
 | [Permission modes](docs/permissions.md) | automatic, prompted, remembered, and AI-judged ACP permission answers |
 | [Stats](docs/stats.md) | what the work did, in five questions: the filters, `ariadne stats` and the Stats screen |
+| [Token usage analysis summary](docs/token-usage-analysis-summary.md) | quick facts about token usage, top cost drivers, and recommended actions |
+| [Token usage analysis](docs/token-usage-analysis.md) | full token usage analysis, cost breakdown, and recommendations for savings |
+| [Token usage optimization tasks](docs/token-usage-optimization-tasks.md) | concrete tasks to address token usage findings with implementation roadmap |
 | [Resuming a session](docs/resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
 | [How Ariadne works](docs/how-it-works.md) | a goal from planning through its workflow's columns, task lifecycle, and ACP sessions |
 | [The forge integration](docs/forge.md) | enabling GitHub, the pull request and review sessions, webhooks and the tunnel, issues |

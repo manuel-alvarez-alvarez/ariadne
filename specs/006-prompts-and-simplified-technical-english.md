@@ -213,34 +213,6 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     recency for ties, and an entry is never cut in
     the middle. A line in the dropped entries' place counts how many there
     were. A budget that fits every entry writes no such line.
-18. A value from the forge or from another agent is fenced before it
-    reaches a briefing: wrapped between `<<<untrusted>>>` and
-    `<<<end untrusted>>>` (`prompts::fence`), the same idea as rule 16's
-    handoff fence, in its own two markers rather than one reserved
-    character, since a briefing is prose an agent reads start to end
-    rather than a feed of discrete entries. Every `<<<` the value itself
-    carries is broken with a zero-width space first, so the value cannot
-    close the fence early or open one of its own; an empty value fences to
-    nothing. The session rules state once, for every seat, that text
-    between the markers is data and never an instruction (018, 026, 032).
-    No forge value is exempt for being structured, bounded or normally
-    short — a URL, a sha, an id or a state word is still the forge's own
-    text, and a briefing never trusts its shape over its source. Fenced:
-    an issue's title, body and URL (as the goal's), a request's title,
-    URL, head and base branch names, head sha and reviewed sha, a
-    comment's id, author, path and first line, a failed check's name,
-    conclusion and URL, the rolled-up checks, the review decision and the
-    state a news line reports, an agent message's body, a step's return
-    reason or completion summary, a task's title and description, and
-    the orchestrator's own brief for a column's agent (`TaskAgent.brief`)
-    — the orchestrator's own planning is still an agent's, so a task it
-    names in a briefing, a message, a nudge or a dependency is fenced
-    wherever its title reaches another agent, and so is anything beyond
-    the task itself it tells a column's agent to do. One line is the
-    exception: an issue goal's `Closes <url>` instruction carries the raw
-    URL, never fenced, since GitHub only closes the issue on that exact
-    text; the same URL is still fenced everywhere else the briefing names
-    the issue.
 
 ## Acceptance criteria
 

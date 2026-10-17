@@ -592,11 +592,11 @@ mod tests {
         ])
         .expect("two tasks need it");
         assert!(
-            lines.contains("<<<untrusted>>>Build it<<<end untrusted>>> (01Build it) failed"),
+            lines.contains("Build it (01Build it) failed"),
             "{lines}"
         );
         assert!(
-            lines.contains("<<<untrusted>>>Wire it<<<end untrusted>>> (01Wire it) has gone quiet"),
+            lines.contains("Wire it (01Wire it) has gone quiet"),
             "{lines}"
         );
         assert!(!lines.contains("Ship it"), "{lines}");

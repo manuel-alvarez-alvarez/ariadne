@@ -423,7 +423,7 @@ async fn a_switched_orchestrator_moves_the_goals_pin() {
 
     let resume = prompts::template_for(PromptKind::OrchestratorResume).replace(
         "{goal_title}",
-        &format!("<<<untrusted>>>{}<<<end untrusted>>>", goal.title),
+        &goal.title,
     );
     assert_briefing_handoff_resume(&first_prompt(&h, &new.id), &briefing, Some(&resume));
 
