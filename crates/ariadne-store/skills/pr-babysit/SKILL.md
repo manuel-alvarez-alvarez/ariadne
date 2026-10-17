@@ -1,6 +1,6 @@
 ---
 name: pr-babysit
-description: Keeps a task request until it merges or closes. Answers comments, fixes checks and keeps its branch current.
+description: Keep a task request until it merges or closes. Answer comments, fix checks and keep its branch current.
 ---
 
 # PR babysit

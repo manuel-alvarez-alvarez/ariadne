@@ -1,6 +1,6 @@
 ---
 name: orchestration
-description: Plans a goal into tracer tasks with the user, then runs it to the end. Used when a goal opens, a plan changes, or a task reports back.
+description: Plan a goal into tracer tasks with the user, then run it to the end. Use when a goal opens, a plan changes, or a task reports back.
 ---
 
 # Orchestration

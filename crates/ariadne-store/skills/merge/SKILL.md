@@ -1,6 +1,6 @@
 ---
 name: merge
-description: Lands a reviewed task on the base branch, rebasing, squashing, pushing and fast-forwarding.
+description: Land a reviewed task on the base branch. Rebase, squash, push and fast-forward.
 ---
 
 # Merge
