@@ -328,6 +328,40 @@ pub(crate) async fn start_work(
 mod tests {
     use super::*;
 
+    fn integration(login: Option<&str>) -> ForgeIntegration {
+        ForgeIntegration {
+            repository_id: String::new(),
+            kind: "github".into(),
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: login.map(str::to_string),
+            webhook_id: None,
+            webhook_secret: None,
+            webhook_url: None,
+            webhook_state: String::new(),
+            webhook_error: None,
+            webhook_last_delivery_at: None,
+            fetch_error: None,
+            detected_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn an_integrations_author_is_its_author_and_everyone_else_is_a_reviewer() {
+        let signed_in = integration(Some("me"));
+        for author in ["me", "ME"] {
+            assert_eq!(role(author, &signed_in), "author");
+        }
+        for author in ["dependabot[bot]", "alice"] {
+            assert_eq!(role(author, &signed_in), "reviewer");
+        }
+        assert_eq!(role("me", &integration(None)), "reviewer");
+    }
+
     /// The lines a diff shows on its new side are the added and kept lines
     /// of each hunk, numbered as the new file numbers them: a removed line
     /// is not one of them, nor a line past a hunk's end, nor any line of a

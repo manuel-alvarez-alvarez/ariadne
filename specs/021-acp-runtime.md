@@ -390,7 +390,7 @@ outside half) opens no session either: it asks only `initialize` and
   (`acp_runtime.rs::an_acp_error_keeps_an_existing_message_and_reads_other_data_shapes`).
 - Common detail keys, nested errors, strings, and compact JSON all supply
   readable messages for any ACP agent. Long JSON is cut
-  (`acp_runtime.rs::acp_errors_read_common_detail_fields_for_every_agent`).
+  (`acp.rs::tests::common_error_detail_fields_and_long_json_are_readable`).
 - An error without data stays unchanged, and an empty `data.message` takes
   the reason from another field
   (`acp_runtime.rs::an_acp_error_without_data_stays_unchanged_and_an_empty_message_is_filled`).
@@ -419,7 +419,8 @@ outside half) opens no session either: it asks only `initialize` and
   a pattern also in the detail of the error's data, while another error
   remains plain. The stub preserves configured error data
   (`auto_switch.rs::a_codex_exhaustion_switches_to_another_agent_at_the_same_rank`,
-  `auto_switch.rs::claude_and_message_signals_classify_while_a_plain_error_does_not`).
+  `acp.rs::tests::exhaustion_signals_are_classified_and_a_plain_error_is_not`,
+  `auto_switch.rs::a_plain_error_does_not_switch`).
 - The review column's agent runs the same way, in the task's one worktree
   (`acp_runtime.rs::a_reviewer_runs_on_the_registry_agent`).
 - Killing the session kills the agent process and retires the row

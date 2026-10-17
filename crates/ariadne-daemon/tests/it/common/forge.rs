@@ -231,17 +231,20 @@ fn write_script(path: &Path, script: &Value) {
 /// What the daemon runs: the stub beside the link, told which name it was
 /// run under. `$0` is the link, not the shared file.
 const LAUNCHER: &str = "#!/bin/sh\n\
-dir=$(dirname \"$0\")\n\
-exec python3 \"$dir/forge-stub.py\" \"$(cat \"$dir/forge-parent-pid\")\" \"$dir\" \"$(basename \"$0\")\" \"$@\"\n";
+dir=${0%/*}\n\
+IFS= read -r parent < \"$dir/forge-parent-pid\"\n\
+exec python3 -S \"$dir/forge-stub.py\" \"$parent\" \"$dir\" \"${0##*/}\" \"$@\"\n";
 
 const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, subprocess, sys, threading, time
+import json, os, sys, threading, time
 
 parent = int(sys.argv[1])
 def parent_alive():
-    state = subprocess.run(["ps", "-o", "stat=", "-p", str(parent)],
-                           capture_output=True, text=True).stdout.strip()
-    return bool(state) and not state.startswith("Z")
+    try:
+        os.kill(parent, 0)
+    except OSError:
+        return False
+    return True
 def orphaned():
     # Ends with the test process, however that one ends.
     while parent_alive():

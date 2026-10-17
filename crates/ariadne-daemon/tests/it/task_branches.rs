@@ -26,11 +26,6 @@ use common::{
     post_json, sh, test_pin,
 };
 
-/// How long one commit is given to come back over the stream: a filesystem
-/// notification, a debounce and a couple of `git` processes, on a machine
-/// running the rest of the suite beside it.
-const PATIENCE: Duration = Duration::from_secs(20);
-
 /// Bring any task of an already active goal up to its develop column for
 /// real: a worktree checked out on its branch, its agent started by the
 /// scheduler, and its first turn answered.
@@ -110,14 +105,20 @@ async fn next_event(
 
 /// The head of the next `task_branch_updated` on the stream, or a failed test.
 async fn next_head(body: &mut axum::body::Body, task: &Task) -> String {
-    let Some((kind, payload)) = next_event(body, PATIENCE).await else {
-        panic!("no task_branch_updated within the patience");
-    };
-    assert_eq!(kind, "task_branch_updated");
-    assert_eq!(payload["task_id"], task.id);
-    assert_eq!(payload["goal_id"], task.goal_id);
-    assert_eq!(payload["branch"], task.branch);
-    payload["head"].as_str().unwrap().to_string()
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let within = deadline.saturating_duration_since(Instant::now());
+        let Some((kind, payload)) = next_event(body, within).await else {
+            panic!("no task_branch_updated within the timeout");
+        };
+        if kind != "task_branch_updated" {
+            continue;
+        }
+        assert_eq!(payload["task_id"], task.id);
+        assert_eq!(payload["goal_id"], task.goal_id);
+        assert_eq!(payload["branch"], task.branch);
+        return payload["head"].as_str().unwrap().to_string();
+    }
 }
 
 /// Assert the stream has nothing to say for a while.

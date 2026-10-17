@@ -112,11 +112,11 @@ fn script(shown: &Shown) -> Value {
 /// of `main`.
 fn checkout(h: &Harness) -> (PathBuf, String) {
     let path = h.git_repo("widgets");
-    sh(
-        &path,
-        "git checkout -q -b fix && echo a > a.txt && git add a.txt && \
-         git -c user.email=t@t -c user.name=t commit -qm a && git checkout -q main",
-    );
+    // Every harness gets the template's private `next` commit as well as
+    // its main branch. Give that already-real one-commit head the test's
+    // name rather than checking out, writing and committing the same shape
+    // before every babysitting case.
+    sh(&path, "git branch fix next");
     let head = sh(&path, "git rev-parse fix");
     (path, head)
 }
@@ -185,30 +185,29 @@ async fn idle_keeper(h: &Harness, pull_request_id: &str) -> AgentSession {
     found.unwrap()
 }
 
-/// Asking Ariadne to babysit a request of mine starts a keeper session on
+/// Asking Ariadne to babysit an external request starts a keeper session on
 /// the pin picked, loading `pr-babysit`, in a worktree on a local branch
 /// named after the request — distinct from a reviewer's own, detached
 /// worktree. The author's news, a comment by another login, reaches it
 /// once; its `ready` report is accepted; and the merge ends it, taking its
-/// worktree and its branch down with it.
-#[tokio::test]
-async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
-    keep_until_merge("me").await;
-}
-
+/// worktree and its branch down with it. `forge::pulls::role`'s unit matrix
+/// covers the author mapping that selects this request's row role.
 #[tokio::test]
 async fn asking_keeps_a_dependabot_request_until_the_merge() {
     keep_until_merge("dependabot[bot]").await;
 }
 
-#[tokio::test]
-async fn asking_keeps_another_authors_request_until_the_merge() {
-    keep_until_merge("alice").await;
-}
-
 async fn keep_until_merge(author: &str) {
     let stub = stub_forge_cli(json!([]));
-    let h = harness().scheduler().forge_cli(&stub).await;
+    let h = harness()
+        .timeouts(Timeouts {
+            cancel_grace: RUNS_OUT / 10,
+            forge_wake_debounce: RUNS_OUT / 100,
+            ..Timeouts::default()
+        })
+        .scheduler()
+        .forge_cli(&stub)
+        .await;
     let (path, head) = checkout(&h);
     let shown = || Shown {
         author,
@@ -259,7 +258,7 @@ async fn keep_until_merge(author: &str) {
     let id = asked["id"].as_str().expect("a row").to_string();
     assert_eq!(
         h.store.get_pull_request(&id).await.unwrap().role,
-        if author == "me" { "author" } else { "reviewer" }
+        "reviewer"
     );
 
     let session = idle_keeper(&h, &id).await;
@@ -438,7 +437,18 @@ async fn keep_until_merge(author: &str) {
 #[tokio::test]
 async fn a_dependabot_request_can_be_reviewed_and_babysat_independently() {
     let stub = stub_forge_cli(json!([]));
-    let h = harness().scheduler().forge_cli(&stub).await;
+    let h = harness()
+        .timeouts(Timeouts {
+            // Both seats are ordinary idle stubs. Their cancellation is the
+            // transition under test, so the production grace for an agent
+            // that stops answering would only slow its observation.
+            cancel_grace: RUNS_OUT / 10,
+            forge_wake_debounce: RUNS_OUT / 100,
+            ..Timeouts::default()
+        })
+        .scheduler()
+        .forge_cli(&stub)
+        .await;
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown {
         author: "dependabot[bot]",

@@ -713,16 +713,11 @@ Server((host, port), Handler).serve_forever()
 async fn a_request_made_while_the_server_loads_waits_for_it() {
     let release = ModelServer::hanging().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    // Two paths that do not exist until written: the stand-in server polls
-    // for its own release rather than sleeping a guessed delay, and the
-    // stub agent marks the instant its permission request is out, so
-    // neither the None assertion nor the release below ever races a guess
-    // at how long loading or the request takes.
+    // The stand-in server polls for its own release rather than sleeping a
+    // guessed delay. The daemon's loading-wait receiver below acknowledges
+    // the request only after it has seen this server still loading.
     let gate_dir = tempfile::tempdir().unwrap();
     let gate = gate_dir.path().join("release-server");
-    let sent = gate_dir.path().join("permission-sent");
-    let mut scripted = permission_script();
-    scripted["prompts"][0]["permission"]["sent"] = json!(sent.display().to_string());
     let command = vec![
         shared_script(SLOW_SERVER).display().to_string(),
         std::process::id().to_string(),
@@ -734,7 +729,7 @@ async fn a_request_made_while_the_server_loads_waits_for_it() {
         &release,
         0.2,
         Timeouts::default(),
-        scripted,
+        permission_script(),
     )
     .await;
     eventually(TIMEOUT, "the server to start loading", || async {
@@ -747,13 +742,19 @@ async fn a_request_made_while_the_server_loads_waits_for_it() {
         "the server is still loading"
     );
 
+    let loading_waits = h.state.ai_permissions.loading_waits();
     let session = h.start_agent(&cast.task, "develop").await;
-    // Wait for the agent's own request to be out before releasing the
-    // server: the daemon's decision on it, already under way, is what
-    // this test is about catching mid-wait, not merely sent somewhere.
-    eventually(TIMEOUT, "the permission request to be sent", || async {
-        sent.exists()
-    })
+    // The acknowledgement comes from `live_once_started`, after it read
+    // `starting` and found no endpoint, immediately before it waits for the
+    // server. An ACP request alone would prove only that stdout accepted it.
+    eventually(
+        TIMEOUT,
+        "the permission request to wait for the server",
+        || {
+            let mut loading_waits = loading_waits.clone();
+            async move { *loading_waits.borrow_and_update() > 0 }
+        },
+    )
     .await;
     std::fs::write(&gate, "").unwrap();
     eventually(TIMEOUT, "the AI-allowed turn to finish", || async {

@@ -16,6 +16,7 @@ tests:
   - crates/ariadne-daemon/src/forge/github/details.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/src/launcher.rs
+  - crates/ariadne-daemon/src/scheduler/tasks.rs
   - crates/ariadne-daemon/tests/it/pull_requests.rs
   - crates/ariadne-daemon/tests/it/pull_request_detail_skip.rs
   - crates/ariadne-daemon/tests/it/pull_request_lists.rs
@@ -188,6 +189,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     The daemon advances a merged request column itself when that agent falls quiet after the news, and finishes the task when that column is last (030 rule 10).
     Once the task is over, what is left of the request is taken down: any session or worktree an earlier release started on it.
     The task's own cleanup took its worktree and its branch.
+    The task's completion wake reconciles its own request at once, so this cleanup does not wait for the periodic pass.
     Then Ariadne stops working on the request: its row and its marks go, so an ended request takes no room. Its sessions stay, with their history and spend, let go of it.
     The row goes only as the pass read it: a pass decides who wants a request from a read taken a few store calls earlier, and an ask by hand that lands in between — a review (029), a keeper (032) — is one that read never saw. Deleted regardless, the row would take the ask with it, and the next fetch would read the request back with nothing asked of it; so the delete is refused where an ask was written since the read, the row stays whole with its sessions on it, and the pass the ask itself woke acts on it. Every ask or withdrawal of a review or a keeper, and a task adopting the request, moves the row's ask revision, and the delete holds to that revision: an ask taken back and made again, or made again on another pin, reads as the same asks but is still one the read never saw.
     A deletion that fails keeps the row: the next change of the request tries it again, and the tick after 60 seconds, and so does a restarted daemon.
@@ -394,8 +396,9 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `github/mod.rs::tests::a_rate_limit_reset_is_none_when_no_resource_is_spent`,
   `forge_rate_limit.rs::a_rate_limited_fetch_reads_the_only_spent_limit_reset`,
   `forge_rate_limit.rs::a_past_rate_limit_reset_waits_for_the_poll_interval`.
-  A failed fetch that is not a rate limit doubles the timer wait up to the
-  cap, resets on success, and a wake still fetches at once:
+  A failed timer fetch that is not a rate limit doubles its wait up to the
+  cap and resets on success: `forge::poll::tests::timer_backoff_doubles_caps_and_resets`.
+  A wake still fetches at once from that pending timer:
   `forge_rate_limit.rs::a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once`.
   Wakes inside the debounce window fold into one fetch, and continued wakes
   do not move its first deadline:
@@ -447,6 +450,9 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - Opening a task or session replaces the request panel and preserves list filters:
   `paths.test.ts::pull request panel navigation`.
 - A new comment by another login is told once by id to the `pr` agent of the task that opened the request; a failed check is told by name; the request has no session of its own:
+  `workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`.
+- Completing the last request column removes its row, worktree, and branch
+  through that task's own wake, before a periodic scheduler pass:
   `workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`.
 - The agent replies and reports; another session and no session get 403:
   `kept_requests.rs::the_pr_agent_replies_and_reports_and_no_other_session_may`.

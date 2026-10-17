@@ -1,5 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
+use ariadne_api::models::ModelDto;
 use ariadne_core::models::{ModelRank, agent_of};
 use ariadne_core::{AttentionReason, Seat, SessionStatus};
 use ariadne_store::{AgentSession, NewAgentEvent, Result, SessionFilter, Store};
@@ -260,16 +261,32 @@ async fn switch_target(
     used: &HashSet<String>,
 ) -> Result<Option<String>> {
     let ranks = store.model_ranks().await?;
-    let Some(&rank) = ranks.get(&session.model) else {
-        return Ok(None);
-    };
-    if rank == ModelRank::Local {
-        return Ok(None);
-    }
     let disabled = store.disabled_models().await?;
-    let mut models = launcher.registry.models().await;
-    models.retain(|model| !disabled.contains(&model.id) && !used.contains(&model.id));
-    let own_agent = agent_of(&session.model);
+    let models = launcher.registry.models().await;
+    Ok(ranked_target(
+        &session.model,
+        &ranks,
+        models,
+        &disabled,
+        used,
+    ))
+}
+
+/// Pick the next model from the live catalog after the store supplied the
+/// user's ranks and disabled rows. Kept separate from the I/O above because
+/// rank order is a small, exhaustive decision table in its own right.
+fn ranked_target(
+    current: &str,
+    ranks: &BTreeMap<String, ModelRank>,
+    models: Vec<ModelDto>,
+    disabled: &BTreeSet<String>,
+    used: &HashSet<String>,
+) -> Option<String> {
+    let &rank = ranks.get(current)?;
+    if rank == ModelRank::Local {
+        return None;
+    }
+    let own_agent = agent_of(current);
     let mut rank_order = vec![rank];
     match rank {
         ModelRank::Fast => rank_order.push(ModelRank::Balanced),
@@ -278,17 +295,96 @@ async fn switch_target(
             rank_order.push(ModelRank::Fast);
         }
         ModelRank::Frontier => rank_order.push(ModelRank::Balanced),
-        ModelRank::Local => return Ok(None),
+        ModelRank::Local => return None,
     }
     for wanted_rank in rank_order {
         for same_agent in [false, true] {
             if let Some(model) = models.iter().find(|model| {
-                ranks.get(&model.id) == Some(&wanted_rank)
+                !disabled.contains(&model.id)
+                    && !used.contains(&model.id)
+                    && ranks.get(&model.id) == Some(&wanted_rank)
                     && (model.agent_id == own_agent) == same_agent
             }) {
-                return Ok(Some(model.id.clone()));
+                return Some(model.id.clone());
             }
         }
     }
-    Ok(None)
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+    use ariadne_api::models::ModelDto;
+    use ariadne_core::models::ModelRank;
+
+    use super::ranked_target;
+
+    fn model(id: &str) -> ModelDto {
+        let (agent_id, _) = id.split_once(':').unwrap();
+        ModelDto {
+            id: id.to_string(),
+            agent_id: agent_id.to_string(),
+            description: None,
+            efforts: Vec::new(),
+            enabled: true,
+            rank: None,
+        }
+    }
+
+    #[test]
+    fn rank_ladder_prefers_another_agent_then_the_rank_above_then_below() {
+        for (ranks, expected) in [
+            (
+                vec![
+                    ("codex:old", ModelRank::Balanced),
+                    ("codex:same", ModelRank::Balanced),
+                    ("other:old-model", ModelRank::Balanced),
+                ],
+                Some("other:old-model"),
+            ),
+            (
+                vec![
+                    ("codex:old", ModelRank::Balanced),
+                    ("codex:same", ModelRank::Balanced),
+                    ("other:frontier", ModelRank::Frontier),
+                ],
+                Some("codex:same"),
+            ),
+            (
+                vec![
+                    ("codex:old", ModelRank::Balanced),
+                    ("codex:same", ModelRank::Balanced),
+                ],
+                Some("codex:same"),
+            ),
+            (
+                vec![
+                    ("codex:old", ModelRank::Balanced),
+                    ("other:frontier", ModelRank::Frontier),
+                    ("other:fast", ModelRank::Fast),
+                ],
+                Some("other:frontier"),
+            ),
+            (
+                vec![
+                    ("codex:old", ModelRank::Balanced),
+                    ("other:fast", ModelRank::Fast),
+                ],
+                Some("other:fast"),
+            ),
+        ] {
+            let ranks: BTreeMap<_, _> = ranks
+                .iter()
+                .map(|(id, rank)| ((*id).to_string(), *rank))
+                .collect();
+            let models = ranks.keys().map(|id| model(id)).collect();
+            let used = HashSet::from(["codex:old".to_string()]);
+            assert_eq!(
+                ranked_target("codex:old", &ranks, models, &BTreeSet::new(), &used,).as_deref(),
+                expected
+            );
+        }
+    }
 }

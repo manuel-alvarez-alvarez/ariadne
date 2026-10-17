@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use crate::common::forge::{Invocation, StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, RUNS_OUT, TIMEOUT, eventually, harness, next_event, post_json, put_json, sh,
+    Harness, QUIET, RUNS_OUT, TIMEOUT, eventually, git_repo_copy, harness, next_event, post_json,
+    put_json, sh, store_copy,
 };
 use ariadne_api::repositories::{ForgeTunnelDto, TunnelState};
 use ariadne_daemon::forge::tunnel::Tunnel;
@@ -614,10 +615,10 @@ async fn a_server_that_goes_away_restores_the_timer_and_one_that_returns_goes_li
     let gates = Gates::shut();
     let stub = stub_forge_cli(script(&[], &gates));
     let timeouts = Timeouts {
-        forge_poll: RUNS_OUT,
+        forge_poll: RUNS_OUT / 2,
         forge_wake_debounce: RUNS_OUT / 10,
-        tunnel_connect: RUNS_OUT,
-        tunnel_retry: Duration::from_millis(100),
+        tunnel_connect: RUNS_OUT / 2,
+        tunnel_retry: RUNS_OUT / 100,
         ..Timeouts::default()
     };
     let (h, _listener) = daemon(home.path(), &stub, timeouts).await;
@@ -1057,13 +1058,10 @@ async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds
     let server = StandIn::start(&dir.path().join("stand-in"), 0).await;
     let gates = Gates::opened();
     let stub = stub_forge_cli(script(&[], &gates));
-    let repo = dir.path().join("repo");
-    std::fs::create_dir_all(&repo).unwrap();
+    let repo = git_repo_copy(dir.path(), "repo").await;
     sh(
         &repo,
-        "git init -q -b main && echo v1 > file.txt && git add . && \
-         git -c user.email=t@t -c user.name=t commit -qm init && \
-         git remote add origin https://github.com/acme/widgets.git",
+        "git remote add origin https://github.com/acme/widgets.git",
     );
     let port = {
         let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1071,6 +1069,7 @@ async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds
     };
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
+    store_copy(&home.join("ariadne.db")).await;
     std::fs::write(
         home.join("config.toml"),
         format!(
@@ -1084,6 +1083,11 @@ async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds
         wrapper: std::process::Command::new("python3")
             .args(["-c", WRAPPER, env!("CARGO_BIN_EXE_ariadned"), "--home"])
             .arg(&home)
+            // This test starts no agent. Keep the daemon from probing any
+            // coding-agent command the machine happens to have installed;
+            // it still has the system `git` and the stub `gh` by absolute
+            // path through the home configuration above.
+            .env("PATH", "/usr/bin:/bin")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()

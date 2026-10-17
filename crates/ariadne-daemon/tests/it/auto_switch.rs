@@ -190,13 +190,19 @@ async fn count_errors(h: &Harness, session: &AgentSession) -> usize {
 /// caller ever gets to look, and `switched_successor` would then name that
 /// second switch's target, not the first one this helper is asked for.
 async fn successor(h: &Harness, old: &AgentSession) -> AgentSession {
-    let event = eventually_some(TIMEOUT, "the exhausted session to switch", || async {
-        h.store
-            .list_session_events(&old.id)
-            .await
-            .unwrap()
-            .into_iter()
-            .find(|event| event.kind == "session.switched")
+    let store = h.store.clone();
+    let session_id = old.id.clone();
+    let event = eventually_some(TIMEOUT, "the exhausted session to switch", move || {
+        let store = store.clone();
+        let session_id = session_id.clone();
+        async move {
+            store
+                .list_session_events(&session_id)
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|event| event.kind == "session.switched")
+        }
     })
     .await;
     let payload: Value = serde_json::from_str(&event.payload).unwrap();
@@ -251,57 +257,7 @@ async fn a_codex_exhaustion_switches_to_another_agent_at_the_same_rank() {
 }
 
 #[tokio::test]
-async fn claude_and_message_signals_classify_while_a_plain_error_does_not() {
-    for error in [
-        json!({"code": -32603, "message": "stopped", "data": {
-            "_meta": {"jetbrains": {"air": {"sessionFailure": {"category": "limit"}}}}
-        }}),
-        json!({"code": -32603, "message": "RATE LIMIT reached", "data": {}}),
-        json!({"code": -32603, "message": "You've hit your session limit", "data": {
-            "errorKind": "rate_limit"
-        }}),
-        json!({"code": -32603, "message": "Internal error", "data": {
-            "details": "API error: 429 This request would exceed your account's rate limit."
-        }}),
-    ] {
-        let world = world(error, true, &["other"]).await;
-        rank(
-            &world.h,
-            &[
-                ("codex:old", ModelRank::Fast),
-                ("other:old-model", ModelRank::Fast),
-            ],
-        )
-        .await;
-        wake(&world).await;
-        assert_eq!(
-            successor(&world.h, &world.agent).await.model,
-            "other:old-model"
-        );
-    }
-
-    let response = world_with_prompt(
-        json!({"meta": {
-            "jetbrains": {"air": {"sessionFailure": {"category": "limit"}}}
-        }}),
-        true,
-        &["other"],
-    )
-    .await;
-    rank(
-        &response.h,
-        &[
-            ("codex:old", ModelRank::Fast),
-            ("other:old-model", ModelRank::Fast),
-        ],
-    )
-    .await;
-    wake(&response).await;
-    assert_eq!(
-        successor(&response.h, &response.agent).await.model,
-        "other:old-model"
-    );
-
+async fn a_plain_error_does_not_switch() {
     let plain = world(
         json!({"code": -32603, "message": "authentication failed", "data": {"kept": true}}),
         true,
@@ -342,55 +298,6 @@ async fn claude_and_message_signals_classify_while_a_plain_error_does_not() {
     )
     .unwrap();
     assert_eq!(error["error"]["exhausted"], Value::Null);
-}
-
-#[tokio::test]
-async fn the_ladder_uses_same_agent_then_the_rank_above_then_below() {
-    for (ranks, expected) in [
-        (
-            vec![
-                ("codex:old", ModelRank::Balanced),
-                ("codex:same", ModelRank::Balanced),
-                ("other:old-model", ModelRank::Balanced),
-            ],
-            "other:old-model",
-        ),
-        (
-            vec![
-                ("codex:old", ModelRank::Balanced),
-                ("codex:same", ModelRank::Balanced),
-                ("other:frontier", ModelRank::Frontier),
-            ],
-            "codex:same",
-        ),
-        (
-            vec![
-                ("codex:old", ModelRank::Balanced),
-                ("codex:same", ModelRank::Balanced),
-            ],
-            "codex:same",
-        ),
-        (
-            vec![
-                ("codex:old", ModelRank::Balanced),
-                ("other:frontier", ModelRank::Frontier),
-                ("other:fast", ModelRank::Fast),
-            ],
-            "other:frontier",
-        ),
-        (
-            vec![
-                ("codex:old", ModelRank::Balanced),
-                ("other:fast", ModelRank::Fast),
-            ],
-            "other:fast",
-        ),
-    ] {
-        let world = world(codex_error(), true, &["other"]).await;
-        rank(&world.h, &ranks).await;
-        wake(&world).await;
-        assert_eq!(successor(&world.h, &world.agent).await.model, expected);
-    }
 }
 
 #[tokio::test]

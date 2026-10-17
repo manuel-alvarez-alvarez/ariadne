@@ -11,7 +11,8 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, check_states, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, post_json, sh, with_forge,
+    Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, post_json, sh, test_pin,
+    with_forge,
 };
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::tasks::TaskDto;
@@ -19,7 +20,7 @@ use ariadne_core::{SessionStatus, TaskStatus};
 use ariadne_daemon::forge::poll::Mode;
 use ariadne_daemon::scheduler::SchedEvent;
 use ariadne_store::defaults::PULL_REQUEST_WORKFLOW;
-use ariadne_store::{AgentSession, SessionFilter, Task};
+use ariadne_store::{AgentSession, NewPullRequest, SessionFilter, Task};
 
 /// Where `pr create` says the task's request is.
 const URL: &str = "https://github.com/acme/widgets/pull/1";
@@ -211,8 +212,6 @@ struct ReadyToOpen {
     task: Task,
     agent: AgentSession,
     repo: String,
-    path: PathBuf,
-    bare: PathBuf,
 }
 
 async fn ready_to_open(script: Value) -> ReadyToOpen {
@@ -225,7 +224,6 @@ async fn ready_to_open(script: Value) -> ReadyToOpen {
     let path = h.git_repo("repo");
     let cast = h.active_cast_running(Some(PULL_REQUEST_WORKFLOW)).await;
     with_forge(&h, &cast.repo).await;
-    let bare = h.at("remote.git");
     // The base is on the remote, as a forge's is: a merge is fetched from it.
     sh(&path, "git push -q origin main");
     let task = cast.task.clone();
@@ -251,39 +249,142 @@ async fn ready_to_open(script: Value) -> ReadyToOpen {
         task,
         agent,
         repo,
+    }
+}
+
+/// A kept request for a test that exercises its ledger, forge reads or HTTP
+/// routes but does not need an ACP delivery. The real task is already in its
+/// `pr` column and its branch is really pushed; only the idle agent process
+/// is omitted. Tests that prove news reaches the keeper use
+/// [`kept_request_running`] instead.
+async fn kept_request(script: Value) -> Kept {
+    let stub = stub_forge_cli(script);
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let path = h.git_repo("repo");
+    let repo_row = h.repository(&path).await;
+    let goal = h
+        .goal_running(&repo_row, test_pin(), Some(PULL_REQUEST_WORKFLOW))
+        .await;
+    let task = h.task_on(&goal, &repo_row, "task", test_pin()).await;
+    h.advance_to(&task, "pr").await;
+    let agent_id = h
+        .store
+        .list_task_agents(&task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|agent| agent.step == "pr")
+        .expect("the request column is staffed")
+        .id;
+    let agent = h
+        .session(&goal, Some(&task), ariadne_core::Seat::Agent, &agent_id)
+        .await;
+    sh(
+        &path,
+        &format!(
+            "git checkout -q -b {} && echo change > widget && git add widget && \
+             git -c user.name=Test -c user.email=test@test commit -qm 'feat: add widgets' && \
+             git checkout -q main",
+            task.branch
+        ),
+    );
+    h.store
+        .set_task_worktree(&task.id, Some(&path.display().to_string()))
+        .await
+        .unwrap();
+    h.store.set_task_pull_request(&task.id, URL).await.unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(NewPullRequest {
+            repository_id: repo_row.id.clone(),
+            number: 1,
+            url: URL.into(),
+            role: "author".into(),
+            origin_task_id: Some(task.id.clone()),
+        })
+        .await
+        .unwrap();
+    with_forge(&h, &repo_row).await;
+    let bare = h.at("remote.git");
+    sh(
+        &path,
+        &format!(
+            "git push -q origin main && git push -q origin {}",
+            task.branch
+        ),
+    );
+    let repo = repo_row.id;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    eventually(TIMEOUT, "the request's first fetch", async || {
+        stub.fetches() >= 1 && h.launcher.live.get(&pull.id).is_some()
+    })
+    .await;
+    Kept {
+        h,
+        stub,
+        task,
+        agent,
+        id: pull.id,
+        repo,
         path,
         bare,
     }
 }
 
-async fn kept_request(script: Value) -> Kept {
-    let ReadyToOpen {
-        h,
-        stub,
-        task,
-        agent,
-        repo,
-        path,
-        bare,
-    } = ready_to_open(script).await;
-    let opened: TaskDto = h
-        .json(
-            as_session(
-                &format!("/v1/tasks/{}/pull-request", task.id),
-                &agent.id,
-                json!({"title": "Fix widgets", "body": "Fixes widgets."}),
-            ),
-            StatusCode::OK,
-        )
+/// A kept request whose `pr` agent is really running, for delivery tests.
+async fn kept_request_running(script: Value) -> Kept {
+    let stub = stub_forge_cli(script);
+    let h = harness()
+        .scheduler()
+        .discover_agents()
+        .forge_cli(&stub)
         .await;
-    assert_eq!(opened.pr_url.as_deref(), Some(URL));
-    let id = h
+    let path = h.git_repo("repo");
+    let repo_row = h.repository(&path).await;
+
+    // The tests below cover the behavior after a task's request exists. The
+    // opening route has its own `ready_to_open` coverage; walking develop
+    // and review here would only repeat their ACP launches and their git
+    // gates before every read, reply and evidence assertion. Move a planning
+    // task to its `pr` column before it becomes active, then let the real
+    // scheduler launch that one keeping agent.
+    let goal = h
+        .goal_running(&repo_row, test_pin(), Some(PULL_REQUEST_WORKFLOW))
+        .await;
+    let task = h.task_on(&goal, &repo_row, "task", test_pin()).await;
+    h.advance_to(&task, "pr").await;
+    h.activate(&goal).await;
+    let agent = h.step_session(&task, "pr").await;
+    let worktree = PathBuf::from(agent.worktree_path.as_deref().unwrap());
+    sh(
+        &worktree,
+        "echo change > widget && git add widget && git -c user.name=Test -c user.email=test@test commit -qm 'feat: add widgets'",
+    );
+
+    h.store.set_task_pull_request(&task.id, URL).await.unwrap();
+    let (pull, _) = h
         .store
-        .pull_request_of_task(&task.id)
+        .upsert_pull_request(NewPullRequest {
+            repository_id: repo_row.id.clone(),
+            number: 1,
+            url: URL.into(),
+            role: "author".into(),
+            origin_task_id: Some(task.id.clone()),
+        })
         .await
-        .unwrap()
-        .expect("the ledger holds the task's request")
-        .id;
+        .unwrap();
+    let id = pull.id;
+    let repo = repo_row.id.clone();
+    // The request row exists before enabling the integration. Its worker's
+    // first fetch is therefore this row's first read, not a startup fetch
+    // that began before there was anything to read and can complete after
+    // the fixture has moved on.
+    with_forge(&h, &repo_row).await;
+    let bare = h.at("remote.git");
+    // The merge assertions below use the forge's base branch, so keep this
+    // real remote shape even though the request ledger itself is seeded.
+    sh(&path, "git push -q origin main");
+    sh(&worktree, "git push -q origin HEAD");
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     eventually(
         TIMEOUT,
@@ -291,7 +392,10 @@ async fn kept_request(script: Value) -> Kept {
         async || h.session_status(&agent).await == SessionStatus::Idle,
     )
     .await;
-    eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
+    eventually(TIMEOUT, "the request's first fetch", async || {
+        stub.fetches() >= 1 && h.launcher.live.get(&id).is_some()
+    })
+    .await;
     Kept {
         h,
         stub,
@@ -343,7 +447,7 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
         id,
         repo,
         ..
-    } = kept_request(quiet_script()).await;
+    } = kept_request_running(quiet_script()).await;
     let briefed = h.prompts_to(&agent).len();
 
     let comments = [review_comment(101, "alice", None, "2026-10-02T00:00:00Z")];
@@ -450,7 +554,7 @@ async fn a_pending_reviews_comments_give_no_live_view_comment_and_no_news() {
         id,
         repo,
         ..
-    } = kept_request(quiet_script()).await;
+    } = kept_request_running(quiet_script()).await;
     let briefed = h.prompts_to(&agent).len();
 
     let pending_comments = [
@@ -522,7 +626,7 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         id,
         repo,
         ..
-    } = kept_request(script("OPEN", &comments, json!([]))).await;
+    } = kept_request_running(script("OPEN", &comments, json!([]))).await;
     let repository = h.store.get_repository(&repo).await.unwrap();
     h.set_supervise_posts(&repository, false).await;
     fetch_again(&h, &stub, &repo).await;
@@ -2026,6 +2130,12 @@ async fn a_first_successful_route_level_read_creates_the_readiness_item_and_publ
         "the first successful read creates the item"
     );
 
+    // Start the absence listen after the first read's event has arrived. It
+    // is the boundary this assertion means: the next route read itself must
+    // publish nothing, rather than a subscriber created for the first read
+    // mistaking that already-proven transition for a second one.
+    drop(events);
+    let mut events = h.bus.subscribe();
     // The same read again changes nothing: no second publish.
     let _: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
     assert!(
@@ -2105,7 +2215,7 @@ async fn a_merge_ends_the_task_on_its_own_merge_commit_once_the_local_base_holds
         path,
         bare,
         ..
-    } = kept_request(quiet_script()).await;
+    } = kept_request_running(quiet_script()).await;
     // A human merges the request on the forge, and another request merges
     // on top of it before Ariadne's next pass.
     let clone = h.at("forge-clone");
@@ -2178,7 +2288,7 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
         repo,
         path,
         ..
-    } = kept_request(quiet_script()).await;
+    } = kept_request_running(quiet_script()).await;
     // Not about the supervised path (026 rule 24 covers that separately):
     // the reply below posts directly, as it did before that rule existed.
     let repository = h.store.get_repository(&repo).await.unwrap();
@@ -2672,7 +2782,7 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
         id,
         repo,
         ..
-    } = kept_request(quiet_script()).await;
+    } = kept_request_running(quiet_script()).await;
     let failed = json!([{"name": "lint", "html_url": "https://ci.example/1",
         "conclusion": "failure"}]);
     let told_lint = || {
@@ -2698,6 +2808,11 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
         dto["failed_checks"].as_array().is_some_and(Vec::is_empty)
     })
     .await;
+    // The stored recovery proves the scheduler made no news decision, but
+    // the previous failure's delivery drains on the ACP queue behind it.
+    // Nothing else can prove that queue has stayed quiet before the next
+    // failure begins, so keep the absence listen here.
+    tokio::time::sleep(QUIET).await;
     let after_recovery = h.prompts_to(&agent).len();
 
     stub.reprogram(script("OPEN", &[], failed));

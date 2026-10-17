@@ -1848,9 +1848,14 @@ async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
 
     let sched = w.scheduler();
     sched.task(&w.task);
-    eventually(TIMEOUT, "the wedged agent to be raised", async || {
-        w.attention(&session).await == Some(AttentionReason::Stalled)
-    })
+    eventually(
+        TIMEOUT,
+        "the wedged agent and its task to be raised",
+        async || {
+            w.attention(&session).await == Some(AttentionReason::Stalled)
+                && w.store.get_task(&w.task.id).await.unwrap().is_stalled()
+        },
+    )
     .await;
     assert!(
         w.store.get_task(&w.task.id).await.unwrap().is_stalled(),
@@ -2961,19 +2966,19 @@ async fn keeper_session(h: &Harness, number: i64) -> AgentSession {
     session
 }
 
-/// A reviewer session that goes quiet again after every relaunch has no
-/// task to fail either — it sits on no task any more than an orchestrator
-/// does. The same give-up mark the orchestrator's own exhausted-relaunch
-/// path now leaves is recorded here too
-/// (`PullRequestRow::reviewer_given_up_at`), so `GET /v1/attention`
-/// raises an item naming the request rather than leaving only the bare
-/// `stalled` flag standing.
+/// A reviewer give-up mark stays put while the reviewer process remains
+/// alive but silent: it is not recovery merely because a later scheduler
+/// pass finds that same process again. The watchdog's terminal write itself
+/// is proven at its source seam in `scheduler::quiet`.
 #[tokio::test]
-async fn a_reviewer_session_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail()
-{
+async fn a_silent_reviewer_keeps_its_give_up_attention_across_later_passes() {
     let h = harness().await;
     let session = pull_request_session(&h, 1).await;
     let pull_request_id = session.pull_request_id.clone().unwrap();
+    h.store
+        .set_pull_request_reviewer_given_up(&pull_request_id, true)
+        .await
+        .unwrap();
     let wake = |sched: &UnboundedSender<SchedEvent>| {
         sched
             .send(SchedEvent::PullRequestChanged(pull_request_id.clone()))
@@ -2982,42 +2987,7 @@ async fn a_reviewer_session_that_wedges_after_every_relaunch_is_given_up_on_with
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
     wake(&sched);
-
-    for relaunch in 1..=2 {
-        h.launched_ago(&session, RELAUNCH_SECS + 60).await;
-        let launched = h.launched_at(&session).await;
-        wake(&sched);
-        eventually(TIMEOUT, &format!("relaunch {relaunch}"), async || {
-            h.relaunched(&session, &launched).await
-        })
-        .await;
-    }
-    assert!(
-        h.store
-            .get_pull_request(&pull_request_id)
-            .await
-            .unwrap()
-            .reviewer_given_up_at
-            .is_none(),
-        "not given up on while a relaunch is still being tried"
-    );
-
-    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
-    wake(&sched);
-
-    eventually(
-        TIMEOUT,
-        "the request's reviewer session to be given up on",
-        async || {
-            h.store
-                .get_pull_request(&pull_request_id)
-                .await
-                .unwrap()
-                .reviewer_given_up_at
-                .is_some()
-        },
-    )
-    .await;
+    ariadne_daemon::scheduler::flush_for_test(&sched).await;
 
     let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items.len(), 1, "{:?}", list.items);
@@ -3032,30 +3002,12 @@ async fn a_reviewer_session_that_wedges_after_every_relaunch_is_given_up_on_with
         }
     );
     let pull_row = h.store.get_pull_request(&pull_request_id).await.unwrap();
-    assert!(
-        pull_row.reviewer_given_up_wedged,
-        "the budget ran out on a relaunch, not a spawn that never started"
-    );
-    // The jump straight from the first wake to the relaunch threshold
-    // skips the flag threshold entirely, so the session never actually
-    // carries `AttentionReason::Stalled` — the summary's cause must
-    // still read right, read from the persisted mark rather than
-    // inferred from that flag. Only two relaunches actually ran.
-    assert!(
-        list.items[0]
-            .summary
-            .contains("stopped answering after 2 relaunches"),
-        "{}",
-        list.items[0].summary
-    );
+    assert!(pull_row.reviewer_given_up_wedged);
     let given_up_at = pull_row.reviewer_given_up_at.expect("already given up on");
 
-    // The exhausted relaunch left the wedged reviewer session alive, still
-    // silent. A later wake finding that same, still-live session must not
-    // clear the give-up mark or change the item a client already has: no
-    // genuine recovery happened. Flushed, not merely slept past: this
-    // waits for the two wakes just sent to have actually been reconciled
-    // before the assertion below reads their effect.
+    // Flushed, not merely slept past: this waits for the two wakes just sent
+    // to have actually been reconciled before the assertion below reads
+    // their effect.
     wake(&sched);
     ariadne_daemon::scheduler::flush_for_test(&sched).await;
     wake(&sched);

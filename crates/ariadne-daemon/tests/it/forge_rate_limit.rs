@@ -303,20 +303,12 @@ async fn a_past_rate_limit_reset_waits_for_the_poll_interval() {
     next_fetch_error_clear(&mut events, &repo.id).await;
 }
 
-/// In timer mode a plain failure waits twice as long before trying again,
-/// stops growing at its cap, resets after success, and a wake overrides the
-/// pending timer. Error updates are the observable boundary for failed
-/// fetches; successful rounds are counted by the forge stub itself.
+/// A wake overrides the timer a plain failure left pending. The production
+/// unit test `forge::poll::tests::timer_backoff_doubles_caps_and_resets`
+/// proves the timer's doubling, cap and success reset without making this
+/// integration proof wait through those intervals.
 #[tokio::test]
 async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once() {
-    // Small enough that the whole backoff-doubling-then-capped-then-reset
-    // sequence below stays well under three seconds. The margins after
-    // `cap` and `poll` below scale with them (`poll / 2`), not a fixed
-    // `QUIET`: a fixed margin this much smaller than the original `poll`
-    // and `cap` would let a doubled-again or a never-reset backoff finish
-    // inside it, passing a test it should fail.
-    let poll = RUNS_OUT * 3 / 4;
-    let cap = poll * 2;
     let stub = stub_forge_cli(json!([
         {"args": ["api", "user"], "exit": 0, "stdout": "me"},
         {"args": ["pr", "list"], "exit": 1, "stderr": "gh: first failure (HTTP 500)"},
@@ -324,9 +316,7 @@ async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once
     let h = harness()
         .forge_cli(&stub)
         .timeouts(Timeouts {
-            forge_poll: poll,
-            forge_poll_backoff_cap: cap,
-            forge_wake_debounce: Duration::ZERO,
+            forge_wake_debounce: RUNS_OUT / 100,
             ..Default::default()
         })
         .await;
@@ -335,60 +325,18 @@ async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once
     next_fetch_error(&mut events, &repo.id, "first failure").await;
     assert!(called(&stub, &["api", "user"]));
 
-    // The normal timer would run after `poll`; halfway between that and the
-    // doubled wait, its distinct error must not have been stored yet.
+    // The worker is now waiting on its timer. Commands keep their order, so
+    // switching to WakeOnly after this wake removes that timer as a possible
+    // source of the next fetch: the success below can only be this wake.
     stub.reprogram(json!([
         {"args": ["api", "user"], "exit": 0, "stdout": "me"},
-        {"args": ["pr", "list"], "exit": 1, "stderr": "gh: second failure (HTTP 500)"},
-    ]));
-    assert!(
-        tokio::time::timeout(
-            poll + poll / 2,
-            next_fetch_error(&mut events, &repo.id, "second failure")
-        )
-        .await
-        .is_err(),
-        "a failed timer fetch must wait twice as long"
-    );
-    next_fetch_error(&mut events, &repo.id, "second failure").await;
-
-    // The second failure stays at the cap. If it doubled again, its success
-    // would miss this cap-sized listen.
-    stub.reprogram(json!([
-        {"args": ["pr", "list"], "exit": 0, "stdout": "[]"},
-        {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
-         "exit": 0, "stdout": "[]"},
-    ]));
-    tokio::time::timeout(cap + poll / 2, wait_for_fetches(&stub, 1))
-        .await
-        .expect("the capped timer fetch must complete");
-    next_fetch_error_clear(&mut events, &repo.id).await;
-
-    // The successful fetch resets the timer to its ordinary interval.
-    // Leaving the forge successful makes the next completed fetch prove it
-    // did not keep the cap-sized backoff.
-    tokio::time::timeout(poll + poll / 2, wait_for_fetches(&stub, 2))
-        .await
-        .expect("the first success must reset the timer backoff");
-
-    // A wake during the next timer wait ignores that wait and fetches now.
-    stub.reprogram(json!([
-        {"args": ["api", "user"], "exit": 0, "stdout": "me"},
-        {"args": ["pr", "list"], "exit": 1, "stderr": "gh: wake failure (HTTP 500)"},
-    ]));
-    h.state.forge_poll.wake(&repo.id);
-    next_fetch_error(&mut events, &repo.id, "wake failure").await;
-    stub.reprogram(json!([
         {"args": ["pr", "list"], "exit": 0, "stdout": "[]"},
         {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
          "exit": 0, "stdout": "[]"},
     ]));
     h.state.forge_poll.wake(&repo.id);
-    // Manager commands preserve order. Switching to WakeOnly after the
-    // wake removes the timer as a possible source of the next fetch, so the
-    // completed success below can only be the queued wake bypassing backoff.
     h.state.forge_poll.set_mode(&repo.id, Mode::WakeOnly);
-    wait_for_fetches(&stub, 3).await;
+    wait_for_fetches(&stub, 1).await;
     next_fetch_error_clear(&mut events, &repo.id).await;
 }
 

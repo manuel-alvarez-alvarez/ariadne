@@ -3427,11 +3427,75 @@ fn permission_answer(option_id: Option<&str>, label: Option<&str>, params: &Valu
 #[cfg(test)]
 mod tests {
     use super::{
-        approved_option, completed_tool_payload, permission_signature, usage_for_prompt_response,
+        acp_error_detail, approved_option, completed_tool_payload, exhausted_reason,
+        permission_signature, usage_for_prompt_response,
     };
 
     use ariadne_core::TokenUsage;
     use serde_json::json;
+
+    #[test]
+    fn exhaustion_signals_are_classified_and_a_plain_error_is_not() {
+        let patterns = crate::config::default_exhausted_patterns();
+        assert_eq!(
+            exhausted_reason(
+                "stopped",
+                Some(
+                    &json!({"_meta": {"jetbrains": {"air": {"sessionFailure": {"category": "limit"}}}}})
+                ),
+                &patterns,
+            ),
+            Some("limit".into())
+        );
+        assert_eq!(
+            exhausted_reason("RATE LIMIT reached", Some(&json!({})), &patterns),
+            Some("rate limit".into())
+        );
+        assert_eq!(
+            exhausted_reason(
+                "You've hit your session limit",
+                Some(&json!({"errorKind": "rate_limit"})),
+                &patterns,
+            ),
+            Some("rate_limit".into())
+        );
+        assert_eq!(
+            exhausted_reason(
+                "Internal error",
+                Some(
+                    &json!({"details": "API error: 429 This request would exceed your account's rate limit."})
+                ),
+                &patterns,
+            ),
+            Some("rate limit".into())
+        );
+        assert_eq!(
+            exhausted_reason(
+                "authentication failed",
+                Some(&json!({"kept": true})),
+                &patterns,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn common_error_detail_fields_and_long_json_are_readable() {
+        for (data, expected) in [
+            (json!({"details": "X"}), "X"),
+            (json!({"detail": "X"}), "X"),
+            (json!({"error": {"message": "X"}}), "X"),
+            (json!({"details": "", "reason": "X"}), "X"),
+            (json!("X"), "X"),
+            (json!({"unknown": 7}), "{\"unknown\":7}"),
+        ] {
+            assert_eq!(acp_error_detail(&data), expected, "{data}");
+        }
+        let detail = acp_error_detail(&json!({"unknown": "x".repeat(500)}));
+        assert!(detail.starts_with("{\"unknown\":\""));
+        assert!(detail.ends_with('…'));
+        assert!(detail.chars().count() <= 201);
+    }
 
     /// The tool name is the first string among `name`, the Claude tool name
     /// and the title: a null candidate does not hide the next one.
