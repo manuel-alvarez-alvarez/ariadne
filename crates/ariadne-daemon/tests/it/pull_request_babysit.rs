@@ -301,13 +301,18 @@ async fn keep_until_merge(author: &str) {
         ..shown()
     }));
     h.state.forge_poll.wake(&repo);
+    // A check update can follow the comment before this assertion runs.
+    // Keep the matching prompt even when it is no longer the last one.
+    let mut comment_news = None;
     eventually(TIMEOUT, "the news to reach the keeper", async || {
-        h.prompts_to(&session)
-            .last()
-            .is_some_and(|news| news.contains("ic-301"))
+        comment_news = h
+            .prompts_to(&session)
+            .into_iter()
+            .find(|news| news.contains("ic-301"));
+        comment_news.is_some()
     })
     .await;
-    let news = h.prompts_to(&session).pop().unwrap();
+    let news = comment_news.unwrap();
     assert!(news.contains("alice"), "{news}");
     eventually(TIMEOUT, "failed checks to reach the keeper", async || {
         h.prompts_to(&session)

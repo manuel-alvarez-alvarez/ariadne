@@ -180,6 +180,10 @@ reads behind them ([026](026-pull-requests.md)).
   by another login reaches it once; its `ready` report is accepted; and the
   merge ends it, with its worktree and its branch gone and the row gone:
   `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`.
+- The keeper receives the comment even when a check update becomes its latest prompt:
+  `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`,
+  `::asking_keeps_a_dependabot_request_until_the_merge`,
+  `::asking_keeps_another_authors_request_until_the_merge`.
 - Where the repository supervises its posts, the keeper's reply to a
   conversation comment answers `pending: true` with the pending review's
   own id, posts no `gh pr comment`, announces the request changed so a
