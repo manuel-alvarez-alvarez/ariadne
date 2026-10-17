@@ -195,18 +195,34 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
      still land between that read and the send, however few lines stand
      between them — no ordering inside one task excludes a different one
      running on a different core at the same moment. What actually closes
-     it is `acp::prompt_once`: a confirmed `GoalAttention` delivery's key
-     is never taken off the launch's queue ledger (unlike every other
-     delivery kind), so a stale pass's own attempt at the identical
-     content and the turn that already confirmed it both answer to the
-     same `queue_daemon_prompt` lock over the same key, whichever reaches
-     it first — the one already there, from whichever of them won, is
-     what the other's own `insert` then fails on. That is a property of
-     the lock and the key, true of every interleaving between the two at
-     once, not a window narrow enough that a forced run could still be
-     raced into it; none was, on the daemon's own multi-threaded runtime,
-     repeated, under load, against the version of this code before the
-     key stopped coming off.
+     it is `AcpRuntime::goal_attention_lock`, one lock held across both
+     sides of the race: `tell_orchestrator`'s own read-and-send, and
+     `acp::prompt_once`'s own confirm-and-dequeue for the delivery that
+     read is about. Whichever of the two acquires it first runs to
+     completion before the other even starts its own read, so the read
+     never lands in the middle of the write it would otherwise race.
+     Confirming a `GoalAttention` delivery still takes its key off the
+     launch's queue ledger (`claim_message`) exactly as every other
+     delivery kind does, but now only once the store write actually
+     succeeds — a failed write leaves both the store and the ledger
+     saying unconfirmed, so a later pass still retries it, rather than a
+     key quietly gone despite nothing having actually confirmed. The
+     ledger key alone — named by a goal's failed tasks, nothing else —
+     was tried first and found wanting: a stall warning and an unrelated
+     "every task is done" notice can both carry an empty failed-task
+     list, and a key kept past its own confirmation to answer a race
+     would have suppressed whichever of the two came second
+     (`scheduler_attention.rs::a_stalled_tasks_warning_does_not_suppress_the_done_notice_that_follows`),
+     the same way it would have suppressed the same task stalling again
+     after its first stall already cleared
+     (`scheduler_attention.rs::a_tasks_stall_recurring_after_it_cleared_is_told_again`).
+     The lock answers the race without asking the key to carry an identity
+     it was never given, which is why the key keeps coming off on
+     confirmation exactly as it always did. That the lock closes the race
+     is a property of holding it on both sides, true of every
+     interleaving between the two at once, not a window narrow enough
+     that a forced run could still be raced into it; none was, on the
+     daemon's own multi-threaded runtime, repeated, under load.
      A goal not `orchestrated`, or not `planning` or
      `active` any more, answers `true` outright — nothing automatic is
      ever coming either way. Otherwise the goal's own give-up mark is
@@ -754,18 +770,30 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   daemon's multi-threaded runtime it cannot close it, since no ordering
   inside this one pass excludes the ACP driver confirming the same
   failure on another worker at the very moment this pass reaches the
-  read. What closes it is the queue ledger a confirmed `GoalAttention`
-  key is never taken off: a stale pass's own attempt at the identical
-  content and the turn that already confirmed it both answer to the same
-  lock over the same key, whichever reaches it first, so the other's own
-  `insert` fails on the one already there. The wider, pre-ledger gap is
-  forced in a test, on that same multi-threaded runtime, by holding the
-  confirming turn open on a gate and giving the pass other failed tasks
-  to still be reading through when the gate is released; the lock-and-key
-  guarantee past it holds for every interleaving at once and is read from
-  the code, not raced into — no forced run, on that runtime, repeated,
-  under load, against the version of the code before the key stopped
-  coming off, turned red either
+  read. What closes it is `AcpRuntime::goal_attention_lock`, held across
+  this whole read-and-send on one side and across `acp::prompt_once`'s
+  whole confirm-and-dequeue on the other: whichever acquires it first
+  finishes before the other's own read can start, so that read always
+  lands before or after the confirmation, never inside it. The ledger
+  key alone, named by a goal's failed tasks and nothing else, cannot
+  carry this: kept past its own confirmation instead, it would answer
+  for an unrelated situation that happens to share an empty failed-task
+  list, suppressing a stall warning's own completion notice
+  (`scheduler_attention.rs::a_stalled_tasks_warning_does_not_suppress_the_done_notice_that_follows`)
+  or the same task stalling again after its first stall cleared
+  (`scheduler_attention.rs::a_tasks_stall_recurring_after_it_cleared_is_told_again`),
+  so the key keeps coming off on confirmation exactly as every other
+  delivery kind's does, and only once that confirming write actually
+  succeeds. The wider, pre-lock gap is forced in a test, on that same
+  multi-threaded runtime, by holding the confirming turn open on a gate
+  and giving the pass other failed tasks to still be reading through
+  when the gate is released, with an ordinary marker prompt queued
+  behind the race and waited for before the count is read, so a wrongly
+  queued duplicate has already reached the stub, not merely been sent,
+  by the time that count is taken; the lock guarantee past the gap holds
+  for every interleaving at once and is read from the code, not raced
+  into — no forced run, on that runtime, repeated, under load, turned it
+  red either
   (`scheduler_attention.rs::a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure`).
   An orchestrated goal with no orchestrator session yet — awaiting its
   first launch — raises nothing either, the same grace a dead one

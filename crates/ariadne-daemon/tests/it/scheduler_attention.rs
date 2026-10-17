@@ -3765,21 +3765,14 @@ async fn a_pass_started_before_confirmation_does_not_retell_an_already_confirmed
 
     // The orchestrator's next turn is held open until the gate file exists,
     // so its confirmation (`acp::prompt_once`) lands at a moment this test
-    // chooses rather than whenever the stub happens to answer. A second,
-    // unheld entry follows it: a wrongly queued duplicate then runs its own
-    // turn to completion quickly, rather than hanging on a script with
-    // nothing left to answer it, so waiting for the session to settle
-    // actually waits the duplicate out instead of racing its start.
+    // chooses rather than whenever the stub happens to answer.
     let gate = w.dir.path().join("stale-goal-gate");
     let mut script = common::acp::script();
-    script["prompts"] = serde_json::json!([
-        {
-            "wait_for": gate.display().to_string(),
-            "updates": [],
-            "stop_reason": "end_turn",
-        },
-        { "updates": [], "stop_reason": "end_turn" },
-    ]);
+    script["prompts"] = serde_json::json!([{
+        "wait_for": gate.display().to_string(),
+        "updates": [],
+        "stop_reason": "end_turn",
+    }]);
     w.agent.reprogram(script);
 
     let sched = w.scheduler();
@@ -3797,31 +3790,147 @@ async fn a_pass_started_before_confirmation_does_not_retell_an_already_confirmed
     std::fs::write(&gate, "go").unwrap();
     sched.goal(&w.goal);
     sched.flush().await;
+
+    // An ordinary prompt, queued only now and carrying no delivery of its
+    // own, so nothing before it can be mistaken for it. The driver answers
+    // every prompt on one session in the order it was queued behind
+    // (021), so a wrongly queued duplicate of the attention prompt — which
+    // would have been queued by the flush above, ahead of this one — has
+    // already reached the stub and run its own turn to completion by the
+    // moment this marker does. Settling for that reason rather than for
+    // the session going idle: idle is also true in the narrow gap between
+    // the first turn's own stop and a duplicate's start, which this marker
+    // cannot be confused for, since nothing queues it until after this
+    // point.
+    const SETTLE_MARKER: &str = "the-pass-raced-the-confirmation-marker";
+    w.launcher
+        .acp
+        .send_prompt(&orchestrator.id, SETTLE_MARKER.into())
+        .unwrap();
     eventually(
         TIMEOUT,
-        "the first turn, or a wrongly queued second one, to settle",
-        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
-    )
-    .await;
-    // Idle here is the first turn's own stop, a wrongly queued duplicate's,
-    // or the narrow moment between the two — the second script entry gives
-    // a duplicate somewhere to run to, but not a reason to have reached it
-    // yet. One more pass, flushed and settled the same way, is owed
-    // whichever the first idle actually was: a duplicate already running
-    // finishes under it, and one not yet started has nothing new to delay
-    // it on, so this is the pass whose own idle a duplicate cannot outrun.
-    sched.goal(&w.goal);
-    sched.flush().await;
-    eventually(
-        TIMEOUT,
-        "a wrongly queued second turn to finish rather than still be running",
-        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+        "the settle marker, queued behind anything a wrongly duplicated pass sent first",
+        async || w.prompted(&orchestrator).contains(SETTLE_MARKER),
     )
     .await;
 
     assert_eq!(
-        w.prompts_to(&orchestrator).len(),
+        w.prompts_to(&orchestrator)
+            .iter()
+            .filter(|prompt| prompt.contains(&w.task.title))
+            .count(),
         1,
         "exactly one delivery of an already-confirmed failure"
     );
+}
+
+/// The ledger key the fix above protects names a goal's failed tasks alone
+/// (`acp::Delivery::key`), so a stall warning and a later, distinct "every
+/// task is done" notice — both confirmed with no failed task on record,
+/// `failed_tasks` empty either way — could collide on it. Restoring the
+/// ledger's original removal, taken off the moment each delivery's own
+/// turn confirms it rather than kept for the rest of the launch, is what
+/// keeps that collision from suppressing the second notice: once a
+/// delivery is confirmed its key is gone, whatever the next one's is.
+#[tokio::test]
+async fn a_stalled_tasks_warning_does_not_suppress_the_done_notice_that_follows() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.raise(&session, AttentionReason::Stalled).await;
+
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the stall warning",
+        async || w.prompted(&orchestrator).contains("has gone quiet"),
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "the stall warning's own turn to confirm",
+        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+    )
+    .await;
+
+    // The stall clears, and the task lands: a different situation, with
+    // the same empty `failed_tasks` the stall warning's own key carried.
+    w.store.clear_session_attention(&session.id).await.unwrap();
+    w.advance_to(&w.task, "merge").await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Finished,
+            Actor::Agent,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
+
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear every task is done, not suppressed by the stall's own key",
+        async || w.prompted(&orchestrator).contains("Every task is done."),
+    )
+    .await;
+}
+
+/// The same task stalling twice renders the identical "has gone quiet"
+/// line both times — nothing about a stall names which occurrence of it
+/// this is, unlike a failure's own transition id. Clearing the first
+/// stall's situation (`tell_orchestrator` dropping `goal_told` for this
+/// goal once `goal_attention` has nothing left to say) and the ledger key
+/// its own confirmed turn already took off is what lets the second stall
+/// be told again rather than finding a cache or a key still saying it
+/// already was.
+#[tokio::test]
+async fn a_tasks_stall_recurring_after_it_cleared_is_told_again() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+
+    let sched = w.scheduler();
+    w.raise(&session, AttentionReason::Stalled).await;
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the first stall",
+        async || w.prompted(&orchestrator).contains("has gone quiet"),
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "the first stall's own turn to confirm",
+        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+    )
+    .await;
+    let told_once = w.prompted(&orchestrator).matches("has gone quiet").count();
+
+    // Cleared, and nothing else said while it stays clear: no situation to
+    // render, so nothing for `tell_orchestrator` to send.
+    w.store.clear_session_attention(&session.id).await.unwrap();
+    sched.goal(&w.goal);
+    sched.flush().await;
+    assert_eq!(
+        w.prompted(&orchestrator).matches("has gone quiet").count(),
+        told_once,
+        "a cleared stall says nothing more on its own"
+    );
+
+    // The same task, stalled again: the identical line, rendered fresh.
+    w.raise(&session, AttentionReason::Stalled).await;
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the recurring stall to be told again rather than found already confirmed",
+        async || w.prompted(&orchestrator).matches("has gone quiet").count() > told_once,
+    )
+    .await;
 }

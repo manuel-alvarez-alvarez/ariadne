@@ -444,24 +444,18 @@ impl super::Scheduler {
             // finds it idle says it then.
             return Ok(());
         };
-        // Read fresh here, right before the send, rather than off `goal` —
-        // which `reconcile_goal` fetched before `keep_orchestrator`,
-        // `deliver_goal_messages` and `list_tasks` each gave this pass a
-        // moment to fall behind in — so a confirmation that lands while
-        // this pass is still working is the answer this read gets, not
-        // the one the pass started with. That narrows the window; it does
-        // not close it, since the daemon's runtime is multi-threaded
-        // (`#[tokio::main]`, `crates/ariadne-daemon/Cargo.toml`'s `tokio`
-        // on the default, not `current_thread`, flavor) and the ACP
-        // driver confirming this exact failure on another worker can
-        // still land between this read and the send below, however few
-        // lines separate them. What actually closes it is on the other
-        // side, in `acp::prompt_once`: the queue's ledger key for this
-        // exact content is never taken off once confirmed, so whichever
-        // of this send and that confirmation reaches `queue_daemon_prompt`
-        // first is the one answer its own lock gives either of them, and
-        // this read only has to be close enough that the common case
-        // skips a pass that already knows it is moot.
+        // Locked against `acp::prompt_once` confirming this exact goal's
+        // last delivery: on the daemon's multi-threaded runtime, no
+        // ordering inside this pass excludes that confirmation landing on
+        // another worker between the read below and the send further
+        // down, however few lines separate them — nothing short of a lock
+        // either side actually waits on closes that gap. Whichever of the
+        // two acquires it first — this pass's whole read-and-send, or that
+        // turn's whole confirm-and-dequeue — runs to completion before the
+        // other even starts its own read, so the read below always sees
+        // either the confirmation whole or not at all, never half-landed.
+        let goal_attention_lock = self.launcher.acp.goal_attention_lock();
+        let _goal_attention_guard = goal_attention_lock.lock().await;
         let confirmed: Vec<(String, String)> = self
             .store
             .get_goal(&goal.id)
