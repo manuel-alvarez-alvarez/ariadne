@@ -66,6 +66,7 @@ const TOOLING = new Set([
   "@types/node",
   "@types/react",
   "@types/react-dom",
+  "@typescript/native",
   "jsdom",
   "openapi-typescript",
   "tailwindcss",

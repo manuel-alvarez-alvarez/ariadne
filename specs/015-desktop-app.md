@@ -196,6 +196,9 @@ Out: the daemon endpoints themselves (012).
     verified there, not only in a browser.
 12. The app is checked by `npm test`, `npm run typecheck`, `npm run lint` and
     `npm run check:unused` before a commit.
+    Typecheck and build use TypeScript 7 through the `@typescript/native`
+    alias, with an explicit compiler path. API generation retains TypeScript
+    5.9.3 because `openapi-typescript` requires its compiler API.
 13. A goal, and on a task of a goal a workflow runs each column's staffing
     row, each name a concrete `<agent>:<model>` before their form can submit,
     where `<agent>` is a registry agent id (011), and an empty effort stays

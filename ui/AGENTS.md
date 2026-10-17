@@ -207,6 +207,13 @@ alias nothing imports. Add one when a screen needs it.
 
 ### Regenerating the API types
 
+`npm run typecheck` runs TypeScript 7 through the `@typescript/native` npm alias.
+`npm run build` uses the same command before Vite builds the app.
+`openapi-typescript` still requires the TypeScript 5 compiler API, so `typescript`
+stays at 5.9.3 for generation. Both packages provide `tsc`; the scripts name
+the native compiler's path explicitly to avoid the shared binary name.
+The `@/*` mapping uses relative paths without the removed `baseUrl` option.
+
 `src/api/schema.d.ts` is generated from the daemon's OpenAPI document by
 [openapi-typescript](https://openapi-ts.dev). **Both it and the `openapi.json`
 snapshot it was generated from are committed**, so nothing here needs a running
