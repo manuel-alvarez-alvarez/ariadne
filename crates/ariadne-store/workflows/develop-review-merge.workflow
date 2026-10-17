@@ -6,11 +6,10 @@ workflow develop-review-merge
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
-    Fail the step with the changes to make.
     skills: code-review
     ranks: balanced, frontier
   merge[Merge]
-    Rebase onto the base branch, squash, fast-forward and push.
+    Land the task on the base branch.
     skills: merge
     ranks: fast
     gate: merged

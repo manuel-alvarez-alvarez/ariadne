@@ -180,8 +180,7 @@ async fn the_orchestrator_briefing_names_the_workflow_and_its_columns_and_no_lan
     assert!(
         briefing.lines().any(|line| line
             == "- review [Review]: Judge the change against the task and the repository \
-                rules. Fail the step with the changes to make. Skills: code-review. Ranks: \
-                balanced, frontier."),
+                rules. Skills: code-review. Ranks: balanced, frontier."),
         "{briefing}"
     );
 

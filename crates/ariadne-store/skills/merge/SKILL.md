@@ -5,9 +5,9 @@ description: Land a reviewed task on the base branch. Rebase, squash, push and f
 
 # Merge
 
-Land the reviewed task on the base branch from your worktree. The primary
-checkout is the `Repo:` path of your briefing. `<upstream>` is
-`<remote>/<base>` where `git remote -v` names a remote, else `<base>`.
+Work from your worktree. The primary checkout is the `Repo:` path of your
+briefing. `<upstream>` is `<remote>/<base>` where `git remote -v` names a
+remote, else `<base>`.
 
 ## Steps
 
@@ -28,10 +28,9 @@ checkout is the `Repo:` path of your briefing. `<upstream>` is
 
 ## Rules
 
-- A refused push or a failed check is a fix on the task branch. Make it,
-  then start again from step 1.
-- A rejected non-fast-forward push means the base moved. Start again from
-  step 1.
+- A refused push or a failed check is a fix on the task branch. Start
+  again from step 1.
+- A failed fast-forward means the base moved. Start again from step 1.
 - Never force a push to `<base>`.
 
 ## Done
