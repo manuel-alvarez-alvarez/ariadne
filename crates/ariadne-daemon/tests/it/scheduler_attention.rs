@@ -341,7 +341,7 @@ impl Sched {
 
 /// The agent's resume template, rendered for the world's task on its first
 /// column: the words the daemon nudges an idle column agent with.
-const RESUME: &str = "Not a new request: continue <<<untrusted>>>task<<<end untrusted>>> at Develop. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
+const RESUME: &str = "Not a new request: continue task at Develop. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
 
 // -- the timeline -----------------------------------------------------------
 
@@ -3678,7 +3678,7 @@ async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_i
     assert!(
         back.initial_prompt
             .unwrap_or_default()
-            .contains("# Review pull request: <<<untrusted>>>Fix widgets 2<<<end untrusted>>>"),
+            .contains("# Review pull request: Fix widgets 2"),
         "a relaunched request session is briefed on its request again"
     );
 
