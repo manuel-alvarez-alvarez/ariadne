@@ -40,8 +40,16 @@ beforeEach(() => {
 // that cares what is in one of them clears it itself; both survive between
 // the tests of a file, exactly as they survive between screens in the app.
 if (typeof window !== "undefined") {
-  globalThis.localStorage = webStorage()
-  globalThis.sessionStorage = webStorage()
+  Object.defineProperty(globalThis, "localStorage", {
+    value: webStorage(),
+    writable: false,
+    configurable: true,
+  })
+  Object.defineProperty(globalThis, "sessionStorage", {
+    value: webStorage(),
+    writable: false,
+    configurable: true,
+  })
 
   // Assigned rather than stubbed: a test that calls `vi.unstubAllGlobals` in
   // its teardown would otherwise take this with it and leave the next one
