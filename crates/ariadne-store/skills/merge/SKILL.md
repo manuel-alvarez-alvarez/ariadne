@@ -1,13 +1,12 @@
 ---
 name: merge
-description: Land a reviewed task on the base branch. Rebase, squash, push and fast-forward.
+description: Lands a reviewed task on the base branch, rebasing, squashing, pushing and fast-forwarding.
 ---
 
 # Merge
 
-Work from your worktree. The primary checkout is the `Repo:` path of your
-briefing. `<upstream>` is `<remote>/<base>` where `git remote -v` names a
-remote, else `<base>`.
+The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
+`<remote>/<base>` where `git remote -v` names a remote, else `<base>`.
 
 ## Steps
 
@@ -24,7 +23,8 @@ remote, else `<base>`.
    - else `git -C <repo> fetch <remote> <base>:<base>`.
 6. With no remote: run the checks the repository names for a landing. Then
    fast-forward `<base>` in the primary checkout to the task branch.
-7. Call `complete_step` with the sha of `<base>` as `merge_commit`.
+7. Call `complete_step` with the column report and the sha of `<base>`
+   as `merge_commit`.
 
 ## Rules
 

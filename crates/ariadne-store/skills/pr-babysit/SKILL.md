@@ -1,6 +1,6 @@
 ---
 name: pr-babysit
-description: Keep a task request until it merges or closes. Answer comments, fix checks, and keep its branch current.
+description: Keeps a task request until it merges or closes. Answers comments, fixes checks and keeps its branch current.
 ---
 
 # PR babysit
@@ -47,7 +47,7 @@ Then end your turn.
    - `git -C <repo> merge --ff-only <remote>/<base>` where `<base>` is
      checked out
    - else `git -C <repo> fetch <remote> <base>:<base>`.
-   Call `complete_step` with the merge as the reason. Else end your turn:
+   Call `complete_step` with the column report. Else end your turn:
    Ariadne ends your session. On a close, where you sit on a task, call
    `fail_task` with the reason. Else end your turn.
 

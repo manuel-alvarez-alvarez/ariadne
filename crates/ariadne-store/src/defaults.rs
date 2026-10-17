@@ -1304,7 +1304,7 @@ mod tests {
             "git -C <repo> merge --ff-only <remote>/<base>",
             "else `git -C <repo> fetch <remote> <base>:<base>`",
             "With no remote: run the checks the repository names for a landing.",
-            "Call `complete_step` with the sha of `<base>` as `merge_commit`.",
+            "Call `complete_step` with the column report and the sha of `<base>` as `merge_commit`.",
         ] {
             let found = text[at..]
                 .find(step)
@@ -1382,7 +1382,7 @@ mod tests {
             "`ready: true` with the `head_sha`",
             "`ready: false` when one goes back",
             "On a merge, where you sit on a task, update `<base>` in the primary checkout:",
-            "Call `complete_step` with the merge as the reason.",
+            "Call `complete_step` with the column report.",
             "Else end your turn: Ariadne ends your session.",
             "On a close, where you sit on a task, call `fail_task` with the reason.",
             "## Done",
@@ -1578,13 +1578,18 @@ mod tests {
     fn each_rule_is_stated_in_exactly_one_briefing() {
         // The step calls, the hook rule and the stop rule belong to the
         // agent seat text. `finalize_plan` belongs to the orchestration
-        // skill.
+        // skill. The worktree scope and the plan-with-the-user rule belong
+        // to the agent and orchestrator seat texts: a skill that repeated
+        // either, as `merge` and `orchestration` once did, is the mistake
+        // this guards against.
         for marker in [
             "Call `complete_step` when",
             "Call `fail_step` when",
             "Never pass `--no-verify` or `-n` to git",
             "After three failed attempts at one fix, stop.",
             "Call it no earlier.",
+            "Work only in the task's worktree",
+            "Plan the goal with the user",
         ] {
             let places = all_defaults()
                 .into_iter()

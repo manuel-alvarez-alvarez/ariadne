@@ -1,12 +1,12 @@
 ---
 name: orchestration
-description: Plan a goal into tracer tasks with the user, then run it to the end. Use when a goal opens, a plan changes, or a task reports back.
+description: Plans a goal into tracer tasks with the user, then runs it to the end. Used when a goal opens, a plan changes, or a task reports back.
 ---
 
 # Orchestration
 
-Each tracer task has one cohesive outcome and complete path. Plan with the
-user. The workflow columns in your briefing are settled: do not ask for them.
+Each tracer task has one cohesive outcome and complete path. The workflow
+columns in your briefing are settled: do not ask for them.
 
 ## Steps
 
