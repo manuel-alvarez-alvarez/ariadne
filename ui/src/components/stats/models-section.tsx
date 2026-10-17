@@ -104,7 +104,6 @@ function AgentSeat({ rows }: { rows: Model[] }) {
         data={chartRows}
         config={MODELS_AGENT_CONFIG}
         bars={["tasks"]}
-        legendExtra={["tokens", "time_secs", "messages", "tasks_finished"]}
         caption="Agent models ranked by tasks worked"
         tooltip={(row) => (
           <>
@@ -166,7 +165,6 @@ function OrchestratorSeat({ rows }: { rows: Model[] }) {
         data={chartRows}
         config={MODELS_ORCHESTRATOR_CONFIG}
         bars={["goals"]}
-        legendExtra={["tokens", "time_secs", "messages"]}
         caption="Orchestrator models ranked by goals run"
         tooltip={(row) => (
           <>

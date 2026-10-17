@@ -139,6 +139,27 @@ it("draws a summary card and a ranked chart for each seat, heaviest model first"
   ])
 })
 
+it("names only the drawn bar in each legend, with every other figure kept in the table", async () => {
+  serve(STATS)
+  renderScreen(<ModelsSection filter={{}} />, { route: "/stats" })
+
+  const section = await screen.findByRole("region", { name: "Models" })
+  await within(section).findByText("Agents")
+
+  const outsideTables = (text: string) =>
+    within(section)
+      .queryAllByText(text)
+      .filter((element) => !element.closest("table"))
+  expect(outsideTables("Tasks")).toHaveLength(1)
+  expect(outsideTables("Goals")).toHaveLength(1)
+  for (const figure of ["Tokens", "Time", "Messages", "Finished"]) {
+    expect(outsideTables(figure)).toHaveLength(0)
+    expect(
+      within(section).getAllByRole("columnheader", { hidden: true, name: figure }).length,
+    ).toBeGreaterThan(0)
+  }
+})
+
 it("omits a seat with no row", async () => {
   serve({ items: [STATS.items[0] as ModelStatsDto["items"][number]] })
   renderScreen(<ModelsSection filter={{}} />, { route: "/stats" })
