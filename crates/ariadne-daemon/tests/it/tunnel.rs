@@ -957,6 +957,13 @@ async fn a_delivery_and_a_timer_fetch_record_the_same_pull_request_rows() {
         !rows(&h).await.is_empty()
     })
     .await;
+    // The row above lands mid-round, from `start_work`, well before the
+    // round's own trailing issues call: wait for the round itself to finish
+    // before its script changes under it.
+    eventually(TIMEOUT, "the first fetch to finish", async || {
+        stub.fetches() >= 1
+    })
+    .await;
     stub.reprogram(script(&after, &gates));
     eventually(TIMEOUT, "the timer's row", async || {
         rows(&h)

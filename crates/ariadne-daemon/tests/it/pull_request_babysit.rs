@@ -220,6 +220,14 @@ async fn keep_until_merge(author: &str) {
     };
     stub.reprogram(script(&shown()));
     let repo = repository(&h, &path).await;
+    // The repository's own worker starts a fetch of its own the moment it
+    // is created: waited out before the script changes below, since one
+    // still under way would answer its own remaining calls from the new
+    // script instead of this one.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
     // Not about the supervised path (026 rule 24 covers that separately):
     // the reply below posts directly, as it did before that rule existed.
     let repository_row = h.store.get_repository(&repo).await.unwrap();
@@ -494,6 +502,14 @@ async fn a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts()
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path).await;
+    // The repository's own worker starts a fetch of its own the moment it
+    // is created: waited out before the script changes below, since one
+    // still under way would answer its own remaining calls from the new
+    // script instead of this one.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.flush_scheduler().await;
 
@@ -516,6 +532,7 @@ async fn a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts()
         ..Shown::open(&head)
     };
     stub.reprogram(script(&shown_with_alice));
+    let before_alice = stub.fetches();
     h.state.forge_poll.wake(&repo);
     eventually(TIMEOUT, "the news to reach the keeper", async || {
         h.prompts_to(&session)
@@ -524,6 +541,14 @@ async fn a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts()
     })
     .await;
     let told = h.prompts_to(&session).len();
+    // The scheduler is woken with the row's own news mid-fetch, before the
+    // round's own trailing calls end (`forge::poll::fetch`): waited out
+    // here too, since the script changes below for the same reason as the
+    // first fetch's own wait above.
+    eventually(TIMEOUT, "the alice fetch to end", async || {
+        stub.fetches() > before_alice
+    })
+    .await;
 
     // The repository holds posts back: the reply finds no pending review
     // of its own yet (the plain `pulls/1/reviews` entry below still

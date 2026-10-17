@@ -486,6 +486,13 @@ async fn a_missing_stored_hook_restores_timer_and_wakes_a_fetch() {
     public.set(Some("https://first.example".into()));
     let id = enable(&h).await;
     eventually(TIMEOUT, "initial fetch", async || fetches(&stub) == 1).await;
+    // `fetches` above only counts the round's leading `pr list` call; wait
+    // for its own trailing issues call too, so the round's own last call
+    // cannot straggle into the reprogrammed script below.
+    eventually(TIMEOUT, "the initial fetch to finish", async || {
+        stub.fetches() >= 1
+    })
+    .await;
     let mut entries = script().as_array().unwrap().clone();
     entries.pop();
     entries.push(json!({"args":["api"],"exit":1,"stderr":"HTTP 404: hook not found"}));
@@ -517,6 +524,12 @@ async fn a_failed_hook_update_keeps_its_id_and_reports_the_error_with_timer_fall
     public.set(Some("https://first.example".into()));
     let id = enable(&h).await;
     eventually(TIMEOUT, "initial fetch", async || fetches(&stub) == 1).await;
+    // As above: prove the round's own trailing issues call is over too,
+    // before its script changes under it.
+    eventually(TIMEOUT, "the initial fetch to finish", async || {
+        stub.fetches() >= 1
+    })
+    .await;
     let secret = h
         .store
         .forge_integration(&id)

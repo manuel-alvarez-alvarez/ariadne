@@ -383,10 +383,10 @@ async fn a_draft_starts_no_review_until_it_leaves_draft() {
     }));
     let repo = repository(&h, &path).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
-    h.state.forge_poll.wake(&repo);
-    // Prove that the draft creates no review row.
-    tokio::time::sleep(QUIET).await;
-    h.flush_scheduler().await;
+    // Wait for the draft's own fetch round to finish, not merely for a
+    // quiet window, so the reprogram below never races a straggler still
+    // reading this draft script.
+    fetch_again(&h, &stub, &repo).await;
     assert!(no_rows(&h).await, "a draft is no work yet");
 
     stub.reprogram(script(&Shown::open(&head)));
@@ -453,12 +453,22 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
+    let before = stub.fetches();
     stub.reprogram(script(&Shown::open(&first)));
     let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
     ask_review(&h, &id, &repo, 1, PIN).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let session = idle_session(&h, &id).await;
+    // Wait for the repository's own first fetch round to finish: the row,
+    // the evidence and the idle session above all land mid-round, well
+    // before the round's own trailing calls do.
+    eventually(
+        TIMEOUT,
+        "the repository's first fetch to finish",
+        async || stub.fetches() > before,
+    )
+    .await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
     let _: Value = h
         .json(
@@ -542,6 +552,8 @@ async fn a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_new
             entry["stdout"] = json!(reviews.to_string());
         }
     }
+    // No fetch wait needed here: both edited entries are per-row reads round
+    // one's own `details()` already consumed before the idle session above.
     stub.reprogram(pending_script);
     fetch_again(&h, &stub, &repo).await;
 
@@ -564,12 +576,22 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
+    let before = stub.fetches();
     stub.reprogram(script(&Shown::open(&first)));
     let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
     ask_review(&h, &id, &repo, 1, PIN).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let session = idle_session(&h, &id).await;
+    // Wait for the repository's own first fetch round to finish: the row,
+    // the evidence and the idle session above all land mid-round, well
+    // before the round's own trailing calls do.
+    eventually(
+        TIMEOUT,
+        "the repository's first fetch to finish",
+        async || stub.fetches() > before,
+    )
+    .await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
     let briefed = h.prompts_to(&session).len();
     let commit = |file: &str| {
@@ -1022,12 +1044,23 @@ async fn the_review_ends_when_the_request_shows(shown: impl Fn(&str) -> Shown<'_
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
+    let before = stub.fetches();
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
     ask_review(&h, &id, &repo, 1, PIN).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let session = idle_session(&h, &id).await;
+    // Wait for the repository's own first fetch round to finish before
+    // reprogramming for the new state: the row, the evidence and the idle
+    // session above all land mid-round, well before the round's own
+    // trailing calls do.
+    eventually(
+        TIMEOUT,
+        "the repository's first fetch to finish",
+        async || stub.fetches() > before,
+    )
+    .await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
 
     stub.reprogram(script(&shown(&head)));
@@ -1184,12 +1217,23 @@ async fn reviewed() -> Reviewed {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
+    let before = stub.fetches();
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
     ask_review(&h, &id, &repo, 1, PIN).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     let session = idle_session(&h, &id).await;
+    // Wait for the repository's own first fetch round to finish: every
+    // caller of `reviewed()` reprograms the stub right away, and the row,
+    // the evidence and the idle session above all land mid-round, well
+    // before the round's own trailing calls do.
+    eventually(
+        TIMEOUT,
+        "the repository's first fetch to finish",
+        async || stub.fetches() > before,
+    )
+    .await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
     let _: Vec<Value> = h
         .json(
@@ -1408,6 +1452,7 @@ async fn asking_needs_a_model_and_takes_a_review_request_of_anothers() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
+    let before = stub.fetches();
     stub.reprogram(script(&Shown {
         author: "me",
         ..Shown::open(&head)
@@ -1443,6 +1488,16 @@ async fn asking_needs_a_model_and_takes_a_review_request_of_anothers() {
             .is_empty(),
         "a refusal starts no work"
     );
+    // Wait for the repository's own first fetch round to finish: this test
+    // sets no `WakeOnly` lock, so only proving a round actually over keeps
+    // the reprogram below from racing a straggler still reading the
+    // "me"-authored script above.
+    eventually(
+        TIMEOUT,
+        "the repository's first fetch to finish",
+        async || stub.fetches() > before,
+    )
+    .await;
 
     // A request that asks for my review takes a manual ask the same way a
     // request of mine does: nobody else is going to start it (029).

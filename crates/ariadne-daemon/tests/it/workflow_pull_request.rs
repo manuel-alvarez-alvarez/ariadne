@@ -344,9 +344,16 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
     )
     .await;
     let told = h.prompts_to(agent).len();
+    let before_second_wake = forge.fetches();
     h.state.forge_poll.wake(&task.repo_id);
     h.flush_scheduler().await;
     assert_eq!(h.prompts_to(agent).len(), told);
+    // Prove this wake's own round, concurrent detail reads included, is
+    // over before its script changes under a later reprogram below.
+    eventually(TIMEOUT, "the second wake's fetch to finish", async || {
+        forge.fetches() > before_second_wake
+    })
+    .await;
     // Not about the supervised path (026 rule 24 covers that separately):
     // the reply below posts directly, as it did before that rule existed.
     let repository = h.store.get_repository(&task.repo_id).await.unwrap();

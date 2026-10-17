@@ -553,6 +553,15 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         call.args.contains(&"body=Renamed it.".to_string()),
         "{call:?}"
     );
+    // The reply itself wakes a round of its own, but waiting for it here
+    // would be wrong, not merely unneeded: nothing is awaited before the
+    // reprogram and the `wake` inside `fetch_again` below, so the worker's
+    // own wake debounce folds this reply's wake into that same later round,
+    // which runs against the script reprogrammed below, never the one
+    // before this reply. Proving this round over first would instead force
+    // it to run alone, against the old script, at a `since` generation
+    // taken after the reply's own local addition — which
+    // `LivePulls::set_details` then reads as safe to drop.
     // The forge holds the reply now, and the next read finds the thread
     // answered.
     let answered = [
@@ -1654,6 +1663,7 @@ async fn evidence_ok_tracks_a_real_fetchs_own_success_and_failure_at_the_same_he
         answer(&["pr", "list"], 0, "[]"),
         answer(&["pr", "view"], 0, &pull("OPEN", &head).to_string()),
     ]));
+    let before = stub.fetches();
     h.state.forge_poll.wake(&repo);
     eventually(TIMEOUT, "evidence_ok to drop", async || {
         h.launcher.live.get(&id).is_some_and(|l| !l.evidence_ok)
@@ -1664,6 +1674,13 @@ async fn evidence_ok_tracks_a_real_fetchs_own_success_and_failure_at_the_same_he
         Some(head.clone()),
         "the head itself never moved"
     );
+    // `evidence_ok` drops mid-round, inside `read_row`, before the round's
+    // own trailing calls end: wait for the fetch itself too, before the
+    // script changes below.
+    eventually(TIMEOUT, "the failing fetch to end", async || {
+        stub.fetches() > before
+    })
+    .await;
 
     // A later fetch succeeds again, on the same head: evidence_ok
     // recovers.
@@ -1720,12 +1737,20 @@ async fn a_direct_read_failure_withdraws_the_rows_evidence() {
     assert!(h.launcher.live.get(&id).unwrap().evidence_ok);
 
     stub.reprogram(script_for_head_with(&head, &["pr", "view"]));
+    let before = stub.fetches();
     h.state.forge_poll.wake(&repo);
     eventually(
         TIMEOUT,
         "evidence_ok to drop on a direct read failure",
         async || h.launcher.live.get(&id).is_some_and(|l| !l.evidence_ok),
     )
+    .await;
+    // Unlike an outer list failure, this one happens inside the per-row
+    // loop: the round still runs its trailing calls after it, so wait for
+    // the fetch itself too, before the script changes below.
+    eventually(TIMEOUT, "the failing fetch to end", async || {
+        stub.fetches() > before
+    })
     .await;
 
     stub.reprogram(script_for_head(&head));
@@ -2198,6 +2223,7 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
     // The setup fetch can finish after the fixture changes but before this
     // wake records its detail-call baseline. Wait for the state that either
     // fetch must leave instead of missing that completed refresh.
+    let before = stub.fetches();
     h.state.forge_poll.wake(&repo);
     eventually(
         TIMEOUT,
@@ -2213,6 +2239,13 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
         },
     )
     .await;
+    // The row's own detail read is proof of its own work, but the round's
+    // own trailing calls can still be running: wait for the round itself to
+    // end too, before anything that wakes another one.
+    eventually(TIMEOUT, "the detail fetch's own round to end", async || {
+        stub.fetches() > before
+    })
+    .await;
     h.flush_scheduler().await;
 
     let ask = Request::builder()
@@ -2225,7 +2258,14 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
             json!({"asked": true, "model": "stub:review-model"}).to_string(),
         ))
         .unwrap();
+    let before = stub.fetches();
     let _: Value = h.json(ask, StatusCode::OK).await;
+    // `ask_review` wakes a round of its own too: wait for it to end before
+    // the next thing that wakes another one.
+    eventually(TIMEOUT, "the ask's own fetch to end", async || {
+        stub.fetches() > before
+    })
+    .await;
     let mut review = None;
     eventually(TIMEOUT, "the review session to be idle", async || {
         review = h
@@ -2243,6 +2283,7 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
     .await;
     let review = review.unwrap();
     let told = h.prompts_to(&agent).len();
+    let before = stub.fetches();
     let stored: Vec<Value> = h
         .json(
             as_session(
@@ -2263,6 +2304,12 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
         .as_str()
         .unwrap()
         .to_string();
+    // `submit_review` posts directly and wakes a round of its own: wait for
+    // it to end before swapping the script below.
+    eventually(TIMEOUT, "the review's own fetch to end", async || {
+        stub.fetches() > before
+    })
+    .await;
     // The forge holds the review finding on its line; no review summary is posted.
     let holds = |script: &mut Value, comments: Value, summary: Value| {
         for entry in script.as_array_mut().unwrap() {
@@ -2318,6 +2365,13 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
             StatusCode::CREATED,
         )
         .await;
+    // The reply wakes the one round the wait below leans on to tell the
+    // review of the answer, but no wait is needed before the reprogram
+    // right below: nothing is awaited in between, so that round's own
+    // calls have not even started by the time it runs against the script
+    // reprogrammed here (as above, proving it over first would instead run
+    // it alone, against the old script, old enough to read the reply's own
+    // local addition as safe to drop).
     let mut answered = posted.as_array().unwrap().clone();
     answered.push(
         json!({"id": 601, "in_reply_to_id": 501, "user": me, "body": "Added the test.",
@@ -2751,6 +2805,15 @@ async fn a_closed_request_i_review_deletes_no_branch() {
         )
         .await;
     let repo = created["id"].as_str().unwrap().to_string();
+    // The repository's own worker starts a fetch of its own the moment it
+    // is created: waited out before anything that wakes it again, since one
+    // still under way would answer its own remaining calls from a later
+    // script instead of this one.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
+    let before = stub.fetches();
     let ask = Request::builder()
         .method("PUT")
         .uri(format!(
@@ -2764,6 +2827,12 @@ async fn a_closed_request_i_review_deletes_no_branch() {
     let dto: Value = h.json(ask, StatusCode::OK).await;
     assert_eq!(dto["role"], "reviewer");
     let id = dto["id"].as_str().unwrap().to_string();
+    // `ask_review` wakes a round of its own too: wait for it to end before
+    // the script changes below.
+    eventually(TIMEOUT, "the ask's own fetch to end", async || {
+        stub.fetches() > before
+    })
+    .await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
 
     read["state"] = json!("CLOSED");
