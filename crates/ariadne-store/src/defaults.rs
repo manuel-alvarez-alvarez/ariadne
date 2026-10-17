@@ -358,7 +358,7 @@ const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its br
 - Call `fail_step` when the previous column must fix something.
 - Call `fail_task` when nobody can do the task as written.
 - Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again.
-- After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator, or call `fail_task`."#;
+- After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator with `send_message`, or call `fail_task`."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
 /// commands act on, and what the column before it said.
@@ -973,7 +973,7 @@ mod tests {
              - Call `fail_step` when the previous column must fix something.\n\
              - Call `fail_task` when nobody can do the task as written.\n\
              - Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again.\n\
-             - After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator, or call `fail_task`."
+             - After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator with `send_message`, or call `fail_task`."
         );
         assert!(
             default_prompt_text(PromptKind::StepBriefing)

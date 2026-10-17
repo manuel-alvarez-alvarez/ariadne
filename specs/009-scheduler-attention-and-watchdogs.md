@@ -70,12 +70,9 @@ the ACP runtime that takes a prompt (021).
    with its id, and the scheduler stamps nothing: the stamp is the driver's,
    when the prompt goes out (018). A step entry is handed the same way: the
    transition that moved the task owns its delivery mark, and the runtime
-   claims it right before the prompt is written (030). The nudge's wording is
-   the `AgentResume` template's alone (006): that this is not a new request,
-   to check whether the column's work is already done, to make the call
-   that ends the column or go on, and to write no reply about the nudge
-   itself — a turn a nudge buys for narration is a turn the task did not
-   need.
+   claims it right before the prompt is written (030). The nudge's wording
+   is the `AgentResume` template's alone (006 rule 10): a turn a nudge buys
+   for narration is a turn the task did not need.
 7. A pass never waits on a delivery: the runtime queues each prompt, so a
    pass with several agents to nudge hands them all their prompt at once.
    A message still unstamped is handed again on every pass, and the runtime
@@ -261,9 +258,7 @@ the ACP runtime that takes a prompt (021).
   so a concurrent relaunch cannot replace the agent under observation.
 - A nudge to an idle agent arrives as a `session/prompt`
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`),
-  and the words it carries say it is not a new request, to check whether
-  the work is done, to make the call that ends the column or go on, and to
-  write no reply about the nudge
+  with the wording 006 rule 10 owns
   (`defaults.rs::the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner`).
 - A pass with three agents to nudge hands all three their prompt at once
   (`scheduler_attention.rs::a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries`).

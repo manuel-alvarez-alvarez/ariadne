@@ -169,8 +169,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     a column of the task's workflow, which names the agent that staffs it;
     the body is taken as `body` or as `message`. A refusal names every
     column with its agent, so the sender picks a reader rather than guessing
-    again. After a question, end your turn. Do not poll `read_messages`.
-    Ariadne delivers the answer as a new turn.
+    again. A message is a question, an answer, or a blocker report — the
+    stop rule's own call (006) — and nothing else. After a question, end
+    your turn. Do not poll `read_messages`. Ariadne delivers the answer as
+    a new turn.
 12. A value the schema offers is a value the tool takes. The schema an agent
     reads is derived from the parameter types, and the value it sends back is
     deserialized from them, so a spelling set on one of the two alone offers

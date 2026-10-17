@@ -118,24 +118,20 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      poll;
    - the column report a column ends on, and the return report a column is
      sent back with: the `complete_step` and `fail_step` descriptions
-     alone (013). No skill restates a field of either;
+     alone (013 rule 4). No skill restates a field of either;
    - stopping a fix loop: the agent seat text alone, which stops an agent
      after three failed attempts at one fix.
 6. `coding` uses test-first development for a code behavior change: it runs
    the new seam test failing before implementation. Prose changes and
    behavior-preserving refactors use verification that fits their risk.
    `coding` calls `complete_step` with the column report that tool's
-   description defines — the outcome, the revision checked, each check's
-   command and result, each assumption and each open concern, fifteen lines
-   at most — covering every criterion. `code-review` reads that report as
-   unverified claims, then reads the handoff reasons, accessible logs and CI
-   evidence before deciding which checks to run. It reuses a result only
-   when its revision is the reviewed revision and its command covers a
-   required check. Missing, outdated or insufficient evidence runs the
-   required check. Evidence never replaces code inspection, acceptance
-   review or repository-rule enforcement. A column that fails three
-   attempts at one fix stops, by the agent seat text's own rule, and tells
-   the orchestrator or fails the task (030).
+   description defines (013), covering every criterion. `code-review` reads
+   that report as unverified claims, then reads the handoff reasons,
+   accessible logs and CI evidence before deciding which checks to run. It
+   reuses a result only when its revision is the reviewed revision and its
+   command covers a required check. Missing, outdated or insufficient
+   evidence runs the required check. Evidence never replaces code
+   inspection, acceptance review or repository-rule enforcement.
 7. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
    amends nothing, since the merge column squashes. `refactoring` commits
@@ -155,7 +151,10 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    an agent any more — every text is the code's — so the check runs over the
    defaults rather than at a save. The kinds are the orchestrator's briefing,
    resume and attention, `IncomingMessage`, `StepBriefing`, `StepReturn` and
-   `AgentResume` (`ariadne_core::PromptKind`).
+   `AgentResume` (`ariadne_core::PromptKind`). `AgentResume`, the quiet nudge
+   of a column's agent (009), says four things only: this is not a new
+   request, to check whether the work is done, to make the call that ends
+   the column or go on, and to write no reply about the nudge itself.
 11. Default texts, shipped skills, workflow documents, session rules and tool
     descriptions use ASD-STE100 Simplified Technical English: one instruction
     to a sentence, the imperative for an instruction, the active voice, at

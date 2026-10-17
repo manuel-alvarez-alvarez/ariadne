@@ -947,7 +947,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post new inline findings in the user's name. Give each finding its file, line and priority. A supervised repository holds findings in forge drafts."
+        description = "Post new inline findings in the user's name. A supervised repository holds findings in forge drafts."
     )]
     async fn submit_review(
         &self,
@@ -987,7 +987,7 @@ impl AriadneMcp {
     // ---- everyone ----
 
     #[tool(
-        description = "Send one message. Ask or answer questions only. Send no confirmations, thanks, or plans. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."
+        description = "Send one message. Ask a question, answer one, or report a blocker. Send no confirmations, thanks, or plans. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."
     )]
     async fn send_message(
         &self,

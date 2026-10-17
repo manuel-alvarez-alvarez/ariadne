@@ -206,9 +206,9 @@ every other kebab-case word in it; the wire spells the same gate
    Every move writes its source column, target column and reason into one
    transition (`TransitionDto.from_step`, `to_step`). A move that reaches a
    status — `finished`, `failed` — is a transition of the table (001 rule
-   5), by actor `agent`. `complete_step`'s `reason` is the column report its
-   description defines; `fail_step`'s is the return report its description
-   defines (006, 013 rule 4).
+   5), by actor `agent`. `complete_step`'s `reason` is the column report,
+   and `fail_step`'s is the return report, each owned by that tool's
+   description (013 rule 4).
 5. Completion checks the column's gate before moving:
    - `committed`: at least one commit past the base, with a clean worktree;
    - `pushed`: the remote holds the branch tip;
@@ -234,10 +234,8 @@ every other kebab-case word in it; the wire spells the same gate
    finds the next column's entry newest, neither starts nor briefs an agent
    for it, and leaves it to the pass the move wakes, which reads the task
    afresh.
-7. The agent seat text's stop rule binds every column alike: after three
-   failed attempts at one fix, the agent stops, tells the orchestrator the
-   attempts and the suspected cause, or fails the task with `fail_task`
-   (006). No skill names its own limit on an attempt.
+7. The agent seat text's stop rule (006 rule 5) binds every column alike.
+   No skill names its own limit on an attempt.
 
    Any step agent can fail the task with `fail_task` (001 rule 6). A retry
    puts the task back on the first column and reuses its agent's

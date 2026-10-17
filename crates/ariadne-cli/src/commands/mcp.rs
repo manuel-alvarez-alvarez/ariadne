@@ -987,10 +987,12 @@ pub(crate) mod tests {
         );
     }
 
-    /// And no session is told about a conversation there is not: the thread,
-    /// the tools that read and wrote it and the word that addressed a message
-    /// are gone, and an instruction that still named one would be an agent
-    /// reaching for a tool nothing serves.
+    /// And no session is told about a conversation there is not: the thread
+    /// and the tools that read and wrote it are gone, and an instruction
+    /// that still named one would be an agent reaching for a tool nothing
+    /// serves. `send_message` and its messages are current tools, not that
+    /// removed thread, so naming `send_message` in the agent seat text's
+    /// stop rule (006) is not a reach for one.
     #[test]
     fn no_session_is_told_of_a_conversation() {
         for seat in SEATS {
@@ -999,7 +1001,7 @@ pub(crate) mod tests {
                 Client::resolve(Some("http://127.0.0.1:1"), None),
             );
             let instructions = mcp.get_info().instructions.expect("instructions");
-            for gone in ["thread", "message", "conversation"] {
+            for gone in ["thread", "conversation"] {
                 assert!(!instructions.contains(gone), "{seat:?}: {instructions}");
             }
         }
