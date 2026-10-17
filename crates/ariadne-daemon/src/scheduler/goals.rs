@@ -444,19 +444,24 @@ impl super::Scheduler {
             // finds it idle says it then.
             return Ok(());
         };
-        // Read fresh, and right here: no `await` stands between this read
-        // and the send below, which is plain, synchronous Rust the whole
-        // way down (`acp::queue_daemon_prompt` never awaits), so nothing
-        // else can run in between to move the answer out from under it.
-        // Read any earlier — off `goal`, which `reconcile_goal` fetched
-        // before `keep_orchestrator`, `deliver_goal_messages` and
-        // `list_tasks` each gave this pass's own turn to run on, or even
-        // freshly but before the `live_sessions` await just above — the
-        // very turn a failure was last handed to could land its
-        // confirmation and go idle in the gap that followed, and this
-        // pass would then act on "not confirmed yet" against a session it
-        // only learns is idle afterward, handing the same, already-
-        // confirmed failure off a second time.
+        // Read fresh here, right before the send, rather than off `goal` —
+        // which `reconcile_goal` fetched before `keep_orchestrator`,
+        // `deliver_goal_messages` and `list_tasks` each gave this pass a
+        // moment to fall behind in — so a confirmation that lands while
+        // this pass is still working is the answer this read gets, not
+        // the one the pass started with. That narrows the window; it does
+        // not close it, since the daemon's runtime is multi-threaded
+        // (`#[tokio::main]`, `crates/ariadne-daemon/Cargo.toml`'s `tokio`
+        // on the default, not `current_thread`, flavor) and the ACP
+        // driver confirming this exact failure on another worker can
+        // still land between this read and the send below, however few
+        // lines separate them. What actually closes it is on the other
+        // side, in `acp::prompt_once`: the queue's ledger key for this
+        // exact content is never taken off once confirmed, so whichever
+        // of this send and that confirmation reaches `queue_daemon_prompt`
+        // first is the one answer its own lock gives either of them, and
+        // this read only has to be close enough that the common case
+        // skips a pass that already knows it is moot.
         let confirmed: Vec<(String, String)> = self
             .store
             .get_goal(&goal.id)

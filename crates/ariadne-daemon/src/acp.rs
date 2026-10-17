@@ -245,9 +245,18 @@ pub(crate) enum Delivery {
     /// once this exact prompt's own turn ends (`prompt_once`), never by an
     /// unrelated turn landing on the same session: nothing here is written
     /// to the store until this delivery's own `session/prompt` call
-    /// returns. Held on the launch's queue ledger until then
-    /// (`claim_message`), so a pass that finds the session still idle
-    /// before the turn's first event lands cannot queue it a second time.
+    /// returns. Held on the launch's queue ledger (`claim_message`) for as
+    /// long as the launch lives, never taken off it even once confirmed
+    /// (unlike every other delivery kind): the store write a scheduler
+    /// pass reads to answer "already confirmed" runs on a worker of its
+    /// own, on the daemon's multi-threaded runtime, and no ordering inside
+    /// that pass keeps a confirm on another worker from landing between
+    /// its read and its own attempt to queue this exact content again. The
+    /// ledger key is the one answer both of them race to, under
+    /// `queue_daemon_prompt`'s own lock, so whichever reaches it first is
+    /// final — a confirmed delivery left on it is a key no later, stale
+    /// attempt at the same content can ever re-queue, not a record kept
+    /// for its own sake.
     GoalAttention {
         goal_id: String,
         failed_tasks: Vec<(String, String)>,
@@ -3040,25 +3049,32 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
     // confirmed together, so it has nothing to say again. Written after the
     // `stop`, the gap between the two was a window in which that pass told
     // the orchestrator the same thing twice.
-    if let Some(
-        delivery @ Delivery::GoalAttention {
-            goal_id,
-            failed_tasks,
-        },
-    ) = &prompt.delivery
+    if let Some(Delivery::GoalAttention {
+        goal_id,
+        failed_tasks,
+    }) = &prompt.delivery
     {
-        let sink = &rpc.sink;
-        let _ = sink
+        let _ = rpc
+            .sink
             .runtime
             .inner
             .store
             .confirm_goal_orchestrator_answered(goal_id, failed_tasks)
             .await;
-        // Confirmed, so off the queue's ledger (`claim_message`): a pass
-        // from here on finds the failure confirmed, and a new situation
-        // for the goal is a new key.
-        sink.runtime
-            .dequeue_message(&sink.session_id, &sink.launch_id, &delivery.key());
+        // Left on the queue's ledger rather than taken off it: the store
+        // write above is a second record of the same fact, read by a
+        // scheduler pass running on another worker, which no `await` of
+        // this task's own can keep from landing between that pass's read
+        // and its own attempt to queue this exact content again — the
+        // runtime is multi-threaded (`#[tokio::main]`, no
+        // `flavor = "current_thread"`), so that pass is free to run on a
+        // different core at the very moment this one reaches here, and a
+        // key taken off now is a key that read could still find open. Left
+        // on, `queue_daemon_prompt`'s own lock is what every attempt at
+        // this exact content answers to, that pass included: whichever of
+        // the two reaches the lock first is the one answer there is. The
+        // key dies with this launch, or a goal moving its transition id
+        // on a retry makes a new one, never as a cleanup of its own.
     }
     rpc.sink.emit("stop", stop).await;
     rpc.turn_ended.notify_waiters();

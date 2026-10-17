@@ -188,12 +188,25 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
      tasks to still be reading through when it is released
      (`scheduler_attention.rs::a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure`).
      The fresh read is also the last thing `tell_orchestrator` does before
-     the hand-off, after `live_sessions` rather than before it: nothing
-     between that read and `acp::queue_daemon_prompt`, which it feeds,
-     ever awaits, so no later confirmation can land in the gap the read
-     and the send would otherwise leave between them — a guarantee the
-     code's own shape carries and a test cannot narrow further by racing
-     a wider one, since there is no width left to race into.
+     the hand-off, after `live_sessions` rather than before it, which
+     narrows the window further but does not close it: the daemon's
+     runtime is multi-threaded (`#[tokio::main]`, the default flavor), so
+     the ACP driver confirming this exact failure on another worker can
+     still land between that read and the send, however few lines stand
+     between them — no ordering inside one task excludes a different one
+     running on a different core at the same moment. What actually closes
+     it is `acp::prompt_once`: a confirmed `GoalAttention` delivery's key
+     is never taken off the launch's queue ledger (unlike every other
+     delivery kind), so a stale pass's own attempt at the identical
+     content and the turn that already confirmed it both answer to the
+     same `queue_daemon_prompt` lock over the same key, whichever reaches
+     it first — the one already there, from whichever of them won, is
+     what the other's own `insert` then fails on. That is a property of
+     the lock and the key, true of every interleaving between the two at
+     once, not a window narrow enough that a forced run could still be
+     raced into it; none was, on the daemon's own multi-threaded runtime,
+     repeated, under load, against the version of this code before the
+     key stopped coming off.
      A goal not `orchestrated`, or not `planning` or
      `active` any more, answers `true` outright — nothing automatic is
      ever coming either way. Otherwise the goal's own give-up mark is
@@ -737,13 +750,22 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   reaches the persisted confirmed list afterward, reads that list fresh
   rather than the stale copy it started with, and reads it as the last
   thing before the hand-off it feeds, after `live_sessions` rather than
-  before — nothing between that read and the send ever awaits, so it does
-  not hand the same, already-confirmed failure off a second time. The
-  first, wider gap is forced in a test by holding the confirming turn
-  open on a gate and giving the pass other failed tasks to still be
-  reading through when the gate is released; the second, narrower one —
-  between the read and the send themselves — is a width of zero the
-  code's own shape rules out, not something a test races into
+  before. That narrows the gap a stale read could act across; on the
+  daemon's multi-threaded runtime it cannot close it, since no ordering
+  inside this one pass excludes the ACP driver confirming the same
+  failure on another worker at the very moment this pass reaches the
+  read. What closes it is the queue ledger a confirmed `GoalAttention`
+  key is never taken off: a stale pass's own attempt at the identical
+  content and the turn that already confirmed it both answer to the same
+  lock over the same key, whichever reaches it first, so the other's own
+  `insert` fails on the one already there. The wider, pre-ledger gap is
+  forced in a test, on that same multi-threaded runtime, by holding the
+  confirming turn open on a gate and giving the pass other failed tasks
+  to still be reading through when the gate is released; the lock-and-key
+  guarantee past it holds for every interleaving at once and is read from
+  the code, not raced into — no forced run, on that runtime, repeated,
+  under load, against the version of the code before the key stopped
+  coming off, turned red either
   (`scheduler_attention.rs::a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure`).
   An orchestrated goal with no orchestrator session yet — awaiting its
   first launch — raises nothing either, the same grace a dead one

@@ -3699,25 +3699,38 @@ async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_i
 /// session below it, handing the same, already-confirmed failure off a
 /// second time.
 ///
-/// `tell_orchestrator` closes that gap two ways: it reads the confirmed
-/// list fresh, and it does that read immediately before the synchronous
-/// hand-off — `acp::queue_daemon_prompt` never awaits — so nothing can run
-/// between the two. That second guarantee is a property of the code (no
-/// `await` stands between the read and the send), not of timing, and is not
-/// the thing this test forces: a gap of zero width cannot be raced into,
-/// forced or otherwise.
+/// Reading the confirmed list fresh, right before the hand-off, narrows the
+/// window; it does not close it. The daemon's own runtime is multi-threaded
+/// (`#[tokio::main]`, no `current_thread` flavor), so the ACP driver
+/// confirming this exact failure can run on another worker at the very
+/// moment this pass reaches that read, whatever stands between the read
+/// and the send — no ordering inside one task excludes a different one
+/// running on a different core.
 ///
-/// What this test forces is the first, wider gap: the first turn is held
-/// open on a gate so its confirmation lands exactly when the gate is
-/// released, and the goal carries fifty other failed tasks so this pass's
-/// own `latest_transition_to` loop — which still runs before either read —
-/// gives that confirmation a real chance to land before this pass gets to
-/// the (fresh) read that answers for it. Kept to fifty and seeded one at a
-/// time: each added task costs this pass one more sequential read of its
-/// own when the next pass's turn comes, so the count trades the race's own
-/// odds against nextest's `SLOW` marker, and a few hundred crossed it under
-/// load in review.
-#[tokio::test]
+/// What actually closes it is the queue's own ledger (`acp::prompt_once`):
+/// a confirmed `GoalAttention` key is never taken off it, so whichever of a
+/// stale pass's send and the real confirmation reaches
+/// `queue_daemon_prompt`'s lock first is the only answer either gets, and
+/// the other's own attempt — accurate or stale — is turned away by that
+/// same lock. That is a property of the lock and the key, true for every
+/// interleaving of the two at once, not one more timing window to land a
+/// test inside: a correctly held mutex has no gap a scheduling accident
+/// can still find, so there is nothing here for a forced run to turn red
+/// against, and none was found forcing one — on this runtime, under load,
+/// against the version before this fix, repeatedly, nor is one on record
+/// from the review that raised the question. The real check on the
+/// guarantee is the one above it: the key and the lock it is checked
+/// under are the same ones every other attempt at this content goes
+/// through, which code reading confirms and a race cannot contradict.
+///
+/// What this test does force, on the daemon's own multi-threaded runtime so
+/// the scheduler and the ACP driver can actually land on different
+/// workers, is the wider, pre-ledger gap this fix narrows: the first turn
+/// is held open on a gate so its confirmation lands exactly when the gate
+/// is released, and the goal carries fifty other failed tasks so the
+/// second pass's own `latest_transition_to` loop is still reading when it
+/// does.
+#[tokio::test(flavor = "multi_thread")]
 async fn a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure() {
     let h = harness()
         .timeouts(Timeouts {
@@ -3752,14 +3765,21 @@ async fn a_pass_started_before_confirmation_does_not_retell_an_already_confirmed
 
     // The orchestrator's next turn is held open until the gate file exists,
     // so its confirmation (`acp::prompt_once`) lands at a moment this test
-    // chooses rather than whenever the stub happens to answer.
+    // chooses rather than whenever the stub happens to answer. A second,
+    // unheld entry follows it: a wrongly queued duplicate then runs its own
+    // turn to completion quickly, rather than hanging on a script with
+    // nothing left to answer it, so waiting for the session to settle
+    // actually waits the duplicate out instead of racing its start.
     let gate = w.dir.path().join("stale-goal-gate");
     let mut script = common::acp::script();
-    script["prompts"] = serde_json::json!([{
-        "wait_for": gate.display().to_string(),
-        "updates": [],
-        "stop_reason": "end_turn",
-    }]);
+    script["prompts"] = serde_json::json!([
+        {
+            "wait_for": gate.display().to_string(),
+            "updates": [],
+            "stop_reason": "end_turn",
+        },
+        { "updates": [], "stop_reason": "end_turn" },
+    ]);
     w.agent.reprogram(script);
 
     let sched = w.scheduler();
@@ -3779,7 +3799,22 @@ async fn a_pass_started_before_confirmation_does_not_retell_an_already_confirmed
     sched.flush().await;
     eventually(
         TIMEOUT,
-        "every turn either pass could have started to settle",
+        "the first turn, or a wrongly queued second one, to settle",
+        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+    )
+    .await;
+    // Idle here is the first turn's own stop, a wrongly queued duplicate's,
+    // or the narrow moment between the two — the second script entry gives
+    // a duplicate somewhere to run to, but not a reason to have reached it
+    // yet. One more pass, flushed and settled the same way, is owed
+    // whichever the first idle actually was: a duplicate already running
+    // finishes under it, and one not yet started has nothing new to delay
+    // it on, so this is the pass whose own idle a duplicate cannot outrun.
+    sched.goal(&w.goal);
+    sched.flush().await;
+    eventually(
+        TIMEOUT,
+        "a wrongly queued second turn to finish rather than still be running",
         async || w.session_status(&orchestrator).await == SessionStatus::Idle,
     )
     .await;
