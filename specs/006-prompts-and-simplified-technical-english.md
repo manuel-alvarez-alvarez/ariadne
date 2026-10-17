@@ -124,9 +124,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      poll;
    - the column report a column ends on, and the return report a column is
      sent back with: the `complete_step` and `fail_step` descriptions
-     alone (013 rule 4). No skill restates a field of either; every skill
-     that ends a column on `complete_step` — `coding`, `merge` and
-     `pr-babysit` included — names it only as "the column report";
+     alone (013 rule 4). No skill restates a field of either; `coding`,
+     `merge` and `pr-babysit` each name their own report only as "the
+     column report";
    - stopping a fix loop: the agent seat text alone, which stops an agent
      after three failed attempts at one fix.
 6. `coding` uses test-first development for a code behavior change: it runs

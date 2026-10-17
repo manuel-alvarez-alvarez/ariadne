@@ -1603,6 +1603,16 @@ mod tests {
                 "\"{marker}\" is stated in {places:?}, not in one place"
             );
         }
+        for (name, phrase) in [
+            ("merge", "Work from your worktree"),
+            ("orchestration", "Plan with the user"),
+        ] {
+            let document = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                !document.contains(phrase),
+                "the {name} skill repeats its seat's own \"{phrase}\""
+            );
+        }
     }
 
     /// The constants are the templates every session runs on, so the

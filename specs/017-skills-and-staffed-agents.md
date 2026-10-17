@@ -164,12 +164,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
     rather than re-deriving it, and reads further only to judge a risk it
     can name. Each writes its verdict first, with no preamble, no process
     narration and no closing summary. A skill that ends a column ends on
-    `complete_step` or `fail_step` (030), and names the column report or
-    the return report only by that name, never a field of either (006 rule
-    5): `code-review` fails the step on a must-fix finding, never on an
-    optional one, and edits no file; `merge` completes it with the column
-    report and the base branch's sha; `pr-babysit` completes it with the
-    column report on a merge; `coding` and every other produce skill that
+    `complete_step` or `fail_step` (030): `code-review` fails the step on a
+    must-fix finding, never on an optional one, and edits no file; `coding`,
+    `merge` and `pr-babysit` name their own report only as "the column
+    report", never a field of it (006 rule 5) — `merge` alongside the base
+    branch's sha, `pr-babysit` on a merge; every other produce skill that
     ends its own column — `debugging`, `refactoring`, `migration`,
     `conflict-resolution`, `documentation`, `research`, `spec-writing` —
     calls `complete_step` with the column report the same way; each other
