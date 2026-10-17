@@ -152,7 +152,15 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `fail_step` (030): `code-review` fails the step on a must-fix finding,
     never on an optional one, and edits no file; `merge` completes it with
     the base branch's sha; each other review skill fails it on a blocking
-    finding.
+    finding. Every review skill — `code-review`, `pr-reviewer`,
+    `spec-review`, `architecture-review` and `performance-review` — marks a
+    blocking or must-fix finding with a trigger, the input or state that
+    breaks it, and a failure; a finding with no nameable trigger is
+    downgraded to its non-blocking weight, and the non-blocking findings of
+    one review are capped at five. Each scopes its reading to the change
+    under review and reads further only to judge a risk it can name, and
+    each writes its verdict first, with no preamble, no process narration
+    and no closing summary.
 
     A skill document holds one text. The launcher links the run directory's
     `skills` folder onto the shared home copy that holds it (15), for the

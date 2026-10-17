@@ -126,13 +126,21 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    the new seam test failing before implementation. Prose changes and
    behavior-preserving refactors use verification that fits their risk.
    `coding` calls `complete_step` with the column report that tool's
-   description defines (013), covering every criterion. `code-review` reads
-   that report as unverified claims, then reads the handoff reasons,
-   accessible logs and CI evidence before deciding which checks to run. It
-   reuses a result only when its revision is the reviewed revision and its
-   command covers a required check. Missing, outdated or insufficient
-   evidence runs the required check. Evidence never replaces code
-   inspection, acceptance review or repository-rule enforcement.
+   description defines (013), covering every criterion. `code-review` names
+   the column report and the return report by name, and restates no field
+   of either. It reads the column report as unverified claims before it
+   pins the scope to the diff, then reuses a result only when its revision
+   is the reviewed revision and its command covers a required check.
+   Missing, outdated or insufficient evidence runs the required check, once
+   for the verdict; the skill never reruns a check only to confirm the
+   report. Evidence never replaces code inspection, acceptance review or
+   repository-rule enforcement. Each of the five review skills (017) marks
+   a blocking or must-fix finding with a trigger — the input or state that
+   breaks it — and a failure; a finding with no nameable trigger is
+   downgraded to its skill's non-blocking weight, and non-blocking findings
+   are capped at five per review. Reading outside the diff is bound to a
+   risk the reviewer can name, and each skill's verdict comes first, with
+   no preamble, no process narration and no closing summary.
 7. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
    amends nothing, since the merge column squashes. `refactoring` commits
@@ -293,10 +301,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`defaults.rs::the_ste_rules_are_read_off_a_text_line_by_line`).
 - `coding` calls `complete_step` with the column report that tool's
   description defines, covering every criterion, and names no field of it
-  itself. `code-review` reads that report as unverified claims, then reuses
-  only matching evidence and runs missing, outdated or insufficient
-  required checks. Evidence does not replace its code inspection,
-  acceptance review or repository-rule enforcement
+  itself. `code-review` names the column report and the return report by
+  name, reads the former as unverified claims, then reuses only matching
+  evidence and runs missing, outdated or insufficient required checks.
+  Evidence does not replace its code inspection, acceptance review or
+  repository-rule enforcement
   (`defaults.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`,
   `::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
   `tools.rs::complete_step_and_fail_step_define_their_reports`).
