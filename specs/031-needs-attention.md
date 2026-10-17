@@ -837,8 +837,10 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   same mark for a taskless orchestrator, with no task to fail onto
   instead
   (`scheduler_attention.rs::an_orchestrator_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail`),
-  and a reviewer's terminal budget writes the same durable, wedged mark
-  (`scheduler/quiet.rs::tests::a_reviewers_exhausted_relaunch_budget_marks_its_request_once`).
+  and a reviewer's terminal budget writes the same durable, wedged mark,
+  through the real watchdog path, with the item's summary naming the
+  relaunches that ran before it gave up
+  (`scheduler_attention.rs::a_reviewer_that_wedges_after_every_relaunch_is_given_up_on`).
   A later pass over that same still-silent reviewer preserves the mark, its
   `since`, and the item's presentation with no flap
   (`scheduler_attention.rs::a_silent_reviewer_keeps_its_give_up_attention_across_later_passes`).
