@@ -203,11 +203,17 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
      never lands in the middle of the write it would otherwise race.
      Confirming a `GoalAttention` delivery still takes its key off the
      launch's queue ledger (`claim_message`) exactly as every other
-     delivery kind does, but now only once the store write actually
-     succeeds — a failed write leaves both the store and the ledger
-     saying unconfirmed, so a later pass still retries it, rather than a
-     key quietly gone despite nothing having actually confirmed. The
-     ledger key alone — named by a goal's failed tasks, nothing else —
+     delivery kind does, and whether or not the store write actually
+     succeeds: the key's only job was the one in-flight attempt, and
+     once this turn is over there is no attempt left for it to protect.
+     Whether a later pass retries is answered by a fresh read of the
+     store itself, which a failed write already leaves reading
+     unconfirmed — a key still held over that failure, rather than taken
+     off, would instead have refused the retry's own attempt to queue,
+     stranding the failure unconfirmed for the rest of the launch despite
+     the store being free to correct it on the very next pass
+     (`scheduler_attention.rs::a_failed_confirmation_write_is_retried_once_the_write_can_land`).
+     The ledger key alone — named by a goal's failed tasks, nothing else —
      was tried first and found wanting: a stall warning and an unrelated
      "every task is done" notice can both carry an empty failed-task
      list, and a key kept past its own confirmation to answer a race
@@ -783,8 +789,12 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   or the same task stalling again after its first stall cleared
   (`scheduler_attention.rs::a_tasks_stall_recurring_after_it_cleared_is_told_again`),
   so the key keeps coming off on confirmation exactly as every other
-  delivery kind's does, and only once that confirming write actually
-  succeeds. The wider, pre-lock gap is forced in a test, on that same
+  delivery kind's does — whether or not the confirming write actually
+  succeeds, since the key's job ends with the turn and a failed write
+  already leaves the store itself reading unconfirmed for the next pass
+  to act on
+  (`scheduler_attention.rs::a_failed_confirmation_write_is_retried_once_the_write_can_land`).
+  The wider, pre-lock gap is forced in a test, on that same
   multi-threaded runtime, by holding the confirming turn open on a gate
   and giving the pass other failed tasks to still be reading through
   when the gate is released, with an ordinary marker prompt queued

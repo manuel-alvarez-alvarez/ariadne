@@ -1828,6 +1828,37 @@ impl Harness {
         query.bind(&session.id).execute(&self.db).await.unwrap();
     }
 
+    /// Make the next write of this goal's confirmed-failures column fail,
+    /// the way a transient database error would, until
+    /// [`Self::stop_rejecting_goal_confirm`] undoes it. A trigger rather
+    /// than a closed connection: the rest of the store, this write's own
+    /// caller included, has to go on working around it.
+    pub(crate) async fn reject_goal_confirm(&self, goal_id: &str) {
+        // Safe: `goal_id` is this module's own `new_id()`, lowercase ULID
+        // characters only, used here as both a literal and part of an
+        // identifier because `CREATE TRIGGER` takes no bind parameters.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TRIGGER reject_goal_confirm_{goal_id}
+             BEFORE UPDATE OF orchestrator_answered_failed_task_ids ON goals
+             WHEN NEW.id = '{goal_id}'
+             BEGIN SELECT RAISE(ABORT, 'rejected for test'); END;"
+        )))
+        .execute(&self.db)
+        .await
+        .unwrap();
+    }
+
+    /// Undo [`Self::reject_goal_confirm`]: the next write of this goal's
+    /// confirmed-failures column succeeds again.
+    pub(crate) async fn stop_rejecting_goal_confirm(&self, goal_id: &str) {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP TRIGGER reject_goal_confirm_{goal_id}"
+        )))
+        .execute(&self.db)
+        .await
+        .unwrap();
+    }
+
     // -- HTTP ---------------------------------------------------------------
 
     /// The whole response, for the handful of tests that assert on a header.

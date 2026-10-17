@@ -3707,21 +3707,22 @@ async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_i
 /// and the send — no ordering inside one task excludes a different one
 /// running on a different core.
 ///
-/// What actually closes it is the queue's own ledger (`acp::prompt_once`):
-/// a confirmed `GoalAttention` key is never taken off it, so whichever of a
-/// stale pass's send and the real confirmation reaches
-/// `queue_daemon_prompt`'s lock first is the only answer either gets, and
-/// the other's own attempt — accurate or stale — is turned away by that
-/// same lock. That is a property of the lock and the key, true for every
-/// interleaving of the two at once, not one more timing window to land a
-/// test inside: a correctly held mutex has no gap a scheduling accident
-/// can still find, so there is nothing here for a forced run to turn red
-/// against, and none was found forcing one — on this runtime, under load,
-/// against the version before this fix, repeatedly, nor is one on record
-/// from the review that raised the question. The real check on the
-/// guarantee is the one above it: the key and the lock it is checked
-/// under are the same ones every other attempt at this content goes
-/// through, which code reading confirms and a race cannot contradict.
+/// What actually closes it is `AcpRuntime::goal_attention_lock`, held
+/// across this pass's whole read-and-send on one side and
+/// `acp::prompt_once`'s whole confirm-and-dequeue on the other: whichever
+/// of the two acquires it first runs to completion before the other even
+/// starts its own read, so the read never lands inside the write it would
+/// otherwise race. That is a property of holding the same lock on both
+/// sides, true for every interleaving of the two at once, not one more
+/// timing window to land a test inside: a correctly held mutex has no gap
+/// a scheduling accident can still find, so there is nothing here for a
+/// forced run to turn red against, and none was found forcing one — on
+/// this runtime, under load, against a version of this code with no lock
+/// at all, repeatedly, nor is one on record from the review that raised
+/// the question. The real check on the guarantee is the one above it:
+/// both sides take the same lock before touching the state the other
+/// reads or writes, which code reading confirms and a race cannot
+/// contradict.
 ///
 /// What this test does force, on the daemon's own multi-threaded runtime so
 /// the scheduler and the ACP driver can actually land on different
@@ -3931,6 +3932,80 @@ async fn a_tasks_stall_recurring_after_it_cleared_is_told_again() {
         TIMEOUT,
         "the recurring stall to be told again rather than found already confirmed",
         async || w.prompted(&orchestrator).matches("has gone quiet").count() > told_once,
+    )
+    .await;
+}
+
+/// The ledger key comes off a `GoalAttention` delivery's turn whether or
+/// not `confirm_goal_orchestrator_answered`'s own write actually lands —
+/// its only job is the one in-flight attempt, not standing in for the
+/// store on whether a later pass should retry. A write that fails leaves
+/// the store itself reading unconfirmed, which is what a later pass acts
+/// on: forced here with a trigger that rejects the write once, so the
+/// failure is the database's own rather than a guess about what a real
+/// one looks like, on the same live launch throughout — no restart, no
+/// relaunch, just the next pass finding the write can land now.
+#[tokio::test]
+async fn a_failed_confirmation_write_is_retried_once_the_write_can_land() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some("the crate the task names was deleted upstream"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    w.reject_goal_confirm(&w.goal.id).await;
+
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the failure, its confirming write rejected",
+        async || w.prompted(&orchestrator).contains(&w.task.title),
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "that turn to end despite the write failing",
+        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+    )
+    .await;
+    assert!(
+        w.store
+            .get_goal(&w.goal.id)
+            .await
+            .unwrap()
+            .orchestrator_answered_failed_task_ids
+            .is_none(),
+        "the rejected write must not have landed"
+    );
+
+    // The write can land now, and the next pass is the one that finds out:
+    // the ledger key this delivery's own failed turn already freed is what
+    // lets it try again, on the same launch, rather than finding its own
+    // prior attempt still blocking it.
+    w.stop_rejecting_goal_confirm(&w.goal.id).await;
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the retried confirmation to land now that the write can succeed",
+        async || {
+            w.store
+                .get_goal(&w.goal.id)
+                .await
+                .unwrap()
+                .orchestrator_answered_failed_task_ids
+                .is_some()
+        },
     )
     .await;
 }

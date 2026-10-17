@@ -257,10 +257,14 @@ pub(crate) enum Delivery {
     /// once this exact prompt's own turn ends (`prompt_once`), never by an
     /// unrelated turn landing on the same session: nothing here is written
     /// to the store until this delivery's own `session/prompt` call
-    /// returns, and only once that write actually succeeds does the key
-    /// come off the launch's queue ledger (`claim_message`) — a failed
-    /// write leaves both the store and the ledger saying unconfirmed, so a
-    /// later pass still retries it. Confirming and taking the key off
+    /// returns. The key comes off the launch's queue ledger
+    /// (`claim_message`) when that turn ends either way, confirmed or
+    /// not: its only job was keeping this one in-flight attempt from
+    /// being queued twice, and a failed write already leaves the store
+    /// itself reading unconfirmed, which is what makes the next pass
+    /// retry — a key still held over a failed write would instead refuse
+    /// that retry's own attempt to queue, past the point the store was
+    /// already free to correct it. Confirming and taking the key off
     /// happen under `AcpRuntime::goal_attention_lock`, the same lock a
     /// scheduler pass holds across its own read of this goal's confirmed
     /// list and its own send: on the daemon's multi-threaded runtime,
@@ -3089,25 +3093,30 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
     {
         let lock = rpc.sink.runtime.goal_attention_lock();
         let _guard = lock.lock().await;
-        let confirmed = rpc
+        let _ = rpc
             .sink
             .runtime
             .inner
             .store
             .confirm_goal_orchestrator_answered(goal_id, failed_tasks)
             .await;
-        // Taken off the ledger only once the write above actually landed:
-        // a failed write leaves the failure unconfirmed in the store, so
-        // the key must stay too, or a later pass reading that store would
-        // find nothing to tell and never retry a delivery that never
-        // really confirmed.
-        if confirmed.is_ok() {
-            rpc.sink.runtime.dequeue_message(
-                &rpc.sink.session_id,
-                &rpc.sink.launch_id,
-                &delivery.key(),
-            );
-        }
+        // Taken off the ledger whether or not the write above landed: the
+        // key's only job is to keep this one in-flight attempt from being
+        // queued twice, and once this turn is over there is no attempt
+        // left for it to protect. Whether to tell the orchestrator again
+        // is answered on the next pass by a fresh read of the store
+        // itself, under this same lock — not by this delivery's own write
+        // having failed, which a key kept open here would otherwise make
+        // permanent: a failed write already leaves the store reading
+        // unconfirmed, which is what makes the next pass retry; a key
+        // still held over it would instead have refused the retry's own
+        // attempt to queue, keeping the failure stuck unconfirmed for the
+        // rest of this launch despite the store being free to correct it.
+        rpc.sink.runtime.dequeue_message(
+            &rpc.sink.session_id,
+            &rpc.sink.launch_id,
+            &delivery.key(),
+        );
     }
     rpc.sink.emit("stop", stop).await;
     rpc.turn_ended.notify_waiters();
