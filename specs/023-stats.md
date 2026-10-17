@@ -435,7 +435,9 @@ that seat's own models by the same primary figure, heaviest first. A model's
 other figures — tokens, time, messages, and an agent's own finished count —
 carry no bar of their own: they ride in the chart's tooltip and its
 `sr-only` table, which is where their exact value lives rather than in a
-column of a visible table (rule 35). `ModelsSection` omits a seat with no
+column of a visible table (rule 35). The chart's legend names the ranked
+figure alone, never a figure with no bar, so no legend swatch reads as a
+series the chart does not draw. `ModelsSection` omits a seat with no
 row, the same as the table it replaced did. Responses without rows for
 either seat use the shared empty state, including responses with only
 seatless rows.
@@ -746,7 +748,10 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   seat"); it draws a summary card and a ranked chart per seat, heaviest model
   first, and omits a seat with no row
   (`models-section.test.tsx` "draws a summary card and a ranked chart for
-  each seat, heaviest model first", "omits a seat with no row").
+  each seat, heaviest model first", "omits a seat with no row"); each legend
+  names only the drawn bar, and every other figure stays in the `sr-only`
+  table (`models-section.test.tsx` "names only the drawn bar in each legend,
+  with every other figure kept in the table").
 
 #### Attention
 
