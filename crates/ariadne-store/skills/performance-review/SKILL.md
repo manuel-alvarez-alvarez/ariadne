@@ -1,44 +1,47 @@
 ---
 name: performance-review
-description: Review time, memory and round-trip costs with measured evidence. Use when a hot path, regression, or scaling risk needs performance review.
+description: Use when a hot path, regression or scaling risk needs review. Reviews time, memory and round-trip costs with measured evidence.
 ---
 
 # Performance review
 
-Measure first. A guess about speed is usually wrong. Keep every conclusion
-beside its measurement.
+Measure first. A guess about speed is usually wrong. Write the verdict
+first, beside its measurement. No preamble, no narration, no closing
+summary.
 
 ## Steps
 
-1. Find the hot path. Name the realistic input size and workload.
-   Done when the workload includes the reported input size and operation.
-2. Measure the current cost. Record the method, environment and results.
-   Done when another reviewer can repeat the measurement.
-3. Read the hot path for every cost class below. Mark each candidate location.
-   Done when every class has evidence or a recorded absence.
-4. Measure each proposed change with the same method and workload.
+1. Pin the scope to the diff. Find the hot path it changes, and a
+   realistic workload.
+   Done when the workload names a real input size and operation.
+2. Reuse the column report's measurement only if it covers this
+   revision and workload. Else measure: method, environment, result.
+   Done when another reviewer can repeat it.
+3. Read the hot path for every cost class below. Read code outside the
+   diff only to judge a risk you can name.
+   Done when every class has a measurement or a recorded absence.
+4. Measure each proposed change the same way.
    Done when each proposal has comparable before and after results.
-5. Report the numbers and trade-offs. Separate measured findings from open
-   questions.
-   Done when every performance claim cites its measurement.
-6. Call `fail_step` with the verdict on a blocking finding, else
+5. Give each finding its trigger, the workload that causes its measured
+   cost, and the regression or requirement it breaks. A finding with no
+   trigger or no broken rule is optional. Mark it unverified.
+   Done when every blocking finding names its trigger, cost and rule.
+6. Write the verdict. Cap optional findings at five, the ones you have
+   most conviction in.
+7. Call `fail_step` with the verdict on a blocking finding, else
    `complete_step`.
 
 ## What to look for
 
-- Complexity: Find nested work over the same growing input.
-- Round trips: Find a query or request per item where one call fits.
-- Allocation: Find a copy per item or a buffer grown one element at a time.
-- Repeated work: Find a value computed again inside a loop.
-- Blocking: Find slow work on a thread that other work needs.
-- Volume: Find rows or bytes read beyond what the answer needs.
+- Complexity: nested work over the same growing input.
+- Round trips: a query or a request per item where one call fits.
+- Allocation: a copy per item or a buffer grown one element at a time.
+- Repeated work: a value computed again inside a loop.
+- Blocking: slow work on a thread that other work needs.
+- Volume: rows or bytes read beyond what the answer needs.
 
 ## Rules
 
-- Give every claim a measurement.
-- Measure the cost at a realistic input size.
-- Compare results from the same method and environment.
-- Weigh implementation cost against measured time or memory savings.
 - Keep readable code when the gain is too small to measure.
 
 ## Do not tell yourself
@@ -50,5 +53,6 @@ beside its measurement.
 
 ## Done
 
-The report names the hot path and workload. Each claim has a repeatable
-measurement. Each proposal has comparable before and after results.
+The report names the hot path and workload. Each blocking finding has a
+measurement and the rule it breaks. Optional findings stay at five or
+fewer.

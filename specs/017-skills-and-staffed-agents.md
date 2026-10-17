@@ -152,7 +152,19 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `fail_step` (030): `code-review` fails the step on a must-fix finding,
     never on an optional one, and edits no file; `merge` completes it with
     the base branch's sha; each other review skill fails it on a blocking
-    finding.
+    finding. Every review skill — `code-review`, `pr-reviewer`,
+    `spec-review`, `architecture-review` and `performance-review` — marks a
+    blocking or must-fix finding with a trigger, the input or state that
+    causes it, the failure it causes, and the criterion, behavior or
+    written rule it breaks. A finding with no nameable trigger is
+    downgraded to its non-blocking weight and marked unverified, and every
+    non-blocking finding of one review is capped at five. Each scopes its
+    reading to the change under review, reuses evidence that already
+    covers it — the column report's, for the four task-column skills, and
+    its own prior round's, for `pr-reviewer` — rather than re-deriving it,
+    and reads further only to judge a risk it can name. Each writes its
+    verdict first, with no preamble, no process narration and no closing
+    summary.
 
     A skill document holds one text. The launcher links the run directory's
     `skills` folder onto the shared home copy that holds it (15), for the
@@ -309,6 +321,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - The review skill ends on a step call, and the merge skill lands in order
   (`defaults.rs::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
   `::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`).
+- Every review skill names a trigger on a blocking or must-fix finding,
+  downgrades and marks unverified a finding with none, and caps its
+  non-blocking findings at five; the four task-column skills also pin
+  their reading to the diff and reuse the column report's evidence
+  (`defaults.rs::every_review_skill_names_a_trigger_and_caps_its_optional_findings`).
 - An agent is written on the pin it was given, whole
   (`store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`), and no
   table names an agent by anything but the registry id at the head of its

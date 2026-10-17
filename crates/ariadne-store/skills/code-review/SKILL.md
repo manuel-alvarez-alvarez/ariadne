@@ -1,40 +1,40 @@
 ---
 name: code-review
-description: Review repository conventions and task acceptance as separate axes. Use when a branch, pull request, or patch needs a failure-based verdict.
+description: Use when a diff needs a pass or fail verdict. Reviews a branch, pull request or patch for a correctness or convention failure.
 ---
 
 # Code review
 
-Judge repository conventions and task acceptance apart.
+Judge repository convention and task acceptance apart. Write the verdict
+first. No preamble, no narration, no closing summary.
 
 ## Steps
 
 1. For a branch review, run `git checkout --detach <branch>` in the task
-   worktree. Search the handoff reasons, accessible logs and CI evidence.
-   Read the column report as unverified claims, not proof.
-   Done when you can judge what each claim covers.
-2. Pin the scope. For a second review, read the prior SHA from your
-   conversation. Run `git merge-base --is-ancestor <sha> HEAD`.
-   If HEAD is not after that SHA, use `get_diff`. Otherwise, run
-   `git log <sha>..HEAD` and `git diff <sha>..HEAD`. With no SHA, use
-   `get_diff`.
-   Done when the revisions resolve and the diff is not empty.
-3. Read the task and repository instructions. List the checks the scoped
-   diff requires. Reuse a result only when its revision matches
-   `git rev-parse HEAD`. Its command must be a check this diff requires.
-   Run each required check with no reusable result, once for this verdict.
+   worktree. Read the column report as unverified claims, not proof.
+   Done when you can name what each claim covers.
+2. Pin the scope to the diff. With a prior SHA from the conversation, run
+   `git merge-base --is-ancestor <sha> HEAD`. Where HEAD is after it, run
+   `git diff <sha>..HEAD`. Otherwise, use `get_diff`.
+   Done when the diff is not empty.
+3. List the checks the diff requires. Reuse a result only when its
+   revision matches `git rev-parse HEAD` and its command is a required
+   check. Run each required check with no reusable result, once for this
+   verdict.
    Done when every required check has a reused or fresh result.
-4. List the source for each axis. Read the scoped diff and surrounding
-   code. Map every hunk to its purpose.
-5. Judge the repository axis against documented style, naming, structure and
-   patterns. Judge the acceptance axis against every criterion, its tests and
-   added behavior. A reused result proves only its covered behavior.
-6. Write both axes under their own headings. Give each finding its file,
-   function, input, failure and weight. Include the SHA from
-   `git rev-parse HEAD`.
-   On any must-fix finding, call `fail_step` with the verdict. Else call
-   `complete_step` with the verdict, and list the optional findings in it.
-   An optional finding never fails the step.
+4. Map every hunk of the diff to its purpose. Read code outside the diff
+   only to judge a risk you can name.
+5. Judge the repository axis against documented style, naming, structure
+   and patterns. Judge the acceptance axis against every criterion and
+   added behavior. Judge each test by reading its setup, action and
+   assertions. Never change code to see whether a test fails.
+6. Give each finding its trigger, the input or state that breaks it, and
+   its failure. A finding with no trigger you can name is optional, not
+   must-fix, and marked unverified. Cap optional findings at five, the
+   ones you have most conviction in.
+7. Write the verdict under each axis's own heading. On a must-fix finding,
+   call `fail_step` with the return report. Else call `complete_step` with
+   the verdict and the optional findings.
 
 ## Repository conventions axis
 
@@ -45,31 +45,28 @@ Judge repository conventions and task acceptance apart.
 ## Acceptance criteria axis
 
 - Find wrong results, unhandled errors, races and boundary cases.
-- Find each criterion with no implementation or proof.
-- Judge each test by reading its setup, action and assertions.
-  Never change code to see whether a test fails.
+- Find a criterion with no implementation or proof.
 - Find behavior outside the task.
 
 ## Rules
 
-- Treat a claim without a failure as a question, not a defect.
-- Mark each finding as must-fix or optional.
 - A must-fix finding breaks a criterion or a written repository rule.
+- An optional finding never fails the step.
 - Judge the task, not your preferred design. Edit no file.
-- Evidence proves a check ran. Inspect code and enforce both axes yourself.
+- Evidence proves a check ran. Inspect code and enforce both axes
+  yourself.
+- Never rerun a check only to confirm the column report.
 
 ## Do not tell yourself
 
-- "The checks pass, so the change is correct." -> Checks prove only covered
-  behavior.
-- "The reused result is close enough." -> A missing revision or command
-  proves nothing here. Run the check.
-- "The task passes, so conventions do not matter." -> A correct feature can
-  still damage the repository.
-- "I will save a note on this review." -> Save to memory only a breach that
-  will come back. The verdict is the record.
+- "The checks pass, so the change is correct." -> Checks prove only
+  covered behavior.
+- "The task passes, so conventions do not matter." -> A correct feature
+  can still damage the repository.
+- "The task asked for a review, so I name a gap." -> A sound change gets
+  no invented gap.
 
 ## Done
 
-Each axis has its own verdict. Every finding names its file, failure and
-weight. Every criterion has a status.
+Each axis has its own verdict. Every finding names its trigger, failure
+and weight. Every criterion has a status.
