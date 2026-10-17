@@ -2346,8 +2346,8 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
         .await
         .unwrap();
 
+    sched.goal(&w.goal);
     eventually(TIMEOUT, "the orchestrator to be woken", async || {
-        sched.goal(&w.goal);
         w.prompted(&orchestrator).contains("failed")
     })
     .await;
@@ -2585,13 +2585,11 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
 
     // The same agent hears again, and the situation is still owed.
     reopen();
+    sched.goal(&w.goal);
     eventually(
         TIMEOUT,
         "the orchestrator to be told now that it can hear it",
-        async || {
-            sched.goal(&w.goal);
-            w.prompted(&orchestrator).contains("failed")
-        },
+        async || w.prompted(&orchestrator).contains("failed"),
     )
     .await;
 
@@ -3701,12 +3699,24 @@ async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_i
 /// session below it, handing the same, already-confirmed failure off a
 /// second time.
 ///
-/// Forced rather than hoped for: the first turn is held open on a gate so
-/// its confirmation lands exactly when the gate is released, and the goal
-/// carries three hundred other failed tasks (seeded concurrently, so the
-/// setup itself stays quick) so this pass's own `latest_transition_to`
-/// loop — between the goal fetch and the confirmation read — takes long
-/// enough to still be running when it does.
+/// `tell_orchestrator` closes that gap two ways: it reads the confirmed
+/// list fresh, and it does that read immediately before the synchronous
+/// hand-off — `acp::queue_daemon_prompt` never awaits — so nothing can run
+/// between the two. That second guarantee is a property of the code (no
+/// `await` stands between the read and the send), not of timing, and is not
+/// the thing this test forces: a gap of zero width cannot be raced into,
+/// forced or otherwise.
+///
+/// What this test forces is the first, wider gap: the first turn is held
+/// open on a gate so its confirmation lands exactly when the gate is
+/// released, and the goal carries fifty other failed tasks so this pass's
+/// own `latest_transition_to` loop — which still runs before either read —
+/// gives that confirmation a real chance to land before this pass gets to
+/// the (fresh) read that answers for it. Kept to fifty and seeded one at a
+/// time: each added task costs this pass one more sequential read of its
+/// own when the next pass's turn comes, so the count trades the race's own
+/// odds against nextest's `SLOW` marker, and a few hundred crossed it under
+/// load in review.
 #[tokio::test]
 async fn a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure() {
     let h = harness()
@@ -3731,18 +3741,14 @@ async fn a_pass_started_before_confirmation_does_not_retell_an_already_confirmed
         .await
         .unwrap();
 
-    futures_util::future::join_all((0..300).map(|i| {
-        let w = &w;
-        async move {
-            let extra = w.extra_task(&format!("padding {i}")).await;
-            w.advance(&extra, TaskStatus::InProgress).await;
-            w.store
-                .transition_task(&extra.id, TaskStatus::Failed, Actor::Agent, None, None)
-                .await
-                .unwrap();
-        }
-    }))
-    .await;
+    for i in 0..50 {
+        let extra = w.extra_task(&format!("padding {i}")).await;
+        w.advance(&extra, TaskStatus::InProgress).await;
+        w.store
+            .transition_task(&extra.id, TaskStatus::Failed, Actor::Agent, None, None)
+            .await
+            .unwrap();
+    }
 
     // The orchestrator's next turn is held open until the gate file exists,
     // so its confirmation (`acp::prompt_once`) lands at a moment this test
@@ -3766,8 +3772,8 @@ async fn a_pass_started_before_confirmation_does_not_retell_an_already_confirmed
     .await;
 
     // Released and asked again in the same breath: the second pass's own
-    // goal fetch races the first turn's confirmation, which the three
-    // hundred other failed tasks give it every chance to lose.
+    // goal fetch races the first turn's confirmation, which the fifty
+    // other failed tasks give it a real chance to lose.
     std::fs::write(&gate, "go").unwrap();
     sched.goal(&w.goal);
     sched.flush().await;

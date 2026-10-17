@@ -182,10 +182,18 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
      under load, for the very turn a failure was last handed to land its
      confirmation in the meantime. A pass that answered from the stale
      copy there would read "not confirmed yet", find the now-idle session
-     its own, separately fresh, read of `live_sessions` turns up right
-     after, and hand the same, already-confirmed failure off a second
-     time
+     `live_sessions` turns up, and hand the same, already-confirmed
+     failure off a second time — forced in a test by holding that first
+     turn's confirmation open on a gate and giving the pass other failed
+     tasks to still be reading through when it is released
      (`scheduler_attention.rs::a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure`).
+     The fresh read is also the last thing `tell_orchestrator` does before
+     the hand-off, after `live_sessions` rather than before it: nothing
+     between that read and `acp::queue_daemon_prompt`, which it feeds,
+     ever awaits, so no later confirmation can land in the gap the read
+     and the send would otherwise leave between them — a guarantee the
+     code's own shape carries and a test cannot narrow further by racing
+     a wider one, since there is no width left to race into.
      A goal not `orchestrated`, or not `planning` or
      `active` any more, answers `true` outright — nothing automatic is
      ever coming either way. Otherwise the goal's own give-up mark is
@@ -727,11 +735,15 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   (`attention.rs::a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacement_answers`).
   A pass whose own goal fetch predates a failure's confirmation, and only
   reaches the persisted confirmed list afterward, reads that list fresh
-  rather than the stale copy it started with, so it does not hand the
-  same, already-confirmed failure off a second time — forced by holding
-  the confirming turn open on a gate and giving the pass three hundred
-  other failed tasks to still be reading through when the gate is
-  released
+  rather than the stale copy it started with, and reads it as the last
+  thing before the hand-off it feeds, after `live_sessions` rather than
+  before — nothing between that read and the send ever awaits, so it does
+  not hand the same, already-confirmed failure off a second time. The
+  first, wider gap is forced in a test by holding the confirming turn
+  open on a gate and giving the pass other failed tasks to still be
+  reading through when the gate is released; the second, narrower one —
+  between the read and the send themselves — is a width of zero the
+  code's own shape rules out, not something a test races into
   (`scheduler_attention.rs::a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure`).
   An orchestrated goal with no orchestrator session yet — awaiting its
   first launch — raises nothing either, the same grace a dead one

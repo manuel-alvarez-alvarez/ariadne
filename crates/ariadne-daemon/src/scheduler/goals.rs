@@ -432,26 +432,6 @@ impl super::Scheduler {
                 failed_tasks.push((task.id.clone(), transition_id));
             }
         }
-        // Read fresh rather than trusted off `goal`: `reconcile_goal` fetched
-        // that copy before `keep_orchestrator`, `deliver_goal_messages` and
-        // `list_tasks` each gave this pass's own turn to run on — long
-        // enough, under load, for the very turn a failure was last handed to
-        // land its confirmation and go idle again before this pass reaches
-        // here. Answering "not confirmed yet" from the stale copy, this pass
-        // would then find that now-idle session below and hand the same,
-        // already-confirmed failure off a second time.
-        let confirmed: Vec<(String, String)> = self
-            .store
-            .get_goal(&goal.id)
-            .await?
-            .orchestrator_answered_failed_task_ids
-            .as_deref()
-            .and_then(|json| serde_json::from_str(json).ok())
-            .unwrap_or_default();
-        let all_confirmed = failed_tasks.iter().all(|pair| confirmed.contains(pair));
-        if self.goal_told.get(&goal.id) == Some(&situation) && all_confirmed {
-            return Ok(());
-        }
         let orchestrators = self
             .live_sessions(&goal.id, None, Seat::Orchestrator)
             .await?;
@@ -464,6 +444,31 @@ impl super::Scheduler {
             // finds it idle says it then.
             return Ok(());
         };
+        // Read fresh, and right here: no `await` stands between this read
+        // and the send below, which is plain, synchronous Rust the whole
+        // way down (`acp::queue_daemon_prompt` never awaits), so nothing
+        // else can run in between to move the answer out from under it.
+        // Read any earlier — off `goal`, which `reconcile_goal` fetched
+        // before `keep_orchestrator`, `deliver_goal_messages` and
+        // `list_tasks` each gave this pass's own turn to run on, or even
+        // freshly but before the `live_sessions` await just above — the
+        // very turn a failure was last handed to could land its
+        // confirmation and go idle in the gap that followed, and this
+        // pass would then act on "not confirmed yet" against a session it
+        // only learns is idle afterward, handing the same, already-
+        // confirmed failure off a second time.
+        let confirmed: Vec<(String, String)> = self
+            .store
+            .get_goal(&goal.id)
+            .await?
+            .orchestrator_answered_failed_task_ids
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+        let all_confirmed = failed_tasks.iter().all(|pair| confirmed.contains(pair));
+        if self.goal_told.get(&goal.id) == Some(&situation) && all_confirmed {
+            return Ok(());
+        }
         let template = prompts::template_for(PromptKind::GoalAttention);
         let text = prompts::goal_attention_briefing(template, goal, &situation);
         // The delivery itself carries its own confirmation evidence,
