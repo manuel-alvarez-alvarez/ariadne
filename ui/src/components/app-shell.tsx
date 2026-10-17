@@ -7,13 +7,14 @@
  * The header's title comes from the route's own `handle` (see
  * `src/routes/router.tsx`), so this file knows nothing about which screens
  * exist. A screen's own actions and the one-line description that used to sit
- * under a second heading now reach this header through `PageHeaderContext`:
- * `PageHeader` (`page-header.tsx`) portals its `actions` into the slot this
- * file renders at the header's end, and hands its `description` to
- * `setDescription`, which becomes the title's tooltip. That keeps `PageHeader`
- * itself free of layout — it registers content, this file places it — so a
- * feature page's call site never has to know whether it is framed by the real
- * shell or mounted on its own in a test.
+ * under a second heading now reach this header through `PageHeaderContext`
+ * (`page-header-context.ts`, split out of this file so a screen's test does
+ * not pay to import the whole shell for it): `PageHeader` (`page-header.tsx`)
+ * portals its `actions` into the slot this file renders at the header's end,
+ * and hands its `description` to `setDescription`, which becomes the title's
+ * tooltip. That keeps `PageHeader` itself free of layout — it registers
+ * content, this file places it — so a feature page's call site never has to
+ * know whether it is framed by the real shell or mounted on its own in a test.
  *
  * It also binds the app's global chords and mounts what they open — the command
  * palette, the settings dialog, the create-goal dialog and the keyboard cheat
@@ -29,7 +30,7 @@
  */
 
 import { PanelLeftCloseIcon, PanelLeftOpenIcon, SearchIcon, SettingsIcon } from "lucide-react"
-import { createContext, type ReactNode, useCallback, useMemo, useState } from "react"
+import { type ReactNode, useCallback, useMemo, useState } from "react"
 import { Outlet, useMatches, useNavigate } from "react-router-dom"
 
 import { AppSidebar } from "@/components/app-sidebar"
@@ -37,6 +38,7 @@ import { ConnectionBanner } from "@/components/connection-banner"
 import { ConnectionStatus } from "@/components/connection-status"
 import { DetailPanels } from "@/components/detail-panels"
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog"
+import { PageHeaderContext, type PageHeaderSlot } from "@/components/page-header-context"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -69,21 +71,6 @@ function usePageTitle(): string | null {
   }
   return null
 }
-
-/**
- * What a mounted `PageHeader` reaches through to put itself in the header:
- * `actionsSlot` is the DOM node its `actions` portal into — the header's end,
- * before search, theme and settings — and `setDescription` hands the header
- * title's tooltip its one line. `null` outside the shell, so a `PageHeader`
- * rendered on its own (every feature test) falls back to rendering its
- * `actions` inline instead of reaching for a slot that does not exist.
- */
-interface PageHeaderSlot {
-  actionsSlot: HTMLDivElement | null
-  setDescription: (description: ReactNode) => void
-}
-
-export const PageHeaderContext = createContext<PageHeaderSlot | null>(null)
 
 /** A thread wound on a spool: the app's mark. Always 16px, always `text-primary`. */
 function AriadneMark() {

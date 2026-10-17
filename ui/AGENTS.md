@@ -115,6 +115,21 @@ time out.
 - Fail a changed test above one second or a changed file above ten seconds; make it faster.
 - Fail a mock in `src/test/setup.ts` or a global stub a test leaves behind; use local mocks and `vi.stubGlobal`.
 - Fail a test that depends on another test's render or state; render and reset its own state.
+- Fail a context, hook or type a test needs that is only reachable by importing
+  the large component that defines it; give it its own module (`page-header.tsx`
+  reaches `AppShell`'s `PageHeaderContext` through `page-header-context.ts`, not
+  `app-shell.tsx` itself) so a test that needs the value is not charged for
+  importing the component tree around it.
+- Fail a `userEvent` interaction that simulates typing or clicking for a step a
+  test's claim does not cover — clearing a field before picking a value, say;
+  use `fireEvent` there and keep `userEvent` for the interaction under test.
+
+Find where a slow file's time goes — module import, environment, or the tests
+themselves — in the `Duration` line `npx vitest run <file>` already prints
+(`transform`, `setup`, `import`, `tests`, `environment`), then break the
+import time down further with `npx vitest run --experimental.importDurations.print
+--experimental.importDurations.limit 20 <file>`, which prints each imported
+module's own and cumulative time.
 
 ## Layout
 
