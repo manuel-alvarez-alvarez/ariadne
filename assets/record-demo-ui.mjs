@@ -10,13 +10,17 @@
  * It builds the release binaries, creates an isolated Ariadne home, and
  * starts its daemon with a two-second inert `cli_bin`. The scheduler can
  * create metadata rows for the demo, but it cannot start an agent process.
- * It seeds the scratch repository with the same small login HTTP service
- * assets/demo.tape seeds (assets/seed-demo-repo.sh), fills the New goal
- * form in the UI with the same goal assets/demo.tape types, then seeds the
- * same two tasks over the REST API assets/seed-demo-goal.py also seeds them
- * with, so both recordings show the same goal and the same tasks. The
- * temporary home, repository, daemon, dev server, and Playwright install are
- * removed when the recording ends.
+ * It registers assets/demo-orchestrator-agent.py as the acp agent
+ * `demo-orchestrator` — the stub both README recordings run as the
+ * orchestrator — seeds the scratch repository with the same small login
+ * HTTP service assets/demo.tape seeds (assets/seed-demo-repo.sh), fills the
+ * New goal form in the UI with the same goal assets/demo.tape types and the
+ * orchestrator pinned to that stub, opens the orchestrator console and
+ * types the same answer assets/demo.tape types, then seeds the same two
+ * tasks over the REST API assets/seed-demo-goal.py also seeds them with, so
+ * both recordings show the same goal, the same orchestrator exchange, and
+ * the same tasks. The temporary home, repository, daemon, dev server, and
+ * Playwright install are removed when the recording ends.
  */
 
 import { execFile, spawn } from "node:child_process"
@@ -40,7 +44,18 @@ const GOAL_TITLE = "Add rate limiting to the login endpoint"
 const GOAL_DESCRIPTION =
   "Limit the login endpoint to 5 attempts per minute per IP address. " +
   "Respond 429 Too Many Requests, with a Retry-After header, once a caller goes over the limit."
-const MODEL = "codex-acp:gpt-5.6-sol"
+
+// The orchestrator's model: assets/demo-orchestrator-agent.py, the same
+// scripted stub assets/demo.tape registers, so both recordings show the
+// same orchestrator exchange rather than a real agent's unscripted one.
+const ORCHESTRATOR_MODEL = "demo-orchestrator:demo-model"
+// What the two seeded tasks' columns run on — unrelated to the orchestrator,
+// and kept as a real agent so neither recording's task list depends on this
+// one's own staffing choices.
+const TASK_MODEL = "codex-acp:gpt-5.6-sol"
+// What assets/demo.tape types as the answer to the orchestrator's question;
+// kept identical so both recordings show the same conversation.
+const ORCHESTRATOR_ANSWER = "Per IP address."
 
 let daemon
 let devServer
@@ -125,9 +140,11 @@ async function main() {
   await mkdir(repositoryPath)
   await writeFile(inertCli, "#!/bin/sh\nsleep 2\n")
   await chmod(inertCli, 0o755)
+  const orchestratorAgentScript = join(root, "assets", "demo-orchestrator-agent.py")
   await writeFile(
     join(home, "config.toml"),
-    `tcp_listen = "127.0.0.1:${port}"\ncli_bin = "${inertCli}"\nprevent_sleep = false\n`,
+    `tcp_listen = "127.0.0.1:${port}"\ncli_bin = "${inertCli}"\nprevent_sleep = false\n` +
+      `[[acp_agents]]\nid = "demo-orchestrator"\ncommand = ["python3", "${orchestratorAgentScript}"]\n`,
   )
   await run("git", ["init", "-q", "-b", "main", repositoryPath])
   await run("bash", [join(root, "assets", "seed-demo-repo.sh"), repositoryPath])
@@ -179,6 +196,7 @@ async function main() {
   context = await browser.newContext({
     colorScheme: "dark",
     viewport,
+    deviceScaleFactor: 2,
     recordVideo: { dir: videoDirectory, size: viewport },
   })
   await context.addInitScript((url) => {
@@ -188,49 +206,101 @@ async function main() {
       JSON.stringify({ state: { baseUrl: url, goalStatusFilter: "planning,active" }, version: 0 }),
     )
   }, baseUrl)
+  // Every `waitForTimeout` below is one distinct screen of the required
+  // sequence held for 2 to 3 seconds, per assets/AGENTS.md — the 40 to 45
+  // second target comes from holding each of those screens in turn, never
+  // from holding any one of them longer.
   const page = await context.newPage()
   await page.goto("http://127.0.0.1:1420/#/goals")
   await page.getByRole("heading", { name: "Goals" }).waitFor()
-  await page.waitForTimeout(800)
+  await page.waitForTimeout(3_000)
 
   await page.getByRole("banner").getByRole("button", { name: "New goal" }).click()
   await page.getByRole("dialog", { name: "New goal" }).waitFor()
-  await page.locator("#goal-title").fill(GOAL_TITLE)
-  await page.locator("#goal-description").fill(GOAL_DESCRIPTION)
+  await page.waitForTimeout(2_000)
+  // Typed at a visible speed, like assets/demo.tape's own typing, rather than
+  // filled in one frame.
+  await page.locator("#goal-title").pressSequentially(GOAL_TITLE, { delay: 35 })
+  await page.locator("#goal-description").pressSequentially(GOAL_DESCRIPTION, { delay: 18 })
+  await page.waitForTimeout(2_000)
 
   await page.getByRole("combobox", { name: "Repositories", exact: true }).click()
   await page.getByRole("option", { name: new RegExp(repositoryPath.replaceAll("/", "\\/")) }).click()
   await page.getByRole("combobox", { name: "Repositories", exact: true }).click()
+  await page.waitForTimeout(2_000)
 
   await page.getByRole("button", { name: "Orchestrator runs on" }).click()
-  await page.getByPlaceholder("Search models, or type an id…").fill(MODEL)
-  await page.getByRole("option", { name: MODEL }).click()
+  await page.getByPlaceholder("Search models, or type an id…").fill(ORCHESTRATOR_MODEL)
+  await page.waitForTimeout(2_000)
+  await page.getByRole("option", { name: ORCHESTRATOR_MODEL }).click()
+  // A pick does not close the popover by itself (ui/src/features/models/pin-picker.tsx
+  // only closes it on an outside press or Escape); Escape is the one that
+  // cannot also close the dialog underneath, since the picker's own listener
+  // stops it from propagating.
+  await page.keyboard.press("Escape")
+  await page.waitForTimeout(3_000)
 
   await page.getByRole("button", { name: "Create goal" }).click()
   await page.getByRole("heading", { name: GOAL_TITLE, exact: true }).waitFor()
-  await page.waitForTimeout(1_200)
+  await page.waitForTimeout(3_000)
 
-  await exec("python3", [join(root, "assets", "seed-demo-goal.py"), baseUrl, MODEL])
+  // Open the orchestrator's console: the goal panel's Sessions tab lists its
+  // one live session (the scripted stub above), held on its own screen
+  // before it is opened, and selecting it opens on the console tab by
+  // default.
+  await page.getByRole("tab", { name: /^Sessions/ }).click()
+  const orchestratorRow = page.getByRole("row", { name: /Orchestrator/ })
+  await orchestratorRow.waitFor()
+  await page.waitForTimeout(2_000)
+  await orchestratorRow.click()
+  const terminal = page.getByLabel("Console terminal")
+  await terminal.waitFor()
+  // Time for the daemon to spawn the stub and for it to read the repository
+  // and ask its question, which the console then draws.
+  await page.waitForTimeout(3_000)
+
+  // The same answer assets/demo.tape types into the CLI's own console — the
+  // UI's console is the same bytes, in a terminal emulator (see
+  // ui/src/features/sessions/session-terminal.tsx), so the same keystrokes
+  // apply here too.
+  await terminal.click()
+  await page.keyboard.type(ORCHESTRATOR_ANSWER, { delay: 45 })
+  // Held once typed, before it is sent, and again once the stub's
+  // acknowledgement has had time to render.
+  await page.waitForTimeout(2_000)
+  await page.keyboard.press("Enter")
+  await page.waitForTimeout(3_000)
+
+  // Only now, after the console showed the stub accept the typed answer, is
+  // the task seeder started: assets/seed-demo-goal.py adds the goal's two
+  // tasks and finalizes the plan as soon as it finds the goal, which already
+  // exists by this point, so it would race ahead of the answer if it ran
+  // any earlier (as assets/demo.tape's own hidden step does, for the same
+  // reason). Awaited at the very end, once the rest of the flow below has
+  // already given it time to finish, so it adds nothing to the recording's
+  // own pace while still surfacing a seeding failure loudly.
+  const seeded = exec("python3", [join(root, "assets", "seed-demo-goal.py"), baseUrl, TASK_MODEL])
+
+  // The session view took over the whole panel, breadcrumb and tabs
+  // included (see ui/src/features/goals/goal-sessions.tsx), so the way to
+  // the goal panel's own Tasks tab is back through that breadcrumb first.
+  // Its own task list is the one row that also names its column, which is
+  // what picks the task out from the attention strip's same-named link
+  // behind the scrim.
+  await page.getByRole("button", { name: GOAL_TITLE, exact: true }).click()
+  await page.waitForTimeout(2_000)
+  await page.getByRole("tab", { name: /^Tasks/ }).click()
 
   const limiterTask = "Add the rate limiter middleware"
-  // Both the attention strip (behind the panel's scrim) and the panel's own
-  // task list link to the task by the same name; only the task list's own
-  // row also names its column, which is what picks that one.
   const taskRow = page.getByRole("link", { name: `${limiterTask} Develop` })
   await taskRow.waitFor()
-  await page.waitForTimeout(600)
+  await page.waitForTimeout(3_000)
 
   await taskRow.click()
   await page.getByRole("heading", { name: limiterTask, exact: true }).waitFor()
-  await page.waitForTimeout(1_200)
+  await page.waitForTimeout(3_000)
 
-  await page.keyboard.press("Escape")
-  await page.waitForTimeout(400)
-  await page.keyboard.press("Escape")
-  await page.getByRole("button", { name: /Search/ }).click()
-  await page.getByRole("dialog", { name: "Command palette" }).waitFor()
-  await page.getByPlaceholder("Search goals, tasks, sessions, skills, workflows…").fill("rate limit")
-  await page.waitForTimeout(1_600)
+  await seeded
 
   const video = page.video()
   if (!video) throw new Error("Playwright did not start video recording")
@@ -245,7 +315,7 @@ async function main() {
     "-i",
     videoPath,
     "-filter_complex",
-    "trim=start=0.8,setpts=PTS-STARTPTS,fps=8,scale=1120:-2:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128:stats_mode=diff[p];[s1][p]paletteuse=dither=sierra2_4a",
+    "trim=start=0.8,setpts=PTS-STARTPTS,fps=12,scale=1280:-2:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128:stats_mode=diff[p];[s1][p]paletteuse=dither=sierra2_4a",
     "-loop",
     "0",
     output,
