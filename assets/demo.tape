@@ -3,6 +3,7 @@
 # Regenerate with assets/record-demo-cli.sh, never by calling vhs on this
 # file directly: that script builds the release binary, creates the
 # throwaway daemon this tape types against (never the real ~/.ariadne home),
+# registers assets/demo-orchestrator-agent.py as the orchestrator's agent,
 # runs vhs over this file, and removes the daemon and its scratch
 # repository when the recording ends or the script is interrupted.
 #
@@ -11,9 +12,10 @@
 # Expects, already set up by that script when this tape runs:
 #   - target/release/ariadne on PATH
 #   - ARIADNE_HOME=/tmp/ariadne-demo-home, a daemon already running on it,
-#     with its REST API on 127.0.0.1:18765 (tcp_listen) — the hidden setup
-#     below seeds the goal's tasks over it, the same way
-#     assets/record-demo-ui.mjs does
+#     with its REST API on 127.0.0.1:18765 (tcp_listen), and
+#     assets/demo-orchestrator-agent.py registered as the acp agent
+#     `demo-orchestrator` — the hidden setup below seeds the goal's tasks
+#     over that REST API, the same way assets/record-demo-ui.mjs does
 #   - /tmp/ariadne-demo-repo, a git repository seeded with
 #     assets/seed-demo-repo.sh
 
@@ -50,10 +52,25 @@ Sleep 500ms
 Enter
 Sleep 1.5s
 
-Type "ariadne goal create --title 'Add rate limiting to the login endpoint' --description 'Limit the login endpoint to 5 attempts per minute per IP address. Respond 429 Too Many Requests, with a Retry-After header, once a caller goes over the limit.' --repo /tmp/ariadne-demo-repo --model opencode:opencode/big-pickle"
+Type "GOAL_ID=$(ariadne goal create -q --title 'Add rate limiting to the login endpoint' --description 'Limit the login endpoint to 5 attempts per minute per IP address. Respond 429 Too Many Requests, with a Retry-After header, once a caller goes over the limit.' --repo /tmp/ariadne-demo-repo --model demo-orchestrator:demo-model)"
 Sleep 500ms
 Enter
-Sleep 6s
+Sleep 1.5s
+
+Type "ariadne goal attach $GOAL_ID"
+Sleep 500ms
+Enter
+Sleep 4s
+
+Type "Per IP address."
+Sleep 500ms
+Enter
+Sleep 3.5s
+
+Ctrl+C
+Sleep 300ms
+Ctrl+C
+Sleep 500ms
 
 Type "ariadne task ls"
 Sleep 500ms
@@ -64,8 +81,3 @@ Type "ariadne attention"
 Sleep 500ms
 Enter
 Sleep 1.5s
-
-Type "ariadne models ls --agent opencode"
-Sleep 500ms
-Enter
-Sleep 3s

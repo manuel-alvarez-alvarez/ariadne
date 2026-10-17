@@ -7,7 +7,10 @@
 #
 # It builds the release binary, creates an isolated Ariadne home and a
 # scratch repository seeded with the same small login HTTP service
-# assets/record-demo-ui.mjs seeds (assets/seed-demo-repo.sh), starts a
+# assets/record-demo-ui.mjs seeds (assets/seed-demo-repo.sh), registers
+# assets/demo-orchestrator-agent.py as the acp agent `demo-orchestrator`
+# (the stub both README recordings run as the orchestrator, so the tape can
+# attach to its console and show a real, scripted exchange), starts a
 # throwaway daemon with its REST API on a loopback port, and runs
 # assets/demo.tape with vhs over it — which starts assets/seed-demo-goal.py
 # in the background to seed the goal's tasks the same way the UI recording
@@ -48,7 +51,11 @@ rm -rf "$home" "$repo"
 mkdir -p "$home" "$repo"
 git -C "$repo" init -q -b main
 bash "$root/assets/seed-demo-repo.sh" "$repo"
-printf 'tcp_listen = "127.0.0.1:%s"\n' "$port" > "$home/config.toml"
+{
+  printf 'tcp_listen = "127.0.0.1:%s"\n' "$port"
+  printf '[[acp_agents]]\nid = "demo-orchestrator"\ncommand = ["python3", "%s"]\n' \
+    "$root/assets/demo-orchestrator-agent.py"
+} > "$home/config.toml"
 ARIADNE_HOME="$home" "$ariadne" daemon start
 
 # A plain foreground `vhs ...` would leave INT/TERM pending until vhs itself
