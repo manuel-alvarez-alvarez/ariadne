@@ -2589,6 +2589,15 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
         },
     )
     .await;
+
+    // Told once, however many more passes ask about the same situation.
+    // Flushed after each send, so every pass is known reconciled before the
+    // count below is read, rather than counted across passes an `eventually`
+    // loop fired before it stopped asking.
+    for _ in 0..3 {
+        sched.goal(&w.goal);
+        sched.flush().await;
+    }
     assert_eq!(
         w.prompted(&orchestrator).matches("failed").count(),
         1,
