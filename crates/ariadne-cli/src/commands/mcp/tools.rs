@@ -118,8 +118,7 @@ pub(super) struct ListModelsReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct FailTaskReq {
-    /// Why you cannot do the task as written. Ariadne records it on the
-    /// task, and the user reads only this.
+    /// Why you cannot do the task as written.
     pub reason: String,
 }
 
@@ -437,7 +436,7 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Flag that you wait for the user. Call it before you ask. `hint` is one line for the Needs attention list, not the question. Then write the question in your reply and end your turn. A turn that ends without the call ends the wait."
+        description = "Flag that you wait for the user. Call it before you ask. Then write the question in your reply and end your turn. A turn that ends without the call ends the wait."
     )]
     async fn wait_for_user(
         &self,
@@ -517,9 +516,7 @@ impl AriadneMcp {
 
     // ---- orchestrator ----
 
-    #[tool(
-        description = "Create one task in the goal. Pass `agents`, one for each column of the workflow."
-    )]
+    #[tool(description = "Create one task in the goal.")]
     async fn create_task(
         &self,
         Parameters(req): Parameters<CreateTaskReq>,
@@ -541,9 +538,7 @@ impl AriadneMcp {
         )
     }
 
-    #[tool(
-        description = "Edit a task that is pending, ready or failed. `agents` replaces the whole staffing, one for each column."
-    )]
+    #[tool(description = "Edit a task that is pending, ready or failed.")]
     async fn update_task(
         &self,
         Parameters(req): Parameters<UpdateTaskReq>,
@@ -651,7 +646,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Switch a session to the model or agent you give. The new session is briefed with a handoff of the old conversation. A model is required, so `default` is refused."
+        description = "Switch a session to the model or agent you give. The new session is briefed with a handoff of the old conversation."
     )]
     async fn switch_session(
         &self,
@@ -732,7 +727,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Read the diff of the task branch against its base branch. On a pull request, pass `since` to read only the commits after that sha."
+        description = "Read the diff of the task branch against its base branch. On a pull request, read the diff of the request instead."
     )]
     async fn get_diff(
         &self,
@@ -779,7 +774,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the comments of your pull request, read off the forge now, with every field. Set `unanswered_only` for the threads that wait on your answer."
+        description = "List the comments of your pull request, read off the forge now, with every field."
     )]
     async fn list_comments(
         &self,
@@ -919,9 +914,7 @@ impl AriadneMcp {
         json_result(self.post(&path, &serde_json::json!({})).await?)
     }
 
-    #[tool(
-        description = "Report your pull request. Set `ready` to true once every required approval and check reads green. Name `head_sha`, the head you read them on. Set `ready` to false on a change back. Set `reviewed_sha` after you post a review."
-    )]
+    #[tool(description = "Report your pull request.")]
     async fn report_pull_request(
         &self,
         Parameters(req): Parameters<ReportPullRequestReq>,
@@ -954,7 +947,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post new inline findings in the user's name. Give each finding its file, line and priority. Set `event` to `request_changes` while a P0 or P1 is open, else `comment`. A supervised repository holds findings in forge drafts."
+        description = "Post new inline findings in the user's name. Give each finding its file, line and priority. A supervised repository holds findings in forge drafts."
     )]
     async fn submit_review(
         &self,
@@ -994,7 +987,7 @@ impl AriadneMcp {
     // ---- everyone ----
 
     #[tool(
-        description = "Send one message. Set `to` to a column id from `get_task` or `orchestrator`. Ask or answer questions only. Send no confirmations, thanks, or plans. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."
+        description = "Send one message. Ask or answer questions only. Send no confirmations, thanks, or plans. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."
     )]
     async fn send_message(
         &self,
