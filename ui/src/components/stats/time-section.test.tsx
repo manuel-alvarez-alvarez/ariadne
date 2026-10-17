@@ -66,6 +66,42 @@ it("asks for its family with the filter and draws its time figures", async () =>
   expect(queryClient.getQueryData(qk.stats.time(filter))).toMatchObject({ tasks: 2 })
 })
 
+it("draws a share chart and a compact comparison table beside the duration bars", async () => {
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init)
+    asked.push(new URL(request.url))
+    return jsonResponse({
+      tasks: 2,
+      lead_time: { median_secs: 120, p90_secs: 300, mean_secs: 180 },
+      in_status: [
+        { status: "in_progress", total_secs: 180, median_secs: 90, share: 0.75 },
+        { status: "ready", total_secs: 60, median_secs: 60, share: 0.25 },
+      ],
+      waiting_on_person: { prompts: 3, total_secs: 60, median_secs: 20 },
+    })
+  })
+  renderScreen(<TimeSection filter={{}} />, { route: "/stats" })
+
+  const section = await screen.findByRole("region", { name: "Time" })
+  await within(section).findByText("Where the time goes")
+  expect(within(section).getByText("Share of time by status")).toBeDefined()
+
+  const table = within(section).getByRole("table", {
+    name: "Share of time by status, exact values",
+  })
+  const rows = within(table).getAllByRole("row").slice(1)
+  expect(
+    rows.map((row) =>
+      within(row)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent),
+    ),
+  ).toEqual([
+    ["in_progress", "75.0%"],
+    ["ready", "25.0%"],
+  ])
+})
+
 it("explains every tile and every chart series, on hover", async () => {
   renderScreen(<TimeSection filter={{}} />, { route: "/stats" })
 

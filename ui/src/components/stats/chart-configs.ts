@@ -59,6 +59,7 @@ export const WORK_CONFIG = {
   },
   landed: {
     label: "Landed",
+    color: STATUS_COLORS.active,
     explain:
       "Landed: the count of finished tasks in this bucket whose landing was a merge or a pull request.",
   },
@@ -103,5 +104,123 @@ export const SPEND_CONFIG: ChartConfig = {
   cached_share: {
     label: "Cached",
     explain: "Cached: the share of this bucket's input tokens that were served from cache.",
+  },
+}
+
+/**
+ * How the Spend section's composition chart splits the span's tokens into
+ * three slices that sum to the whole, cached input kept apart from the
+ * fresh input beside it rather than folded back into one "input" slice: the
+ * two share a colour family — `active` for the fresh tokens a session asked
+ * for, `ready` for the ones a cache answered instead — while output keeps
+ * the same `done` it draws in the trend chart above.
+ */
+export const SPEND_COMPOSITION_CONFIG: ChartConfig = {
+  fresh_input_tokens: {
+    label: "Fresh input",
+    color: STATUS_COLORS.active,
+    explain: "Fresh input: input tokens spent in this span that were not served from cache.",
+  },
+  cached_input_tokens: {
+    label: "Cached input",
+    color: STATUS_COLORS.ready,
+    explain: "Cached input: input tokens spent in this span that were served from cache.",
+  },
+  output_tokens: {
+    label: "Output",
+    color: STATUS_COLORS.done,
+    explain: "Output: output tokens spent across every session in this span.",
+  },
+}
+
+/**
+ * The six steps `time_stats` reports, in the Time section's share chart:
+ * each a status a task's lifecycle passes through, in the same order the
+ * family lists them (specs/023-stats.md rule 42), each on the one colour
+ * the rest of the app already gives that step — the board's own Pending and
+ * Ready, `active` for work under way, and a review's own three outcomes.
+ */
+export const TIME_STATUS_PIE_CONFIG: ChartConfig = {
+  pending: {
+    label: "Pending",
+    color: STATUS_COLORS.pending,
+    explain: "Pending: this status's share of the total time measured here.",
+  },
+  ready: {
+    label: "Ready",
+    color: STATUS_COLORS.ready,
+    explain: "Ready: this status's share of the total time measured here.",
+  },
+  in_progress: {
+    label: "In progress",
+    color: STATUS_COLORS.active,
+    explain: "In progress: this status's share of the total time measured here.",
+  },
+  under_review: {
+    label: "Under review",
+    color: STATUS_COLORS.review,
+    explain: "Under review: this status's share of the total time measured here.",
+  },
+  changes_requested: {
+    label: "Changes requested",
+    color: STATUS_COLORS.warn,
+    explain: "Changes requested: this status's share of the total time measured here.",
+  },
+  approved: {
+    label: "Approved",
+    color: STATUS_COLORS.approved,
+    explain: "Approved: this status's share of the total time measured here.",
+  },
+}
+
+/**
+ * The Models section's ranked comparison charts: one bar per model, coloured
+ * as a plain count since no model's figure is an outcome of its own. Agents
+ * rank by tasks, orchestrators by goals; the rest of each row's figures ride
+ * in the bar's tooltip and its `sr-only` table alone.
+ */
+export const MODELS_AGENT_CONFIG: ChartConfig = {
+  tasks: {
+    label: "Tasks",
+    color: STATUS_COLORS.active,
+    explain: "Tasks: the count of distinct tasks this model worked as this seat.",
+  },
+  tokens: {
+    label: "Tokens",
+    explain:
+      "Tokens: input and output tokens this model used in this seat, cache not counted twice.",
+  },
+  time_secs: {
+    label: "Time",
+    explain: "Time: the summed session time this model ran in this seat.",
+  },
+  messages: {
+    label: "Messages",
+    explain: "Messages: the count of messages this model sent in this seat.",
+  },
+  tasks_finished: {
+    label: "Finished",
+    explain: "Finished: the count of this model's tasks that ended in the column it ran.",
+  },
+}
+
+export const MODELS_ORCHESTRATOR_CONFIG: ChartConfig = {
+  goals: {
+    label: "Goals",
+    color: STATUS_COLORS.active,
+    explain: "Goals: the count of distinct goals this model orchestrated.",
+  },
+  tokens: {
+    label: "Tokens",
+    explain:
+      "Tokens: input and output tokens this model used in this seat, cache not counted twice.",
+  },
+  time_secs: {
+    label: "Time",
+    explain: "Time: the summed session time this model ran in this seat.",
+  },
+  messages: {
+    label: "Messages",
+    explain: "Messages: the count of messages this model sent in this seat.",
   },
 }

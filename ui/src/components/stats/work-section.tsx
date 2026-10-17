@@ -105,7 +105,8 @@ export function WorkSection({ filter }: { filter: StatsFilter }) {
             config={WORK_CONFIG}
             keys={["tasks_finished", "tasks_failed", "tasks_cancelled"]}
             extra={["goals_completed", "landed"]}
-            caption="Tasks per bucket, by how they ended"
+            line="landed"
+            caption="Tasks per bucket, by how they ended, with changes landed as a trend"
             bucket={bucketStep(data.bucket)}
           />
         </div>

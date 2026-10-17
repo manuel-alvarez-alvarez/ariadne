@@ -31,6 +31,27 @@ it("gives the sr-only table a positioned ancestor", () => {
   expect(table.closest(".relative")).not.toBeNull()
 })
 
+it("accepts a trend line over the same buckets, with no change to its sr-only numbers", () => {
+  const LINE_CONFIG: ChartConfig = {
+    count: { label: "Count", color: "red" },
+    trend: { label: "Trend", color: "blue" },
+  }
+  render(
+    <StatTimeChart
+      data={[{ bucket: "2026-09-28T00:00:00Z", count: 3, trend: 5 }]}
+      config={LINE_CONFIG}
+      keys={["count"]}
+      extra={["trend"]}
+      caption="Stub chart"
+      line="trend"
+    />,
+  )
+
+  const table = screen.getByRole("table", { hidden: true })
+  expect(within(table).getByText("Trend")).toBeDefined()
+  expect(within(table).getByText("5")).toBeDefined()
+})
+
 it("labels an hour bucket as a time, with the date added, not a bare date", () => {
   render(
     <StatTimeChart

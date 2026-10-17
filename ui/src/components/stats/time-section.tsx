@@ -8,9 +8,11 @@ import { queryOptions, useQuery } from "@tanstack/react-query"
 
 import { api, qk, type StatsFilter, type TimeStatsDto, unwrap } from "@/api"
 import { formatDuration } from "@/lib/format"
-import { TIME_STATUS_CONFIG } from "./chart-configs"
+import { TIME_STATUS_CONFIG, TIME_STATUS_PIE_CONFIG } from "./chart-configs"
 import { StatBarChart } from "./stat-bar-chart"
+import { StatPieChart } from "./stat-pie-chart"
 import { StatSection } from "./stat-section"
+import { StatTable } from "./stat-table"
 import { StatTile, StatTiles } from "./stat-tiles"
 
 /** `GET /v1/stats/time`, narrowed by the screen's filter. */
@@ -34,8 +36,13 @@ export function TimeSection({ filter }: { filter: StatsFilter }) {
     >
       {(data) => {
         const rows = data.in_status.map((row) => ({ label: row.status, ...row }))
+        const shareRows = data.in_status.map((row) => ({
+          key: row.status,
+          value: row.total_secs,
+          ...row,
+        }))
         return (
-          <>
+          <div className="flex flex-1 flex-col gap-4">
             <StatTiles>
               <StatTile
                 label="Median lead time"
@@ -58,27 +65,62 @@ export function TimeSection({ filter }: { filter: StatsFilter }) {
                 explain="Prompts waited on: the count of permission prompts you answered."
               />
             </StatTiles>
-            <StatBarChart
-              data={rows}
-              config={TIME_STATUS_CONFIG}
-              bars={["total_secs"]}
-              legendExtra={["median_secs", "share"]}
-              caption="Where the time goes"
-              tooltip={(row) => (
-                <>
-                  <p className="font-medium">{row.status}</p>
-                  <p>Median: {formatDuration(row.median_secs)}</p>
-                  <p>Share: {(row.share * 100).toFixed(1)}%</p>
-                </>
-              )}
-              columns={[
-                { header: "Status", render: (row) => row.status },
-                { header: "Total", render: (row) => formatDuration(row.total_secs) },
-                { header: "Median", render: (row) => formatDuration(row.median_secs) },
-                { header: "Share", render: (row) => `${(row.share * 100).toFixed(1)}%` },
-              ]}
-            />
-          </>
+            <div className="flex flex-1 flex-col gap-4 md:flex-row">
+              <StatBarChart
+                data={rows}
+                config={TIME_STATUS_CONFIG}
+                bars={["total_secs"]}
+                legendExtra={["median_secs", "share"]}
+                caption="Where the time goes"
+                tooltip={(row) => (
+                  <>
+                    <p className="font-medium">{row.status}</p>
+                    <p>Median: {formatDuration(row.median_secs)}</p>
+                    <p>Share: {(row.share * 100).toFixed(1)}%</p>
+                  </>
+                )}
+                columns={[
+                  { header: "Status", render: (row) => row.status },
+                  { header: "Total", render: (row) => formatDuration(row.total_secs) },
+                  { header: "Median", render: (row) => formatDuration(row.median_secs) },
+                  { header: "Share", render: (row) => `${(row.share * 100).toFixed(1)}%` },
+                ]}
+              />
+              <div className="flex flex-1 flex-col gap-2 md:max-w-64">
+                <StatPieChart
+                  data={shareRows}
+                  config={TIME_STATUS_PIE_CONFIG}
+                  caption="Share of time by status"
+                  valueFormatter={formatDuration}
+                  columns={[
+                    { header: "Status", render: (row) => row.status },
+                    { header: "Total", render: (row) => formatDuration(row.total_secs) },
+                    { header: "Median", render: (row) => formatDuration(row.median_secs) },
+                    { header: "Share", render: (row) => `${(row.share * 100).toFixed(1)}%` },
+                  ]}
+                />
+                <StatTable
+                  rows={shareRows}
+                  rowKey={(row) => row.status}
+                  caption="Share of time by status, exact values"
+                  columns={[
+                    {
+                      header: "Status",
+                      explain:
+                        "Status: which step of a finished task's lifecycle this row measures.",
+                      render: (row) => row.status,
+                    },
+                    {
+                      header: "Share",
+                      numeric: true,
+                      explain: "Share: this status's share of the total time measured here.",
+                      render: (row) => `${(row.share * 100).toFixed(1)}%`,
+                    },
+                  ]}
+                />
+              </div>
+            </div>
+          </div>
         )
       }}
     </StatSection>

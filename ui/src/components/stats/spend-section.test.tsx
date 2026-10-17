@@ -110,20 +110,47 @@ it("draws the tiles and the time chart from a mocked response, with no by-model 
   renderScreen(<SpendSection filter={filter} />, { route: "/stats" })
 
   const section = await screen.findByRole("region", { name: "Spend" })
-  expect(await within(section).findByText("1M")).toBeDefined()
-  expect(within(section).getByText("80.0%")).toBeDefined()
-  expect(within(section).getByText("100k")).toBeDefined()
-  expect(within(section).getByText("450k")).toBeDefined()
-  expect(within(section).getByText("of 2 tasks")).toBeDefined()
+  await within(section).findByText("Input tokens")
+  const tile = (label: string) =>
+    within(section)
+      .getAllByRole("term")
+      .find((term) => term.textContent === label)?.nextElementSibling?.textContent
+  expect(tile("Input tokens")).toBe("1M")
+  expect(tile("Cache share")).toBe("80.0%")
+  expect(tile("Output tokens")).toBe("100k")
+  expect(tile("Tokens per finished task")).toBe("450k")
 
   const tables = within(section).getAllByRole("table", { hidden: true })
-  expect(tables).toHaveLength(1)
+  // One sr-only table beside the trend chart, one beside the composition
+  // chart, and one visible comparison table beside the latter.
+  expect(tables).toHaveLength(3)
   const joined = tables.map((table) => table.textContent).join("\n")
   expect(joined).toContain("Sep 28")
   expect(joined).toContain("300k")
   expect(joined).toContain("40k")
   expect(joined).not.toContain("300000")
   expect(joined).not.toContain("stub:heavy")
+
+  // The composition chart and its table split the totals into fresh input,
+  // cached input and output: 1,000,000 - 800,000 = 200,000 fresh.
+  expect(
+    within(section).getByText("How the span's tokens split: fresh input, cached input and output"),
+  ).toBeDefined()
+  const compositionTable = within(section).getByRole("table", {
+    name: "Token composition, exact values",
+  })
+  const rows = within(compositionTable).getAllByRole("row").slice(1)
+  expect(
+    rows.map((row) =>
+      within(row)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent),
+    ),
+  ).toEqual([
+    ["Fresh input", "200k", "18.2%"],
+    ["Cached input", "800k", "72.7%"],
+    ["Output", "100k", "9.1%"],
+  ])
 })
 
 it("explains every tile and every chart series, on hover", async () => {
