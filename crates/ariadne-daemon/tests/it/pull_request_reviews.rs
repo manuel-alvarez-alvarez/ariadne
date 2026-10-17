@@ -385,8 +385,14 @@ async fn a_draft_starts_no_review_until_it_leaves_draft() {
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     // Wait for the draft's own fetch round to finish, not merely for a
     // quiet window, so the reprogram below never races a straggler still
-    // reading this draft script.
-    fetch_again(&h, &stub, &repo).await;
+    // reading this draft script. `fetch_again` would wake a second round
+    // and take its own baseline before this first one is proven over,
+    // letting the first round's own completion satisfy that wait instead
+    // of the second one it actually means to wait for.
+    eventually(TIMEOUT, "the draft's own fetch to finish", async || {
+        stub.fetches() >= 1
+    })
+    .await;
     assert!(no_rows(&h).await, "a draft is no work yet");
 
     stub.reprogram(script(&Shown::open(&head)));

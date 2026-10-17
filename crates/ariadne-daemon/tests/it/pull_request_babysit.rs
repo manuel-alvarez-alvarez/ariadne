@@ -312,6 +312,7 @@ async fn keep_until_merge(author: &str) {
         ]),
         ..shown()
     }));
+    let before_alice = stub.fetches();
     h.state.forge_poll.wake(&repo);
     eventually(TIMEOUT, "the news to reach the keeper", async || {
         h.prompts_to(&session)
@@ -325,6 +326,16 @@ async fn keep_until_merge(author: &str) {
         h.prompts_to(&session)
             .iter()
             .any(|news| news.contains("checks now read") && news.contains("failure"))
+    })
+    .await;
+
+    // The news above lands mid-round, well before the round's own trailing
+    // calls do: wait for the round itself to finish before `fetch_again`
+    // below takes its own baseline, or that baseline could still be taken
+    // during this round, letting its completion, not the next fetch's,
+    // satisfy `fetch_again`'s own wait.
+    eventually(TIMEOUT, "the alice fetch to end", async || {
+        stub.fetches() > before_alice
     })
     .await;
 
@@ -1365,6 +1376,16 @@ async fn asking_is_refused_with_no_model_an_unknown_one_an_untaskable_skill_or_t
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path).await;
+    // The repository's own worker starts a fetch of its own the moment it
+    // is created: waited out before the first script change below, since
+    // one still under way would answer its own remaining calls from the
+    // new script instead of this one. None of the refused asks below wake
+    // a fetch of their own (each is refused before reaching that point),
+    // so this one wait covers every reprogram this test makes.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
 
     h.error(
         babysit(&repo, 1, json!({"asked": true})),
