@@ -651,6 +651,32 @@ enum TemplateLock {
     TemplateReady,
 }
 
+#[cfg(test)]
+mod template_lock_tests {
+    use super::{TemplateLock, template_lock_attempt};
+
+    #[test]
+    fn a_published_template_ends_a_contended_lock_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = dir.path().join("template.lock");
+        let template_path = dir.path().join("template.db");
+        let holder = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        rustix::fs::flock(&holder, rustix::fs::FlockOperation::LockExclusive).unwrap();
+
+        assert!(template_lock_attempt(&lock_path, &template_path).is_none());
+        std::fs::write(&template_path, "complete").unwrap();
+        assert!(matches!(
+            template_lock_attempt(&lock_path, &template_path),
+            Some(TemplateLock::TemplateReady)
+        ));
+    }
+}
+
 /// Where a harness's agents keep their transcripts: under its own
 /// directory, so no test reads the transcripts of the machine it runs on.
 fn transcript_homes(dir: &Path) -> TranscriptHomes {
