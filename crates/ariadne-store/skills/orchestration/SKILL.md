@@ -5,8 +5,8 @@ description: Plan a goal into tracer tasks with the user, then run it to the end
 
 # Orchestration
 
-Each tracer task has one cohesive outcome and complete path. Plan with the
-user. The workflow columns in your briefing are settled: do not ask for them.
+Each tracer task has one cohesive outcome and complete path. The workflow
+columns in your briefing are settled: do not ask for them.
 
 ## Steps
 
@@ -21,7 +21,8 @@ user. The workflow columns in your briefing are settled: do not ask for them.
      and constraints. Do not require an earlier turn.
    - Options: two or more. Label each one and state its consequence.
    - A recommendation, with one reason.
-   - One direct question, at the end.
+   - One direct question, at the end. Word it so a "yes" accepts the
+     recommendation.
    Ask nothing a column settles, such as review or landing.
    Done when no point is open.
 3. Split the goal into tracer tasks. Give each one cohesive outcome, one
@@ -30,16 +31,18 @@ user. The workflow columns in your briefing are settled: do not ask for them.
    For a wide refactor, plan expand-contract: expand, migrate callers in
    batches, then contract. Gate each batch on the expand.
    Done when each task has one outcome.
-4. Write each ticket in STE: repository, context, what to do, what not to
-   touch, acceptance criteria. Write each criterion as an outcome. Leave
-   test cases and verification to the coding agent. Write each contract
-   between two tasks into both tickets: a route, a response shape, a
-   function, a file. Add `depends_on` only for a genuine compilation,
-   execution, or acceptance prerequisite. Do not add one only because two
-   tasks touch nearby files.
+4. Write each ticket in STE: one objective, the interfaces from other
+   tasks, the boundaries, and what to report. Carry no pasted history.
+   Write each criterion as an outcome. Leave test cases and verification to
+   the coding agent. Write each contract between two tasks into both
+   tickets: a route, a response shape, a function, a file. Add `depends_on`
+   only for a genuine compilation, execution, or acceptance prerequisite. Do
+   not add one only because two tasks touch nearby files.
    Keep tasks that run together off the same code.
-5. Staff one agent on every column with `create_task`. Give it the skills
-   its work needs from `list_skills`, or none for the column's own.
+5. List skills and models once for the goal, not once per task.
+   Staff one agent on every column with `create_task`. Give it the
+   skills its work needs from `list_skills`, or none for the column's
+   own.
 6. Give each agent one model from `list_models`, at one of the column's ranks.
    Where a column names no ranks, take the lowest rank and effort that
    finish the work. Staff `local` only where the user names it. State
@@ -70,6 +73,8 @@ user. The workflow columns in your briefing are settled: do not ask for them.
 - "The frontend waits for the backend to land." -> Write the contract into
   both tickets. Both run now.
 - "This task needs no review." -> The workflow decides; staff its column.
+- "A plan this long is thorough." -> A plan longer than the code it
+  describes has written the code.
 
 ## Done
 

@@ -56,11 +56,10 @@ workflow develop-review-merge
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
-    Fail the step with the changes to make.
     skills: code-review
     ranks: balanced, frontier
   merge[Merge]
-    Rebase onto the base branch, squash, fast-forward and push.
+    Land the task on the base branch.
     skills: merge
     ranks: fast
     gate: merged
@@ -82,7 +81,9 @@ workflow develop-review-merge
    body line is a description line. The description joins its lines with
    one space. Skills, ranks, gate and description are all optional; `rank:`
    (singular) is not read as a compatibility alias for `ranks:` and falls
-   through to a description line instead.
+   through to a description line instead. A column's description names
+   what its agent does, in one line; what its skill says is the skill
+   document's to say, not the description's to repeat.
 5. Blank lines are ignored. Indentation is ignored. At least one column is
    required.
 6. A document that breaks a rule is refused with the line number and one
@@ -124,8 +125,9 @@ every other kebab-case word in it; the wire spells the same gate
    remote exists, rebase the task branch onto the upstream base, squash onto
    the merge base, check `git diff --stat`, push where a remote exists, then
    fast-forward the base branch in the primary checkout — the `Repo:` path
-   of the briefing — and call `complete_step` with the base branch's sha as
-   `merge_commit`. The repository's hooks run the suite at that push; with
+   of the briefing — and call `complete_step` with the column report and
+   the base branch's sha as `merge_commit`. The repository's hooks run the
+   suite at that push; with
    no remote, the agent runs the checks the repository names for a landing. The
    squash goes onto the merge base rather than the base branch's name,
    since the base can move while the push runs; a `git diff --stat` that

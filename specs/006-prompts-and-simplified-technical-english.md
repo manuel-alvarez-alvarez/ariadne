@@ -105,6 +105,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 5. A rule every seat shares has one owner, and no other text repeats it:
    - asking the user: the session rules, picked by seat, with a short form
      in the `wait_for_user` description;
+   - working in the task's worktree and on the current column: the `agent`
+     seat text alone; no column's skill repeats it;
+   - planning the goal with the user, writing no code, and deciding no
+     open point alone: the `orchestrator` seat text alone; the
+     `orchestration` skill states its phases, never these three;
    - ending the turn after a call: the `complete_step`, `fail_step` and
      `send_message` descriptions;
    - how a check runs — in the foreground, split by crate, logged outside
@@ -119,7 +124,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      poll;
    - the column report a column ends on, and the return report a column is
      sent back with: the `complete_step` and `fail_step` descriptions
-     alone (013 rule 4). No skill restates a field of either;
+     alone (013 rule 4). No skill restates a field of either; `coding`,
+     `merge` and `pr-babysit` each name their own report only as "the
+     column report";
    - stopping a fix loop: the agent seat text alone, which stops an agent
      after three failed attempts at one fix.
 6. `coding` uses test-first development for a code behavior change: it runs

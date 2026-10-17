@@ -140,35 +140,39 @@ written into the system prompt (006), and the lifecycle the seats sit in
     session reads when it opens the document again.
 11. A skill document obeys the STE rules and the size caps of spec 006, the
     same as every other default text. It also obeys the rules the seat texts
-    state. No skill divides a task into slices or small commits. `coding`
-    builds the whole task and commits it once, adds a new commit on a return
-    from review and never amends, and `refactoring` holds every move in one
-    commit (006). A skill that runs checks says which: the checks of what it
-    changed. How a check runs — in the foreground, never polled, its output
-    in a log outside the worktree — is the session rules' (006, 013), and no
-    skill repeats it. `coding` ends its search step when the agent can name
-    each definition it changes and its callers, not when a tool named every
-    file it opened. A skill that ends a column ends on `complete_step` or
-    `fail_step` (030): `code-review` fails the step on a must-fix finding,
-    never on an optional one, and edits no file; `merge` completes it with
-    the base branch's sha; each other review skill fails it on a blocking
-    finding. `coding` and every other produce skill that ends its own
-    column — `debugging`, `refactoring`, `migration`,
+    state, and repeats none of them: no column skill says to work in the
+    task's worktree, and `orchestration` does not say to plan with the user,
+    since the `agent` and `orchestrator` seat texts own those words alone
+    (006 rule 5). No skill divides a task into slices or small commits.
+    `coding` builds the whole task and commits it once, adds a new commit on
+    a return from review and never amends, and `refactoring` holds every
+    move in one commit (006). A skill that runs checks says which: the
+    checks of what it changed. How a check runs — in the foreground, never
+    polled, its output in a log outside the worktree — is the session
+    rules' (006, 013), and no skill repeats it. `coding` ends its search
+    step when the agent can name each definition it changes and its
+    callers, not when a tool named every file it opened. Every review skill
+    — `code-review`, `pr-reviewer`, `spec-review`, `architecture-review` and
+    `performance-review` — marks a blocking or must-fix finding with a
+    trigger, the input or state that causes it, the failure it causes, and
+    the criterion, behavior or written rule it breaks. A finding with no
+    nameable trigger is downgraded to its non-blocking weight and marked
+    unverified, and every non-blocking finding of one review is capped at
+    five. Each scopes its reading to the change under review, reuses
+    evidence that already covers it — the column report's, for the four
+    task-column skills, and its own prior round's, for `pr-reviewer` —
+    rather than re-deriving it, and reads further only to judge a risk it
+    can name. Each writes its verdict first, with no preamble, no process
+    narration and no closing summary. A skill that ends a column ends on
+    `complete_step` or `fail_step` (030): `code-review` fails the step on a
+    must-fix finding, never on an optional one, and edits no file; `coding`,
+    `merge` and `pr-babysit` name their own report only as "the column
+    report", never a field of it (006 rule 5) — `merge` alongside the base
+    branch's sha, `pr-babysit` on a merge; every other produce skill that
+    ends its own column — `debugging`, `refactoring`, `migration`,
     `conflict-resolution`, `documentation`, `research`, `spec-writing` —
-    calls `complete_step` with the column report that tool's description
-    defines, and names it without restating a field (006 rule 5). Every
-    review skill — `code-review`, `pr-reviewer`, `spec-review`,
-    `architecture-review` and `performance-review` — marks a blocking or
-    must-fix finding with a trigger, the input or state that causes it, the
-    failure it causes, and the criterion, behavior or written rule it
-    breaks. A finding with no nameable trigger is downgraded to its
-    non-blocking weight and marked unverified, and every non-blocking
-    finding of one review is capped at five. Each scopes its reading to the
-    change under review, reuses evidence that already covers it — the
-    column report's, for the four task-column skills, and its own prior
-    round's, for `pr-reviewer` — rather than re-deriving it, and reads
-    further only to judge a risk it can name. Each writes its verdict
-    first, with no preamble, no process narration and no closing summary.
+    calls `complete_step` with the column report the same way; each other
+    review skill fails it on a blocking finding.
 
     A skill document holds one text. The launcher links the run directory's
     `skills` folder onto the shared home copy that holds it (15), for the

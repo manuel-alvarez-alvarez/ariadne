@@ -1304,7 +1304,7 @@ mod tests {
             "git -C <repo> merge --ff-only <remote>/<base>",
             "else `git -C <repo> fetch <remote> <base>:<base>`",
             "With no remote: run the checks the repository names for a landing.",
-            "Call `complete_step` with the sha of `<base>` as `merge_commit`.",
+            "Call `complete_step` with the column report and the sha of `<base>` as `merge_commit`.",
         ] {
             let found = text[at..]
                 .find(step)
@@ -1382,7 +1382,7 @@ mod tests {
             "`ready: true` with the `head_sha`",
             "`ready: false` when one goes back",
             "On a merge, where you sit on a task, update `<base>` in the primary checkout:",
-            "Call `complete_step` with the merge as the reason.",
+            "Call `complete_step` with the column report.",
             "Else end your turn: Ariadne ends your session.",
             "On a close, where you sit on a task, call `fail_task` with the reason.",
             "## Done",
@@ -1578,13 +1578,18 @@ mod tests {
     fn each_rule_is_stated_in_exactly_one_briefing() {
         // The step calls, the hook rule and the stop rule belong to the
         // agent seat text. `finalize_plan` belongs to the orchestration
-        // skill.
+        // skill. The worktree scope and the plan-with-the-user rule belong
+        // to the agent and orchestrator seat texts: a skill that repeated
+        // either, as `merge` and `orchestration` once did, is the mistake
+        // this guards against.
         for marker in [
             "Call `complete_step` when",
             "Call `fail_step` when",
             "Never pass `--no-verify` or `-n` to git",
             "After three failed attempts at one fix, stop.",
             "Call it no earlier.",
+            "Work only in the task's worktree",
+            "Plan the goal with the user",
         ] {
             let places = all_defaults()
                 .into_iter()
@@ -1596,6 +1601,16 @@ mod tests {
                 places.len(),
                 1,
                 "\"{marker}\" is stated in {places:?}, not in one place"
+            );
+        }
+        for (name, phrase) in [
+            ("merge", "Work from your worktree"),
+            ("orchestration", "Plan with the user"),
+        ] {
+            let document = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                !document.contains(phrase),
+                "the {name} skill repeats its seat's own \"{phrase}\""
             );
         }
     }
@@ -1669,7 +1684,9 @@ mod tests {
     /// skill waits for each answer before it asks the next question, and
     /// names the five parts a question carries. A plan with two questions
     /// folded into one turn would hand the user a wall of options with no
-    /// room to answer one at a time, which is what this guards against.
+    /// room to answer one at a time, which is what this guards against. The
+    /// direct question is worded so a "yes" accepts the recommendation,
+    /// which is what lets the user agree in one word.
     #[test]
     fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
         let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
@@ -1682,6 +1699,7 @@ mod tests {
             "Options: two or more.",
             "A recommendation, with one reason.",
             "One direct question, at the end.",
+            "Word it so a \"yes\" accepts the recommendation.",
             "\"Two short questions fit in one turn.\" -> Ask one; the user answers each one with its full context.",
         ] {
             assert!(
@@ -1699,7 +1717,9 @@ mod tests {
     /// by task: the orchestrator reads its columns off its briefing, staffs
     /// one agent per column, and asks the user nothing a column already
     /// settles. The reviewer question and the final task are gone with the
-    /// pipeline they belonged to.
+    /// pipeline they belonged to. Skills and models are read from the
+    /// catalog once for the whole goal, not re-read for every task it
+    /// staffs.
     #[test]
     fn the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question() {
         let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
@@ -1720,6 +1740,7 @@ mod tests {
         for phrase in [
             "The workflow columns in your briefing are settled: do not ask for them.",
             "Ask nothing a column settles, such as review or landing.",
+            "List skills and models once for the goal, not once per task.",
             "Staff one agent on every column with `create_task`.",
             "or none for the column's own.",
             "\"This task needs no review.\" -> The workflow decides; staff its column.",
@@ -1746,6 +1767,24 @@ mod tests {
             "Keep tasks that run together off the same code.",
             "Run no checks yourself: the last column proved the work.",
             "\"The frontend waits for the backend to land.\" -> Write the contract into both tickets. Both run now.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
+    }
+
+    /// A worker brief carries one objective, the interfaces from other
+    /// tasks, the boundaries, and what to report, and no pasted history: a
+    /// plan longer than the code it describes has written the code.
+    #[test]
+    fn the_orchestration_skill_names_what_a_ticket_carries() {
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for phrase in [
+            "one objective, the interfaces from other tasks, the boundaries, and what to report",
+            "Carry no pasted history.",
+            "\"A plan this long is thorough.\" -> A plan longer than the code it describes has written the code.",
         ] {
             assert!(
                 prompt.contains(phrase),
@@ -2147,15 +2186,9 @@ mod tests {
     /// that grows costs a decision here rather than a quiet raid on another
     /// skill's share.
     ///
-    /// `coding` gets 5400, because `testing` merged into it. `pr-babysit`
-    /// keeps 4000: the reviewer's own skill never writes a literal `Still
-    /// there:` prefix, so the stop names what the reply means instead; a
-    /// reply reaches only an inline thread, so a comment on the
-    /// conversation is named and left; and a suggestion block is applied
-    /// only once the agent has judged and accepted it.
-    /// `orchestration` gets 4600: it
-    /// staffs one agent per column on the column's rank, and staffs a
-    /// missing column before a retry.
+    /// `coding` gets 5400, because `testing` merged into it. `orchestration`
+    /// gets 4600: it staffs one agent per column on the column's rank, and
+    /// staffs a missing column before a retry.
     ///
     /// The five review skills were tightened for falsifiable findings, a
     /// cap on the optional ones, and the diff as scope: every blocking or
@@ -2188,11 +2221,32 @@ mod tests {
     /// `conflict-resolution`, `documentation`, `research` and
     /// `spec-writing` share 2000, down from the default 2400. The total
     /// comes down with them, from 43000 to 40000.
+    ///
+    /// A pass pruned every line of `orchestration`, `merge` and
+    /// `pr-babysit` that a tool description, the session rules, a spec or
+    /// another skill already said, or that cost nothing to remove.
+    /// `orchestration` still grew: its ticket step now names the four
+    /// things a ticket carries and bars pasted history, and its question
+    /// step words a question so a "yes" accepts the recommendation; its cap
+    /// moves from 4600 to 4500, the size the rewrite fits in with the usual
+    /// margin. `pr-babysit` lost its restated lead sentence, a log-URL tip
+    /// a tool's own response already carries, a redundant push-flag detail,
+    /// and a generic "do not tell yourself" entry that only restated the
+    /// no-polling session rule; its "Supervised repositories" section no
+    /// longer repeats what `edit_pending_comment` and
+    /// `delete_pending_comment` already say about when they are refused.
+    /// Its cap moves from 4000 to 3800, trading the one-line margin finding
+    /// 4 found for one that holds through a small future edit. `merge` lost
+    /// only its restated lead sentence, since every rule it states — the
+    /// refused push, the failed fast-forward, the forced push it never
+    /// makes — is its own case with its own trigger. It gets a cap of its
+    /// own, 1700, rather than the 2400 every unlisted skill shares, since a
+    /// landing procedure this short does not need a template's room.
     #[test]
     fn skill_size_caps_hold() {
         const TOTAL: usize = 40_000;
         let cap = |name: &str| match name {
-            ORCHESTRATION_SKILL => 4600,
+            ORCHESTRATION_SKILL => 4500,
             "debugging" => 2700,
             "code-review" => 3100,
             "coding" => 3300,
@@ -2205,11 +2259,12 @@ mod tests {
             | "documentation"
             | "research"
             | "spec-writing" => 2000,
+            "merge" => 1700,
             // Eight steps: the open, the read, the three reply shapes and
             // the two loop stops (a follow-up and a kept-open finding), the
             // suggestion rule, the checks, the report, and the two endings.
             // Plus a "Supervised repositories" section (026 rule 25).
-            PR_BABYSIT_SKILL => 4000,
+            PR_BABYSIT_SKILL => 3800,
             // Eight steps: the read, the checks, the hunt, the three
             // priorities with a trigger and a cap on P2, one inline comment
             // per finding, the one review and the report. Plus a

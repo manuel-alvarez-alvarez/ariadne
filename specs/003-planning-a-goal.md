@@ -48,27 +48,31 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    question names its position, such as "Question 2 of 3"; gives the context
    the user needs, with no earlier turn required; lists two or more labeled
    options and what each one causes; gives a recommendation with one reason;
-   and ends with one direct question. How to ask is the session rules' (013);
-   asking one question at a time, with these parts, is the playbook's.
+   and ends with one direct question, worded so a "yes" accepts the
+   recommendation. How to ask is the session rules' (013); asking one
+   question at a time, with these parts, is the playbook's.
    The user answers in the session's terminal (`ariadne goal attach`). An
    orchestrator waiting on an answer is not nudged.
 4. It writes one task per unit of work: one cohesive outcome, one repository,
    and a complete path through every layer the outcome touches. A task
    groups behaviors that share context and verification rather than
-   splitting them apart. Each ticket carries context, what to do, what not to
-   touch and acceptance criteria written as outcomes, in Simplified Technical
-   English (006); the test cases and the verification are the coding agent's
-   to choose.
+   splitting them apart. Each ticket carries one objective, the interfaces
+   from other tasks, the boundaries, and what to report, each written as
+   an outcome, in Simplified Technical English (006); the test cases and
+   the verification are the coding agent's to choose. It carries no pasted
+   history: a plan longer than the code it describes has written the code.
 5. `depends_on` is for a genuine compilation, execution, or acceptance
    prerequisite only; tasks that merely touch nearby files run together.
    Tasks that run together stay off the same code.
    Where one task hands another a route, a response shape, a function or a
    file, it names that interface in both tickets instead of a `depends_on`
    edge.
-6. It staffs one agent on every column of each task (030), and gives every
-   agent one model from the catalog (011) — a model is required, so no agent
-   is staffed without one. A column's agent runs on the column's skills
-   unless the task names others. For each column it takes a model at one of
+6. It reads the skill and model catalogs once for the whole plan, not once
+   per task. It staffs one agent on every column of each task (030), and
+   gives every agent one model from the catalog (011) — a model is
+   required, so no agent is staffed without one. A column's agent runs on
+   the column's skills unless the task names others. For each column it
+   takes a model at one of
    the ranks in the column's capability band (030) — a band naming more than
    one rank lets it pick any rank in it — and it states a reason for each
    step up. Where a column names no ranks, it takes the lowest rank and
@@ -142,6 +146,9 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   `depends_on` names only a real prerequisite
   (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`,
   `::the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule`).
+- Each ticket carries one objective, the interfaces from other tasks, the
+  boundaries and what to report, and no pasted history
+  (`defaults.rs::the_orchestration_skill_names_what_a_ticket_carries`).
 - The playbook takes a model at one of each column's ranks, and states a
   reason for each step up
   (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`).

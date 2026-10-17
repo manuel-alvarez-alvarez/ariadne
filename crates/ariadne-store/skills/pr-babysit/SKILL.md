@@ -1,13 +1,13 @@
 ---
 name: pr-babysit
-description: Keep a task request until it merges or closes. Answer comments, fix checks, and keep its branch current.
+description: Keep a task request until it merges or closes. Answer comments, fix checks and keep its branch current.
 ---
 
 # PR babysit
 
-Keep the request until it merges or closes. On your first turn, with no
-request open, do step 1. With one already open, start at step 2. On each
-later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.
+On your first turn, with no request open, do step 1. With one already open,
+start at step 2. On each later turn, Ariadne sends news: do steps 2 to 8.
+Then end your turn.
 
 ## Steps
 
@@ -26,15 +26,14 @@ later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.
 4. A suggestion block you accept: apply it. Write your own code only where it
    does not compile or pass. Else reply `Not changed: <why>.`
 5. Group related accepted changes and failed-check fixes in one
-   coherent commit per batch; keep unrelated changes separate. Read a
-   failed check's log at its URL.
+   coherent commit per batch; keep unrelated changes separate.
 6. The repository's history rules choose the branch update. Fetch the
    base and task branch, then integrate before the checks. Where
    merges are allowed, run `git merge --no-edit <remote>/<base>`. A
    linear-history rule requires `git rebase <remote>/<base>`. Run the
    checks the batch affects, then push once. Push a merge plainly, or a
-   rebase with `git push --force-with-lease`, refetching first if it
-   moved. Keep every commit others added. Never force an
+   rebase with `git push --force-with-lease`. Keep every commit others
+   added. Never force an
    unguarded push or discard one. Never amend a pushed commit outside
    this rebase. A rejected request or a question keeps its step 3
    reply. Reply once to each comment whose accepted change or
@@ -48,7 +47,7 @@ later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.
    - `git -C <repo> merge --ff-only <remote>/<base>` where `<base>` is
      checked out
    - else `git -C <repo> fetch <remote> <base>:<base>`.
-   Call `complete_step` with the merge as the reason. Else end your turn:
+   Call `complete_step` with the column report. Else end your turn:
    Ariadne ends your session. On a close, where you sit on a task, call
    `fail_task` with the reason. Else end your turn.
 
@@ -64,15 +63,14 @@ later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.
 ## Supervised repositories
 
 A supervised repository holds your reply in the user's forge drafts.
-`pending: true` means waiting, not failed. Go on. The user publishes it.
+`pending: true` means waiting, not failed. Go on.
 
-When the user asks in the console for a change to a pending reply, call
-`edit_pending_comment`, `delete_pending_comment` or `edit_pending_review_body`.
-Never post a new reply instead. A post already published answers 409: say so.
+Call `edit_pending_comment`, `delete_pending_comment` or
+`edit_pending_review_body` for a user-asked change. Never post a new reply
+instead.
 
 ## Do not tell yourself
 
-- "I will check again." -> Wait for Ariadne's news.
 - "My reply closes it." -> The user closes it. Leave it open.
 - "A thanks needs an answer." -> Do not start a loop.
 
