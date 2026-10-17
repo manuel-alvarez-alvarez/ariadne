@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-10-15
+updated: 2026-10-17
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
@@ -206,7 +206,9 @@ every other kebab-case word in it; the wire spells the same gate
    Every move writes its source column, target column and reason into one
    transition (`TransitionDto.from_step`, `to_step`). A move that reaches a
    status — `finished`, `failed` — is a transition of the table (001 rule
-   5), by actor `agent`.
+   5), by actor `agent`. `complete_step`'s `reason` is the column report,
+   and `fail_step`'s is the return report, each owned by that tool's
+   description (013 rule 4).
 5. Completion checks the column's gate before moving:
    - `committed`: at least one commit past the base, with a clean worktree;
    - `pushed`: the remote holds the branch tip;
@@ -232,7 +234,10 @@ every other kebab-case word in it; the wire spells the same gate
    finds the next column's entry newest, neither starts nor briefs an agent
    for it, and leaves it to the pass the move wakes, which reads the task
    afresh.
-7. Any step agent can fail the task with `fail_task` (001 rule 6). A retry
+7. The agent seat text's stop rule (006 rule 5) binds every column alike.
+   No skill names its own limit on an attempt.
+
+   Any step agent can fail the task with `fail_task` (001 rule 6). A retry
    puts the task back on the first column and reuses its agent's
    conversation where one exists on the pin the agent still has; an agent
    whose model or effort an edit moved gets a fresh session on the new pin,
@@ -405,6 +410,9 @@ every other kebab-case word in it; the wire spells the same gate
   `resume.rs::a_retry_after_a_staffing_edit_starts_a_new_session_on_the_new_pin`).
 - Another column and the orchestrator receive 403
   (`workflow_steps.rs::another_column_and_the_orchestrator_cannot_move_a_step`).
+- The agent seat text states the stop rule once, and no skill repeats it
+  (`defaults.rs::the_agent_seat_text_moves_the_task_with_the_two_step_calls`,
+  `::each_rule_is_stated_in_exactly_one_briefing`).
 - Only the current column is nudged, and cancellation stops all task agents
   (`workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
 - A failed prompt hand-off retains its delivery and retries once

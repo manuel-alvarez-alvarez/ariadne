@@ -30,9 +30,7 @@ changes, and use verification that fits work that preserves behavior.
 6. Commit the work in the form below. Run the checks of what you changed at
    the committed revision.
    Done when the required checks are green.
-7. Call `complete_step` with assumptions and proof for each criterion.
-   Include usable check evidence: the checked revision, each command and its
-   result.
+7. Call `complete_step` with the column report, covering every criterion.
 
 ## The commit
 

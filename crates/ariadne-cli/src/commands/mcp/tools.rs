@@ -118,15 +118,14 @@ pub(super) struct ListModelsReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct FailTaskReq {
-    /// Why you cannot do the task as written. Ariadne records it on the
-    /// task, and the user reads only this.
+    /// Why you cannot do the task as written.
     pub reason: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct CompleteStepReq {
-    /// The summary the next column agent reads.
+    /// The column report.
     pub reason: String,
     /// The base branch merge sha. Pass it only where the last column needs it.
     pub merge_commit: Option<String>,
@@ -135,7 +134,7 @@ pub(super) struct CompleteStepReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct FailStepReq {
-    /// The feedback the previous column agent reads.
+    /// The return report.
     pub reason: String,
 }
 
@@ -437,7 +436,7 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Flag that you wait for the user. Call it before you ask. `hint` is one line for the Needs attention list, not the question. Then write the question in your reply and end your turn. A turn that ends without the call ends the wait."
+        description = "Flag that you wait for the user. Call it before you ask. Then write the question in your reply and end your turn. A turn that ends without the call ends the wait."
     )]
     async fn wait_for_user(
         &self,
@@ -481,7 +480,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Complete your column. Give the summary the next column agent reads. The last column ends the task. End your turn after this call."
+        description = "Complete your column. Give the column report:\n- the outcome, in one line\n- the revision you checked\n- each check, its command and result\n- each assumption you made\n- each open concern\nFifteen lines at most. The last column ends the task. End your turn after this call."
     )]
     async fn complete_step(
         &self,
@@ -500,7 +499,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Fail your column. Give the feedback the previous column agent reads. A fail on the first column fails the task. End your turn after this call."
+        description = "Fail your column. Give the return report: each must-fix finding, with its file, its failure and the fix wanted. A fail on the first column fails the task. End your turn after this call."
     )]
     async fn fail_step(
         &self,
@@ -517,9 +516,7 @@ impl AriadneMcp {
 
     // ---- orchestrator ----
 
-    #[tool(
-        description = "Create one task in the goal. Pass `agents`, one for each column of the workflow."
-    )]
+    #[tool(description = "Create one task in the goal.")]
     async fn create_task(
         &self,
         Parameters(req): Parameters<CreateTaskReq>,
@@ -541,9 +538,7 @@ impl AriadneMcp {
         )
     }
 
-    #[tool(
-        description = "Edit a task that is pending, ready or failed. `agents` replaces the whole staffing, one for each column."
-    )]
+    #[tool(description = "Edit a task that is pending, ready or failed.")]
     async fn update_task(
         &self,
         Parameters(req): Parameters<UpdateTaskReq>,
@@ -651,7 +646,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Switch a session to the model or agent you give. The new session is briefed with a handoff of the old conversation. A model is required, so `default` is refused."
+        description = "Switch a session to the model or agent you give. The new session is briefed with a handoff of the old conversation."
     )]
     async fn switch_session(
         &self,
@@ -732,7 +727,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Read the diff of the task branch against its base branch. On a pull request, pass `since` to read only the commits after that sha."
+        description = "Read the diff of the task branch against its base branch. On a pull request, read the diff of the request instead."
     )]
     async fn get_diff(
         &self,
@@ -779,7 +774,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the comments of your pull request, read off the forge now, with every field. Set `unanswered_only` for the threads that wait on your answer."
+        description = "List the comments of your pull request, read off the forge now, with every field."
     )]
     async fn list_comments(
         &self,
@@ -919,9 +914,7 @@ impl AriadneMcp {
         json_result(self.post(&path, &serde_json::json!({})).await?)
     }
 
-    #[tool(
-        description = "Report your pull request. Set `ready` to true once every required approval and check reads green. Name `head_sha`, the head you read them on. Set `ready` to false on a change back. Set `reviewed_sha` after you post a review."
-    )]
+    #[tool(description = "Report your pull request.")]
     async fn report_pull_request(
         &self,
         Parameters(req): Parameters<ReportPullRequestReq>,
@@ -954,7 +947,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post new inline findings in the user's name. Give each finding its file, line and priority. Set `event` to `request_changes` while a P0 or P1 is open, else `comment`. A supervised repository holds findings in forge drafts."
+        description = "Post new inline findings in the user's name. A supervised repository holds findings in forge drafts."
     )]
     async fn submit_review(
         &self,
@@ -994,7 +987,7 @@ impl AriadneMcp {
     // ---- everyone ----
 
     #[tool(
-        description = "Send one message. Set `to` to a column id from `get_task` or `orchestrator`. Ask or answer questions only. Send no confirmations, thanks, or plans. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."
+        description = "Send one message. Ask a question, answer one, or report a blocker. Send no confirmations, thanks, or plans. After a question, end your turn. Do not poll `read_messages`. Ariadne delivers the answer as a new turn."
     )]
     async fn send_message(
         &self,
@@ -1478,6 +1471,50 @@ mod tests {
                 tool.name,
                 described.len()
             );
+        }
+    }
+
+    /// `complete_step` defines the column report: five fields, in order, and
+    /// a line cap. `fail_step` defines the return report: a must-fix finding
+    /// with its file, its failure and the fix wanted.
+    #[test]
+    fn complete_step_and_fail_step_define_their_reports() {
+        let tool = |name: &str| {
+            AriadneMcp::tool_router()
+                .list_all()
+                .into_iter()
+                .find(|tool| tool.name == name)
+                .and_then(|tool| tool.description)
+                .unwrap_or_else(|| panic!("no {name} description"))
+        };
+
+        let complete = tool("complete_step");
+        let mut at = 0;
+        for field in [
+            "the outcome",
+            "the revision",
+            "each check",
+            "each assumption",
+            "each open concern",
+        ] {
+            let found = complete[at..]
+                .find(field)
+                .unwrap_or_else(|| panic!("complete_step has no \"{field}\" after {at}"));
+            at += found + field.len();
+        }
+        assert!(
+            complete.contains("Fifteen lines at most."),
+            "complete_step and the line cap"
+        );
+
+        let fail = tool("fail_step");
+        for rule in [
+            "must-fix finding",
+            "its file",
+            "its failure",
+            "the fix wanted",
+        ] {
+            assert!(fail.contains(rule), "fail_step and \"{rule}\"");
         }
     }
 

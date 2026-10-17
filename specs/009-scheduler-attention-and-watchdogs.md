@@ -1,10 +1,11 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-10-11
+updated: 2026-10-17
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
+  - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
   - crates/ariadne-daemon/src/scheduler/coalesce.rs
   - crates/ariadne-daemon/tests/it/agent_messages.rs
@@ -69,7 +70,9 @@ the ACP runtime that takes a prompt (021).
    with its id, and the scheduler stamps nothing: the stamp is the driver's,
    when the prompt goes out (018). A step entry is handed the same way: the
    transition that moved the task owns its delivery mark, and the runtime
-   claims it right before the prompt is written (030).
+   claims it right before the prompt is written (030). The nudge's wording
+   is the `AgentResume` template's alone (006 rule 10): a turn a nudge buys
+   for narration is a turn the task did not need.
 7. A pass never waits on a delivery: the runtime queues each prompt, so a
    pass with several agents to nudge hands them all their prompt at once.
    A message still unstamped is handed again on every pass, and the runtime
@@ -254,7 +257,9 @@ the ACP runtime that takes a prompt (021).
   The test restores the same agent's prompt channel after the refusal,
   so a concurrent relaunch cannot replace the agent under observation.
 - A nudge to an idle agent arrives as a `session/prompt`
-  (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
+  (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`),
+  with the wording 006 rule 10 owns
+  (`defaults.rs::the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner`).
 - A pass with three agents to nudge hands all three their prompt at once
   (`scheduler_attention.rs::a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries`).
 - An idle column agent past the threshold is raised on its session and its
