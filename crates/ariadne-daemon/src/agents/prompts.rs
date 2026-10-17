@@ -148,6 +148,24 @@ pub(crate) fn skill_index(skills: &[Skill], skills_dir: Option<&Path>) -> String
 const SKILLS_HEADER: &str =
     "Your skills. Read the document of a skill before you do the work it covers:";
 
+/// A goal's title, fenced only where the goal came from an issue: the
+/// forge's own text stays fenced wherever it reaches a briefing, never
+/// only at the orchestrator's first one (006 rules 18 and 19).
+fn goal_title(goal: &Goal) -> String {
+    match goal.issue_url {
+        Some(_) => fence(&goal.title),
+        None => goal.title.clone(),
+    }
+}
+
+/// A goal's description, fenced the same way its title is.
+fn goal_description(goal: &Goal) -> String {
+    match goal.issue_url {
+        Some(_) => fence(&goal.description),
+        None => goal.description.clone(),
+    }
+}
+
 /// Initial prompt for an orchestrator session.
 ///
 /// A repository's description is what its owner wrote it down as, so it goes
@@ -179,15 +197,11 @@ pub(crate) fn orchestrator_briefing(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let (title, description) = match goal.issue_url {
-        Some(_) => (fence(&goal.title), fence(&goal.description)),
-        None => (goal.title.clone(), goal.description.clone()),
-    };
     let briefing = render(
         template,
         &[
-            ("goal_title", &title),
-            ("goal_description", &description),
+            ("goal_title", &goal_title(goal)),
+            ("goal_description", &goal_description(goal)),
             ("workflow", &goal.workflow),
             ("columns", &column_lines(steps)),
             ("repositories", &repo_lines),
@@ -228,13 +242,16 @@ fn column_lines(steps: &[GoalStep]) -> String {
 
 /// What an orchestrator that has gone quiet is nudged with.
 pub(crate) fn orchestrator_resume_briefing(template: &str, goal: &Goal) -> String {
-    render(template, &[("goal_title", &goal.title)])
+    render(template, &[("goal_title", &goal_title(goal))])
 }
 
 /// What the orchestrator of a goal under way is woken with: the goal, and the
 /// lines the scheduler wrote about the tasks that need it.
 pub(crate) fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) -> String {
-    render(template, &[("goal_title", &goal.title), ("tasks", tasks)])
+    render(
+        template,
+        &[("goal_title", &goal_title(goal)), ("tasks", tasks)],
+    )
 }
 
 /// What one agent said to another, as the recipient reads it: who wrote it,
@@ -370,7 +387,7 @@ pub(crate) fn step_briefing(
         &[
             ("task_title", &task.title),
             ("task_description", &task.description),
-            ("goal_title", &goal.title),
+            ("goal_title", &goal_title(goal)),
             ("worktree_path", task.worktree_path.as_deref().unwrap_or("")),
             ("branch", &task.branch),
             ("base_branch", &repo.base_branch),
@@ -1124,6 +1141,53 @@ mod tests {
             briefing.contains("<<<untrusted>>>The board needs swimlanes.<<<end untrusted>>>"),
             "{briefing}"
         );
+    }
+
+    /// An issue goal's title stays fenced wherever it reaches a briefing,
+    /// not only in the orchestrator's first one: the resume nudge, the
+    /// attention text and a column's first briefing all name the same
+    /// forge text (006 rules 18 and 19).
+    #[test]
+    fn an_issue_goals_title_stays_fenced_everywhere_it_is_named() {
+        let goal = Goal {
+            issue_url: Some("https://github.com/acme/widgets/issues/9".into()),
+            ..goal()
+        };
+        let fenced_title = "<<<untrusted>>>Ship the UI<<<end untrusted>>>";
+
+        let resume = orchestrator_resume_briefing(default(PromptKind::OrchestratorResume), &goal);
+        assert!(resume.contains(fenced_title), "{resume}");
+
+        let attention =
+            goal_attention_briefing(default(PromptKind::GoalAttention), &goal, "- one failed");
+        assert!(attention.contains(fenced_title), "{attention}");
+
+        let task = task();
+        let step = step_briefing(
+            default(PromptKind::StepBriefing),
+            &task,
+            &goal,
+            &repo(),
+            &steps()[0],
+            "",
+            "none",
+        );
+        assert!(step.contains(fenced_title), "{step}");
+    }
+
+    /// A goal the user typed keeps its title plain in the resume nudge and
+    /// the attention text too, the same as it does in the orchestrator's
+    /// first briefing.
+    #[test]
+    fn a_user_typed_goals_title_stays_plain_everywhere_it_is_named() {
+        let goal = goal();
+
+        let resume = orchestrator_resume_briefing(default(PromptKind::OrchestratorResume), &goal);
+        assert!(!resume.contains("<<<untrusted>>>"), "{resume}");
+
+        let attention =
+            goal_attention_briefing(default(PromptKind::GoalAttention), &goal, "- one failed");
+        assert!(!attention.contains("<<<untrusted>>>"), "{attention}");
     }
 
     /// The line that names the request body closing an issue goal is

@@ -411,6 +411,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   `::a_goal_from_an_issue_is_fenced`,
   `::a_goal_from_an_issue_names_the_line_that_closes_it`; end to end,
   `prompts.rs::an_issue_goal_keeps_its_url_and_briefs_the_orchestrator_to_close_it`).
+  The same holds everywhere else a goal's title reaches a briefing: the
+  resume nudge, the attention text and a column's first briefing fence
+  an issue goal's title and leave a user-typed one plain, the same as
+  the orchestrator's own first briefing does
+  (`prompts.rs::an_issue_goals_title_stays_fenced_everywhere_it_is_named`,
+  `::a_user_typed_goals_title_stays_plain_everywhere_it_is_named`).
   A task's title and description reach a briefing, a nudge, a relayed
   message or a dependency line plain, never fenced, proved through the
   daemon's own rendering, not a hand-built string

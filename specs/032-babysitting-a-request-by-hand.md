@@ -65,10 +65,13 @@ reads behind them ([026](026-pull-requests.md)).
    base, the login and the push command. The title, the URL and the base
    branch name are fenced, the same as a reviewer's own (026 rule 26);
    the worktree path, the login and the local branch — Ariadne's own
-   name, `ariadne/keep-<id>` — are not. A
-   keeper session refuses to start on a head branch git itself refuses as
-   a ref, the same refusal a reviewer session's own spawn makes (026 rule
-   26). Its recovery mark is separate from a reviewer mark on the same
+   name, `ariadne/keep-<id>` — are not. A keeper session carries no task
+   and no goal, so 006 rule 19's plain-text treatment of those never
+   applies here: the title, the URL and the base branch name stay the
+   forge's own, fenced regardless. A keeper session refuses to start on
+   a head branch git itself refuses as a ref, the same refusal a
+   reviewer session's own spawn makes (026 rule 26). Its recovery mark
+   is separate from a reviewer mark on the same
    request, and its recovery clears only that keeper mark, whether a new
    session starts or its keeper reports again. The seat text
    says what it owes: keep one open request the
@@ -210,7 +213,10 @@ reads behind them ([026](026-pull-requests.md)).
   `pr.rs::tests::pr_inspect_prints_readable_keys_in_order_with_the_body_last`.
 - The keeper seat lists its six tools and no task or message tool:
   `mcp.rs::tests::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`.
-- The keeper briefing fills every placeholder it names:
+- The keeper briefing fills every placeholder it names, its title, URL
+  and base branch name fenced the same as a reviewer's own, since a
+  keeper session carries no task or goal for 006 rule 19's plain-text
+  treatment to reach:
   `prompts.rs::tests::the_keeper_briefing_fills_every_placeholder_it_names`.
 - The push command quotes the remote and the head branch into one
   argument each, a real shell reads either back as the exact value
