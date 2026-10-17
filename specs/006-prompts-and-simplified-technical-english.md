@@ -1,11 +1,12 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-10-16
+updated: 2026-10-17
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
   - crates/ariadne-store/src/defaults.rs
+  - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/src/agents/handoff.rs
   - crates/ariadne-daemon/src/forge/news.rs
@@ -114,17 +115,27 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    - never polling a request: the session rules of the `agent` and
      `reviewer` seats alone, which say that Ariadne wakes the session with
      the request's news (026, 030) instead. No skill names a timer or a
-     poll.
+     poll;
+   - the column report a column ends on, and the return report a column is
+     sent back with: the `complete_step` and `fail_step` descriptions
+     alone (013). No skill restates a field of either;
+   - stopping a fix loop: the agent seat text alone, which stops an agent
+     after three failed attempts at one fix.
 6. `coding` uses test-first development for a code behavior change: it runs
    the new seam test failing before implementation. Prose changes and
    behavior-preserving refactors use verification that fits their risk.
-   `coding` reports the committed revision, every check command and its
-   result in its completion handoff. `code-review` reads the handoff reasons,
-   accessible logs and CI evidence before deciding which checks to run. It
-   reuses a result only when its revision is the reviewed revision and its
-   command covers a required check. Missing, outdated or insufficient
-   evidence runs the required check. Evidence never replaces code inspection,
-   acceptance review or repository-rule enforcement.
+   `coding` calls `complete_step` with the column report that tool's
+   description defines — the outcome, the revision checked, each check's
+   command and result, each assumption and each open concern, fifteen lines
+   at most — covering every criterion. `code-review` reads that report as
+   unverified claims, then reads the handoff reasons, accessible logs and CI
+   evidence before deciding which checks to run. It reuses a result only
+   when its revision is the reviewed revision and its command covers a
+   required check. Missing, outdated or insufficient evidence runs the
+   required check. Evidence never replaces code inspection, acceptance
+   review or repository-rule enforcement. A column that fails three
+   attempts at one fix stops, by the agent seat text's own rule, and tells
+   the orchestrator or fails the task (030).
 7. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
    amends nothing, since the merge column squashes. `refactoring` commits
@@ -256,23 +267,30 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 - Every shipped skill holds to the STE limit with each wrapped sentence read
   whole, and a closing quote ends with its sentence
   (`defaults.rs::the_ste_rules_are_read_off_a_text_line_by_line`).
-- `coding` uses a failing seam test before each code behavior change. Prose
-  changes and behavior-preserving refactors use appropriate verification.
-  Its completion handoff identifies the checked revision, each command and
-  result. `code-review` reuses only matching evidence and runs missing,
-  outdated or insufficient required checks. Evidence does not replace its
-  code inspection, acceptance review or repository-rule enforcement
+- `coding` calls `complete_step` with the column report that tool's
+  description defines, covering every criterion, and names no field of it
+  itself. `code-review` reads that report as unverified claims, then reuses
+  only matching evidence and runs missing, outdated or insufficient
+  required checks. Evidence does not replace its code inspection,
+  acceptance review or repository-rule enforcement
   (`defaults.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`,
-  `::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`).
+  `::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
+  `tools.rs::complete_step_and_fail_step_define_their_reports`).
   No shipped skill names a whole suite.
   The merge skill pushes before it fast-forwards, with a squash onto the
   merge base and a guard before the push
   (`::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
   `::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`).
-- The `agent` seat text names what the three task calls are for and bans
-  `--no-verify` and `-n`, and names no end of a turn
-  (`defaults.rs::the_agent_seat_text_moves_the_task_with_the_two_step_calls`).
-  No skill repeats the rule (`defaults.rs::each_rule_is_stated_in_exactly_one_briefing`).
+- The `agent` seat text names what the three task calls are for, bans
+  `--no-verify` and `-n`, states the stop rule once, and names no end of a
+  turn (`defaults.rs::the_agent_seat_text_moves_the_task_with_the_two_step_calls`).
+  No skill repeats any of it
+  (`defaults.rs::each_rule_is_stated_in_exactly_one_briefing`).
+- The quiet nudge says this is not a new request, to check whether the work
+  is done, to make the call that ends the column or go on, and to write no
+  reply about the nudge; the stop rule has the agent seat text as its one
+  owner
+  (`defaults.rs::the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner`).
 - `coding` adds a new commit on a return and amends nothing, and no skill
   divides a task
   (`defaults.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).

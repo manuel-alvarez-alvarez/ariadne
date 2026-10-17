@@ -11,8 +11,8 @@ Judge repository conventions and task acceptance apart.
 
 1. For a branch review, run `git checkout --detach <branch>` in the task
    worktree. Search the handoff reasons, accessible logs and CI evidence.
-   Read each result's revision, command and result.
-   Done when you can judge what every result covers.
+   Read the column report as unverified claims, not proof.
+   Done when you can judge what each claim covers.
 2. Pin the scope. For a second review, read the prior SHA from your
    conversation. Run `git merge-base --is-ancestor <sha> HEAD`.
    If HEAD is not after that SHA, use `get_diff`. Otherwise, run

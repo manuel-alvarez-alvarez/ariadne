@@ -126,7 +126,7 @@ pub(super) struct FailTaskReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct CompleteStepReq {
-    /// The summary the next column agent reads.
+    /// The column report.
     pub reason: String,
     /// The base branch merge sha. Pass it only where the last column needs it.
     pub merge_commit: Option<String>,
@@ -135,7 +135,7 @@ pub(super) struct CompleteStepReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct FailStepReq {
-    /// The feedback the previous column agent reads.
+    /// The return report.
     pub reason: String,
 }
 
@@ -481,7 +481,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Complete your column. Give the summary the next column agent reads. The last column ends the task. End your turn after this call."
+        description = "Complete your column. Give the column report:\n- the outcome, in one line\n- the revision you checked\n- each check, its command and result\n- each assumption you made\n- each open concern\nFifteen lines at most. The last column ends the task. End your turn after this call."
     )]
     async fn complete_step(
         &self,
@@ -500,7 +500,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Fail your column. Give the feedback the previous column agent reads. A fail on the first column fails the task. End your turn after this call."
+        description = "Fail your column. Give the return report: each must-fix finding, with its file, its failure and the fix wanted. A fail on the first column fails the task. End your turn after this call."
     )]
     async fn fail_step(
         &self,
@@ -1478,6 +1478,50 @@ mod tests {
                 tool.name,
                 described.len()
             );
+        }
+    }
+
+    /// `complete_step` defines the column report: five fields, in order, and
+    /// a line cap. `fail_step` defines the return report: a must-fix finding
+    /// with its file, its failure and the fix wanted.
+    #[test]
+    fn complete_step_and_fail_step_define_their_reports() {
+        let tool = |name: &str| {
+            AriadneMcp::tool_router()
+                .list_all()
+                .into_iter()
+                .find(|tool| tool.name == name)
+                .and_then(|tool| tool.description)
+                .unwrap_or_else(|| panic!("no {name} description"))
+        };
+
+        let complete = tool("complete_step");
+        let mut at = 0;
+        for field in [
+            "the outcome",
+            "the revision",
+            "each check",
+            "each assumption",
+            "each open concern",
+        ] {
+            let found = complete[at..]
+                .find(field)
+                .unwrap_or_else(|| panic!("complete_step has no \"{field}\" after {at}"));
+            at += found + field.len();
+        }
+        assert!(
+            complete.contains("Fifteen lines at most."),
+            "complete_step and the line cap"
+        );
+
+        let fail = tool("fail_step");
+        for rule in [
+            "must-fix finding",
+            "its file",
+            "its failure",
+            "the fix wanted",
+        ] {
+            assert!(fail.contains(rule), "fail_step and \"{rule}\"");
         }
     }
 

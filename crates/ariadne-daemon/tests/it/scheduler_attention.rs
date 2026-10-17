@@ -341,7 +341,7 @@ impl Sched {
 
 /// The agent's resume template, rendered for the world's task on its first
 /// column: the words the daemon nudges an idle column agent with.
-const RESUME: &str = "Continue <<<untrusted>>>task<<<end untrusted>>> at Develop.";
+const RESUME: &str = "Not a new request: continue <<<untrusted>>>task<<<end untrusted>>> at Develop. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
 
 // -- the timeline -----------------------------------------------------------
 

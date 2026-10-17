@@ -923,7 +923,9 @@ async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
     eventually(TIMEOUT, "the nudge to arrive as a prompt", || async {
         stub.calls_of("session/prompt").iter().any(|prompt| {
             prompt["prompt"][0]["text"].as_str().is_some_and(|text| {
-                text.contains("Continue <<<untrusted>>>task<<<end untrusted>>> at")
+                text.contains(
+                    "Not a new request: continue <<<untrusted>>>task<<<end untrusted>>> at",
+                )
             })
         })
     })

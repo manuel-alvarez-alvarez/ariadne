@@ -350,12 +350,15 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str =
 /// column is. The work of the column is its skills'; what each of the three
 /// calls that move the task is for is said here and nowhere else. When the
 /// turn ends is the call's own description to say, and how to ask the user
-/// is the session rules'.
+/// is the session rules'. The stop rule is here too, and nowhere else: a
+/// column's skill can tell an agent how to fix one thing, never how long to
+/// keep trying it.
 const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its branch. Work on your current column alone. Read its skills first.
 - Call `complete_step` when the column's work is done.
 - Call `fail_step` when the previous column must fix something.
 - Call `fail_task` when nobody can do the task as written.
-- Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again."#;
+- Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again.
+- After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator, or call `fail_task`."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
 /// commands act on, and what the column before it said.
@@ -377,7 +380,13 @@ const STEP_RETURN: &str = "Resume {task_title} at {step_title}.\nDirection: {dir
 
 /// What the agent of the current column is nudged with when it has gone
 /// quiet with the task still in front of it.
-const AGENT_RESUME: &str = "Continue {task_title} at {step_title}.";
+///
+/// Four things, and no more: this is not a new request, so there is nothing
+/// to plan or narrate; check whether the work the column owes is already
+/// done; make the call that ends the column, or go on with the work; and
+/// write no reply about the nudge itself, since a reply over the nudge is a
+/// turn spent on nothing the task needed.
+const AGENT_RESUME: &str = "Not a new request: continue {task_title} at {step_title}. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
 
 /// Seat text of a reviewer pull request session (029).
 const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request where the user is a requested reviewer. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing. Ariadne wakes you with the request and its news. Review it as your skill says. Then end your turn."#;
@@ -928,6 +937,7 @@ mod tests {
             "Call `fail_step` when the previous column must fix something.",
             "Call `fail_task` when nobody can do the task as written.",
             "Never pass `--no-verify` or `-n` to git.",
+            "After three failed attempts at one fix, stop.",
         ] {
             assert!(agent.contains(rule), "the agent seat text and \"{rule}\"");
         }
@@ -962,7 +972,8 @@ mod tests {
              - Call `complete_step` when the column's work is done.\n\
              - Call `fail_step` when the previous column must fix something.\n\
              - Call `fail_task` when nobody can do the task as written.\n\
-             - Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again."
+             - Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again.\n\
+             - After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator, or call `fail_task`."
         );
         assert!(
             default_prompt_text(PromptKind::StepBriefing)
@@ -978,6 +989,34 @@ mod tests {
         assert_eq!(
             exhausted_switch_notice(),
             "The {column} agent of \"{task_title}\" moved from {old} to {new}. The old model ran out. Tell the user."
+        );
+    }
+
+    /// The quiet nudge says four things, and the agent seat text is the one
+    /// place a column's agent is told to stop after three failed attempts
+    /// at one fix.
+    #[test]
+    fn the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner() {
+        let nudge = default_prompt_text(PromptKind::AgentResume);
+        for rule in [
+            "Not a new request",
+            "Check if the work is done.",
+            "Make the call that ends the column, or go on.",
+            "Write no reply about this nudge.",
+        ] {
+            assert!(nudge.contains(rule), "the quiet nudge and \"{rule}\"");
+        }
+
+        let places = all_defaults()
+            .into_iter()
+            .chain(all_skills())
+            .filter(|(_, text)| text.contains("After three failed attempts at one fix, stop."))
+            .map(|(name, _)| name)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            places,
+            std::collections::BTreeSet::from(["agent system prompt".to_string()]),
+            "the stop rule is stated in {places:?}, not in the agent seat text alone"
         );
     }
 
@@ -1066,7 +1105,7 @@ mod tests {
             ),
             (
                 "coding",
-                "the checked revision, each command and its result",
+                "Call `complete_step` with the column report, covering every criterion.",
             ),
             ("debugging", "The tests of the crate you changed are green."),
             ("debugging", "Run the checks of what you changed."),
@@ -1468,12 +1507,14 @@ mod tests {
     /// restated in a second one is a rule that goes stale in one of them.
     #[test]
     fn each_rule_is_stated_in_exactly_one_briefing() {
-        // The step calls and hook rule belong to the agent seat text.
-        // `finalize_plan` belongs to the orchestration skill.
+        // The step calls, the hook rule and the stop rule belong to the
+        // agent seat text. `finalize_plan` belongs to the orchestration
+        // skill.
         for marker in [
             "Call `complete_step` when",
             "Call `fail_step` when",
             "Never pass `--no-verify` or `-n` to git",
+            "After three failed attempts at one fix, stop.",
             "Call it no earlier.",
         ] {
             let places = all_defaults()

@@ -101,7 +101,15 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      task, and its instructions name the task and the column.
      `complete_step` moves to the next column, or ends the task from the
      last; `fail_step` moves to the previous column, or fails the task
-     from the first; both end its turn (030). Nothing the forge holds is
+     from the first; both end its turn (030). `complete_step`'s
+     description is the one owner of the column report a column ends on:
+     the outcome in one line, the revision checked, each check with its
+     command and result, each assumption made and each open concern,
+     fifteen lines at most. `fail_step`'s description is the one owner of
+     the return report a column is sent back with: each must-fix finding,
+     with its file, its failure and the fix wanted. No skill restates a
+     field of either report; `coding` and `code-review` name the report by
+     its name alone (006). Nothing the forge holds is
      stored, so each request read is the forge's now (026). Each request
      tool finds the request through
      `GET /v1/pull-requests?task=<id>&role=author`, and says to call
@@ -207,6 +215,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`).
 - Step calls post their bodies to the complete and fail routes
   (`tools.rs::step_tools_post_their_bodies_to_the_step_routes`).
+- `complete_step`'s description names the column report's five fields in
+  order and its line cap; `fail_step`'s description names the return
+  report's finding fields
+  (`tools.rs::complete_step_and_fail_step_define_their_reports`).
 - `switch_session` is offered to the orchestrator alone
   (`tools.rs::switch_session_is_offered_to_the_orchestrator_alone`), posts
   the pin to the session's switch endpoint
