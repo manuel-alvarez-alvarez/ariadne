@@ -10,6 +10,9 @@ describe("STATUS_COLORS", () => {
       warn: "var(--color-status-warn)",
       pending: "var(--color-status-pending)",
       active: "var(--color-status-active)",
+      ready: "var(--color-status-ready)",
+      review: "var(--color-status-review)",
+      approved: "var(--color-status-approved)",
     })
   })
 })

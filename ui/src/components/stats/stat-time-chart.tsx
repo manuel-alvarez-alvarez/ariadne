@@ -1,7 +1,10 @@
 /**
  * One chart over time of the Stats screen: a bar per bucket — an hour, a
  * day, or a week from its Monday, as the daemon bucketed the span — with
- * every key the caller names stacked into it, on a time axis.
+ * every key the caller names stacked into it, on a time axis. A caller that
+ * also names `line` overlays one more series as a trend line across the
+ * same buckets, through the same `ComposedChart` rather than a chart of its
+ * own, so the two keep one axis and one tooltip.
  *
  * Every key's colour comes from `config`, built by the caller off
  * {@link import("./status-colors").STATUS_COLORS}, so the same meaning reads
@@ -18,7 +21,7 @@
  */
 
 import type { ReactNode } from "react"
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
+import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from "recharts"
 
 import { type ChartConfig, ChartContainer, ChartTooltip } from "@/components/ui/chart"
 import { StatChartLegend } from "./stat-chart-legend"
@@ -72,6 +75,7 @@ export function StatTimeChart<T extends { bucket: string }>({
   tooltipExtra,
   valueFormatter = String,
   bucket = "day",
+  line,
 }: {
   /** One row per bucket, oldest first, `bucket` its RFC 3339 start. */
   data: T[]
@@ -98,6 +102,10 @@ export function StatTimeChart<T extends { bucket: string }>({
   /** The step `data`'s own buckets are drawn at: `"day"` where the caller
    * does not say. */
   bucket?: BucketStep
+  /** A key overlaid as a trend line across the same buckets, on top of the
+   * stack rather than inside it. Include it in `extra` too, so the tooltip,
+   * the `sr-only` table and the legend still carry its exact value. */
+  line?: keyof T & string
 }) {
   return (
     <div className="flex flex-1 flex-col gap-1">
@@ -110,7 +118,7 @@ export function StatTimeChart<T extends { bucket: string }>({
           into that room, and shrinks back with it. */}
       <div className="relative flex-1" style={{ minHeight: CHART_HEIGHT_PX }}>
         <ChartContainer config={config} className="absolute inset-0 block aspect-auto">
-          <BarChart data={data} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
+          <ComposedChart data={data} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
             <CartesianGrid vertical={false} stroke="var(--color-border)" strokeOpacity={0.5} />
             <XAxis
               dataKey="bucket"
@@ -153,7 +161,16 @@ export function StatTimeChart<T extends { bucket: string }>({
                 radius={index === keys.length - 1 ? [4, 4, 0, 0] : 0}
               />
             ))}
-          </BarChart>
+            {line ? (
+              <Line
+                dataKey={String(line)}
+                stroke={`var(--color-${line})`}
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+              />
+            ) : null}
+          </ComposedChart>
         </ChartContainer>
         <table className="sr-only">
           <caption>{caption}</caption>

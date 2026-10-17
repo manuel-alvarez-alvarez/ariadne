@@ -8,8 +8,10 @@ import { queryOptions, useQuery } from "@tanstack/react-query"
 
 import { api, qk, type SpendStatsDto, type StatsFilter, unwrap } from "@/api"
 import { cachedShare, formatTokens, plural } from "@/lib/format"
-import { SPEND_CONFIG } from "./chart-configs"
+import { SPEND_COMPOSITION_CONFIG, SPEND_CONFIG } from "./chart-configs"
+import { StatPieChart } from "./stat-pie-chart"
 import { StatSection } from "./stat-section"
+import { StatTable } from "./stat-table"
 import { StatTile, StatTiles } from "./stat-tiles"
 import { StatTimeChart } from "./stat-time-chart"
 
@@ -53,6 +55,15 @@ export function SpendSection({ filter }: { filter: StatsFilter }) {
           cached_input_tokens: bucket.cached_input_tokens,
         }))
         const perTask = data.per_finished_task.input_tokens + data.per_finished_task.output_tokens
+        const total = data.totals.input_tokens + data.totals.output_tokens
+        const compositionRows = [
+          {
+            key: "fresh_input_tokens",
+            value: data.totals.input_tokens - data.totals.cached_input_tokens,
+          },
+          { key: "cached_input_tokens", value: data.totals.cached_input_tokens },
+          { key: "output_tokens", value: data.totals.output_tokens },
+        ]
 
         return (
           <div className="flex flex-1 flex-col gap-4">
@@ -79,16 +90,57 @@ export function SpendSection({ filter }: { filter: StatsFilter }) {
                 explain="Tokens per finished task: input and output tokens divided by the tasks that finished in this span."
               />
             </StatTiles>
-            <StatTimeChart
-              data={timeRows}
-              config={SPEND_CONFIG}
-              keys={["input_tokens", "output_tokens"]}
-              legendExtra={["cached_share"]}
-              caption="Tokens spent over time"
-              valueFormatter={formatTokens}
-              tooltipExtra={(row) => <p>Cached: {cachedShare(row)}</p>}
-              bucket={data.bucket}
-            />
+            <div className="flex flex-1 flex-col gap-4 md:flex-row">
+              <StatTimeChart
+                data={timeRows}
+                config={SPEND_CONFIG}
+                keys={["input_tokens", "output_tokens"]}
+                legendExtra={["cached_share"]}
+                caption="Tokens spent over time"
+                valueFormatter={formatTokens}
+                tooltipExtra={(row) => <p>Cached: {cachedShare(row)}</p>}
+                bucket={data.bucket}
+              />
+              <div className="flex flex-1 flex-col gap-2 md:max-w-64">
+                <StatPieChart
+                  data={compositionRows}
+                  config={SPEND_COMPOSITION_CONFIG}
+                  caption="How the span's tokens split: fresh input, cached input and output"
+                  valueFormatter={formatTokens}
+                  columns={[
+                    { header: "Type", render: (row) => SPEND_COMPOSITION_CONFIG[row.key]?.label },
+                    { header: "Tokens", render: (row) => formatTokens(row.value) },
+                  ]}
+                />
+                <StatTable
+                  rows={compositionRows}
+                  rowKey={(row) => row.key}
+                  caption="Token composition, exact values"
+                  columns={[
+                    {
+                      header: "Type",
+                      explain: "Type: which part of the span's tokens this row measures.",
+                      render: (row) => SPEND_COMPOSITION_CONFIG[row.key]?.label,
+                    },
+                    {
+                      header: "Tokens",
+                      numeric: true,
+                      explain:
+                        "Tokens: the tokens of this type spent across every session in this span.",
+                      render: (row) => formatTokens(row.value),
+                    },
+                    {
+                      header: "Share",
+                      numeric: true,
+                      explain:
+                        "Share: this type's share of the span's tokens, input and output together.",
+                      render: (row) =>
+                        total === 0 ? formatShare(0) : formatShare(row.value / total),
+                    },
+                  ]}
+                />
+              </div>
+            </div>
           </div>
         )
       }}
