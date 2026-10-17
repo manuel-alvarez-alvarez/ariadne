@@ -22,6 +22,7 @@ tests:
   - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-daemon/tests/it/seat_brief.rs
   - crates/ariadne-cli/src/commands/mcp.rs
+  - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-core/src/lib.rs
 ---
 
@@ -163,6 +164,15 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     skill with each wrapped sentence joined first — and a
     list of banned words (`utilise`, `prior to`, `in order to`, `ensure`,
     `should`, `may`).
+
+    The same two readable rules — the word count and the banned list — hold
+    for a line the daemon builds rather than ships as a default, wherever
+    that line reaches an agent: the forge's news, a goal's attention line,
+    the handoff's intro and its omission notes, a dependency line in a
+    step's first briefing, the issue goal's `Closes` line, and a tool's
+    refusal or the result string it writes in place of the daemon's own
+    JSON. Each is proven with the `ste` module beside the code that builds
+    it, rendered with sample values where the line takes any.
 12. STE binds what the agents write too — turn text and visible reasoning,
     task titles and descriptions, step and task reasons, commits, and pull
     request text — and that rule lives in the session rules, where no edit
@@ -236,6 +246,21 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`::the_ste_rules_are_read_off_a_text_line_by_line`). So does every text
   the MCP server hands an agent
   (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
+- So does every line the daemon builds rather than ships as a default: the
+  forge's news
+  (`news.rs::every_news_line_is_simplified_technical_english`), a goal's
+  attention line
+  (`goals.rs::goal_attention_lines_are_simplified_technical_english`), the
+  handoff's intro and its omission notes
+  (`handoff.rs::the_intro_and_the_omission_notes_are_simplified_technical_english`),
+  a dependency line in a step's first briefing
+  (`launcher.rs::dependency_line_tests::a_dependency_line_is_simplified_technical_english`),
+  the issue goal's `Closes` line
+  (`prompts.rs::the_closes_line_is_simplified_technical_english`), and a
+  tool's refusal or the result string it writes in place of the daemon's
+  own JSON
+  (`tools.rs::every_refusal_and_result_string_is_simplified_technical_english`,
+  `mcp.rs::the_seat_refusal_is_simplified_technical_english`).
 - Every default text is within its cap and the totals
   (`defaults.rs::size_caps_hold`).
 - The seat texts and the briefings the agreed text gives ship word for word

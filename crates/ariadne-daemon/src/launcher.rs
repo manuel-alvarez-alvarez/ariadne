@@ -678,12 +678,7 @@ impl Launcher {
         let mut deps = Vec::new();
         for id in self.store.list_task_dependencies(&task.id).await? {
             let dep = self.store.get_task(&id).await?;
-            deps.push(format!(
-                "{} ({}, branch {})",
-                prompts::fence(&dep.title),
-                dep.status,
-                dep.branch
-            ));
+            deps.push(dependency_line(&dep.title, &dep.status, &dep.branch));
         }
         Ok(prompts::step_briefing(
             prompts::template_for(PromptKind::StepBriefing),
@@ -2156,6 +2151,35 @@ pub(crate) fn loose_title(prompt: &str) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty())?;
     Some(line.chars().take(TITLE_CHARS).collect())
+}
+
+/// One dependency a step's first briefing names: its title, fenced since a
+/// task's title is text an agent raised it on, not Ariadne's own (006 rule
+/// 18), beside its status and its branch.
+fn dependency_line(title: &str, status: &str, branch: &str) -> String {
+    format!("{} ({status}, branch {branch})", prompts::fence(title))
+}
+
+#[cfg(test)]
+mod dependency_line_tests {
+    use super::dependency_line;
+
+    /// The dependency line a step's first briefing names is Simplified
+    /// Technical English (006 rule 11).
+    #[test]
+    fn a_dependency_line_is_simplified_technical_english() {
+        use ariadne_store::defaults::ste;
+
+        let line = dependency_line("Write the parser with care", "in_progress", "parser-fix");
+        for sentence in ste::sentences(&line) {
+            let words = sentence.split_whitespace().count();
+            assert!(
+                words <= ste::MAX_WORDS,
+                "a dependency line runs a sentence of {words} words: {sentence}"
+            );
+        }
+        assert_eq!(ste::banned_word(&line), None, "a dependency line: {line}");
+    }
 }
 
 /// Whether a task's branch is one to follow: there is a worktree to commit in,

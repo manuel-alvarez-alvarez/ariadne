@@ -531,6 +531,66 @@ mod tests {
         assert_eq!(news.comment_ids, [summary.id]);
     }
 
+    /// Every line the news builds is Simplified Technical English (006 rule
+    /// 11): every branch `of` and `of_review` can write, rendered with
+    /// sample values.
+    #[test]
+    fn every_news_line_is_simplified_technical_english() {
+        use ariadne_store::defaults::ste;
+
+        let changed = PullRequest {
+            failed_checks: r#"[{"name":"lint","url":"https://ci/1","conclusion":"failure"}]"#
+                .into(),
+            behind_base: true,
+            review_decision: "changes_requested".into(),
+            state: "merged".into(),
+            ..pull()
+        };
+        let finding = PullRequestComment {
+            path: Some("src/lib.rs".into()),
+            line: Some(3),
+            kind: "review_comment".into(),
+            ..comment("rc-1", "1", "them", true)
+        };
+        let pushed_and_reviewed = of_review(
+            &PullRequest {
+                role: "reviewer".into(),
+                told_head_sha: Some("abc".into()),
+                head_sha: "def".into(),
+                reviewed_sha: Some("abc".into()),
+                ..pull()
+            },
+            &[],
+        );
+        let pushed_and_unreviewed = of_review(
+            &PullRequest {
+                role: "reviewer".into(),
+                told_head_sha: Some("abc".into()),
+                head_sha: "def".into(),
+                reviewed_sha: None,
+                ..pull()
+            },
+            &[],
+        );
+
+        let texts = [
+            of(&changed, &[finding], "me").lines.join("\n"),
+            pushed_and_reviewed.lines.join("\n"),
+            pushed_and_unreviewed.lines.join("\n"),
+        ];
+
+        for text in texts {
+            for sentence in ste::sentences(&text) {
+                let words = sentence.split_whitespace().count();
+                assert!(
+                    words <= ste::MAX_WORDS,
+                    "a news line runs a sentence of {words} words: {sentence}"
+                );
+            }
+            assert_eq!(ste::banned_word(&text), None, "a news line: {text}");
+        }
+    }
+
     /// An inline finding the same round posts is still news the babysitter
     /// must answer, whatever its summary does beside it.
     #[test]

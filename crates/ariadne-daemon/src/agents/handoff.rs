@@ -988,4 +988,34 @@ mod tests {
         assert_eq!(out.matches(FENCE_OPEN).count(), 1, "{out}");
         assert_eq!(out.matches(FENCE_CLOSE).count(), 1, "{out}");
     }
+
+    /// `INTRO` and every omission note it may carry are Simplified Technical
+    /// English (006 rule 11): the text every switched session reads ahead
+    /// of its own history.
+    #[test]
+    fn the_intro_and_the_omission_notes_are_simplified_technical_english() {
+        use ariadne_store::defaults::ste;
+
+        let texts = [
+            INTRO.to_string(),
+            omitted_note(1),
+            omitted_note(3),
+            // A prefix dropped: the oldest entries are the ones left out.
+            omission_note(&[false, true, true], 1),
+            // A suffix dropped: the newest entries are the ones left out.
+            omission_note(&[true, true, false], 1),
+            // Neither: the drops are scattered across more than one gap.
+            omission_note(&[true, false, true], 1),
+        ];
+        for text in texts {
+            for sentence in ste::sentences(&text) {
+                let words = sentence.split_whitespace().count();
+                assert!(
+                    words <= ste::MAX_WORDS,
+                    "a handoff line runs a sentence of {words} words: {sentence}"
+                );
+            }
+            assert_eq!(ste::banned_word(&text), None, "a handoff line: {text}");
+        }
+    }
 }

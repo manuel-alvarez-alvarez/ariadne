@@ -1,12 +1,13 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-10-16
+updated: 2026-10-17
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
+  - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-daemon/src/agents/mod.rs
   - crates/ariadne-daemon/tests/it/home_skills.rs
@@ -128,8 +129,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `develop-review-pr` stages (030) and which the daemon also loads for a
     keeper session on a request asked for by hand (032). The store refuses
     a task agent staffed on `orchestration` or `pr-reviewer`, and
-    `list_skills` lists neither (013). The launcher loads the orchestrator's skill from the store for
-    every orchestrator session — indexed, and reached through the run
+    `list_skills` lists neither (013). Nor does it list a skill with no
+    document, shipped or written, or one of blank space only: a dropped
+    skill such as `pull-request` (rule 7) keeps its row for an old staffing,
+    but the catalog never offers that row as a fresh choice (013). The launcher loads the
+    orchestrator's skill from the store for every orchestrator session —
+    indexed, and reached through the run
     directory's link the way a task agent's skills are (006, 007) — so an
     edit or a reset of it reaches the next launch and changes what a running
     session reads when it opens the document again.
@@ -318,6 +323,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   any more
   (`skill_documents.rs::an_old_staffing_on_pull_request_reads_as_empty`,
   `store.rs::an_old_staffing_on_pull_request_keeps_its_row_and_reads_as_empty`).
+  `list_skills` leaves that row out of the catalog, while a skill with a
+  document, shipped or written, still lists
+  (`tools.rs::the_skill_catalog_excludes_a_skill_with_no_document`).
 - The home copy starts with every skill's current document, follows creates,
   edits and resets, and removes deleted and stale folders while retaining the
   other skill folders (`home_skills.rs::the_home_skill_copy_tracks_the_catalog_and_its_documents`).
