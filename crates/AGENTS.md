@@ -184,6 +184,14 @@ requires anyway, and a stub ACP agent that `tests/it/common/acp.rs` writes in
 that stub, so the suite needs no coding-agent CLI installed. A machine missing
 `git` or `python3` gets failures rather than a quiet pass.
 
+A harness's store starts from a template rather than a fresh migration: the
+first harness of the binary's own process to build one migrates and seeds a
+database into the machine's temp directory, keyed by the test binary's own
+path (so a rebuild never reads a stale template), and copies it for every
+harness after. The same write-aside-then-rename idiom as the shared stub
+executable above, since nextest runs every test in a process of its own and
+two of them can race to build the template first.
+
 `[profile.dev]` in the root `Cargo.toml` keeps line tables for workspace code
 and no debug information for dependencies; change it only in a separate branch.
 

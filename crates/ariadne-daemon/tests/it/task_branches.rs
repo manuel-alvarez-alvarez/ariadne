@@ -239,6 +239,8 @@ async fn a_failed_task_stops_being_followed() {
     );
 
     commit(&worktree, "after-the-failure");
+    // A dropped watch publishes nothing to wait for instead: the absence is
+    // the proof.
     tokio::time::sleep(QUIET).await;
     while let Ok(event) = rx.try_recv() {
         assert!(

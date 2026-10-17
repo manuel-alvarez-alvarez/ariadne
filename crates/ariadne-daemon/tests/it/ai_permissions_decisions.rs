@@ -711,11 +711,14 @@ Server((host, port), Handler).serve_forever()
 async fn a_request_made_while_the_server_loads_waits_for_it() {
     let release = ModelServer::hanging().await;
     let record = tempfile::NamedTempFile::new().unwrap();
+    // Long enough that the harness build and the agent's launch, both well
+    // under this even under load, land their decision request before the
+    // stand-in answers health, so the request genuinely catches it loading.
     let command = vec![
         shared_script(SLOW_SERVER).display().to_string(),
         std::process::id().to_string(),
         record.path().display().to_string(),
-        "3".to_string(),
+        (RUNS_OUT * 3).as_secs_f64().to_string(),
     ];
     let (h, cast, _agent_dir) = ai_permissions_harness_on(
         |builder| builder.ai_permissions_serve_command(command),

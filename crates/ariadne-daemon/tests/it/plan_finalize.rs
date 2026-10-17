@@ -108,11 +108,13 @@ async fn the_tasks_of_a_plan_wait_for_the_yes_that_finalizes_it() {
     let cast = h.cast().await;
 
     // A pass over the goal, and as many over the task as a plan being written
-    // sends: every one of them finds a goal still in planning.
+    // sends: every one of them finds a goal still in planning. Flushed
+    // rather than timed, so each pass is proven reconciled before the next
+    // notify, not merely guessed to have had enough time.
     for _ in 0..3 {
         h.notify_goal(&cast.goal.id);
         h.notify(&cast.task.id);
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        h.flush_scheduler().await;
     }
     eventually(TIMEOUT, "the goal's orchestrator to be up", async || {
         !h.sessions_of_goal(&cast.goal.id).await.is_empty()
@@ -408,9 +410,11 @@ async fn a_scheduler_pass_keeps_the_orchestrator_of_an_active_goal_and_types_not
     })
     .await;
 
+    // Flushed rather than timed, so each pass is proven reconciled before
+    // the next notify, not merely guessed to have had enough time.
     for _ in 0..3 {
         h.notify_goal(&cast.goal.id);
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        h.flush_scheduler().await;
     }
 
     assert!(

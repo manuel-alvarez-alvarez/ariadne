@@ -1,6 +1,8 @@
 //! `GET /v1/attention`: the authoritative "Needs attention" list, and its
 //! first producer, recovery.
 
+use ariadne_daemon::timeouts::Timeouts;
+
 use ariadne_api::attention::{
     AttentionCause, AttentionListDto, AttentionProducer, AttentionSubjectKind, AttentionTarget,
 };
@@ -9,7 +11,9 @@ use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{AgentPin, NewSession};
 
 use crate::common::test_pin;
-use crate::common::{Harness, TIMEOUT, as_session, eventually, harness, next_event, with_forge};
+use crate::common::{
+    Harness, RUNS_OUT, TIMEOUT, as_session, eventually, harness, next_event, with_forge,
+};
 
 /// An agent question is explicit evidence, so punctuation and an idle turn
 /// cannot create this row. The item keeps the session console as its target.
@@ -1321,7 +1325,15 @@ async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it
 /// proving the delivery was retried, not merely that the attempt was made.
 #[tokio::test]
 async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacement_answers() {
-    let h = harness().scheduler().await;
+    // The replacement's launch waits on the periodic full reconcile: nothing
+    // an agent dying mid-turn reports ever wakes the scheduler about it.
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .scheduler()
+        .await;
     let gate = h.dir.path().join("goal-attention-turn");
     let mut script = crate::common::acp::script();
     script["prompts"]

@@ -309,7 +309,11 @@ async fn a_past_rate_limit_reset_waits_for_the_poll_interval() {
 /// fetches; successful rounds are counted by the forge stub itself.
 #[tokio::test]
 async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once() {
-    let poll = RUNS_OUT * 2;
+    // Small enough that the whole backoff-doubling-then-capped-then-reset
+    // sequence below stays under a second: every `+ QUIET` margin below is
+    // the real tolerance for scheduling jitter, not `poll` or `cap`
+    // themselves, so shrinking them buys speed without losing that margin.
+    let poll = RUNS_OUT / 4;
     let cap = poll * 2;
     let stub = stub_forge_cli(json!([
         {"args": ["api", "user"], "exit": 0, "stdout": "me"},

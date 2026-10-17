@@ -350,6 +350,7 @@ impl HarnessBuilder {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
+        std::fs::copy(template_db().await, &db_path).unwrap();
         let store = Store::open(&db_path).await.unwrap();
         let agent_dir = dir.path().join("agent");
         std::fs::create_dir_all(&agent_dir).unwrap();
@@ -530,6 +531,60 @@ impl HarnessBuilder {
         }
         h
     }
+}
+
+/// A store at the current migrations, with the built-in skills and workflows
+/// already seeded: a path to copy rather than a fresh database for every
+/// harness to migrate and seed itself.
+///
+/// Built once and cached under the machine's temp directory, keyed by the
+/// binary's own path — a new build of the test binary gets a fresh template,
+/// and an old one left over from a previous build is never read by a binary
+/// whose migrations may have moved on. Nextest runs every test in a process
+/// of its own, so caching in-process buys nothing; this is the same
+/// write-aside-then-rename idiom as [`shared_script`], so two tests racing to
+/// build it the first time never hand a third a half-written file.
+async fn template_db() -> PathBuf {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::env::current_exe().unwrap().hash(&mut hasher);
+    let dir = std::env::temp_dir().join("ariadne-test-store-template");
+    std::fs::create_dir_all(&dir).unwrap();
+    let key = format!("{:016x}", hasher.finish());
+    let path = dir.join(format!("{key}.db"));
+    if path.exists() {
+        return path;
+    }
+    // `create_new` claims the build for exactly one of the many processes
+    // that can all reach this line within the same instant: every other
+    // one waits for the file the claimant renames into place, rather than
+    // each paying for a redundant migrate-and-seed of its own.
+    let claim = dir.join(format!("{key}.claim"));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&claim)
+    {
+        Ok(_) => {
+            let partial = dir.join(format!("{key}.{}.db", std::process::id()));
+            {
+                let store = Store::open(&partial).await.unwrap();
+                store.checkpoint().await.unwrap();
+            }
+            std::fs::rename(&partial, &path).unwrap();
+        }
+        Err(_) => {
+            // A process bootstrap wait, not a test assertion: polled by
+            // hand rather than through `eventually` below, which a closure
+            // borrowing `path` here sends into a Send-inference failure
+            // where `HarnessBuilder::into_future` boxes this function.
+            while !path.exists() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }
+    }
+    path
 }
 
 /// Where a harness's agents keep their transcripts: under its own

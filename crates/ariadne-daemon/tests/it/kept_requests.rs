@@ -385,9 +385,9 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
         stub.fetches() > before
     })
     .await;
+    // Flushed, not merely fetched: the flush already proves the completed
+    // fetch hands no later duplicate news.
     h.flush_scheduler().await;
-    // Prove that the completed fetch hands no later duplicate news.
-    tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&agent).len(),
         briefed + 1,
@@ -469,6 +469,8 @@ async fn a_pending_reviews_comments_give_no_live_view_comment_and_no_news() {
         }
     }
     stub.reprogram(script);
+    // `fetch_again`'s own flush already proves the quiet below, not merely
+    // that nothing has arrived yet.
     fetch_again(&h, &stub, &repo).await;
 
     eventually(
@@ -487,8 +489,6 @@ async fn a_pending_reviews_comments_give_no_live_view_comment_and_no_news() {
         Vec::<Value>::new(),
         "the pending review's own comment and its reply give no live-view comment"
     );
-    // Prove the quiet, not merely that nothing has arrived yet.
-    tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&agent).len(),
         briefed,

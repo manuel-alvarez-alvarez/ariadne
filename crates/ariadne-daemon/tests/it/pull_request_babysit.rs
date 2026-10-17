@@ -342,9 +342,10 @@ async fn keep_until_merge(author: &str) {
     let told = h.prompts_to(&session).len();
 
     // The same comment is told once: a later fetch that reads the same
-    // details hands the keeper no second prompt naming it.
+    // details hands the keeper no second prompt naming it. `fetch_again`'s
+    // own flush already proves any delivery that fetch would have queued
+    // has been reconciled, so nothing further is waited on here.
     fetch_again(&h, &stub, &repo).await;
-    tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&session).len(),
         told,
