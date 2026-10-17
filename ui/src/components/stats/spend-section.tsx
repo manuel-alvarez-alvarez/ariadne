@@ -110,6 +110,11 @@ export function SpendSection({ filter }: { filter: StatsFilter }) {
                   columns={[
                     { header: "Type", render: (row) => SPEND_COMPOSITION_CONFIG[row.key]?.label },
                     { header: "Tokens", render: (row) => formatTokens(row.value) },
+                    {
+                      header: "Share",
+                      render: (row) =>
+                        total === 0 ? formatShare(0) : formatShare(row.value / total),
+                    },
                   ]}
                 />
                 <StatTable

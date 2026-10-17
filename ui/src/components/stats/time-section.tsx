@@ -94,6 +94,8 @@ export function TimeSection({ filter }: { filter: StatsFilter }) {
                   valueFormatter={formatDuration}
                   columns={[
                     { header: "Status", render: (row) => row.status },
+                    { header: "Total", render: (row) => formatDuration(row.total_secs) },
+                    { header: "Median", render: (row) => formatDuration(row.median_secs) },
                     { header: "Share", render: (row) => `${(row.share * 100).toFixed(1)}%` },
                   ]}
                 />
