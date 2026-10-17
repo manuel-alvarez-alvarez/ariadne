@@ -593,6 +593,9 @@ ariadne goal create --from-issue https://github.com/owner/repo/issues/7 \
 `ariadne issue ls` lists open issues from an enabled repository, assigned to
 your forge login by default, or every open one with `--all`. `goal create
 --from-issue` reads one issue and uses its title and body to fill the goal.
+The orchestrator reads them marked as somebody else's words, never yours,
+since the issue could be anybody's; a title and description you type
+yourself reach it in plain text.
 
 ```sh
 ariadne forge tunnel

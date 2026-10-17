@@ -148,6 +148,24 @@ pub(crate) fn skill_index(skills: &[Skill], skills_dir: Option<&Path>) -> String
 const SKILLS_HEADER: &str =
     "Your skills. Read the document of a skill before you do the work it covers:";
 
+/// A goal's title, fenced only where the goal came from an issue: the
+/// forge's own text stays fenced wherever it reaches a briefing, never
+/// only at the orchestrator's first one (006 rules 18 and 19).
+fn goal_title(goal: &Goal) -> String {
+    match goal.issue_url {
+        Some(_) => fence(&goal.title),
+        None => goal.title.clone(),
+    }
+}
+
+/// A goal's description, fenced the same way its title is.
+fn goal_description(goal: &Goal) -> String {
+    match goal.issue_url {
+        Some(_) => fence(&goal.description),
+        None => goal.description.clone(),
+    }
+}
+
 /// Initial prompt for an orchestrator session.
 ///
 /// A repository's description is what its owner wrote it down as, so it goes
@@ -158,6 +176,10 @@ const SKILLS_HEADER: &str =
 /// the one text that starts the plan. A goal with no repository is not one
 /// an orchestrator is ever started for, so what that case renders only has to
 /// stay readable, never to work.
+///
+/// The title and the description are the user's own words, read plain,
+/// unless the goal came from an issue: an issue's title and body are the
+/// forge's text, fenced the same as its URL below (006 rule 18).
 pub(crate) fn orchestrator_briefing(
     template: &str,
     goal: &Goal,
@@ -175,13 +197,11 @@ pub(crate) fn orchestrator_briefing(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let title = fence(&goal.title);
-    let description = fence(&goal.description);
     let briefing = render(
         template,
         &[
-            ("goal_title", &title),
-            ("goal_description", &description),
+            ("goal_title", &goal_title(goal)),
+            ("goal_description", &goal_description(goal)),
             ("workflow", &goal.workflow),
             ("columns", &column_lines(steps)),
             ("repositories", &repo_lines),
@@ -222,7 +242,7 @@ fn column_lines(steps: &[GoalStep]) -> String {
 
 /// What an orchestrator that has gone quiet is nudged with.
 pub(crate) fn orchestrator_resume_briefing(template: &str, goal: &Goal) -> String {
-    render(template, &[("goal_title", &fence(&goal.title))])
+    render(template, &[("goal_title", &goal_title(goal))])
 }
 
 /// What the orchestrator of a goal under way is woken with: the goal, and the
@@ -230,7 +250,7 @@ pub(crate) fn orchestrator_resume_briefing(template: &str, goal: &Goal) -> Strin
 pub(crate) fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) -> String {
     render(
         template,
-        &[("goal_title", &fence(&goal.title)), ("tasks", tasks)],
+        &[("goal_title", &goal_title(goal)), ("tasks", tasks)],
     )
 }
 
@@ -252,7 +272,7 @@ pub(crate) fn incoming_message_briefing(
 ) -> String {
     let (from, answer_to) = match (&message.task_id, task_title, column) {
         (Some(task_id), Some(title), Some(column)) if message.from_agent_id.is_some() => (
-            format!(r#"the {column} agent of task {task_id} "{}""#, fence(title)),
+            format!(r#"the {column} agent of task {task_id} "{title}""#),
             format!(", with `send_message` to `{column}` and task `{task_id}`"),
         ),
         _ => (format!("your {seat}"), String::new()),
@@ -280,7 +300,7 @@ pub(crate) fn exhausted_switch_notice(
         template,
         &[
             ("column", column),
-            ("task_title", &fence(task_title)),
+            ("task_title", task_title),
             ("old", old),
             ("new", new),
         ],
@@ -365,9 +385,9 @@ pub(crate) fn step_briefing(
     render(
         template,
         &[
-            ("task_title", &fence(&task.title)),
-            ("task_description", &fence(&task.description)),
-            ("goal_title", &fence(&goal.title)),
+            ("task_title", &task.title),
+            ("task_description", &task.description),
+            ("goal_title", &goal_title(goal)),
             ("worktree_path", task.worktree_path.as_deref().unwrap_or("")),
             ("branch", &task.branch),
             ("base_branch", &repo.base_branch),
@@ -393,7 +413,7 @@ pub(crate) fn step_return(
     render(
         template,
         &[
-            ("task_title", &fence(&task.title)),
+            ("task_title", &task.title),
             ("step_title", &step.title),
             ("direction", direction),
             ("reason", &fence(reason)),
@@ -405,10 +425,7 @@ pub(crate) fn step_return(
 pub(crate) fn agent_resume(template: &str, task: &Task, step: &GoalStep) -> String {
     render(
         template,
-        &[
-            ("task_title", &fence(&task.title)),
-            ("step_title", &step.title),
-        ],
+        &[("task_title", &task.title), ("step_title", &step.title)],
     )
 }
 
@@ -849,12 +866,8 @@ mod tests {
         let repo_line = format!("- {} (base branch: {})", repo.path, repo.base_branch);
         let columns = column_lines(&steps);
         let attention = "- Render prompts (01task) failed".to_string();
-        let fenced_goal_title = fence(&goal.title);
-        let fenced_goal_description = fence(&goal.description);
         let fenced_previous = fence("The change is committed.");
         let fenced_reason = fence("Add a test.");
-        let fenced_task_title = fence(&task.title);
-        let fenced_task_description = fence(&task.description);
 
         // The values every kind is rendered with, and what the briefing that
         // owns it renders.
@@ -875,8 +888,8 @@ mod tests {
                     &steps,
                 ),
                 vec![
-                    ("goal_title", &fenced_goal_title),
-                    ("goal_description", &fenced_goal_description),
+                    ("goal_title", &goal.title),
+                    ("goal_description", &goal.description),
                     ("workflow", &goal.workflow),
                     ("columns", &columns),
                     ("repositories", &repo_line),
@@ -885,12 +898,12 @@ mod tests {
             (
                 PromptKind::OrchestratorResume,
                 orchestrator_resume_briefing(default(PromptKind::OrchestratorResume), &goal),
-                vec![("goal_title", &fenced_goal_title)],
+                vec![("goal_title", &goal.title)],
             ),
             (
                 PromptKind::GoalAttention,
                 goal_attention_briefing(default(PromptKind::GoalAttention), &goal, &attention),
-                vec![("goal_title", &fenced_goal_title), ("tasks", &attention)],
+                vec![("goal_title", &goal.title), ("tasks", &attention)],
             ),
             (
                 PromptKind::StepBriefing,
@@ -904,9 +917,9 @@ mod tests {
                     "none",
                 ),
                 vec![
-                    ("task_title", &fenced_task_title),
-                    ("task_description", &fenced_task_description),
-                    ("goal_title", &fenced_goal_title),
+                    ("task_title", &task.title),
+                    ("task_description", &task.description),
+                    ("goal_title", &goal.title),
                     ("worktree_path", task.worktree_path.as_deref().unwrap()),
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
@@ -928,7 +941,7 @@ mod tests {
                     "Add a test.",
                 ),
                 vec![
-                    ("task_title", &fenced_task_title),
+                    ("task_title", &task.title),
                     ("step_title", "Develop"),
                     ("direction", "back"),
                     ("reason", &fenced_reason),
@@ -937,10 +950,7 @@ mod tests {
             (
                 PromptKind::AgentResume,
                 agent_resume(default(PromptKind::AgentResume), &task, &steps[0]),
-                vec![
-                    ("task_title", &fenced_task_title),
-                    ("step_title", "Develop"),
-                ],
+                vec![("task_title", &task.title), ("step_title", "Develop")],
             ),
         ];
 
@@ -1035,11 +1045,27 @@ mod tests {
             &[],
             &steps(),
         );
+        assert!(briefing.contains("# Goal: Ship the UI"), "{briefing}");
+        assert!(!briefing.contains('{'), "{briefing}");
+    }
+
+    /// A goal the user typed reaches the orchestrator with no fence around
+    /// its title or its description: only an issue's own text is the
+    /// forge's to fence.
+    #[test]
+    fn a_goal_the_user_typed_is_not_fenced() {
+        let briefing = orchestrator_briefing(
+            default(PromptKind::OrchestratorBriefing),
+            &goal(),
+            &[repo()],
+            &steps(),
+        );
+        assert!(briefing.contains("# Goal: Ship the UI"), "{briefing}");
         assert!(
-            briefing.contains("# Goal: <<<untrusted>>>Ship the UI<<<end untrusted>>>"),
+            briefing.contains("The board needs swimlanes."),
             "{briefing}"
         );
-        assert!(!briefing.contains('{'), "{briefing}");
+        assert!(!briefing.contains("<<<untrusted>>>"), "{briefing}");
     }
 
     /// The orchestrator is briefed with every repository the goal works in,
@@ -1091,6 +1117,77 @@ mod tests {
             ),
             "{briefing}"
         );
+    }
+
+    /// An issue's own title and description are the forge's text, fenced
+    /// the same as its URL: an issue goal is not the user's own words.
+    #[test]
+    fn a_goal_from_an_issue_is_fenced() {
+        let goal = Goal {
+            issue_url: Some("https://github.com/acme/widgets/issues/9".into()),
+            ..goal()
+        };
+        let briefing = orchestrator_briefing(
+            default(PromptKind::OrchestratorBriefing),
+            &goal,
+            &[repo()],
+            &steps(),
+        );
+        assert!(
+            briefing.contains("# Goal: <<<untrusted>>>Ship the UI<<<end untrusted>>>"),
+            "{briefing}"
+        );
+        assert!(
+            briefing.contains("<<<untrusted>>>The board needs swimlanes.<<<end untrusted>>>"),
+            "{briefing}"
+        );
+    }
+
+    /// An issue goal's title stays fenced wherever it reaches a briefing,
+    /// not only in the orchestrator's first one: the resume nudge, the
+    /// attention text and a column's first briefing all name the same
+    /// forge text (006 rules 18 and 19).
+    #[test]
+    fn an_issue_goals_title_stays_fenced_everywhere_it_is_named() {
+        let goal = Goal {
+            issue_url: Some("https://github.com/acme/widgets/issues/9".into()),
+            ..goal()
+        };
+        let fenced_title = "<<<untrusted>>>Ship the UI<<<end untrusted>>>";
+
+        let resume = orchestrator_resume_briefing(default(PromptKind::OrchestratorResume), &goal);
+        assert!(resume.contains(fenced_title), "{resume}");
+
+        let attention =
+            goal_attention_briefing(default(PromptKind::GoalAttention), &goal, "- one failed");
+        assert!(attention.contains(fenced_title), "{attention}");
+
+        let task = task();
+        let step = step_briefing(
+            default(PromptKind::StepBriefing),
+            &task,
+            &goal,
+            &repo(),
+            &steps()[0],
+            "",
+            "none",
+        );
+        assert!(step.contains(fenced_title), "{step}");
+    }
+
+    /// A goal the user typed keeps its title plain in the resume nudge and
+    /// the attention text too, the same as it does in the orchestrator's
+    /// first briefing.
+    #[test]
+    fn a_user_typed_goals_title_stays_plain_everywhere_it_is_named() {
+        let goal = goal();
+
+        let resume = orchestrator_resume_briefing(default(PromptKind::OrchestratorResume), &goal);
+        assert!(!resume.contains("<<<untrusted>>>"), "{resume}");
+
+        let attention =
+            goal_attention_briefing(default(PromptKind::GoalAttention), &goal, "- one failed");
+        assert!(!attention.contains("<<<untrusted>>>"), "{attention}");
     }
 
     /// The line that names the request body closing an issue goal is

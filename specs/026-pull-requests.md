@@ -214,8 +214,13 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 26. A request's title, URL, head branch, base branch, head sha and
     reviewed sha each reach a briefing or a news prompt fenced as data,
     never as an instruction (006 rule 18): the reviewer's own briefing
-    and news, and the keeper's (032 rule 5). A comment's id, author,
-    path and first line, as rule 12's news computes it, are each fenced
+    and news, and the keeper's (032 rule 5). None of this is the user's
+    or the orchestrator's own text, so 006 rule 19's plain-text
+    treatment of a task's or a user-typed goal's title never reaches a
+    reviewer or a keeper session either: both carry no task and no
+    goal, and every field this rule names is the forge's own
+    regardless. A comment's id, author, path and first line, as rule
+    12's news computes it, are each fenced
     the same way — a path crafted with the closing marker cannot read as
     though it closed the fence, since every `<<<` the forge's own text
     carries is broken first. So is a failed check's name, conclusion and
@@ -628,6 +633,10 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   comment's path crafted with the closing marker and a fresh instruction
   cannot escape its own fence:
   `news.rs::tests::a_crafted_comment_path_cannot_escape_its_fence`.
+  006 rule 19 plainly reaches a task's title and a user-typed goal's
+  title and description; a reviewer and a keeper session carry neither,
+  so every field above stays inside the fence unchanged by that rule
+  (rule 26 above).
 - A reviewer or a keeper session refuses to start on a head branch git
   refuses as a ref, starting no worktree and no session, and the refusal
   is recorded on the row (032)
