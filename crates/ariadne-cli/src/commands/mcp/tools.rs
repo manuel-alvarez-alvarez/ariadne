@@ -1734,7 +1734,8 @@ mod tests {
         let (endpoint, _seen) = recording_daemon_answering(
             r#"[
                 {"name":"pull-request","seat":"task","summary":"pull-request","document":"","document_is_default":false,"builtin":true,"created_at":"","updated_at":""},
-                {"name":"coding","seat":"task","summary":"Write code.","document":"Coding\n\nThe whole document of the skill.","document_is_default":true,"builtin":true,"created_at":"","updated_at":""}
+                {"name":"coding","seat":"task","summary":"Write code.","document":"Coding\n\nThe whole document of the skill.","document_is_default":true,"builtin":true,"created_at":"","updated_at":""},
+                {"name":"api-design","seat":"task","summary":"Design the API.","document":"API Design\n\nThe whole document a user wrote for it.","document_is_default":false,"builtin":false,"created_at":"","updated_at":""}
             ]"#,
         )
         .await;
@@ -1751,8 +1752,12 @@ mod tests {
             serde_json::from_str(&text.text).expect("the skill catalog is json");
         assert_eq!(
             skills,
-            vec![serde_json::json!({"name": "coding", "summary": "Write code."})],
-            "a skill with no document is left out, a skill with one still lists"
+            vec![
+                serde_json::json!({"name": "coding", "summary": "Write code."}),
+                serde_json::json!({"name": "api-design", "summary": "Design the API."}),
+            ],
+            "a skill with no document is left out; one with a shipped document and one \
+             with a written document of its own both still list"
         );
     }
 
