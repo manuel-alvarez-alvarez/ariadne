@@ -2153,11 +2153,10 @@ pub(crate) fn loose_title(prompt: &str) -> Option<String> {
     Some(line.chars().take(TITLE_CHARS).collect())
 }
 
-/// One dependency a step's first briefing names: its title, fenced since a
-/// task's title is text an agent raised it on, not Ariadne's own (006 rule
-/// 18), beside its status and its branch.
+/// One dependency a step's first briefing names: its title, beside its
+/// status and its branch.
 fn dependency_line(title: &str, status: &str, branch: &str) -> String {
-    format!("{} ({status}, branch {branch})", prompts::fence(title))
+    format!("{title} ({status}, branch {branch})")
 }
 
 #[cfg(test)]

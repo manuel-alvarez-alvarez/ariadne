@@ -242,17 +242,22 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     URL, head and base branch names, head sha and reviewed sha, a
     comment's id, author, path and first line, a failed check's name,
     conclusion and URL, the rolled-up checks, the review decision and the
-    state a news line reports, an agent message's body, a step's return
-    reason or completion summary, a task's title and description, and
-    the orchestrator's own brief for a column's agent (`TaskAgent.brief`)
-    — the orchestrator's own planning is still an agent's, so a task it
-    names in a briefing, a message, a nudge or a dependency is fenced
-    wherever its title reaches another agent, and so is anything beyond
-    the task itself it tells a column's agent to do. One line is the
-    exception: an issue goal's `Closes <url>` instruction carries the raw
-    URL, never fenced, since GitHub only closes the issue on that exact
-    text; the same URL is still fenced everywhere else the briefing names
-    the issue.
+    state a news line reports, an agent message's body, and a step's
+    return reason or completion summary. One line is the exception: an
+    issue goal's `Closes <url>` instruction carries the raw URL, never
+    fenced, since GitHub only closes the issue on that exact text; the
+    same URL is still fenced everywhere else the briefing names the
+    issue.
+19. A goal's title and description reach every briefing plain, never
+    fenced, since they are the user's own words — unless the goal came
+    from an issue, where rule 18 already fences them as the forge's own
+    text. A task's title and description are plain the same way,
+    wherever a briefing, a message, a nudge or a dependency line names
+    the task: whoever opens a task is Ariadne's own user or orchestrator,
+    never a third party. The orchestrator's own brief for a column's
+    agent (`TaskAgent.brief`) is plain too — the orchestrator plans
+    alongside the user, not against it, so its brief is read the same as
+    the user's own words, not fenced as another agent's would be.
 
 ## Acceptance criteria
 
@@ -394,13 +399,20 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   early (`prompts.rs::a_fenced_value_sits_between_its_markers`,
   `::an_empty_value_fences_to_nothing`,
   `::a_value_holding_the_closing_marker_cannot_close_the_fence`). Every
-  forge or agent value a briefing or a news prompt carries is fenced, and
-  the exhaustive-substitution tests prove it word for word
+  forge value a reviewer or a keeper briefing or a news prompt carries is
+  fenced, and the exhaustive-substitution tests prove it word for word
   (`prompts.rs::every_default_briefing_is_its_template_with_the_values_put_in`,
   `::the_pull_request_texts_fill_every_placeholder_they_name`,
-  `::the_keeper_briefing_fills_every_placeholder_it_names`). A task's
-  title and description are fenced wherever a briefing, a nudge, a
-  relayed message or a dependency line names them, proved through the
+  `::the_keeper_briefing_fills_every_placeholder_it_names`).
+- A goal the user typed reaches the orchestrator's briefing with no fence
+  around its title or its description, and a goal from an issue keeps
+  them fenced the same as its URL
+  (`prompts.rs::a_goal_the_user_typed_is_not_fenced`,
+  `::a_goal_from_an_issue_is_fenced`,
+  `::a_goal_from_an_issue_names_the_line_that_closes_it`; end to end,
+  `prompts.rs::an_issue_goal_keeps_its_url_and_briefs_the_orchestrator_to_close_it`).
+  A task's title and description reach a briefing, a nudge, a relayed
+  message or a dependency line plain, never fenced, proved through the
   daemon's own rendering, not a hand-built string
   (`agent_messages.rs::a_message_is_handed_to_the_agent_it_was_sent_to`,
   `::two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator`,
@@ -410,10 +422,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   `resume.rs::the_scheduler_relaunches_the_current_columns_agent_in_its_session`,
   `acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`,
   `workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
-  The orchestrator's own brief for a column's agent is fenced too, and a
-  brief crafted with the closing marker and a fresh instruction cannot
-  escape it:
-  `prompts.rs::a_crafted_agent_brief_cannot_escape_its_fence`.
+  The orchestrator's own brief for a column's agent reaches it plain too,
+  the same as the user's own words:
+  `prompts.rs::an_agents_brief_reaches_it_in_plain_text`.
   The fence
   rule is in the shared session rules alone, within their size cap
   (`mcp.rs::the_shared_rules_stay_small`,

@@ -302,7 +302,7 @@ impl super::Scheduler {
             }
             if let Some(brief) = &agent.brief {
                 briefing.push_str("\n\n");
-                briefing.push_str(&crate::agents::prompts::fence(brief));
+                briefing.push_str(brief);
             }
             let handed = self
                 .launcher

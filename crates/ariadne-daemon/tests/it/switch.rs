@@ -421,10 +421,8 @@ async fn a_switched_orchestrator_moves_the_goals_pin() {
     assert_eq!(h.session_status(&old).await, SessionStatus::Exited);
     assert_eq!(switched_event(&h, &old).await["to"], json!(new.id));
 
-    let resume = prompts::template_for(PromptKind::OrchestratorResume).replace(
-        "{goal_title}",
-        &format!("<<<untrusted>>>{}<<<end untrusted>>>", goal.title),
-    );
+    let resume =
+        prompts::template_for(PromptKind::OrchestratorResume).replace("{goal_title}", &goal.title);
     assert_briefing_handoff_resume(&first_prompt(&h, &new.id), &briefing, Some(&resume));
 
     let goal = h.store.get_goal(&goal.id).await.unwrap();

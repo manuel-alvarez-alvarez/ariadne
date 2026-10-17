@@ -158,6 +158,10 @@ const SKILLS_HEADER: &str =
 /// the one text that starts the plan. A goal with no repository is not one
 /// an orchestrator is ever started for, so what that case renders only has to
 /// stay readable, never to work.
+///
+/// The title and the description are the user's own words, read plain,
+/// unless the goal came from an issue: an issue's title and body are the
+/// forge's text, fenced the same as its URL below (006 rule 18).
 pub(crate) fn orchestrator_briefing(
     template: &str,
     goal: &Goal,
@@ -175,8 +179,10 @@ pub(crate) fn orchestrator_briefing(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let title = fence(&goal.title);
-    let description = fence(&goal.description);
+    let (title, description) = match goal.issue_url {
+        Some(_) => (fence(&goal.title), fence(&goal.description)),
+        None => (goal.title.clone(), goal.description.clone()),
+    };
     let briefing = render(
         template,
         &[
@@ -222,16 +228,13 @@ fn column_lines(steps: &[GoalStep]) -> String {
 
 /// What an orchestrator that has gone quiet is nudged with.
 pub(crate) fn orchestrator_resume_briefing(template: &str, goal: &Goal) -> String {
-    render(template, &[("goal_title", &fence(&goal.title))])
+    render(template, &[("goal_title", &goal.title)])
 }
 
 /// What the orchestrator of a goal under way is woken with: the goal, and the
 /// lines the scheduler wrote about the tasks that need it.
 pub(crate) fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) -> String {
-    render(
-        template,
-        &[("goal_title", &fence(&goal.title)), ("tasks", tasks)],
-    )
+    render(template, &[("goal_title", &goal.title), ("tasks", tasks)])
 }
 
 /// What one agent said to another, as the recipient reads it: who wrote it,
@@ -252,7 +255,7 @@ pub(crate) fn incoming_message_briefing(
 ) -> String {
     let (from, answer_to) = match (&message.task_id, task_title, column) {
         (Some(task_id), Some(title), Some(column)) if message.from_agent_id.is_some() => (
-            format!(r#"the {column} agent of task {task_id} "{}""#, fence(title)),
+            format!(r#"the {column} agent of task {task_id} "{title}""#),
             format!(", with `send_message` to `{column}` and task `{task_id}`"),
         ),
         _ => (format!("your {seat}"), String::new()),
@@ -280,7 +283,7 @@ pub(crate) fn exhausted_switch_notice(
         template,
         &[
             ("column", column),
-            ("task_title", &fence(task_title)),
+            ("task_title", task_title),
             ("old", old),
             ("new", new),
         ],
@@ -365,9 +368,9 @@ pub(crate) fn step_briefing(
     render(
         template,
         &[
-            ("task_title", &fence(&task.title)),
-            ("task_description", &fence(&task.description)),
-            ("goal_title", &fence(&goal.title)),
+            ("task_title", &task.title),
+            ("task_description", &task.description),
+            ("goal_title", &goal.title),
             ("worktree_path", task.worktree_path.as_deref().unwrap_or("")),
             ("branch", &task.branch),
             ("base_branch", &repo.base_branch),
@@ -393,7 +396,7 @@ pub(crate) fn step_return(
     render(
         template,
         &[
-            ("task_title", &fence(&task.title)),
+            ("task_title", &task.title),
             ("step_title", &step.title),
             ("direction", direction),
             ("reason", &fence(reason)),
@@ -405,10 +408,7 @@ pub(crate) fn step_return(
 pub(crate) fn agent_resume(template: &str, task: &Task, step: &GoalStep) -> String {
     render(
         template,
-        &[
-            ("task_title", &fence(&task.title)),
-            ("step_title", &step.title),
-        ],
+        &[("task_title", &task.title), ("step_title", &step.title)],
     )
 }
 
@@ -849,12 +849,8 @@ mod tests {
         let repo_line = format!("- {} (base branch: {})", repo.path, repo.base_branch);
         let columns = column_lines(&steps);
         let attention = "- Render prompts (01task) failed".to_string();
-        let fenced_goal_title = fence(&goal.title);
-        let fenced_goal_description = fence(&goal.description);
         let fenced_previous = fence("The change is committed.");
         let fenced_reason = fence("Add a test.");
-        let fenced_task_title = fence(&task.title);
-        let fenced_task_description = fence(&task.description);
 
         // The values every kind is rendered with, and what the briefing that
         // owns it renders.
@@ -875,8 +871,8 @@ mod tests {
                     &steps,
                 ),
                 vec![
-                    ("goal_title", &fenced_goal_title),
-                    ("goal_description", &fenced_goal_description),
+                    ("goal_title", &goal.title),
+                    ("goal_description", &goal.description),
                     ("workflow", &goal.workflow),
                     ("columns", &columns),
                     ("repositories", &repo_line),
@@ -885,12 +881,12 @@ mod tests {
             (
                 PromptKind::OrchestratorResume,
                 orchestrator_resume_briefing(default(PromptKind::OrchestratorResume), &goal),
-                vec![("goal_title", &fenced_goal_title)],
+                vec![("goal_title", &goal.title)],
             ),
             (
                 PromptKind::GoalAttention,
                 goal_attention_briefing(default(PromptKind::GoalAttention), &goal, &attention),
-                vec![("goal_title", &fenced_goal_title), ("tasks", &attention)],
+                vec![("goal_title", &goal.title), ("tasks", &attention)],
             ),
             (
                 PromptKind::StepBriefing,
@@ -904,9 +900,9 @@ mod tests {
                     "none",
                 ),
                 vec![
-                    ("task_title", &fenced_task_title),
-                    ("task_description", &fenced_task_description),
-                    ("goal_title", &fenced_goal_title),
+                    ("task_title", &task.title),
+                    ("task_description", &task.description),
+                    ("goal_title", &goal.title),
                     ("worktree_path", task.worktree_path.as_deref().unwrap()),
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
@@ -928,7 +924,7 @@ mod tests {
                     "Add a test.",
                 ),
                 vec![
-                    ("task_title", &fenced_task_title),
+                    ("task_title", &task.title),
                     ("step_title", "Develop"),
                     ("direction", "back"),
                     ("reason", &fenced_reason),
@@ -937,10 +933,7 @@ mod tests {
             (
                 PromptKind::AgentResume,
                 agent_resume(default(PromptKind::AgentResume), &task, &steps[0]),
-                vec![
-                    ("task_title", &fenced_task_title),
-                    ("step_title", "Develop"),
-                ],
+                vec![("task_title", &task.title), ("step_title", "Develop")],
             ),
         ];
 
@@ -1035,11 +1028,27 @@ mod tests {
             &[],
             &steps(),
         );
+        assert!(briefing.contains("# Goal: Ship the UI"), "{briefing}");
+        assert!(!briefing.contains('{'), "{briefing}");
+    }
+
+    /// A goal the user typed reaches the orchestrator with no fence around
+    /// its title or its description: only an issue's own text is the
+    /// forge's to fence.
+    #[test]
+    fn a_goal_the_user_typed_is_not_fenced() {
+        let briefing = orchestrator_briefing(
+            default(PromptKind::OrchestratorBriefing),
+            &goal(),
+            &[repo()],
+            &steps(),
+        );
+        assert!(briefing.contains("# Goal: Ship the UI"), "{briefing}");
         assert!(
-            briefing.contains("# Goal: <<<untrusted>>>Ship the UI<<<end untrusted>>>"),
+            briefing.contains("The board needs swimlanes."),
             "{briefing}"
         );
-        assert!(!briefing.contains('{'), "{briefing}");
+        assert!(!briefing.contains("<<<untrusted>>>"), "{briefing}");
     }
 
     /// The orchestrator is briefed with every repository the goal works in,
@@ -1089,6 +1098,30 @@ mod tests {
                  <<<end untrusted>>>. Every request a task opens must say `Closes \
                  https://github.com/acme/widgets/issues/9` in its body."
             ),
+            "{briefing}"
+        );
+    }
+
+    /// An issue's own title and description are the forge's text, fenced
+    /// the same as its URL: an issue goal is not the user's own words.
+    #[test]
+    fn a_goal_from_an_issue_is_fenced() {
+        let goal = Goal {
+            issue_url: Some("https://github.com/acme/widgets/issues/9".into()),
+            ..goal()
+        };
+        let briefing = orchestrator_briefing(
+            default(PromptKind::OrchestratorBriefing),
+            &goal,
+            &[repo()],
+            &steps(),
+        );
+        assert!(
+            briefing.contains("# Goal: <<<untrusted>>>Ship the UI<<<end untrusted>>>"),
+            "{briefing}"
+        );
+        assert!(
+            briefing.contains("<<<untrusted>>>The board needs swimlanes.<<<end untrusted>>>"),
             "{briefing}"
         );
     }
