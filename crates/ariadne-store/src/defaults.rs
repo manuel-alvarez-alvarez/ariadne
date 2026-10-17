@@ -2092,6 +2092,34 @@ mod tests {
         );
     }
 
+    /// `coding` names the column report at its own end, and every other
+    /// produce skill that ends its own column names it the same way. None
+    /// of them restates a field of the report, which the `complete_step`
+    /// description alone defines.
+    #[test]
+    fn a_produce_skill_names_the_column_report_where_it_ends_a_column() {
+        for name in [
+            "coding",
+            "debugging",
+            "refactoring",
+            "migration",
+            "conflict-resolution",
+            "documentation",
+            "research",
+            "spec-writing",
+        ] {
+            let document = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                document.contains("Call `complete_step` with the column report"),
+                "the {name} skill does not name the column report where it ends"
+            );
+            assert!(
+                !document.contains("Fifteen lines at most"),
+                "the {name} skill restates the column report's own line cap"
+            );
+        }
+    }
+
     #[test]
     fn skill_text_returns_its_document() {
         assert_eq!(skill_text("Ask twice.\n"), "Ask twice.\n");
@@ -2149,17 +2177,34 @@ mod tests {
     /// names the trigger a blocking finding carries and the rule it
     /// breaks, which cost more than the shared template budgeted, so a line
     /// restating the same requirement a second time was cut to make room.
+    ///
+    /// The eight produce skills were pruned to findings 1 to 7, past the
+    /// restated fields and the named ending, to the generic reasons and
+    /// slogans the review found: a description written as an instruction
+    /// instead of in the third person, a seat rule a skill repeated in its
+    /// own words, and a "Do not tell yourself" entry naming no failure.
+    /// Each cap comes down with the text: `coding` drops from 5400 to
+    /// 3300, `debugging` from 3400 to 2700, and `refactoring`, `migration`,
+    /// `conflict-resolution`, `documentation`, `research` and
+    /// `spec-writing` share 2000, down from the default 2400. The total
+    /// comes down with them, from 43000 to 40000.
     #[test]
     fn skill_size_caps_hold() {
-        const TOTAL: usize = 43_000;
+        const TOTAL: usize = 40_000;
         let cap = |name: &str| match name {
             ORCHESTRATION_SKILL => 4600,
-            "debugging" => 3400,
+            "debugging" => 2700,
             "code-review" => 3100,
-            "coding" => 5400,
+            "coding" => 3300,
             "architecture-review" => 2380,
             "spec-review" => 2320,
             "performance-review" => 2380,
+            "refactoring"
+            | "migration"
+            | "conflict-resolution"
+            | "documentation"
+            | "research"
+            | "spec-writing" => 2000,
             // Eight steps: the open, the read, the three reply shapes and
             // the two loop stops (a follow-up and a kept-open finding), the
             // suggestion rule, the checks, the report, and the two endings.

@@ -1,6 +1,6 @@
 ---
 name: coding
-description: Build a task whole and prove changed behavior at a seam. Use when a task asks for code, a feature, a fix, or tests.
+description: For code, a feature, or a fix, builds the task and proves behavior at a seam.
 ---
 
 # Coding
@@ -61,12 +61,8 @@ column squashes.
   changes from review.
 - "The test passes, so it proves the claim." -> A behavior test you never
   watched fail proves only that it runs.
-- "This edit needs no proof." -> Prose and preserving refactors need
-  verification, even when they need no new test.
 - "Mocking internals makes this easier." -> A mock behind the seam couples
   the test to code free to change.
-- "I will save a note on this task." -> Save to memory only a trap that
-  will come back. The commit is the record of the task.
 
 ## Done
 

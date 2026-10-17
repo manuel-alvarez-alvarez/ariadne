@@ -1,6 +1,6 @@
 ---
 name: spec-writing
-description: Write a specification - scope, behavior, and the criteria that prove it. Use when a goal has no spec or its criteria are missing.
+description: When a goal has no spec, writes the scope, behavior, and criteria that prove it.
 ---
 
 # Spec writing
@@ -22,6 +22,7 @@ must be one a reader can test.
    Done when every claim has a criterion and every criterion names a test.
 6. Follow the format of the specs already in the repository. Where there
    are none, agree a path and a format with the orchestrator first.
+7. Call `complete_step` with the column report.
 
 ## Rules
 
