@@ -206,52 +206,58 @@ async function main() {
       JSON.stringify({ state: { baseUrl: url, goalStatusFilter: "planning,active" }, version: 0 }),
     )
   }, baseUrl)
+  // Every `waitForTimeout` below is one distinct screen of the required
+  // sequence held for 2 to 3 seconds, per assets/AGENTS.md — the 40 to 45
+  // second target comes from holding each of those screens in turn, never
+  // from holding any one of them longer.
   const page = await context.newPage()
   await page.goto("http://127.0.0.1:1420/#/goals")
   await page.getByRole("heading", { name: "Goals" }).waitFor()
-  await page.waitForTimeout(4_500)
+  await page.waitForTimeout(3_000)
 
   await page.getByRole("banner").getByRole("button", { name: "New goal" }).click()
   await page.getByRole("dialog", { name: "New goal" }).waitFor()
-  await page.waitForTimeout(700)
+  await page.waitForTimeout(2_000)
   // Typed at a visible speed, like assets/demo.tape's own typing, rather than
   // filled in one frame.
   await page.locator("#goal-title").pressSequentially(GOAL_TITLE, { delay: 35 })
   await page.locator("#goal-description").pressSequentially(GOAL_DESCRIPTION, { delay: 18 })
-  await page.waitForTimeout(900)
+  await page.waitForTimeout(2_000)
 
   await page.getByRole("combobox", { name: "Repositories", exact: true }).click()
   await page.getByRole("option", { name: new RegExp(repositoryPath.replaceAll("/", "\\/")) }).click()
   await page.getByRole("combobox", { name: "Repositories", exact: true }).click()
-  await page.waitForTimeout(600)
+  await page.waitForTimeout(2_000)
 
   await page.getByRole("button", { name: "Orchestrator runs on" }).click()
   await page.getByPlaceholder("Search models, or type an id…").fill(ORCHESTRATOR_MODEL)
-  await page.waitForTimeout(300)
+  await page.waitForTimeout(2_000)
   await page.getByRole("option", { name: ORCHESTRATOR_MODEL }).click()
   // A pick does not close the popover by itself (ui/src/features/models/pin-picker.tsx
   // only closes it on an outside press or Escape); Escape is the one that
   // cannot also close the dialog underneath, since the picker's own listener
   // stops it from propagating.
   await page.keyboard.press("Escape")
-  await page.waitForTimeout(3_500)
+  await page.waitForTimeout(3_000)
 
   await page.getByRole("button", { name: "Create goal" }).click()
   await page.getByRole("heading", { name: GOAL_TITLE, exact: true }).waitFor()
-  await page.waitForTimeout(4_000)
+  await page.waitForTimeout(3_000)
 
   // Open the orchestrator's console: the goal panel's Sessions tab lists its
-  // one live session (the scripted stub above), and selecting it opens on
-  // the console tab by default.
+  // one live session (the scripted stub above), held on its own screen
+  // before it is opened, and selecting it opens on the console tab by
+  // default.
   await page.getByRole("tab", { name: /^Sessions/ }).click()
   const orchestratorRow = page.getByRole("row", { name: /Orchestrator/ })
   await orchestratorRow.waitFor()
+  await page.waitForTimeout(2_000)
   await orchestratorRow.click()
   const terminal = page.getByLabel("Console terminal")
   await terminal.waitFor()
   // Time for the daemon to spawn the stub and for it to read the repository
   // and ask its question, which the console then draws.
-  await page.waitForTimeout(5_000)
+  await page.waitForTimeout(3_000)
 
   // The same answer assets/demo.tape types into the CLI's own console — the
   // UI's console is the same bytes, in a terminal emulator (see
@@ -259,8 +265,11 @@ async function main() {
   // apply here too.
   await terminal.click()
   await page.keyboard.type(ORCHESTRATOR_ANSWER, { delay: 45 })
+  // Held once typed, before it is sent, and again once the stub's
+  // acknowledgement has had time to render.
+  await page.waitForTimeout(2_000)
   await page.keyboard.press("Enter")
-  await page.waitForTimeout(5_000)
+  await page.waitForTimeout(3_000)
 
   // Only now, after the console showed the stub accept the typed answer, is
   // the task seeder started: assets/seed-demo-goal.py adds the goal's two
@@ -279,6 +288,7 @@ async function main() {
   // what picks the task out from the attention strip's same-named link
   // behind the scrim.
   await page.getByRole("button", { name: GOAL_TITLE, exact: true }).click()
+  await page.waitForTimeout(2_000)
   await page.getByRole("tab", { name: /^Tasks/ }).click()
 
   const limiterTask = "Add the rate limiter middleware"
@@ -288,7 +298,7 @@ async function main() {
 
   await taskRow.click()
   await page.getByRole("heading", { name: limiterTask, exact: true }).waitFor()
-  await page.waitForTimeout(6_500)
+  await page.waitForTimeout(3_000)
 
   await seeded
 
