@@ -20,12 +20,13 @@ typecheck`, both from inside `ui/` (`npm ci` first when `ui/node_modules` is
 missing). For a staged file under `ui/src-tauri`: `cargo fmt --all -- --check`
 from inside `ui/src-tauri`.
 
-The pre-push hook (`.githooks/pre-push`) runs the whole suite for a push that
-touches `ui/`: `npm run check:audit`, then `npm run check` in `ui/` (`npm ci`
-first when `ui/node_modules` is missing) — `npm run check` is `npm test`,
-`npm run typecheck`, `npm run lint` and `npm run check:unused` together. For
-a push that touches `ui/src-tauri`: `cargo fmt --all -- --check` and `cargo
-check`, both from inside `ui/src-tauri`.
+The pre-push hook (`.githooks/pre-push`) runs the whole suite but the test
+suite, for a push that touches `ui/`: `npm run check:audit`, `npm run lint`,
+`npm run typecheck` and `npm run check:unused`, each in `ui/` (`npm ci` first
+when `ui/node_modules` is missing). `npm test` takes about a minute, so the
+hook leaves it to CI; run it by hand before a push when the change warrants
+it. For a push that touches `ui/src-tauri`: `cargo fmt --all -- --check` and
+`cargo check`, both from inside `ui/src-tauri`.
 
 ### Dependency advisories
 

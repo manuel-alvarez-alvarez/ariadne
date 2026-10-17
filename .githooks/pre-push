@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs the whole-workspace checks for every area a push touches: the Rust
-# workspace, the UI, and the Tauri shell.
+# Runs every CI check but the test suites for every area a push touches: the
+# Rust workspace, the UI, and the Tauri shell. CI alone runs cargo nextest
+# and npm test.
 # Run by hand: .githooks/pre-push --all
 set -euo pipefail
 
@@ -81,7 +82,6 @@ fi
 if [ "$run_rust" = 1 ]; then
     githooks_run cargo audit
     githooks_run cargo build --locked --workspace --bins
-    githooks_run cargo nextest run --workspace --profile ci
     githooks_run cargo test --doc --workspace
     githooks_run cargo clippy --workspace --all-targets -- -D warnings
     githooks_run cargo fmt --all -- --check
@@ -94,7 +94,9 @@ if [ "$run_ui" = 1 ]; then
         (cd ui && githooks_run npm ci)
     fi
     (cd ui && githooks_run npm run check:audit)
-    (cd ui && githooks_run npm run check)
+    (cd ui && githooks_run npm run lint)
+    (cd ui && githooks_run npm run typecheck)
+    (cd ui && githooks_run npm run check:unused)
 fi
 
 if [ "$run_tauri" = 1 ]; then
