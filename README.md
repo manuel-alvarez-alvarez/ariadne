@@ -37,13 +37,20 @@
   any compatible agent. A goal picks each agent's model and effort.
 </p>
 
-<p align="center">
-  <img src="assets/demo.gif" alt="Creating a goal and watching its tasks run from the terminal">
-</p>
-
-<p align="center">
-  <sub>One goal, its tasks, and the agents running them — from the terminal.</sub>
-</p>
+<table>
+<tr>
+<td width="50%" align="center">
+<a href="assets/demo.gif"><img src="assets/demo.gif" alt="Creating a goal and watching its tasks run from the terminal"></a>
+<br>
+<sub>Creating a goal and watching its tasks run — from the terminal.</sub>
+</td>
+<td width="50%" align="center">
+<a href="assets/demo-ui.gif"><img src="assets/demo-ui.gif" alt="Creating the same goal and opening one of its tasks in Ariadne Desktop"></a>
+<br>
+<sub>The same goal, opened on one of its tasks — in Ariadne Desktop.</sub>
+</td>
+</tr>
+</table>
 
 ## Features
 
@@ -127,10 +134,6 @@ event stream. It is a pure REST/SSE client of the daemon's TCP listener — the
 same code runs in a browser tab and in the packaged [Tauri
 2](https://v2.tauri.app) app — and `scripts/install.sh` installs it beside the
 CLI.
-
-<p align="center">
-  <img src="assets/demo-ui.gif" alt="Ariadne Desktop showing a goal, its tasks and an agent console">
-</p>
 
 > [!NOTE]
 > The daemon's TCP listener is off by default. Set `tcp_listen` in

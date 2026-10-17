@@ -10,8 +10,13 @@
  * It builds the release binaries, creates an isolated Ariadne home, and
  * starts its daemon with a two-second inert `cli_bin`. The scheduler can
  * create metadata rows for the demo, but it cannot start an agent process.
- * The temporary home, repository, daemon, dev server, and Playwright install
- * are removed when the recording ends.
+ * It seeds the scratch repository with the same small login HTTP service
+ * assets/demo.tape seeds (assets/seed-demo-repo.sh), fills the New goal
+ * form in the UI with the same goal assets/demo.tape types, then seeds the
+ * same two tasks over the REST API assets/seed-demo-goal.py also seeds them
+ * with, so both recordings show the same goal and the same tasks. The
+ * temporary home, repository, daemon, dev server, and Playwright install are
+ * removed when the recording ends.
  */
 
 import { execFile, spawn } from "node:child_process"
@@ -28,6 +33,14 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..")
 const output = join(root, "assets", "demo-ui.gif")
 const playwrightVersion = "1.62.1"
 const viewport = { width: 1280, height: 800 }
+
+// Kept in step with assets/demo.tape and assets/seed-demo-goal.py: the same
+// goal, by the same title, is what that script finds and adds tasks to.
+const GOAL_TITLE = "Add rate limiting to the login endpoint"
+const GOAL_DESCRIPTION =
+  "Limit the login endpoint to 5 attempts per minute per IP address. " +
+  "Respond 429 Too Many Requests, with a Retry-After header, once a caller goes over the limit."
+const MODEL = "codex-acp:gpt-5.6-sol"
 
 let daemon
 let devServer
@@ -83,101 +96,14 @@ async function waitFor(check, description) {
   throw new Error(`timed out waiting for ${description}`)
 }
 
-async function api(baseUrl, path, { method = "GET", body, session } = {}) {
+async function api(baseUrl, path, { method = "GET", body } = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
-    headers: {
-      ...(body ? { "content-type": "application/json" } : {}),
-      ...(session ? { "X-Ariadne-Session": session } : {}),
-    },
+    headers: body ? { "content-type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
   })
   if (!response.ok) throw new Error(`${method} ${path}: ${response.status} ${await response.text()}`)
   return response.status === 204 ? undefined : response.json()
-}
-
-async function firstSession(baseUrl, query, seat) {
-  return waitFor(async () => {
-    const sessions = await api(baseUrl, `/v1/sessions?${query}`)
-    return sessions.find((session) => session.seat === seat)
-  }, `${seat} demo session`)
-}
-
-async function seed(baseUrl, repositoryPath) {
-  const repository = await api(baseUrl, "/v1/repositories", {
-    method: "POST",
-    body: {
-      path: repositoryPath,
-      base_branch: "main",
-      description: "The repository used by the README UI demo.",
-    },
-  })
-  const goal = await api(baseUrl, "/v1/goals", {
-    method: "POST",
-    body: {
-      title: "Launch the engineering dashboard",
-      description: "Give the engineering team one clear view of delivery work and release readiness.",
-      repository_ids: [repository.id],
-      model: "codex:gpt-5.6-sol",
-    },
-  })
-  const draft = await api(baseUrl, `/v1/goals/${goal.id}/tasks`, {
-    method: "POST",
-    body: {
-      title: "Design the dashboard overview",
-      description: "Show the delivery stages, the work that needs attention, and the most useful progress signals.",
-      agents: [
-        { seat: "author", skills: ["coding"], model: "codex:gpt-5.6-sol" },
-        { seat: "reviewer", skills: ["code-review"], model: "codex:gpt-5.6-luna" },
-      ],
-    },
-  })
-  await api(baseUrl, `/v1/goals/${goal.id}/tasks`, {
-    method: "POST",
-    body: {
-      title: "Prepare the release notes",
-      description: "Summarize the visible changes after the dashboard ships.",
-      depends_on: [draft.id],
-      agents: [{ seat: "author", skills: ["coding"], model: "codex:gpt-5.6-luna" }],
-    },
-  })
-
-  const orchestrator = await firstSession(baseUrl, `goal=${goal.id}`, "orchestrator")
-  await api(baseUrl, `/v1/goals/${goal.id}/finalize`, {
-    method: "POST",
-    body: {},
-    session: orchestrator.id,
-  })
-  const author = await firstSession(baseUrl, `task=${draft.id}`, "author")
-  await waitFor(async () => {
-    const task = await api(baseUrl, `/v1/tasks/${draft.id}`)
-    return task.status === "in_progress"
-  }, "the active demo task")
-  await api(baseUrl, `/v1/tasks/${draft.id}/transitions`, {
-    method: "POST",
-    body: { to: "under_review", reason: "The overview is ready for feedback.", merge_commit: null },
-    session: author.id,
-  })
-
-  const planningGoal = await api(baseUrl, "/v1/goals", {
-    method: "POST",
-    body: {
-      title: "Improve first-run guidance",
-      description: "Make the first project setup clear for a new team member.",
-      repository_ids: [repository.id],
-      model: "codex:gpt-5.6-luna",
-    },
-  })
-  await api(baseUrl, `/v1/goals/${planningGoal.id}/tasks`, {
-    method: "POST",
-    body: {
-      title: "Review the setup flow",
-      description: "List the steps that a new contributor must complete before the first task.",
-      agents: [{ seat: "author", skills: ["coding"], model: "codex:gpt-5.6-luna" }],
-    },
-  })
-
-  return { goal, task: draft }
 }
 
 async function main() {
@@ -204,7 +130,7 @@ async function main() {
     `tcp_listen = "127.0.0.1:${port}"\ncli_bin = "${inertCli}"\nprevent_sleep = false\n`,
   )
   await run("git", ["init", "-q", "-b", "main", repositoryPath])
-  await run("git", ["-C", repositoryPath, "-c", "user.name=Demo", "-c", "user.email=demo@example.invalid", "commit", "-q", "--allow-empty", "-m", "chore: seed demo repository"])
+  await run("bash", [join(root, "assets", "seed-demo-repo.sh"), repositoryPath])
 
   daemon = spawn(daemonPath, [], {
     cwd: root,
@@ -217,7 +143,15 @@ async function main() {
     return response.ok
   }, "the demo daemon")
 
-  const demo = await seed(baseUrl, repositoryPath)
+  await api(baseUrl, "/v1/repositories", {
+    method: "POST",
+    body: {
+      path: repositoryPath,
+      base_branch: "main",
+      description: "The login service used by the README UI demo.",
+    },
+  })
+
   devServer = spawn("npm", ["run", "dev", "--", "--host", "127.0.0.1"], {
     cwd: join(root, "ui"),
     env: process.env,
@@ -257,15 +191,37 @@ async function main() {
   const page = await context.newPage()
   await page.goto("http://127.0.0.1:1420/#/goals")
   await page.getByRole("heading", { name: "Goals" }).waitFor()
-  await page.getByRole("link", { name: demo.goal.title, exact: true }).waitFor()
+  await page.waitForTimeout(800)
+
+  await page.getByRole("banner").getByRole("button", { name: "New goal" }).click()
+  await page.getByRole("dialog", { name: "New goal" }).waitFor()
+  await page.locator("#goal-title").fill(GOAL_TITLE)
+  await page.locator("#goal-description").fill(GOAL_DESCRIPTION)
+
+  await page.getByRole("combobox", { name: "Repositories", exact: true }).click()
+  await page.getByRole("option", { name: new RegExp(repositoryPath.replaceAll("/", "\\/")) }).click()
+  await page.getByRole("combobox", { name: "Repositories", exact: true }).click()
+
+  await page.getByRole("button", { name: "Orchestrator runs on" }).click()
+  await page.getByPlaceholder("Search models, or type an id…").fill(MODEL)
+  await page.getByRole("option", { name: MODEL }).click()
+
+  await page.getByRole("button", { name: "Create goal" }).click()
+  await page.getByRole("heading", { name: GOAL_TITLE, exact: true }).waitFor()
   await page.waitForTimeout(1_200)
 
-  await page.getByRole("link", { name: demo.goal.title, exact: true }).click()
-  await page.getByRole("heading", { name: demo.goal.title, exact: true }).waitFor()
-  await page.waitForTimeout(1_200)
+  await exec("python3", [join(root, "assets", "seed-demo-goal.py"), baseUrl, MODEL])
 
-  await page.getByRole("link", { name: demo.task.title }).click()
-  await page.getByRole("heading", { name: demo.task.title, exact: true }).waitFor()
+  const limiterTask = "Add the rate limiter middleware"
+  // Both the attention strip (behind the panel's scrim) and the panel's own
+  // task list link to the task by the same name; only the task list's own
+  // row also names its column, which is what picks that one.
+  const taskRow = page.getByRole("link", { name: `${limiterTask} Develop` })
+  await taskRow.waitFor()
+  await page.waitForTimeout(600)
+
+  await taskRow.click()
+  await page.getByRole("heading", { name: limiterTask, exact: true }).waitFor()
   await page.waitForTimeout(1_200)
 
   await page.keyboard.press("Escape")
@@ -273,7 +229,7 @@ async function main() {
   await page.keyboard.press("Escape")
   await page.getByRole("button", { name: /Search/ }).click()
   await page.getByRole("dialog", { name: "Command palette" }).waitFor()
-  await page.getByPlaceholder("Search goals, tasks, sessions, skills…").fill("dashboard")
+  await page.getByPlaceholder("Search goals, tasks, sessions, skills, workflows…").fill("rate limit")
   await page.waitForTimeout(1_600)
 
   const video = page.video()
