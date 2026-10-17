@@ -73,6 +73,12 @@ no_command_matching() {
     ! grep -F "$1" "$TEST_ROOT/commands" > /dev/null 2>&1
 }
 
+# Fail unless the command log holds exactly these lines, in this order:
+# neither a missing nor an extra command passes.
+assert_commands() {
+    diff <(printf '%s\n' "$@") "$TEST_ROOT/commands"
+}
+
 case "$test_case" in
     install)
         setup_repo
@@ -161,14 +167,11 @@ case "$test_case" in
         rm -f "$TEST_ROOT/commands"
         printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$base" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
-        for cmd in 'cargo machete .' 'cargo build --locked --workspace --bins' \
+        assert_commands 'cargo machete .' 'cargo audit' \
+            'cargo build --locked --workspace --bins' \
             'cargo test --doc --workspace' \
-            'cargo clippy --workspace --all-targets -- -D warnings' 'cargo fmt --all -- --check' \
-            'check-unused-rust' 'check-migrations.sh'; do
-            grep -Fx "$cmd" "$TEST_ROOT/commands"
-        done
-        no_command_matching npm
-        no_command_matching 'nextest run'
+            'cargo clippy --workspace --all-targets -- -D warnings' \
+            'cargo fmt --all -- --check' 'check-unused-rust' 'check-migrations.sh'
         ;;
     push-isolation)
         setup_repo
@@ -208,11 +211,13 @@ case "$test_case" in
         rm -f "$TEST_ROOT/commands"
         printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$unreachable_sha" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
-        grep -Fx 'cargo clippy --workspace --all-targets -- -D warnings' "$TEST_ROOT/commands"
-        grep -Fx 'npm run lint' "$TEST_ROOT/commands"
-        grep -Fx 'cargo check' "$TEST_ROOT/commands"
-        no_command_matching 'nextest run'
-        no_command_matching 'npm test'
+        assert_commands 'cargo machete .' 'cargo audit' \
+            'cargo build --locked --workspace --bins' \
+            'cargo test --doc --workspace' \
+            'cargo clippy --workspace --all-targets -- -D warnings' \
+            'cargo fmt --all -- --check' 'check-unused-rust' 'check-migrations.sh' \
+            'npm run check:audit' 'npm run lint' 'npm run typecheck' \
+            'npm run check:unused' 'cargo fmt --all -- --check' 'cargo check'
         ;;
     ui-push)
         setup_repo
@@ -224,11 +229,8 @@ case "$test_case" in
         rm -f "$TEST_ROOT/commands"
         printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$base" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
-        grep -Fx 'npm run lint' "$TEST_ROOT/commands"
-        grep -Fx 'npm run typecheck' "$TEST_ROOT/commands"
-        grep -Fx 'npm run check:unused' "$TEST_ROOT/commands"
-        no_command_matching cargo
-        no_command_matching 'npm test'
+        assert_commands 'npm run check:audit' 'npm run lint' 'npm run typecheck' \
+            'npm run check:unused'
         ;;
     tauri-push)
         setup_repo
@@ -240,10 +242,7 @@ case "$test_case" in
         rm -f "$TEST_ROOT/commands"
         printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$base" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
-        grep -Fx 'cargo machete .' "$TEST_ROOT/commands"
-        grep -Fx 'cargo fmt --all -- --check' "$TEST_ROOT/commands"
-        grep -Fx 'cargo check' "$TEST_ROOT/commands"
-        ! grep -Fx 'cargo nextest run --workspace --profile ci' "$TEST_ROOT/commands"
+        assert_commands 'cargo machete .' 'cargo fmt --all -- --check' 'cargo check'
         ;;
     unicode-push)
         setup_repo
@@ -255,20 +254,20 @@ case "$test_case" in
         rm -f "$TEST_ROOT/commands"
         printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$base" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
-        grep -Fx 'npm run lint' "$TEST_ROOT/commands"
-        no_command_matching cargo
+        assert_commands 'npm run check:audit' 'npm run lint' 'npm run typecheck' \
+            'npm run check:unused'
         ;;
     all)
         setup_repo
         rm -f "$TEST_ROOT/commands"
         "$TEST_ROOT/repo/.githooks/pre-push" --all > "$TEST_ROOT/output" 2>&1
-        grep -Fx 'cargo clippy --workspace --all-targets -- -D warnings' "$TEST_ROOT/commands"
-        grep -Fx 'npm run lint' "$TEST_ROOT/commands"
-        grep -Fx 'npm run typecheck' "$TEST_ROOT/commands"
-        grep -Fx 'npm run check:unused' "$TEST_ROOT/commands"
-        grep -Fx 'cargo check' "$TEST_ROOT/commands"
-        no_command_matching 'nextest run'
-        no_command_matching 'npm test'
+        assert_commands 'cargo machete .' 'cargo audit' \
+            'cargo build --locked --workspace --bins' \
+            'cargo test --doc --workspace' \
+            'cargo clippy --workspace --all-targets -- -D warnings' \
+            'cargo fmt --all -- --check' 'check-unused-rust' 'check-migrations.sh' \
+            'npm run check:audit' 'npm run lint' 'npm run typecheck' \
+            'npm run check:unused' 'cargo fmt --all -- --check' 'cargo check'
         ;;
     fail)
         setup_repo

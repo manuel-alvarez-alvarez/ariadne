@@ -69,6 +69,11 @@ Run a hook by hand with `.githooks/pre-push --all`. Never pass `--no-verify`
 or `-n` to `git commit` or `git push`. A hook that refuses a commit or a push
 names the fix; make it, and commit again.
 
+The hook leaves out the two slow test suites; CI alone runs them. Run either
+by hand before a push when the change warrants it: `cargo nextest run
+--workspace --profile ci` for the Rust workspace, `npm test` under `ui/` for
+the desktop app.
+
 What each hook runs for an area is in that area's own file:
 [`crates/AGENTS.md`](crates/AGENTS.md) for Rust, and
 [`ui/AGENTS.md`](ui/AGENTS.md) for the UI and the Tauri shell.
