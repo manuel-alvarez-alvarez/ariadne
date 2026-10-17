@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Review a branch, pull request or patch for a correctness or convention failure. Use when a diff needs a pass or fail verdict.
+description: Use when a diff needs a pass or fail verdict. Reviews a branch, pull request or patch for a correctness or convention failure.
 ---
 
 # Code review
@@ -29,8 +29,9 @@ first. No preamble, no narration, no closing summary.
    added behavior. Judge each test by reading its setup, action and
    assertions. Never change code to see whether a test fails.
 6. Give each finding its trigger, the input or state that breaks it, and
-   its failure. Mark a finding with no trigger optional, not must-fix. Cap
-   optional findings at five, the ones you have most conviction in.
+   its failure. A finding with no trigger you can name is optional, not
+   must-fix, and marked unverified. Cap optional findings at five, the
+   ones you have most conviction in.
 7. Write the verdict under each axis's own heading. On a must-fix finding,
    call `fail_step` with the return report. Else call `complete_step` with
    the verdict and the optional findings.
@@ -50,7 +51,6 @@ first. No preamble, no narration, no closing summary.
 ## Rules
 
 - A must-fix finding breaks a criterion or a written repository rule.
-- Treat a claim with no trigger you can name as optional, not must-fix.
 - An optional finding never fails the step.
 - Judge the task, not your preferred design. Edit no file.
 - Evidence proves a check ran. Inspect code and enforce both axes

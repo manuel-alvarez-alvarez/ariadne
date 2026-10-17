@@ -261,13 +261,12 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 17. `pr-reviewer` asks for changes when an active P0 or P1 finding exists,
     where the forge permits it, and comments otherwise. P0 is a critical
     risk. P1 is a proven defect, unmet requirement, or written repository-rule
-    violation. P2 is optional. A finding names the input or state that
-    triggers it; one with no nameable trigger is P2, and new P2 findings are
-    capped at five a round. It posts only new inline findings. It creates
-    no summary, status table, summary comment, or summary draft, and writes
-    its verdict first, with no preamble or process narration. It records
-    the reviewed revision and evidence that covers its current head, and
-    reads code outside the diff only to judge a risk it can name.
+    violation. P2 is optional. What a finding must name to stand at P0 or
+    P1, the downgrade to P2 and its cap, the diff as scope, and the verdict
+    written first are 017 rule 11's to state, for `pr-reviewer` as for the
+    other four review skills. It posts only new inline findings. It creates
+    no summary, status table, summary comment, or summary draft. It records
+    the reviewed revision and evidence that covers its current head.
 
     Each new finding has a title, its trigger, a failure and a fix. Where the fix replaces the commented line alone, a ```suggestion
     block under the fix holds the new text of that one line, and a fix

@@ -1059,7 +1059,7 @@ mod tests {
             "Run each required check with no reusable result, once for this verdict.",
             "Read code outside the diff only to judge a risk you can name.",
             "Give each finding its trigger, the input or state that breaks it, and",
-            "Mark a finding with no trigger optional, not must-fix.",
+            "is optional, not must-fix, and marked unverified",
             "Cap optional findings at five, the ones you have most conviction in.",
             "On a must-fix finding, call `fail_step` with the return report.",
             "Else call `complete_step` with the verdict and the optional findings.",
@@ -1485,7 +1485,7 @@ mod tests {
             "supervise_posts",
             "Read code outside the diff only to judge a risk you can name.",
             "Give every finding a trigger, the input or state that causes it, and a",
-            "Mark a finding with no trigger you can name P2.",
+            "A finding with no trigger you can name is P2. Mark it unverified.",
             "Cap new P2 findings at five, the ones you have most conviction in.",
             "P1: a proven defect, unmet requirement, or repository-rule violation",
             // An unanswered thread waits; a declined fix is marked so and
@@ -1506,6 +1506,57 @@ mod tests {
             "the pr-reviewer skill still reads a commit list"
         );
         assert_eq!(SkillSeat::of(PR_REVIEWER_SKILL), SkillSeat::PullRequest);
+    }
+
+    /// Every review skill marks a blocking or must-fix finding with a
+    /// trigger and caps its non-blocking findings at five. A finding with
+    /// no nameable trigger is downgraded and marked unverified. The four
+    /// task-column review skills also pin their reading to the diff, reuse
+    /// the column report's evidence where it covers the reviewed revision,
+    /// and bound reading outside the diff to a risk the reviewer can name.
+    #[test]
+    fn every_review_skill_names_a_trigger_and_caps_its_optional_findings() {
+        for name in [
+            "code-review",
+            PR_REVIEWER_SKILL,
+            "spec-review",
+            "architecture-review",
+            "performance-review",
+        ] {
+            let text = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                text.contains("trigger"),
+                "the {name} skill does not name a trigger"
+            );
+            assert!(
+                text.contains("Mark it unverified.") || text.contains("marked unverified"),
+                "the {name} skill does not mark an untriggered finding unverified"
+            );
+            assert!(
+                text.contains("at five"),
+                "the {name} skill does not cap its non-blocking findings at five"
+            );
+        }
+        for name in [
+            "code-review",
+            "spec-review",
+            "architecture-review",
+            "performance-review",
+        ] {
+            let text = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                text.contains("Pin the scope to the diff."),
+                "the {name} skill does not pin the scope to the diff"
+            );
+            assert!(
+                text.contains("the column report"),
+                "the {name} skill does not reuse the column report's evidence"
+            );
+            assert!(
+                text.contains("only to judge a risk you can name"),
+                "the {name} skill does not bound reading outside its scope to a named risk"
+            );
+        }
     }
 
     /// Every rule an agent is briefed with is written down once.
@@ -2072,20 +2123,24 @@ mod tests {
     ///
     /// The five review skills were tightened for falsifiable findings, a
     /// cap on the optional ones, and the diff as scope: every blocking or
-    /// must-fix finding now names a trigger and a failure, a finding with
-    /// none is downgraded, the non-blocking findings are capped at five,
-    /// reading outside the diff is bound to a named risk, and the verdict
-    /// comes first with no preamble or closing summary. `code-review` falls
-    /// from 4100 to 3100: it drops naming the evidence sources the column
-    /// report now carries alone, and names the return report by name
-    /// instead of restating a field of it. `pr-reviewer` falls from 6200 to
-    /// 4100: its own summary paragraph and closing table were pruned, since
-    /// the trigger a finding names already answers what the risk is.
-    /// `architecture-review`, `spec-review` and
-    /// `performance-review` move off the shared 2400 onto their own caps —
-    /// 2500, 2450 and 2450 — since each now names the trigger a blocking
-    /// finding carries and the cap on its non-blocking ones, which the
-    /// shared template did not budget for.
+    /// must-fix finding now names a trigger, a failure and the criterion,
+    /// behavior or written rule it breaks; a finding with none is
+    /// downgraded and marked unverified; the non-blocking findings are
+    /// capped at five; reading outside the diff is bound to a named risk;
+    /// and the verdict comes first with no preamble or closing summary.
+    /// `code-review` falls from 4100 to 3100: it drops naming the evidence
+    /// sources the column report now carries alone, and names the return
+    /// report by name instead of restating a field of it. `pr-reviewer`
+    /// falls from 6200 to 3750: its own summary paragraph and closing table
+    /// were pruned, since the trigger a finding names already answers what
+    /// the risk is, and its "Supervised repositories" section keeps only
+    /// the routing decision the pending-edit tools do not state themselves.
+    /// `architecture-review`, `spec-review` and `performance-review` move
+    /// off the shared 2400 onto their own, lower caps — 2380, 2320 and
+    /// 2380 — since each now reuses the column report's evidence and
+    /// names the trigger a blocking finding carries and the rule it
+    /// breaks, which cost more than the shared template budgeted, so a line
+    /// restating the same requirement a second time was cut to make room.
     #[test]
     fn skill_size_caps_hold() {
         const TOTAL: usize = 43_000;
@@ -2094,9 +2149,9 @@ mod tests {
             "debugging" => 3400,
             "code-review" => 3100,
             "coding" => 5400,
-            "architecture-review" => 2500,
-            "spec-review" => 2450,
-            "performance-review" => 2450,
+            "architecture-review" => 2380,
+            "spec-review" => 2320,
+            "performance-review" => 2380,
             // Eight steps: the open, the read, the three reply shapes and
             // the two loop stops (a follow-up and a kept-open finding), the
             // suggestion rule, the checks, the report, and the two endings.
@@ -2105,8 +2160,9 @@ mod tests {
             // Eight steps: the read, the checks, the hunt, the three
             // priorities with a trigger and a cap on P2, one inline comment
             // per finding, the one review and the report. Plus a
-            // "Supervised repositories" section (026 rule 25).
-            PR_REVIEWER_SKILL => 4100,
+            // "Supervised repositories" section (026 rule 25), pruned to
+            // the routing decision the pending-edit tools do not state.
+            PR_REVIEWER_SKILL => 3750,
             _ => 2400,
         };
 

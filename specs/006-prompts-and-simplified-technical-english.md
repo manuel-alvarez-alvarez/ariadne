@@ -134,13 +134,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    Missing, outdated or insufficient evidence runs the required check, once
    for the verdict; the skill never reruns a check only to confirm the
    report. Evidence never replaces code inspection, acceptance review or
-   repository-rule enforcement. Each of the five review skills (017) marks
-   a blocking or must-fix finding with a trigger — the input or state that
-   breaks it — and a failure; a finding with no nameable trigger is
-   downgraded to its skill's non-blocking weight, and non-blocking findings
-   are capped at five per review. Reading outside the diff is bound to a
-   risk the reviewer can name, and each skill's verdict comes first, with
-   no preamble, no process narration and no closing summary.
+   repository-rule enforcement. What a blocking or must-fix finding must
+   name, and the cap on the rest, is 017 rule 11's to state, for all five
+   review skills alike.
 7. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
    amends nothing, since the merge column squashes. `refactoring` commits

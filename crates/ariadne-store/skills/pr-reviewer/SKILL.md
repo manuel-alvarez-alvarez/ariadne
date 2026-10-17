@@ -1,6 +1,6 @@
 ---
 name: pr-reviewer
-description: Review one open forge request and post one inline finding per defect, P0 to P2. Use for a live reviewer session on a request.
+description: Use for a live reviewer session on an open forge request. Posts one inline finding per defect, P0 to P2.
 ---
 
 # PR reviewer
@@ -35,8 +35,8 @@ preamble, no narration, no closing summary.
    - P0: a critical risk to behavior, data, or security.
    - P1: a proven defect, unmet requirement, or repository-rule violation.
    - P2: an optional improvement.
-   Mark a finding with no trigger you can name P2. Cap new P2 findings at
-   five, the ones you have most conviction in.
+   A finding with no trigger you can name is P2. Mark it unverified. Cap
+   new P2 findings at five, the ones you have most conviction in.
 6. Write every new finding as one inline comment on the line of the
    defect. The line is on the new side and shown by the diff. Give it a
    title, the trigger, the failure and the fix. Use a ```suggestion block
@@ -61,16 +61,10 @@ preamble, no narration, no closing summary.
 
 ## Supervised repositories
 
-A supervised repository holds replies and reviews in the user's forge
-drafts. `pending: true` means held, not failed. The user publishes drafts.
-
 When the user asks to change a pending post, call `edit_pending_comment`,
-`delete_pending_comment`, or `edit_pending_review_body`. Do not post a new
-reply or review instead. A 409 means the user already published it.
-
-Read `list_comments` for a pending finding id before editing or deleting
-it. `edit_pending_review_body` replaces the user's pending review body
-whole.
+`delete_pending_comment` or `edit_pending_review_body` instead of
+`submit_review` or `resolve_thread`. Read `list_comments` for the pending
+finding's forge id first.
 
 ## Do not tell yourself
 

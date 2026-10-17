@@ -1,6 +1,6 @@
 ---
 name: performance-review
-description: Review time, memory and round-trip costs with measured evidence. Use when a hot path, regression or scaling risk needs performance review.
+description: Use when a hot path, regression or scaling risk needs review. Reviews time, memory and round-trip costs with measured evidence.
 ---
 
 # Performance review
@@ -11,21 +11,24 @@ summary.
 
 ## Steps
 
-1. Pin the scope to the diff. Find the hot path it changes, and the
-   realistic input size and workload.
-   Done when the workload includes the reported input size and
-   operation.
-2. Measure the current cost. Record the method, environment and result.
-   Done when another reviewer can repeat the measurement.
+1. Pin the scope to the diff. Find the hot path it changes, and a
+   realistic workload.
+   Done when the workload names a real input size and operation.
+2. Reuse the column report's measurement if it covers this workload.
+   Else measure: method, environment, result.
+   Done when another reviewer can repeat it.
 3. Read the hot path for every cost class below. Read code outside the
    diff only to judge a risk you can name.
    Done when every class has a measurement or a recorded absence.
-4. Measure each proposed change with the same method and workload.
+4. Measure each proposed change the same way.
    Done when each proposal has comparable before and after results.
-5. Write the verdict. Give every blocking finding its workload and its
-   measured cost. Cap open, unmeasured questions at five, the ones you
-   have most conviction in.
-6. Call `fail_step` with the verdict on a blocking finding, else
+5. Give each finding its trigger, the workload that causes its measured
+   cost, and the regression or requirement it breaks. A finding with no
+   trigger or no broken rule is optional. Mark it unverified.
+   Done when every blocking finding names its trigger, cost and rule.
+6. Write the verdict. Cap optional findings at five, the ones you have
+   most conviction in.
+7. Call `fail_step` with the verdict on a blocking finding, else
    `complete_step`.
 
 ## What to look for
@@ -39,10 +42,6 @@ summary.
 
 ## Rules
 
-- A blocking finding names its workload and its measured cost.
-- Mark a finding with no measurement optional, not blocking.
-- Compare results from the same method and environment.
-- Weigh implementation cost against measured time or memory savings.
 - Keep readable code when the gain is too small to measure.
 
 ## Do not tell yourself
@@ -55,5 +54,5 @@ summary.
 ## Done
 
 The report names the hot path and workload. Each blocking finding has a
-repeatable measurement. Each proposal has comparable before and after
-results.
+measurement and the rule it breaks. Optional findings stay at five or
+fewer.

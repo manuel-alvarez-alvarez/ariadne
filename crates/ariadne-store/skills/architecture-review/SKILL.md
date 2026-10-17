@@ -1,6 +1,6 @@
 ---
 name: architecture-review
-description: Judge a change against system boundaries, coupling and dependency direction. Use when a design, component or integration needs review.
+description: Use when a design, component or integration needs review. Judges a change against system boundaries, coupling and dependency direction.
 ---
 
 # Architecture review
@@ -10,8 +10,9 @@ No preamble, no narration, no closing summary.
 
 ## Steps
 
-1. Pin the scope to the diff. Map the current system: name its modules,
-   owners and dependency directions.
+1. Pin the scope to the diff. Map the system it touches: modules, owners
+   and dependency directions. Reuse the column report's evidence where it
+   covers this revision.
    Done when every changed component has a place on the map.
 2. Place the change on that map. Mark each boundary it crosses. Read code
    outside the diff only to judge a risk you can name.
@@ -19,12 +20,12 @@ No preamble, no narration, no closing summary.
 3. Trace ownership of behavior and state. Find each idea held in two
    places.
    Done when every changed responsibility has one named owner.
-4. Price each concern: name the concrete future change it makes harder
-   and its cost.
-   Done when every concern names one affected change and its cost.
-5. Write the verdict. Separate blocking concerns from accepted costs and
-   later work. Cap later-work concerns at five, the ones you have most
-   conviction in.
+4. Give each concern its trigger, the future change it blocks, and the
+   rule or pattern it breaks. Price its cost. A concern with no nameable
+   trigger or no rule it breaks is optional. Mark it unverified.
+   Done when every blocking concern names its trigger, rule and cost.
+5. Write the verdict. Cap optional concerns at five, the ones you have
+   most conviction in.
 6. Call `fail_step` with the verdict on a blocking finding, else
    `complete_step`.
 
@@ -40,9 +41,6 @@ No preamble, no narration, no closing summary.
 
 ## Rules
 
-- A blocking concern names the future change it blocks and its cost.
-- Mark a concern with no nameable future change later work, not
-  blocking.
 - Prefer the boundary arrangement the repository already uses.
 - Accept a small inconsistency when a broad abstraction has no current
   use.
@@ -58,6 +56,5 @@ No preamble, no narration, no closing summary.
 
 ## Done
 
-The report maps every changed component and dependency. Each concern
-names its cost and disposition. Every changed responsibility has one
-owner.
+The report maps every changed component and dependency. Optional
+concerns stay at five or fewer.

@@ -1,6 +1,6 @@
 ---
 name: spec-review
-description: Review a specification for ambiguity, testability and scope. Use when a proposal or requirement set needs a pass or fail verdict.
+description: Use when a proposal or requirement set needs a pass or fail verdict. Reviews a specification for ambiguity, testability and scope.
 ---
 
 # Spec review
@@ -10,20 +10,24 @@ first. No preamble, no narration, no closing summary.
 
 ## Steps
 
-1. Read the goal and the specification. Map each rule to the goal.
-   Done when every rule is inside the goal or marked as added scope.
-2. Name the test that proves each rule. Read code only to judge a risk you
-   can name.
-   Done when every rule has an observable pass condition.
+1. Pin the scope to the diff. Read the goal and the changed rules. Reuse
+   the column report's evidence where it covers this revision.
+   Done when every changed rule is inside the goal or marked as added
+   scope.
+2. Name the test that proves each changed rule. Read code only to judge a
+   risk you can name.
+   Done when every changed rule has an observable pass condition.
 3. Find each missing decision: an error path, an empty case, a boundary, a
    limit or a permission.
    Done when each gap has one direct question.
-4. Find a rule two readers can read two ways, each reading to a different
-   behavior. Write both readings and the behavior each one causes.
-   Done when each ambiguity names two readings and their two behaviors.
-5. Write the verdict. Give each finding a weight and a location. Cap
-   later-improvement findings at five, the ones you have most conviction
-   in.
+4. Give each finding its trigger: an ambiguous reading or a conflicting
+   rule. Name the requirement or written rule it breaks. A finding with
+   no nameable trigger or no broken requirement is optional. Mark it
+   unverified.
+   Done when every blocking finding names its trigger and the rule it
+   breaks.
+5. Write the verdict. Cap optional findings at five, the ones you have
+   most conviction in.
 6. Call `fail_step` with the verdict on a blocking finding, else
    `complete_step`.
 
@@ -38,11 +42,7 @@ first. No preamble, no narration, no closing summary.
 
 ## Rules
 
-- A blocking finding names two readings and the different behavior each
-  causes.
-- Mark a finding with one reading alone optional, not blocking.
 - Judge the specification without inventing its implementation.
-- Request changes only where a rule cannot be tested as written.
 - Keep each requirement in one authoritative place.
 
 ## Do not tell yourself
@@ -56,5 +56,5 @@ first. No preamble, no narration, no closing summary.
 
 ## Done
 
-Every rule is testable, stated once and inside the goal. Every finding
-names its two readings or its gap, a weight and a location.
+Every changed rule is testable, stated once and inside the goal. Optional
+findings stay at five or fewer.
