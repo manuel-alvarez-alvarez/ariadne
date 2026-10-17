@@ -260,8 +260,11 @@ describe("the example picker", () => {
     async (name, title, kind, input, options, locations) => {
       const user = userEvent.setup()
       renderPanel(ENABLED)
+      // The picker's own fill is what this test proves, so clearing each
+      // field first only has to rule out a value that was already there —
+      // `fireEvent` does that without paying for a real, simulated clear.
       for (const label of ["Title", "Kind", "Input", "Options", "Locations", "Workspace"]) {
-        await user.clear(screen.getByLabelText(label))
+        fireEvent.change(screen.getByLabelText(label), { target: { value: "" } })
       }
 
       await user.click(screen.getByRole("button", { name: "Examples" }))

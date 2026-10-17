@@ -2,9 +2,9 @@
  * The one way a screen introduces itself: no heading of its own any more —
  * the shell's window header already carries the screen's name — just
  * `description` and `actions` handed up to that header through
- * `PageHeaderContext` (`app-shell.tsx`). `actions` portals into the slot the
- * header renders at its end; `description` becomes the tooltip of the
- * header's title.
+ * `PageHeaderContext` (`page-header-context.ts`), which `app-shell.tsx`
+ * provides. `actions` portals into the slot the header renders at its end;
+ * `description` becomes the tooltip of the header's title.
  *
  * `title` stays a required prop even though nothing here reads it: every
  * feature page still passes it, matching the shell's own `handle.title` for
@@ -20,7 +20,7 @@
 import { type ReactNode, useContext, useLayoutEffect } from "react"
 import { createPortal } from "react-dom"
 
-import { PageHeaderContext } from "@/components/app-shell"
+import { PageHeaderContext } from "@/components/page-header-context"
 
 export function PageHeader({
   description,
