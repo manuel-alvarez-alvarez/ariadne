@@ -185,16 +185,25 @@ async fn idle_keeper(h: &Harness, pull_request_id: &str) -> AgentSession {
     found.unwrap()
 }
 
-/// Asking Ariadne to babysit an external request starts a keeper session on
-/// the pin picked, loading `pr-babysit`, in a worktree on a local branch
-/// named after the request — distinct from a reviewer's own, detached
-/// worktree. The author's news, a comment by another login, reaches it
-/// once; its `ready` report is accepted; and the merge ends it, taking its
-/// worktree and its branch down with it. `forge::pulls::role`'s unit matrix
-/// covers the author mapping that selects this request's row role.
+/// Asking Ariadne to babysit a request starts a keeper session on the pin
+/// picked, loading `pr-babysit`, in a worktree on a local branch named after
+/// the request — distinct from a reviewer's own, detached worktree. The
+/// author's news, a comment by another login, reaches it once; its `ready`
+/// report is accepted; and the merge ends it, taking its worktree and branch
+/// down with it, for my own request, Dependabot's and another person's.
+#[tokio::test]
+async fn asking_keeps_a_request_of_mine_by_hand_until_the_merge() {
+    keep_until_merge("me").await;
+}
+
 #[tokio::test]
 async fn asking_keeps_a_dependabot_request_until_the_merge() {
     keep_until_merge("dependabot[bot]").await;
+}
+
+#[tokio::test]
+async fn asking_keeps_another_authors_request_until_the_merge() {
+    keep_until_merge("alice").await;
 }
 
 async fn keep_until_merge(author: &str) {
@@ -240,6 +249,7 @@ async fn keep_until_merge(author: &str) {
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.flush_scheduler().await;
 
+    let before_ask = stub.fetches();
     let asked: Value = h
         .json(
             babysit(
@@ -257,7 +267,7 @@ async fn keep_until_merge(author: &str) {
     let id = asked["id"].as_str().expect("a row").to_string();
     assert_eq!(
         h.store.get_pull_request(&id).await.unwrap().role,
-        "reviewer"
+        if author == "me" { "author" } else { "reviewer" }
     );
 
     let session = idle_keeper(&h, &id).await;
@@ -292,12 +302,15 @@ async fn keep_until_merge(author: &str) {
         "the keeper works on its own branch, not a detached head"
     );
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), head);
-    // A comment by another login is the author's news, told once. The ask
-    // above already woke this same worker: program the news before waking
-    // it again, so its pending round can read the one state this assertion
-    // is about instead of spending a whole round on a state no assertion
-    // reads. If that round has already started, the explicit wake below is
-    // its one following round.
+    // The ask itself wakes a round of its own (`http::pull_requests`'s
+    // babysit handler). Its process may still be reading the old script, so
+    // it must finish before the next script version is published.
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before_ask
+    })
+    .await;
+
+    // A comment by another login is the author's news, told once.
     stub.reprogram(script(&Shown {
         updated_at: "2026-10-02T00:00:00Z",
         checks: "FAILURE",

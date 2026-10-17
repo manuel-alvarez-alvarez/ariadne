@@ -240,6 +240,11 @@ import json, os, sys, threading, time
 
 parent = int(sys.argv[1])
 def parent_alive():
+    # kill(pid, 0) still succeeds for an unreaped zombie. A direct child is
+    # reparented as soon as its parent dies, so getppid detects that state
+    # without requiring anyone else to reap the former parent first.
+    if os.getppid() != parent:
+        return False
     try:
         os.kill(parent, 0)
     except OSError:

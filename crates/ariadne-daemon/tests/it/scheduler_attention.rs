@@ -49,7 +49,7 @@ use ariadne_store::{AgentSession, Goal, NewTaskAgent, SessionFilter, Task};
 
 #[cfg(unix)]
 use common::sh;
-use common::{Harness, eventually, harness, test_pin};
+use common::{Harness, RUNS_OUT, eventually, harness, test_pin};
 
 /// The budget the goal's orchestrator spends: how many attempts starting one is
 /// worth, as the scheduler has it.
@@ -2966,10 +2966,94 @@ async fn keeper_session(h: &Harness, number: i64) -> AgentSession {
     session
 }
 
+/// A reviewer session that wedges after every watchdog relaunch spends its
+/// budget before the scheduler writes its terminal recovery marker. Two
+/// actual restarts are allowed; the third wedge is the terminal decision,
+/// and its summary names the two restarts that were tried.
+#[tokio::test]
+async fn a_reviewer_that_wedges_after_every_relaunch_is_given_up_on() {
+    let h = harness()
+        .timeouts(Timeouts {
+            cancel_grace: RUNS_OUT / 10,
+            ..Timeouts::default()
+        })
+        .await;
+    let session = pull_request_session(&h, 1).await;
+    let pull_request_id = session.pull_request_id.clone().unwrap();
+    let wake = |sched: &UnboundedSender<SchedEvent>| {
+        sched
+            .send(SchedEvent::PullRequestChanged(pull_request_id.clone()))
+            .unwrap();
+    };
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    wake(&sched);
+
+    for relaunch in 1..=2 {
+        h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+        let launched = h.launched_at(&session).await;
+        wake(&sched);
+        eventually(TIMEOUT, &format!("relaunch {relaunch}"), async || {
+            h.relaunched(&session, &launched).await
+        })
+        .await;
+    }
+    assert!(
+        h.store
+            .get_pull_request(&pull_request_id)
+            .await
+            .unwrap()
+            .reviewer_given_up_at
+            .is_none(),
+        "not given up on while a relaunch is still being tried"
+    );
+
+    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    wake(&sched);
+    eventually(
+        TIMEOUT,
+        "the request's reviewer session to be given up on",
+        async || {
+            h.store
+                .get_pull_request(&pull_request_id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(
+        list.items[0].reason,
+        ariadne_api::attention::AttentionCause::Unknown
+    );
+    assert_eq!(
+        list.items[0].target,
+        ariadne_api::attention::AttentionTarget::PullRequest {
+            pull_request_id: pull_request_id.clone()
+        }
+    );
+    let pull_row = h.store.get_pull_request(&pull_request_id).await.unwrap();
+    assert!(
+        pull_row.reviewer_given_up_wedged,
+        "the budget ran out on a relaunch, not a spawn that never started"
+    );
+    assert!(
+        list.items[0]
+            .summary
+            .contains("stopped answering after 2 relaunches"),
+        "{}",
+        list.items[0].summary
+    );
+}
+
 /// A reviewer give-up mark stays put while the reviewer process remains
 /// alive but silent: it is not recovery merely because a later scheduler
-/// pass finds that same process again. The watchdog's terminal write itself
-/// is proven at its source seam in `scheduler::quiet`.
+/// pass finds that same process again. The preceding watchdog-path test
+/// proves the terminal decision; this one proves its persistence.
 #[tokio::test]
 async fn a_silent_reviewer_keeps_its_give_up_attention_across_later_passes() {
     let h = harness().await;

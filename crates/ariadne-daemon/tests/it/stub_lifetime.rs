@@ -62,8 +62,10 @@ async fn a_forge_stub_exits_when_its_parent_is_killed() {
     .await;
     let pid = forge.pid().unwrap();
     process.kill().unwrap();
-    process.wait().unwrap();
+    // Keep the dead parent unreaped while proving the stub notices its
+    // reparenting; kill(pid, 0) alone would call that zombie alive.
     wait_for_exit(pid).await;
+    process.wait().unwrap();
 }
 
 #[tokio::test]
@@ -82,6 +84,8 @@ async fn an_acp_stub_exits_when_its_parent_is_killed() {
     .await;
     let pid = stub.pid().unwrap();
     process.kill().unwrap();
-    process.wait().unwrap();
+    // Keep the dead parent unreaped while proving the stub notices its
+    // reparenting; kill(pid, 0) alone would call that zombie alive.
     wait_for_exit(pid).await;
+    process.wait().unwrap();
 }

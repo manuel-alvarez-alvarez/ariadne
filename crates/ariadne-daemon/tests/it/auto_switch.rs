@@ -256,6 +256,34 @@ async fn a_codex_exhaustion_switches_to_another_agent_at_the_same_rank() {
     assert_eq!(error["error"]["exhausted_reason"], "usageLimitExceeded");
 }
 
+/// A successful ACP prompt response may carry the JetBrains limit metadata
+/// too. It becomes the same exhausted session error as an RPC error, so the
+/// successor selection must take over from this response path as well.
+#[tokio::test]
+async fn a_prompt_response_with_limit_metadata_switches_to_another_agent() {
+    let response = world_with_prompt(
+        json!({"meta": {
+            "jetbrains": {"air": {"sessionFailure": {"category": "limit"}}}
+        }}),
+        true,
+        &["other"],
+    )
+    .await;
+    rank(
+        &response.h,
+        &[
+            ("codex:old", ModelRank::Fast),
+            ("other:old-model", ModelRank::Fast),
+        ],
+    )
+    .await;
+    wake(&response).await;
+    assert_eq!(
+        successor(&response.h, &response.agent).await.model,
+        "other:old-model"
+    );
+}
+
 #[tokio::test]
 async fn a_plain_error_does_not_switch() {
     let plain = world(

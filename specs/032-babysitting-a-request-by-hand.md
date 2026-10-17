@@ -166,11 +166,14 @@ reads behind them ([026](026-pull-requests.md)).
 
 ## Acceptance criteria
 
-- Dependabot and human-authored requests map to the reviewer role, then a
-  manual ask starts a keeper that receives comments and failing-check news,
-  raises readiness attention once backed by forge evidence, and cleans up
-  on merge: `forge/pulls.rs::tests::an_integrations_author_is_its_author_and_everyone_else_is_a_reviewer`,
-  `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`.
+- A request of Ariadne's maps to the author role; Dependabot's and another
+  person's map to reviewer. A manual ask for each starts a keeper that
+  receives comments and failing-check news, raises readiness attention once
+  backed by forge evidence, and cleans up on merge:
+  `forge/pulls.rs::tests::an_integrations_author_is_its_author_and_everyone_else_is_a_reviewer`,
+  `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`,
+  `::asking_keeps_a_dependabot_request_until_the_merge`,
+  `::asking_keeps_another_authors_request_until_the_merge`.
 - Review and babysitting can coexist on a Dependabot request; stopping
   either preserves the other, and stopping both removes the request row:
   `pull_request_babysit.rs::stopping_review_keeps_a_dependabot_keeper`,

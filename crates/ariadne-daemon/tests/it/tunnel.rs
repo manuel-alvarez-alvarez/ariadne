@@ -1104,6 +1104,15 @@ async fn shutdown_closes_the_tunnel_and_the_listener_while_an_event_stream_holds
             .is_ok_and(|r| r.status().is_success())
     })
     .await;
+    // This daemon is a separate process, so its forge child has `ariadned`
+    // rather than the test as its direct parent. Bind the stub's lifetime to
+    // that process before its first forge call.
+    let daemon_pid = std::fs::read_to_string(&daemon.pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    stub.set_parent_pid(daemon_pid);
     let created = client
         .post(format!("{api}/v1/repositories"))
         .header("Content-Type", "application/json")

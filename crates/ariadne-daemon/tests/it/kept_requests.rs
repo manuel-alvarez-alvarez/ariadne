@@ -2784,6 +2784,12 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
         ..
     } = kept_request_running(quiet_script()).await;
     let failed = json!([{"name": "lint", "html_url": "https://ci.example/1",
+        "conclusion": "failure"}, {"name": "format", "html_url": "https://ci.example/2",
+        "conclusion": "failure"}]);
+    // Lint recovers while another failed check keeps the rolled-up state at
+    // failure. The state itself is news when it changes, so holding it steady
+    // isolates the no-news recovery that must drop lint's told mark.
+    let lint_recovered = json!([{"name": "format", "html_url": "https://ci.example/2",
         "conclusion": "failure"}]);
     let told_lint = || {
         h.prompts_to(&agent)
@@ -2800,12 +2806,22 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
     stub.reprogram(script("OPEN", &[], failed.clone()));
     fetch_again(&h, &stub, &repo).await;
     eventually(TIMEOUT, "the failure to be told", async || told_lint() == 1).await;
+    let before_recovery = h.prompts_to(&agent).len();
+    // The prompt is published while the fetch that found it can still be
+    // reading its remaining forge answers. Finish a same-script round before
+    // changing answers, so no old process can read the recovery as failure.
+    fetch_again(&h, &stub, &repo).await;
 
-    stub.reprogram(quiet_script());
+    stub.reprogram(moved_at(
+        script("OPEN", &[], lint_recovered),
+        "2026-10-02T00:00:00Z",
+    ));
     fetch_again(&h, &stub, &repo).await;
     eventually(TIMEOUT, "the recovered check to be stored", async || {
         let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
-        dto["failed_checks"].as_array().is_some_and(Vec::is_empty)
+        dto["failed_checks"]
+            .as_array()
+            .is_some_and(|checks| checks.len() == 1 && checks[0]["name"] == "format")
     })
     .await;
     // The stored recovery proves the scheduler made no news decision, but
@@ -2813,9 +2829,16 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
     // Nothing else can prove that queue has stayed quiet before the next
     // failure begins, so keep the absence listen here.
     tokio::time::sleep(QUIET).await;
-    let after_recovery = h.prompts_to(&agent).len();
+    assert_eq!(
+        h.prompts_to(&agent).len(),
+        before_recovery,
+        "the recovery itself was no news"
+    );
 
-    stub.reprogram(script("OPEN", &[], failed));
+    stub.reprogram(moved_at(
+        script("OPEN", &[], failed),
+        "2026-10-03T00:00:00Z",
+    ));
     fetch_again(&h, &stub, &repo).await;
     eventually(TIMEOUT, "the second failure to be told", async || {
         told_lint() == 2
@@ -2823,8 +2846,8 @@ async fn a_check_that_recovers_and_fails_again_is_told_again() {
     .await;
     assert_eq!(
         h.prompts_to(&agent).len(),
-        after_recovery + 1,
-        "the recovery itself was no news"
+        before_recovery + 1,
+        "the second failure is exactly one new item of news"
     );
 }
 
