@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, put_json, sh, with_forge,
+    Harness, QUIET, RUNS_OUT, TIMEOUT, as_session, eventually, harness, next_event, put_json, sh,
+    with_forge,
 };
 use ariadne_core::{Seat, SessionStatus};
 use ariadne_daemon::forge::poll::Mode;
@@ -21,11 +22,6 @@ use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::{AgentSession, SessionFilter};
 
 const PIN: &str = "stub:babysit-model";
-
-/// How often the scheduler's full reconcile tick runs, sped up so a dead
-/// launch's own budget runs out within the test's own timeout rather than
-/// the daemon's ordinary five seconds.
-const SWEEPS_SOON: Duration = Duration::from_millis(100);
 
 /// How the stub forge shows one request: its state, the head
 /// repository it lives in, and the comments on its conversation, oldest
@@ -245,6 +241,7 @@ async fn keep_until_merge(author: &str) {
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.flush_scheduler().await;
 
+    let before = stub.fetches();
     let asked: Value = h
         .json(
             babysit(
@@ -297,6 +294,13 @@ async fn keep_until_merge(author: &str) {
         "the keeper works on its own branch, not a detached head"
     );
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), head);
+    // The ask itself wakes a round of its own too
+    // (`http::pull_requests`'s babysit handler): wait for it to finish
+    // before the script changes below.
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before
+    })
+    .await;
 
     // A comment by another login is the author's news, told once.
     stub.reprogram(script(&Shown {
@@ -339,6 +343,7 @@ async fn keep_until_merge(author: &str) {
     // A reply from the keeper follows the keeping agent's own rule (026
     // rule 16): it answers an inline review comment, the thread of a
     // defect, and a comment of the other side in the conversation too.
+    let before = stub.fetches();
     let reply: Value = h
         .json(
             as_session(
@@ -350,8 +355,17 @@ async fn keep_until_merge(author: &str) {
         )
         .await;
     assert_eq!(reply["body"], "Thanks!");
+    // The reply itself wakes a round of its own too
+    // (`http::pull_requests`'s comment-reply handler): wait for it to
+    // finish before the script changes below.
+    eventually(TIMEOUT, "the reply's own fetch to finish", async || {
+        stub.fetches() > before
+    })
+    .await;
 
-    // The keeper reports the request ready, on the head it read.
+    // The keeper reports the request ready, on the head it read. `report`
+    // wakes no fetch of its own, so no further wait is needed before the
+    // merge below.
     let reported: Value = h
         .json(
             as_session(
@@ -513,6 +527,7 @@ async fn a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts()
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.flush_scheduler().await;
 
+    let before_ask = stub.fetches();
     let asked: Value = h
         .json(
             babysit(&repo, 1, json!({"asked": true, "model": PIN})),
@@ -521,6 +536,13 @@ async fn a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts()
         .await;
     let id = asked["id"].as_str().expect("a row").to_string();
     let session = idle_keeper(&h, &id).await;
+    // The ask itself wakes a round of its own too
+    // (`http::pull_requests`'s babysit handler): wait for it to finish
+    // before the script changes below.
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before_ask
+    })
+    .await;
 
     // A comment by another login is the author's news, told once.
     let shown_with_alice = Shown {
@@ -973,9 +995,18 @@ async fn a_merge_that_auto_deletes_the_head_branch_still_cleans_up_published_wor
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path).await;
+    // The repository's own worker starts a fetch of its own the moment it
+    // is created: waited out before anything that wakes it again, since
+    // one still under way would answer its own remaining calls from a
+    // later script instead of this one.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.flush_scheduler().await;
 
+    let before = stub.fetches();
     let asked: Value = h
         .json(
             babysit(&repo, 1, json!({"asked": true, "model": PIN})),
@@ -984,6 +1015,13 @@ async fn a_merge_that_auto_deletes_the_head_branch_still_cleans_up_published_wor
         .await;
     let id = asked["id"].as_str().expect("a row").to_string();
     let session = idle_keeper(&h, &id).await;
+    // The ask itself wakes a round of its own too
+    // (`http::pull_requests`'s babysit handler): wait for it to finish
+    // before the script changes below.
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before
+    })
+    .await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
     let branch = format!("ariadne/keep-{id}");
 
@@ -1033,9 +1071,18 @@ async fn a_branch_whose_source_vanished_before_any_merge_is_preserved() {
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path).await;
+    // The repository's own worker starts a fetch of its own the moment it
+    // is created: waited out before anything that wakes it again, since
+    // one still under way would answer its own remaining calls from a
+    // later script instead of this one.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.flush_scheduler().await;
 
+    let before = stub.fetches();
     let asked: Value = h
         .json(
             babysit(&repo, 1, json!({"asked": true, "model": PIN})),
@@ -1044,6 +1091,13 @@ async fn a_branch_whose_source_vanished_before_any_merge_is_preserved() {
         .await;
     let id = asked["id"].as_str().expect("a row").to_string();
     let session = idle_keeper(&h, &id).await;
+    // The ask itself wakes a round of its own too
+    // (`http::pull_requests`'s babysit handler): wait for it to finish
+    // before the script changes below.
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before
+    })
+    .await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
     let branch = format!("ariadne/keep-{id}");
 
@@ -1240,7 +1294,7 @@ async fn a_keeper_fetches_a_forks_head_through_the_configured_remotes_own_push_u
 async fn a_keeper_whose_agent_dies_the_moment_it_starts_gives_up_after_the_budget() {
     let stub = stub_forge_cli(json!([]));
     let timeouts = Timeouts {
-        full_reconcile: SWEEPS_SOON,
+        full_reconcile: RUNS_OUT,
         dead_launch_patience: Duration::from_secs(300),
         ..Timeouts::default()
     };

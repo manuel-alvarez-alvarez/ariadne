@@ -453,21 +453,28 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
-    let before = stub.fetches();
     stub.reprogram(script(&Shown::open(&first)));
     let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
-    ask_review(&h, &id, &repo, 1, PIN).await;
-    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
-    let session = idle_session(&h, &id).await;
-    // Wait for the repository's own first fetch round to finish: the row,
-    // the evidence and the idle session above all land mid-round, well
-    // before the round's own trailing calls do.
+    // The repository's own automatic fetch must fully finish before the ask
+    // below wakes a round of its own (`http::pull_requests::ask_review`):
+    // capturing the baseline any earlier lets that round's own completion,
+    // not the ask's, satisfy the wait after it.
     eventually(
         TIMEOUT,
         "the repository's first fetch to finish",
-        async || stub.fetches() > before,
+        async || stub.fetches() >= 1,
     )
+    .await;
+    let before = stub.fetches();
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let session = idle_session(&h, &id).await;
+    // Wait for the ask's own fetch round to finish too: the idle session
+    // above lands mid-round, well before the round's own trailing calls do.
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before
+    })
     .await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
     let _: Value = h
@@ -576,21 +583,28 @@ async fn a_push_reaches_an_idle_session_without_a_wait() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, first) = checkout(&h);
-    let before = stub.fetches();
     stub.reprogram(script(&Shown::open(&first)));
     let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
-    ask_review(&h, &id, &repo, 1, PIN).await;
-    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
-    let session = idle_session(&h, &id).await;
-    // Wait for the repository's own first fetch round to finish: the row,
-    // the evidence and the idle session above all land mid-round, well
-    // before the round's own trailing calls do.
+    // The repository's own automatic fetch must fully finish before the ask
+    // below wakes a round of its own (`http::pull_requests::ask_review`):
+    // capturing the baseline any earlier lets that round's own completion,
+    // not the ask's, satisfy the wait after it.
     eventually(
         TIMEOUT,
         "the repository's first fetch to finish",
-        async || stub.fetches() > before,
+        async || stub.fetches() >= 1,
     )
+    .await;
+    let before = stub.fetches();
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let session = idle_session(&h, &id).await;
+    // Wait for the ask's own fetch round to finish too: the idle session
+    // above lands mid-round, well before the round's own trailing calls do.
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before
+    })
     .await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
     let briefed = h.prompts_to(&session).len();
@@ -1044,22 +1058,29 @@ async fn the_review_ends_when_the_request_shows(shown: impl Fn(&str) -> Shown<'_
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
-    let before = stub.fetches();
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
-    ask_review(&h, &id, &repo, 1, PIN).await;
-    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
-    let session = idle_session(&h, &id).await;
-    // Wait for the repository's own first fetch round to finish before
-    // reprogramming for the new state: the row, the evidence and the idle
-    // session above all land mid-round, well before the round's own
-    // trailing calls do.
+    // The repository's own automatic fetch must fully finish before the ask
+    // below wakes a round of its own (`http::pull_requests::ask_review`):
+    // capturing the baseline any earlier lets that round's own completion,
+    // not the ask's, satisfy the wait after it.
     eventually(
         TIMEOUT,
         "the repository's first fetch to finish",
-        async || stub.fetches() > before,
+        async || stub.fetches() >= 1,
     )
+    .await;
+    let before = stub.fetches();
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let session = idle_session(&h, &id).await;
+    // Wait for the ask's own fetch round to finish too, before reprogramming
+    // for the new state below: the idle session above lands mid-round, well
+    // before the round's own trailing calls do.
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before
+    })
     .await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
 
@@ -1217,22 +1238,29 @@ async fn reviewed() -> Reviewed {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
-    let before = stub.fetches();
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path).await;
     let id = the_request(&h).await;
-    ask_review(&h, &id, &repo, 1, PIN).await;
-    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
-    let session = idle_session(&h, &id).await;
-    // Wait for the repository's own first fetch round to finish: every
-    // caller of `reviewed()` reprograms the stub right away, and the row,
-    // the evidence and the idle session above all land mid-round, well
-    // before the round's own trailing calls do.
+    // The repository's own automatic fetch must fully finish before the ask
+    // below wakes a round of its own (`http::pull_requests::ask_review`):
+    // capturing the baseline any earlier lets that round's own completion,
+    // not the ask's, satisfy the wait after it.
     eventually(
         TIMEOUT,
         "the repository's first fetch to finish",
-        async || stub.fetches() > before,
+        async || stub.fetches() >= 1,
     )
+    .await;
+    let before = stub.fetches();
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let session = idle_session(&h, &id).await;
+    // Wait for the ask's own fetch round to finish too: every caller of
+    // `reviewed()` reprograms the stub right away, and the idle session
+    // above lands mid-round, well before the round's own trailing calls do.
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before
+    })
     .await;
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
     let _: Vec<Value> = h

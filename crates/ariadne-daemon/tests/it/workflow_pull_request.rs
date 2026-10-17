@@ -227,6 +227,14 @@ async fn request_column(hold_news: bool, deploy_after: bool) -> RequestColumn {
         h.session_status(&agent).await == SessionStatus::Idle
     })
     .await;
+    // The repository's own automatic fetch, started the moment it was
+    // created, must be fully over before any caller of this fixture
+    // reprograms the stub: opening the request wakes no fetch of its own,
+    // so this first round is the only one that can still be straggling.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        forge.fetches() >= 1
+    })
+    .await;
     RequestColumn {
         h,
         forge,
@@ -328,6 +336,7 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
         std::slice::from_ref(&comment),
         std::slice::from_ref(&failed),
     ));
+    let before_first_wake = forge.fetches();
     h.state.forge_poll.wake(&task.repo_id);
     eventually(
         TIMEOUT,
@@ -342,6 +351,15 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
             })
         },
     )
+    .await;
+    // The news above lands mid-round, well before the round's own trailing
+    // calls do: wait for the round itself to finish before taking the
+    // baseline for the second wake below, or that baseline could still be
+    // mid-round too, letting this round's own completion, not the second
+    // wake's, satisfy the wait after it.
+    eventually(TIMEOUT, "the first wake's fetch to finish", async || {
+        forge.fetches() > before_first_wake
+    })
     .await;
     let told = h.prompts_to(agent).len();
     let before_second_wake = forge.fetches();
@@ -358,6 +376,7 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
     // the reply below posts directly, as it did before that rule existed.
     let repository = h.store.get_repository(&task.repo_id).await.unwrap();
     h.set_supervise_posts(&repository, false).await;
+    let before_reply = forge.fetches();
     let reply: Value = h
         .json(
             as_session(
@@ -374,6 +393,13 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
             .iter()
             .any(|arg| arg.ends_with("/comments/101/replies"))
     }));
+    // The reply itself wakes a round of its own too
+    // (`http::pull_requests`'s comment-reply handler): wait for it to
+    // finish before the script changes for the merge below.
+    eventually(TIMEOUT, "the reply's own fetch to finish", async || {
+        forge.fetches() > before_reply
+    })
+    .await;
     let report = |ready| {
         as_session(
             &format!("/v1/pull-requests/{id}/report"),
