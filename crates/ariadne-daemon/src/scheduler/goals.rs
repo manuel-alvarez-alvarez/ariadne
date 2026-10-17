@@ -432,7 +432,18 @@ impl super::Scheduler {
                 failed_tasks.push((task.id.clone(), transition_id));
             }
         }
-        let confirmed: Vec<(String, String)> = goal
+        // Read fresh rather than trusted off `goal`: `reconcile_goal` fetched
+        // that copy before `keep_orchestrator`, `deliver_goal_messages` and
+        // `list_tasks` each gave this pass's own turn to run on — long
+        // enough, under load, for the very turn a failure was last handed to
+        // land its confirmation and go idle again before this pass reaches
+        // here. Answering "not confirmed yet" from the stale copy, this pass
+        // would then find that now-idle session below and hand the same,
+        // already-confirmed failure off a second time.
+        let confirmed: Vec<(String, String)> = self
+            .store
+            .get_goal(&goal.id)
+            .await?
             .orchestrator_answered_failed_task_ids
             .as_deref()
             .and_then(|json| serde_json::from_str(json).ok())

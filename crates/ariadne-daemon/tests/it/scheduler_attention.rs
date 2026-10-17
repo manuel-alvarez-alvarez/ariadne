@@ -2354,18 +2354,23 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
     let woken = w.prompted(&orchestrator);
     assert!(woken.contains(&w.task.title), "{woken}");
     assert!(woken.contains("`list_tasks`"), "{woken}");
+    assert_eq!(
+        woken.matches("`list_tasks`").count(),
+        1,
+        "exactly one delivery, the moment the orchestrator could hear it"
+    );
 
     // Every pass after it says the same thing, so nothing is said again.
     // Flushed after each send, so every pass is known reconciled before the
-    // next one is sent, rather than guessed from a wait between them.
-    let said = w.prompted(&orchestrator).matches("`list_tasks`").count();
+    // count below is read, rather than counted against a baseline an
+    // `eventually` loop could have already doubled before this point.
     for _ in 0..3 {
         sched.goal(&w.goal);
         sched.flush().await;
     }
     assert_eq!(
         w.prompted(&orchestrator).matches("`list_tasks`").count(),
-        said,
+        1,
         "the orchestrator was woken again for the same situation"
     );
 }
@@ -3595,7 +3600,10 @@ async fn a_reviewer_session_refuses_to_restart_on_a_head_branch_that_turned_inva
         .await
         .unwrap();
     h.store.mark_session_launched(&session.id).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(5)).await;
+    // Backdated rather than slept past: `heard_from` needs `last_activity_at`
+    // strictly later than `launched_at`, and a real sleep is not the only way
+    // to put the launch stamp behind it.
+    h.backdate(&["launched_at"], &session, 1).await;
     h.store.touch_session(&session.id).await.unwrap();
     h.store
         .set_session_status(&session.id, SessionStatus::Exited)
@@ -3683,4 +3691,96 @@ async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_i
     );
     assert_eq!(h.launched_at(&idle).await, idle_launched, "nor relaunched");
     assert_eq!(h.attention(&idle).await, None, "nor flagged stalled");
+}
+
+/// `reconcile_goal` fetches the goal once, at the top, and carries that copy
+/// through `keep_orchestrator`, `deliver_goal_messages` and `list_tasks`
+/// before `tell_orchestrator` ever reads it: a pass that started before a
+/// failure's turn confirmed, and only reaches that read afterward, used to
+/// answer from the stale copy — "not confirmed yet" — and find the now-idle
+/// session below it, handing the same, already-confirmed failure off a
+/// second time.
+///
+/// Forced rather than hoped for: the first turn is held open on a gate so
+/// its confirmation lands exactly when the gate is released, and the goal
+/// carries three hundred other failed tasks (seeded concurrently, so the
+/// setup itself stays quick) so this pass's own `latest_transition_to`
+/// loop — between the goal fetch and the confirmation read — takes long
+/// enough to still be running when it does.
+#[tokio::test]
+async fn a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure() {
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: NO_TICK,
+            ..Timeouts::default()
+        })
+        .await;
+    let w = World::build(h).await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some("the crate the task names was deleted upstream"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    futures_util::future::join_all((0..300).map(|i| {
+        let w = &w;
+        async move {
+            let extra = w.extra_task(&format!("padding {i}")).await;
+            w.advance(&extra, TaskStatus::InProgress).await;
+            w.store
+                .transition_task(&extra.id, TaskStatus::Failed, Actor::Agent, None, None)
+                .await
+                .unwrap();
+        }
+    }))
+    .await;
+
+    // The orchestrator's next turn is held open until the gate file exists,
+    // so its confirmation (`acp::prompt_once`) lands at a moment this test
+    // chooses rather than whenever the stub happens to answer.
+    let gate = w.dir.path().join("stale-goal-gate");
+    let mut script = common::acp::script();
+    script["prompts"] = serde_json::json!([{
+        "wait_for": gate.display().to_string(),
+        "updates": [],
+        "stop_reason": "end_turn",
+    }]);
+    w.agent.reprogram(script);
+
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the failure",
+        async || w.prompted(&orchestrator).contains(&w.task.title),
+    )
+    .await;
+
+    // Released and asked again in the same breath: the second pass's own
+    // goal fetch races the first turn's confirmation, which the three
+    // hundred other failed tasks give it every chance to lose.
+    std::fs::write(&gate, "go").unwrap();
+    sched.goal(&w.goal);
+    sched.flush().await;
+    eventually(
+        TIMEOUT,
+        "every turn either pass could have started to settle",
+        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+    )
+    .await;
+
+    assert_eq!(
+        w.prompts_to(&orchestrator).len(),
+        1,
+        "exactly one delivery of an already-confirmed failure"
+    );
 }

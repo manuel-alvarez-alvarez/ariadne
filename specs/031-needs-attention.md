@@ -175,7 +175,18 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
      `Goal::orchestrator_answered_failed_task_ids` — so an unconfirmed or
      abandoned delivery is retried on every later pass, through the
      session's next automatic resume, until a turn actually completes and
-     confirms it. A goal not `orchestrated`, or not `planning` or
+     confirms it. That list is read fresh every time `tell_orchestrator`
+     checks it, never off the `Goal` row `reconcile_goal` fetched at the
+     top of its own pass: that copy predates `keep_orchestrator`,
+     `deliver_goal_messages` and `list_tasks`, each an await long enough,
+     under load, for the very turn a failure was last handed to land its
+     confirmation in the meantime. A pass that answered from the stale
+     copy there would read "not confirmed yet", find the now-idle session
+     its own, separately fresh, read of `live_sessions` turns up right
+     after, and hand the same, already-confirmed failure off a second
+     time
+     (`scheduler_attention.rs::a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure`).
+     A goal not `orchestrated`, or not `planning` or
      `active` any more, answers `true` outright — nothing automatic is
      ever coming either way. Otherwise the goal's own give-up mark is
      read: `Goal::orchestrator_given_up_at`, stamped by
@@ -714,6 +725,14 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   and confirmed once the replacement's own turn actually ends, proven end
   to end through the real scheduler rather than a hand-written store poke
   (`attention.rs::a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacement_answers`).
+  A pass whose own goal fetch predates a failure's confirmation, and only
+  reaches the persisted confirmed list afterward, reads that list fresh
+  rather than the stale copy it started with, so it does not hand the
+  same, already-confirmed failure off a second time — forced by holding
+  the confirming turn open on a gate and giving the pass three hundred
+  other failed tasks to still be reading through when the gate is
+  released
+  (`scheduler_attention.rs::a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure`).
   An orchestrated goal with no orchestrator session yet — awaiting its
   first launch — raises nothing either, the same grace a dead one
   gets
