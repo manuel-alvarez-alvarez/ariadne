@@ -1,23 +1,21 @@
 # Terminal demo of the `ariadne` CLI, recorded with https://github.com/charmbracelet/vhs.
 #
-# Regenerate:
+# Regenerate with assets/record-demo-cli.sh, never by calling vhs on this
+# file directly: that script builds the release binary, creates the
+# throwaway daemon this tape types against (never the real ~/.ariadne home),
+# runs vhs over this file, and removes the daemon and its scratch
+# repository when the recording ends or the script is interrupted.
 #
-#   vhs assets/demo.tape
+#   bash assets/record-demo-cli.sh
 #
-# Needs, before running:
-#
-#   - `cargo build --release`, so target/release/ariadne is the CLI it types
-#   - a throwaway daemon, never the real ~/.ariadne home, with its REST API
-#     on a loopback port — the hidden setup inside the tape seeds the goal's
-#     tasks over it, the same way assets/record-demo-ui.mjs does:
-#       rm -rf /tmp/ariadne-demo-home /tmp/ariadne-demo-repo
-#       mkdir -p /tmp/ariadne-demo-home /tmp/ariadne-demo-repo
-#       git -C /tmp/ariadne-demo-repo init -q -b main
-#       bash assets/seed-demo-repo.sh /tmp/ariadne-demo-repo
-#       printf 'tcp_listen = "127.0.0.1:18765"\n' > /tmp/ariadne-demo-home/config.toml
-#       ARIADNE_HOME=/tmp/ariadne-demo-home target/release/ariadne daemon start
-#   - stop it after with the pid `daemon start` printed, never by pattern:
-#       ARIADNE_HOME=/tmp/ariadne-demo-home target/release/ariadne daemon stop
+# Expects, already set up by that script when this tape runs:
+#   - target/release/ariadne on PATH
+#   - ARIADNE_HOME=/tmp/ariadne-demo-home, a daemon already running on it,
+#     with its REST API on 127.0.0.1:18765 (tcp_listen) — the hidden setup
+#     below seeds the goal's tasks over it, the same way
+#     assets/record-demo-ui.mjs does
+#   - /tmp/ariadne-demo-repo, a git repository seeded with
+#     assets/seed-demo-repo.sh
 
 Output assets/demo.gif
 
