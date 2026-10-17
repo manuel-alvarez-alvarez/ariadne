@@ -592,7 +592,7 @@ impl AriadneMcp {
         json_result(serde_json::Value::Array(
             skills
                 .into_iter()
-                .filter(|skill| skill.seat == SkillSeat::Task && !skill.document.is_empty())
+                .filter(|skill| skill.seat == SkillSeat::Task && !skill.document.trim().is_empty())
                 .map(|skill| serde_json::json!({"name": skill.name, "summary": skill.summary}))
                 .collect(),
         ))
@@ -1728,12 +1728,16 @@ mod tests {
     /// `pull-request` left the catalog (017), so an old staffing on it reads
     /// as a row with no document (017 rule 7): the catalog leaves it out
     /// rather than staff a fresh agent on an empty document, while a skill
-    /// that still has one, shipped or written, still lists.
+    /// that still has one, shipped or written, still lists. A document of
+    /// blank space only reads the same as no document: `create_skill` and
+    /// `set_skill_document` take it, so the catalog, not the store, is what
+    /// keeps a new agent from staffing on it.
     #[tokio::test]
     async fn the_skill_catalog_excludes_a_skill_with_no_document() {
         let (endpoint, _seen) = recording_daemon_answering(
             r#"[
                 {"name":"pull-request","seat":"task","summary":"pull-request","document":"","document_is_default":false,"builtin":true,"created_at":"","updated_at":""},
+                {"name":"blank","seat":"task","summary":"blank","document":"   \n","document_is_default":false,"builtin":false,"created_at":"","updated_at":""},
                 {"name":"coding","seat":"task","summary":"Write code.","document":"Coding\n\nThe whole document of the skill.","document_is_default":true,"builtin":true,"created_at":"","updated_at":""},
                 {"name":"api-design","seat":"task","summary":"Design the API.","document":"API Design\n\nThe whole document a user wrote for it.","document_is_default":false,"builtin":false,"created_at":"","updated_at":""}
             ]"#,
@@ -1756,8 +1760,8 @@ mod tests {
                 serde_json::json!({"name": "coding", "summary": "Write code."}),
                 serde_json::json!({"name": "api-design", "summary": "Design the API."}),
             ],
-            "a skill with no document is left out; one with a shipped document and one \
-             with a written document of its own both still list"
+            "a skill with no document, or a blank one, is left out; one with a shipped \
+             document and one with a written document of its own both still list"
         );
     }
 

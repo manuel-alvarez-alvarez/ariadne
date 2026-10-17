@@ -160,11 +160,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    is what the agent staffed on the skill reads; an orchestrator choosing
    between skills reads the line. The orchestrator's own skill and the review
    session's stay available through the API and CLI, but are not a task
-   staffing choice. It also leaves out a skill with no document, shipped or
-   written: a dropped skill's row stays for the old staffing that still
-   names it (017 rule 7) and reads as empty, and the catalog never offers it
-   as a fresh choice. A skill with a document, shipped or written, still
-   lists.
+   staffing choice. It also leaves out a skill with no document, shipped,
+   written, or blank space only: a dropped skill's row stays for the old
+   staffing that still names it (017 rule 7) and reads as empty, and the
+   catalog never offers it as a fresh choice. A skill with a document,
+   shipped or written, still lists.
 10. `read_messages` reads an inbox, not a transcript: a default read takes
     delivery of what is addressed to this session's own agent, and `all`
     reads the whole thread instead (018). The channel is the session's task,
@@ -280,8 +280,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - The skill catalog excludes orchestrator-only skills, and gives a name and a
   summary per skill and nothing else
   (`tools.rs::the_skill_catalog_excludes_orchestrator_only_skills`). It also
-  excludes a skill with no document, shipped or written, while a skill with
-  one still lists
+  excludes a skill with no document, shipped or written, or one of blank
+  space only, while a skill with a real one still lists
   (`tools.rs::the_skill_catalog_excludes_a_skill_with_no_document`).
 - Every refusal a tool builds, and every result string it writes in place
   of the daemon's own JSON, is Simplified Technical English

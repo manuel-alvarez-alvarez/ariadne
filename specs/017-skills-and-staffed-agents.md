@@ -130,9 +130,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
     keeper session on a request asked for by hand (032). The store refuses
     a task agent staffed on `orchestration` or `pr-reviewer`, and
     `list_skills` lists neither (013). Nor does it list a skill with no
-    document, shipped or written: a dropped skill such as `pull-request`
-    (rule 7) keeps its row for an old staffing, but the catalog never
-    offers that row as a fresh choice (013). The launcher loads the
+    document, shipped or written, or one of blank space only: a dropped
+    skill such as `pull-request` (rule 7) keeps its row for an old staffing,
+    but the catalog never offers that row as a fresh choice (013). The launcher loads the
     orchestrator's skill from the store for every orchestrator session —
     indexed, and reached through the run
     directory's link the way a task agent's skills are (006, 007) — so an
