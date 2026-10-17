@@ -27,7 +27,8 @@ use ariadne_daemon::attention::work_is_active;
 use ariadne_store::{NewTask, NewTaskAgent};
 
 use common::{
-    Cast, Harness, as_session, eventually, harness, patch_json, post_json, put_json, test_pin,
+    Cast, Harness, QUIET, as_session, eventually, harness, patch_json, post_json, put_json,
+    test_pin,
 };
 
 /// How long a test waits for the scheduler to come round to what it was told.
@@ -411,11 +412,15 @@ async fn a_scheduler_pass_keeps_the_orchestrator_of_an_active_goal_and_types_not
     .await;
 
     // Flushed rather than timed, so each pass is proven reconciled before
-    // the next notify, not merely guessed to have had enough time.
+    // the next notify, not merely guessed to have had enough time. The
+    // flush proves only the scheduler's own decision; a decision to prompt
+    // still drains through the ACP queue behind it, so the prompts_to
+    // assertion below keeps its own quiet listen on top of the loop.
     for _ in 0..3 {
         h.notify_goal(&cast.goal.id);
         h.flush_scheduler().await;
     }
+    tokio::time::sleep(QUIET).await;
 
     assert!(
         h.agent_is_running(&orchestrator),

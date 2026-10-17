@@ -1228,7 +1228,16 @@ async fn an_exhausted_session_already_switched_raises_no_quota_item() {
 #[tokio::test]
 async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it_is_still_running()
 {
-    let h = harness().scheduler().await;
+    // The orchestrator's launch waits on the periodic full reconcile: the
+    // status write below, straight through the store, wakes the scheduler
+    // about nothing in particular.
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .scheduler()
+        .await;
     let gate = h.dir.path().join("goal-attention-turn");
     let mut script = crate::common::acp::script();
     script["prompts"]
@@ -1457,7 +1466,16 @@ async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacem
 /// delivery that completed, not from the session's ambient status.
 #[tokio::test]
 async fn an_unrelated_turn_confirms_nothing_it_never_carried() {
-    let h = harness().scheduler().await;
+    // The orchestrator's launch waits on the periodic full reconcile: the
+    // status write below, straight through the store, wakes the scheduler
+    // about nothing in particular.
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .scheduler()
+        .await;
     let cast = h.cast().await;
     h.store
         .set_goal_status(&cast.goal.id, ariadne_core::GoalStatus::Active)

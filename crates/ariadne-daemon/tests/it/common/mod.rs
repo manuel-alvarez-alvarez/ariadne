@@ -538,17 +538,29 @@ impl HarnessBuilder {
 /// harness to migrate and seed itself.
 ///
 /// Built once and cached under the machine's temp directory, keyed by the
-/// binary's own path — a new build of the test binary gets a fresh template,
-/// and an old one left over from a previous build is never read by a binary
-/// whose migrations may have moved on. Nextest runs every test in a process
-/// of its own, so caching in-process buys nothing; this is the same
-/// write-aside-then-rename idiom as [`shared_script`], so two tests racing to
-/// build it the first time never hand a third a half-written file.
+/// test binary's own path, size and modified time — not the path alone,
+/// which a rebuild can leave unchanged (cargo names a test binary after its
+/// unit's metadata, not its content, so an edit that does not change that
+/// metadata reuses the old path with new bytes). A cache a rebuild cannot
+/// invalidate would read stale migrations.
+///
+/// One process builds it; every other one blocks on the same exclusive
+/// `flock` and finds it already there once it gets the lock itself. A
+/// builder that dies mid-build drops the lock when its file descriptor
+/// closes, which the kernel guarantees happens however the process ends —
+/// so a crash hands the lock on to the next waiter rather than wedging it
+/// forever behind a claim nothing will ever finish. The lock wait is itself
+/// bounded by [`TIMEOUT`], so a build that is merely slow still surfaces as
+/// a named failure rather than an unexplained hang.
 async fn template_db() -> PathBuf {
     use std::hash::{Hash, Hasher};
 
+    let exe = std::env::current_exe().unwrap();
+    let exe_meta = std::fs::metadata(&exe).unwrap();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::env::current_exe().unwrap().hash(&mut hasher);
+    exe.hash(&mut hasher);
+    exe_meta.len().hash(&mut hasher);
+    exe_meta.modified().unwrap().hash(&mut hasher);
     let dir = std::env::temp_dir().join("ariadne-test-store-template");
     std::fs::create_dir_all(&dir).unwrap();
     let key = format!("{:016x}", hasher.finish());
@@ -556,34 +568,41 @@ async fn template_db() -> PathBuf {
     if path.exists() {
         return path;
     }
-    // `create_new` claims the build for exactly one of the many processes
-    // that can all reach this line within the same instant: every other
-    // one waits for the file the claimant renames into place, rather than
-    // each paying for a redundant migrate-and-seed of its own.
-    let claim = dir.join(format!("{key}.claim"));
-    match std::fs::OpenOptions::new()
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
         .write(true)
-        .create_new(true)
-        .open(&claim)
-    {
-        Ok(_) => {
-            let partial = dir.join(format!("{key}.{}.db", std::process::id()));
-            {
-                let store = Store::open(&partial).await.unwrap();
-                store.checkpoint().await.unwrap();
-            }
-            std::fs::rename(&partial, &path).unwrap();
+        .open(dir.join(format!("{key}.lock")))
+        .unwrap();
+    let lock_file = tokio::time::timeout(
+        TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            rustix::fs::flock(&lock_file, rustix::fs::FlockOperation::LockExclusive).unwrap();
+            lock_file
+        }),
+    )
+    .await
+    .expect("timed out waiting for another process's template database build")
+    .unwrap();
+    if !path.exists() {
+        // Built aside and renamed, even under the lock: a reader that
+        // raced the lock itself and lost only ever sees `path` once it is
+        // the finished database, never a build the holder died in the
+        // middle of — `rename` is the one step that cannot leave a half
+        // state for `path.exists()` above to find on the next call.
+        let partial = dir.join(format!("{key}.{}.db", std::process::id()));
+        {
+            let store = Store::open(&partial).await.unwrap();
+            store.checkpoint().await.unwrap();
         }
-        Err(_) => {
-            // A process bootstrap wait, not a test assertion: polled by
-            // hand rather than through `eventually` below, which a closure
-            // borrowing `path` here sends into a Send-inference failure
-            // where `HarnessBuilder::into_future` boxes this function.
-            while !path.exists() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        }
+        std::fs::rename(&partial, &path).unwrap();
+        // The checkpoint above empties these rather than removing them;
+        // `rename` only takes the main file, so the sidecars under the
+        // partial's own name are cleaned up by hand.
+        let _ = std::fs::remove_file(partial.with_extension("db-wal"));
+        let _ = std::fs::remove_file(partial.with_extension("db-shm"));
     }
+    drop(lock_file);
     path
 }
 

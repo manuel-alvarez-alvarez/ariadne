@@ -656,9 +656,9 @@ async fn a_test_request_with_locations_derives_what_the_live_request_does() {
     );
 }
 
-/// A `kev.serve` that records its pid, loads for as long as its second
-/// argument says, reports the device its environment chose, and then allows
-/// every request with the calibrated danger 0.05.
+/// A `kev.serve` that records its pid, loads until its own test releases
+/// the gate its third argument names, reports the device its environment
+/// chose, and then allows every request with the calibrated danger 0.05.
 const SLOW_SERVER: &str = r#"#!/usr/bin/env python3
 import http.server, json, os, socketserver, subprocess, sys, threading, time
 parent = int(sys.argv[1])
@@ -676,7 +676,9 @@ if not parent_alive():
     os._exit(0)
 with open(sys.argv[2], 'w') as f:
     f.write(str(os.getpid()) + '\n')
-time.sleep(float(sys.argv[3]))
+gate = sys.argv[3]
+while not os.path.exists(gate):
+    time.sleep(0.05)
 args = sys.argv[4:]
 host = args[args.index('--host') + 1]
 port = int(args[args.index('--port') + 1])
@@ -711,14 +713,16 @@ Server((host, port), Handler).serve_forever()
 async fn a_request_made_while_the_server_loads_waits_for_it() {
     let release = ModelServer::hanging().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    // Long enough that the harness build and the agent's launch, both well
-    // under this even under load, land their decision request before the
-    // stand-in answers health, so the request genuinely catches it loading.
+    // A path that does not exist until this test writes it: the stand-in
+    // polls for it rather than sleeping a guessed delay, so the None
+    // assertion below is never a race against how long loading takes.
+    let gate_dir = tempfile::tempdir().unwrap();
+    let gate = gate_dir.path().join("release-server");
     let command = vec![
         shared_script(SLOW_SERVER).display().to_string(),
         std::process::id().to_string(),
         record.path().display().to_string(),
-        (RUNS_OUT * 3).as_secs_f64().to_string(),
+        gate.display().to_string(),
     ];
     let (h, cast, _agent_dir) = ai_permissions_harness_on(
         |builder| builder.ai_permissions_serve_command(command),
@@ -739,6 +743,9 @@ async fn a_request_made_while_the_server_loads_waits_for_it() {
     );
 
     let session = h.start_agent(&cast.task, "develop").await;
+    // Only now does the stand-in finish loading: the decision the launch
+    // above triggers has already found the server not yet live.
+    std::fs::write(&gate, "").unwrap();
     eventually(TIMEOUT, "the AI-allowed turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })

@@ -185,12 +185,15 @@ that stub, so the suite needs no coding-agent CLI installed. A machine missing
 `git` or `python3` gets failures rather than a quiet pass.
 
 A harness's store starts from a template rather than a fresh migration: the
-first harness of the binary's own process to build one migrates and seeds a
-database into the machine's temp directory, keyed by the test binary's own
-path (so a rebuild never reads a stale template), and copies it for every
-harness after. The same write-aside-then-rename idiom as the shared stub
-executable above, since nextest runs every test in a process of its own and
-two of them can race to build the template first.
+first harness to build one migrates and seeds a database into the machine's
+temp directory, keyed by the test binary's own path, size and modified time
+— not the path alone, which cargo can leave unchanged across a rebuild whose
+content differs — and copies it for every harness after. Nextest runs every
+test in a process of its own, so an exclusive `flock` on a lock file beside
+the template, not an in-process cache, keeps every other process racing to
+build the same template waiting on the one that gets there first; a holder
+that dies mid-build drops the lock with its own process, so the next waiter
+rebuilds rather than waiting forever on a claim nothing will ever finish.
 
 `[profile.dev]` in the root `Cargo.toml` keeps line tables for workspace code
 and no debug information for dependencies; change it only in a separate branch.

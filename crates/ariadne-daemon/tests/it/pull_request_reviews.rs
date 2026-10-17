@@ -9,7 +9,7 @@ use axum::http::{Request, StatusCode};
 use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
-use crate::common::{Harness, TIMEOUT, as_session, eventually, harness, post_json, sh};
+use crate::common::{Harness, QUIET, TIMEOUT, as_session, eventually, harness, post_json, sh};
 use ariadne_api::SESSION_HEADER;
 use ariadne_core::SessionStatus;
 use ariadne_daemon::forge::poll::Mode;
@@ -517,9 +517,12 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     );
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), second);
 
-    // `fetch_again`'s own flush already proves the completed fetch sent no
-    // duplicate news for this head: nothing further to wait on here.
+    // `fetch_again`'s own flush proves the fetch's own reconciliation ran;
+    // it does not prove a prompt that pass queued has reached the agent,
+    // since that drains on a task of its own behind the scheduler. Prove
+    // that the completed fetch sends no duplicate news for this head.
     fetch_again(&h, &stub, &repo).await;
+    tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&session).len(),
         briefed + 1,
@@ -568,12 +571,14 @@ async fn a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_new
     // No fetch wait needed here: both edited entries are per-row reads round
     // one's own `details()` already consumed before the idle session above.
     stub.reprogram(pending_script);
-    // `fetch_again`'s own flush already proves the quiet, not merely that
-    // nothing has arrived yet.
     fetch_again(&h, &stub, &repo).await;
 
     let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
     assert!(comments.is_empty(), "{comments:?}");
+    // Prove the quiet, not merely that nothing has arrived yet: the flush
+    // inside `fetch_again` only proves the fetch's own pass is reconciled,
+    // not that a prompt it queued has reached the agent.
+    tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&session).len(),
         briefed,

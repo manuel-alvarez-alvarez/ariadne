@@ -385,9 +385,12 @@ async fn the_news_of_its_request_reaches_the_pr_agent_once() {
         stub.fetches() > before
     })
     .await;
-    // Flushed, not merely fetched: the flush already proves the completed
-    // fetch hands no later duplicate news.
+    // The flush above proves the scheduler decided to send nothing more;
+    // it does not prove a decision made just before it already reached the
+    // agent, since the ACP prompt queue drains on its own task behind that
+    // decision. The quiet is still waited out for that last, real step.
     h.flush_scheduler().await;
+    tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&agent).len(),
         briefed + 1,
@@ -469,8 +472,6 @@ async fn a_pending_reviews_comments_give_no_live_view_comment_and_no_news() {
         }
     }
     stub.reprogram(script);
-    // `fetch_again`'s own flush already proves the quiet below, not merely
-    // that nothing has arrived yet.
     fetch_again(&h, &stub, &repo).await;
 
     eventually(
@@ -489,6 +490,11 @@ async fn a_pending_reviews_comments_give_no_live_view_comment_and_no_news() {
         Vec::<Value>::new(),
         "the pending review's own comment and its reply give no live-view comment"
     );
+    // `fetch_again`'s own flush proves the fetch's own reconciliation ran;
+    // it does not prove a prompt that pass queued has reached the agent,
+    // since that drains on a task of its own behind the scheduler. Prove
+    // the quiet, not merely that nothing has arrived yet.
+    tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&agent).len(),
         briefed,

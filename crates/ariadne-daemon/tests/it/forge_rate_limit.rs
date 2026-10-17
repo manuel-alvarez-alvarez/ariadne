@@ -310,10 +310,12 @@ async fn a_past_rate_limit_reset_waits_for_the_poll_interval() {
 #[tokio::test]
 async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once() {
     // Small enough that the whole backoff-doubling-then-capped-then-reset
-    // sequence below stays under a second: every `+ QUIET` margin below is
-    // the real tolerance for scheduling jitter, not `poll` or `cap`
-    // themselves, so shrinking them buys speed without losing that margin.
-    let poll = RUNS_OUT / 4;
+    // sequence below stays well under three seconds. The margins after
+    // `cap` and `poll` below scale with them (`poll / 2`), not a fixed
+    // `QUIET`: a fixed margin this much smaller than the original `poll`
+    // and `cap` would let a doubled-again or a never-reset backoff finish
+    // inside it, passing a test it should fail.
+    let poll = RUNS_OUT * 3 / 4;
     let cap = poll * 2;
     let stub = stub_forge_cli(json!([
         {"args": ["api", "user"], "exit": 0, "stdout": "me"},
@@ -357,7 +359,7 @@ async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once
         {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
          "exit": 0, "stdout": "[]"},
     ]));
-    tokio::time::timeout(cap + QUIET, wait_for_fetches(&stub, 1))
+    tokio::time::timeout(cap + poll / 2, wait_for_fetches(&stub, 1))
         .await
         .expect("the capped timer fetch must complete");
     next_fetch_error_clear(&mut events, &repo.id).await;
@@ -365,7 +367,7 @@ async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once
     // The successful fetch resets the timer to its ordinary interval.
     // Leaving the forge successful makes the next completed fetch prove it
     // did not keep the cap-sized backoff.
-    tokio::time::timeout(poll + QUIET, wait_for_fetches(&stub, 2))
+    tokio::time::timeout(poll + poll / 2, wait_for_fetches(&stub, 2))
         .await
         .expect("the first success must reset the timer backoff");
 

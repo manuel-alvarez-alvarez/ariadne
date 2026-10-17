@@ -343,9 +343,11 @@ async fn keep_until_merge(author: &str) {
 
     // The same comment is told once: a later fetch that reads the same
     // details hands the keeper no second prompt naming it. `fetch_again`'s
-    // own flush already proves any delivery that fetch would have queued
-    // has been reconciled, so nothing further is waited on here.
+    // own flush proves the fetch's reconciliation ran, not that a prompt it
+    // queued has reached the agent, since that drains on a task of its own
+    // behind the scheduler.
     fetch_again(&h, &stub, &repo).await;
+    tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&session).len(),
         told,
