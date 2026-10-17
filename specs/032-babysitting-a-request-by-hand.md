@@ -173,7 +173,8 @@ reads behind them ([026](026-pull-requests.md)).
   `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`.
 - Review and babysitting can coexist on a Dependabot request; stopping
   either preserves the other, and stopping both removes the request row:
-  `pull_request_babysit.rs::a_dependabot_request_can_be_reviewed_and_babysat_independently`.
+  `pull_request_babysit.rs::stopping_review_keeps_a_dependabot_keeper`,
+  `pull_request_babysit.rs::stopping_babysitting_keeps_a_dependabot_reviewer`.
 
 - Asking on a request starts one keeper session, seat `keeper`,
   with `pr-babysit` indexed, its worktree on `ariadne/keep-<id>`; a comment

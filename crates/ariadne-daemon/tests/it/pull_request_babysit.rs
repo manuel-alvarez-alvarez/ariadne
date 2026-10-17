@@ -240,7 +240,6 @@ async fn keep_until_merge(author: &str) {
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
     h.flush_scheduler().await;
 
-    let before = stub.fetches();
     let asked: Value = h
         .json(
             babysit(
@@ -293,15 +292,12 @@ async fn keep_until_merge(author: &str) {
         "the keeper works on its own branch, not a detached head"
     );
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), head);
-    // The ask itself wakes a round of its own too
-    // (`http::pull_requests`'s babysit handler): wait for it to finish
-    // before the script changes below.
-    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
-        stub.fetches() > before
-    })
-    .await;
-
-    // A comment by another login is the author's news, told once.
+    // A comment by another login is the author's news, told once. The ask
+    // above already woke this same worker: program the news before waking
+    // it again, so its pending round can read the one state this assertion
+    // is about instead of spending a whole round on a state no assertion
+    // reads. If that round has already started, the explicit wake below is
+    // its one following round.
     stub.reprogram(script(&Shown {
         updated_at: "2026-10-02T00:00:00Z",
         checks: "FAILURE",
@@ -432,17 +428,28 @@ async fn keep_until_merge(author: &str) {
     .await;
 }
 
-/// Each seat follows its own ask on a PR by another author. Ending one
-/// must preserve the other's session, worktree and request row.
-#[tokio::test]
-async fn a_dependabot_request_can_be_reviewed_and_babysat_independently() {
+/// The two live seats of a Dependabot request, once both asks have made
+/// their own worktree and completed their briefing turn.
+struct BothSeats {
+    h: Harness,
+    _stub: StubForgeCli,
+    repo: String,
+    id: String,
+    keeper: AgentSession,
+    reviewer: AgentSession,
+    review_route: String,
+}
+
+/// Start both manually asked seats on a request whose author maps to the
+/// reviewer role.
+async fn both_seats() -> BothSeats {
     let stub = stub_forge_cli(json!([]));
     let h = harness()
         .timeouts(Timeouts {
             // Both seats are ordinary idle stubs. Their cancellation is the
             // transition under test, so the production grace for an agent
             // that stops answering would only slow its observation.
-            cancel_grace: RUNS_OUT / 10,
+            cancel_grace: RUNS_OUT / 100,
             forge_wake_debounce: RUNS_OUT / 100,
             ..Timeouts::default()
         })
@@ -462,43 +469,89 @@ async fn a_dependabot_request_can_be_reviewed_and_babysat_independently() {
             StatusCode::OK,
         )
         .await;
-    let id = asked["id"].as_str().unwrap();
-    let keeper = idle_keeper(&h, id).await;
+    let id = asked["id"].as_str().unwrap().to_string();
+    let keeper = idle_keeper(&h, &id).await;
     let review_route = format!("/v1/repositories/{repo}/pull-requests/1/ariadne-review");
-    let mut reviewer = None;
-    for stop_review in [true, false] {
-        let _: Value = h
-            .json(
-                put_json(&review_route, json!({"asked": true, "model": PIN})),
-                StatusCode::OK,
-            )
-            .await;
-        eventually(TIMEOUT, "the reviewer beside the keeper", async || {
-            reviewer = sessions(&h, id).await.into_iter().find(|s| {
-                s.seat() == Some(Seat::Reviewer)
-                    && s.status() == SessionStatus::Idle
-                    && s.launched_at.is_some()
-            });
-            reviewer.is_some()
-        })
+    let _: Value = h
+        .json(
+            put_json(&review_route, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
         .await;
-        if stop_review {
-            let _: Value = h
-                .json(
-                    put_json(&review_route, json!({"asked": false})),
-                    StatusCode::OK,
-                )
-                .await;
-            eventually(TIMEOUT, "only the review to stop", async || {
-                !h.session_status(reviewer.as_ref().unwrap()).await.is_live()
-            })
-            .await;
-            h.flush_scheduler().await;
-            assert!(h.session_status(&keeper).await.is_live());
-            assert!(h.store.get_pull_request(id).await.unwrap().babysit_asked);
-        }
+    let mut reviewer = None;
+    eventually(TIMEOUT, "the reviewer beside the keeper", async || {
+        reviewer = sessions(&h, &id).await.into_iter().find(|s| {
+            s.seat() == Some(Seat::Reviewer)
+                && s.status() == SessionStatus::Idle
+                && s.launched_at.is_some()
+        });
+        reviewer.is_some()
+    })
+    .await;
+    BothSeats {
+        h,
+        _stub: stub,
+        repo,
+        id,
+        keeper,
+        reviewer: reviewer.unwrap(),
+        review_route,
     }
-    let reviewer = reviewer.unwrap();
+}
+
+/// Each seat follows its own ask on a PR by another author. Stopping review
+/// keeps the keeper and its row until its own ask stops.
+#[tokio::test]
+async fn stopping_review_keeps_a_dependabot_keeper() {
+    let BothSeats {
+        h,
+        repo,
+        id,
+        keeper,
+        reviewer,
+        review_route,
+        _stub,
+    } = both_seats().await;
+    let _: Value = h
+        .json(
+            put_json(&review_route, json!({"asked": false})),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "only the review to stop", async || {
+        !h.session_status(&reviewer).await.is_live()
+    })
+    .await;
+    h.flush_scheduler().await;
+    assert!(h.session_status(&keeper).await.is_live());
+    assert!(h.store.get_pull_request(&id).await.unwrap().babysit_asked);
+
+    let _: Value = h
+        .json(babysit(&repo, 1, json!({"asked": false})), StatusCode::OK)
+        .await;
+    eventually(
+        TIMEOUT,
+        "the last keeper and its request to end",
+        async || {
+            !h.session_status(&keeper).await.is_live()
+                && h.store.get_pull_request(&id).await.is_err()
+        },
+    )
+    .await;
+}
+
+/// Stopping babysitting keeps the reviewer and its row until review stops.
+#[tokio::test]
+async fn stopping_babysitting_keeps_a_dependabot_reviewer() {
+    let BothSeats {
+        h,
+        repo,
+        id,
+        keeper,
+        reviewer,
+        review_route,
+        _stub,
+    } = both_seats().await;
     let _: Value = h
         .json(babysit(&repo, 1, json!({"asked": false})), StatusCode::OK)
         .await;
@@ -508,7 +561,7 @@ async fn a_dependabot_request_can_be_reviewed_and_babysat_independently() {
     .await;
     h.flush_scheduler().await;
     assert!(h.session_status(&reviewer).await.is_live());
-    assert!(h.store.get_pull_request(id).await.unwrap().review_asked);
+    assert!(h.store.get_pull_request(&id).await.unwrap().review_asked);
     let _: Value = h
         .json(
             put_json(&review_route, json!({"asked": false})),
@@ -520,7 +573,7 @@ async fn a_dependabot_request_can_be_reviewed_and_babysat_independently() {
         "the last session and its request to end",
         async || {
             !h.session_status(&reviewer).await.is_live()
-                && h.store.get_pull_request(id).await.is_err()
+                && h.store.get_pull_request(&id).await.is_err()
         },
     )
     .await;
