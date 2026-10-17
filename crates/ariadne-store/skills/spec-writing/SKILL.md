@@ -1,6 +1,6 @@
 ---
 name: spec-writing
-description: Write a specification - scope, behavior, and the criteria that prove it. Use when a goal has no spec or its criteria are missing.
+description: When a goal has no spec, writes the scope, behavior, and criteria that prove it.
 ---
 
 # Spec writing

@@ -1,11 +1,9 @@
 ---
 name: debugging
-description: Find the cause of a defect with a loop that goes red on the bug. Use when a test fails, a build breaks, or behavior does not match.
+description: For a failing test or broken build, finds the cause with a loop that goes red.
 ---
 
 # Debugging
-
-The feedback loop is the skill.
 
 ## Steps
 
@@ -45,8 +43,6 @@ The feedback loop is the skill.
 - Keep the fix narrow. A refactor hides its risk.
 - A killed hypothesis sends you to the next ranked one. The stop rule ends
   a loop that does not resolve.
-- Where the cause sits in another component, call `fail_task` with the
-  cause and the component.
 
 ## Do not tell yourself
 
@@ -56,8 +52,6 @@ The feedback loop is the skill.
   red on this bug proves nothing.
 - "The failing test is probably wrong." -> Verify that. Fix a wrong test;
   skip none.
-- "The reviewer wants to see my reasoning." -> The commit body carries the
-  cause.
 
 ## Done
 

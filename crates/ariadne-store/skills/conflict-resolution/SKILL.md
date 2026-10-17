@@ -1,6 +1,6 @@
 ---
 name: conflict-resolution
-description: Resolve a merge or rebase conflict by the intent of each side. Use when a rebase stops, a merge conflicts, or markers block a landing.
+description: When a rebase stops, a merge conflicts, or a landing is blocked, resolves it by intent.
 ---
 
 # Conflict resolution

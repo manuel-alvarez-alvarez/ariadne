@@ -1,6 +1,6 @@
 ---
 name: research
-description: Answer a question from evidence, with a recommendation and what would change it. Use when a task asks a question or compares options.
+description: When a task asks a question or compares options, answers from evidence, with a recommendation.
 ---
 
 # Research
@@ -41,7 +41,6 @@ A finding without a source is an opinion.
   the source that disagrees.
 - "The report reads thin without more." -> Padding buries the finding. An
   unsettled question is a finding too.
-- "This might help somebody later." -> The report is the record.
 
 ## Done
 

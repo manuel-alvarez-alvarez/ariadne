@@ -1,6 +1,6 @@
 ---
 name: migration
-description: Move a schema or data shape forward without loss. Use when schema shapes change, data moves, or old callers retire.
+description: When a schema shape changes, data moves, or a caller retires, moves it forward without loss.
 ---
 
 # Migration

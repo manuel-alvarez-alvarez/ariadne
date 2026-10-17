@@ -1,6 +1,6 @@
 ---
 name: documentation
-description: Write what a user reads - the manual, the README, the changelog and the reference. Use when a feature lands or a page drifts.
+description: When a feature lands or a page drifts, writes the manual, README, changelog, or reference.
 ---
 
 # Documentation
