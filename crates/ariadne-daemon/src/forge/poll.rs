@@ -113,6 +113,25 @@ struct Worker {
     mode: watch::Sender<Mode>,
     task: tokio::task::JoinHandle<()>,
 }
+
+/// The delay after one ordinary fetch. Timer-mode failures double it until
+/// their cap; success starts the ordinary interval again. Wake-only failures
+/// carry their delay unchanged because that mode never spends it.
+fn next_backoff(
+    current: Duration,
+    base: Duration,
+    cap: Duration,
+    succeeded: bool,
+    timer_mode: bool,
+) -> Duration {
+    if succeeded {
+        base
+    } else if timer_mode {
+        current.saturating_mul(2).min(cap)
+    } else {
+        current
+    }
+}
 impl Drop for Worker {
     fn drop(&mut self) {
         self.task.abort();
@@ -443,16 +462,17 @@ async fn worker(
             }
             continue;
         }
+        let timer_mode = *mode.borrow() == Mode::Timer;
         if let Err(error) = &fetched {
             warn!(%error, repository = id, "cannot fetch pull requests");
-            if *mode.borrow() == Mode::Timer {
-                backoff = backoff
-                    .saturating_mul(2)
-                    .min(timeouts.forge_poll_backoff_cap);
-            }
-        } else {
-            backoff = timeouts.forge_poll;
         }
+        backoff = next_backoff(
+            backoff,
+            timeouts.forge_poll,
+            timeouts.forge_poll_backoff_cap,
+            fetched.is_ok(),
+            timer_mode,
+        );
         // What says polling works, where no hook is live (026).
         if let Err(error) = store
             .set_forge_fetch_error(&id, fetched.err().as_deref())
@@ -986,6 +1006,19 @@ mod tests {
             detected_at: String::new(),
             updated_at: String::new(),
         }
+    }
+
+    #[test]
+    fn timer_backoff_doubles_caps_and_resets() {
+        let base = Duration::from_secs(1);
+        let cap = Duration::from_secs(4);
+        let first = next_backoff(base, base, cap, false, true);
+        assert_eq!(first, Duration::from_secs(2));
+        let capped = next_backoff(first, base, cap, false, true);
+        assert_eq!(capped, cap);
+        assert_eq!(next_backoff(capped, base, cap, false, true), cap);
+        assert_eq!(next_backoff(capped, base, cap, true, true), base);
+        assert_eq!(next_backoff(capped, base, cap, false, false), capped);
     }
 
     /// A pending fetch that finishes while its worker is stopped. Its drop

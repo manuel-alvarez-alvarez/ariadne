@@ -517,8 +517,11 @@ async fn a_push_moves_the_worktree_and_is_told_once_with_the_last_reviewed_sha()
     );
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), second);
 
+    // `fetch_again`'s own flush proves the fetch's own reconciliation ran;
+    // it does not prove a prompt that pass queued has reached the agent,
+    // since that drains on a task of its own behind the scheduler. Prove
+    // that the completed fetch sends no duplicate news for this head.
     fetch_again(&h, &stub, &repo).await;
-    // Prove that the completed fetch sends no duplicate news for this head.
     tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&session).len(),
@@ -572,7 +575,9 @@ async fn a_pending_review_gives_the_reviewer_session_no_live_view_comment_or_new
 
     let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
     assert!(comments.is_empty(), "{comments:?}");
-    // Prove the quiet, not merely that nothing has arrived yet.
+    // Prove the quiet, not merely that nothing has arrived yet: the flush
+    // inside `fetch_again` only proves the fetch's own pass is reconciled,
+    // not that a prompt it queued has reached the agent.
     tokio::time::sleep(QUIET).await;
     assert_eq!(
         h.prompts_to(&session).len(),

@@ -184,6 +184,35 @@ requires anyway, and a stub ACP agent that `tests/it/common/acp.rs` writes in
 that stub, so the suite needs no coding-agent CLI installed. A machine missing
 `git` or `python3` gets failures rather than a quiet pass.
 
+A harness's store starts from a template rather than a fresh migration: the
+first harness to build one migrates and seeds a database into the machine's
+temp directory, keyed by the test binary's own path, size and modified time
+— not the path alone, which cargo can leave unchanged across a rebuild whose
+content differs — and copies it for every harness after. Nextest runs every
+test in a process of its own, so an exclusive `flock` on a lock file beside
+the template, not an in-process cache, keeps every other process racing to
+build the same template waiting on the one that gets there first — polled
+non-blocking from the async side rather than taken as a real blocking call,
+which would park an uncancellable OS thread for as long as the holder keeps
+it. A holder that dies mid-build drops the lock with its own process, so
+the next waiter rebuilds rather than waiting forever on a claim nothing
+will ever finish.
+
+The harness also copies a ready-made private git repository with `main` and
+`next`, and a private bare origin with that same history, from the same
+publication. It therefore avoids running `git init` and making those commits
+for every working tree and forge fixture. Tests outside `Harness` use
+`git_repo_copy` or `store_copy` first, which waits for that same publication;
+every repository and database copy is still private to its test.
+
+The default integration harness shortens the forge wake debounce and ACP
+cancel grace through `Timeouts`: ordinary stub agents answer cancellation
+at once, and tests that need either production interval name it themselves.
+`eventually` and `eventually_some` poll every 10 ms, so a condition that is
+already true does not add a 50 ms interval to every test seam. `QUIET` is
+100 ms: twice the branch watch debounce and only for an absence no event can
+prove.
+
 `[profile.dev]` in the root `Cargo.toml` keeps line tables for workspace code
 and no debug information for dependencies; change it only in a separate branch.
 

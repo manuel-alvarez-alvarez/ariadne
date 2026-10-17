@@ -166,20 +166,24 @@ reads behind them ([026](026-pull-requests.md)).
 
 ## Acceptance criteria
 
-- Dependabot and human-authored requests start keepers, receive comments
-  and failing-check news, raise readiness attention once backed by forge
-  evidence, and clean up on merge:
-  `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`,
+- A request of Ariadne's maps to the author role; Dependabot's and another
+  person's map to reviewer. A manual ask for each starts a keeper that
+  receives comments and failing-check news, raises readiness attention once
+  backed by forge evidence, and cleans up on merge:
+  `forge/pulls.rs::tests::an_integrations_author_is_its_author_and_everyone_else_is_a_reviewer`,
+  `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`,
+  `::asking_keeps_a_dependabot_request_until_the_merge`,
   `::asking_keeps_another_authors_request_until_the_merge`.
 - Review and babysitting can coexist on a Dependabot request; stopping
   either preserves the other, and stopping both removes the request row:
-  `pull_request_babysit.rs::a_dependabot_request_can_be_reviewed_and_babysat_independently`.
+  `pull_request_babysit.rs::stopping_review_keeps_a_dependabot_keeper`,
+  `pull_request_babysit.rs::stopping_babysitting_keeps_a_dependabot_reviewer`.
 
-- Asking on a request of mine starts one keeper session, seat `keeper`,
+- Asking on a request starts one keeper session, seat `keeper`,
   with `pr-babysit` indexed, its worktree on `ariadne/keep-<id>`; a comment
   by another login reaches it once; its `ready` report is accepted; and the
   merge ends it, with its worktree and its branch gone and the row gone:
-  `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`.
+  `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`.
 - Where the repository supervises its posts, the keeper's reply to a
   conversation comment answers `pending: true` with the pending review's
   own id, posts no `gh pr comment`, announces the request changed so a
@@ -214,7 +218,7 @@ reads behind them ([026](026-pull-requests.md)).
   argument of the line a request is actually kept on:
   `launcher.rs::shell_quote_tests::a_shell_reads_a_quoted_value_back_as_one_argument`,
   `::a_push_command_keeps_a_metacharacter_laden_branch_as_one_argument`,
-  `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`,
+  `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`,
   `::a_keeper_on_a_fork_is_told_to_push_to_the_forks_own_repository`,
   `::a_keeper_on_the_same_repository_pushes_through_the_configured_remote`.
 - A keeper head-branch refusal and recovery use the keeper's recovery mark

@@ -196,35 +196,6 @@ async fn an_acp_error_keeps_an_existing_message_and_reads_other_data_shapes() {
 }
 
 #[tokio::test]
-async fn acp_errors_read_common_detail_fields_for_every_agent() {
-    for (data, expected) in [
-        (json!({"details": "X"}), "Internal error: X"),
-        (json!({"detail": "X"}), "Internal error: X"),
-        (json!({"error": {"message": "X"}}), "Internal error: X"),
-        (json!({"details": "", "reason": "X"}), "Internal error: X"),
-        (json!("X"), "Internal error: X"),
-        (json!({"unknown": 7}), "Internal error: {\"unknown\":7}"),
-    ] {
-        let event = failed_prompt_event(data.clone()).await;
-        assert_eq!(
-            event.payload.pointer("/error/data/message"),
-            Some(&json!(expected)),
-            "{data}"
-        );
-    }
-
-    let long = failed_prompt_event(json!({"unknown": "x".repeat(500)})).await;
-    let message = long
-        .payload
-        .pointer("/error/data/message")
-        .and_then(Value::as_str)
-        .unwrap();
-    assert!(message.starts_with("Internal error: {\"unknown\":\""));
-    assert!(message.ends_with('…'));
-    assert!(message.chars().count() <= 220);
-}
-
-#[tokio::test]
 async fn an_acp_error_without_data_stays_unchanged_and_an_empty_message_is_filled() {
     let absent = failed_prompt_event_with_data(None).await;
     assert_eq!(

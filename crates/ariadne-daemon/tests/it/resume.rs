@@ -17,7 +17,7 @@ use ariadne_core::{Actor, GoalStatus, SessionStatus, TaskStatus};
 use ariadne_store::AgentSession;
 use axum::http::StatusCode;
 
-use common::{Cast, Harness, TIMEOUT, eventually, harness, heard_from, next_event};
+use common::{Cast, Harness, QUIET, TIMEOUT, eventually, harness, heard_from, next_event};
 
 /// A task in its first column for real: a repo on disk, the goal active and
 /// the task in progress, its agents carrying `model` at the moment it was
@@ -391,7 +391,9 @@ async fn agent_runs_stays_open_through_the_clock_alone_and_settles_on_the_status
         !waiting.is_finished(),
         "the clock alone is not what the wait settles on"
     );
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Nothing publishes a wait still pending on its status write: the
+    // absence is the wait itself not having returned.
+    tokio::time::sleep(QUIET).await;
     assert!(
         !waiting.is_finished(),
         "still nothing to settle the wait on without the status write"

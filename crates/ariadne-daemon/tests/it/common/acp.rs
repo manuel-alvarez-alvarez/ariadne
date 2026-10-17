@@ -245,8 +245,9 @@ impl StubAcpAgent {
 /// `@agentclientprotocol/claude-agent-acp`, the way the real path would.
 const PNPM_LAUNCHER: &str = "#!/bin/sh\n\
 # .pnpm/@agentclientprotocol+claude-agent-acp@0.79.0/node_modules/@agentclientprotocol/claude-agent-acp/bin/claude-agent-acp\n\
-dir=$(dirname \"$0\")\n\
-exec python3 \"$dir/acp-stub.py\" \"$(cat \"$dir/acp-parent-pid\")\" \"$dir/acp-script.json\" \"$@\"\n";
+case \"$0\" in */*) dir=${0%/*} ;; *) resolved=$(command -v \"$0\"); dir=${resolved%/*} ;; esac\n\
+IFS= read -r parent < \"$dir/acp-parent-pid\"\n\
+exec python3 -S \"$dir/acp-stub.py\" \"$parent\" \"$dir/acp-script.json\" \"$@\"\n";
 
 /// Like [`PNPM_LAUNCHER`], except the path in its comment names
 /// `claude-agent-acp-legacy`, a package of its own that merely shares the
@@ -254,8 +255,9 @@ exec python3 \"$dir/acp-stub.py\" \"$(cat \"$dir/acp-parent-pid\")\" \"$dir/acp-
 /// the real package, and a path-component check would not.
 const PNPM_LAUNCHER_LEGACY_PREFIX: &str = "#!/bin/sh\n\
 # .pnpm/@agentclientprotocol+claude-agent-acp-legacy@0.1.0/node_modules/@agentclientprotocol/claude-agent-acp-legacy/bin/claude-agent-acp\n\
-dir=$(dirname \"$0\")\n\
-exec python3 \"$dir/acp-stub.py\" \"$(cat \"$dir/acp-parent-pid\")\" \"$dir/acp-script.json\" \"$@\"\n";
+case \"$0\" in */*) dir=${0%/*} ;; *) resolved=$(command -v \"$0\"); dir=${resolved%/*} ;; esac\n\
+IFS= read -r parent < \"$dir/acp-parent-pid\"\n\
+exec python3 -S \"$dir/acp-stub.py\" \"$parent\" \"$dir/acp-script.json\" \"$@\"\n";
 
 /// Install `name` on `dir` as a package manager does: `program` under the
 /// directories `package` is unpacked into, and `name` itself a link to it.
@@ -406,8 +408,9 @@ fn write_script_file(
 /// What the registry launches: the stub and the script next to the link
 /// the launcher was started by. `$0` is that link, not the shared file.
 const LAUNCHER: &str = "#!/bin/sh\n\
-dir=$(dirname \"$0\")\n\
-exec python3 \"$dir/acp-stub.py\" \"$(cat \"$dir/acp-parent-pid\")\" \"$dir/acp-script.json\" \"$@\"\n";
+case \"$0\" in */*) dir=${0%/*} ;; *) resolved=$(command -v \"$0\"); dir=${resolved%/*} ;; esac\n\
+IFS= read -r parent < \"$dir/acp-parent-pid\"\n\
+exec python3 -S \"$dir/acp-stub.py\" \"$parent\" \"$dir/acp-script.json\" \"$@\"\n";
 
 /// The stub itself: single-threaded, line-oriented, and honest about order —
 /// it answers exactly what the script says, logs every incoming message, and
@@ -418,9 +421,16 @@ import json, os, select, subprocess, sys, threading, time
 parent = int(sys.argv[1])
 script = json.load(open(sys.argv[2]))
 def parent_alive():
-    state = subprocess.run(["ps", "-o", "stat=", "-p", str(parent)],
-                           capture_output=True, text=True).stdout.strip()
-    return bool(state) and not state.startswith("Z")
+    # kill(pid, 0) still succeeds for an unreaped zombie. A direct child is
+    # reparented as soon as its parent dies, so getppid detects that state
+    # without requiring anyone else to reap the former parent first.
+    if os.getppid() != parent:
+        return False
+    try:
+        os.kill(parent, 0)
+    except OSError:
+        return False
+    return True
 def orphaned():
     # Ends with the test process, however that one ends.
     while parent_alive():

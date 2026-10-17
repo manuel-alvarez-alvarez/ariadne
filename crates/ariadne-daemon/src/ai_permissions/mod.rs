@@ -72,6 +72,9 @@ pub struct AiPermissions {
     /// Whether a server has been launched and is still loading its weights:
     /// neither healthy nor given up on yet.
     starting: Arc<watch::Sender<bool>>,
+    /// How many callers found a server loading and started waiting for it.
+    /// This is a monotonic observation point for the loading hand-off.
+    loading_waits: Arc<watch::Sender<u64>>,
     /// Whether an install is running now. Claimed with a compare-and-swap, so
     /// exactly one install runs at a time however many callers ask at once.
     /// Whether an install runs. Taken around every write of the install's
@@ -93,6 +96,7 @@ impl AiPermissions {
     /// publishing on `events`.
     pub fn new(store: Store, events: EventBus, cfg: &Config, timeouts: Timeouts) -> Self {
         let (server_tx, server_rx) = mpsc::unbounded_channel();
+        let (loading_waits, _) = watch::channel(0);
         let ai_permissions = Self {
             store,
             events,
@@ -105,6 +109,7 @@ impl AiPermissions {
             configured_endpoint: cfg.ai_permissions_endpoint.clone(),
             endpoint: Arc::default(),
             starting: Arc::new(watch::Sender::new(false)),
+            loading_waits: Arc::new(loading_waits),
             installing: Arc::default(),
             timeouts,
             server_tx,
@@ -322,10 +327,22 @@ impl AiPermissions {
             if let Some(live) = self.live().await {
                 return Some(live);
             }
-            if !was_starting || starting.changed().await.is_err() {
+            if !was_starting {
+                return None;
+            }
+            self.loading_waits.send_modify(|waits| *waits += 1);
+            if starting.changed().await.is_err() {
                 return None;
             }
         }
+    }
+
+    /// A receiver that advances when a caller begins to wait for the loading
+    /// server. Integration tests use it to release a server only after the
+    /// request has reached this hand-off.
+    #[doc(hidden)]
+    pub fn loading_waits(&self) -> watch::Receiver<u64> {
+        self.loading_waits.subscribe()
     }
 
     /// The maximum time one model scoring request may take.

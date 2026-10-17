@@ -656,9 +656,9 @@ async fn a_test_request_with_locations_derives_what_the_live_request_does() {
     );
 }
 
-/// A `kev.serve` that records its pid, loads for as long as its second
-/// argument says, reports the device its environment chose, and then allows
-/// every request with the calibrated danger 0.05.
+/// A `kev.serve` that records its pid, loads until its own test releases
+/// the gate its third argument names, reports the device its environment
+/// chose, and then allows every request with the calibrated danger 0.05.
 const SLOW_SERVER: &str = r#"#!/usr/bin/env python3
 import http.server, json, os, socketserver, subprocess, sys, threading, time
 parent = int(sys.argv[1])
@@ -676,7 +676,9 @@ if not parent_alive():
     os._exit(0)
 with open(sys.argv[2], 'w') as f:
     f.write(str(os.getpid()) + '\n')
-time.sleep(float(sys.argv[3]))
+gate = sys.argv[3]
+while not os.path.exists(gate):
+    time.sleep(0.05)
 args = sys.argv[4:]
 host = args[args.index('--host') + 1]
 port = int(args[args.index('--port') + 1])
@@ -711,11 +713,16 @@ Server((host, port), Handler).serve_forever()
 async fn a_request_made_while_the_server_loads_waits_for_it() {
     let release = ModelServer::hanging().await;
     let record = tempfile::NamedTempFile::new().unwrap();
+    // The stand-in server polls for its own release rather than sleeping a
+    // guessed delay. The daemon's loading-wait receiver below acknowledges
+    // the request only after it has seen this server still loading.
+    let gate_dir = tempfile::tempdir().unwrap();
+    let gate = gate_dir.path().join("release-server");
     let command = vec![
         shared_script(SLOW_SERVER).display().to_string(),
         std::process::id().to_string(),
         record.path().display().to_string(),
-        "3".to_string(),
+        gate.display().to_string(),
     ];
     let (h, cast, _agent_dir) = ai_permissions_harness_on(
         |builder| builder.ai_permissions_serve_command(command),
@@ -735,7 +742,21 @@ async fn a_request_made_while_the_server_loads_waits_for_it() {
         "the server is still loading"
     );
 
+    let loading_waits = h.state.ai_permissions.loading_waits();
     let session = h.start_agent(&cast.task, "develop").await;
+    // The acknowledgement comes from `live_once_started`, after it read
+    // `starting` and found no endpoint, immediately before it waits for the
+    // server. An ACP request alone would prove only that stdout accepted it.
+    eventually(
+        TIMEOUT,
+        "the permission request to wait for the server",
+        || {
+            let mut loading_waits = loading_waits.clone();
+            async move { *loading_waits.borrow_and_update() > 0 }
+        },
+    )
+    .await;
+    std::fs::write(&gate, "").unwrap();
     eventually(TIMEOUT, "the AI-allowed turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })

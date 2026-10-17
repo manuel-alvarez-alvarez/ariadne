@@ -1,6 +1,7 @@
 //! The request column opens, keeps, and ends a stepped task's request.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use ariadne_core::{GoalStatus, SessionStatus, TaskStatus};
 use ariadne_daemon::forge::poll::Mode;
@@ -11,7 +12,9 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, check_states, opened_pull, stub_forge_cli};
-use crate::common::{Harness, TIMEOUT, as_session, eventually, harness, sh, test_pin, with_forge};
+use crate::common::{
+    Harness, RUNS_OUT, TIMEOUT, as_session, eventually, harness, sh, test_pin, with_forge,
+};
 
 const URL: &str = "https://github.com/acme/widgets/pull/1";
 const HOST: &str = "github.com";
@@ -118,8 +121,46 @@ async fn session_at(h: &Harness, task: &Task, step: &str) -> AgentSession {
 }
 
 async fn request_column(hold_news: bool, deploy_after: bool) -> RequestColumn {
+    request_column_with_full_reconcile(hold_news, deploy_after, RUNS_OUT / 2).await
+}
+
+/// The same request-column fixture with no periodic scheduler pass during
+/// the test. A completion wake must do the cleanup this variant observes.
+async fn request_column_without_periodic_reconcile(
+    hold_news: bool,
+    deploy_after: bool,
+) -> RequestColumn {
+    request_column_with_full_reconcile(
+        hold_news,
+        deploy_after,
+        ariadne_daemon::timeouts::Timeouts::default().full_reconcile * 1_000,
+    )
+    .await
+}
+
+async fn request_column_with_full_reconcile(
+    hold_news: bool,
+    deploy_after: bool,
+    full_reconcile: Duration,
+) -> RequestColumn {
     let forge = stub_forge_cli(script("OPEN", "unused", &[], &[]));
-    let h = harness().scheduler().forge_cli(&forge).await;
+    // Every one of these is 5 s by default, and this fixture kills a
+    // held-open turn, finishes a task and reconciles its request all in
+    // one pass: at the default, whichever of the three a run happens to
+    // need runs this fixture's every caller past the three-second ceiling.
+    // `forge_wake_debounce` is carried over from `harness`'s own default
+    // rather than left to its 5 s production one, which overriding the
+    // whole struct would otherwise reset.
+    let h = harness()
+        .scheduler()
+        .forge_cli(&forge)
+        .timeouts(ariadne_daemon::timeouts::Timeouts {
+            cancel_grace: RUNS_OUT / 2,
+            full_reconcile,
+            forge_wake_debounce: Duration::from_millis(1),
+            ..ariadne_daemon::timeouts::Timeouts::default()
+        })
+        .await;
     let path = h.git_repo("widgets");
     let repo = h.repository(&path).await;
     with_forge(&h, &repo).await;
@@ -269,7 +310,7 @@ fn merge_request(request: &RequestColumn) -> String {
 
 #[tokio::test]
 async fn the_pr_column_opens_the_request_once_and_keeps_it() {
-    let request = request_column(false, false).await;
+    let request = request_column_without_periodic_reconcile(false, false).await;
     let RequestColumn {
         h,
         forge,
@@ -434,17 +475,13 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
     forge.reprogram(merged);
     let finished: Value = h.json(complete(), StatusCode::OK).await;
     assert_eq!(finished["status"], "finished");
-    eventually(
-        TIMEOUT,
-        "the request and task work to be cleaned",
-        async || {
-            h.flush_scheduler().await;
-            h.store.get_pull_request(id).await.is_err()
-                && !std::path::Path::new(agent.worktree_path.as_deref().unwrap()).exists()
-                && sh(path, &format!("git branch --list {}", task.branch)).is_empty()
-        },
-    )
-    .await;
+    // This flush waits for the completion's TaskChanged wake; its fixture's
+    // next periodic pass is far away. The cleanup therefore comes from the
+    // task's own immediate request reconciliation, not the fallback tick.
+    h.flush_scheduler().await;
+    assert!(h.store.get_pull_request(id).await.is_err());
+    assert!(!std::path::Path::new(agent.worktree_path.as_deref().unwrap()).exists());
+    assert!(sh(path, &format!("git branch --list {}", task.branch)).is_empty());
     for session in h
         .store
         .list_sessions(SessionFilter {

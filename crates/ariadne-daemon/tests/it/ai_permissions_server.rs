@@ -8,7 +8,7 @@ use ariadne_api::permissions::{AiPermissionsState, AiPermissionsStatusDto};
 use ariadne_daemon::ai_permissions::hardware::HardwareOverride;
 use ariadne_daemon::timeouts::Timeouts;
 
-use crate::common::{Harness, TIMEOUT, eventually, harness, post, put_json, shared_script};
+use crate::common::{Harness, QUIET, TIMEOUT, eventually, harness, post, put_json, shared_script};
 
 /// A `kev.serve` stand-in. `$1` is where it records what it was started
 /// with, as one JSON object: its pid, the arguments after its own two, and
@@ -242,7 +242,11 @@ async fn a_server_that_never_answers_health_is_not_live() {
         .await;
     let _: AiPermissionsStatusDto = h.json(enable(), StatusCode::OK).await;
     ready(&h).await;
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Nothing publishes the restart loop giving up on this attempt: the
+    // endpoint it leaves behind is the same `None` it started from, so
+    // there is no transition to wait for, only the shortened serve-start
+    // timeout above to run out.
+    tokio::time::sleep(QUIET).await;
     let status: AiPermissionsStatusDto = h.get("/v1/permissions/ai").await;
     assert_eq!(status.endpoint, None);
     h.state.ai_permissions.shutdown().await;

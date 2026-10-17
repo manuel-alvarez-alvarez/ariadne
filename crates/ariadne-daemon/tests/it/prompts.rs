@@ -21,12 +21,13 @@ use crate::common;
 use crate::common::{post_json, sh, test_pin};
 use ariadne_core::{GoalStatus, PromptKind, Seat};
 use ariadne_daemon::scheduler::QUIET_NUDGE_SECS;
+use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::defaults::default_prompt_text;
 use ariadne_store::{NewGoal, NewTask, NewTaskAgent, NewWorkflow};
 use axum::http::StatusCode;
 use serde_json::json;
 
-use common::{Cast, Harness, TIMEOUT, eventually, harness};
+use common::{Cast, Harness, RUNS_OUT, TIMEOUT, eventually, harness};
 
 /// A task ready for its first column's agent to be started, in a real repo,
 /// on a goal under way.
@@ -492,7 +493,15 @@ async fn every_allowed_placeholder_is_one_a_briefing_fills_in() {
             .unwrap_or_else(|e| panic!("{}: {e}", kind.as_str()));
     }
 
-    let h = harness().scheduler().await;
+    // The orchestrator's own launch can wait on the periodic full
+    // reconcile, since `seeded` notifies the task, not the goal.
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .scheduler()
+        .await;
     let cast = seeded(&h).await;
     // The scheduler starts the goal's orchestrator on its own.
     let launched = async || {

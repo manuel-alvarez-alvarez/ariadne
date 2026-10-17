@@ -14,7 +14,7 @@
 pub(crate) mod acp;
 pub(crate) mod forge;
 
-use std::future::IntoFuture;
+use std::future::{Future, IntoFuture};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -71,7 +71,7 @@ pub(crate) const TIMEOUT: Duration = Duration::from_secs(30);
 /// catches a wrong event that comes later still. Everything it listens for is
 /// the daemon reacting inside its own process, and the branch watch, the
 /// slowest of those, debounces for 50 ms.
-pub(crate) const QUIET: Duration = Duration::from_millis(500);
+pub(crate) const QUIET: Duration = Duration::from_millis(100);
 
 /// A daemon timeout for a test that is about that timeout running out. The
 /// test waits it out, so it is short, and nothing the test needs done in time
@@ -178,9 +178,12 @@ pub(crate) fn harness() -> HarnessBuilder {
         discover_agents: false,
         second_agent: None,
         // A test that does not name the debounce itself must not pay its
-        // production wait on every wake: only `forge_rate_limit.rs` sets
-        // this back to an observable window to prove the merging itself.
+        // production wait on every wake. The stub accepts a cancellation at
+        // once, so tests that do not inspect the grace itself need not pay
+        // the production five seconds to take an ending session down.
+        // `forge_rate_limit.rs` sets its observable window itself.
         timeouts: Timeouts {
+            cancel_grace: RUNS_OUT,
             forge_wake_debounce: Duration::from_millis(1),
             ..Timeouts::default()
         },
@@ -350,6 +353,7 @@ impl HarnessBuilder {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
+        std::fs::copy(template_db().await, &db_path).unwrap();
         let store = Store::open(&db_path).await.unwrap();
         let agent_dir = dir.path().join("agent");
         std::fs::create_dir_all(&agent_dir).unwrap();
@@ -529,6 +533,260 @@ impl HarnessBuilder {
             h.agent.clear_messages();
         }
         h
+    }
+}
+
+/// A store at the current migrations, with the built-in skills and workflows
+/// already seeded: a path to copy rather than a fresh database for every
+/// harness to migrate and seed itself.
+///
+/// Built once and cached under the machine's temp directory, keyed by the
+/// test binary's own path, size and modified time — not the path alone,
+/// which a rebuild can leave unchanged (cargo names a test binary after its
+/// unit's metadata, not its content, so an edit that does not change that
+/// metadata reuses the old path with new bytes). A cache a rebuild cannot
+/// invalidate would read stale migrations.
+///
+/// One process builds it; every other one polls the same exclusive `flock`,
+/// non-blocking and on its own async side, until it gets the lock itself or
+/// finds `path` already there — a blocking `flock` would park a real OS
+/// thread for as long as the holder keeps it, uncancellable and still owed
+/// by the runtime at shutdown. A builder that dies mid-build drops the lock
+/// when its file descriptor closes, which the kernel guarantees happens
+/// however the process ends — so a crash hands the lock on to the next
+/// waiter rather than wedging it forever behind a claim nothing will ever
+/// finish. The poll is itself bounded by [`TIMEOUT`], so a build that is
+/// merely slow still surfaces as a named failure rather than an
+/// unexplained hang.
+async fn template_db() -> PathBuf {
+    use std::hash::{Hash, Hasher};
+
+    let exe = std::env::current_exe().unwrap();
+    let exe_meta = std::fs::metadata(&exe).unwrap();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    exe.hash(&mut hasher);
+    exe_meta.len().hash(&mut hasher);
+    exe_meta.modified().unwrap().hash(&mut hasher);
+    let dir = std::env::temp_dir().join("ariadne-test-store-template");
+    std::fs::create_dir_all(&dir).unwrap();
+    let key = format!("{:016x}", hasher.finish());
+    let path = dir.join(format!("{key}.db"));
+    if path.exists() {
+        return path;
+    }
+    let lock_path = dir.join(format!("{key}.lock"));
+    // Non-blocking and polled from the async side, not a blocking `flock`
+    // handed to a blocking-pool thread: that thread would stay parked in
+    // the syscall for as long as the holder keeps the lock, which a
+    // `tokio::time::timeout` around the `JoinHandle` only stops *waiting*
+    // on — it cannot cancel a thread already blocked in the kernel, so the
+    // runtime would still hang at shutdown behind it. A failed attempt here
+    // returns at once, so this helper's deadline is the only thing that
+    // ever waits. `TemplateReady` distinguishes "stop waiting, nothing to
+    // build" from "keep polling for the lock" without a second flag.
+    let lock_file = match wait_for_template_lock(path.clone(), lock_path).await {
+        TemplateLock::Acquired(lock_file) => lock_file,
+        TemplateLock::TemplateReady => return path,
+    };
+    if !path.exists() {
+        // Built aside and renamed, even under the lock: a reader that
+        // raced the lock itself and lost only ever sees `path` once it is
+        // the finished database, never a build the holder died in the
+        // middle of — `rename` is the one step that cannot leave a half
+        // state for `path.exists()` above to find on the next call.
+        let partial = dir.join(format!("{key}.{}.db", std::process::id()));
+        {
+            let store = Store::open(&partial).await.unwrap();
+            store.checkpoint().await.unwrap();
+        }
+        // Publish the git fixture first. A harness only sees the database
+        // after this rename, so a process whose build raced this one cannot
+        // start copying a repository before the template is complete.
+        let git_template = prepare_git_repo_template(&dir, &key);
+        prepare_git_remote_template(&dir, &key, &git_template);
+        std::fs::rename(&partial, &path).unwrap();
+        // The checkpoint above empties these rather than removing them;
+        // `rename` only takes the main file, so the sidecars under the
+        // partial's own name are cleaned up by hand.
+        let _ = std::fs::remove_file(partial.with_extension("db-wal"));
+        let _ = std::fs::remove_file(partial.with_extension("db-shm"));
+    }
+    drop(lock_file);
+    path
+}
+
+/// The one real repository every [`Harness::git_repo`] starts from.
+///
+/// A test still gets a private copy — a branch, remote or worktree in one
+/// cannot reach another — but the initial main/next history is made once per
+/// test binary rather than by every harness. Its availability is coupled to
+/// `template_db`'s publication above, which holds the same key and lock.
+fn git_repo_template() -> PathBuf {
+    use std::hash::{Hash, Hasher};
+
+    let exe = std::env::current_exe().unwrap();
+    let exe_meta = std::fs::metadata(&exe).unwrap();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    exe.hash(&mut hasher);
+    exe_meta.len().hash(&mut hasher);
+    exe_meta.modified().unwrap().hash(&mut hasher);
+    let dir = std::env::temp_dir().join("ariadne-test-store-template");
+    let key = format!("{:016x}", hasher.finish());
+    prepare_git_repo_template(&dir, &key)
+}
+
+/// The bare origin copied for a forge fixture. It has the same initial
+/// history as [`git_repo_template`], but every test still mutates its own
+/// private copy through `push` and `ls-remote`.
+fn git_remote_template() -> PathBuf {
+    use std::hash::{Hash, Hasher};
+
+    let exe = std::env::current_exe().unwrap();
+    let exe_meta = std::fs::metadata(&exe).unwrap();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    exe.hash(&mut hasher);
+    exe_meta.len().hash(&mut hasher);
+    exe_meta.modified().unwrap().hash(&mut hasher);
+    let dir = std::env::temp_dir().join("ariadne-test-store-template");
+    let key = format!("{:016x}", hasher.finish());
+    let repo = prepare_git_repo_template(&dir, &key);
+    prepare_git_remote_template(&dir, &key, &repo)
+}
+
+/// Build the git template aside, then make it visible all at once.
+fn prepare_git_repo_template(dir: &Path, key: &str) -> PathBuf {
+    let path = dir.join(format!("{key}.git"));
+    if path.exists() {
+        return path;
+    }
+    std::fs::create_dir_all(dir).unwrap();
+    let partial = dir.join(format!("{key}.{}.git", std::process::id()));
+    let _ = std::fs::remove_dir_all(&partial);
+    std::fs::create_dir_all(&partial).unwrap();
+    sh(
+        &partial,
+        "git init -q -b main && echo v1 > file.txt && git add . && \
+         git -c user.email=t@t -c user.name=t commit -qm init && \
+         git checkout -q -b next && echo v2 > file.txt && git add . && \
+         git -c user.email=t@t -c user.name=t commit -qm ahead && \
+         git checkout -q main",
+    );
+    match std::fs::rename(&partial, &path) {
+        Ok(()) => path,
+        // A process that did not build the database can still get here after
+        // an interrupted old cache build. Its complete template wins; ours
+        // is discarded without exposing a partial directory to any reader.
+        Err(_) if path.exists() => {
+            let _ = std::fs::remove_dir_all(&partial);
+            path
+        }
+        Err(e) => panic!("publishing the git test template: {e}"),
+    }
+}
+
+/// Build the bare origin template aside, then make it visible all at once.
+fn prepare_git_remote_template(dir: &Path, key: &str, repo: &Path) -> PathBuf {
+    let path = dir.join(format!("{key}.remote.git"));
+    if path.exists() {
+        return path;
+    }
+    std::fs::create_dir_all(dir).unwrap();
+    let partial = dir.join(format!("{key}.{}.remote.git", std::process::id()));
+    let _ = std::fs::remove_dir_all(&partial);
+    sh(
+        dir,
+        &format!(
+            "git clone -q --bare '{}' '{}'",
+            repo.display(),
+            partial.display()
+        ),
+    );
+    match std::fs::rename(&partial, &path) {
+        Ok(()) => path,
+        Err(_) if path.exists() => {
+            let _ = std::fs::remove_dir_all(&partial);
+            path
+        }
+        Err(e) => panic!("publishing the git remote test template: {e}"),
+    }
+}
+
+/// Copy the template's whole repository, including its `.git` directory.
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let destination = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &destination);
+        } else {
+            std::fs::copy(entry.path(), destination).unwrap();
+        }
+    }
+}
+
+/// Try the process-wide template lock once, without parking a runtime thread.
+///
+/// The outer poll owns the wait. A completed template has priority over a
+/// lock another process still holds, since the caller only needs its path.
+fn template_lock_attempt(lock_path: &Path, path: &Path) -> Option<TemplateLock> {
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_path)
+        .unwrap();
+    match rustix::fs::flock(
+        &lock_file,
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    ) {
+        Ok(()) => Some(TemplateLock::Acquired(lock_file)),
+        Err(rustix::io::Errno::WOULDBLOCK) => path.exists().then_some(TemplateLock::TemplateReady),
+        Err(e) => panic!("locking the template database build: {e}"),
+    }
+}
+
+/// Poll for the process-wide template lock without parking a runtime thread.
+async fn wait_for_template_lock(path: PathBuf, lock_path: PathBuf) -> TemplateLock {
+    eventually_some(
+        TIMEOUT,
+        "another process's template database build",
+        move || std::future::ready(template_lock_attempt(&lock_path, &path)),
+    )
+    .await
+}
+
+/// The two outcomes that end the template-lock poll.
+enum TemplateLock {
+    /// This process owns the lock and must build the database if it is absent.
+    Acquired(std::fs::File),
+    /// Another process published the complete database before this one locked.
+    TemplateReady,
+}
+
+#[cfg(test)]
+mod template_lock_tests {
+    use super::{TemplateLock, template_lock_attempt};
+
+    #[test]
+    fn a_published_template_ends_a_contended_lock_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = dir.path().join("template.lock");
+        let template_path = dir.path().join("template.db");
+        let holder = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        rustix::fs::flock(&holder, rustix::fs::FlockOperation::LockExclusive).unwrap();
+
+        assert!(template_lock_attempt(&lock_path, &template_path).is_none());
+        std::fs::write(&template_path, "complete").unwrap();
+        assert!(matches!(
+            template_lock_attempt(&lock_path, &template_path),
+            Some(TemplateLock::TemplateReady)
+        ));
     }
 }
 
@@ -884,13 +1142,10 @@ pub(crate) async fn with_forge(h: &Harness, repo: &Repository) {
 
 pub(crate) async fn with_forge_enabled(h: &Harness, repo: &Repository, enabled: bool) {
     let remote = h.at("remote.git");
+    copy_tree(&git_remote_template(), &remote);
     sh(
         Path::new(&repo.path),
-        &format!(
-            "git init -q --bare '{}' && git remote add origin '{}'",
-            remote.display(),
-            remote.display()
-        ),
+        &format!("git remote add origin '{}'", remote.display()),
     );
     h.store
         .set_forge_integration(SetForgeIntegration {
@@ -912,15 +1167,7 @@ impl Harness {
     /// `next` branch one commit ahead of it, checked out on `main`.
     pub(crate) fn git_repo(&self, name: &str) -> PathBuf {
         let repo = self.at(name);
-        std::fs::create_dir_all(&repo).unwrap();
-        sh(
-            &repo,
-            "git init -q -b main && echo v1 > file.txt && git add . && \
-             git -c user.email=t@t -c user.name=t commit -qm init && \
-             git checkout -q -b next && echo v2 > file.txt && git add . && \
-             git -c user.email=t@t -c user.name=t commit -qm ahead && \
-             git checkout -q main",
-        );
+        copy_tree(&git_repo_template(), &repo);
         repo
     }
 
@@ -1904,6 +2151,23 @@ impl Harness {
     }
 }
 
+/// A private copy of the harness's ready-made repository for a test that
+/// drives a daemon outside [`Harness`]. The database template's publication
+/// also publishes this repository template, so no concurrent test copies a
+/// partial history.
+pub(crate) async fn git_repo_copy(dir: &Path, name: &str) -> PathBuf {
+    template_db().await;
+    let repo = dir.join(name);
+    copy_tree(&git_repo_template(), &repo);
+    repo
+}
+
+/// A private copy of the migrated store for a test that runs `ariadned`
+/// outside [`Harness`].
+pub(crate) async fn store_copy(path: &Path) {
+    std::fs::copy(template_db().await, path).unwrap();
+}
+
 // -- requests ---------------------------------------------------------------
 
 pub(crate) fn get(uri: &str) -> Request<Body> {
@@ -1990,7 +2254,7 @@ pub(crate) async fn eventually(
             return;
         }
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -1998,18 +2262,19 @@ pub(crate) async fn eventually(
 /// the one read that satisfies the wait is the one a caller gets, so
 /// nothing later can see a different, newer state than the check itself
 /// just read.
-pub(crate) async fn eventually_some<T>(
-    patience: Duration,
-    what: &str,
-    mut check: impl AsyncFnMut() -> Option<T>,
-) -> T {
+pub(crate) async fn eventually_some<T, F, Fut>(patience: Duration, what: &str, mut check: F) -> T
+where
+    T: Send,
+    F: FnMut() -> Fut + Send,
+    Fut: Future<Output = Option<T>> + Send,
+{
     let deadline = Instant::now() + patience;
     loop {
         if let Some(value) = check().await {
             return value;
         }
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 

@@ -837,18 +837,13 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   same mark for a taskless orchestrator, with no task to fail onto
   instead
   (`scheduler_attention.rs::an_orchestrator_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail`),
-  and for a pull request's reviewer session the same way
-  (`scheduler_attention.rs::a_reviewer_session_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail`).
-  Both tests back their session straight into the relaunch threshold,
-  skipping the flag one entirely, so the alarm session never actually
-  carries `AttentionReason::Stalled` — proving the summary still reads
-  "stopped answering after 2 relaunches" (`SPAWN_RETRY_BUDGET - 1`, the
-  count actually performed) from the persisted `wedged` evidence rather
-  than that flag (same two tests). Both also extend through later
-  reconciliation passes over the same, still-wedged session: the give-up
-  mark, its `since`, and the item's presentation all stay exactly as
-  they were, with no flap, since no genuine recovery happened in between
-  (same two tests).
+  and a reviewer's terminal budget writes the same durable, wedged mark,
+  through the real watchdog path, with the item's summary naming the
+  relaunches that ran before it gave up
+  (`scheduler_attention.rs::a_reviewer_that_wedges_after_every_relaunch_is_given_up_on`).
+  A later pass over that same still-silent reviewer preserves the mark, its
+  `since`, and the item's presentation with no flap
+  (`scheduler_attention.rs::a_silent_reviewer_keeps_its_give_up_attention_across_later_passes`).
 - A forge integration whose fetch failed on the daemon's own "CLI not
   installed" words is a `configuration` item naming the repository
   (`attention.rs::a_missing_forge_cli_is_a_configuration_item`); one whose
@@ -963,9 +958,10 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
   (`pull_request_reviews.rs::an_unassigned_dependabot_request_is_reviewed_until_stopped`,
   `::a_withdrawn_review_request_keeps_its_manually_asked_review`).
 - A keeper on a Dependabot or another person's request raises readiness
-  attention once the same forge evidence backs its report:
-  `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`,
-  `::asking_keeps_another_authors_request_until_the_merge`.
+  attention once the same forge evidence backs its report. The author-role
+  mapping covers both kinds, and the keeper flow covers their shared
+  lifecycle: `forge/pulls.rs::tests::an_integrations_author_is_its_author_and_everyone_else_is_a_reviewer`,
+  `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`.
 - A babysat request's readiness item answers only once approval, no open
   conversation-side comment, every *resolvable* review thread actually
   resolved (not merely answered, and regardless of who opened it), green

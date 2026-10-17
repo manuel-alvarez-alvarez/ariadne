@@ -37,7 +37,10 @@ async fn started(h: &Harness, task: &Task) -> AgentSession {
 enum Answer {
     Value(Value),
     Hang,
-    Delayed(Duration, Value),
+    /// Answers only once the test's own gate releases it: long enough for
+    /// the test to act while the request is still in flight, however long
+    /// that takes, rather than a guessed delay racing the test's own steps.
+    Gated(Arc<tokio::sync::Notify>, Value),
     /// Hangs on a `diagnosis` question, answers a `decision` question at
     /// once — one worker a diagnosis in flight occupies until a permission
     /// decision preempts it (024).
@@ -81,12 +84,12 @@ impl ModelServer {
         .await
     }
 
-    /// An answer that takes `delay` to arrive — long enough for a test to
-    /// act while it is still in flight, short enough not to be mistaken for
-    /// [`Self::hanging`].
-    async fn delayed(delay: Duration, choice: &str, probabilities: Value) -> Self {
-        Self::start(Answer::Delayed(
-            delay,
+    /// An answer that waits for `gate` before it arrives: a test holds it
+    /// open to act while the request is still in flight, then releases it
+    /// with a `notify_one`.
+    async fn gated(gate: Arc<tokio::sync::Notify>, choice: &str, probabilities: Value) -> Self {
+        Self::start(Answer::Gated(
+            gate,
             diagnosis_answer("kev-latest", choice, probabilities),
         ))
         .await
@@ -161,8 +164,8 @@ async fn respond(
             std::future::pending::<()>().await;
             unreachable!()
         }
-        Answer::Delayed(delay, answer) => {
-            tokio::time::sleep(delay).await;
+        Answer::Gated(gate, answer) => {
+            gate.notified().await;
             axum::Json(answer)
         }
         Answer::DiagnosisHangsDecisionAnswers(score) => {
@@ -603,8 +606,9 @@ async fn a_diagnosis_that_runs_past_its_bound_times_out_and_produces_none() {
 /// disturbs neither the session's current launch nor its status.
 #[tokio::test]
 async fn a_diagnosis_for_a_replaced_launch_keeps_that_launchs_id_and_disturbs_nothing_current() {
-    let server = ModelServer::delayed(
-        Duration::from_millis(300),
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let server = ModelServer::gated(
+        gate.clone(),
         "exhausted",
         json!({"exhausted": 0.9, "temporary": 0.03, "auth_config": 0.03, "task_error": 0.02, "insufficient": 0.02}),
     )
@@ -618,17 +622,18 @@ async fn a_diagnosis_for_a_replaced_launch_keeps_that_launchs_id_and_disturbs_no
         .launch_id
         .expect("the failed launch is on the row");
 
-    eventually(
-        TIMEOUT,
-        "the delayed request to reach the model",
-        || async { !server.requests.lock().unwrap().is_empty() },
-    )
+    eventually(TIMEOUT, "the gated request to reach the model", || async {
+        !server.requests.lock().unwrap().is_empty()
+    })
     .await;
     // A replacement launch takes the row over before the diagnosis answers.
     h.store
         .set_session_launch(&agent.id, "launch-replacement")
         .await
         .unwrap();
+    // Only now does the model answer: the replacement above is provably
+    // over before the diagnosis this release lets through can arrive.
+    gate.notify_one();
 
     eventually(TIMEOUT, "the advisory diagnosis to arrive", || async {
         !events_of(&h, &agent.id, "session.diagnosis")

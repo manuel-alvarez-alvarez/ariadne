@@ -387,7 +387,7 @@ the ACP runtime that takes a prompt (021).
   effort
   (`auto_switch.rs::a_codex_exhaustion_switches_to_another_agent_at_the_same_rank`).
   They prefer the same rank before moving up and then down
-  (`auto_switch.rs::the_ladder_uses_same_agent_then_the_rank_above_then_below`).
+  (`scheduler/auto_switch.rs::tests::rank_ladder_prefers_another_agent_then_the_rank_above_then_below`).
   A chain avoids earlier models, notifies the orchestrator once per switch,
   clears attention after each successful switch, and stops at the budget
   (`auto_switch.rs::a_chain_never_revisits_a_model_and_stops_at_the_budget`,

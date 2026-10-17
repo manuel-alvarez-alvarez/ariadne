@@ -658,7 +658,6 @@ async fn a_volta_shim_naming_a_different_package_goes_to_the_probe() {
         .manager_homes(homes)
         .discover_agents()
         .await;
-
     let agents: Vec<Value> = h.get("/v1/acp-agents").await;
     assert!(
         !agents.iter().any(|a| a["id"] == "claude-acp"),
@@ -669,7 +668,8 @@ async fn a_volta_shim_naming_a_different_package_goes_to_the_probe() {
     matching["agent_info"] =
         json!({"name": "@agentclientprotocol/claude-agent-acp", "version": "1.0"});
     agent.reprogram(matching);
-    let agents: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
+    h.launcher.registry.refresh().await;
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
     let claude = agents
         .iter()
         .find(|a| a["id"] == "claude-acp")
