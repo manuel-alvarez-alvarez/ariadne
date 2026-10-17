@@ -191,9 +191,12 @@ temp directory, keyed by the test binary's own path, size and modified time
 content differs — and copies it for every harness after. Nextest runs every
 test in a process of its own, so an exclusive `flock` on a lock file beside
 the template, not an in-process cache, keeps every other process racing to
-build the same template waiting on the one that gets there first; a holder
-that dies mid-build drops the lock with its own process, so the next waiter
-rebuilds rather than waiting forever on a claim nothing will ever finish.
+build the same template waiting on the one that gets there first — polled
+non-blocking from the async side rather than taken as a real blocking call,
+which would park an uncancellable OS thread for as long as the holder keeps
+it. A holder that dies mid-build drops the lock with its own process, so
+the next waiter rebuilds rather than waiting forever on a claim nothing
+will ever finish.
 
 `[profile.dev]` in the root `Cargo.toml` keeps line tables for workspace code
 and no debug information for dependencies; change it only in a separate branch.

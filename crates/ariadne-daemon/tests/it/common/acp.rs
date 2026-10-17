@@ -614,10 +614,18 @@ def respond(request):
         if "permission" in turn:
             permissions += 1
             request_permission = dict(turn["permission"])
+            sent = request_permission.pop("sent", None)
             request_permission["sessionId"] = sid
             send({"jsonrpc": "2.0", "id": "permission-%d" % permissions,
                   "method": "session/request_permission",
                   "params": request_permission})
+            # Marks the instant the request is out, for a test about what
+            # happens while the daemon is still deciding it — a file, not
+            # the log `read()` appends to below, since that only grows once
+            # the answer, not the request, comes back.
+            if sent:
+                with open(sent, "w") as f:
+                    f.write("1")
             read()  # the client's answer, logged like everything else
         send_updates(sid, turn.get("updates", []))
         stop_reason = turn.get("stop_reason", "end_turn")

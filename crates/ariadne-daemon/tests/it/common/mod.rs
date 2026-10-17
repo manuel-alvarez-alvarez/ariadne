@@ -544,14 +544,17 @@ impl HarnessBuilder {
 /// metadata reuses the old path with new bytes). A cache a rebuild cannot
 /// invalidate would read stale migrations.
 ///
-/// One process builds it; every other one blocks on the same exclusive
-/// `flock` and finds it already there once it gets the lock itself. A
-/// builder that dies mid-build drops the lock when its file descriptor
-/// closes, which the kernel guarantees happens however the process ends —
-/// so a crash hands the lock on to the next waiter rather than wedging it
-/// forever behind a claim nothing will ever finish. The lock wait is itself
-/// bounded by [`TIMEOUT`], so a build that is merely slow still surfaces as
-/// a named failure rather than an unexplained hang.
+/// One process builds it; every other one polls the same exclusive `flock`,
+/// non-blocking and on its own async side, until it gets the lock itself or
+/// finds `path` already there — a blocking `flock` would park a real OS
+/// thread for as long as the holder keeps it, uncancellable and still owed
+/// by the runtime at shutdown. A builder that dies mid-build drops the lock
+/// when its file descriptor closes, which the kernel guarantees happens
+/// however the process ends — so a crash hands the lock on to the next
+/// waiter rather than wedging it forever behind a claim nothing will ever
+/// finish. The poll is itself bounded by [`TIMEOUT`], so a build that is
+/// merely slow still surfaces as a named failure rather than an
+/// unexplained hang.
 async fn template_db() -> PathBuf {
     use std::hash::{Hash, Hasher};
 
@@ -568,22 +571,42 @@ async fn template_db() -> PathBuf {
     if path.exists() {
         return path;
     }
-    let lock_file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(dir.join(format!("{key}.lock")))
-        .unwrap();
-    let lock_file = tokio::time::timeout(
-        TIMEOUT,
-        tokio::task::spawn_blocking(move || {
-            rustix::fs::flock(&lock_file, rustix::fs::FlockOperation::LockExclusive).unwrap();
-            lock_file
-        }),
-    )
-    .await
-    .expect("timed out waiting for another process's template database build")
-    .unwrap();
+    let lock_path = dir.join(format!("{key}.lock"));
+    // Non-blocking and polled from the async side, not a blocking `flock`
+    // handed to a blocking-pool thread: that thread would stay parked in
+    // the syscall for as long as the holder keeps the lock, which a
+    // `tokio::time::timeout` around the `JoinHandle` only stops *waiting*
+    // on — it cannot cancel a thread already blocked in the kernel, so the
+    // runtime would still hang at shutdown behind it. A failed attempt
+    // here returns at once, so the deadline below is the only thing that
+    // ever waits.
+    let deadline = Instant::now() + TIMEOUT;
+    let lock_file = loop {
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        if rustix::fs::flock(
+            &lock_file,
+            rustix::fs::FlockOperation::NonBlockingLockExclusive,
+        )
+        .is_ok()
+        {
+            break lock_file;
+        }
+        if path.exists() {
+            return path;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for another process's template database build"
+        );
+        // The same poll period `eventually` below uses for the same
+        // reason: cheap enough to not matter, short enough to not be felt.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
     if !path.exists() {
         // Built aside and renamed, even under the lock: a reader that
         // raced the lock itself and lost only ever sees `path` once it is

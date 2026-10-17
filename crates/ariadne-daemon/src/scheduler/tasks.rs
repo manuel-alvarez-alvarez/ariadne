@@ -51,6 +51,14 @@ impl super::Scheduler {
                         self.launcher.cfg.delete_merged_branches,
                     )
                     .await?;
+                // The request this task opened, if it has one, is nobody's
+                // to keep now — but nothing else tells the scheduler that:
+                // a task finishing publishes only its own change, never the
+                // request's, so without this its own end would otherwise
+                // wait on the periodic tick to notice.
+                if let Some(pull) = self.store.pull_request_of_task(&task.id).await? {
+                    self.reconcile_pull_request(&pull.id).await;
+                }
                 for dependent in self.dependents_of(&task).await? {
                     Box::pin(self.reconcile_task(&dependent)).await?;
                 }
