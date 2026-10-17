@@ -1416,7 +1416,9 @@ mod tests {
     /// Every refusal a tool builds, and every result string it writes rather
     /// than passing the daemon's own JSON back, is Simplified Technical
     /// English (006 rule 11): the same two rules the session rules and the
-    /// tool descriptions hold to.
+    /// tool descriptions hold to. This covers every local check a tool makes
+    /// before it calls the daemon — `staffing` and `addressee` included —
+    /// not only the ones the daemon itself refuses.
     #[tokio::test]
     async fn every_refusal_and_result_string_is_simplified_technical_english() {
         use ariadne_store::defaults::ste;
@@ -1538,6 +1540,73 @@ mod tests {
             panic!("the answer came back as something other than text");
         };
         texts.push(("submit_review's pending result", text.text.clone()));
+
+        let (endpoint, _seen) = recording_daemon().await;
+        let err = orchestrator_at(&endpoint)
+            .create_task(Parameters(CreateTaskReq {
+                title: "T".into(),
+                description: "D".into(),
+                agents: vec![],
+                depends_on: None,
+                repo_id: None,
+            }))
+            .await
+            .expect_err("a task with no agents");
+        texts.push(("staffing's empty refusal", err.message.to_string()));
+
+        let (endpoint, _seen) = recording_daemon().await;
+        let err = orchestrator_at(&endpoint)
+            .create_task(Parameters(CreateTaskReq {
+                title: "T".into(),
+                description: "D".into(),
+                agents: vec![AgentReq {
+                    step: "develop".into(),
+                    model: "default".into(),
+                    effort: None,
+                    skills: None,
+                    brief: None,
+                }],
+                depends_on: None,
+                repo_id: None,
+            }))
+            .await
+            .expect_err("default is no model for a column");
+        texts.push(("staffing's default-model refusal", err.message.to_string()));
+
+        let (endpoint, _seen) =
+            recording_daemon_answering(r#"{"agents": [{"id": "01A", "step": "develop"}]}"#).await;
+        let err = agent_at(&endpoint)
+            .send_message(Parameters(SendMessageReq {
+                to: "nope".into(),
+                body: "Hi.".into(),
+                task_id: None,
+            }))
+            .await
+            .expect_err("no such agent");
+        texts.push(("addressee's no-agent refusal", err.message.to_string()));
+
+        let (endpoint, _seen) =
+            recording_daemon_answering(r#"{"agents": [{"step": "develop"}]}"#).await;
+        let err = agent_at(&endpoint)
+            .send_message(Parameters(SendMessageReq {
+                to: "develop".into(),
+                body: "Hi.".into(),
+                task_id: None,
+            }))
+            .await
+            .expect_err("an agent with no id");
+        texts.push(("addressee's no-id refusal", err.message.to_string()));
+
+        let (endpoint, _seen) = recording_daemon().await;
+        let err = agent_at(&endpoint)
+            .send_message(Parameters(SendMessageReq {
+                to: "develop".into(),
+                body: "".into(),
+                task_id: None,
+            }))
+            .await
+            .expect_err("a message with no body");
+        texts.push(("send_message's refusal", err.message.to_string()));
 
         for (name, text) in texts {
             for sentence in ste::sentences(&text) {
