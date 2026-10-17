@@ -432,15 +432,6 @@ impl super::Scheduler {
                 failed_tasks.push((task.id.clone(), transition_id));
             }
         }
-        let confirmed: Vec<(String, String)> = goal
-            .orchestrator_answered_failed_task_ids
-            .as_deref()
-            .and_then(|json| serde_json::from_str(json).ok())
-            .unwrap_or_default();
-        let all_confirmed = failed_tasks.iter().all(|pair| confirmed.contains(pair));
-        if self.goal_told.get(&goal.id) == Some(&situation) && all_confirmed {
-            return Ok(());
-        }
         let orchestrators = self
             .live_sessions(&goal.id, None, Seat::Orchestrator)
             .await?;
@@ -453,6 +444,30 @@ impl super::Scheduler {
             // finds it idle says it then.
             return Ok(());
         };
+        // Locked against `acp::prompt_once` confirming this exact goal's
+        // last delivery: on the daemon's multi-threaded runtime, no
+        // ordering inside this pass excludes that confirmation landing on
+        // another worker between the read below and the send further
+        // down, however few lines separate them — nothing short of a lock
+        // either side actually waits on closes that gap. Whichever of the
+        // two acquires it first — this pass's whole read-and-send, or that
+        // turn's whole confirm-and-dequeue — runs to completion before the
+        // other even starts its own read, so the read below always sees
+        // either the confirmation whole or not at all, never half-landed.
+        let goal_attention_lock = self.launcher.acp.goal_attention_lock();
+        let _goal_attention_guard = goal_attention_lock.lock().await;
+        let confirmed: Vec<(String, String)> = self
+            .store
+            .get_goal(&goal.id)
+            .await?
+            .orchestrator_answered_failed_task_ids
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+        let all_confirmed = failed_tasks.iter().all(|pair| confirmed.contains(pair));
+        if self.goal_told.get(&goal.id) == Some(&situation) && all_confirmed {
+            return Ok(());
+        }
         let template = prompts::template_for(PromptKind::GoalAttention);
         let text = prompts::goal_attention_briefing(template, goal, &situation);
         // The delivery itself carries its own confirmation evidence,

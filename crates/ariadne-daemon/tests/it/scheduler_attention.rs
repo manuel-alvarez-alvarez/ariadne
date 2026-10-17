@@ -2346,26 +2346,31 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
         .await
         .unwrap();
 
+    sched.goal(&w.goal);
     eventually(TIMEOUT, "the orchestrator to be woken", async || {
-        sched.goal(&w.goal);
         w.prompted(&orchestrator).contains("failed")
     })
     .await;
     let woken = w.prompted(&orchestrator);
     assert!(woken.contains(&w.task.title), "{woken}");
     assert!(woken.contains("`list_tasks`"), "{woken}");
+    assert_eq!(
+        woken.matches("`list_tasks`").count(),
+        1,
+        "exactly one delivery, the moment the orchestrator could hear it"
+    );
 
     // Every pass after it says the same thing, so nothing is said again.
     // Flushed after each send, so every pass is known reconciled before the
-    // next one is sent, rather than guessed from a wait between them.
-    let said = w.prompted(&orchestrator).matches("`list_tasks`").count();
+    // count below is read, rather than counted against a baseline an
+    // `eventually` loop could have already doubled before this point.
     for _ in 0..3 {
         sched.goal(&w.goal);
         sched.flush().await;
     }
     assert_eq!(
         w.prompted(&orchestrator).matches("`list_tasks`").count(),
-        said,
+        1,
         "the orchestrator was woken again for the same situation"
     );
 }
@@ -2580,15 +2585,22 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
 
     // The same agent hears again, and the situation is still owed.
     reopen();
+    sched.goal(&w.goal);
     eventually(
         TIMEOUT,
         "the orchestrator to be told now that it can hear it",
-        async || {
-            sched.goal(&w.goal);
-            w.prompted(&orchestrator).contains("failed")
-        },
+        async || w.prompted(&orchestrator).contains("failed"),
     )
     .await;
+
+    // Told once, however many more passes ask about the same situation.
+    // Flushed after each send, so every pass is known reconciled before the
+    // count below is read, rather than counted across passes an `eventually`
+    // loop fired before it stopped asking.
+    for _ in 0..3 {
+        sched.goal(&w.goal);
+        sched.flush().await;
+    }
     assert_eq!(
         w.prompted(&orchestrator).matches("failed").count(),
         1,
@@ -3586,7 +3598,10 @@ async fn a_reviewer_session_refuses_to_restart_on_a_head_branch_that_turned_inva
         .await
         .unwrap();
     h.store.mark_session_launched(&session.id).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(5)).await;
+    // Backdated rather than slept past: `heard_from` needs `last_activity_at`
+    // strictly later than `launched_at`, and a real sleep is not the only way
+    // to put the launch stamp behind it.
+    h.backdate(&["launched_at"], &session, 1).await;
     h.store.touch_session(&session.id).await.unwrap();
     h.store
         .set_session_status(&session.id, SessionStatus::Exited)
@@ -3674,4 +3689,323 @@ async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_i
     );
     assert_eq!(h.launched_at(&idle).await, idle_launched, "nor relaunched");
     assert_eq!(h.attention(&idle).await, None, "nor flagged stalled");
+}
+
+/// `reconcile_goal` fetches the goal once, at the top, and carries that copy
+/// through `keep_orchestrator`, `deliver_goal_messages` and `list_tasks`
+/// before `tell_orchestrator` ever reads it: a pass that started before a
+/// failure's turn confirmed, and only reaches that read afterward, used to
+/// answer from the stale copy — "not confirmed yet" — and find the now-idle
+/// session below it, handing the same, already-confirmed failure off a
+/// second time.
+///
+/// Reading the confirmed list fresh, right before the hand-off, narrows the
+/// window; it does not close it. The daemon's own runtime is multi-threaded
+/// (`#[tokio::main]`, no `current_thread` flavor), so the ACP driver
+/// confirming this exact failure can run on another worker at the very
+/// moment this pass reaches that read, whatever stands between the read
+/// and the send — no ordering inside one task excludes a different one
+/// running on a different core.
+///
+/// What actually closes it is `AcpRuntime::goal_attention_lock`, held
+/// across this pass's whole read-and-send on one side and
+/// `acp::prompt_once`'s whole confirm-and-dequeue on the other: whichever
+/// of the two acquires it first runs to completion before the other even
+/// starts its own read, so the read never lands inside the write it would
+/// otherwise race. That is a property of holding the same lock on both
+/// sides, true for every interleaving of the two at once, not one more
+/// timing window to land a test inside: a correctly held mutex has no gap
+/// a scheduling accident can still find, so there is nothing here for a
+/// forced run to turn red against, and none was found forcing one — on
+/// this runtime, under load, against a version of this code with no lock
+/// at all, repeatedly, nor is one on record from the review that raised
+/// the question. The real check on the guarantee is the one above it:
+/// both sides take the same lock before touching the state the other
+/// reads or writes, which code reading confirms and a race cannot
+/// contradict.
+///
+/// What this test does force, on the daemon's own multi-threaded runtime so
+/// the scheduler and the ACP driver can actually land on different
+/// workers, is the wider, pre-ledger gap this fix narrows: the first turn
+/// is held open on a gate so its confirmation lands exactly when the gate
+/// is released, and the goal carries fifty other failed tasks so the
+/// second pass's own `latest_transition_to` loop is still reading when it
+/// does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure() {
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: NO_TICK,
+            ..Timeouts::default()
+        })
+        .await;
+    let w = World::build(h).await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some("the crate the task names was deleted upstream"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    for i in 0..50 {
+        let extra = w.extra_task(&format!("padding {i}")).await;
+        w.advance(&extra, TaskStatus::InProgress).await;
+        w.store
+            .transition_task(&extra.id, TaskStatus::Failed, Actor::Agent, None, None)
+            .await
+            .unwrap();
+    }
+
+    // The orchestrator's next turn is held open until the gate file exists,
+    // so its confirmation (`acp::prompt_once`) lands at a moment this test
+    // chooses rather than whenever the stub happens to answer.
+    let gate = w.dir.path().join("stale-goal-gate");
+    let mut script = common::acp::script();
+    script["prompts"] = serde_json::json!([{
+        "wait_for": gate.display().to_string(),
+        "updates": [],
+        "stop_reason": "end_turn",
+    }]);
+    w.agent.reprogram(script);
+
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the failure",
+        async || w.prompted(&orchestrator).contains(&w.task.title),
+    )
+    .await;
+
+    // Released and asked again in the same breath: the second pass's own
+    // goal fetch races the first turn's confirmation, which the fifty
+    // other failed tasks give it a real chance to lose.
+    std::fs::write(&gate, "go").unwrap();
+    sched.goal(&w.goal);
+    sched.flush().await;
+
+    // An ordinary prompt, queued only now and carrying no delivery of its
+    // own, so nothing before it can be mistaken for it. The driver answers
+    // every prompt on one session in the order it was queued behind
+    // (021), so a wrongly queued duplicate of the attention prompt — which
+    // would have been queued by the flush above, ahead of this one — has
+    // already reached the stub and run its own turn to completion by the
+    // moment this marker does. Settling for that reason rather than for
+    // the session going idle: idle is also true in the narrow gap between
+    // the first turn's own stop and a duplicate's start, which this marker
+    // cannot be confused for, since nothing queues it until after this
+    // point.
+    const SETTLE_MARKER: &str = "the-pass-raced-the-confirmation-marker";
+    w.launcher
+        .acp
+        .send_prompt(&orchestrator.id, SETTLE_MARKER.into())
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "the settle marker, queued behind anything a wrongly duplicated pass sent first",
+        async || w.prompted(&orchestrator).contains(SETTLE_MARKER),
+    )
+    .await;
+
+    assert_eq!(
+        w.prompts_to(&orchestrator)
+            .iter()
+            .filter(|prompt| prompt.contains(&w.task.title))
+            .count(),
+        1,
+        "exactly one delivery of an already-confirmed failure"
+    );
+}
+
+/// The ledger key the fix above protects names a goal's failed tasks alone
+/// (`acp::Delivery::key`), so a stall warning and a later, distinct "every
+/// task is done" notice — both confirmed with no failed task on record,
+/// `failed_tasks` empty either way — could collide on it. Restoring the
+/// ledger's original removal, taken off the moment each delivery's own
+/// turn confirms it rather than kept for the rest of the launch, is what
+/// keeps that collision from suppressing the second notice: once a
+/// delivery is confirmed its key is gone, whatever the next one's is.
+#[tokio::test]
+async fn a_stalled_tasks_warning_does_not_suppress_the_done_notice_that_follows() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.raise(&session, AttentionReason::Stalled).await;
+
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the stall warning",
+        async || w.prompted(&orchestrator).contains("has gone quiet"),
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "the stall warning's own turn to confirm",
+        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+    )
+    .await;
+
+    // The stall clears, and the task lands: a different situation, with
+    // the same empty `failed_tasks` the stall warning's own key carried.
+    w.store.clear_session_attention(&session.id).await.unwrap();
+    w.advance_to(&w.task, "merge").await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Finished,
+            Actor::Agent,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
+
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear every task is done, not suppressed by the stall's own key",
+        async || w.prompted(&orchestrator).contains("Every task is done."),
+    )
+    .await;
+}
+
+/// The same task stalling twice renders the identical "has gone quiet"
+/// line both times — nothing about a stall names which occurrence of it
+/// this is, unlike a failure's own transition id. Clearing the first
+/// stall's situation (`tell_orchestrator` dropping `goal_told` for this
+/// goal once `goal_attention` has nothing left to say) and the ledger key
+/// its own confirmed turn already took off is what lets the second stall
+/// be told again rather than finding a cache or a key still saying it
+/// already was.
+#[tokio::test]
+async fn a_tasks_stall_recurring_after_it_cleared_is_told_again() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+
+    let sched = w.scheduler();
+    w.raise(&session, AttentionReason::Stalled).await;
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the first stall",
+        async || w.prompted(&orchestrator).contains("has gone quiet"),
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "the first stall's own turn to confirm",
+        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+    )
+    .await;
+    let told_once = w.prompted(&orchestrator).matches("has gone quiet").count();
+
+    // Cleared, and nothing else said while it stays clear: no situation to
+    // render, so nothing for `tell_orchestrator` to send.
+    w.store.clear_session_attention(&session.id).await.unwrap();
+    sched.goal(&w.goal);
+    sched.flush().await;
+    assert_eq!(
+        w.prompted(&orchestrator).matches("has gone quiet").count(),
+        told_once,
+        "a cleared stall says nothing more on its own"
+    );
+
+    // The same task, stalled again: the identical line, rendered fresh.
+    w.raise(&session, AttentionReason::Stalled).await;
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the recurring stall to be told again rather than found already confirmed",
+        async || w.prompted(&orchestrator).matches("has gone quiet").count() > told_once,
+    )
+    .await;
+}
+
+/// The ledger key comes off a `GoalAttention` delivery's turn whether or
+/// not `confirm_goal_orchestrator_answered`'s own write actually lands —
+/// its only job is the one in-flight attempt, not standing in for the
+/// store on whether a later pass should retry. A write that fails leaves
+/// the store itself reading unconfirmed, which is what a later pass acts
+/// on: forced here with a trigger that rejects the write once, so the
+/// failure is the database's own rather than a guess about what a real
+/// one looks like, on the same live launch throughout — no restart, no
+/// relaunch, just the next pass finding the write can land now.
+#[tokio::test]
+async fn a_failed_confirmation_write_is_retried_once_the_write_can_land() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some("the crate the task names was deleted upstream"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    w.reject_goal_confirm(&w.goal.id).await;
+
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the failure, its confirming write rejected",
+        async || w.prompted(&orchestrator).contains(&w.task.title),
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "that turn to end despite the write failing",
+        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+    )
+    .await;
+    assert!(
+        w.store
+            .get_goal(&w.goal.id)
+            .await
+            .unwrap()
+            .orchestrator_answered_failed_task_ids
+            .is_none(),
+        "the rejected write must not have landed"
+    );
+
+    // The write can land now, and the next pass is the one that finds out:
+    // the ledger key this delivery's own failed turn already freed is what
+    // lets it try again, on the same launch, rather than finding its own
+    // prior attempt still blocking it.
+    w.stop_rejecting_goal_confirm(&w.goal.id).await;
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the retried confirmation to land now that the write can succeed",
+        async || {
+            w.store
+                .get_goal(&w.goal.id)
+                .await
+                .unwrap()
+                .orchestrator_answered_failed_task_ids
+                .is_some()
+        },
+    )
+    .await;
 }

@@ -163,6 +163,18 @@ struct Inner {
     ai_permissions: Option<AiPermissions>,
     exhausted_patterns: Vec<String>,
     failure_diagnosis: Option<crate::failure_diagnosis::FailureDiagnosis>,
+    /// Serializes a goal's attention decision (`tell_orchestrator`, in the
+    /// scheduler) against the confirmation its own prior delivery's turn
+    /// writes (`prompt_once`, right here), on the daemon's multi-threaded
+    /// runtime where neither otherwise excludes the other: whichever
+    /// acquires this first runs its whole decision, or its whole
+    /// confirm-and-dequeue, to completion before the other so much as
+    /// reads the state the first one is still writing. One lock for every
+    /// goal rather than one per goal: a goal's own attention is not a hot
+    /// path, and a pass over a different goal taking it only waits as
+    /// long as the last one already held it, never on anything of its
+    /// own.
+    goal_attention: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// The branch one session works on, shared between the runtime and the
@@ -245,9 +257,21 @@ pub(crate) enum Delivery {
     /// once this exact prompt's own turn ends (`prompt_once`), never by an
     /// unrelated turn landing on the same session: nothing here is written
     /// to the store until this delivery's own `session/prompt` call
-    /// returns. Held on the launch's queue ledger until then
-    /// (`claim_message`), so a pass that finds the session still idle
-    /// before the turn's first event lands cannot queue it a second time.
+    /// returns. The key comes off the launch's queue ledger
+    /// (`claim_message`) when that turn ends either way, confirmed or
+    /// not: its only job was keeping this one in-flight attempt from
+    /// being queued twice, and a failed write already leaves the store
+    /// itself reading unconfirmed, which is what makes the next pass
+    /// retry — a key still held over a failed write would instead refuse
+    /// that retry's own attempt to queue, past the point the store was
+    /// already free to correct it. Confirming and taking the key off
+    /// happen under `AcpRuntime::goal_attention_lock`, the same lock a
+    /// scheduler pass holds across its own read of this goal's confirmed
+    /// list and its own send: on the daemon's multi-threaded runtime,
+    /// neither task's lack of an intervening `await` excludes the other
+    /// from running on a different worker at the same moment, so the lock
+    /// is what actually keeps a pass from reading "not confirmed yet" in
+    /// the gap this turn's own confirmation is landing in.
     GoalAttention {
         goal_id: String,
         failed_tasks: Vec<(String, String)>,
@@ -518,6 +542,7 @@ impl AcpRuntime {
                 ai_permissions: None,
                 exhausted_patterns: crate::config::default_exhausted_patterns(),
                 failure_diagnosis: None,
+                goal_attention: Arc::new(tokio::sync::Mutex::new(())),
             }),
         }
     }
@@ -588,6 +613,14 @@ impl AcpRuntime {
             .lock()
             .expect("user resumes lock")
             .contains(session_id)
+    }
+
+    /// The lock a goal's attention decision and its own prior delivery's
+    /// confirmation serialize against each other on. An owned clone of the
+    /// `Arc`, so the guard a caller holds across its own awaits never ties
+    /// up a borrow of this runtime itself.
+    pub(crate) fn goal_attention_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.inner.goal_attention.clone()
     }
 
     /// Give the runtime the scheduler's waker. Called once, from the
@@ -3040,6 +3073,17 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
     // confirmed together, so it has nothing to say again. Written after the
     // `stop`, the gap between the two was a window in which that pass told
     // the orchestrator the same thing twice.
+    //
+    // Held under the same lock `tell_orchestrator` takes for its own read
+    // of this goal's confirmed list and its own send: on this daemon's
+    // multi-threaded runtime, neither task's lack of an intervening
+    // `await` keeps the other from running on a different worker at the
+    // same moment, so nothing short of a lock either one actually waits
+    // on closes the gap between a pass reading "not confirmed yet" and
+    // this turn confirming it. Whichever of the two acquires it first
+    // runs to completion — the whole confirm-and-dequeue here, or the
+    // whole read-and-send there — before the other even starts its own
+    // read.
     if let Some(
         delivery @ Delivery::GoalAttention {
             goal_id,
@@ -3047,18 +3091,32 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
         },
     ) = &prompt.delivery
     {
-        let sink = &rpc.sink;
-        let _ = sink
+        let lock = rpc.sink.runtime.goal_attention_lock();
+        let _guard = lock.lock().await;
+        let _ = rpc
+            .sink
             .runtime
             .inner
             .store
             .confirm_goal_orchestrator_answered(goal_id, failed_tasks)
             .await;
-        // Confirmed, so off the queue's ledger (`claim_message`): a pass
-        // from here on finds the failure confirmed, and a new situation
-        // for the goal is a new key.
-        sink.runtime
-            .dequeue_message(&sink.session_id, &sink.launch_id, &delivery.key());
+        // Taken off the ledger whether or not the write above landed: the
+        // key's only job is to keep this one in-flight attempt from being
+        // queued twice, and once this turn is over there is no attempt
+        // left for it to protect. Whether to tell the orchestrator again
+        // is answered on the next pass by a fresh read of the store
+        // itself, under this same lock — not by this delivery's own write
+        // having failed, which a key kept open here would otherwise make
+        // permanent: a failed write already leaves the store reading
+        // unconfirmed, which is what makes the next pass retry; a key
+        // still held over it would instead have refused the retry's own
+        // attempt to queue, keeping the failure stuck unconfirmed for the
+        // rest of this launch despite the store being free to correct it.
+        rpc.sink.runtime.dequeue_message(
+            &rpc.sink.session_id,
+            &rpc.sink.launch_id,
+            &delivery.key(),
+        );
     }
     rpc.sink.emit("stop", stop).await;
     rpc.turn_ended.notify_waiters();
