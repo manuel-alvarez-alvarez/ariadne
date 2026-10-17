@@ -577,35 +577,13 @@ async fn template_db() -> PathBuf {
     // the syscall for as long as the holder keeps the lock, which a
     // `tokio::time::timeout` around the `JoinHandle` only stops *waiting*
     // on — it cannot cancel a thread already blocked in the kernel, so the
-    // runtime would still hang at shutdown behind it. A failed attempt
-    // here returns at once, so the deadline below is the only thing that
-    // ever waits.
-    let deadline = Instant::now() + TIMEOUT;
-    let lock_file = loop {
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&lock_path)
-            .unwrap();
-        if rustix::fs::flock(
-            &lock_file,
-            rustix::fs::FlockOperation::NonBlockingLockExclusive,
-        )
-        .is_ok()
-        {
-            break lock_file;
-        }
-        if path.exists() {
-            return path;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for another process's template database build"
-        );
-        // The same poll period `eventually` below uses for the same
-        // reason: cheap enough to not matter, short enough to not be felt.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    // runtime would still hang at shutdown behind it. A failed attempt here
+    // returns at once, so this helper's deadline is the only thing that
+    // ever waits. `TemplateReady` distinguishes "stop waiting, nothing to
+    // build" from "keep polling for the lock" without a second flag.
+    let lock_file = match wait_for_template_lock(path.clone(), lock_path).await {
+        TemplateLock::Acquired(lock_file) => lock_file,
+        TemplateLock::TemplateReady => return path,
     };
     if !path.exists() {
         // Built aside and renamed, even under the lock: a reader that
@@ -627,6 +605,50 @@ async fn template_db() -> PathBuf {
     }
     drop(lock_file);
     path
+}
+
+/// Try the process-wide template lock once, without parking a runtime thread.
+///
+/// The outer poll owns the wait. A completed template has priority over a
+/// lock another process still holds, since the caller only needs its path.
+fn template_lock_attempt(lock_path: &Path, path: &Path) -> Option<TemplateLock> {
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_path)
+        .unwrap();
+    match rustix::fs::flock(
+        &lock_file,
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    ) {
+        Ok(()) => Some(TemplateLock::Acquired(lock_file)),
+        Err(rustix::io::Errno::WOULDBLOCK) => path.exists().then_some(TemplateLock::TemplateReady),
+        Err(e) => panic!("locking the template database build: {e}"),
+    }
+}
+
+/// Poll for the process-wide template lock without parking a runtime thread.
+async fn wait_for_template_lock(path: PathBuf, lock_path: PathBuf) -> TemplateLock {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        if let Some(lock_file) = template_lock_attempt(&lock_path, &path) {
+            return lock_file;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for another process's template database build"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// The two outcomes that end the template-lock poll.
+enum TemplateLock {
+    /// This process owns the lock and must build the database if it is absent.
+    Acquired(std::fs::File),
+    /// Another process published the complete database before this one locked.
+    TemplateReady,
 }
 
 /// Where a harness's agents keep their transcripts: under its own
