@@ -42,14 +42,17 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   create`; the UI fills the New goal form), then finalizes the plan the way
   a real orchestrator would once the user agreed to it, over the daemon's
   REST API: `python3 assets/seed-demo-goal.py <base-url> <model>`. It finds
-  the goal by its title, so it can be started before that goal exists —
-  `demo.tape` relies on exactly that to keep it off the recording (see
-  below). `<model>` is only ever the model the two added tasks' columns run
-  on, never the orchestrator's own — that one is `demo-orchestrator-agent.py`
-  in both recordings, pinned through `goal create`'s own `--model` or the New
-  goal form's model picker, not through this script. No `jq` or other
-  non-stdlib dependency: this repo's own tooling already assumes `python3`
-  (`crates/AGENTS.md`), never a bare `jq`.
+  the goal by its title and adds the tasks and finalizes the moment it does,
+  with no wait of its own for the orchestrator's console exchange — each
+  recording is what holds it back until the stub has accepted the typed
+  answer (see `demo.tape` and `record-demo-ui.mjs` below), since starting it
+  any earlier would let the tasks and the finalized plan show up before the
+  answer did. `<model>` is only ever the model the two added tasks' columns
+  run on, never the orchestrator's own — that one is
+  `demo-orchestrator-agent.py` in both recordings, pinned through `goal
+  create`'s own `--model` or the New goal form's model picker, not through
+  this script. No `jq` or other non-stdlib dependency: this repo's own
+  tooling already assumes `python3` (`crates/AGENTS.md`), never a bare `jq`.
 - `demo.tape`, rendered with [vhs](https://github.com/charmbracelet/vhs), and
   [`record-demo-cli.sh`](record-demo-cli.sh), the script that owns it:
   `bash assets/record-demo-cli.sh`. Never call `vhs` on the tape directly —
@@ -61,14 +64,15 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   `seed-demo-repo.sh`, runs `vhs` over the tape, and removes the daemon and
   the scratch directories when the recording ends or the script is
   interrupted — the same lifecycle `record-demo-ui.mjs` owns for its own
-  recording, below. The tape itself starts `seed-demo-goal.py` in the
-  background, redirected and before anything is on screen: a `Hide`/`Show`
-  pair only skips *capturing* frames, it does not clear the terminal's own
-  scrollback, so a command typed and run between them would still show once
-  `Show` resumes. After the goal is created, the tape attaches to its
+  recording, below. After the goal is created, the tape attaches to its
   orchestrator's console (`ariadne goal attach`), types the answer to the
   stub's question, and detaches with two `Ctrl-C`, the same way a person
-  would.
+  would — only then, back at the shell, does a hidden step start
+  `seed-demo-goal.py` in the background, redirected: a `Hide`/`Show` pair
+  only skips *capturing* frames, it does not clear the terminal's own
+  scrollback, so a command typed and run between them would still show once
+  `Show` resumes, which is what the `clear` at the end of each hidden block
+  is for.
 - `record-demo-ui.mjs`: `node assets/record-demo-ui.mjs`. It builds the
   release binaries, creates an isolated Ariadne home with a two-second inert
   `cli_bin` (the scheduler can create metadata rows for the demo, but it

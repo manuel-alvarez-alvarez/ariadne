@@ -12,10 +12,12 @@
 # (the stub both README recordings run as the orchestrator, so the tape can
 # attach to its console and show a real, scripted exchange), starts a
 # throwaway daemon with its REST API on a loopback port, and runs
-# assets/demo.tape with vhs over it — which starts assets/seed-demo-goal.py
-# in the background to seed the goal's tasks the same way the UI recording
-# does. The daemon, its home and the scratch repository are removed when the
-# recording ends or the script is interrupted.
+# assets/demo.tape with vhs over it — which attaches to the stub's console,
+# types the answer to its question, and only then starts
+# assets/seed-demo-goal.py in the background to seed the goal's tasks, the
+# same way the UI recording does. The daemon, its home and the scratch
+# repository are removed when the recording ends or the script is
+# interrupted.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

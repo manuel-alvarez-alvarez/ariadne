@@ -240,11 +240,6 @@ async function main() {
   await page.getByRole("heading", { name: GOAL_TITLE, exact: true }).waitFor()
   await page.waitForTimeout(4_000)
 
-  // The same two tasks assets/demo.tape's own background seed adds, over the
-  // same REST API — unrelated to the orchestrator console below, which is
-  // the scripted stub's exchange rather than anything this seed does.
-  const seeded = exec("python3", [join(root, "assets", "seed-demo-goal.py"), baseUrl, TASK_MODEL])
-
   // Open the orchestrator's console: the goal panel's Sessions tab lists its
   // one live session (the scripted stub above), and selecting it opens on
   // the console tab by default.
@@ -267,7 +262,15 @@ async function main() {
   await page.keyboard.press("Enter")
   await page.waitForTimeout(5_000)
 
-  await seeded
+  // Only now, after the console showed the stub accept the typed answer, is
+  // the task seeder started: assets/seed-demo-goal.py adds the goal's two
+  // tasks and finalizes the plan as soon as it finds the goal, which already
+  // exists by this point, so it would race ahead of the answer if it ran
+  // any earlier (as assets/demo.tape's own hidden step does, for the same
+  // reason). Awaited at the very end, once the rest of the flow below has
+  // already given it time to finish, so it adds nothing to the recording's
+  // own pace while still surfacing a seeding failure loudly.
+  const seeded = exec("python3", [join(root, "assets", "seed-demo-goal.py"), baseUrl, TASK_MODEL])
 
   // The session view took over the whole panel, breadcrumb and tabs
   // included (see ui/src/features/goals/goal-sessions.tsx), so the way to
@@ -286,6 +289,8 @@ async function main() {
   await taskRow.click()
   await page.getByRole("heading", { name: limiterTask, exact: true }).waitFor()
   await page.waitForTimeout(6_500)
+
+  await seeded
 
   const video = page.video()
   if (!video) throw new Error("Playwright did not start video recording")

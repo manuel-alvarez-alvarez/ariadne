@@ -14,8 +14,12 @@
 #   - ARIADNE_HOME=/tmp/ariadne-demo-home, a daemon already running on it,
 #     with its REST API on 127.0.0.1:18765 (tcp_listen), and
 #     assets/demo-orchestrator-agent.py registered as the acp agent
-#     `demo-orchestrator` — the hidden setup below seeds the goal's tasks
-#     over that REST API, the same way assets/record-demo-ui.mjs does
+#     `demo-orchestrator` — a hidden step after the console exchange below
+#     seeds the goal's tasks over that REST API, the same way
+#     assets/record-demo-ui.mjs does, only once the stub has accepted the
+#     typed answer: seed-demo-goal.py adds the tasks and finalizes the plan
+#     as soon as it finds the goal, so starting it any earlier would let
+#     the tasks and the finalized plan show up before the answer did
 #   - /tmp/ariadne-demo-repo, a git repository seeded with
 #     assets/seed-demo-repo.sh
 
@@ -35,14 +39,14 @@ Set Theme "Dracula"
 Set TypingSpeed 45ms
 
 Hide
-# The seeder is started here, before the goal exists: a `Hide`/`Show` pair
-# only skips capturing frames, it does not erase the terminal's own
-# scrollback, so a command typed and run *between* them still shows once
-# `Show` resumes. Backgrounding it before anything is on screen, with its
-# own output redirected away, is what actually keeps it off the recording.
-# It polls for the goal by title (assets/seed-demo-goal.py), so starting it
-# this early is safe.
-Type "export ARIADNE_REPO_ROOT=$PWD; export PATH=$PWD/target/release:$PATH; export ARIADNE_HOME=/tmp/ariadne-demo-home; unset ARIADNE_SOCKET ARIADNE_ENDPOINT; cd /tmp/ariadne-demo-repo; set +m; (python3 $ARIADNE_REPO_ROOT/assets/seed-demo-goal.py http://127.0.0.1:18765 opencode:opencode/big-pickle >/tmp/ariadne-demo-seed.log 2>&1 &); clear"
+# A `Hide`/`Show` pair only skips capturing frames, it does not erase the
+# terminal's own scrollback, so a command typed and run *between* them would
+# still show once `Show` resumes — the `clear` at the end of each hidden
+# block is what actually keeps it off the recording. This first one only
+# sets up the shell: the task seeder itself is started in a later hidden
+# block, after the console exchange below, never here (see the note at the
+# top of this file).
+Type "export ARIADNE_REPO_ROOT=$PWD; export PATH=$PWD/target/release:$PATH; export ARIADNE_HOME=/tmp/ariadne-demo-home; unset ARIADNE_SOCKET ARIADNE_ENDPOINT; cd /tmp/ariadne-demo-repo; set +m; clear"
 Enter
 Sleep 500ms
 Show
@@ -71,6 +75,18 @@ Ctrl+C
 Sleep 300ms
 Ctrl+C
 Sleep 500ms
+
+Hide
+# Only now, after the console showed the stub accept the typed answer, is
+# the task seeder started: assets/seed-demo-goal.py adds the goal's two
+# tasks and finalizes the plan as soon as it finds the goal, which already
+# exists by this point, so it would race ahead of the answer if it ran any
+# earlier. A second behind a daemon that only answers loopback requests
+# locally is plenty for its REST calls to land before `task ls` below asks.
+Type "(python3 $ARIADNE_REPO_ROOT/assets/seed-demo-goal.py http://127.0.0.1:18765 opencode:opencode/big-pickle >/tmp/ariadne-demo-seed.log 2>&1 &); clear"
+Enter
+Sleep 1s
+Show
 
 Type "ariadne task ls"
 Sleep 500ms
