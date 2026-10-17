@@ -18,11 +18,6 @@ use ariadne_daemon::webhooks::WebhookListen;
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-/// A python3 child process starting under load is slower and more variable
-/// than an in-process wait, so its own readiness gets more patience than
-/// `TIMEOUT` gives the rest of this file.
-const STAND_IN_TIMEOUT: Duration = Duration::from_secs(90);
-
 const STAND_IN: &str = r#"
 import json, os, queue, socket, socketserver, sys, threading, time
 from http.server import BaseHTTPRequestHandler
@@ -158,10 +153,7 @@ impl StandIn {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        eventually(STAND_IN_TIMEOUT, "the stand-in to bind", async || {
-            ports.exists()
-        })
-        .await;
+        eventually(TIMEOUT, "the stand-in to bind", async || ports.exists()).await;
         let bound: Value = serde_json::from_str(&std::fs::read_to_string(&ports).unwrap()).unwrap();
         Self {
             child,
@@ -955,6 +947,13 @@ async fn a_delivery_and_a_timer_fetch_record_the_same_pull_request_rows() {
     enable(&h).await;
     eventually(TIMEOUT, "the first row", async || {
         !rows(&h).await.is_empty()
+    })
+    .await;
+    // The row above lands mid-round, from `start_work`, well before the
+    // round's own trailing issues call: wait for the round itself to finish
+    // before its script changes under it.
+    eventually(TIMEOUT, "the first fetch to finish", async || {
+        stub.fetches() >= 1
     })
     .await;
     stub.reprogram(script(&after, &gates));

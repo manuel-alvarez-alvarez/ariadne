@@ -188,6 +188,10 @@ async fn a_detail_read_asks_the_forge_for_its_parts_together() {
             entry["wait_for"] = json!(gate);
         }
     }
+    // No wait needed before this reprogram: the repository's own automatic
+    // fetch lists no open request (`vec![]`), so it never reaches a
+    // `reviews` call either; the only read of #2's reviews is the direct
+    // route-level read below.
     stub.reprogram(blocked);
     let others = [
         "graphql",
@@ -244,6 +248,12 @@ async fn a_review_request_has_a_row_while_it_is_reviewed_and_none_once_it_merged
     let listed: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
     let reviewed = listed.iter().find(|r| r["number"] == 2).unwrap();
     assert_eq!(reviewed["id"], row.id);
+    // The row the first fetch gives the request is no proof that the same
+    // fetch is over: wait for it too, before the script changes below.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
 
     let mut merged = github_pull(2, "other");
     merged["state"] = json!("MERGED");
@@ -471,6 +481,12 @@ async fn startup_fetches_enabled_repositories_and_reads_a_missing_row_as_merged(
     };
     eventually(TIMEOUT, "the row", async || row().await.is_some()).await;
     let row = row().await.unwrap();
+    // The row is no proof that the fetch which gave it is over: wait for
+    // that too, before the script changes for the new manager below.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
     let mut merged = github_pull(1, "other");
     merged["state"] = json!("MERGED");
     stub.reprogram(script(vec![], merged));
@@ -985,6 +1001,12 @@ async fn an_outer_list_failure_publishes_pull_requests_changed() {
         .await
         .is_ok()
     {}
+    // `evidence_ok` above is set mid-fetch, before the round's own trailing
+    // calls end: waited out here too, before the script changes below.
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
 
     // The next fetch fails before any row is ever read: the outer list
     // call itself is gone.

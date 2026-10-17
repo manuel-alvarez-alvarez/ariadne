@@ -69,9 +69,35 @@ impl StubForgeCli {
     /// answered one does, so a count of calls still running is exact
     /// whatever the script holds.
     pub(crate) fn completed(&self) -> usize {
-        std::fs::read_to_string(&self.finished)
-            .map(|s| s.lines().count())
-            .unwrap_or(0)
+        self.finished().len()
+    }
+
+    /// Every call the stub has finished, in the order each one finished: an
+    /// answer from the script, or a refusal for want of an entry.
+    ///
+    /// Read from the finished log, not from [`Self::invocations`] taken in
+    /// start order: `Cli::run`'s `kill_on_drop(true)` can kill a detail
+    /// call a failing sibling's own `try_join!` abandoned (`forge::github::
+    /// details::details`) before it ever finishes, which leaves that one
+    /// call's start logged with no finish to match — forever, since a
+    /// killed call never runs again. A count keyed off "the last call
+    /// started is the only one that can still be running" turns that one
+    /// stranded start into a permanent undercount; reading what finished,
+    /// whichever call it was, does not.
+    fn finished(&self) -> Vec<Invocation> {
+        let Ok(log) = std::fs::read_to_string(&self.finished) else {
+            return Vec::new();
+        };
+        log.lines()
+            .map(|line| {
+                let call: Value = serde_json::from_str(line).unwrap();
+                Invocation {
+                    program: call["program"].as_str().unwrap().to_string(),
+                    args: serde_json::from_value(call["args"].clone()).unwrap(),
+                    input: None,
+                }
+            })
+            .collect()
     }
 
     /// How many selected forge reads have completed. The default counts
@@ -81,8 +107,7 @@ impl StubForgeCli {
     /// Wait for the default count before reprogramming the stub after a
     /// wake: a fetch still under way answers the rest of its calls from the
     /// new script, and what it then publishes is neither the old situation
-    /// nor the new one. The poll runs its calls in order, so an unanswered
-    /// final issues listing is the one fetch still under way.
+    /// nor the new one.
     pub(crate) fn fetches(&self) -> usize {
         match self.fetches {
             Fetches::Repository => self.repository_fetches(),
@@ -98,20 +123,18 @@ impl StubForgeCli {
     }
 
     fn repository_fetches(&self) -> usize {
-        let calls = self.invocations();
-        let issues_read = |call: &Invocation| {
-            call.args.first().is_some_and(|arg| arg == "api")
-                && call.args.get(1).is_some_and(|arg| arg.contains("/issues?"))
-        };
-        let reads = calls.iter().filter(|call| issues_read(call)).count();
-        let last_pending = calls.last().is_some_and(issues_read) && self.completed() < calls.len();
-        reads - usize::from(last_pending)
+        self.finished()
+            .iter()
+            .filter(|call| {
+                call.args.first().is_some_and(|arg| arg == "api")
+                    && call.args.get(1).is_some_and(|arg| arg.contains("/issues?"))
+            })
+            .count()
     }
 
     fn completed_pull_request_views(&self) -> usize {
-        self.invocations()
-            .into_iter()
-            .take(self.completed())
+        self.finished()
+            .iter()
             .filter(|call| {
                 call.args.first().is_some_and(|arg| arg == "pr")
                     && call.args.get(1).is_some_and(|arg| arg == "view")
