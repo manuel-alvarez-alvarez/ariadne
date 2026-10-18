@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { TunnelSettings } from "@/features/repositories/tunnel-settings"
 import { useSettingsStore } from "@/stores/settings"
 
@@ -33,6 +34,8 @@ export function SettingsDialog({
 }) {
   const baseUrl = useSettingsStore((state) => state.baseUrl)
   const setBaseUrl = useSettingsStore((state) => state.setBaseUrl)
+  const diagnosticsEnabled = useSettingsStore((state) => state.diagnosticsEnabled)
+  const setDiagnosticsEnabled = useSettingsStore((state) => state.setDiagnosticsEnabled)
 
   const [draft, setDraft] = useState(baseUrl)
   const [error, setError] = useState<string | null>(null)
@@ -98,6 +101,21 @@ export function SettingsDialog({
                   everything cached from the previous daemon.
                 </FieldDescription>
               )}
+            </Field>
+            <Field orientation="horizontal">
+              <div className="flex-1">
+                <FieldLabel htmlFor="send-app-diagnostics">
+                  Send app diagnostics to the daemon
+                </FieldLabel>
+                <FieldDescription>
+                  Send app logs and performance metrics to this daemon for troubleshooting.
+                </FieldDescription>
+              </div>
+              <Switch
+                id="send-app-diagnostics"
+                checked={diagnosticsEnabled}
+                onCheckedChange={setDiagnosticsEnabled}
+              />
             </Field>
             <div className="border-t pt-4">
               <TunnelSettings open={open} />

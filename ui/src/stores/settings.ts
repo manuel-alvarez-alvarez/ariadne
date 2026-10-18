@@ -20,6 +20,9 @@ interface SettingsState {
   baseUrl: string
   setBaseUrl: (url: string) => void
   resetBaseUrl: () => void
+  /** Whether the app exports its own diagnostics to the selected daemon. */
+  diagnosticsEnabled: boolean
+  setDiagnosticsEnabled: (enabled: boolean) => void
   /**
    * The status filter the goals board was last left with, spelled the way its
    * `?status=` param spells it: `"active,completed"`, or `""` for all statuses.
@@ -76,6 +79,8 @@ export const useSettingsStore = create<SettingsState>()(
       baseUrl: DEFAULT_BASE_URL,
       setBaseUrl: (url) => set({ baseUrl: normalizeBaseUrl(url) }),
       resetBaseUrl: () => set({ baseUrl: DEFAULT_BASE_URL }),
+      diagnosticsEnabled: true,
+      setDiagnosticsEnabled: (diagnosticsEnabled) => set({ diagnosticsEnabled }),
       goalStatusFilter: DEFAULT_GOAL_STATUS_FILTER,
       setGoalStatusFilter: (value) => set({ goalStatusFilter: value }),
       sessionStatusFilter: "",
@@ -95,6 +100,7 @@ export const useSettingsStore = create<SettingsState>()(
       name: SETTINGS_STORAGE_KEY,
       partialize: (state) => ({
         baseUrl: state.baseUrl,
+        diagnosticsEnabled: state.diagnosticsEnabled,
         goalStatusFilter: state.goalStatusFilter,
         sessionStatusFilter: state.sessionStatusFilter,
         sessionRoleFilter: state.sessionRoleFilter,
@@ -117,3 +123,4 @@ useSettingsStore.subscribe((state, previous) => {
 })
 
 export const useBaseUrl = () => useSettingsStore((state) => state.baseUrl)
+export const useDiagnosticsEnabled = () => useSettingsStore((state) => state.diagnosticsEnabled)

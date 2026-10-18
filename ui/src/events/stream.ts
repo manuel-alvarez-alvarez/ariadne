@@ -92,6 +92,8 @@ interface DomainEventStreamHandlers {
    * well have loaded during the gap and events since then are gone for good.
    */
   onOpen: (info: { reconnected: boolean }) => void
+  /** A failed or forced connection starts a telemetry-counted reconnect. */
+  onReconnect?: (reason: string) => void
   /** Status changes worth showing in the UI. */
   onStatus: (status: StreamStatus, error?: string | null) => void
 }
@@ -107,6 +109,7 @@ export class DomainEventStream extends ReconnectingEventStream<StreamStatus> {
       maxBackoffMs: MAX_BACKOFF_MS,
       onStatus: handlers.onStatus,
       onOpen: handlers.onOpen,
+      onReconnect: handlers.onReconnect,
       dropped: "event stream disconnected",
       idle: { timeoutMs: IDLE_BUDGET_MS, reason: "no heartbeat from the daemon" },
     })

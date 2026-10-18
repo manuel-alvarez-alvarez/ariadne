@@ -35,7 +35,9 @@ npm run tauri build    # packaged app + installers under src-tauri/target/releas
 ```
 
 The daemon URL defaults to `http://127.0.0.1:7676` and is editable in the
-settings dialog (the gear in the header, or `⌘,`). It is persisted to
+settings dialog (the gear in the header, or `⌘,`). The **Send app diagnostics
+to the daemon** switch is on by default and controls OTLP logs and metrics.
+Both settings are persisted to
 `localStorage` under `ariadne.settings`; the theme lives under `ariadne.theme`.
 Changing the URL clears the query cache and reconnects the event stream.
 

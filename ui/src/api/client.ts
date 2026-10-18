@@ -17,6 +17,8 @@
 
 import createClient, { type Client } from "openapi-fetch"
 
+import { recordApiRequest } from "@/telemetry/telemetry"
+
 import { ApiError } from "./errors"
 import type { paths } from "./schema"
 
@@ -29,7 +31,7 @@ export function normalizeBaseUrl(url: string): string {
 }
 
 let baseUrl = DEFAULT_BASE_URL
-let client: Client<paths> = createClient<paths>({ baseUrl })
+let client: Client<paths> = createTelemetryClient(baseUrl)
 
 /**
  * Point the client at another daemon. Called by the settings store; the query
@@ -39,12 +41,34 @@ export function setApiBaseUrl(next: string): void {
   const normalized = normalizeBaseUrl(next)
   if (normalized === baseUrl) return
   baseUrl = normalized
-  client = createClient<paths>({ baseUrl: normalized })
+  client = createTelemetryClient(normalized)
 }
 
 /** The current typed client. Re-read it per call — it is swapped on URL changes. */
 export function api(): Client<paths> {
   return client
+}
+
+function createTelemetryClient(url: string): Client<paths> {
+  const next = createClient<paths>({ baseUrl: url })
+  const started = new Map<string, number>()
+  next.use({
+    onRequest: ({ id }) => {
+      started.set(id, performance.now())
+    },
+    onResponse: ({ id, request, response, schemaPath }) => {
+      recordRequest(id, request.method, schemaPath, response.status)
+    },
+    onError: ({ id, request, schemaPath }) => {
+      recordRequest(id, request.method, schemaPath, 0)
+    },
+  })
+  function recordRequest(id: string, method: string, route: string, status: number): void {
+    const began = started.get(id)
+    started.delete(id)
+    if (began !== undefined) recordApiRequest(method, route, status, performance.now() - began)
+  }
+  return next
 }
 
 /**

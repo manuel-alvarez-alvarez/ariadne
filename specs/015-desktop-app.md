@@ -172,7 +172,14 @@ Out: the daemon endpoints themselves (012).
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
    machinery behind it; fat events (012) are applied to the cached queries
    directly rather than triggering a re-fetch.
-6. Query keys follow one convention, so an event knows which caches it
+6. The app exports its own logs and metrics to the selected daemon's OTLP HTTP
+   routes. The resource names service `ariadne-desktop` and the app version.
+   Settings keeps **Send app diagnostics to the daemon** on by default; off
+   sends no app diagnostics. API duration uses the method and route template,
+   never request paths or bodies. It also counts stream reconnects and route
+   navigations. Console warnings, errors, browser errors, and unhandled
+   rejections become log records without request or response bodies.
+7. Query keys follow one convention, so an event knows which caches it
    invalidates.
 7. The Tauri shell is deliberately empty — no commands — and `ui/src-tauri` is
    excluded from the cargo workspace, so a workspace build never builds the

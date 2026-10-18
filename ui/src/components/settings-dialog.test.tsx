@@ -39,7 +39,7 @@ let tunnelWrites: unknown[] = []
 beforeEach(() => {
   tunnel = aTunnel()
   tunnelWrites = []
-  useSettingsStore.setState({ baseUrl: DEFAULT_BASE_URL })
+  useSettingsStore.setState({ baseUrl: DEFAULT_BASE_URL, diagnosticsEnabled: true })
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     if (request.method === "PUT") {
@@ -52,6 +52,16 @@ beforeEach(() => {
 })
 
 describe("SettingsDialog", () => {
+  it("sends app diagnostics by default and lets the user disable them", async () => {
+    const user = userEvent.setup()
+    renderScreen(<SettingsDialog open onOpenChange={() => {}} />)
+
+    const toggle = screen.getByRole("switch", { name: "Send app diagnostics to the daemon" })
+    expect(toggle.getAttribute("aria-checked")).toBe("true")
+    await user.click(toggle)
+    expect(useSettingsStore.getState().diagnosticsEnabled).toBe(false)
+  })
+
   it("saves the daemon URL from the button beside the field, and closes", async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()

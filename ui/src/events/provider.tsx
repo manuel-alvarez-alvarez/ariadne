@@ -19,6 +19,7 @@ import { setDomainStream } from "@/events/handle"
 import { DomainEventStream } from "@/events/stream"
 import { useBaseUrl } from "@/stores/settings"
 import { useStreamStore } from "@/stores/stream"
+import { recordStreamReconnect } from "@/telemetry/telemetry"
 
 export function EventStreamProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
@@ -53,6 +54,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
         // No replay: whatever happened while we were away has to be refetched.
         if (reconnected) invalidateEverything(queryClient)
       },
+      onReconnect: recordStreamReconnect,
       onEvent: (event) => {
         useStreamStore.getState().markEvent(event.event)
         if (import.meta.env.DEV) console.debug("[events]", event.event, event.data)

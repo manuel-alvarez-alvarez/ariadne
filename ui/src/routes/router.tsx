@@ -36,6 +36,7 @@ import { RouteErrorPage } from "@/routes/error-page"
 import { NotFoundPage } from "@/routes/not-found-page"
 import { paths } from "@/routes/paths"
 import { StatsPage } from "@/routes/stats"
+import { recordNavigation } from "@/telemetry/telemetry"
 
 function GoalPanelRedirect() {
   const { goalId = "" } = useParams<{ goalId: string }>()
@@ -87,3 +88,11 @@ export const router = createHashRouter([
   // things and offer different ways on: see `error-page.tsx`.
   { path: "/", element: <AppShell />, errorElement: <RouteErrorPage />, children: routes },
 ])
+
+router.subscribe((state) => {
+  const route = state.matches
+    .map((match) => match.route.path)
+    .filter((path): path is string => path !== undefined && path !== "*")
+    .join("/")
+  if (route) recordNavigation(`/${route.replace(/^\/+/, "")}`)
+})

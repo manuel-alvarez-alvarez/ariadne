@@ -139,6 +139,7 @@ src/
   api/             typed HTTP client, generated types, the query-key convention,
                    and the query building blocks the features share
   events/          the one SSE connection, its dispatcher, the reconnect machinery
+  telemetry/       OTLP logs and metrics emitted by the desktop app
   stores/          zustand: settings (daemon URL), stream status
   hooks/           shared hooks (connection state, global shortcuts, focus return)
   lib/             format, clipboard, keyboard chords, design tokens
