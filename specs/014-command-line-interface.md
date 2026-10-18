@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-10-16
+updated: 2026-10-18
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -14,6 +14,7 @@ tests:
   - crates/ariadne-cli/src/commands/session.rs
   - crates/ariadne-cli/src/commands/task.rs
   - crates/ariadne-cli/src/error.rs
+  - crates/ariadne-cli/src/telemetry.rs
   - crates/ariadne-cli/src/complete.rs
   - crates/ariadne-daemon/tests/it/doctor.rs
   - crates/ariadne-cli/src/commands/doctor.rs
@@ -258,6 +259,12 @@ same binary also serves (013).
     warning naming the version that is too old or that none was found;
     `ai permissions` is `ok` for `disabled`, `installing` and `ready <release>`, and a
     warning for `failed: <last_error>`.
+34b. Every command exports one command count and duration to the daemon's OTLP
+    endpoints. The count has its command path and outcome. Warnings and
+    errors export as OTLP logs. `ARIADNE_TELEMETRY=off` disables this pipeline.
+    Prompt and message values never enter telemetry. Exit flushes both signals
+    within 250 ms. `mcp serve` and `attach` export every 30 seconds. `daemon
+    start` exports nothing until its daemon answers.
 34a. `ariadne permissions learned` lists, shows, removes and widens or narrows
     learned permissions. `list` shows the columns id, repository, tool, level,
     family, key, scope, target, selected, ai, created and updated; it has no

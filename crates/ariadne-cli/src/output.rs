@@ -623,6 +623,7 @@ pub(crate) fn empty_state(statement: &str, next: Option<&str>) -> String {
 /// A note that something looks wrong, in the same place and the same colour
 /// wherever it is said: stderr, so it never lands in what a pipe is reading.
 pub(crate) fn warn(message: &str) {
+    tracing::warn!(warning = %message, "command warning");
     note(&style::paint(view().color, style::WARN, message));
 }
 

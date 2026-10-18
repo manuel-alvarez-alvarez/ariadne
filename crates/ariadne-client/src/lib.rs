@@ -422,6 +422,29 @@ impl Client {
         self.request(Method::POST, path, None::<&()>).await
     }
 
+    /// Post an opaque payload through this client's configured transport.
+    ///
+    /// OTLP uses protobuf rather than JSON, but must reach the same Unix
+    /// socket or TCP endpoint as the rest of the caller's daemon requests.
+    pub async fn post_bytes(
+        &self,
+        path: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Result<(), ClientError> {
+        let builder = Request::builder()
+            .method(Method::POST)
+            .header(header::CONTENT_TYPE, content_type);
+        let response = self.send(builder, path, Bytes::from(body)).await?;
+        let status = response.status();
+        let bytes = self.collect(response).await?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(self.api_error(status, bytes))
+        }
+    }
+
     pub async fn put_json<T: DeserializeOwned, B: Serialize>(
         &self,
         path: &str,

@@ -3,6 +3,12 @@
 Use `ariadne` to create goals, follow the work, and connect to an agent's
 console. `ariadne --help` is the complete command reference.
 
+## Command telemetry
+
+The CLI sends a command count, duration, warnings, and errors to its daemon.
+Set `ARIADNE_TELEMETRY=off` to disable this for one command or shell session.
+The CLI does not send prompt or message text.
+
 ## A first run
 
 Choose a model that `ariadne models ls` reports, then create a goal with its
