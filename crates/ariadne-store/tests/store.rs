@@ -3458,25 +3458,29 @@ async fn a_source_replaces_its_own_totals_and_sources_add_up() {
         TokenUsage::default()
     );
 
-    assert!(
+    assert_eq!(
         w.store
             .upsert_session_usage(&session.id, "/x.jsonl", usage(100, 80, 10))
             .await
-            .unwrap()
+            .unwrap(),
+        Some(usage(100, 80, 10))
     );
     // Agents re-report their totals on every event: the same figures again
     // are no change, and say so.
-    assert!(
-        !w.store
+    assert_eq!(
+        w.store
             .upsert_session_usage(&session.id, "/x.jsonl", usage(100, 80, 10))
             .await
-            .unwrap()
+            .unwrap(),
+        None
     );
-    assert!(
+    assert_eq!(
         w.store
             .upsert_session_usage(&session.id, "/x.jsonl", usage(150, 120, 30))
             .await
-            .unwrap()
+            .unwrap(),
+        Some(usage(50, 40, 20)),
+        "a report answers how far it moved each counter"
     );
     assert_eq!(
         w.store.session_usage(&session.id).await.unwrap(),
@@ -4986,326 +4990,6 @@ async fn a_repository_takes_the_ai_permission_mode() {
 }
 
 /// A `session_ended` fact about one run of an agent, on `repo_id`.
-fn ended(repo_id: &str, launch_id: &str, data: serde_json::Value) -> NewStatFact {
-    NewStatFact {
-        kind: "session_ended".into(),
-        repo_id: Some(repo_id.into()),
-        goal_id: Some("01GOAL".into()),
-        task_id: Some("01TASK".into()),
-        session_id: Some("01SESSION".into()),
-        launch_id: Some(launch_id.into()),
-        seat: Some("agent".into()),
-        model: Some("stub:test-model".into()),
-        effort: Some("high".into()),
-        skills: vec!["coding".into(), "migration".into()],
-        data,
-    }
-}
-
-/// The data of a run that ended `status`, flagged `reason`, after
-/// `lifetime_secs`, having spent 1000 in, 800 of it cached, and 100 out.
-fn run(status: &str, reason: Option<&str>, lifetime_secs: i64) -> serde_json::Value {
-    serde_json::json!({
-        "status": status, "attention_reason": reason, "lifetime_secs": lifetime_secs,
-        "turns": 3, "input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 100,
-    })
-}
-
-/// Every fact of `kind` in the ledger of the database under `dir`, oldest
-/// first, as its model and its data. Straight SQL: the store reads the
-/// ledger only as aggregates, and a test of the fact itself needs the row.
-async fn ledger(dir: &std::path::Path, kind: &str) -> Vec<(Option<String>, serde_json::Value)> {
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", dir.join("test.db").display()))
-        .await
-        .unwrap();
-    let rows: Vec<(Option<String>, String)> =
-        sqlx::query_as("SELECT model, data FROM stat_facts WHERE kind = ? ORDER BY id")
-            .bind(kind)
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-    pool.close().await;
-    rows.into_iter()
-        .map(|(model, data)| (model, serde_json::from_str(&data).unwrap()))
-        .collect()
-}
-
-/// A fact names its goal by id and holds no key to it, so deleting the goal
-/// leaves the fact where it was.
-#[tokio::test]
-async fn a_fact_outlives_the_goal_it_is_about() {
-    let w = World::new().await;
-    let mut fact = ended(&w.repo.id, "launch-1", run("exited", None, 10));
-    fact.goal_id = Some(w.goal.id.clone());
-    fact.task_id = Some(w.task.id.clone());
-    w.store.record_fact(fact).await.unwrap();
-    w.store.delete_goal(&w.goal.id).await.unwrap();
-    assert_eq!(ledger(w._dir.path(), "session_ended").await.len(), 1);
-}
-
-/// One run of a session ends once in the ledger: a second fact of the same
-/// kind for the same launch is refused, and a fact for the next launch is
-/// kept.
-#[tokio::test]
-async fn a_fact_is_recorded_once_per_launch() {
-    let (store, dir) = test_store().await;
-    let first = ended("01REPO", "launch-1", run("exited", None, 10));
-    assert!(
-        store
-            .record_fact_once_per_launch(first.clone())
-            .await
-            .unwrap()
-    );
-    assert!(!store.record_fact_once_per_launch(first).await.unwrap());
-    let next = ended("01REPO", "launch-2", run("exited", None, 10));
-    assert!(store.record_fact_once_per_launch(next).await.unwrap());
-    assert_eq!(ledger(dir.path(), "session_ended").await.len(), 2);
-}
-
-/// The status write that ends a session is announced before its fact exists,
-/// so the fact announces the session again once it is readable: a client
-/// that refetches its stats on that event reads the fact. The same run
-/// refused a second fact announces nothing.
-#[tokio::test]
-async fn a_fact_announces_its_session_once_it_is_readable() {
-    let w = World::new().await;
-    let session = w.agent_session().await;
-    let mut changes = w.store.watch_changes().expect("the only watcher");
-    w.store
-        .set_session_status(&session.id, SessionStatus::Exited)
-        .await
-        .unwrap();
-    while changes.try_recv().is_ok() {}
-
-    let mut fact = ended(&w.repo.id, "launch-1", run("exited", None, 10));
-    fact.session_id = Some(session.id.clone());
-    assert!(
-        w.store
-            .record_fact_once_per_launch(fact.clone())
-            .await
-            .unwrap()
-    );
-
-    match changes.try_recv() {
-        Ok(Change::SessionUpdated(updated)) => assert_eq!(updated.id, session.id),
-        other => panic!("expected the session announced after its fact: {other:?}"),
-    }
-    assert_eq!(
-        ledger(w._dir.path(), "session_ended").await.len(),
-        1,
-        "the fact is readable on that event"
-    );
-
-    assert!(!w.store.record_fact_once_per_launch(fact).await.unwrap());
-    assert!(
-        changes.try_recv().is_err(),
-        "a refused fact announces nothing"
-    );
-}
-
-/// A session's end answers the row as that write left it: ended, its prompt
-/// flag gone, and the reason it ended carrying kept. The row is read in the
-/// same transaction as the write, so a resume that writes the row next
-/// cannot change what the caller is told.
-#[tokio::test]
-async fn ending_a_session_answers_the_row_its_write_left() {
-    let w = World::new().await;
-    let prompted = w.agent_session().await;
-    w.store
-        .set_session_attention(&prompted.id, AttentionReason::WaitingPermission)
-        .await
-        .unwrap();
-    let ended = w
-        .store
-        .set_session_status(&prompted.id, SessionStatus::Exited)
-        .await
-        .unwrap();
-    assert_eq!(ended.status(), SessionStatus::Exited);
-    assert!(ended.ended_at.is_some());
-    assert_eq!(ended.attention_reason(), None);
-
-    let stalled = w.review_session().await;
-    w.store
-        .set_session_attention(&stalled.id, AttentionReason::Stalled)
-        .await
-        .unwrap();
-    let ended = w
-        .store
-        .set_session_status(&stalled.id, SessionStatus::Failed)
-        .await
-        .unwrap();
-    assert_eq!(ended.status(), SessionStatus::Failed);
-    assert_eq!(ended.attention_reason(), Some(AttentionReason::Stalled));
-}
-
-/// A `task_ended` fact names its goal by id and holds no key to it, so
-/// deleting the goal leaves the fact where it was. It is filled from the
-/// agent of the column the task ended in: the last column's, for a task that
-/// finished, with the column it ended in and whether the change landed.
-#[tokio::test]
-async fn an_outcome_fact_outlives_the_goal_it_is_about() {
-    let w = World::new().await;
-    walk_to(&w.store, &w.task.id, TaskStatus::Finished).await;
-    w.store.delete_goal(&w.goal.id).await.unwrap();
-    let facts = ledger(w._dir.path(), "task_ended").await;
-    assert_eq!(facts.len(), 1, "{facts:?}");
-    assert_eq!(facts[0].0.as_deref(), Some("stub:test-model"));
-    assert_eq!(facts[0].1["status"], "finished");
-    assert_eq!(facts[0].1["step"], "merge");
-    assert_eq!(facts[0].1["landed"], true);
-}
-
-/// A clear is a completed spell of attention: the agent's event and an idle
-/// report each record the reason and wait, while a no-op adds nothing.
-#[tokio::test]
-async fn attention_clears_write_facts_only_when_a_flag_falls() {
-    let w = World::new().await;
-    let session = w.agent_session().await;
-    w.store
-        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
-        .await
-        .unwrap();
-    w.store.clear_agent_attention(&session.id).await.unwrap();
-    w.store
-        .set_session_attention(&session.id, AttentionReason::Stalled)
-        .await
-        .unwrap();
-    w.store
-        .clear_attention_after_idle(&session.id)
-        .await
-        .unwrap();
-    w.store.clear_session_attention(&session.id).await.unwrap();
-
-    let facts = ledger(w._dir.path(), "attention").await;
-    assert_eq!(facts.len(), 2, "a clear with no flag is not a fact");
-    assert_eq!(facts[0].1["reason"], "waiting_permission");
-    assert_eq!(facts[1].1["reason"], "stalled");
-    assert!(facts.iter().all(|(_, data)| data["wait_secs"].is_number()));
-}
-
-/// The aggregate counts every attention source and applies both fact filters.
-#[tokio::test]
-async fn attention_stats_groups_facts_and_honours_the_filter() {
-    let (store, _dir) = test_store().await;
-    let fact = |kind: &str, repo_id: &str, data| NewStatFact {
-        kind: kind.into(),
-        repo_id: Some(repo_id.into()),
-        goal_id: None,
-        task_id: None,
-        session_id: None,
-        launch_id: None,
-        seat: None,
-        model: None,
-        effort: None,
-        skills: vec![],
-        data,
-    };
-    for data in [
-        serde_json::json!({"decided_by":"console","answer":"allow","wait_ms":10}),
-        serde_json::json!({"decided_by":"console","answer":"deny","wait_ms":30}),
-        serde_json::json!({"decided_by":"auto","answer":"cancelled","wait_ms":5}),
-    ] {
-        store
-            .record_fact(fact("permission", "kept", data))
-            .await
-            .unwrap();
-    }
-    store
-        .record_fact(fact(
-            "attention",
-            "kept",
-            serde_json::json!({"reason":"waiting_input","wait_secs":4}),
-        ))
-        .await
-        .unwrap();
-    store
-        .record_fact(fact(
-            "attention",
-            "kept",
-            serde_json::json!({"reason":"waiting_input","wait_secs":8}),
-        ))
-        .await
-        .unwrap();
-    store
-        .record_fact(fact(
-            "session_ended",
-            "kept",
-            serde_json::json!({"status":"failed","attention_reason":"stalled"}),
-        ))
-        .await
-        .unwrap();
-    store
-        .record_fact(fact(
-            "switch",
-            "kept",
-            serde_json::json!({"reason":"exhausted"}),
-        ))
-        .await
-        .unwrap();
-    store
-        .record_fact(fact(
-            "permission",
-            "other",
-            serde_json::json!({"decided_by":"console","answer":"allow","wait_ms":1}),
-        ))
-        .await
-        .unwrap();
-
-    let stats = store
-        .attention_stats(&StatsFilter {
-            repo_id: Some("kept".into()),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert_eq!(stats.permissions.total, 3);
-    assert_eq!(stats.permissions.person_share, 2.0 / 3.0);
-    assert_eq!(stats.permissions.by_decider[0].decided_by, "console");
-    assert_eq!(stats.permissions.by_decider[0].allowed, 1);
-    assert_eq!(stats.permissions.by_decider[0].denied, 1);
-    assert_eq!(stats.permissions.by_decider[0].mean_wait_ms, 20.0);
-    let asked = stats
-        .flags
-        .iter()
-        .find(|row| row.reason == "waiting_input")
-        .unwrap();
-    assert_eq!((asked.raised, asked.mean_wait_secs), (2, 6.0));
-    assert_eq!(
-        (
-            stats.sessions_failed,
-            stats.sessions_stalled,
-            stats.exhaustions
-        ),
-        (1, 1, 1)
-    );
-    let none = store
-        .attention_stats(&StatsFilter {
-            since: Some(chrono::Utc::now() + chrono::Duration::seconds(1)),
-            repo_id: Some("kept".into()),
-        })
-        .await
-        .unwrap();
-    assert_eq!(none.permissions.total, 0);
-}
-
-/// Remaining aggregates ignore an old `tool_call` fact in the append-only ledger.
-#[tokio::test]
-async fn remaining_stats_reads_ignore_legacy_tool_call_facts() {
-    let (store, _dir) = test_store().await;
-    let mut legacy = ended("01REPO", "legacy", serde_json::json!({"tool_name": "Bash"}));
-    legacy.kind = "tool_call".into();
-    store.record_fact(legacy).await.unwrap();
-
-    let filter = StatsFilter::default();
-    store.work_stats(&filter).await.unwrap();
-    store.time_stats(&filter).await.unwrap();
-    store.spend_stats(&filter).await.unwrap();
-    store.model_stats(&filter).await.unwrap();
-    store.attention_stats(&filter).await.unwrap();
-}
-
-/// A forge row as a detection writes it: `acme/widgets` on github.com, not
-/// enabled.
 fn widgets(repository_id: &str) -> SetForgeIntegration {
     SetForgeIntegration {
         repository_id: repository_id.into(),

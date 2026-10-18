@@ -55,6 +55,10 @@ opentelemetry-appender-tracing = { workspace = true }
 reqwest = { workspace = true }
 regex = { workspace = true }
 rustix = { workspace = true }
+# The resident memory behind `process.memory.usage` (035): the safe read of
+# Mach's `task_info` on macOS and of `/proc/self/statm` on Linux, which
+# rustix does not wrap and the workspace forbids `unsafe` to call.
+memory-stats = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_urlencoded = { workspace = true }

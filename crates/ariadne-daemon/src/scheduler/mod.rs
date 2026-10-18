@@ -259,7 +259,11 @@ pub fn start(
                     scheduler.settle_due(&mut wakes).await;
                 }
                 _ = window_end(wakes.next_window_end()) => scheduler.settle_due(&mut wakes).await,
-                _ = tick.tick() => scheduler.reconcile_all().await,
+                _ = tick.tick() => {
+                    let started = Instant::now();
+                    scheduler.reconcile_all().await;
+                    crate::metrics::record_scheduler_tick(started.elapsed().as_secs_f64());
+                }
             }
         }
     });

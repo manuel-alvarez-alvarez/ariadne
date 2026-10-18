@@ -136,10 +136,9 @@ pub(super) async fn cancel(
             goal.status
         )));
     }
-    let goal = state
-        .store
-        .set_goal_status(&id, GoalStatus::Cancelled)
-        .await?;
+    let goal = state.store.end_goal(&id, GoalStatus::Cancelled).await?;
+    // Only the ending that landed gets here: a racing one is a conflict.
+    crate::metrics::record_goal_ended(&state.store, &goal).await;
     // The scheduler tears down sessions/worktrees of cancelled goals.
     state.notify_scheduler_goal(&goal.id);
     to_dto(&state, goal).await
@@ -304,10 +303,9 @@ pub(super) async fn complete(
             unfinished.join(", ")
         )));
     }
-    let goal = state
-        .store
-        .set_goal_status(&id, GoalStatus::Completed)
-        .await?;
+    let goal = state.store.end_goal(&id, GoalStatus::Completed).await?;
+    // Only the ending that landed gets here: a racing one is a conflict.
+    crate::metrics::record_goal_ended(&state.store, &goal).await;
     state.notify_scheduler_goal(&id);
     to_dto(&state, goal).await
 }

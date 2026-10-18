@@ -1157,11 +1157,6 @@ async fn any_column_can_fail_the_task_and_usage_and_facts_name_the_column() {
     assert_eq!(usage["usage"]["input_tokens"], 12);
     let goal: Value = h.get(&format!("/v1/goals/{}", task.goal_id)).await;
     assert!(goal["usage"]["agents"].as_array().unwrap().contains(usage));
-    let fact = ariadne_daemon::stats::session_fact(&h.store, &review.id, "test", json!({}))
-        .await
-        .unwrap();
-    assert_eq!(fact.seat.as_deref(), Some("agent"));
-    assert_eq!(fact.data["step"], "review");
     let failed: Value = h
         .json(
             as_session(

@@ -278,6 +278,16 @@ async fn pump(
 /// One change, fattened and published. A payload that cannot be loaded costs
 /// the event and nothing else.
 async fn publish(store: &Store, change: Change, bus: &EventBus) {
+    if let Change::SessionUpdated(session) = &change {
+        crate::metrics::record_session_update(session);
+    }
+    if let Change::TaskUpdated {
+        task,
+        transition: Some(transition),
+    } = &change
+    {
+        crate::metrics::record_task_transition(store, task, transition).await;
+    }
     // An agent event is a session's transcript, and a console follows it on
     // this bus alone: one dropped here leaves a hole no later event fills,
     // so it is counted under the session it belongs to, for that session's

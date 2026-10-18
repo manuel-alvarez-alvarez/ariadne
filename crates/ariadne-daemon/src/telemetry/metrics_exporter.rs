@@ -214,12 +214,7 @@ impl PushMetricExporter for StoreMetricExporter {
             stamp_service(&mut point.labels, service_name);
         }
         let store = self.store.clone();
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| opentelemetry_sdk::error::OTelSdkError::InternalFailure(e.to_string()))?
-            .block_on(store.write_metrics(&points))
-            .map_err(|e| opentelemetry_sdk::error::OTelSdkError::InternalFailure(e.to_string()))?;
+        super::export(store.write_metrics(&points))?;
 
         super::record_pipeline_count("metric", service.as_deref().unwrap_or("ariadned"), count);
         Ok(())

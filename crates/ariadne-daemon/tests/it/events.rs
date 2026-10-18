@@ -314,6 +314,11 @@ async fn sse_stream_signals_resync_and_closes_when_a_client_lags() {
         .await
         .expect("stream must close after resync, not hang");
     assert!(end.is_none(), "no frames follow the resync event");
+    assert_eq!(
+        h.metric("ariadne.events.stream.resyncs", &[]).await,
+        1.0,
+        "the resync is counted (035)"
+    );
 }
 
 #[tokio::test]

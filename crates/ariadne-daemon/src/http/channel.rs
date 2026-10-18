@@ -3,8 +3,6 @@
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
-use serde_json::json;
-use tracing::warn;
 
 use ariadne_api::messages::{MessageDto, MessageListQuery, SendMessageRequest};
 use ariadne_api::tasks::{OpenPullRequestRequest, TaskDto};
@@ -17,7 +15,6 @@ use super::convert::{message_dto, task_dto_of};
 use super::error::{ApiError, ApiResult, Json};
 use crate::forge::ForgeClient;
 use crate::forge::pulls;
-use crate::stats::session_fact;
 
 /// Git could not answer about the task's branch: a conflict, since what the
 /// caller asked for cannot be established rather than being wrong.
@@ -376,42 +373,8 @@ pub(super) async fn send(
             body: body.to_string(),
         })
         .await?;
-    record_message_fact(state, ctx, task, &message).await;
+    crate::metrics::record_message(&message.kind, &message.from_actor, &message.to_actor);
     Ok(message)
-}
-
-/// Record every stored task message. A sender session supplies the model and
-/// seat; messages from the user or daemon still keep their task and goal.
-async fn record_message_fact(
-    state: &AppState,
-    ctx: &CallCtx,
-    task: Option<&Task>,
-    message: &ariadne_store::Message,
-) {
-    let data = json!({ "kind": message.kind, "from_actor": message.from_actor, "to_actor": message.to_actor });
-    let fact = match ctx.session.as_ref() {
-        Some(session) => session_fact(&state.store, &session.id, "message", data).await,
-        None => Ok(ariadne_store::NewStatFact {
-            kind: "message".into(),
-            repo_id: task.map(|t| t.repo_id.clone()),
-            goal_id: Some(message.goal_id.clone()),
-            task_id: message.task_id.clone(),
-            session_id: None,
-            launch_id: None,
-            seat: None,
-            model: None,
-            effort: None,
-            skills: vec![],
-            data,
-        }),
-    };
-    match fact {
-        Ok(fact) => match state.store.record_fact(fact).await {
-            Ok(()) => {}
-            Err(error) => warn!(error = %error, "could not record a message fact"),
-        },
-        Err(error) => warn!(error = %error, "could not record a message fact"),
-    }
 }
 
 /// Diff of the task branch against its base (`git diff base...branch`), or,

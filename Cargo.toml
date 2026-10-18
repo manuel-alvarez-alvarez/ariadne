@@ -136,7 +136,7 @@ opentelemetry-appender-tracing = "0.33"
 # Safe wrappers over the POSIX calls std does not expose. Used for access(2):
 # whether *this* process may write a directory is a question only the kernel
 # can answer, and `ariadne doctor` must ask it without writing anything.
-rustix = { version = "1", features = ["fs", "process", "termios"] }
+rustix = { version = "1", features = ["fs", "process", "termios", "time"] }
 ulid = "3"
 # Filesystem notifications: the branch watcher is woken by the ref writes
 # themselves instead of polling for them (see `ariadne-daemon/src/branch.rs`).

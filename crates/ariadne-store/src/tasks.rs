@@ -6,16 +6,12 @@ use std::collections::{HashMap, HashSet};
 
 use ariadne_core::id::new_id;
 use ariadne_core::{Actor, AttentionReason, GoalStatus, TaskStatus, check_transition};
-use chrono::DateTime;
 
 use crate::query::Filtered;
 use crate::{
     Change, Goal, GoalStep, NewTaskAgent, Result, Store, StoreError, Task, TaskTransition,
     not_found, now,
 };
-
-/// The fact a task writes once it reaches one of its three endings.
-const TASK_ENDED: &str = "task_ended";
 
 #[derive(Debug, Clone)]
 pub struct NewTask {
@@ -736,134 +732,7 @@ impl Store {
         .execute(&mut **tx)
         .await?;
 
-        if matches!(
-            to,
-            TaskStatus::Finished | TaskStatus::Cancelled | TaskStatus::Failed
-        ) {
-            Self::record_task_ended_in_tx(
-                tx,
-                task,
-                to,
-                reason,
-                merge_commit,
-                &transition.created_at,
-            )
-            .await?;
-        }
-
         Ok(transition)
-    }
-
-    /// Write the `task_ended` fact (023): one row, filled from the agent of
-    /// the column the task ended in, where it ended in one. A task cancelled
-    /// or failed before its first column names no agent at all.
-    async fn record_task_ended_in_tx(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        task: &Task,
-        to: TaskStatus,
-        reason: Option<&str>,
-        merge_commit: Option<&str>,
-        ended_at: &str,
-    ) -> Result<()> {
-        let agent: Option<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT id, model, effort FROM task_agents
-              WHERE task_id = ? AND step = ? ORDER BY ordinal LIMIT 1",
-        )
-        .bind(&task.id)
-        .bind(&task.step)
-        .fetch_optional(&mut **tx)
-        .await?;
-        let skills: Vec<String> = match &agent {
-            Some((agent_id, _, _)) => {
-                sqlx::query_scalar(
-                    "SELECT skill_name FROM task_agent_skills
-                      WHERE agent_id = ? ORDER BY ordinal",
-                )
-                .bind(agent_id)
-                .fetch_all(&mut **tx)
-                .await?
-            }
-            None => Vec::new(),
-        };
-        let lead_time_secs = match (
-            DateTime::parse_from_rfc3339(&task.created_at),
-            DateTime::parse_from_rfc3339(ended_at),
-        ) {
-            (Ok(created), Ok(ended)) => (ended - created).num_seconds().max(0),
-            _ => 0,
-        };
-        let status_secs = Self::task_status_secs_in_tx(tx, task).await?;
-        let mut data = serde_json::json!({
-            "status": to.as_str(),
-            "reason": reason,
-            "lead_time_secs": lead_time_secs,
-            "status_secs": status_secs,
-            // Whether a change reached its base branch: the last column
-            // reported the commit it landed as.
-            "landed": merge_commit.or(task.merge_commit.as_deref()).is_some(),
-        });
-        if let Some(step) = &task.step {
-            data["step"] = serde_json::json!(step);
-        }
-        let skills_json = serde_json::to_string(&skills).expect("a list of names serializes");
-        sqlx::query(
-            "INSERT INTO stat_facts (id, kind, created_at, repo_id, goal_id, task_id, session_id,
-                                      launch_id, seat, model, effort, skills, data)
-             VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)",
-        )
-        .bind(new_id())
-        .bind(TASK_ENDED)
-        .bind(ended_at)
-        .bind(&task.repo_id)
-        .bind(&task.goal_id)
-        .bind(&task.id)
-        .bind(agent.as_ref().map(|_| "agent"))
-        .bind(agent.as_ref().map(|(_, model, _)| model.clone()))
-        .bind(agent.as_ref().and_then(|(_, _, effort)| effort.clone()))
-        .bind(skills_json)
-        .bind(data.to_string())
-        .execute(&mut **tx)
-        .await?;
-        Ok(())
-    }
-
-    /// Time starts at task creation in `pending`, then each transition ends
-    /// the status before it and begins the next one. The ending status has no
-    /// later transition, so it carries no time.
-    async fn task_status_secs_in_tx(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        task: &Task,
-    ) -> Result<serde_json::Value> {
-        let transitions: Vec<(String, String, String)> = sqlx::query_as(
-            "SELECT from_status, to_status, created_at FROM task_transitions
-             WHERE task_id = ? ORDER BY created_at, id",
-        )
-        .bind(&task.id)
-        .fetch_all(&mut **tx)
-        .await?;
-        let mut seconds = serde_json::Map::new();
-        let mut status = "pending".to_string();
-        let mut started = task.created_at.clone();
-        for (from, to, at) in transitions {
-            if status == from {
-                let elapsed = match (
-                    DateTime::parse_from_rfc3339(&started),
-                    DateTime::parse_from_rfc3339(&at),
-                ) {
-                    (Ok(started), Ok(ended)) => (ended - started).num_seconds().max(0),
-                    _ => 0,
-                };
-                let total = seconds
-                    .get(&status)
-                    .and_then(serde_json::Value::as_i64)
-                    .unwrap_or(0)
-                    + elapsed;
-                seconds.insert(status.clone(), serde_json::Value::from(total));
-            }
-            status = to;
-            started = at;
-        }
-        Ok(serde_json::Value::Object(seconds))
     }
 
     pub async fn list_task_transitions(&self, task_id: &str) -> Result<Vec<TaskTransition>> {

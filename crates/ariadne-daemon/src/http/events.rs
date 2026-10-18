@@ -108,10 +108,12 @@ pub async fn ingest_event(
     // news even from a launch the session has moved past: the turn a
     // relaunch cancelled reports what it spent only after the relaunch, and
     // its source is its own launch, which nothing later replaces.
-    if let Some((source, usage)) = usage_for_event(&req.payload) {
-        store
+    if let Some((source, usage)) = usage_for_event(&req.payload)
+        && let Some(moved) = store
             .upsert_session_usage(&session.id, &source, usage)
-            .await?;
+            .await?
+    {
+        crate::metrics::record_tokens(store, &session.id, moved).await;
     }
 
     if superseded {
@@ -210,9 +212,6 @@ pub async fn ingest_event(
         store
             .set_session_status_if_live(&session.id, status, req.launch.as_deref())
             .await?;
-        if !status.is_live() {
-            crate::stats::record_session_end(store, &session.id).await;
-        }
     }
     Ok(Some(event))
 }

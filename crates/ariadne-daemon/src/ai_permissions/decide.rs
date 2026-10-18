@@ -100,11 +100,25 @@ pub(crate) fn prepare(tool_call: &Value, options: &Value, workspace: Option<&str
     }
 }
 
+/// Ask the model, and record the verdict and its latency (035).
 pub(crate) async fn decide(
     live: &AiPermissionsLive,
     prepared: &Prepared,
     timeout: Duration,
 ) -> Decision {
+    let started = std::time::Instant::now();
+    let decision = ask(live, prepared, timeout).await;
+    let verdict = match &decision {
+        Decision::Allow { .. } => "allow",
+        Decision::Deny { .. } => "deny",
+        Decision::Ask { .. } => "ask",
+        Decision::Unanswered { .. } => "unanswered",
+    };
+    crate::metrics::record_ai_permission(verdict, started.elapsed().as_secs_f64());
+    decision
+}
+
+async fn ask(live: &AiPermissionsLive, prepared: &Prepared, timeout: Duration) -> Decision {
     let request = async {
         let body = serde_json::to_vec(&prepared.body)?;
         let response = reqwest::Client::new()

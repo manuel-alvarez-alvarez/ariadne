@@ -26,7 +26,6 @@ mod repositories;
 mod sessions;
 mod skills;
 mod sse;
-mod stats;
 mod steps;
 mod stream;
 mod tasks;
@@ -36,7 +35,7 @@ mod workflows;
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::extract::{Request, State};
+use axum::extract::{MatchedPath, Request, State};
 use axum::http::{HeaderName, HeaderValue, Method, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -216,16 +215,13 @@ impl AppState {
         (name = "events", description = "Agent events the ACP runtime reports, and the live domain-event stream"),
         (name = "models", description = "The model catalog discovery found each registry agent offering"),
         (name = "logs", description = "The daemon's own process log"),
-        (name = "stats", description = "How work performs, read off the stats ledger"),
         (name = "attention", description = "The authoritative list of what needs a human now"),
     )
 )]
 struct ApiDoc;
 
-/// The whole API document: the routes declared above, and the stats
-/// families, each of which declares its own.
 fn api_doc() -> utoipa::openapi::OpenApi {
-    ApiDoc::openapi().merge_from(stats::openapi())
+    ApiDoc::openapi()
 }
 
 /// Build the daemon router.
@@ -423,7 +419,6 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/logs", get(logs::snapshot))
         .route("/v1/logs/stream", get(logs::stream))
         .merge(query::routes())
-        .merge(stats::routes())
         // attention
         .route("/v1/attention", get(attention::list))
         // events
@@ -434,6 +429,35 @@ pub fn router(state: AppState) -> Router {
         // docs (SwaggerUi also serves the spec at /api-docs/openapi.json)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", api_doc()))
         .with_state(state)
+        .layer(middleware::from_fn(record_request_duration))
+}
+
+/// Measure normal HTTP routes after routing selected their template. Long
+/// streams and telemetry ingestion are intentionally not request metrics.
+async fn record_request_duration(request: Request, next: Next) -> Response {
+    let started = Instant::now();
+    let method = request.method().to_string();
+    let path = request.uri().path().to_string();
+    let matched = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|route| route.as_str().to_string());
+    let response = next.run(request).await;
+    let excluded = matches!(path.as_str(), "/v1/events/stream" | "/v1/logs/stream")
+        || path.contains("/console/stream")
+        || path.contains("/console/terminal")
+        || ["/otlp/", "/api/v1/", "/loki/"]
+            .iter()
+            .any(|prefix| path.starts_with(prefix));
+    if !excluded && let Some(route) = matched {
+        crate::metrics::record_http_request(
+            &method,
+            &route,
+            response.status().as_u16(),
+            started.elapsed().as_secs_f64(),
+        );
+    }
+    response
 }
 
 /// Build the TCP router. The unix socket serves the unwrapped [`router`].

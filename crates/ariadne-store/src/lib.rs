@@ -27,7 +27,6 @@ mod query;
 mod repositories;
 mod sessions;
 mod skills;
-mod stats;
 mod task_agents;
 mod tasks;
 pub mod telemetry;
@@ -51,11 +50,6 @@ pub use pull_requests::{NewPullRequest, PullRequestFilter, PullRequestTold};
 pub use repositories::{NewRepository, RepositoryUpdate};
 pub use sessions::{NewSession, SessionFilter};
 pub use skills::{NewSkill, skill_name_rejection};
-pub use stats::{
-    AttentionStats, Bucket, LeadTime, ModelSpend, ModelStat, ModelStats, NewStatFact,
-    PerFinishedTask, PersonWait, SpendBucket, SpendStats, SpendTotals, StatsFilter, StatusTime,
-    TimeStats, WorkStats,
-};
 pub use task_agents::NewTaskAgent;
 pub use tasks::{NewTask, TaskFilter, TaskUpdate, unstaffed_columns};
 pub use usage::{AgentUsage, SeatUsage};
@@ -323,6 +317,29 @@ impl Store {
         store.seed_builtin_workflows().await?;
         store.seed_builtin_dashboards().await?;
         Ok(store)
+    }
+
+    /// Open the database at `path` for reading alone: no migration, no seed,
+    /// and every connection read-only, so a write through it fails. For a
+    /// reader on a runtime of its own — the metric collector (035) — whose
+    /// connections must not be the daemon's: a pool returns a connection on
+    /// the runtime that dropped it.
+    pub async fn open_read_only(path: impl AsRef<Path>) -> Result<Self> {
+        let options = SqliteConnectOptions::new()
+            .filename(path.as_ref())
+            .create_if_missing(false)
+            .read_only(true)
+            .busy_timeout(Duration::from_secs(5));
+        let read = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await?;
+        Ok(Self {
+            write: read.clone(),
+            read,
+            changes: Arc::default(),
+            event_order: Arc::default(),
+        })
     }
 
     /// Subscribe to committed writes (see [`Change`]).

@@ -99,6 +99,23 @@ async fn deliver(
     body: Bytes,
     kind: &str,
 ) -> StatusCode {
+    let status = accept(state, id, headers, body, kind).await;
+    crate::metrics::record_webhook(match status {
+        StatusCode::ACCEPTED => "accepted",
+        StatusCode::UNAUTHORIZED => "refused",
+        _ => "failed",
+    });
+    status
+}
+
+/// Check one delivery and wake the repository's fetch on a real event.
+async fn accept(
+    state: Ingress,
+    id: String,
+    headers: HeaderMap,
+    body: Bytes,
+    kind: &str,
+) -> StatusCode {
     let row = match state.store.forge_integration(&id).await {
         Ok(Some(row)) if row.enabled && row.kind == kind => row,
         Ok(_) => return StatusCode::UNAUTHORIZED,

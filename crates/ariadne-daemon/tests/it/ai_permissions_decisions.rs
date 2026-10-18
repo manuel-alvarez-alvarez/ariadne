@@ -285,6 +285,16 @@ async fn a_test_request_scores_the_same_model_state_without_publishing_or_learni
     assert_eq!(second.label.as_deref(), Some("ask"));
     assert_eq!(second.danger, Some(0.41));
     assert_eq!(server.requests.lock().unwrap().len(), 2);
+    // Each answer of the model is counted by its verdict, and timed (035).
+    assert_eq!(
+        h.metric("ariadne.ai_permissions.decisions", &[("verdict", "ask")])
+            .await,
+        2.0
+    );
+    assert_eq!(
+        h.metric("ariadne.ai_permissions.latency_count", &[]).await,
+        2.0
+    );
     assert!(
         tokio::time::timeout(QUIET, events.recv()).await.is_err(),
         "the test published an event"

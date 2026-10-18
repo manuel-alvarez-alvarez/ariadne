@@ -28,7 +28,6 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
   - crates/ariadne-daemon/tests/it/transcript_usage.rs
   - crates/ariadne-daemon/src/transcript.rs
-  - crates/ariadne-daemon/tests/it/stats.rs
 ---
 
 # HTTP API, event stream and usage
@@ -330,12 +329,6 @@ and the ACP runtime that reports the agent events (021).
     A configured list replaces it whole.
 28. Session attention also has `exhausted`, for active work whose current
     model accepts no more work.
-29. The stats are served under `/v1/stats/<family>`, one route per family —
-    `work`, `time`, `spend`, `models` and `attention` — each taking
-    the `since` and `repo` filters and answering its own
-    `<Family>StatsDto` (023). A bad `since` is `400 invalid_request`. A stat
-    reads the stats ledger only, and counts no cost: the tokens are the ones
-    rule 15 keeps.
 
 ## Pull request events (026)
 
@@ -366,10 +359,6 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
 
 ## Acceptance criteria
 
-- Each `GET /v1/stats/<family>` answers its DTO and is in the OpenAPI
-  document under the `stats` tag
-  (`stats_<family>.rs::the_<family>_stat_answers_and_is_in_the_api_document`),
-  and a bad `since` is refused (`stats.rs::a_bad_since_is_refused`).
 - `POST /v1/sessions/{id}/switch` is in the OpenAPI document with
   `SwitchSessionRequest`, and answers a `SessionDto` that carries
   `switched_from`

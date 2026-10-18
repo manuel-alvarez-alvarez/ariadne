@@ -54,26 +54,8 @@ IGNORED = {
     "crates/ariadne-store/src/defaults.rs: BuiltinWorkflow": (
         "the element type of the public `BUILTIN_WORKFLOWS`; its callers read the fields"
     ),
-    "crates/ariadne-store/src/stats/work.rs: WorkTotals": (
-        "the type of the public field `WorkStats::totals`; its callers read the fields"
-    ),
-    "crates/ariadne-store/src/stats/work.rs: WorkBucket": (
-        "the element type of the public field `WorkStats::buckets`; its callers read the fields"
-    ),
     "crates/ariadne-console/src/transcript.rs: Location": (
         "the element type of the public field `Tool::locations`"
-    ),
-    "crates/ariadne-store/src/stats/attention.rs: PermissionStats": (
-        "the public AttentionStats permissions field carries it to the daemon"
-    ),
-    "crates/ariadne-store/src/stats/attention.rs: PermissionDecider": (
-        "the public PermissionStats by_decider field carries it to the daemon"
-    ),
-    "crates/ariadne-store/src/stats/attention.rs: AttentionFlag": (
-        "the public AttentionStats flags field carries it to the daemon"
-    ),
-    "crates/ariadne-store/src/stats/attention.rs: AttentionInterventions": (
-        "the public AttentionStats interventions field carries it to the daemon"
     ),
     "crates/ariadne-store/src/telemetry/metrics.rs: label_names": (
         "the PromQL query task reads telemetry label names through this store API"

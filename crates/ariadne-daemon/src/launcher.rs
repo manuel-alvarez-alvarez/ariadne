@@ -739,7 +739,6 @@ impl Launcher {
             self.store
                 .set_session_status(&session.id, SessionStatus::Failed)
                 .await?;
-            crate::stats::record_session_end(&self.store, &session.id).await;
         }
         result
     }
@@ -770,7 +769,6 @@ impl Launcher {
             self.store
                 .set_session_status(&session.id, SessionStatus::Failed)
                 .await?;
-            crate::stats::record_session_end(&self.store, &session.id).await;
         }
         result
     }
@@ -1016,20 +1014,9 @@ impl Launcher {
                     )
                     .await?;
             }
-            // Off the row before the pin moves: the fact is of the session
-            // that leaves, so its `model` is the model left.
-            crate::stats::record_switch(
-                &self.store,
-                &old,
-                serde_json::json!({
-                    "to_model": pin.model,
-                    "to_effort": pin.effort,
-                    "reason": reason,
-                    "automatic": reason == "exhausted",
-                    "same_agent": true,
-                }),
-            )
-            .await;
+            // Off the row before the pin moves: the switch is of the session
+            // that leaves, so its `from_model` is the model left.
+            crate::metrics::record_switch(&old, &pin.model, reason, reason == "exhausted", true);
             let session = self.store.set_session_pin(&old.id, &pin).await?;
             self.move_seat_pin(&old, &pin).await?;
             self.store
@@ -1112,22 +1099,10 @@ impl Launcher {
                 }),
             })
             .await?;
-        crate::stats::record_switch(
-            &self.store,
-            &old,
-            serde_json::json!({
-                "to_model": pin.model,
-                "to_effort": pin.effort,
-                "reason": reason,
-                "automatic": reason == "exhausted",
-                "same_agent": false,
-            }),
-        )
-        .await;
+        crate::metrics::record_switch(&old, &pin.model, reason, reason == "exhausted", false);
         self.store
             .set_session_status(&old.id, SessionStatus::Exited)
             .await?;
-        crate::stats::record_session_end(&self.store, &old.id).await;
         self.move_seat_pin(&old, &pin).await?;
 
         if session.seat.is_none() {
@@ -1141,7 +1116,6 @@ impl Launcher {
                 self.store
                     .set_session_status(&session.id, SessionStatus::Failed)
                     .await?;
-                crate::stats::record_session_end(&self.store, &session.id).await;
             }
             result?;
             // A loose session has no seat to find its siblings by: the
@@ -1255,24 +1229,18 @@ impl Launcher {
     /// Kill a session's agent process — the daemon-owned child — and mark
     /// the session exited.
     ///
-    /// The run's `session_ended` fact waits for the reap, off the caller's
-    /// path: the driver is still cancelling the turn, and the cancelled turn
-    /// reports its stop and what it spent only then (023). The fact is taken
-    /// off the row exactly as the kill wrote it, and the session's next
-    /// launch waits until the fact is written, so a resume neither takes the
-    /// killed run's fact away nor adds its own turns and tokens to it.
+    /// The session's next launch waits for the reap, off the caller's path:
+    /// the driver is still cancelling the turn, and a resume must not start
+    /// beside it.
     pub async fn kill_session(&self, session_id: &str) -> Result<()> {
         let session = self.store.get_session(session_id).await?;
         let (reaped, gate) = self.acp.kill_gated(&session.id);
         if session.status().is_live() {
-            let ended = self
-                .store
+            self.store
                 .set_session_status(session_id, SessionStatus::Exited)
                 .await?;
-            let store = self.store.clone();
             tokio::spawn(async move {
                 reaped.await;
-                crate::stats::record_run_end(&store, &ended).await;
                 drop(gate);
             });
         }

@@ -17,10 +17,10 @@ use ariadne_store::telemetry::{LogRecord, NewLogRecord, TelemetryStore};
 use super::convert::{any_value_to_body, log_attributes_to_json};
 use super::stream::{LogStream, StreamedLog};
 
-/// Writes every batched record to the telemetry store on the thread the SDK's
-/// batch processor runs on. Its SQLite future uses a runtime local to that
-/// worker thread, so force-flushing from the daemon's Tokio runtime cannot
-/// deadlock waiting for the daemon runtime to make progress.
+/// Writes every batched record to the telemetry store from the thread the
+/// SDK's batch processor runs on. Its SQLite future runs on the exporters'
+/// own runtime (`super::export`), so force-flushing from the daemon's Tokio
+/// runtime cannot deadlock waiting for the daemon runtime to make progress.
 #[derive(Debug)]
 pub(super) struct StoreLogExporter {
     store: TelemetryStore,
@@ -108,12 +108,7 @@ impl LogExporter for StoreLogExporter {
         }
 
         let store = self.store.clone();
-        let written = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| opentelemetry_sdk::error::OTelSdkError::InternalFailure(e.to_string()))?
-            .block_on(store.write_logs(&records))
-            .map_err(|e| opentelemetry_sdk::error::OTelSdkError::InternalFailure(e.to_string()))?;
+        let written = super::export(store.write_logs(&records))?;
 
         for record in written {
             self.stream.feed(StreamedLog {

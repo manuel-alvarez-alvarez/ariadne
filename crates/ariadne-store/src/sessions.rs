@@ -4,7 +4,6 @@ use ariadne_core::id::new_id;
 use ariadne_core::{AttentionReason, Seat, SessionStatus};
 
 use crate::query::Filtered;
-use crate::stats::record_attention_clear;
 use crate::{AgentPin, AgentSession, Change, Result, Store, StoreError, not_found, now};
 
 /// [`SessionStatus::is_live`] in SQL, in the one place SQL has to know it.
@@ -213,7 +212,7 @@ impl Store {
     ///
     /// Answers the row as this write left it, read in the same transaction:
     /// a write that lands right after it — a resume that starts the session
-    /// again — cannot change what the caller is told it ended (023).
+    /// again — cannot change what the caller is told it ended (035).
     pub async fn set_session_status(
         &self,
         id: &str,
@@ -224,7 +223,7 @@ impl Store {
             _ => None,
         };
         let mut tx = self.w().begin().await?;
-        let before: AgentSession =
+        let _before: AgentSession =
             Self::fetch_by_in_tx(&mut tx, "session", "agent_sessions", id).await?;
         let n = sqlx::query(
             "UPDATE agent_sessions SET status = ?, ended_at = COALESCE(?, ended_at) WHERE id = ?",
@@ -256,18 +255,6 @@ impl Store {
             Self::fetch_by_in_tx(&mut tx, "session", "agent_sessions", id).await?;
         tx.commit().await?;
         self.publish(Change::SessionUpdated(session.clone()));
-        if !status.is_live()
-            && matches!(
-                before.attention_reason.as_deref(),
-                Some("waiting_permission" | "waiting_input")
-            )
-            && let (Some(reason), Some(since)) = (
-                before.attention_reason.clone(),
-                before.attention_since.clone(),
-            )
-        {
-            record_attention_clear(self, before, reason, since).await?;
-        }
         Ok(session)
     }
 
@@ -405,15 +392,12 @@ impl Store {
         let Some(cleared) = cleared else {
             return self.announce_attention(id, 0).await;
         };
-        let (Some(reason), Some(since)) = (
-            cleared.attention_reason.clone(),
-            cleared.attention_since.clone(),
-        ) else {
+        if cleared.attention_reason.is_none() || cleared.attention_since.is_none() {
             return Ok(());
-        };
+        }
         self.sync_task_stall(id).await?;
         self.publish_session_update(id).await?;
-        record_attention_clear(self, cleared, reason, since).await
+        Ok(())
     }
 
     /// Put a finished session back into its pre-spawn state so it can be
@@ -441,7 +425,7 @@ impl Store {
         worktree_path: Option<&str>,
     ) -> Result<AgentSession> {
         let mut tx = self.w().begin().await?;
-        let before: AgentSession =
+        let _before: AgentSession =
             Self::fetch_by_in_tx(&mut tx, "session", "agent_sessions", id).await?;
         sqlx::query(
             "UPDATE agent_sessions
@@ -457,12 +441,6 @@ impl Store {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        if let (Some(reason), Some(since)) = (
-            before.attention_reason.clone(),
-            before.attention_since.clone(),
-        ) {
-            record_attention_clear(self, before, reason, since).await?;
-        }
         self.sync_task_stall(id).await?;
         let session = self.get_session(id).await?;
         self.publish(Change::SessionUpdated(session.clone()));

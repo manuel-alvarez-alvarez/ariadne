@@ -109,27 +109,6 @@ pub(crate) struct Harness {
     pub failure_diagnosis: ariadne_daemon::failure_diagnosis::FailureDiagnosis,
 }
 
-/// One row of the stats ledger, as [`Harness::facts`] reads it.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Fact {
-    pub session_id: Option<String>,
-    pub launch_id: Option<String>,
-    pub seat: Option<String>,
-    pub model: Option<String>,
-    pub skills: Vec<String>,
-    pub data: serde_json::Value,
-}
-
-/// A ledger row as SQLite holds it, in the order [`Harness::facts`] selects it.
-type FactRow = (
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    String,
-    String,
-);
-
 pub(crate) struct HarnessBuilder {
     home: Option<PathBuf>,
     scheduler: bool,
@@ -458,6 +437,10 @@ impl HarnessBuilder {
                 .await
                 .unwrap();
         let (telemetry, log_stream) = telemetry::init(telemetry_store.clone(), "test");
+        ariadne_daemon::metrics::start([
+            dir.path().join("test.db"),
+            dir.path().join("telemetry.db"),
+        ]);
         let forge_poll = ariadne_daemon::forge::poll::start(
             store.clone(),
             launcher.cfg.clone(),
@@ -1492,28 +1475,58 @@ impl Harness {
             .unwrap();
     }
 
-    /// Every fact of `kind` in the stats ledger, oldest first, as
-    /// `(session_id, launch_id, seat, model, skills, data)`. Straight SQL: the
-    /// daemon reads the ledger only as aggregates, and a test of the fact
-    /// itself needs the row.
-    pub(crate) async fn facts(&self, kind: &str) -> Vec<Fact> {
-        let rows: Vec<FactRow> = sqlx::query_as(
-            "SELECT session_id, launch_id, seat, model, skills, data
-                   FROM stat_facts WHERE kind = ? ORDER BY id",
-        )
-        .bind(kind)
-        .fetch_all(&self.db)
-        .await
-        .unwrap();
-        rows.into_iter()
-            .map(|(session_id, launch_id, seat, model, skills, data)| Fact {
-                session_id,
-                launch_id,
-                seat,
-                model,
-                skills: serde_json::from_str(&skills).unwrap(),
-                data: serde_json::from_str(&data).unwrap(),
-            })
+    /// Export every metric now, off this test's runtime thread: a flush
+    /// blocks its caller until the exporter has written, and a daemon task
+    /// on this runtime — the retention pass holding the telemetry writer —
+    /// may be what that write waits on.
+    pub(crate) async fn flush_metrics(&self) {
+        let telemetry = self.telemetry.clone();
+        tokio::task::spawn_blocking(move || telemetry.flush())
+            .await
+            .unwrap();
+    }
+
+    /// The value of metric `name` summed over every series whose labels hold
+    /// each of `labels`, as the daemon's meter reports it once flushed into
+    /// the telemetry store: the newest sample of each series, 0 where none
+    /// matches. A histogram is read by its `_count` or `_sum` series.
+    pub(crate) async fn metric(&self, name: &str, labels: &[(&str, &str)]) -> f64 {
+        self.flush_metrics().await;
+        let mut total = 0.0;
+        for series in self.telemetry_store.list_series(&[]).await.unwrap() {
+            if series.name != name
+                || !labels
+                    .iter()
+                    .all(|(key, value)| series.labels[*key].as_str() == Some(*value))
+            {
+                continue;
+            }
+            let samples = self
+                .telemetry_store
+                .read_samples(
+                    &series.id,
+                    ariadne_store::telemetry::TimeRange {
+                        since: "2000-01-01T00:00:00Z".into(),
+                        until: "2999-01-01T00:00:00Z".into(),
+                    },
+                )
+                .await
+                .unwrap();
+            total += samples.last().map_or(0.0, |sample| sample.value);
+        }
+        total
+    }
+
+    /// Every label set metric `name` was recorded under, once flushed.
+    pub(crate) async fn metric_labels(&self, name: &str) -> Vec<serde_json::Value> {
+        self.flush_metrics().await;
+        self.telemetry_store
+            .list_series(&[])
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|series| series.name == name)
+            .map(|series| series.labels)
             .collect()
     }
 

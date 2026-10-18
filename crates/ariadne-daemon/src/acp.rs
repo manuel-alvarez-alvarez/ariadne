@@ -48,7 +48,6 @@ use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
 use crate::learned_key::{Facts, Key, normalize};
 use crate::scheduler::SchedEvent;
-use crate::stats::session_fact;
 use crate::timeouts::Timeouts;
 use crate::transcript::{LaunchTranscript, TranscriptHomes};
 
@@ -1023,13 +1022,18 @@ impl AcpRuntime {
             .process_group(0)
             .kill_on_drop(true);
         apply_agent_launch_environment(&mut command, &launch.agent_id);
-        let mut child = command.spawn().with_context(|| {
-            format!(
-                "starting ACP agent {} in {}",
-                launch.program,
-                launch.cwd.display()
-            )
-        })?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                crate::metrics::record_launch_failed_to_spawn();
+                return Err(anyhow::Error::new(error).context(format!(
+                    "starting ACP agent {} in {}",
+                    launch.program,
+                    launch.cwd.display()
+                )));
+            }
+        };
+        crate::metrics::record_launch_spawned(&launch.launch_id);
         let stdin = child
             .stdin
             .take()
@@ -1712,6 +1716,14 @@ impl EventSink {
                 return None;
             }
         };
+        crate::metrics::record_agent_activity(
+            &self.runtime.inner.store,
+            &self.session_id,
+            &self.launch_id,
+            kind,
+            &request.payload,
+        )
+        .await;
         if let Some(tx) = self.runtime.inner.scheduler.get() {
             let _ = tx.send(SchedEvent::SessionEvent(self.session_id.clone()));
         }
@@ -1740,30 +1752,18 @@ impl EventSink {
     /// Record what this launch has spent so far, as its `stop` would.
     async fn record_usage(&self, usage: TokenUsage) {
         let store = &self.runtime.inner.store;
-        if let Err(e) = store
+        match store
             .upsert_session_usage(&self.session_id, &self.launch_id, usage)
             .await
         {
-            tracing::warn!(session = %self.session_id, error = %e, "recording a transcript's usage failed");
+            Err(e) => {
+                tracing::warn!(session = %self.session_id, error = %e, "recording a transcript's usage failed");
+            }
+            Ok(Some(moved)) => {
+                crate::metrics::record_tokens(store, &self.session_id, moved).await;
+            }
+            Ok(None) => {}
         }
-    }
-
-    /// Append one session fact without making ACP wait on SQLite. Facts are
-    /// observational: a failure is logged after the protocol reply has gone
-    /// out, and does not change the turn.
-    fn record_stat_fact(&self, kind: &'static str, data: Value) {
-        let store = self.runtime.inner.store.clone();
-        let session_id = self.session_id.clone();
-        tokio::spawn(async move {
-            let result = async {
-                let fact = session_fact(&store, &session_id, kind, data).await?;
-                store.record_fact(fact).await
-            }
-            .await;
-            if let Err(error) = result {
-                tracing::warn!(session = %session_id, kind, error = %error, "recording ACP stat fact failed");
-            }
-        });
     }
 
     /// The ACP session id as a payload value: the one setup learned, else the
@@ -2308,13 +2308,12 @@ impl RuntimeIncoming {
             learned_level: learned_reply.map(|row| row.level.clone()),
             learned_key: learned_reply.map(|row| row.key.clone()),
         };
-        self.sink.record_stat_fact("permission", json!({
-            "tool_name": signature.tool_name,
-            "decided_by": decided_by,
-            "answer": permission_answer(reply.option_id.as_deref(), reply.label.as_deref(), params),
-            "console_option_id": reply.console_option_id,
-            "wait_ms": requested_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
-        }));
+        crate::metrics::record_permission(
+            decided_by,
+            permission_answer(reply.option_id.as_deref(), reply.label.as_deref(), params),
+            &signature.tool_name,
+            requested_at.elapsed().as_secs_f64(),
+        );
         self.sink.emit("permission.replied", json!(reply)).await;
         Ok(json!({"outcome": outcome}))
     }

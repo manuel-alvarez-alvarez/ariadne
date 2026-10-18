@@ -1,7 +1,8 @@
 ---
 id: stats
-status: current
+status: superseded
 updated: 2026-10-18
+superseded_by: 035
 areas: [api, store, daemon]
 commits: []
 tests:
@@ -20,6 +21,9 @@ tests:
 ---
 
 # Stats
+
+Superseded by [035 Metrics](035-metrics.md). This historical specification
+describes the removed ledger.
 
 What the work did. The daemon writes one fact to a ledger when a thing that
 tells performance happens, and every stat is an aggregate of that ledger. The

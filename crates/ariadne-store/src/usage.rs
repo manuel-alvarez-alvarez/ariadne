@@ -39,9 +39,13 @@ impl Store {
     /// Record what one transcript of a session has spent so far, replacing
     /// whatever it last reported.
     ///
-    /// Answers whether that moved anything: a report identical to the stored
-    /// one is written nowhere and announced to nobody, which matters because
-    /// agents re-report their totals on every event they send.
+    /// Answers what that moved, or None where it moved nothing: a report
+    /// identical to the stored one is written nowhere and announced to
+    /// nobody, which matters because agents re-report their totals on every
+    /// event they send. What it moved is how far each counter rose over the
+    /// one this transcript held, read in the same transaction as the write,
+    /// so two reports racing each answer their own step; a counter that fell
+    /// moved by zero.
     ///
     /// A report that does move it is announced three times over — the
     /// session, the task that owns it where there is one, and the goal —
@@ -53,7 +57,16 @@ impl Store {
         session_id: &str,
         source: &str,
         usage: TokenUsage,
-    ) -> Result<bool> {
+    ) -> Result<Option<TokenUsage>> {
+        let mut tx = self.w().begin().await?;
+        let held: Option<(i64, i64, i64)> = sqlx::query_as(
+            "SELECT input_tokens, cached_input_tokens, output_tokens
+               FROM session_usage WHERE session_id = ? AND source = ?",
+        )
+        .bind(session_id)
+        .bind(source)
+        .fetch_optional(&mut *tx)
+        .await?;
         let changed = sqlx::query(
             "INSERT INTO session_usage (session_id, source, input_tokens,
                                         cached_input_tokens, output_tokens, updated_at)
@@ -73,13 +86,21 @@ impl Store {
         .bind(stored(usage.cached_input_tokens))
         .bind(stored(usage.output_tokens))
         .bind(now())
-        .execute(self.w())
+        .execute(&mut *tx)
         .await?
         .rows_affected()
             > 0;
+        tx.commit().await?;
         if !changed {
-            return Ok(false);
+            return Ok(None);
         }
+        let (input, cached, output) = held.unwrap_or_default();
+        let rose = |now: u64, then: i64| now.saturating_sub(u64::try_from(then).unwrap_or(0));
+        let moved = TokenUsage {
+            input_tokens: rose(usage.input_tokens, input),
+            cached_input_tokens: rose(usage.cached_input_tokens, cached),
+            output_tokens: rose(usage.output_tokens, output),
+        };
         let session = self.get_session(session_id).await?;
         self.publish(Change::SessionUpdated(session.clone()));
         if let Some(task_id) = &session.task_id {
@@ -88,7 +109,7 @@ impl Store {
         if let Some(goal_id) = &session.goal_id {
             self.publish_goal_update(goal_id).await?;
         }
-        Ok(true)
+        Ok(Some(moved))
     }
 
     /// What one session has spent, summed over every transcript it reported

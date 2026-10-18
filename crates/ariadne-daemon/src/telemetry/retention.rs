@@ -58,14 +58,19 @@ async fn retention_tick(
         )
         .await
     {
-        Ok(report) => debug!(
-            store = "telemetry",
-            rolled_up_samples = report.rolled_up_samples,
-            deleted_samples = report.deleted_samples,
-            deleted_logs = report.deleted_logs,
-            deleted_rollups = report.deleted_rollups,
-            "ran the telemetry retention pass"
-        ),
+        Ok(report) => {
+            crate::metrics::record_telemetry_deleted("metric_samples", report.deleted_samples);
+            crate::metrics::record_telemetry_deleted("log_records", report.deleted_logs);
+            crate::metrics::record_telemetry_deleted("metric_rollups_1h", report.deleted_rollups);
+            debug!(
+                store = "telemetry",
+                rolled_up_samples = report.rolled_up_samples,
+                deleted_samples = report.deleted_samples,
+                deleted_logs = report.deleted_logs,
+                deleted_rollups = report.deleted_rollups,
+                "ran the telemetry retention pass"
+            )
+        }
         Err(error) => {
             warn!(store = "telemetry", %error, "could not run the telemetry retention pass")
         }

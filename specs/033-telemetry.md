@@ -107,9 +107,14 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
    a later task records through `opentelemetry::global::meter` with no
    knowledge of the store underneath. Both the logger provider's batch
    processor and the meter provider's `PeriodicReader` run on their own
-   plain thread. Each custom exporter (`StoreLogExporter`,
-   `StoreMetricExporter`) builds a short-lived current-thread Tokio runtime
-   on that SDK worker thread and blocks it on its SQLite write. The
+   plain thread. The two custom exporters (`StoreLogExporter`,
+   `StoreMetricExporter`) block that SDK worker thread on their SQLite write,
+   run on one Tokio runtime they share for the life of the process
+   (`telemetry::export`, one worker thread, `telemetry-export`). Not a
+   runtime per export: a pool returns each connection on a task spawned on
+   the runtime that dropped it, and a runtime dropped with that task still
+   waiting kept the store's one write connection from coming back, so the
+   next export waited out its timeout. The
    resource both providers share carries `service.name=ariadned` and
    `service.version` from the crate version; `LogExporter::set_resource`
    is how the log exporter learns the service name a batch's records carry,

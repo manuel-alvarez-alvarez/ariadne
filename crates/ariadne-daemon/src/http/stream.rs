@@ -68,9 +68,12 @@ pub(super) async fn stream(
         let beat = beat.clone();
         async move { Ok(beat) }
     });
+    let client = crate::metrics::EventStreamClient::open();
     let events = sse::follow(
         state.events.subscribe(),
         move |event| {
+            // Held by the stream, so the follower is counted until it goes.
+            let _ = &client;
             // Filtered out: keep waiting rather than end the stream.
             event
                 .matches(goal.as_deref(), task.as_deref())
@@ -78,6 +81,7 @@ pub(super) async fn stream(
         },
         |missed| {
             warn!(missed, "event stream subscriber lagged; signalling resync");
+            crate::metrics::record_events_resync();
             Some(sse::identified_event("resync", ResyncDto { missed }))
         },
     );

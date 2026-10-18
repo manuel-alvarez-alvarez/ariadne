@@ -196,6 +196,7 @@ async fn main() -> Result<()> {
         store.clone(),
         ariadne_daemon::timeouts::Timeouts::default().checkpoint,
     );
+    ariadne_daemon::metrics::start([config.db_path.clone(), config.telemetry_db_path.clone()]);
     ariadne_daemon::telemetry::retention::start(
         telemetry_store.clone(),
         ariadne_daemon::timeouts::Timeouts::default().telemetry_retention,

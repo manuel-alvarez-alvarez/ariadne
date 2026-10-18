@@ -6,8 +6,8 @@
 //! [`opentelemetry::global::meter`].
 //!
 //! The batch log processor and the metrics `PeriodicReader` each run on
-//! their own plain thread. Each exporter owns the small current-thread Tokio
-//! runtime it needs to finish its SQLite future there, so flushing from the
+//! their own plain thread. The two exporters finish their SQLite futures on
+//! one small runtime of their own ([`export`]), so flushing from the
 //! daemon's Tokio thread cannot wait on work that needs that same thread.
 
 mod convert;
@@ -37,7 +37,9 @@ pub(crate) use stream::StreamedLog;
 const SERVICE_NAME: &str = "ariadned";
 
 /// Owns the two SDK providers so the daemon can shut them down on exit,
-/// flushing whatever the last batch had not sent yet.
+/// flushing whatever the last batch had not sent yet. A clone is a handle on
+/// the same two providers.
+#[derive(Clone)]
 pub struct Telemetry {
     logger_provider: SdkLoggerProvider,
     meter_provider: SdkMeterProvider,
@@ -69,6 +71,7 @@ pub fn init(store: TelemetryStore, service_version: &str) -> (Telemetry, LogStre
     let meter_provider = SdkMeterProvider::builder()
         .with_resource(resource)
         .with_reader(reader)
+        .with_view(crate::metrics::view)
         .build();
     opentelemetry::global::set_meter_provider(meter_provider.clone());
 
@@ -133,6 +136,38 @@ pub(crate) fn exported_key(key: &str, taken: impl Fn(&str) -> bool) -> String {
         moved = format!("exported_{moved}");
     }
     moved
+}
+
+/// Run an exporter's store write to its end, on the exporters' own runtime.
+///
+/// The batch log processor and the metric reader call their exporter on
+/// threads of their own, and a flush can block the daemon thread a daemon
+/// task would answer on, so the write cannot run on the daemon's runtime. It
+/// runs on one runtime the two exporters share for the life of the process,
+/// not on one built and dropped per export: a pool returns each connection
+/// on a task spawned on the runtime that dropped it, and a runtime dropped
+/// with that task still waiting kept the telemetry store's one write
+/// connection from ever coming back, so the next export waited out its
+/// timeout.
+fn export<T>(
+    write: impl std::future::Future<Output = ariadne_store::Result<T>> + Send,
+) -> Result<T, opentelemetry_sdk::error::OTelSdkError>
+where
+    T: Send,
+{
+    static EXPORTS: OnceLock<std::io::Result<tokio::runtime::Runtime>> = OnceLock::new();
+    let internal = |e: String| opentelemetry_sdk::error::OTelSdkError::InternalFailure(e);
+    let runtime = EXPORTS
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .thread_name("telemetry-export")
+                .enable_all()
+                .build()
+        })
+        .as_ref()
+        .map_err(|e| internal(e.to_string()))?;
+    runtime.block_on(write).map_err(|e| internal(e.to_string()))
 }
 
 static TELEMETRY_RECORDS: OnceLock<Counter<u64>> = OnceLock::new();

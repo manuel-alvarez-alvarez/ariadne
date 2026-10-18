@@ -433,7 +433,18 @@ async fn worker(
         // repository's own remote can move past between one call and the
         // next, well before this worker is torn down and respawned under
         // its new identity (`sync`'s own `integration_changed`).
+        let started = std::time::Instant::now();
         let fetched = fetch(&store, &cfg, &handoff, &id).await;
+        let outcome = match &fetched {
+            Ok(()) => "ok",
+            Err(error) if Refusal::of(error.clone()).is_rate_limited() => "rate_limited",
+            Err(_) => "failed",
+        };
+        crate::metrics::record_forge_poll(
+            &crate::metrics::repo_name(&store, &id).await,
+            outcome,
+            started.elapsed().as_secs_f64(),
+        );
         if let Err(error) = &fetched
             && Refusal::of(error.clone()).is_rate_limited()
         {

@@ -311,9 +311,12 @@ async fn a_past_rate_limit_reset_waits_for_the_poll_interval() {
 async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once() {
     // These are production timeout fields reduced only for this timer
     // behavior test. The proportional margins below still distinguish each
-    // scheduling decision from the next one.
+    // scheduling decision from the next one. A listen that waits for a fetch
+    // to complete also waits out the stub's own calls, which under load take
+    // a good part of an interval: so the cap is four intervals, and each such
+    // listen ends at least an interval before the wrong decision would fetch.
     let poll = RUNS_OUT / 2;
-    let cap = poll * 2;
+    let cap = poll * 4;
     let stub = stub_forge_cli(json!([
         {"args": ["api", "user"], "exit": 0, "stdout": "me"},
         {"args": ["pr", "list"], "exit": 1, "stderr": "gh: first failure (HTTP 500)"},
@@ -349,22 +352,23 @@ async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once
     );
     next_fetch_error(&mut events, &repo.id, "second failure").await;
 
-    // The second failure stays at the cap. If it doubled again, its success
-    // would miss this cap-sized listen.
+    // The second failure reaches the cap. If it doubled past it, its success
+    // would miss this listen, which ends three intervals before that.
     stub.reprogram(json!([
         {"args": ["pr", "list"], "exit": 0, "stdout": "[]"},
         {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
          "exit": 0, "stdout": "[]"},
     ]));
-    tokio::time::timeout(cap + poll / 2, wait_for_fetches(&stub, 1))
+    tokio::time::timeout(cap + poll, wait_for_fetches(&stub, 1))
         .await
         .expect("the capped timer fetch must complete");
     next_fetch_error_clear(&mut events, &repo.id).await;
 
     // The successful fetch resets the timer to its ordinary interval.
     // Leaving the forge successful makes the next completed fetch prove it
-    // did not keep the cap-sized backoff.
-    tokio::time::timeout(poll + poll / 2, wait_for_fetches(&stub, 2))
+    // did not keep the cap-sized backoff: kept, it would start only at the
+    // cap, an interval and a half after this listen ends.
+    tokio::time::timeout(poll * 2 + poll / 2, wait_for_fetches(&stub, 2))
         .await
         .expect("the first success must reset the timer backoff");
 
@@ -387,6 +391,44 @@ async fn a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once
     h.state.forge_poll.set_mode(&repo.id, Mode::WakeOnly);
     wait_for_fetches(&stub, 3).await;
     next_fetch_error_clear(&mut events, &repo.id).await;
+}
+
+/// Each fetch of a repository's requests is timed by its repository and its
+/// outcome (035): a failure, then the wake's success.
+#[tokio::test]
+async fn each_fetch_is_timed_by_its_repository_and_outcome() {
+    let stub = stub_forge_cli(json!([
+        {"args": ["api", "user"], "exit": 0, "stdout": "me"},
+        {"args": ["pr", "list"], "exit": 1, "stderr": "gh: failure (HTTP 500)"},
+    ]));
+    let h = harness()
+        .forge_cli(&stub)
+        .timeouts(Timeouts {
+            forge_wake_debounce: Duration::ZERO,
+            ..Default::default()
+        })
+        .await;
+    let mut events = h.bus.subscribe();
+    let repo = enabled_repository(&h).await;
+    next_fetch_error(&mut events, &repo.id, "failure").await;
+    stub.reprogram(json!([
+        {"args": ["pr", "list"], "exit": 0, "stdout": "[]"},
+        {"args": ["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+         "exit": 0, "stdout": "[]"},
+    ]));
+    h.state.forge_poll.wake(&repo.id);
+    next_fetch_error_clear(&mut events, &repo.id).await;
+    for outcome in ["failed", "ok"] {
+        eventually(TIMEOUT, "the timed fetch", async || {
+            h.metric(
+                "ariadne.forge.poll.duration_count",
+                &[("repo", "repo"), ("outcome", outcome)],
+            )
+            .await
+                == 1.0
+        })
+        .await;
+    }
 }
 
 /// Three wakes during the configured quiet period become one fetch.
