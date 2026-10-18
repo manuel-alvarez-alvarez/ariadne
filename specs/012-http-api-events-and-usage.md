@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-10-17
+updated: 2026-10-18
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -11,7 +11,6 @@ tests:
   - crates/ariadne-daemon/tests/it/switch.rs
   - crates/ariadne-daemon/tests/it/unknown_fields.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
-  - crates/ariadne-daemon/tests/it/logs.rs
   - crates/ariadne-daemon/tests/it/doctor.rs
   - crates/ariadne-daemon/tests/it/ai_permissions.rs
   - crates/ariadne-daemon/tests/it/agents.rs
@@ -224,9 +223,8 @@ and the ACP runtime that reports the agent events (021).
     /v1/agents/{id}` replaces one agent's list whole, an empty one included,
     and refuses an agent the registry does not hold by name. A launch passes
     the flags after the agent's registry command.
-18. The daemon's own log is served both as a snapshot (with a tail limit) and
-    as a stream that opens with a snapshot and follows with deltas, from a
-    ring buffer that evicts its oldest lines.
+18. See [033](033-telemetry.md) for the daemon's own log: the telemetry
+    store it is read from, and its snapshot and stream routes.
 19. `doctor` reports the environment the daemon actually runs in: its own
     paths, every registry agent with what discovery made of it, the tools a
     session and a published task need (`git`, `gh`), the Python
@@ -533,12 +531,6 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   agent is refused by name (`::an_unknown_agent_is_refused_by_name`), and a
   launch takes its flags from the config
   (`::a_launch_takes_its_flags_from_the_agent_config`).
-- The log snapshot, tail, eviction and stream behave
-  (`logs.rs::the_snapshot_returns_captured_lines_in_order`,
-  `::tail_limits_the_snapshot_to_the_last_n_lines`,
-  `::the_ring_buffer_evicts_its_oldest_lines`,
-  `::the_stream_opens_with_a_snapshot_then_follows_with_deltas`), and hostile
-  content survives SSE framing (`::hostile_log_content_survives_sse_framing`).
 - `doctor` reports every registry agent, the tools, its own paths, and an
   unwritable worktree root
   (`doctor.rs::every_registry_agent_is_reported_with_what_discovery_made_of_it`,
@@ -549,8 +541,7 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   loads are served by the daemon
   (`docs.rs::swagger_serves_its_page_assets_and_the_daemons_schema`).
 - Every endpoint is in the OpenAPI document
-  (`logs.rs::both_endpoints_are_in_the_openapi_document`,
-  `acp_console.rs::the_cancel_endpoint_is_in_the_openapi_document`,
+  (`acp_console.rs::the_cancel_endpoint_is_in_the_openapi_document`,
   `acp_terminal.rs::the_terminal_endpoint_is_in_the_openapi_document`,
   `doctor.rs::endpoint_is_in_the_openapi_document`,
   `models.rs::endpoint_is_in_the_openapi_document_with_nothing_to_filter_by`).

@@ -88,20 +88,34 @@ const DESCRIPTOR_RETRY_CHILD: &str = "ARIADNE_DESCRIPTOR_RETRY_CHILD";
 /// the daemon captures it behind `/v1/logs`. A `#[tokio::test]` runs its
 /// tasks on the thread it is on, so the scheduler's lines land here too.
 fn capture(h: &Harness) -> tracing::subscriber::DefaultGuard {
-    tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()))
+    tracing::subscriber::set_default(tracing_subscriber::registry().with(h.telemetry.log_layer()))
+}
+
+/// Every message the capture has recorded so far, rendered the way
+/// `GET /v1/logs` would. Flushes the telemetry pipeline first, so this is
+/// exact rather than a snapshot of whatever had already left the batch
+/// queue.
+async fn captured_messages(h: &Harness) -> Vec<String> {
+    h.telemetry.flush();
+    h.telemetry_store
+        .read_logs(Default::default())
+        .await
+        .unwrap()
+        .iter()
+        .map(|record| ariadne_api::logs::render_message(record.body.as_deref(), &record.attributes))
+        .collect()
 }
 
 /// How many passes the scheduler has run over what this session's wakes are
 /// about: what the folding of those wakes is measured by, read from the line
 /// `Scheduler::reconcile_session` logs.
-fn reconciles_of(h: &Harness, session: &AgentSession) -> usize {
-    h.logs
-        .snapshot()
+async fn reconciles_of(h: &Harness, session: &AgentSession) -> usize {
+    captured_messages(h)
+        .await
         .iter()
-        .filter(|line| {
-            line.message
-                .starts_with("reconciling what a session's wake is about")
-                && line.message.contains(&session.id)
+        .filter(|message| {
+            message.starts_with("reconciling what a session's wake is about")
+                && message.contains(&session.id)
         })
         .count()
 }
@@ -111,14 +125,13 @@ fn reconciles_of(h: &Harness, session: &AgentSession) -> usize {
 /// from the line `Scheduler::reconcile_steps` logs before each attempt. It
 /// covers a resume of a row that is already there as well as a spawn that
 /// writes one.
-fn agent_starts_of(h: &Harness, task: &Task) -> usize {
-    h.logs
-        .snapshot()
+async fn agent_starts_of(h: &Harness, task: &Task) -> usize {
+    captured_messages(h)
+        .await
         .iter()
-        .filter(|line| {
-            line.message
-                .starts_with("the column has no live agent, starting one")
-                && line.message.contains(&task.id)
+        .filter(|message| {
+            message.starts_with("the column has no live agent, starting one")
+                && message.contains(&task.id)
         })
         .count()
 }
@@ -1365,7 +1378,7 @@ async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
     sched.flush().await;
     // What the shortage itself bought: one attempt, or none where it bit
     // before the attempt was made.
-    let spent = agent_starts_of(&w, &w.task);
+    let spent = agent_starts_of(&w, &w.task).await;
     assert!(spent <= 1, "the shortage spent {spent} attempts");
     drop(held);
     setrlimit(Resource::Nofile, original).unwrap();
@@ -1387,7 +1400,7 @@ async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
         .filter(|session| session.task_agent_id.as_deref() == Some(w.review.as_str()))
         .collect();
     assert_eq!(
-        agent_starts_of(&w, &w.task),
+        agent_starts_of(&w, &w.task).await,
         spent,
         "an adjacent wake retried the reviewer: {reviewers:#?}"
     );
@@ -2658,7 +2671,7 @@ async fn the_wake_a_burst_of_events_ends_on_is_still_acted_on() {
     }
     sched.flush().await;
     assert_eq!(
-        reconciles_of(&w, &session),
+        reconciles_of(&w, &session).await,
         2,
         "a hundred wakes cost the pass the first one ran and one more"
     );
@@ -2669,7 +2682,7 @@ async fn the_wake_a_burst_of_events_ends_on_is_still_acted_on() {
     eventually(
         TIMEOUT,
         "the last wake of the burst to be reconciled",
-        async || reconciles_of(&w, &session) == 3,
+        async || reconciles_of(&w, &session).await == 3,
     )
     .await;
 }
@@ -2688,7 +2701,7 @@ async fn a_wake_folded_into_a_window_is_taken_by_a_flush() {
     sched.session(&session);
     sched.flush().await;
     assert_eq!(
-        reconciles_of(&w, &session),
+        reconciles_of(&w, &session).await,
         1,
         "the first wake of a burst runs where it lands"
     );
@@ -2698,7 +2711,7 @@ async fn a_wake_folded_into_a_window_is_taken_by_a_flush() {
     sched.session(&session);
     sched.flush().await;
     assert_eq!(
-        reconciles_of(&w, &session),
+        reconciles_of(&w, &session).await,
         2,
         "the folded wake was reconciled before the flush answered"
     );
@@ -2758,7 +2771,7 @@ async fn a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles(
     sched.flush().await;
 
     assert_eq!(
-        reconciles_of(&h, &author),
+        reconciles_of(&h, &author).await,
         2,
         "the burst costs the pass it arrived during and one more, whatever \
          the pass cost"
@@ -2824,7 +2837,7 @@ async fn a_window_still_ends_under_a_stream_of_wakes_that_never_pauses() {
     });
     // The first wake's own pass, and the one the window ends with.
     eventually(TIMEOUT, "the window to end under the stream", async || {
-        reconciles_of(&h, &author) >= 2
+        reconciles_of(&h, &author).await >= 2
     })
     .await;
     ended.store(true, std::sync::atomic::Ordering::SeqCst);

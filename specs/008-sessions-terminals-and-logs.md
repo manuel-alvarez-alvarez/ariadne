@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-10-11
+updated: 2026-10-18
 areas: [daemon, cli, ui]
 commits: [e4816cf6, 39937143, a69b953f, 7880c022, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -10,7 +10,6 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
   - crates/ariadne-daemon/tests/it/resume.rs
   - crates/ariadne-daemon/tests/it/switch.rs
-  - crates/ariadne-daemon/tests/it/logs.rs
   - crates/ariadne-console/src/transcript.rs
   - crates/ariadne-console/src/tui/mod.rs
   - crates/ariadne-console/src/tui/blocks.rs
@@ -58,7 +57,7 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 24. A same-agent switch keeps the conversation and applies the new model and effort.
 25. A cross-agent switch starts a new conversation and leaves the old session exited.
 26. A cancelled-goal session, a model turned off, or an already switched session refuses switching.
-27. The daemon log snapshot preserves order and a tail limit, and its stream starts with a snapshot.
+27. See [033](033-telemetry.md) for the daemon's own log: the telemetry store it is read from, and its snapshot and stream routes.
 28. The console draws an agent's thought whole, as dimmed markdown; Ctrl-O does not fold it.
 29. The console draws the rest of a permission's command in the terminal's own foreground, not dimmed.
 
@@ -72,15 +71,13 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 6. Tool updates share a transcript block (`ariadne-console::transcript::tests::updates_of_one_call_fold_into_it_and_the_last_dates_its_end`).
 7. A reconnect redraws without duplicate scrollback (`ariadne-console::tui::tests::a_reconnect_redraws_the_fresh_snapshot_without_repeating_the_scrollback`).
 8. Session switches preserve the required conversation behavior (`crates/ariadne-daemon/tests/it/switch.rs::a_same_agent_switch_keeps_the_row_and_conversation`, `::a_switched_agent_starts_a_new_session_briefed_on_its_column`, `::a_session_already_switched_is_not_switched_again`).
-9. Logs preserve order, tail, and stream snapshots (`crates/ariadne-daemon/tests/it/logs.rs::the_snapshot_returns_captured_lines_in_order`, `::tail_limits_the_snapshot_to_the_last_n_lines`, `::the_stream_opens_with_a_snapshot_then_follows_with_deltas`).
-10. A thought is drawn whole, as markdown (`ariadne-console::tui::blocks::tests::a_thought_draws_its_markdown_whole`, `::ctrl_o_draws_a_daemon_prompt_whole_and_a_thought_is_whole_either_way`).
-11. A permission's command is drawn above its options, not dimmed (`ariadne-console::tui::picker::tests::a_permission_question_draws_the_call_above_its_options`).
+9. A thought is drawn whole, as markdown (`ariadne-console::tui::blocks::tests::a_thought_draws_its_markdown_whole`, `::ctrl_o_draws_a_daemon_prompt_whole_and_a_thought_is_whole_either_way`).
+10. A permission's command is drawn above its options, not dimmed (`ariadne-console::tui::picker::tests::a_permission_question_draws_the_call_above_its_options`).
 
 ## Sources
 
 - crates/ariadne-daemon/src/http/console.rs
 - crates/ariadne-daemon/src/http/terminal.rs
 - crates/ariadne-daemon/src/http/sessions.rs
-- crates/ariadne-daemon/src/http/logs.rs
 - crates/ariadne-console/src/tui/mod.rs
 - ui/src/features/sessions/session-terminal.tsx

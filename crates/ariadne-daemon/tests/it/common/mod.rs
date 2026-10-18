@@ -47,8 +47,8 @@ use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::launcher::Launcher;
-use ariadne_daemon::log::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
+use ariadne_daemon::telemetry::{self, Telemetry};
 use ariadne_daemon::timeouts::Timeouts;
 use ariadne_daemon::transcript::TranscriptHomes;
 use ariadne_store::{
@@ -87,7 +87,8 @@ pub(crate) struct Harness {
     pub router: Router,
     pub state: AppState,
     pub bus: EventBus,
-    pub logs: LogBuffer,
+    pub telemetry_store: ariadne_store::telemetry::TelemetryStore,
+    pub telemetry: Telemetry,
     /// Present when the harness was built with [`HarnessBuilder::scheduler`].
     pub sched: Option<UnboundedSender<SchedEvent>>,
     /// The stub agent the harness registers as [`STUB`] — whatever the home,
@@ -134,7 +135,6 @@ pub(crate) struct HarnessBuilder {
     scheduler: bool,
     spawns: bool,
     dies: bool,
-    logs: Option<LogBuffer>,
     discover_agents: bool,
     second_agent: Option<String>,
     timeouts: Timeouts,
@@ -174,7 +174,6 @@ pub(crate) fn harness() -> HarnessBuilder {
         scheduler: false,
         spawns: true,
         dies: false,
-        logs: None,
         discover_agents: false,
         second_agent: None,
         // A test that does not name the debounce itself must not pay its
@@ -238,12 +237,6 @@ impl HarnessBuilder {
     /// and not one agent is ever heard from.
     pub(crate) fn dying_agent(mut self) -> Self {
         self.dies = true;
-        self
-    }
-
-    /// Serve `/v1/logs` from a buffer the test already holds.
-    pub(crate) fn logs(mut self, logs: LogBuffer) -> Self {
-        self.logs = Some(logs);
         self
     }
 
@@ -460,7 +453,11 @@ impl HarnessBuilder {
         let sched = self
             .scheduler
             .then(|| scheduler::start(store.clone(), launcher.clone(), false, self.timeouts));
-        let logs = self.logs.unwrap_or_default();
+        let telemetry_store =
+            ariadne_store::telemetry::TelemetryStore::open(dir.path().join("telemetry.db"))
+                .await
+                .unwrap();
+        let (telemetry, log_stream) = telemetry::init(telemetry_store.clone(), "test");
         let forge_poll = ariadne_daemon::forge::poll::start(
             store.clone(),
             launcher.cfg.clone(),
@@ -488,7 +485,8 @@ impl HarnessBuilder {
             launcher: launcher.clone(),
             sched_tx: sched.clone(),
             events: bus.clone(),
-            logs: logs.clone(),
+            telemetry_store: telemetry_store.clone(),
+            log_stream: log_stream.clone(),
             agent_registry,
             outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::with_transcripts(
                 &transcript_homes(dir.path()),
@@ -509,7 +507,8 @@ impl HarnessBuilder {
             store,
             launcher,
             bus,
-            logs,
+            telemetry_store,
+            telemetry,
             sched,
             agent,
             dir,

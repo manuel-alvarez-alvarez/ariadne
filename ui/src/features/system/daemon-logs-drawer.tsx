@@ -22,6 +22,13 @@ import { useEffect, useRef, useState } from "react"
 
 import type { LogLineDto } from "@/api"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -46,6 +53,27 @@ const LEVEL_TINT: Record<string, string> = {
   TRACE: "text-muted-foreground",
 }
 
+/** `"all"` leaves the filter off; every other value narrows the stream. */
+const ALL = "all"
+
+/** The three services the daemon's telemetry pipeline can carry a record
+ * for (033): this daemon, the desktop app, and the CLI. */
+const SERVICES = [
+  { value: ALL, label: "All services" },
+  { value: "ariadned", label: "ariadned" },
+  { value: "ariadne-desktop", label: "ariadne-desktop" },
+  { value: "ariadne-cli", label: "ariadne-cli" },
+]
+
+const LEVELS = [
+  { value: ALL, label: "All levels" },
+  { value: "trace", label: "Trace" },
+  { value: "debug", label: "Debug" },
+  { value: "info", label: "Info" },
+  { value: "warn", label: "Warn" },
+  { value: "error", label: "Error" },
+]
+
 export function DaemonLogsDrawer({
   open,
   onOpenChange,
@@ -56,6 +84,8 @@ export function DaemonLogsDrawer({
   const baseUrl = useBaseUrl()
   const [lines, setLines] = useState<LogLineDto[]>([])
   const [status, setStatus] = useState<DaemonLogStatus>("connecting")
+  const [service, setService] = useState(ALL)
+  const [level, setLevel] = useState(ALL)
 
   const scroller = useRef<HTMLDivElement | null>(null)
   /** Whether the view is pinned to the newest line. */
@@ -63,16 +93,22 @@ export function DaemonLogsDrawer({
 
   useEffect(() => {
     if (!open) return
-    // A fresh open reads from the bottom, whatever the last one was doing.
+    // A fresh open (or a changed filter) reads from the bottom, whatever the
+    // last one was doing.
     follow.current = true
     setStatus("connecting")
-    const stream = new DaemonLogStream(daemonLogStreamUrl(baseUrl), {
+    setLines([])
+    const url = daemonLogStreamUrl(baseUrl, {
+      service: service === ALL ? undefined : service,
+      level: level === ALL ? undefined : level,
+    })
+    const stream = new DaemonLogStream(url, {
       onLines: setLines,
       onStatus: setStatus,
     })
     stream.start()
     return () => stream.stop()
-  }, [open, baseUrl])
+  }, [open, baseUrl, service, level])
 
   // Keep the newest line in view — unless the user scrolled up to read.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `lines` is the trigger, not an input
@@ -92,11 +128,47 @@ export function DaemonLogsDrawer({
       <SheetContent side="bottom" className="h-[50svh] gap-0 overflow-hidden p-0 after:hidden">
         {/* One wrapper, so the scroller escapes the popup's `*:shrink-0`. */}
         <div className="flex h-full min-h-0 flex-col">
-          <SheetHeader className="border-b px-4 py-3">
-            <SheetTitle>Daemon logs</SheetTitle>
-            <SheetDescription className="sr-only">
-              Live tail of the daemon&apos;s own log.
-            </SheetDescription>
+          <SheetHeader className="flex-row items-center justify-between border-b px-4 py-3">
+            <div>
+              <SheetTitle>Daemon logs</SheetTitle>
+              <SheetDescription className="sr-only">
+                Live tail of the daemon&apos;s own log.
+              </SheetDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Select
+                value={service}
+                onValueChange={(value) => setService(value ?? ALL)}
+                items={SERVICES}
+              >
+                <SelectTrigger size="sm" className="w-40" aria-label="Filter by service">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  {SERVICES.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={level}
+                onValueChange={(value) => setLevel(value ?? ALL)}
+                items={LEVELS}
+              >
+                <SelectTrigger size="sm" className="w-32" aria-label="Filter by level">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  {LEVELS.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </SheetHeader>
 
           {status === "reconnecting" ? (

@@ -212,6 +212,7 @@ ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the dae
 | [Workflows](docs/workflows.md) | the document syntax, the two shipped workflows, every gate, and a repository's default and a goal's override |
 | [Following what happens](docs/following-events.md) | `ariadne events`, the log streams and the `--watch` tables |
 | [Configuration](docs/configuration.md) | every key of `~/.ariadne/config.toml`, and the environment that addresses a daemon |
+| [Telemetry](docs/telemetry.md) | the telemetry database, what it keeps and for how long, and reading the daemon's log |
 | [Permission modes](docs/permissions.md) | automatic, prompted, remembered, and AI-judged ACP permission answers |
 | [Stats](docs/stats.md) | what the work did, in five questions: the filters, `ariadne stats` and the Stats screen |
 | [Resuming a session](docs/resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |

@@ -5,6 +5,14 @@
 ```toml
 socket_path = "/Users/me/.ariadne/ariadne.sock"   # (default: <home>/ariadne.sock)
 db_path = "/Users/me/.ariadne/ariadne.db"         # (default: <home>/ariadne.db)
+telemetry_db_path = "/Users/me/.ariadne/telemetry.db"
+                                   # (default: <home>/telemetry.db); see Telemetry
+telemetry_samples_days = 30       # days a raw metric sample is kept before
+                                   # retention deletes it (default shown)
+telemetry_logs_days = 14          # days a log record is kept before retention
+                                   # deletes it (default shown)
+telemetry_rollups_days = 365      # days an hourly metric rollup is kept before
+                                   # retention deletes it (default shown)
 worktree_root = "/Users/me/.ariadne/worktrees"    # (default: <home>/worktrees)
 run_dir = "/Users/me/.ariadne/run"                # (default: <home>/run)
 skills_dir = "/Users/me/.ariadne/skills"          # (default: <home>/skills)
@@ -137,6 +145,13 @@ refuse is named where it stands, without starting anything or touching the
 daemon that is already running. `ariadned --help` lists every key above but
 `ai_failure_diagnosis`, and the two environment variables (`ARIADNE_HOME`,
 `RUST_LOG`) with a line each.
+
+`telemetry_samples_days`, `telemetry_logs_days` and `telemetry_rollups_days`
+each have to be a positive number of days; a non-positive value is refused
+at startup and by `--check-config`, by name, the same way a non-loopback
+`tcp_listen` is. See [Telemetry](telemetry.md) for what each retention
+window keeps, and for `ariadne daemon logs`'s own `--service` and `--level`
+flags.
 
 ## The database of an earlier release
 

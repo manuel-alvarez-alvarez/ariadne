@@ -945,8 +945,9 @@ async fn a_cap_changes_a_model_allow_to_a_console_question() {
 async fn a_confident_deny_selects_the_rejecting_option_and_reports_ai() {
     let server = ModelServer::answer(0.99).await;
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
-    let _guard =
-        tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::registry().with(h.telemetry.log_layer()),
+    );
 
     let session = h.start_agent(&cast.task, "develop").await;
     eventually(TIMEOUT, "the AI-denied turn to finish", || async {
@@ -977,11 +978,14 @@ async fn a_confident_deny_selects_the_rejecting_option_and_reports_ai() {
     assert_eq!(output["danger"], 0.99);
     assert_eq!(output["allow_threshold"], 0.2);
     assert_eq!(output["deny_threshold"], 0.8);
+    h.telemetry.flush();
     let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
     assert!(
         snapshot.lines.iter().any(|line| line.level == "INFO"
             && line.message.contains("AI permission decision")
-            && line.message.contains("tool=Bash decided_by=ai label=deny")
+            && line.message.contains("tool=Bash")
+            && line.message.contains("decided_by=ai")
+            && line.message.contains("label=deny")
             && line.message.contains("danger=0.99")
             && line.message.contains("allow_threshold=0.2")
             && line.message.contains("deny_threshold=0.8")),
@@ -1099,11 +1103,13 @@ async fn an_allow_without_an_allowing_option_waits_for_the_console() {
 async fn a_malformed_answer_warns_and_waits_for_the_console() {
     let server = ModelServer::start(Answer::Value(json!({"answers": {}}))).await;
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
-    let _guard =
-        tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::registry().with(h.telemetry.log_layer()),
+    );
 
     let session = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &session).await;
+    h.telemetry.flush();
     let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
     assert!(
         snapshot.lines.iter().any(|line| line.level == "WARN"
@@ -1133,11 +1139,13 @@ async fn a_stopped_model_warns_and_waits_for_the_console() {
     let server = ModelServer::answer(0.05).await;
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
     server.stop();
-    let _guard =
-        tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::registry().with(h.telemetry.log_layer()),
+    );
 
     let session = h.start_agent(&cast.task, "develop").await;
     wait_for_question(&h, &session).await;
+    h.telemetry.flush();
     let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
     assert!(
         snapshot.lines.iter().any(|line| line.level == "WARN"

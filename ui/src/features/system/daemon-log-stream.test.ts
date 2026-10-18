@@ -36,6 +36,7 @@ function line(message: string, over: Partial<LogLineDto> = {}): LogLineDto {
     level: "INFO",
     target: "ariadne_daemon::scheduler",
     message,
+    service: "ariadned",
     ...over,
   }
 }
@@ -69,6 +70,18 @@ const statuses = (spies: ReturnType<typeof handlers>) =>
 describe("daemonLogStreamUrl", () => {
   it("builds the endpoint on the configured daemon", () => {
     expect(daemonLogStreamUrl("http://127.0.0.1:7676/")).toBe(
+      "http://127.0.0.1:7676/v1/logs/stream",
+    )
+  })
+
+  it("carries a service and level filter as query parameters", () => {
+    expect(
+      daemonLogStreamUrl("http://127.0.0.1:7676/", { service: "ariadned", level: "warn" }),
+    ).toBe("http://127.0.0.1:7676/v1/logs/stream?service=ariadned&level=warn")
+  })
+
+  it("leaves the query string off when the filter picks everything", () => {
+    expect(daemonLogStreamUrl("http://127.0.0.1:7676/", {})).toBe(
       "http://127.0.0.1:7676/v1/logs/stream",
     )
   })

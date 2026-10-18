@@ -58,8 +58,8 @@ use catalog::{acp_agents, agents, models};
 use crate::ai_permissions::AiPermissions;
 use crate::bus::EventBus;
 use crate::launcher::Launcher;
-use crate::log::LogBuffer;
 use crate::scheduler::SchedEvent;
+use crate::telemetry::LogStream;
 
 /// Shared handler state.
 #[derive(Clone)]
@@ -76,8 +76,11 @@ pub struct AppState {
     pub sched_tx: Option<mpsc::UnboundedSender<SchedEvent>>,
     /// Fan-out of domain events to `/v1/events/stream` subscribers.
     pub events: EventBus,
-    /// Recent daemon log lines, served by `/v1/logs`.
-    pub logs: LogBuffer,
+    /// The telemetry database: every log record and metric sample (033).
+    pub telemetry_store: ariadne_store::telemetry::TelemetryStore,
+    /// Live feed of new log records, fed by the telemetry log exporter;
+    /// `/v1/logs/stream` follows it after its opening snapshot.
+    pub log_stream: LogStream,
     /// ACP commands and their cached discovery snapshot.
     pub agent_registry: AgentRegistry,
     /// The snapshot of every agent's stored sessions that the outside half

@@ -544,6 +544,13 @@ pub(crate) enum DaemonCommand {
         /// Keep printing lines as the daemon writes them
         #[arg(short, long)]
         follow: bool,
+        /// Only lines from this service (`ariadned`, `ariadne-desktop`,
+        /// `ariadne-cli`)
+        #[arg(long)]
+        service: Option<String>,
+        /// Only lines at or above this level (trace, debug, info, warn, error)
+        #[arg(long)]
+        level: Option<String>,
     },
 }
 

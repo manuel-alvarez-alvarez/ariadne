@@ -43,4 +43,5 @@ test that proves it. Conventions for writing and changing one are in
 | 030 | [Workflows](030-workflows.md) | the workflow every goal runs on: the document, the catalog, the routes, one agent per column, step moves and gates, and the `pr` column |
 | 031 | [Needs attention](031-needs-attention.md) | the shared item shape, `GET /v1/attention`, the producer registry, the recovery producer, the agent-request producer (a turn-scoped `wait_for_user` hint), and the pull-request producer: an unassigned review request and a confirmed-ready request to merge |
 | 032 | [Babysitting a request by hand](032-babysitting-a-request-by-hand.md) | the `keeper` seat, its worktree and branch, asking by hand on any open request, ending it on the merge or the close, and the desktop panel |
+| 033 | [Telemetry](033-telemetry.md) | the telemetry store, the OpenTelemetry pipeline that feeds it, hourly rollup and retention, and the daemon-log routes read from it |
 | 036 | [Dashboards](036-dashboards.md) | editable Perses dashboard documents, their catalog routes, events and CLI |

@@ -49,6 +49,9 @@ clap = { workspace = true }
 crossterm = { workspace = true }
 futures-util = { workspace = true }
 notify = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
 reqwest = { workspace = true }
 regex = { workspace = true }
 rustix = { workspace = true }

@@ -30,6 +30,7 @@ mod skills;
 mod stats;
 mod task_agents;
 mod tasks;
+pub mod telemetry;
 mod usage;
 mod webhooks;
 mod workflows;

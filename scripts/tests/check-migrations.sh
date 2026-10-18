@@ -11,11 +11,14 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 git -C "$TEST_ROOT" init -q -b main
 git -C "$TEST_ROOT" config user.email test@example.com
 git -C "$TEST_ROOT" config user.name "Test"
-mkdir -p "$TEST_ROOT/crates/ariadne-store/migrations" "$TEST_ROOT/scripts"
+mkdir -p "$TEST_ROOT/crates/ariadne-store/migrations" \
+    "$TEST_ROOT/crates/ariadne-store/telemetry-migrations" "$TEST_ROOT/scripts"
 cp "$REPO_DIR/scripts/check-migrations.sh" "$TEST_ROOT/scripts/"
 chmod 755 "$TEST_ROOT/scripts/check-migrations.sh"
 printf 'CREATE TABLE a (id INTEGER);\n' \
     > "$TEST_ROOT/crates/ariadne-store/migrations/0001_init.sql"
+printf 'CREATE TABLE log_records (id INTEGER);\n' \
+    > "$TEST_ROOT/crates/ariadne-store/telemetry-migrations/0001_init.sql"
 git -C "$TEST_ROOT" add -A
 git -C "$TEST_ROOT" commit -q -m "chore: seed repository"
 
@@ -177,6 +180,41 @@ case "$test_case" in
         git -C "$TEST_ROOT" add -A
         git -C "$TEST_ROOT" commit -q -m "test: touch a file outside migrations"
         [ "$(run_guard)" = 0 ]
+        ;;
+    telemetry-reject-edit)
+        git -C "$TEST_ROOT" checkout -q -b change
+        printf -- '-- edited\n' \
+            >> "$TEST_ROOT/crates/ariadne-store/telemetry-migrations/0001_init.sql"
+        git -C "$TEST_ROOT" commit -q -am "test: edit the shipped telemetry migration"
+        [ "$(run_guard)" = 1 ]
+        grep -Fq "telemetry-migrations/0001_init.sql: a migration already on main must not be modified" \
+            "$TEST_ROOT/output"
+        ;;
+    telemetry-accept-add-independent-of-the-other-directory)
+        # The other directory ships up to 0002 on main; the telemetry
+        # migrations are still numbered from their own 0001, so a new
+        # telemetry 0002 is accepted on its own ceiling rather than being
+        # compared against the other directory's.
+        printf 'ALTER TABLE a ADD COLUMN b TEXT;\n' \
+            > "$TEST_ROOT/crates/ariadne-store/migrations/0002_add_b.sql"
+        git -C "$TEST_ROOT" add -A
+        git -C "$TEST_ROOT" commit -q -m "test: main ships a second migration in the other directory"
+        git -C "$TEST_ROOT" checkout -q -b change
+        printf 'ALTER TABLE log_records ADD COLUMN service TEXT;\n' \
+            > "$TEST_ROOT/crates/ariadne-store/telemetry-migrations/0002_add_service.sql"
+        git -C "$TEST_ROOT" add -A
+        git -C "$TEST_ROOT" commit -q -m "test: add a new telemetry migration"
+        [ "$(run_guard)" = 0 ]
+        ;;
+    telemetry-reject-low-number)
+        git -C "$TEST_ROOT" checkout -q -b change
+        printf 'ALTER TABLE log_records ADD COLUMN target TEXT;\n' \
+            > "$TEST_ROOT/crates/ariadne-store/telemetry-migrations/0001_other.sql"
+        git -C "$TEST_ROOT" add -A
+        git -C "$TEST_ROOT" commit -q -m "test: add a telemetry migration numbered no higher than 0001"
+        [ "$(run_guard)" = 1 ]
+        grep -Fq "telemetry-migrations/0001_other.sql: version 1 is not greater than the highest shipped migration, 1" \
+            "$TEST_ROOT/output"
         ;;
     *)
         echo "unknown case: $test_case" >&2

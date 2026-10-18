@@ -44,6 +44,16 @@ struct SocketOnly {
 pub struct FileConfig {
     pub socket_path: Option<PathBuf>,
     pub db_path: Option<PathBuf>,
+    /// The telemetry database: every log record and metric sample (033).
+    pub telemetry_db_path: Option<PathBuf>,
+    /// How long a raw metric sample is kept before retention deletes it
+    /// (default 30; it is rolled into an hourly bucket well before then).
+    pub telemetry_samples_days: Option<i64>,
+    /// How long a log record is kept before retention deletes it (default 14).
+    pub telemetry_logs_days: Option<i64>,
+    /// How long an hourly metric rollup is kept before retention deletes it
+    /// (default 365).
+    pub telemetry_rollups_days: Option<i64>,
     pub worktree_root: Option<PathBuf>,
     pub run_dir: Option<PathBuf>,
     pub skills_dir: Option<PathBuf>,

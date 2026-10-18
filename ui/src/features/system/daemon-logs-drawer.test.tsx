@@ -73,6 +73,7 @@ it("opens from the footer, tails the stream, and lets go of it on close", async 
         level: "INFO",
         target: "ariadne_daemon::scheduler",
         message: "tick complete tasks=3",
+        service: "ariadned",
       },
     ],
   })
@@ -81,6 +82,7 @@ it("opens from the footer, tails the stream, and lets go of it on close", async 
     level: "WARN",
     target: "ariadne_daemon::http",
     message: "slow request",
+    service: "ariadned",
   })
   expect(await screen.findByText("tick complete tasks=3")).toBeTruthy()
   expect(screen.getByText("slow request")).toBeTruthy()
@@ -90,6 +92,27 @@ it("opens from the footer, tails the stream, and lets go of it on close", async 
   expect(source.closed).toBe(true)
   // The dialog primitive returns focus to its opener: the footer button.
   expect(document.activeElement).toBe(footerButton)
+})
+
+it("reconnects with a service and level filter when one is picked", async () => {
+  const user = userEvent.setup()
+  const footerButton = mountShell()
+
+  await user.click(footerButton)
+  expect(FakeEventSource.instances).toHaveLength(1)
+  expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream")
+
+  await user.click(screen.getByRole("combobox", { name: "Filter by service" }))
+  await user.click(await screen.findByRole("option", { name: "ariadne-cli" }))
+  expect(FakeEventSource.instances).toHaveLength(2)
+  expect(latestSource().url).toBe("http://127.0.0.1:7676/v1/logs/stream?service=ariadne-cli")
+
+  await user.click(screen.getByRole("combobox", { name: "Filter by level" }))
+  await user.click(await screen.findByRole("option", { name: "Warn" }))
+  expect(FakeEventSource.instances).toHaveLength(3)
+  expect(latestSource().url).toBe(
+    "http://127.0.0.1:7676/v1/logs/stream?service=ariadne-cli&level=warn",
+  )
 })
 
 it("says when it has nothing to show yet", async () => {

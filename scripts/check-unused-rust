@@ -75,6 +75,18 @@ IGNORED = {
     "crates/ariadne-store/src/stats/attention.rs: AttentionInterventions": (
         "the public AttentionStats interventions field carries it to the daemon"
     ),
+    "crates/ariadne-store/src/telemetry/metrics.rs: label_names": (
+        "the PromQL query task reads telemetry label names through this store API"
+    ),
+    "crates/ariadne-store/src/telemetry/metrics.rs: label_values": (
+        "the PromQL query task reads telemetry label values through this store API"
+    ),
+    "crates/ariadne-store/src/telemetry/metrics.rs: metric_metadata": (
+        "the PromQL query task reads telemetry metadata through this store API"
+    ),
+    "crates/ariadne-store/src/telemetry/metrics.rs: read_rollups": (
+        "the PromQL query task reads telemetry rollups through this store API"
+    ),
 }
 
 DECLARATION = re.compile(

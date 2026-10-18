@@ -24,10 +24,12 @@ in the root [`AGENTS.md`](../AGENTS.md).
   captured to a log and shown only on failure. Sourced, never executed.
 - `check-unused-rust` — lists every `pub` item of a library crate that no
   other file names; see [`crates/AGENTS.md`](../crates/AGENTS.md).
-- `check-migrations.sh` — guards `crates/ariadne-store/migrations/` against
-  an edit, a deletion or a type change (such as a symlink swap) of a
-  migration already on `main`, and checks that a new one is a correctly
-  numbered regular file; see [`crates/AGENTS.md`](../crates/AGENTS.md).
+- `check-migrations.sh` — guards `crates/ariadne-store/migrations/` and
+  `crates/ariadne-store/telemetry-migrations/` against an edit, a deletion
+  or a type change (such as a symlink swap) of a migration already on
+  `main`, and checks that a new one is a correctly numbered regular file,
+  each directory numbered from its own 0001; see
+  [`crates/AGENTS.md`](../crates/AGENTS.md).
 - `install-githooks.sh` — sets `core.hooksPath` to `.githooks` from the
   repository root, so the hooks under `.githooks/` run; a repeat run that
   finds the setting already there changes nothing. See the root
@@ -136,9 +138,15 @@ in the root [`AGENTS.md`](../AGENTS.md).
   function of its content, never of which repository holds it, so writing
   this repository's own pre- and post-edit `0001_init.sql` bytes into the
   throwaway one, verbatim, reproduces the exact same two blobs the real,
-  fixed pin names, with no override of any kind). Builds a throwaway
-  repository with one shipped migration on `main` and drives
-  `check-migrations.sh` against a branch built for the case.
+  fixed pin names, with no override of any kind), `telemetry-reject-edit`
+  and `telemetry-reject-low-number` (the same two refusals, against
+  `telemetry-migrations/` instead of `migrations/`), and
+  `telemetry-accept-add-independent-of-the-other-directory` (a new
+  telemetry migration numbered no higher than a version the other
+  directory ships is still accepted, since each directory is numbered from
+  its own 0001). Builds a throwaway repository with one shipped migration
+  in each directory on `main` and drives `check-migrations.sh` against a
+  branch built for the case.
 
 ## Conventions
 

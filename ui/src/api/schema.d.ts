@@ -403,7 +403,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Recent daemon log lines from the in-memory ring buffer, oldest first. */
+        /** Recent daemon log lines, read off the telemetry store, oldest first. */
         get: operations["logs_snapshot"];
         put?: never;
         post?: never;
@@ -422,12 +422,14 @@ export interface paths {
         };
         /**
          * Follow the daemon log.
-         * @description The stream opens with a `snapshot` event carrying the current ring buffer
-         *     (a `LogSnapshotResponse`, what `GET /v1/logs` would have returned), then
-         *     sends a `delta` event per new line (a `LogLineDto`). Payloads are compact
-         *     JSON, so log content cannot break SSE framing. There is no replay on
-         *     reconnect: every connection starts over from a fresh snapshot, which is
-         *     also the resync path for a follower that fell behind and was dropped.
+         * @description The stream opens with a `snapshot` event carrying the current tail of
+         *     the telemetry store (a `LogSnapshotResponse`, what `GET /v1/logs` would
+         *     have returned), then sends a `delta` event per new line (a
+         *     `LogLineDto`), fed by the telemetry log exporter as it writes. Payloads
+         *     are compact JSON, so log content cannot break SSE framing. There is no
+         *     replay on reconnect: every connection starts over from a fresh snapshot,
+         *     which is also the resync path for a follower that fell behind and was
+         *     dropped.
          */
         get: operations["logs_stream"];
         put?: never;
@@ -2296,13 +2298,13 @@ export interface components {
              */
             default_workflow?: string | null;
             description?: string | null;
-            forge?: null | components["schemas"]["ForgeUpdate"];
+            forge?: components["schemas"]["ForgeUpdate"] | null;
             /**
              * @description Absolute path of an existing git work tree.
              * @example /home/me/dev/ariadne
              */
             path: string;
-            permission_mode?: null | components["schemas"]["PermissionMode"];
+            permission_mode?: components["schemas"]["PermissionMode"] | null;
             /**
              * @description Put agent replies, reviews and resolves in your pending GitHub
              *     review, and open pull requests as drafts. Omit for `true`.
@@ -2756,7 +2758,7 @@ export interface components {
         HardwareDto: {
             /** @example aarch64 */
             arch: string;
-            gpu?: null | components["schemas"]["GpuDto"];
+            gpu?: components["schemas"]["GpuDto"] | null;
             /** Format: int64 */
             memory_bytes: number;
             /** @example macos */
@@ -2883,6 +2885,12 @@ export interface components {
             /** @description Message followed by the event's fields as ` key=value` pairs. */
             message: string;
             /**
+             * @description The emitting resource's `service.name` (`ariadned`, `ariadne-desktop`,
+             *     `ariadne-cli`).
+             * @example ariadned
+             */
+            service: string;
+            /**
              * @description Module path the event was emitted from.
              * @example ariadne_daemon::scheduler
              */
@@ -2893,7 +2901,7 @@ export interface components {
              */
             ts: string;
         };
-        /** @description Response of `GET /v1/logs`: the in-memory ring buffer, oldest first. */
+        /** @description Response of `GET /v1/logs`: the telemetry store's tail, oldest first. */
         LogSnapshotResponse: {
             lines: components["schemas"]["LogLineDto"][];
         };
@@ -2967,7 +2975,7 @@ export interface components {
             enabled: boolean;
             /** @example claude-acp:claude-opus-5 */
             id: string;
-            rank?: null | components["schemas"]["ModelRank"];
+            rank?: components["schemas"]["ModelRank"] | null;
         };
         /**
          * @description A user-set rank, independent of discovery and model availability.
@@ -3379,7 +3387,7 @@ export interface components {
              */
             default_workflow: string;
             description?: string | null;
-            forge?: null | components["schemas"]["ForgeDto"];
+            forge?: components["schemas"]["ForgeDto"] | null;
             id: string;
             /** @description Absolute path of the checkout. */
             path: string;
@@ -3458,7 +3466,7 @@ export interface components {
             to_agent_id?: string | null;
         };
         SessionDto: {
-            attention_reason?: null | components["schemas"]["AttentionReason"];
+            attention_reason?: components["schemas"]["AttentionReason"] | null;
             /** @description When the current `attention_reason` was first raised. */
             attention_since?: string | null;
             /** Format: int64 */
@@ -3492,7 +3500,7 @@ export interface components {
              *     session.
              */
             pull_request_id?: string | null;
-            seat?: null | components["schemas"]["Seat"];
+            seat?: components["schemas"]["Seat"] | null;
             status: components["schemas"]["SessionStatus"];
             /**
              * @description The session this one replaced on its seat, when a switch started it
@@ -3527,7 +3535,7 @@ export interface components {
         SessionEntryDto: {
             /** @description The registry agent this conversation runs on (`GET /v1/acp-agents`). */
             agent_id: string;
-            attention_reason?: null | components["schemas"]["AttentionReason"];
+            attention_reason?: components["schemas"]["AttentionReason"] | null;
             attention_since?: string | null;
             /** Format: int64 */
             context_size?: number | null;
@@ -3553,8 +3561,8 @@ export interface components {
             model?: string | null;
             /** @description The pull request this session watches; None for every other session. */
             pull_request_id?: string | null;
-            seat?: null | components["schemas"]["Seat"];
-            status?: null | components["schemas"]["SessionStatus"];
+            seat?: components["schemas"]["Seat"] | null;
+            status?: components["schemas"]["SessionStatus"] | null;
             /**
              * @description The staffed agent this session runs; None for an orchestrator, a loose
              *     session or an outside one.
@@ -3566,7 +3574,7 @@ export interface components {
              *     an orchestrator, or the first prompt of an outside conversation.
              */
             title?: string | null;
-            usage?: null | components["schemas"]["TokenUsageDto"];
+            usage?: components["schemas"]["TokenUsageDto"] | null;
             /** @description The worktree, or the recorded working directory. */
             working_directory?: string | null;
         };
@@ -3612,7 +3620,7 @@ export interface components {
         SetModelRankRequest: {
             /** @description The entry, as `GET /v1/models` spells its `id`. */
             id: string;
-            rank?: null | components["schemas"]["ModelRank"];
+            rank?: components["schemas"]["ModelRank"] | null;
         };
         /** @description `PUT /v1/forge/tunnel`: turn the tunnel on or off. */
         SetTunnelRequest: {
@@ -3672,7 +3680,10 @@ export interface components {
          *     model, and per finished task — never a cost.
          */
         SpendStatsDto: {
-            /** @default week */
+            /**
+             * @description The step `buckets` is drawn at.
+             * @default week
+             */
             bucket: components["schemas"]["BucketDto"];
             /**
              * @description One row per bucket from the first fact to the last, zeros included.
@@ -3889,7 +3900,7 @@ export interface components {
          */
         TaskUpdatedDto: {
             task: components["schemas"]["TaskDto"];
-            transition?: null | components["schemas"]["TaskTransitionDto"];
+            transition?: components["schemas"]["TaskTransitionDto"] | null;
         };
         /**
          * @description What a task cost, by who spent it: one entry per agent that has a session
@@ -4026,10 +4037,10 @@ export interface components {
              * @description Danger at or above this value is denied. Values outside 0 to 1 are refused.
              */
             deny_threshold?: number | null;
-            device?: null | components["schemas"]["Device"];
+            device?: components["schemas"]["Device"] | null;
             /** @description Turning it on starts an install; turning it off keeps the files. */
             enabled?: boolean | null;
-            flavour?: null | components["schemas"]["Flavour"];
+            flavour?: components["schemas"]["Flavour"] | null;
         };
         /** @description Widen a row to every repository, or narrow it back to its own. */
         UpdateLearnedPermissionRequest: {
@@ -4042,9 +4053,9 @@ export interface components {
             default_workflow?: string | null;
             /** @description New description, or empty to clear it. Absent = unchanged. */
             description?: string | null;
-            forge?: null | components["schemas"]["ForgeUpdate"];
+            forge?: components["schemas"]["ForgeUpdate"] | null;
             path?: string | null;
-            permission_mode?: null | components["schemas"]["PermissionMode"];
+            permission_mode?: components["schemas"]["PermissionMode"] | null;
             /**
              * @description Put agent replies, reviews and resolves in your pending GitHub
              *     review, and open pull requests as drafts. Absent = unchanged.
@@ -4225,7 +4236,7 @@ export interface components {
         /** @description One column of a workflow. */
         WorkflowStepDto: {
             description: string;
-            gate?: null | components["schemas"]["StepGate"];
+            gate?: components["schemas"]["StepGate"] | null;
             /**
              * @description Kebab-case, unique within the workflow.
              * @example develop
@@ -4403,7 +4414,7 @@ export interface operations {
                  * @description Which end of the recorded events the page is taken from (default
                  *     `asc`).
                  */
-                order?: null | components["schemas"]["EventOrder"];
+                order?: components["schemas"]["EventOrder"] | null;
                 /** @description Return items with id greater than this. */
                 after?: string | null;
                 /** @description Max items to return (default 50, cap 200). */
@@ -4468,7 +4479,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": null | components["schemas"]["ForgeDetectionDto"];
+                    "application/json": components["schemas"]["ForgeDetectionDto"] | null;
                 };
             };
             /** @description not an absolute path, or not a git work tree */
@@ -4892,6 +4903,21 @@ export interface operations {
             query?: {
                 /** @description Return only the last N lines. */
                 tail?: number | null;
+                /**
+                 * @description Only lines from this `service.name`.
+                 * @example ariadned
+                 */
+                service?: string | null;
+                /**
+                 * @description Only lines at or above this level (`"info"`, `"warn"`, ...).
+                 * @example warn
+                 */
+                level?: string | null;
+                /**
+                 * @description Only lines at or after this RFC 3339 timestamp.
+                 * @example 2026-08-18T12:34:56.789012Z
+                 */
+                since?: string | null;
             };
             header?: never;
             path?: never;
@@ -4911,14 +4937,32 @@ export interface operations {
     };
     logs_stream: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Return only the last N lines. */
+                tail?: number | null;
+                /**
+                 * @description Only lines from this `service.name`.
+                 * @example ariadned
+                 */
+                service?: string | null;
+                /**
+                 * @description Only lines at or above this level (`"info"`, `"warn"`, ...).
+                 * @example warn
+                 */
+                level?: string | null;
+                /**
+                 * @description Only lines at or after this RFC 3339 timestamp.
+                 * @example 2026-08-18T12:34:56.789012Z
+                 */
+                since?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of daemon log lines (text/event-stream). A `snapshot` event with the current buffer (LogSnapshotResponse), then a `delta` event per new line (LogLineDto). A follower that falls too far behind is disconnected; reconnecting starts over from a fresh snapshot. */
+            /** @description SSE stream of daemon log lines (text/event-stream). A `snapshot` event with the current tail (LogSnapshotResponse), then a `delta` event per new line (LogLineDto). A follower that falls too far behind is disconnected; reconnecting starts over from a fresh snapshot. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6250,7 +6294,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Only sessions of this kind. Omitted lists both. */
-                kind?: null | components["schemas"]["SessionKind"];
+                kind?: components["schemas"]["SessionKind"] | null;
                 /** @description Only sessions of this registry agent (`GET /v1/acp-agents`). */
                 agent?: string | null;
                 /** @description Filter by goal id. No outside session has one. */
@@ -6263,9 +6307,9 @@ export interface operations {
                  * @description Filter by status. No outside session has one. A named status also
                  *     lists sessions that have ended, as `all` does.
                  */
-                status?: null | components["schemas"]["SessionStatus"];
+                status?: components["schemas"]["SessionStatus"] | null;
                 /** @description Filter by seat. No outside session has one. */
-                seat?: null | components["schemas"]["Seat"];
+                seat?: components["schemas"]["Seat"] | null;
                 /**
                  * @description Only sessions currently flagged as needing attention. No outside
                  *     session is.
@@ -7051,7 +7095,7 @@ export interface operations {
                 /** @description Filter by goal id. */
                 goal?: string | null;
                 /** @description Filter by status. */
-                status?: null | components["schemas"]["TaskStatus"];
+                status?: components["schemas"]["TaskStatus"] | null;
             };
             header?: never;
             path?: never;

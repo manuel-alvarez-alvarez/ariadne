@@ -300,8 +300,9 @@ async fn failed_index_refresh(status: StatusCode, document: &str) {
     let mut setup = script();
     setup["config_options"] = json!([option("model-id", "model", "changed-model")]);
     stub_acp_agent(dir.path(), setup);
-    let _guard =
-        tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::registry().with(h.telemetry.log_layer()),
+    );
     let agents: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
     assert_eq!(
         agents
@@ -320,6 +321,7 @@ async fn failed_index_refresh(status: StatusCode, document: &str) {
     );
     let after = h.store.acp_registry_index().await.unwrap().unwrap();
     assert_eq!(after, before);
+    h.telemetry.flush();
     let logs: ariadne_api::logs::LogSnapshotResponse = h.get("/v1/logs").await;
     assert!(
         logs.lines.iter().any(|line| line.level == "WARN"

@@ -233,10 +233,16 @@ const LOG_TAIL: usize = 200;
 ///
 /// The file is the fallback, for the one case the API cannot serve: a daemon
 /// that is not answering, which is exactly when its last lines are wanted.
-pub(crate) async fn logs(client: &Client, home: Option<PathBuf>, follow: bool) -> Result<()> {
+pub(crate) async fn logs(
+    client: &Client,
+    home: Option<PathBuf>,
+    follow: bool,
+    service: Option<String>,
+    level: Option<String>,
+) -> Result<()> {
     let served = match follow {
-        true => follow_log(client).await,
-        false => print_log(client).await,
+        true => follow_log(client, service.as_deref(), level.as_deref()).await,
+        false => print_log(client, service.as_deref(), level.as_deref()).await,
     };
     match served {
         Err(e) if follow::unreachable(&e) => {
@@ -250,16 +256,19 @@ pub(crate) async fn logs(client: &Client, home: Option<PathBuf>, follow: bool) -
     }
 }
 
-/// The daemon's buffer as it stands.
+/// The daemon's recent log, as the telemetry store holds it.
 ///
 /// Through the pager, like every other log snapshot: two hundred lines is
 /// several screens, and there is an end to page to. A follow has none and
 /// writes straight out.
-async fn print_log(client: &Client) -> Result<()> {
+async fn print_log(client: &Client, service: Option<&str>, level: Option<&str>) -> Result<()> {
     let path = query_path(
         "/v1/logs",
         &LogsQuery {
             tail: Some(LOG_TAIL),
+            service: service.map(str::to_string),
+            level: level.map(str::to_string),
+            since: None,
         },
     )?;
     let snapshot: LogSnapshotResponse = client.get_json(&path).await?;
@@ -270,15 +279,24 @@ async fn print_log(client: &Client) -> Result<()> {
 
 /// The same, and then every line the daemon writes from here on.
 ///
-/// The buffer arrives as the stream's own opening `snapshot`, so there is no
+/// The snapshot arrives as the stream's own opening event, so there is no
 /// window between what was printed and what is followed. Every connection
 /// opens with one, reconnects included, and what a reconnect's carries is
 /// mostly lines this tail has already shown — so it is printed from where
 /// [`Shown`] says the two stop overlapping.
-async fn follow_log(client: &Client) -> Result<()> {
+async fn follow_log(client: &Client, service: Option<&str>, level: Option<&str>) -> Result<()> {
     let mut shown = Shown::default();
     let color = view().color;
-    follow::frames_reconnecting(client, "/v1/logs/stream", move |frame| {
+    let path = query_path(
+        "/v1/logs/stream",
+        &LogsQuery {
+            tail: None,
+            service: service.map(str::to_string),
+            level: level.map(str::to_string),
+            since: None,
+        },
+    )?;
+    follow::frames_reconnecting(client, &path, move |frame| {
         match frame.event.as_str() {
             "snapshot" => {
                 let snapshot: LogSnapshotResponse = serde_json::from_str(&frame.data)?;
@@ -661,6 +679,7 @@ mod tests {
             level: "INFO".into(),
             target: "ariadned".into(),
             message: message.into(),
+            service: "ariadned".into(),
         }
     }
 

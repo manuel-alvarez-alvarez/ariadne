@@ -21,6 +21,15 @@ pub struct Config {
     pub root: PathBuf,
     pub socket_path: PathBuf,
     pub db_path: PathBuf,
+    /// The telemetry database: every log record and metric sample (033).
+    pub telemetry_db_path: PathBuf,
+    /// How long a raw metric sample is kept before retention deletes it
+    /// (it is rolled into an hourly bucket well before then).
+    pub telemetry_samples_days: i64,
+    /// How long a log record is kept before retention deletes it.
+    pub telemetry_logs_days: i64,
+    /// How long an hourly metric rollup is kept before retention deletes it.
+    pub telemetry_rollups_days: i64,
     pub worktree_root: PathBuf,
     pub run_dir: PathBuf,
     pub skills_dir: PathBuf,
@@ -102,12 +111,19 @@ impl Config {
         // resolution it shares a file with, so `ariadne doctor` reports on
         // exactly what would stop this daemon from starting.
         let file = endpoint::parse_config(&root)?.unwrap_or_default();
+        validate_telemetry_retention_days(&file)?;
 
         let config = Config {
             socket_path: file
                 .socket_path
                 .unwrap_or_else(|| endpoint::default_socket_path(&root)),
             db_path: file.db_path.unwrap_or_else(|| root.join("ariadne.db")),
+            telemetry_db_path: file
+                .telemetry_db_path
+                .unwrap_or_else(|| root.join("telemetry.db")),
+            telemetry_samples_days: file.telemetry_samples_days.unwrap_or(30),
+            telemetry_logs_days: file.telemetry_logs_days.unwrap_or(14),
+            telemetry_rollups_days: file.telemetry_rollups_days.unwrap_or(365),
             worktree_root: file.worktree_root.unwrap_or_else(|| root.join("worktrees")),
             run_dir: file.run_dir.unwrap_or_else(|| root.join("run")),
             skills_dir: file.skills_dir.unwrap_or_else(|| root.join("skills")),
@@ -175,6 +191,7 @@ impl Config {
         let has_file = file.is_some();
         let file = file.unwrap_or_default();
         validate_tcp_file_config(&file)?;
+        validate_telemetry_retention_days(&file)?;
         let skills_dir = file
             .skills_dir
             .as_ref()
@@ -223,6 +240,19 @@ fn validate_tcp_allowed_origins(origins: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn validate_telemetry_retention_days(config: &endpoint::FileConfig) -> Result<()> {
+    for (key, days) in [
+        ("telemetry_samples_days", config.telemetry_samples_days),
+        ("telemetry_logs_days", config.telemetry_logs_days),
+        ("telemetry_rollups_days", config.telemetry_rollups_days),
+    ] {
+        if days.is_some_and(|days| days <= 0) {
+            anyhow::bail!("{key} must be a positive number of days");
+        }
+    }
+    Ok(())
+}
+
 pub fn default_exhausted_patterns() -> Vec<String> {
     [
         "hit your usage limit",
@@ -263,6 +293,13 @@ mod tests {
         assert!(config.delete_merged_branches);
         assert!(config.prevent_sleep);
         assert!(config.auto_switch);
+        assert_eq!(
+            config.telemetry_db_path,
+            dir.path().join("home/telemetry.db")
+        );
+        assert_eq!(config.telemetry_samples_days, 30);
+        assert_eq!(config.telemetry_logs_days, 14);
+        assert_eq!(config.telemetry_rollups_days, 365);
         assert_eq!(config.exhausted_patterns, default_exhausted_patterns());
         assert!(!config.ai_failure_diagnosis);
         assert_eq!(
@@ -446,6 +483,43 @@ mod tests {
                 .expect_err("the config check must report the startup refusal");
             assert_eq!(start.to_string(), check.to_string());
             assert!(start.to_string().contains("tcp_allowed_origins"));
+        }
+    }
+
+    #[test]
+    fn telemetry_keys_are_read_from_config() {
+        let dir = home_with("");
+        let telemetry_db_path = dir.path().join("home/custom-telemetry.db");
+        std::fs::write(
+            dir.path().join("home/config.toml"),
+            format!(
+                "telemetry_db_path = {:?}\ntelemetry_samples_days = 7\n\
+                 telemetry_logs_days = 3\ntelemetry_rollups_days = 90\n",
+                telemetry_db_path
+            ),
+        )
+        .unwrap();
+        let config = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert_eq!(config.telemetry_db_path, telemetry_db_path);
+        assert_eq!(config.telemetry_samples_days, 7);
+        assert_eq!(config.telemetry_logs_days, 3);
+        assert_eq!(config.telemetry_rollups_days, 90);
+    }
+
+    #[test]
+    fn telemetry_retention_days_must_be_positive_at_start_and_check() {
+        for key in [
+            "telemetry_samples_days",
+            "telemetry_logs_days",
+            "telemetry_rollups_days",
+        ] {
+            let dir = home_with(&format!("{key} = 0\n"));
+            let start = Config::load(Some(dir.path().join("home")))
+                .expect_err("a non-positive retention window must stop startup");
+            let check = Config::check(Some(dir.path().join("home")))
+                .expect_err("the config check must report the startup refusal");
+            assert_eq!(start.to_string(), check.to_string());
+            assert!(start.to_string().contains(key));
         }
     }
 

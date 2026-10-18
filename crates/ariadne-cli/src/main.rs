@@ -138,9 +138,13 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
             // Read like `status` rather than driven like the rest: the log
             // comes from the daemon itself, so `--endpoint` reaches the one it
             // names, and the home is only what the file fallback is found in.
-            DaemonCommand::Logs { follow } => {
+            DaemonCommand::Logs {
+                follow,
+                service,
+                level,
+            } => {
                 let client = Client::resolve(cli.endpoint.as_deref(), home.clone());
-                commands::daemon::logs(&client, home, follow).await
+                commands::daemon::logs(&client, home, follow, service, level).await
             }
         },
         Command::Attach { id, seat, agent } => {

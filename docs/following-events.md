@@ -14,6 +14,8 @@ ariadne task logs <task-id> -f         # the same, found by task
 ariadne session logs <id> --tail 20    # only the last twenty transcript blocks
 ariadne task logs <id> --since 10m --kind agent_message
 ariadne daemon logs -f                 # the daemon's own log, over the API
+ariadne daemon logs --service ariadne-cli --level warn
+                                        # only that service, at or above that level
 
 ariadne attention --watch              # redrawn whenever something needs you
 ariadne task ls --watch --goal <id>    # redrawn whenever a task moves
@@ -33,10 +35,13 @@ events. Repeat `--kind` to select several event kinds; it also filters new
 events during `-f`. JSON mode keeps each event object unchanged.
 
 `-f` prints as it goes; `--watch` redraws the whole table, `watch(1)`-style,
-when an event says it has changed. `ariadne daemon logs` reads the daemon's own
-ring buffer, so it works under launchd and systemd — where nothing writes
-`~/.ariadne/ariadned.log` — and honours `--endpoint`; the file is the fallback
-for a daemon that is not answering.
+when an event says it has changed. `ariadne daemon logs` reads the telemetry
+database (see [Telemetry](telemetry.md)), so it survives a daemon restart,
+works under launchd and systemd — where nothing writes
+`~/.ariadne/ariadned.log` — and honours `--endpoint`; the file is the
+fallback for a daemon that is not answering. `--service` narrows to one
+`service.name` (`ariadned`, `ariadne-desktop`, `ariadne-cli`) and `--level`
+to that level and above (`trace`, `debug`, `info`, `warn`, `error`).
 
 With `ai_failure_diagnosis` on (see [Configuration](configuration.md)), a
 failed session may later carry a `session.diagnosis` event too: an advisory

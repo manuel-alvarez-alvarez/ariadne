@@ -31,6 +31,13 @@ Configuration — <home>/config.toml, every key optional, read strictly (an
 unknown key stops the daemon rather than being ignored):
   socket_path              unix socket to listen on (default: <home>/ariadne.sock)
   db_path                  SQLite database (default: <home>/ariadne.db)
+  telemetry_db_path        telemetry database: logs and metrics (default: <home>/telemetry.db)
+  telemetry_samples_days   days a raw metric sample is kept before retention
+                           deletes it (default: 30)
+  telemetry_logs_days      days a log record is kept before retention deletes it
+                           (default: 14)
+  telemetry_rollups_days   days an hourly metric rollup is kept before retention
+                           deletes it (default: 365)
   worktree_root            where task worktrees are created (default: <home>/worktrees)
   run_dir                  per-session run files: ACP launch files, skills
                            (default: <home>/run)
@@ -96,16 +103,29 @@ async fn main() -> Result<()> {
     }
     let config = Config::load(args.home)?;
 
+    // Opened, and its OpenTelemetry pipeline built, before the subscriber:
+    // the bridge layer below has to exist before `.init()` installs it.
+    let telemetry_store = ariadne_store::telemetry::TelemetryStore::open(&config.telemetry_db_path)
+        .await
+        .with_context(|| {
+            format!(
+                "opening telemetry database {}",
+                config.telemetry_db_path.display()
+            )
+        })?;
+    let (telemetry, log_stream) =
+        ariadne_daemon::telemetry::init(telemetry_store.clone(), env!("CARGO_PKG_VERSION"));
+
     // RUST_LOG wins over config so ad-hoc debugging stays easy.
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(config.log_filter.clone()));
-    // Everything that passes the filter goes to stdout as before, and into
-    // the in-memory buffer behind `/v1/logs`.
-    let logs = ariadne_daemon::log::LogBuffer::new();
+    // Everything that passes the filter goes to stdout as before, and
+    // through the OpenTelemetry bridge into the telemetry database behind
+    // `/v1/logs`.
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer())
-        .with(logs.layer())
+        .with(telemetry.log_layer())
         .init();
 
     info!(root = %config.root.display(), "starting ariadned {}", env!("CARGO_PKG_VERSION"));
@@ -176,6 +196,13 @@ async fn main() -> Result<()> {
         store.clone(),
         ariadne_daemon::timeouts::Timeouts::default().checkpoint,
     );
+    ariadne_daemon::telemetry::retention::start(
+        telemetry_store.clone(),
+        ariadne_daemon::timeouts::Timeouts::default().telemetry_retention,
+        config.telemetry_samples_days,
+        config.telemetry_logs_days,
+        config.telemetry_rollups_days,
+    );
     let forge_poll = ariadne_daemon::forge::poll::start(
         store.clone(),
         config.clone(),
@@ -216,7 +243,8 @@ async fn main() -> Result<()> {
         launcher,
         sched_tx: Some(sched_tx),
         events,
-        logs,
+        telemetry_store: telemetry_store.clone(),
+        log_stream,
         agent_registry,
         outside_sessions,
         ai_permissions,
@@ -257,6 +285,12 @@ async fn main() -> Result<()> {
     // Best-effort cleanup of runtime files.
     failure_diagnosis.shutdown().await;
     ai_permissions_shutdown.shutdown().await;
+    // Flushes the last batch of logs and metrics; blocking (each provider
+    // joins its own background thread), so off the async worker thread.
+    tokio::task::spawn_blocking(move || telemetry.shutdown())
+        .await
+        .ok();
+    telemetry_store.close().await;
     let _ = std::fs::remove_file(&config.socket_path);
     let _ = std::fs::remove_file(&config.pid_file);
     info!("ariadned stopped");

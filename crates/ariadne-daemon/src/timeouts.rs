@@ -94,6 +94,12 @@ pub struct Timeouts {
     /// clock, and a tick that finds readers in the way costs the next one
     /// nothing.
     pub checkpoint: Duration,
+    /// How often the telemetry retention pass runs
+    /// (`crate::telemetry::retention`): rolling up raw metric samples past
+    /// an hour old, deleting what has aged past its own `telemetry_*_days`
+    /// cutoff, then folding the telemetry file's write-ahead log back in.
+    /// Nothing waits on it either, for the same reason as `checkpoint`.
+    pub telemetry_retention: Duration,
     /// How long a test may wait for one dead agent launch to be noticed
     /// and retried (`crate::scheduler`'s spawn-retry budget). Not a pace
     /// the runtime itself keeps — a dead launch is noticed on the next
@@ -128,6 +134,7 @@ impl Default for Timeouts {
             forge_poll_backoff_cap: Duration::from_secs(3600),
             forge_wake_debounce: Duration::from_secs(5),
             checkpoint: Duration::from_secs(30),
+            telemetry_retention: Duration::from_secs(3600),
             dead_launch_patience: Duration::from_secs(30),
         }
     }
