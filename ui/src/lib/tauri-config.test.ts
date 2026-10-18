@@ -22,6 +22,7 @@ describe("Tauri window configuration", () => {
     expect(csp).toContain("base-uri 'none'")
     expect(csp).toContain("frame-ancestors 'none'")
     expect(csp).toContain("connect-src 'self' http: https: ws: wss: ipc: http://ipc.localhost")
+    expect(csp).toContain("frame-src 'self'")
     expect(csp).not.toContain("unsafe-eval")
   })
 })

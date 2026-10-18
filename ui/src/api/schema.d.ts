@@ -102,6 +102,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/dashboards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["dashboards_list"];
+        put?: never;
+        post: operations["dashboards_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/dashboards/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["dashboards_get"];
+        put: operations["dashboards_update"];
+        post?: never;
+        delete: operations["dashboards_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/dashboards/{name}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["dashboards_reset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/doctor": {
         parameters: {
             query?: never;
@@ -2258,6 +2306,10 @@ export interface components {
              */
             summary: string;
         };
+        CreateDashboardRequest: {
+            document: unknown;
+            name: string;
+        };
         CreateGoalRequest: {
             description?: string;
             /**
@@ -2380,6 +2432,14 @@ export interface components {
             version: string;
             worktree_root: components["schemas"]["PathStateDto"];
         };
+        DashboardDto: {
+            builtin: boolean;
+            created_at: string;
+            document: unknown;
+            document_is_default: boolean;
+            name: string;
+            updated_at: string;
+        };
         /** @description Body of `POST /v1/pull-requests/{id}/comments/delete` (026 rule 25). */
         DeletePendingCommentRequest: {
             forge_id: string;
@@ -2492,6 +2552,18 @@ export interface components {
             data: components["schemas"]["DeletedDto"];
             /** @enum {string} */
             event: "workflow_deleted";
+        } | {
+            data: components["schemas"]["DashboardDto"];
+            /** @enum {string} */
+            event: "dashboard_created";
+        } | {
+            data: components["schemas"]["DashboardDto"];
+            /** @enum {string} */
+            event: "dashboard_updated";
+        } | {
+            data: components["schemas"]["DashboardDto"];
+            /** @enum {string} */
+            event: "dashboard_deleted";
         } | {
             data: components["schemas"]["RepositoryDto"];
             /** @enum {string} */
@@ -4042,6 +4114,9 @@ export interface components {
             enabled?: boolean | null;
             flavour?: components["schemas"]["Flavour"] | null;
         };
+        UpdateDashboardRequest: {
+            document: unknown;
+        };
         /** @description Widen a row to every repository, or narrow it back to its own. */
         UpdateLearnedPermissionRequest: {
             scope: components["schemas"]["LearnedPermissionScope"];
@@ -4370,6 +4445,170 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AttentionListDto"];
                 };
+            };
+        };
+    };
+    dashboards_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardDto"][];
+                };
+            };
+        };
+    };
+    dashboards_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDashboardRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    dashboards_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    dashboards_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateDashboardRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardDto"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    dashboards_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    dashboards_reset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

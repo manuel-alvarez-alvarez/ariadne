@@ -3,202 +3,146 @@
 /**
  * The Stats screen against a stubbed daemon.
  *
- * What is pinned: the screen draws the five families in order, each a section
- * under its own heading, asks each `GET /v1/stats/<family>` with the filters
- * in its URL, and keeps each answer under the key `qk` names, which is the
- * one the dispatcher invalidates. Above them stands the key-figure row, read
- * off the same answers, and the sections lie in a card grid. What each
- * section draws is its own test's.
+ * The screen itself renders no chart: it opens the `ui/dashboard` package in
+ * an iframe and leaves the dashboard to it. What is pinned here is the glue —
+ * the picker over `GET /v1/dashboards`, the iframe's own query string
+ * (`daemon`, `dashboard`, `theme`), the Reset action's confirm flow and its
+ * `document_is_default` gate — not anything Perses draws.
  */
 
 import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { qk } from "@/api"
-import { aRepository } from "@/test/fixtures"
-import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
+import { type DashboardDto, qk } from "@/api"
+import { aDashboard } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { StatsPage } from "./stats"
 
-/** The explanation behind a key figure, read off its tooltip on hover. */
-async function explanationOf(container: HTMLElement, label: string): Promise<string | null> {
-  const user = userEvent.setup()
-  const trigger = within(container).getByText(label)
-  await user.hover(trigger)
-  const id = trigger.getAttribute("aria-describedby")
-  return id ? (document.getElementById(id)?.textContent ?? null) : null
-}
-
-/** The five families, in the order the screen shows them. */
-const FAMILIES = ["models", "work", "time", "spend", "attention"] as const
-
 /**
- * `attention` answers a shaped DTO rather than the bare `{}`
- * the rest still do — an empty one holds nothing to show, the same as `{}`
- * does for them. Their sections read their own fields regardless of what
- * route this screen test is pinning, so their answer cannot be the empty
- * object either.
+ * `next-themes` outside its own provider (which this harness never mounts)
+ * answers a fixed, empty context, so a test that cares about a theme
+ * *change* needs the hook itself under its control.
  */
-const EMPTY_BODIES: Record<string, unknown> = {
-  "/v1/stats/attention": {
-    permissions: { total: 0, person_share: 0, by_decider: [] },
-    flags: [],
-    sessions_failed: 0,
-    sessions_stalled: 0,
-    exhaustions: 0,
-    interventions: { permissions: 0, questions: 0, stalls: 0, total: 0, person_secs: 0 },
-  },
-}
+const mockTheme = vi.hoisted(() => ({ resolvedTheme: "light" as string | undefined }))
+vi.mock("next-themes", () => ({
+  useTheme: () => ({ resolvedTheme: mockTheme.resolvedTheme, setTheme: vi.fn() }),
+}))
 
-/** The URLs of every stats request the screen made. */
-let asked: URL[] = []
+const STATS: DashboardDto = aDashboard({ name: "stats", builtin: true, document_is_default: true })
+const CUSTOM: DashboardDto = aDashboard({
+  name: "custom",
+  builtin: false,
+  document_is_default: false,
+  updated_at: "2026-01-02T00:00:00Z",
+})
 
-function emptyBody(pathname: string): unknown {
-  return EMPTY_BODIES[pathname] ?? {}
-}
+/** Every request the screen made, by path. */
+let requests: { method: string; path: string }[] = []
 
 beforeEach(() => {
-  asked = []
+  requests = []
+  mockTheme.resolvedTheme = "light"
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     const url = new URL(request.url)
-    if (url.pathname === "/v1/repositories") return jsonResponse([aRepository()])
-    asked.push(url)
-    return jsonResponse(emptyBody(url.pathname))
+    requests.push({ method: request.method, path: url.pathname })
+    if (url.pathname === "/v1/dashboards") return jsonResponse([STATS, CUSTOM])
+    if (url.pathname === "/v1/dashboards/custom/reset") {
+      return jsonResponse({ ...CUSTOM, document_is_default: true })
+    }
+    return jsonResponse({})
   })
 })
 
 describe("StatsPage", () => {
-  it("renders the five sections in order, under one heading style", async () => {
+  it("opens the iframe on the first dashboard, with the daemon, its name and the theme on its own query string", async () => {
     renderScreen(<StatsPage />, { route: "/stats" })
 
-    const headings = await screen.findAllByRole("heading", { level: 2 })
-    expect(headings.map((heading) => heading.textContent)).toEqual([
-      "Models",
-      "Work",
-      "Time",
-      "Spend",
-      "Attention",
+    const iframe = (await screen.findByTitle("stats dashboard")) as HTMLIFrameElement
+    const src = new URL(iframe.getAttribute("src") ?? "", "http://localhost")
+    expect(src.pathname).toBe("/dashboard/")
+    expect(src.searchParams.get("daemon")).toBe("http://127.0.0.1:7676")
+    expect(src.searchParams.get("dashboard")).toBe("stats")
+    expect(src.searchParams.get("theme")).toBe("light")
+  })
+
+  it("opens the dashboard the URL names", async () => {
+    renderScreen(<StatsPage />, { route: "/stats?dashboard=custom" })
+
+    const iframe = (await screen.findByTitle("custom dashboard")) as HTMLIFrameElement
+    const src = new URL(iframe.getAttribute("src") ?? "", "http://localhost")
+    expect(src.searchParams.get("dashboard")).toBe("custom")
+  })
+
+  it("lists every dashboard in the picker, and switches the iframe on a pick", async () => {
+    const user = userEvent.setup()
+    renderScreen(<StatsPage />, { route: "/stats" })
+    await screen.findByTitle("stats dashboard")
+
+    await user.click(screen.getByRole("combobox", { name: "Dashboard" }))
+    await user.click(await screen.findByRole("option", { name: "custom" }))
+
+    expect(await screen.findByTitle("custom dashboard")).toBeDefined()
+  })
+
+  it("disables Reset on the shipped document, and enables it once something was saved over it", async () => {
+    renderScreen(<StatsPage />, { route: "/stats" })
+    await screen.findByTitle("stats dashboard")
+    expect((screen.getByRole("button", { name: "Reset" }) as HTMLButtonElement).disabled).toBe(true)
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("combobox", { name: "Dashboard" }))
+    await user.click(await screen.findByRole("option", { name: "custom" }))
+    await screen.findByTitle("custom dashboard")
+
+    expect((screen.getByRole("button", { name: "Reset" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    )
+  })
+
+  it("asks before it resets a dashboard, then sends the reset", async () => {
+    const user = userEvent.setup()
+    renderScreen(<StatsPage />, { route: "/stats?dashboard=custom" })
+    await screen.findByTitle("custom dashboard")
+
+    await user.click(screen.getByRole("button", { name: "Reset" }))
+    const dialog = await screen.findByRole("dialog", { name: "Reset custom?" })
+    await user.click(within(dialog).getByRole("button", { name: "Reset" }))
+
+    expect(requests).toContainEqual({ method: "POST", path: "/v1/dashboards/custom/reset" })
+  })
+
+  it("tells the iframe to load the document again once the shown dashboard is edited elsewhere", async () => {
+    const { queryClient } = renderScreen(<StatsPage />, { route: "/stats?dashboard=custom" })
+    const iframe = (await screen.findByTitle("custom dashboard")) as HTMLIFrameElement
+    const post = vi.spyOn(iframe.contentWindow as Window, "postMessage")
+
+    // The SSE dispatcher patches exactly this on a `dashboard_updated` event
+    // (`src/events/dispatch.ts`); the screen reacts to the row changing, not
+    // to the event itself.
+    queryClient.setQueryData(qk.dashboards.list(), [
+      STATS,
+      { ...CUSTOM, updated_at: "2026-01-03T00:00:00Z" },
     ])
-    for (const heading of headings) {
-      expect(heading.className).toBe("text-sm font-medium")
-    }
-  })
 
-  it("asks every family with the filters in its URL, under the key qk names", async () => {
-    const { queryClient } = renderScreen(<StatsPage />, {
-      route: "/stats?since=7d&repo=01JREPO",
+    await vi.waitFor(() => {
+      expect(post).toHaveBeenCalledWith({ type: "reload" }, window.location.origin)
     })
-
-    await within(await screen.findByRole("region", { name: "Attention" })).findByText(
-      "Nothing needed you in this span.",
-    )
-    const filter = { since: "7d", repo: "01JREPO" }
-    for (const family of FAMILIES) {
-      const url = asked.find((asked) => asked.pathname === `/v1/stats/${family}`)
-      expect(url?.searchParams.get("since"), family).toBe("7d")
-      expect(url?.searchParams.get("repo"), family).toBe("01JREPO")
-      expect(queryClient.getQueryData(qk.stats[family](filter)), family).toEqual(
-        emptyBody(`/v1/stats/${family}`),
-      )
-    }
   })
 
-  it("leads with the key figures, read off the work, spend and attention answers", async () => {
-    const bodies: Record<string, unknown> = {
-      "/v1/stats/work": {
-        totals: { tasks_finished: 7, finish_rate: 0.7, median_goal_lead_time_secs: 3_600 },
-        buckets: [],
-      },
-      "/v1/stats/spend": {
-        totals: { sessions: 0, input_tokens: 1_200_000, output_tokens: 300_000 },
-      },
-      "/v1/stats/attention": {
-        permissions: { total: 0, person_share: 0, by_decider: [] },
-        flags: [],
-        sessions_failed: 0,
-        sessions_stalled: 0,
-        exhaustions: 0,
-        interventions: { permissions: 4, questions: 2, stalls: 1, total: 7, person_secs: 1_800 },
-      },
-    }
-    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
-      const request = input instanceof Request ? input : new Request(String(input), init)
-      const url = new URL(request.url)
-      if (url.pathname === "/v1/repositories") return jsonResponse([aRepository()])
-      return jsonResponse(bodies[url.pathname] ?? emptyBody(url.pathname))
+  it("keeps the iframe's src unchanged across a theme change, and posts the new theme instead", async () => {
+    const { rerender } = renderScreen(<StatsPage />, { route: "/stats" })
+    const iframe = (await screen.findByTitle("stats dashboard")) as HTMLIFrameElement
+    const initialSrc = iframe.getAttribute("src")
+    const post = vi.spyOn(iframe.contentWindow as Window, "postMessage")
+
+    mockTheme.resolvedTheme = "dark"
+    rerender(<StatsPage />)
+
+    expect(iframe.getAttribute("src")).toBe(initialSrc)
+    await vi.waitFor(() => {
+      expect(post).toHaveBeenCalledWith({ type: "theme", theme: "dark" }, window.location.origin)
     })
-    renderScreen(<StatsPage />, { route: "/stats" })
-
-    const row = await screen.findByRole("region", { name: "Key figures" })
-    await within(row).findByText("30m")
-    const figures = within(row)
-      .getAllByRole("term")
-      .map((term) => [term.textContent, term.nextElementSibling?.textContent])
-    expect(figures).toEqual([
-      ["Tasks finished", "7"],
-      ["Finish rate", "70.0%"],
-      ["Median goal lead time", "1h"],
-      ["Total tokens", "1.5M"],
-      ["Interventions", "7"],
-      ["Person time", "30m"],
-    ])
-  })
-
-  it("explains every key figure, on hover", async () => {
-    renderScreen(<StatsPage />, { route: "/stats" })
-
-    const row = await screen.findByRole("region", { name: "Key figures" })
-    await within(row).findByText("Tasks finished")
-
-    expect(await explanationOf(row, "Tasks finished")).toBe(
-      "Tasks finished: the count of tasks that reached finished in this span.",
-    )
-    expect(await explanationOf(row, "Finish rate")).toBe(
-      "Finish rate: the share of finished, failed and cancelled tasks that finished.",
-    )
-    expect(await explanationOf(row, "Median goal lead time")).toBe(
-      "Median goal lead time: the median time from a goal's creation to its completion.",
-    )
-    expect(await explanationOf(row, "Total tokens")).toBe(
-      "Total tokens: input and output tokens spent across every session in this span.",
-    )
-    expect(await explanationOf(row, "Interventions")).toBe(
-      "Interventions: the count of permissions you answered, questions you were asked and stalls you cleared.",
-    )
-    expect(await explanationOf(row, "Person time")).toBe(
-      "Person time: the total time spent on those permissions, questions and stalls.",
-    )
-  })
-
-  it("lays Models across the full width, and the other four out as a two-column card grid", async () => {
-    renderScreen(<StatsPage />, { route: "/stats" })
-
-    const models = await screen.findByRole("region", { name: "Models" })
-    const grid = models.parentElement
-    expect(grid?.className).toBe("grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2")
-    expect(models.className).toContain("xl:col-span-2")
-    for (const name of ["Models", "Work", "Time", "Spend", "Attention"]) {
-      const card = screen.getByRole("region", { name })
-      expect(card.parentElement, name).toBe(grid)
-      expect(card.className, name).toContain("rounded-xl border bg-card p-4")
-    }
-  })
-
-  it("renders an error, not the empty sentence, when the daemon refuses a read", async () => {
-    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
-      const request = input instanceof Request ? input : new Request(String(input), init)
-      const url = new URL(request.url)
-      if (url.pathname === "/v1/repositories") return jsonResponse([aRepository()])
-      if (url.pathname === "/v1/stats/work") {
-        return errorResponse(500, "internal", "the ledger is not answering")
-      }
-      return jsonResponse(emptyBody(url.pathname))
-    })
-    renderScreen(<StatsPage />, { route: "/stats" })
-
-    const section = await screen.findByRole("region", { name: "Work" })
-    expect(await within(section).findByText("Could not load the work stats")).toBeDefined()
-    expect(within(section).queryByText("Nothing got done in this span.")).toBeNull()
   })
 })

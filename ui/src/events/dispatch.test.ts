@@ -35,6 +35,7 @@ import {
   type TaskDto,
 } from "@/api"
 import {
+  aDashboard,
   aGoal,
   aLearnedPermission,
   anAiPermissionsStatus,
@@ -419,24 +420,6 @@ describe("agent events", () => {
   })
 })
 
-describe("stats", () => {
-  it("refetches every stat when a task, a session or a goal moves, since any may be a fact", () => {
-    for (const event of [
-      { event: "task_updated", data: { task: TASK } },
-      { event: "session_updated", data: aSession() },
-      { event: "goal_updated", data: GOAL },
-    ] as DomainEvent[]) {
-      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      const models = qk.stats.models({ since: "7d" })
-      queryClient.setQueryData(models, { items: [] })
-
-      dispatch(queryClient, event)
-
-      expect(stale(queryClient, models)).toBe(true)
-    }
-  })
-})
-
 describe("recovery attention", () => {
   it("refetches the attention list on a goal's own confirmed-turn or give-up evidence", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -476,5 +459,24 @@ describe("workflow events", () => {
 
     dispatch(queryClient, { event: "workflow_deleted", data: { id: workflow.name } })
     expect(queryClient.getQueryData(qk.workflows.detail(workflow.name))).toBeUndefined()
+  })
+})
+
+describe("dashboard events", () => {
+  it("patches created and updated dashboards, then drops a deleted dashboard", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const dashboard = aDashboard()
+    queryClient.setQueryData(qk.dashboards.list(), [dashboard])
+
+    dispatch(queryClient, { event: "dashboard_created", data: dashboard })
+    expect(queryClient.getQueryData(qk.dashboards.detail(dashboard.name))).toEqual(dashboard)
+    expect(stale(queryClient, qk.dashboards.list())).toBe(true)
+
+    const updated = { ...dashboard, document_is_default: false }
+    dispatch(queryClient, { event: "dashboard_updated", data: updated })
+    expect(queryClient.getQueryData(qk.dashboards.detail(dashboard.name))).toEqual(updated)
+
+    dispatch(queryClient, { event: "dashboard_deleted", data: updated })
+    expect(queryClient.getQueryData(qk.dashboards.detail(dashboard.name))).toBeUndefined()
   })
 })

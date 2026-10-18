@@ -14,19 +14,27 @@ npm run check:unused           # dependency, export and source reachability
 npm run check:audit            # dependency advisories, always whole
 ```
 
+`ui/dashboard/` is a separate npm package (see
+[The dashboard package](#the-dashboard-package)) with its own copy of every
+command above, run from inside it rather than from `ui/`.
+
 The pre-commit hook (`.githooks/pre-commit`) runs, for a staged file under
-`ui/` (outside `ui/src-tauri`): `npx biome check <staged files>` and `npm run
-typecheck`, both from inside `ui/` (`npm ci` first when `ui/node_modules` is
-missing). For a staged file under `ui/src-tauri`: `cargo fmt --all -- --check`
-from inside `ui/src-tauri`.
+`ui/` (outside `ui/src-tauri` and `ui/dashboard`): `npx biome check <staged
+files>` and `npm run typecheck`, both from inside `ui/` (`npm ci` first when
+`ui/node_modules` is missing). For a staged file under `ui/src-tauri`: `cargo
+fmt --all -- --check` from inside `ui/src-tauri`. For a staged file under
+`ui/dashboard`: the same two commands, from inside `ui/dashboard` (`npm ci`
+first when `ui/dashboard/node_modules` is missing).
 
 The pre-push hook (`.githooks/pre-push`) runs the whole suite but the test
-suite, for a push that touches `ui/`: `npm run check:audit`, `npm run lint`,
-`npm run typecheck` and `npm run check:unused`, each in `ui/` (`npm ci` first
-when `ui/node_modules` is missing). `npm test` takes about a minute, so the
-hook leaves it to CI; run it by hand before a push when the change warrants
-it. For a push that touches `ui/src-tauri`: `cargo fmt --all -- --check` and
-`cargo check`, both from inside `ui/src-tauri`.
+suite, for a push that touches `ui/` (outside `ui/dashboard`): `npm run
+check:audit`, `npm run lint`, `npm run typecheck` and `npm run check:unused`,
+each in `ui/` (`npm ci` first when `ui/node_modules` is missing). `npm test`
+takes about a minute, so the hook leaves it to CI; run it by hand before a
+push when the change warrants it. For a push that touches `ui/src-tauri`:
+`cargo fmt --all -- --check` and `cargo check`, both from inside
+`ui/src-tauri`. For a push that touches `ui/dashboard`: the same four `npm
+run` commands as `ui/`'s own, from inside `ui/dashboard` instead.
 
 ### Dependency advisories
 
@@ -147,14 +155,15 @@ src/
                    history, and the error and 404 pages
   components/      app shell, sidebar, theme + settings + connection, and the
                    table / form dialog / delete dialog / panel pieces features reuse
-    stats/         each stat family's section, and the tiles / table / chart
-                   pieces they share
     ui/            shadcn/ui primitives
   features/
     command-palette/ ⌘K: search over every entity, plus the actions
     goals/         the goals board (swimlanes, attention strip), the goal panel,
                    and the attention count the shell shows everywhere else
     tasks/         the task panel: facts, steps, diff, messages, sessions, history
+    dashboard/     the Stats screen's data layer: the dashboard picker's list,
+                   and the reset mutation — the iframe itself is `ui/dashboard/`
+                   (see "The dashboard package")
     forge/         the Forge screen: one sidebar entry, its two tabs the
                    pull requests and issues routes below it
     pull-requests/ the Forge tab of the open pull requests — every one, the
@@ -269,17 +278,15 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["pull-requests", "list", filters]  ["pull-requests", "detail", id | "repository:number"]
 ["pull-requests", "search", { repo, q }]
 ["learned-permissions", "list", filters] ["learned-permissions", "detail", id]
-["stats",        "list", family, filter]
+["dashboards",   "list", {}]       ["dashboards", "detail", name]
 ```
 
 `workflows.parse` and `pullRequests.search` are the two keys outside the
 `list`/`detail` convention: each caches one derived read — a parsed document,
 a repository's matching requests — that is neither a list nor a detail.
 
-`stats` is one group over the five stat families (`work`, `time`, `spend`,
-`models`, `attention`), `[stats, "list", family, { since, repo }]`, read
-through `qk.stats.<family>(filter)`: a task or a session that moves can be a
-fact of any family, so the dispatcher invalidates `qk.stats.all()` whole.
+`dashboards` is keyed by name rather than id, the same as `skills` and
+`workflows`: `DashboardDto` carries no id of its own.
 
 `permissions.ai()` and `forge.tunnel()` are the keys with no list beside
 them: each is one settings row (`GET /v1/permissions/ai`,
@@ -321,14 +328,14 @@ the query cache and it stays live.
 | event | effect |
 |---|---|
 | `goal_created` | patch `goals.detail`, invalidate `goals.lists` |
-| `goal_updated` | patch `goals.detail`, invalidate `goals.lists` and `stats.all` |
+| `goal_updated` | patch `goals.detail`, invalidate `goals.lists` |
 | `goal_deleted` | remove `goals.detail`, invalidate `goals.lists`, every task and session key, and `attention.lists` |
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
-| `task_updated` | patch `tasks.detail`, invalidate `tasks.lists`, `stats.all` and `attention.lists`; a transition on the event also invalidates `tasks.transitions` and `tasks.diff` — a transition can be the task landing, and the diff answers for the merge commit once there is one |
+| `task_updated` | patch `tasks.detail`, invalidate `tasks.lists` and `attention.lists`; a transition on the event also invalidates `tasks.transitions` and `tasks.diff` — a transition can be the task landing, and the diff answers for the merge commit once there is one |
 | `task_branch_updated` | invalidate `tasks.diff` for the task — a commit in the author's worktree, with nothing about the task row itself changed |
 | `message_sent` | invalidate `tasks.messages` for the task it is about; a message about the goal itself belongs to no task's channel |
 | `session_created` | patch `sessions.detail`, invalidate `sessions.lists` and `outsideSessions.lists` — a resume adopts an outside row; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
-| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists`, `stats.all` and `attention.lists`; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
+| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` and `attention.lists`; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
 | `agent_event` | invalidate `agentEvents.lists` |
 | `skill_created`, `skill_updated` | patch `skills.detail`, invalidate `skills.lists` |
 | `skill_deleted` | remove `skills.detail`, invalidate `skills.lists` |
@@ -343,6 +350,13 @@ the query cache and it stays live.
 | `issues_changed` | invalidate `issues.ofRepository(id)` — both assignment filters of the repository whose open issues moved; issues are read off the forge, so the event carries none |
 | `learned_permission_created`, `learned_permission_updated` | patch `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
 | `learned_permission_deleted` | remove `learnedPermissions.detail`, invalidate `learnedPermissions.lists` |
+| `dashboard_created`, `dashboard_updated` | patch `dashboards.detail`, invalidate `dashboards.lists` |
+| `dashboard_deleted` | remove `dashboards.detail`, invalidate `dashboards.lists` |
+
+`dashboard_deleted` is the one `*_deleted` event that is fat like its own
+`*_created`/`*_updated`, carrying the whole `DashboardDto` rather than the
+generic `DeletedDto` every other one does — a dashboard has no id of its own
+for `DeletedDto.id` to carry, only `name`, which the whole DTO already has.
 
 The daemon has **no replay**: anything that happened while the stream was down
 is gone. So a reconnect — any open that follows a gap, a first connection that
@@ -414,10 +428,10 @@ the Forge screen's two tabs, `#/forge/pull-requests` and `#/forge/issues`
 (`#/forge` opens the first) — and `#/` redirects onto the board. `#/models`
 redirects onto `#/agents`, which folded the model catalog in; `#/tasks`
 redirects the same way onto the board. The Stats screen is
-`src/routes/stats.tsx`, and each stat family is a section of it,
-`src/components/stats/<family>-section.tsx`, drawn through the shared
-`StatSection`, `StatTiles`, `StatTable`, `StatTimeChart` and `StatBarChart`
-beside it.
+`src/routes/stats.tsx`: a picker and a Reset action over `GET /v1/dashboards`
+(`src/features/dashboard/queries.ts`), and an iframe over the `ui/dashboard`
+package's own build (or, in development, its own dev server — see "The
+dashboard package"), which renders the picked Perses dashboard.
 Goals, tasks and sessions have no pages: their details occupy one **floating pane** driven by
 search params (`?goal=` on the board, `?task=` over any screen, `?session=` for
 a session's own panel, `?tab=sessions&session=` for a session inside a goal's or
@@ -527,3 +541,106 @@ or delete it.
 `shadcn` itself stays in `dependencies` rather than `devDependencies`:
 `src/index.css` imports `shadcn/tailwind.css`, so it is a runtime dependency and
 not only the scaffolding CLI.
+
+## The dashboard package
+
+`ui/dashboard/` is the Perses dashboard the Stats screen opens in an iframe
+(`src/routes/stats.tsx`) — its own npm package, on React 18 and
+`@tanstack/react-query` v4, because [`@perses-dev/dashboards`](https://www.npmjs.com/package/@perses-dev/dashboards)
+and its plugins peer-depend on those, a major and a line behind what `ui/`
+itself runs. It shares nothing with `ui/`'s own `src/api` — two endpoints are
+not worth a second copy of that codegen pipeline — so its calls to the daemon
+are hand-rolled (`src/dashboard-client.ts`).
+
+```
+dashboard/
+  src/
+    main.tsx            mounts Page
+    page.tsx            the provider tree (query client, MUI theme, Perses
+                         charts theme, snackbar host, query-param provider,
+                         plugin registry) and ViewDashboard itself
+    page-params.ts       reads `daemon`, `dashboard` and `theme` off this
+                         page's own query string
+    use-host-messages.ts listens for the host's `postMessage`s
+    datasource-api.ts    the app's one `DatasourceApi`: a global Prometheus
+                         and a global Loki datasource, `directUrl` the daemon
+    dashboard-client.ts   `GET`/`PUT /v1/dashboards/{name}`
+    plugins.ts            the plugin loader: every datasource, panel and
+                         variable kind the task names, through
+                         `dynamicImportPluginLoader`
+    test/setup.ts          its own daemon-fetch stub, parallel to `ui/`'s
+  patches/                `patch-package` fix for a packaging bug (below)
+  scripts/                its own copies of `check-unused.mjs` and
+                         `check-audit.mjs`, scoped to this tree
+```
+
+**Build and dev wiring.** `vite.config.ts` sets `base: "/dashboard/"` and
+builds into `../dist/dashboard` — under the app's own `dist/`, so the
+packaged webview serves it from the same origin as everything else. `npm run
+build` in `ui/` builds the app first and this package second (`npm --prefix
+dashboard run build`): building this package first would be wiped by Vite's
+own `emptyOutDir` on the app's default `dist`, which contains it. In
+development, `ui/vite.config.ts`'s dev server proxies `/dashboard` to this
+package's own dev server (port 1421, `ui/`'s own is 1420), so the iframe is
+same-origin in both the packaged app and `npm run dev` alike, matching rule 1
+of the task that added this package.
+
+**The message protocol**, between `src/routes/stats.tsx` (the host) and this
+package's `page.tsx` — see its own docstring for the fuller rationale:
+
+- the iframe opens on `?daemon=<url>&dashboard=<name>&theme=<light|dark>`;
+- the host posts `{type: "theme", theme}` on every theme change after the
+  first paint — the first is already on the query string;
+- the host posts `{type: "reload"}` when the shown dashboard's own
+  `updated_at` moves under it without the iframe's own `src` changing — an
+  edit saved from another window or the CLI, landing here as a
+  `dashboard_updated` event the dispatcher already patched into the row; the
+  package re-reads `GET /v1/dashboards/{name}` and re-renders rather than
+  reloading the document in the literal sense.
+
+**The peer dependency override.** None needed for any `@perses-dev/*`
+package itself: every plugin's `peerDependencies` (checked against the
+published packages, not assumed) resolves cleanly against `dashboards`,
+`plugin-system`, `components` and `client` all at `^0.54.0` and `spec` at
+`^0.2.0`. One *patch* was needed instead, not an override:
+`@perses-dev/logs-table-plugin@0.3.0`'s `LogRow.js` imports
+`./ansiColors.css`, a file missing from the published tarball (fixed
+upstream, but only in an 0.4.0 prerelease that would drag every other
+`@perses-dev/*` package here to its own 0.55.0-rc line). `patches/` adds the
+missing file back — the standard 16-colour ANSI palette `ansi_up` (this
+plugin's own dependency) defines its class names from — as a
+`postinstall: patch-package` script reapplies on every `npm ci`. Drop it
+once a stable 0.4.0 ships.
+
+**Checks.** The same five commands as `ui/`'s own
+(`npx biome check`/`npm run typecheck`/`npm test`/`npm run check:unused`/`npm
+run check:audit`), run from inside `ui/dashboard` rather than `ui/` — see
+"On a task branch" above, the pre-commit and pre-push hooks, and `ci.yml`'s
+`dashboard` job. `check:unused`'s `PEER_ONLY` set is this package's own
+`TOOLING`-shaped list for packages nothing here imports by name because a
+Perses package peer-depends on them instead; a missing peer is an
+install-time error, not a reachable import.
+
+A second `biome.json` next to an existing one, each the default `root: true`,
+is a configuration error the moment anything scans across the boundary — not
+a lint finding, a refusal to run at all — so `ui/biome.json`'s own
+`files.includes` carries `"!dashboard"` to stay out of this package's tree
+entirely, the same way it already stays out of the generated API files; a
+plain `biome check .` run from inside `ui/dashboard` itself needs nothing
+extra; the (unfixed, Biome 2.2–2.5) bug behind writing that exclusion as
+`"!dashboard/**"` instead — silently matching nothing, so the boundary is
+never actually drawn — is why it is spelled without the trailing `/**`.
+
+Tests cover the glue — reading the page's own query string, the host-message
+listener, the datasource lookup, and the load/save calls, each with a
+stubbed `fetch` — and `page.tsx`'s own lifecycle with `ViewDashboard` itself
+mocked to a component that only records its own mount count and the document
+it was given (`page.test.tsx`): real `ViewDashboard` is Perses's own
+integration surface, not this package's, and far too heavy for jsdom, but
+two of this package's own bugs lived in exactly how `page.tsx` drives it —
+`mounted.current` never came back up after React's StrictMode development
+remount, silently dropping every later `load()`, and a `{type: "reload"}`
+message updated `dashboardResource` as a prop into the same `ViewDashboard`
+instance, which only ever reads it once, as its internal store's initial
+value, and so never picked up the fresh document. `key={version}`, bumped on
+every successful load, is what makes a reload remount the component instead.

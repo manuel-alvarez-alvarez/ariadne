@@ -50,17 +50,9 @@ sentence that says so.
 
 ## In the desktop app
 
-Open **Stats** in the sidebar. Choose a span (all time, 24 hours, 7 days or 30
-days) and a repository at the top of the screen; both stay in the address, so
-a reload keeps them.
-
-The screen is a dashboard. A row of key figures comes first: tasks finished,
-finish rate, median goal lead time, total tokens, interventions, and the time
-a person spent. Under it, each family is a card under its question, in this
-order: Models, Work, Time, Spend and Attention. Models spans the full width.
-On a wide window, the other four cards show in two columns; on a narrow
-window, they show in one. The figures update by themselves as sessions end
-and as tasks move.
+The desktop app's **Stats** screen reads this ledger through a Perses
+dashboard, not a screen of its own over these five families — see
+[Dashboards](dashboards.md).
 
 ## From the API
 

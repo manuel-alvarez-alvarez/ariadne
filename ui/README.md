@@ -3,7 +3,10 @@
 Desktop client for `ariadned`. A [Tauri 2](https://v2.tauri.app) window around a
 Vite + React + TypeScript app. The goals board draws a stepped task in its
 workflow's column, and the Workflows screen edits the catalog — shipped and
-your own, each with a document editor and a live kanban preview.
+your own, each with a document editor and a live kanban preview. The Stats
+screen embeds a Perses dashboard, over the daemon's own Prometheus and Loki
+APIs — [`dashboard/`](dashboard) is its own package, on React 18, built
+separately and served same-origin under `/dashboard/`.
 
 The UI is a **pure REST/SSE client of the daemon's TCP listener** — exactly what
 the CLI is, over HTTP instead of a unix socket. It never links against the
@@ -55,7 +58,9 @@ The packaged webview has a content security policy. It loads scripts, styles,
 fonts and images from the app, and it permits HTTP, HTTPS, WebSocket and secure
 WebSocket connections because the daemon URL is configurable. It permits Tauri
 IPC through `ipc:` and `http://ipc.localhost`, so bundled plugins work. It
-rejects evaluated script, plugins, document base changes and embedded ancestors.
+permits a frame from the app itself, which is what lets the Stats screen's
+dashboard open in its iframe. It rejects evaluated script, plugins, document
+base changes and embedded ancestors.
 
 Links to `http:`, `https:` and `mailto:` destinations open in the system
 browser. When a link's visible text does not equal its target, Ariadne first
@@ -66,8 +71,8 @@ console use the same confirmation. Other link schemes do not open.
 
 | Script | What it does |
 |---|---|
-| `npm run dev` | Vite dev server on port 1420 (fixed — `tauri dev` points at it) |
-| `npm run build` | typecheck + production bundle into `dist/` |
+| `npm run dev` | Vite dev server on port 1420 (fixed — `tauri dev` points at it); proxies `/dashboard/` to `dashboard/`'s own dev server on port 1421 |
+| `npm run build` | typecheck + production bundle into `dist/`, then `dashboard/`'s own build into `dist/dashboard/` |
 | `npm run typecheck` | `tsc -b`, no emit |
 | `npm run test` | Vitest, once (`test:watch` to keep it running) |
 | `npm run lint` | Biome lint + format check |

@@ -65,12 +65,6 @@ export type CreateWorkflowRequest = Schemas["CreateWorkflowRequest"]
 export type UpdateWorkflowRequest = Schemas["UpdateWorkflowRequest"]
 export type Seat = Schemas["Seat"]
 export type ModelDto = Schemas["ModelDto"]
-export type WorkStatsDto = Schemas["WorkStatsDto"]
-export type WorkBucketDto = Schemas["WorkBucketDto"]
-export type TimeStatsDto = Schemas["TimeStatsDto"]
-export type SpendStatsDto = Schemas["SpendStatsDto"]
-export type ModelStatsDto = Schemas["ModelStatsDto"]
-export type AttentionStatsDto = Schemas["AttentionStatsDto"]
 export type ModelRank = Schemas["ModelRank"]
 export type EffortDto = Schemas["EffortDto"]
 export type SetModelEnabledRequest = Schemas["SetModelEnabledRequest"]
@@ -92,6 +86,8 @@ export type TestAiPermissionResponse = Schemas["TestAiPermissionResponse"]
 
 export type LearnedPermissionDto = Schemas["LearnedPermissionDto"]
 export type UpdateLearnedPermissionRequest = Schemas["UpdateLearnedPermissionRequest"]
+
+export type DashboardDto = Schemas["DashboardDto"]
 
 /**
  * Every domain event carried by `GET /v1/events/stream`, as a tagged union.

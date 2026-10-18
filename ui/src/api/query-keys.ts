@@ -46,15 +46,6 @@ interface LearnedPermissionFilters {
   repository?: string
 }
 
-/**
- * What every `GET /v1/stats/<family>` is narrowed by: `since` is a span back
- * from now (`24h`, `7d`, `30d`), and `repo` a repository id.
- */
-export interface StatsFilter {
-  since?: string
-  repo?: string
-}
-
 /** What `GET /v1/outside-sessions` narrows its snapshot by, page aside. */
 interface OutsideSessionFilters {
   agent?: string
@@ -196,19 +187,6 @@ export const qk = {
   forge: {
     tunnel: () => ["forge", "detail", "tunnel"] as const,
   },
-  /**
-   * The aggregates of the stats ledger (`GET /v1/stats/<family>`), one list
-   * per family under one group: every family moves when a task or a session
-   * does, so the dispatcher invalidates `all()`.
-   */
-  stats: {
-    all: () => ["stats"] as const,
-    work: (filter: StatsFilter) => ["stats", "list", "work", filter] as const,
-    time: (filter: StatsFilter) => ["stats", "list", "time", filter] as const,
-    spend: (filter: StatsFilter) => ["stats", "list", "spend", filter] as const,
-    models: (filter: StatsFilter) => ["stats", "list", "models", filter] as const,
-    attention: (filter: StatsFilter) => ["stats", "list", "attention", filter] as const,
-  },
   learnedPermissions: {
     all: () => ["learned-permissions"] as const,
     lists: () => ["learned-permissions", "list"] as const,
@@ -216,5 +194,16 @@ export const qk = {
       ["learned-permissions", "list", filters ?? {}] as const,
     details: () => ["learned-permissions", "detail"] as const,
     detail: (id: string) => ["learned-permissions", "detail", id] as const,
+  },
+  /**
+   * Perses dashboard documents (`GET /v1/dashboards`), keyed by name rather
+   * than id — `DashboardDto` carries no id of its own.
+   */
+  dashboards: {
+    all: () => ["dashboards"] as const,
+    lists: () => ["dashboards", "list"] as const,
+    list: () => ["dashboards", "list", {}] as const,
+    details: () => ["dashboards", "detail"] as const,
+    detail: (name: string) => ["dashboards", "detail", name] as const,
   },
 } as const

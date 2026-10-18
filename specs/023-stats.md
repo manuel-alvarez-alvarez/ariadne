@@ -2,7 +2,7 @@
 id: stats
 status: current
 updated: 2026-10-17
-areas: [api, store, daemon, cli, ui]
+areas: [api, store, daemon, cli]
 commits: []
 tests:
   - crates/ariadne-store/tests/store.rs
@@ -19,20 +19,6 @@ tests:
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-cli/src/commands/stats/mod.rs
   - crates/ariadne-cli/src/cli/tests.rs
-  - ui/src/routes/stats.test.tsx
-  - ui/src/components/stats/work-section.test.tsx
-  - ui/src/components/stats/time-section.test.tsx
-  - ui/src/components/stats/spend-section.test.tsx
-  - ui/src/components/stats/models-section.test.tsx
-  - ui/src/components/stats/stat-time-chart.test.tsx
-  - ui/src/components/stats/stat-bar-chart.test.tsx
-  - ui/src/components/stats/stat-pie-chart.test.tsx
-  - ui/src/components/stats/attention-section.test.tsx
-  - ui/src/components/stats/status-colors.test.ts
-  - ui/src/components/stats/stat-explain.test.tsx
-  - ui/src/components/stats/stat-chart-legend.test.tsx
-  - ui/src/events/dispatch.test.ts
-  - ui/src/components/app-shell.test.tsx
 ---
 
 # Stats
@@ -40,8 +26,9 @@ tests:
 What the work did. The daemon writes one fact to a ledger when a thing that
 tells performance happens, and every stat is an aggregate of that ledger. The
 stats are five families, each the answer to one question a user asks, read
-with `GET /v1/stats/<family>`, `ariadne stats <family>` and the Stats screen
-of the desktop app.
+with `GET /v1/stats/<family>` and `ariadne stats <family>`. The desktop app's
+Stats screen reads this ledger too, through a Perses dashboard rather than a
+family section of its own — see spec 015.
 
 ## Scope
 
@@ -197,8 +184,7 @@ not a change to how they decide it.
     the command and the docs show them in this order: `work` (what got
     done?), `time` (how long does it take?), `spend` (what did it spend?),
     `models` (which model does the job?) and `attention` (how much did it
-    need me?). The desktop screen leads with `models` instead, ahead of
-    `work` (rule 35).
+    need me?).
 29. `GET /v1/stats/<family>` answers the family's own DTO: `WorkStatsDto`,
     `TimeStatsDto`, `SpendStatsDto`, `ModelStatsDto` and `AttentionStatsDto`.
     Every route takes the filters of rules 12 to 14 and sits
@@ -206,10 +192,9 @@ not a change to how they decide it.
     `/v1/stats/`.
 30. Each family is one file in each layer: `stats/<family>.rs` in the
     store (`Store::<family>_stats`), the API and the daemon, where the file
-    owns its handler and its part of the API document;
-    `commands/stats/<family>.rs` in the CLI; and `<family>-section.tsx` in
-    the desktop app. The `mod.rs` beside each registers the five once and
-    holds what they share.
+    owns its handler and its part of the API document; and
+    `commands/stats/<family>.rs` in the CLI. The `mod.rs` beside each
+    registers the five once and holds what they share.
 31. A median averages the two middle values of an even count, and a p90 is
     the nearest-rank value. Both are 0 over no values.
 32. A family that draws a time axis buckets its facts over the span `since`
@@ -228,72 +213,20 @@ not a change to how they decide it.
     listing: it takes the table flags (014), and `--format json` prints the
     DTO whole. The table of a family that holds nothing to show prints one
     muted sentence.
-34. The desktop app has a Stats screen at `#/stats`, titled `Stats`, last in
-    the sidebar. Its header holds a `since` selector (all time, 24 hours, 7
-    days, 30 days) and a repository selector. Both live in the URL
-    (`?since=7d&repo=<id>`), and the screen hands them to every section as
-    one `{ since, repo }`. The screen is a dashboard: it leads with a `Key
-    figures` row — tasks finished, finish rate and median goal lead time off
-    the work family, total tokens (input and output) off the spend family,
-    and interventions and person time off the attention family's own
-    `interventions.total` and `interventions.person_secs` — each figure
-    reading `—` until its answer is in.
-35. Under the key figures, the screen renders five sections in this order:
-    `ModelsSection`, `WorkSection`, `TimeSection`, `SpendSection` and
-    `AttentionSection` — `ModelsSection` ahead of rule 28's own order — laid
-    out as a card grid: one column, and two from `xl` up, where `ModelsSection`
-    spans both. Each draws through the shared `StatSection`: its heading
-    (`text-sm font-medium`), one sentence of the question it answers, the
-    read's error or skeleton, and the one muted sentence of an empty family.
-    A section that pairs a chart with a second, narrower one lays the two out
-    side by side from `md` up, and stacked on a narrower screen
-    (`flex flex-col gap-4 md:flex-row`).
-    The other shared pieces are `StatTiles` and `StatTile` (a label, a value
-    and an optional hint), `StatTable` (a compact comparison table, numbers
-    right-aligned, columns given by the caller), `StatTimeChart` (stacked
-    bars per bucket on a time axis, an hour bucket labelled as a time and
-    any other as a date, the date added beside an hour's own tooltip and
-    `sr-only` row, with an optional `line` series overlaid on the same axis
-    as a trend), `StatBarChart` (a horizontal bar per row, ranked by the
-    caller's own order) and `StatPieChart` (a donut of slices that sum to the
-    whole, for a composition or a share a stacked or ranked chart reads less
-    directly). Every chart keeps an `sr-only` table of the same numbers under
-    it, for a screen reader and for a test, in a `relative` wrapper: `sr-only`
-    is `position: absolute`, and with no ancestor positioned the table would
-    lay out against the document and draw a second scrollbar. A chart paired
-    with a small visible `StatTable` of the same rows carries its exact
-    values twice on purpose: once at a glance in the chart's own tooltip and
-    `sr-only` table, and once spelled out beside it for a sighted reader who
-    wants every number without hovering each slice or bar in turn — `TimeSection`
-    and `SpendSection` each pair one chart this way; `ModelsSection` does not,
-    since its own bar chart's tooltip and `sr-only` table already carry a
-    model's full row. A colour carries
-    one meaning, off the
-    status ramp in `index.css` through the shared `STATUS_COLORS` module —
-    finished or ended on `status-done`, failed on `status-danger`, stalled on
-    `status-warn`, cancelled on `status-pending`, a neutral count on
-    `status-active`, work waiting to start on `status-ready`, work out for
-    review on `status-review` and work a review approved on `status-approved`
-    — and each chart's series config lives in `chart-configs.ts`.
-36. Each section reads its family under `qk.stats.<family>(filter)`, in
-    the query-key group `stats`. Every `task_updated`, `session_updated` and
-    `goal_updated` event invalidates the whole group (`qk.stats.all()`),
-    since any of the three may be a fact.
-37. Every figure on the screen explains itself: a short plain sentence of
-    what it is, shown on hover and on keyboard focus through the app's
-    `Tooltip`, and wired as the figure's accessible description rather than a
-    sighted-only hint (`StatExplain`). `StatTile` and each `StatTable` column
-    take an `explain` string; a chart's figures carry theirs under
-    `ChartConfig`'s `explain` field, drawn by `StatChartLegend` — a legend
-    kept outside recharts' own measured area (`ResponsiveContainer`), so it
-    renders, and is explained, with no dependency on whatever size recharts
-    gives the chart itself. The legend carries every figure a chart draws
-    through its `config`, a bar of its own or not: `StatTimeChart`'s `keys`
-    and `extra`, and `StatBarChart`'s `bars`, each add their figures to it,
-    and both also take a `legendExtra` of config keys with neither a bar nor
-    a stacked slot — a figure the caller's own tooltip already carries its
-    own way, such as a bucket's cached share or a status row's median and
-    share, that still wants a hoverable, focusable place for its meaning.
+34. The desktop app's Stats screen (`#/stats`) no longer renders this ledger
+    through family sections of its own: it opens a Perses dashboard, over
+    `GET /v1/dashboards` and the daemon's own Prometheus and Loki APIs, whose
+    rules live in spec 015. This ledger — the facts, the five families, their
+    aggregates, `GET /v1/stats/<family>` and `ariadne stats` — is unchanged;
+    only what read it inside the desktop app changed, and nothing in this
+    spec about the CLI or the API describes the Stats screen any more.
+35. *(retired with rule 34 — the family order, card grid and chart
+    primitives it named belonged to the desktop screen alone)*.
+36. *(retired with rule 34 — the query key and event invalidation it named
+    belonged to the desktop screen alone; this ledger's own freshness rules
+    are 10 and 18)*.
+37. *(retired with rule 34 — the on-hover explanation it named belonged to
+    the desktop screen alone)*.
 
 ### Work
 
@@ -326,13 +259,7 @@ changes landed, over time.
     `ariadne stats work` prints the totals as `label: value` lines, then a
     table of the buckets, `FROM` (the hour too where the bucket is an hour),
     `FINISHED`, `FAILED`, `CANCELLED`, `GOALS` and `LANDED`; `--format json`
-    prints the DTO whole. `WorkSection` draws
-    `StatTiles` of tasks finished, goals completed, changes landed, finish
-    rate and median goal lead time, and one `StatTimeChart` of tasks per
-    bucket, stacked `finished`, `failed` and `cancelled` on `STATUS_COLORS`
-    (the outcome columns), with `landed` overlaid on the same bucket axis as
-    a `line` (the trend) and goals completed carried in the tooltip and the
-    `sr-only` table alongside the stacked counts and the trend line.
+    prints the DTO whole.
 
 ### Time
 
@@ -348,12 +275,6 @@ changes landed, over time.
     task and permission reads honour `since` and `repo`.
 44. `ariadne stats time` prints the lead-time and person-waiting figures as
     label and value lines, then `STATUS`, `TOTAL`, `MEDIAN` and `SHARE` rows.
-    The desktop section shows median and p90 lead time, person wait time and
-    prompt count, then a "Where the time goes" status bar chart (the duration
-    bars) with each row's median and share in its tooltip, beside a
-    `StatPieChart` of the same statuses' share of the total time (the share
-    chart), each status on the ramp colour rule 35 names for it, and a small
-    visible `StatTable` of status and share beside that chart.
 
 ### Spend
 
@@ -387,16 +308,7 @@ nothing here converts one.
     `SHARE`), then a table of `buckets` (`FROM` — the hour too where the
     bucket is an hour — `INPUT`, `CACHED`, `OUTPUT`), one blank line before
     each table. `--format json` prints the DTO whole.
-52. `SpendSection` draws four tiles with `StatTiles`: input tokens, cache
-    share, output tokens, and tokens per finished task (`input_tokens +
-    output_tokens` of `per_finished_task`, hinted with the task count). Under
-    them, one `StatTimeChart` stacks `input_tokens` and `output_tokens` per
-    bucket, the bucket's own cached share added to its tooltip (the token
-    trend), beside a `StatPieChart` of the span's totals split into fresh
-    input, cached input and output tokens (the composition chart) and a
-    small visible `StatTable` of the same three, their tokens and their
-    share of the span's whole. It draws no chart of `by_model`: `ModelsSection`
-    is where a model is compared. A family with no ended session is empty.
+52. A family with no ended session is empty.
 
 ### Models
 
@@ -427,28 +339,6 @@ The CLI prints one comparison table per seat, headed by the seat.
 JSON output always contains the complete DTO, regardless of `--seat`.
 A seatless row uses the TASKS columns under `LOOSE SESSIONS` in the CLI and remains available in JSON.
 
-The desktop section draws one summary card per seat instead of the CLI's own
-table: a `StatTiles` row of the seat's totals (its model count and its
-primary figure — agent tasks, orchestrator goals — plus its tokens and its
-time, summed across every model of the seat), then a `StatBarChart` ranking
-that seat's own models by the same primary figure, heaviest first. A model's
-other figures — tokens, time, messages, and an agent's own finished count —
-carry no bar of their own: they ride in the chart's tooltip and its
-`sr-only` table, which is where their exact value lives rather than in a
-column of a visible table (rule 35). The chart's legend names the ranked
-figure alone, never a figure with no bar, so no legend swatch reads as a
-series the chart does not draw. `ModelsSection` omits a seat with no
-row, the same as the table it replaced did. Responses without rows for
-either seat use the shared empty state, including responses with only
-seatless rows.
-
-| Seat | Ranked by | Tooltip and `sr-only` table |
-| --- | --- | --- |
-| Agent | TASKS | MODEL, TASKS, TOKENS, TIME, MESSAGES, FINISHED |
-| Orchestrator | GOALS | MODEL, GOALS, TOKENS, TIME, MESSAGES |
-
-TOKENS uses compact notation and TIME the existing duration formatter.
-
 ### Attention
 
 An `attention` fact is written by the store whenever a clear takes a session
@@ -473,8 +363,7 @@ nowhere; `total` is the sum of the three counts; `person_secs` sums
 `wait_ms / 1000` of those permissions and `wait_secs` of those attention
 facts. The time and repository filters apply before the counts.
 `ariadne stats attention` prints the interventions total and the person time
-alongside the family's other totals, and the Stats screen's key figures (rule
-34) read the two straight off this object.
+alongside the family's other totals.
 
 ## Acceptance criteria
 
@@ -563,62 +452,9 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 - The five are classified and take the table flags of a listing
   (`cli/tests.rs::every_command_in_the_tree_is_classified`,
   `::the_listing_flags_are_advertised_exactly_where_they_are_honored`).
-- The Stats screen renders the five sections in order under one heading
-  style (`stats.test.tsx` "renders the five sections in order, under one
-  heading style"), asks every family with the filters in its URL under the
-  key `qk` names (`stats.test.tsx` "asks every family with the filters in
-  its URL, under the key qk names"), and renders an error rather than the
-  empty sentence when a read fails (`stats.test.tsx` "renders an error, not
-  the empty sentence, when the daemon refuses a read"). It leads with key
-  figures from Work, Spend, and Attention, and lays Models across the full
-  width (`stats.test.tsx` "leads with the key figures, read off the work,
-  spend and attention answers", "lays Models across the full width, and the
-  other four out as a two-column card grid").
-- Work and Spend show their empty sentence, Attention shows its empty state,
-  and Time draws its family figures (`work-section.test.tsx` "asks for its
-  family with the filter, and says its empty sentence";
-  `spend-section.test.tsx` "asks for its family with the filter, and says
-  its empty sentence"; `attention-section.test.tsx` "shows the empty state
-  when every attention figure is zero"; `time-section.test.tsx` "asks for
-  its family with the filter and draws its time figures").
-- A task, session, or goal update invalidates the stats
-  (`dispatch.test.ts` "refetches every stat when a task, a session or a goal
-  moves, since any may be a fact").
-- Stats ends the navigation, which includes Forge (`app-shell.test.tsx`
-  "ends the navigation with stats, and lists Forge beside the other screens").
-- `STATUS_COLORS` maps each meaning to the status ramp's own CSS variable
-  (`status-colors.test.ts` "maps each meaning to the status ramp's own CSS
-  variable, so every panel's chart draws it the same").
-- `StatExplain` shows its sentence on hover and on keyboard focus, and names
-  it as the trigger's accessible description
-  (`stat-explain.test.tsx` "shows the explanation on hover, and names it as
-  the trigger's accessible description", "shows the explanation on keyboard
-  focus too, not only on hover").
-- `StatChartLegend` explains an entry whose series carries one, and renders
-  one with none plainly, with no trigger to open
-  (`stat-chart-legend.test.tsx` "explains an entry with an explanation, on
-  hover", "renders an entry with no explanation plainly, with no trigger to
-  open").
-- `StatTimeChart` labels an hour bucket as a time, with the date added
-  rather than dropped
-  (`stat-time-chart.test.tsx` "labels an hour bucket as a time, with the
-  date added, not a bare date"), and an overlaid `line` carries its exact
-  value in the same `sr-only` table with no change to the rest
-  (`stat-time-chart.test.tsx` "accepts a trend line over the same buckets,
-  with no change to its sr-only numbers").
-- `StatBarChart` and `StatPieChart` each give their `sr-only` table a
-  positioned ancestor, and `StatPieChart` labels a slice's row with its
-  `config` label rather than its raw key
-  (`stat-bar-chart.test.tsx` "gives the sr-only table a positioned
-  ancestor", `stat-pie-chart.test.tsx` "gives the sr-only table a positioned
-  ancestor", "labels each slice's row with its own config label, not its raw
-  key").
-- Every key figure, and every tile and chart series in the Work, Time, Spend,
-  and Attention sections, explains itself on hover (`stats.test.tsx`
-  "explains every key figure, on hover"; `work-section.test.tsx`,
-  `time-section.test.tsx`, `spend-section.test.tsx`, and
-  `attention-section.test.tsx`, each "explains every tile and every chart
-  series, on hover").
+- The Stats screen's own acceptance criteria — the dashboard picker, the
+  Reset action, the iframe and its message protocol — are spec 015's; none
+  of this ledger's own behavior changed underneath it.
 
 #### Work
 
@@ -648,17 +484,6 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   (`commands/stats/work.rs::tests::the_totals_print_as_label_value_lines_in_field_order`,
   `::a_bucket_row_carries_every_count_in_column_order`,
   `::a_bucket_row_shows_the_time_of_day_for_an_hour_bucket`).
-- `WorkSection` draws the tiles and the chart from a mocked response under
-  `qk.stats.work`, and says its empty sentence where there is nothing to show
-  (`work-section.test.tsx` "asks for its family with the filter, and says its
-  empty sentence", "draws the tiles and the chart from what the daemon
-  answers"); `landed`'s trend line changes none of its tooltip or `sr-only`
-  figures (`work-section.test.tsx` "explains every tile and every chart
-  series, on hover").
-- A `goal_updated` event invalidates the stats too (`dispatch.test.ts`
-  "refetches every stat when a task, a session or a goal moves, since any
-  may be a fact").
-
 #### Time
 
 - A finished task records time in every status it passed
@@ -668,14 +493,6 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   (`stats/time.rs::tests::time_stats_measures_finished_tasks_statuses_and_person_waits`).
 - The route reads a finished task into the time DTO
   (`stats_time.rs::the_time_stat_answers_and_is_in_the_api_document`).
-- The desktop section renders its tiles and status chart from `qk.stats.time`
-  (`time-section.test.tsx` "asks for its family with the filter and draws its
-  time figures").
-- The share chart and its visible comparison table draw beside the duration
-  bars, each status's exact share available in both
-  (`time-section.test.tsx` "draws a share chart and a compact comparison
-  table beside the duration bars").
-
 #### Spend
 
 - The totals sum ended sessions and compute the cached share
@@ -707,11 +524,6 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   (`commands/stats/spend.rs::tests::bucket_date_carries_the_time_of_day_for_an_hour_bucket`),
   and a family with no ended session is empty
   (`commands/stats/spend.rs::tests::a_family_with_no_ended_session_is_empty`).
-- `SpendSection` draws the tiles and the time chart from a mocked response,
-  with no by-model chart, plus the composition chart and its visible table
-  splitting the totals into fresh input, cached input and output
-  (`spend-section.test.tsx` "draws the tiles and the time chart from a
-  mocked response, with no by-model chart").
 
 #### Models
 
@@ -737,21 +549,6 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   `::the_seat_option_belongs_only_to_models_and_prints_one_table`).
 - JSON preserves the complete DTO with a seat selected
   (`commands/stats/models.rs::tests::json_reads_the_complete_dto_even_with_a_seat_selected`).
-- The Stats screen reads the Models family under `qk.stats.models` and renders
-  its section with the other four families (`stats.test.tsx` "asks every
-  family with the filters in its URL, under the key qk names"; "renders the
-  five sections in order, under one heading style").
-- `ModelsSection` asks its family with the filter and says its empty sentence
-  for an empty answer and for one with only unrecognized seats
-  (`models-section.test.tsx` "asks for its family with the filter, and says
-  its empty sentence", "says its empty sentence for rows with no recognized
-  seat"); it draws a summary card and a ranked chart per seat, heaviest model
-  first, and omits a seat with no row
-  (`models-section.test.tsx` "draws a summary card and a ranked chart for
-  each seat, heaviest model first", "omits a seat with no row"); each legend
-  names only the drawn bar, and every other figure stays in the `sr-only`
-  table (`models-section.test.tsx` "names only the drawn bar in each legend,
-  with every other figure kept in the table").
 
 #### Attention
 
@@ -759,9 +556,8 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   when they remove a flag (`store.rs::attention_clears_write_facts_only_when_a_flag_falls`).
 - The aggregate groups permission answers, flag reasons, failures, stalls and
   exhausted switches under both filters (`stats/attention.rs`).
-- The route, command and screen expose the family, including its decider and
-  flag charts (`stats_attention.rs`, `commands/stats/attention.rs`,
-  `attention-section.test.tsx`).
+- The route and command expose the family, including its decider and flag
+  breakdowns (`stats_attention.rs`, `commands/stats/attention.rs`).
 - Interventions count permissions, questions and stalls, exclude
   `waiting_permission`, sum `person_secs`, and obey both filters
   (`stats/attention.rs::tests::interventions_count_permissions_questions_and_stalls_and_exclude_waiting_permission`,
@@ -770,10 +566,6 @@ alongside the family's other totals, and the Stats screen's key figures (rule
   (`stats_attention.rs::the_attention_stat_answers_the_interventions_object`).
 - `ariadne stats attention` prints the interventions total and the person
   time (`commands/stats/attention.rs::tests::the_kv_lines_carry_the_interventions_total_and_the_person_time`).
-- The Stats screen's Interventions and Person time tiles read off the
-  attention family, not the models family
-  (`stats.test.tsx` "leads with the key figures, read off the work, spend and
-  attention answers").
 
 ## Sources
 
@@ -791,8 +583,4 @@ alongside the family's other totals, and the Stats screen's key figures (rule
 `crates/ariadne-daemon/src/scheduler/sweeps.rs`,
 `crates/ariadne-daemon/src/scheduler/auto_switch.rs`,
 `crates/ariadne-daemon/src/scheduler/tasks.rs`,
-`crates/ariadne-cli/src/commands/stats/`,
-`ui/src/routes/stats.tsx`,
-`ui/src/components/stats/`,
-`ui/src/api/query-keys.ts`,
-`ui/src/events/dispatch.ts`.
+`crates/ariadne-cli/src/commands/stats/`.

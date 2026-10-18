@@ -148,13 +148,24 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: ui/package-lock.json
+          cache-dependency-path: |
+            ui/package-lock.json
+            ui/dashboard/package-lock.json
 
       - name: Build ariadne and ariadned
         run: cargo build --release --locked --package ariadne-cli --package ariadne-daemon
 
       - name: Install the desktop app's dependencies
         working-directory: ui
+        run: npm ci
+
+      # `npm run build` in `ui/` (`beforeBuildCommand` below) builds this
+      # package too (`ui/AGENTS.md`), so its own dependencies — Perses and
+      # its plugins — have to be installed before that runs, the same as
+      # `ui/`'s own just above; neither package is an npm workspace of the
+      # other, so one `npm ci` never reaches the other's tree.
+      - name: Install the dashboard's dependencies
+        working-directory: ui/dashboard
         run: npm ci
 
       # Compiles the frontend (`beforeBuildCommand`) and the Tauri shell's

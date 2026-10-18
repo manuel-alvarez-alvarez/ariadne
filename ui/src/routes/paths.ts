@@ -22,6 +22,8 @@ import { useLocation, useSearchParams } from "react-router-dom"
  */
 export const SKILL_PARAM = "skill"
 export const WORKFLOW_PARAM = "workflow"
+/** Which dashboard the Stats screen shows, under `?dashboard=`. */
+export const DASHBOARD_PARAM = "dashboard"
 
 /**
  * What a link asks the screen it opens to hand the keyboard to, under

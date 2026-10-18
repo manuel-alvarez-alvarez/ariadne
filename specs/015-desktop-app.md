@@ -13,6 +13,9 @@ tests:
   - ui/src/hooks/**/*.test.tsx
   - ui/src/lib/**/*.test.ts
   - ui/src/lib/tauri-config.test.ts
+  - ui/dashboard/src/**/*.test.ts
+  - ui/dashboard/src/**/*.test.tsx
+  - ui/dashboard/scripts/**/*.test.mjs
 ---
 
 # Desktop app
@@ -602,51 +605,49 @@ Out: the daemon endpoints themselves (012).
     label from a test result`, `::relabels the same danger once a threshold
     moves, with no second call`, `::draws no marker for an ai_error answer`).
 37. The Stats screen is at `#/stats`, titled `Stats`, last in the sidebar
-    (023). Its header holds a `since` selector — all time, 24 hours, 7 days,
-    30 days — and a repository selector, both kept in the URL as `?since=`
-    and `?repo=`. The screen is a dashboard. It leads with a `Key figures`
-    row: tasks finished, finish rate and median goal lead time off the work
-    family, total tokens (input and output) off the spend family, and
-    interventions and person time off the attention family's own
-    `interventions.total` and `interventions.person_secs`; a figure reads `—`
-    until its answer is in. Under it, the screen passes `{ since, repo }` to
-    five sections, in order: Models, Work, Time, Spend and Attention, each
-    `src/components/stats/<family>-section.tsx`, laid out as a card grid —
-    one column, and two from `xl` up, where Models spans both. Every section
-    draws through the shared `StatSection`, a card: its heading,
-    `text-sm font-medium`, the one sentence of the question it answers, the
-    read's error or skeleton, and the one muted sentence of an empty family.
-    Cards in one grid row share its height; a chart is at least 160px high
-    and grows into the room its card leaves, and tiles wrap to fill each of
-    their rows. A section that pairs two charts lays them side by side from
-    `md` up and stacked below it, so a narrow window keeps each chart full
-    width rather than shrinking two to fit one row. Each reads
-    `GET /v1/stats/<family>` under `qk.stats.<family>(filter)`, and every
-    `task_updated` and `session_updated` event invalidates the `stats` group
-    — parity with `ariadne stats <family>` (014). A chart is colour-coded by
-    meaning off the status ramp through the `STATUS_COLORS` module, and backed
-    by an `sr-only` table of the same numbers for a screen reader; that
-    table's wrapper carries `relative` so the table's own `absolute`
-    positioning stays inside it rather than the document, which would
-    otherwise stretch the page past the viewport into a second scrollbar. The
-    screen draws its variety of widgets through four chart primitives —
-    `StatTimeChart` (a stacked trend over buckets, an optional `line` series
-    overlaid for a second trend), `StatBarChart` (a ranked or grouped
-    comparison), `StatPieChart` (a composition or a share, a donut summing to
-    its whole) and the plain `StatTable` — rather than one chart type
-    repeated five times: `WorkSection` overlays `landed` as a trend line on
-    its stacked outcome columns; `TimeSection` pairs its duration bars with a
-    share donut and a small visible table of the same statuses; `SpendSection`
-    pairs its token trend with a composition donut, split into fresh input,
-    cached input and output, and a small visible table of the same split;
-    `ModelsSection` replaces a full comparison table per seat with a summary
-    card (`StatTiles` of the seat's totals) and a `StatBarChart` ranking its
-    models, a model's full figures carried in the chart's own tooltip and its
-    `sr-only` table rather than a table column each; `SpendSection` draws no
-    chart of `by_model` there — the Models section is where a model is
-    compared. Every figure — a key figure, a tile, a table column and a chart
-    series — explains itself in one short sentence, shown on hover and on
-    keyboard focus and wired as its accessible description (023).
+    (023). Its header holds a dashboard picker over `GET /v1/dashboards`
+    (`qk.dashboards.list()`) and a Reset action; the rest of the screen is
+    an iframe over a Perses dashboard, rendered by the `ui/dashboard`
+    package. Picking a dashboard from the picker is kept in the URL as
+    `?dashboard=`, defaulting to the first the list answers with. Reset opens
+    a confirm dialog (`ConfirmDialog`) whose confirmation sends
+    `POST /v1/dashboards/{name}/reset`; the action itself is disabled while
+    the picked dashboard's `document_is_default` is true, since there is
+    nothing to go back to. The iframe's `src` is `/dashboard/`, queried with
+    `daemon` (the configured daemon URL), `dashboard` (the picked name) and
+    `theme` (the app's resolved light or dark theme, as it was the moment
+    this `src` was last built) — same-origin in a packaged build, where it
+    is this package's own build under the app's `dist/`, and in development,
+    where the main dev server proxies `/dashboard` to this package's own dev
+    server. `src` is rebuilt, reopening the iframe, only on the daemon or the
+    picked dashboard changing — never on a later theme change alone, since
+    assigning a new `src` navigates the iframe the same way a typed address
+    would and would throw away whatever is open in Perses. Two
+    `postMessage`s keep an already-open iframe in step instead:
+    `{type: "theme", theme}` on every resolved-theme change after the first
+    paint, and `{type: "reload"}` when the shown dashboard's own `updated_at`
+    moves under it without the picker's own selection changing — an edit
+    saved from another window or the CLI, landing here as a
+    `dashboard_updated` event the dispatcher already patched into the row
+    `qk.dashboards.detail(name)` (`dashboard_created` and `dashboard_updated`
+    patch the detail and invalidate `qk.dashboards.lists()`;
+    `dashboard_deleted` removes the detail and invalidates the lists too,
+    reading the name off its own payload — the daemon sends the whole
+    `DashboardDto` there as well, not the generic `DeletedDto` every other
+    `*_deleted` event carries, since a dashboard has no id of its own for
+    that to name). A
+    `{type: "reload"}` has the iframe read the dashboard again and show that
+    document in a fresh `ViewDashboard`, since Perses's own internal store
+    only ever reads what it is given once, as its starting state, and a
+    changed prop alone never reaches it. Inside the iframe, `ui/dashboard`'s
+    own `Page` reads its three query parameters,
+    supplies Perses's `DatasourceApi` with one global Prometheus and one
+    global Loki datasource, each `directUrl` the daemon's own address — which
+    serves the standard Prometheus API under `/api/v1/` and the standard
+    Loki API under `/loki/api/v1/` at its root — loads
+    `GET /v1/dashboards/{name}`, renders Perses's `ViewDashboard` with
+    editing on, and saves an edit through `PUT /v1/dashboards/{name}` from
+    `ViewDashboard`'s own `onSave`.
 38. Toasts show at the bottom left, clear of the header and the pane
     (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
 39. A goal a workflow runs (030) is shown by its columns. Its lane on the
@@ -697,8 +698,10 @@ Out: the daemon endpoints themselves (012).
     styles, fonts and images from the app. It permits HTTP, HTTPS, WebSocket
     and secure WebSocket connections because the user selects the daemon's
     host. It permits Tauri IPC connections through `ipc:` and
-    `http://ipc.localhost`, so bundled plugins can work. It permits no
-    objects, bases, embedded ancestors or evaluated script.
+    `http://ipc.localhost`, so bundled plugins can work. It permits a frame
+    from the app itself (`frame-src 'self'`), which is what lets the Stats
+    screen's iframe (rule 37) open at all. It permits no objects, bases,
+    embedded ancestors or evaluated script.
 47. A click on an external `<a>`, anywhere in the app, opens it in the
     system's default browser instead of the webview, which otherwise ignores
     `target="_blank"` and has no opener wired in. The handler permits only
@@ -777,48 +780,53 @@ Out: the daemon endpoints themselves (012).
 - Closing an expanded pane returns focus to the board opener, the same as a
   docked one
   (`ui/src/components/pane-focus.test.tsx::returns focus to the board opener after closing an expanded pane`).
-- The Stats screen renders its five sections in order, and asks every family
-  with the filters in its URL under the key `qk` names
-  (`ui/src/routes/stats.test.tsx::renders the five sections in order, under
-  one heading style`, `::asks every family with the filters in its URL,
-  under the key qk names`); it leads with the key figures and lays the
-  sections out as a card grid (`::leads with the key figures, read off the
-  work, spend and attention answers`, `::lays Models across the full width, and
-  the other four out as a two-column card grid`); a
-  task, a session or a goal update invalidates the stats
-  (`ui/src/events/dispatch.test.ts::refetches every stat when a task, a
-  session or a goal moves, since any may be a fact`); Stats is the last entry of the
-  sidebar (`ui/src/components/app-shell.test.tsx::ends the navigation with
-  stats, and lists Forge beside the other screens`).
-- `ModelsSection` draws a summary card and a ranked chart per seat, heaviest
-  model first, and omits a seat with no row
-  (`ui/src/components/stats/models-section.test.tsx::draws a summary card and
-  a ranked chart for each seat, heaviest model first`, `::omits a seat with no
-  row`); `TimeSection` pairs its duration bars with a share donut and a small
-  visible comparison table
-  (`ui/src/components/stats/time-section.test.tsx::draws a share chart and a
-  compact comparison table beside the duration bars`); `SpendSection` pairs
-  its token trend with a composition donut split into fresh input, cached
-  input and output, and a small visible comparison table
-  (`ui/src/components/stats/spend-section.test.tsx::draws the tiles and the
-  time chart from a mocked response, with no by-model chart`);
-  `StatTimeChart` accepts an overlaid trend `line` with no change to its
-  `sr-only` numbers
-  (`ui/src/components/stats/stat-time-chart.test.tsx::accepts a trend line
-  over the same buckets, with no change to its sr-only numbers`).
-- Every key figure on the Stats screen, and every tile and chart series of its
-  own Work, Time, Spend and Attention sections, explains itself on hover and
-  on keyboard focus, as its accessible description (023)
-  (`ui/src/components/stats/stat-explain.test.tsx`,
-  `ui/src/routes/stats.test.tsx::explains every key figure, on hover`,
-  `ui/src/components/stats/work-section.test.tsx::explains every tile and
-  every chart series, on hover`, and the same title in
-  `time-section.test.tsx`, `spend-section.test.tsx` and
-  `attention-section.test.tsx`).
-- 97 test files cover the features, the API layer and the event stream;
-  most screens are asserted in their own `*.test.tsx` beside them, though a
-  few (noted under Known gap) are exercised only through the panels and
-  boards that mount them.
+- The Stats screen opens its iframe on the first dashboard the picker lists,
+  with the daemon, the dashboard's name and the resolved theme on the
+  iframe's own query string, and reopens it on the dashboard a `?dashboard=`
+  in the URL names
+  (`ui/src/routes/stats.test.tsx::opens the iframe on the first dashboard,
+  with the daemon, its name and the theme on its own query string`,
+  `::opens the dashboard the URL names`); the picker lists every dashboard
+  and switches the iframe on a pick
+  (`::lists every dashboard in the picker, and switches the iframe on a
+  pick`); Reset is disabled on the shipped document and enabled once
+  something was saved over it, and a confirmed reset sends
+  `POST /v1/dashboards/{name}/reset`
+  (`::disables Reset on the shipped document, and enables it once something
+  was saved over it`, `::asks before it resets a dashboard, then sends the
+  reset`); an edit saved elsewhere tells the iframe to load the document
+  again, through the same `postMessage` the host sends on a theme change
+  (`::tells the iframe to load the document again once the shown dashboard
+  is edited elsewhere`); a theme change afterwards leaves the iframe's own
+  `src` untouched, reaching it only as a `postMessage`
+  (`::keeps the iframe's src unchanged across a theme change, and posts the
+  new theme instead`).
+- The dispatcher patches a created or updated dashboard into its detail and
+  refetches the lists, and drops a deleted one the same way `skill_deleted`
+  and `workflow_deleted` do
+  (`ui/src/events/dispatch.test.ts::patches created and updated dashboards,
+  then drops a deleted dashboard`).
+- The packaged webview's content security policy permits a same-origin
+  frame (`ui/src/lib/tauri-config.test.ts::carries a restrictive content
+  security policy`).
+- The `ui/dashboard` package's own glue is tested apart from Perses, which
+  is too heavy to mount in jsdom: its `DatasourceApi` answers the daemon's
+  own URL for a global Prometheus and a global Loki datasource and nothing
+  project-scoped
+  (`ui/dashboard/src/datasource-api.test.ts`); it reads `GET` and writes
+  `PUT /v1/dashboards/{name}` against a stubbed daemon, surfacing the
+  daemon's own refusal message
+  (`ui/dashboard/src/dashboard-client.test.ts`); it reads `daemon`,
+  `dashboard` and `theme` off its own query string, defaulting the theme to
+  light
+  (`ui/dashboard/src/page-params.test.ts`); and it answers a same-origin
+  `{type: "theme"}` or `{type: "reload"}` message and ignores any other
+  origin or shape, until it is unmounted
+  (`ui/dashboard/src/use-host-messages.test.ts`).
+- 97 test files cover the features, the API layer and the event stream of
+  `ui/`, and the glue of `ui/dashboard`; most screens are asserted in their
+  own `*.test.tsx` beside them, though a few (noted under Known gap) are
+  exercised only through the panels and boards that mount them.
 - The sidebar lists Goals, Sessions, Forge, Repositories, Workflows, Agents,
   Skills, Permissions and Stats, in that order, and `#/repositories` mounts
   the repositories screen, while a screen the app dropped leads nowhere
@@ -1207,4 +1215,5 @@ account of the sessions screen in particular rests on reading
 
 ## Sources
 
-`ui/AGENTS.md` (the layout and the conventions), `ui/src/`, `ui/src-tauri/`.
+`ui/AGENTS.md` (the layout and the conventions), `ui/src/`, `ui/src-tauri/`,
+`ui/dashboard/`.

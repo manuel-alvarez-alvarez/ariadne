@@ -52,6 +52,9 @@ const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
   learned_permission_deleted: true,
   forge_settings_updated: true,
   issues_changed: true,
+  dashboard_created: true,
+  dashboard_updated: true,
+  dashboard_deleted: true,
 }
 
 const DOMAIN_EVENT_KINDS = Object.keys(DOMAIN_EVENT_KINDS_PRESENT) as DomainEventKind[]

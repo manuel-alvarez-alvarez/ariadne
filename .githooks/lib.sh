@@ -3,11 +3,13 @@
 
 # Pick the area of a repository-relative path by one rule, checked in order:
 # docs/, specs/, assets/, bench/, .github/ and *.md are no area wherever they
-# are, ui/src-tauri/ is Tauri, other ui/ is UI, and everything else is Rust.
+# are, ui/src-tauri/ is Tauri, ui/dashboard/ is its own package (dashboard),
+# other ui/ is UI, and everything else is Rust.
 githooks_area_for() {
     case "$1" in
         docs/*|specs/*|assets/*|bench/*|.github/*|*.md) echo none ;;
         ui/src-tauri/*) echo tauri ;;
+        ui/dashboard/*) echo dashboard ;;
         ui/*) echo ui ;;
         *) echo rust ;;
     esac

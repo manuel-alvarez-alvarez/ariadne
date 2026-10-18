@@ -144,6 +144,175 @@
         }
       }
     },
+    "/v1/dashboards": {
+      "get": {
+        "tags": [
+          "dashboards"
+        ],
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DashboardDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "dashboards"
+        ],
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDashboardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardDto"
+                }
+              }
+            }
+          },
+          "409": {},
+          "422": {}
+        }
+      }
+    },
+    "/v1/dashboards/{name}": {
+      "get": {
+        "tags": [
+          "dashboards"
+        ],
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardDto"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      },
+      "put": {
+        "tags": [
+          "dashboards"
+        ],
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDashboardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardDto"
+                }
+              }
+            }
+          },
+          "422": {}
+        }
+      },
+      "delete": {
+        "tags": [
+          "dashboards"
+        ],
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "409": {}
+        }
+      }
+    },
+    "/v1/dashboards/{name}/reset": {
+      "post": {
+        "tags": [
+          "dashboards"
+        ],
+        "operationId": "reset",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardDto"
+                }
+              }
+            }
+          },
+          "409": {}
+        }
+      }
+    },
     "/v1/doctor": {
       "get": {
         "tags": [
@@ -5094,6 +5263,20 @@
           }
         }
       },
+      "CreateDashboardRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "document"
+        ],
+        "properties": {
+          "document": {},
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateGoalRequest": {
         "type": "object",
         "required": [
@@ -5336,6 +5519,35 @@
           },
           "worktree_root": {
             "$ref": "#/components/schemas/PathStateDto"
+          }
+        }
+      },
+      "DashboardDto": {
+        "type": "object",
+        "required": [
+          "name",
+          "builtin",
+          "document_is_default",
+          "document",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "builtin": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "document": {},
+          "document_is_default": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
           }
         }
       },
@@ -5716,6 +5928,60 @@
                 "type": "string",
                 "enum": [
                   "workflow_deleted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/DashboardDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "dashboard_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/DashboardDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "dashboard_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/DashboardDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "dashboard_deleted"
                 ]
               }
             }
@@ -9084,6 +9350,16 @@
         },
         "additionalProperties": false
       },
+      "UpdateDashboardRequest": {
+        "type": "object",
+        "required": [
+          "document"
+        ],
+        "properties": {
+          "document": {}
+        },
+        "additionalProperties": false
+      },
       "UpdateLearnedPermissionRequest": {
         "type": "object",
         "description": "Widen a row to every repository, or narrow it back to its own.",
@@ -9509,6 +9785,10 @@
     {
       "name": "workflows",
       "description": "The kanban of columns a task is staged through"
+    },
+    {
+      "name": "dashboards",
+      "description": "Editable Perses dashboards"
     },
     {
       "name": "repositories",

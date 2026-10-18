@@ -18,12 +18,14 @@ fi
 
 run_rust=0
 run_ui=0
+run_dashboard=0
 run_tauri=0
 run_workspace_clippy=0
 run_machete=0
 run_release_please=0
 rust_crates=()
 ui_files=()
+dashboard_files=()
 shellcheck_files=()
 
 add_crate() {
@@ -37,6 +39,7 @@ add_crate() {
 if [ "$all" = 1 ]; then
     run_rust=1
     run_ui=1
+    run_dashboard=1
     run_tauri=1
     run_workspace_clippy=1
     run_machete=1
@@ -70,6 +73,10 @@ else
                     openapi.json | src/api/schema.d.ts) ;;
                     *) ui_files[${#ui_files[@]}]="$rel" ;;
                 esac
+                ;;
+            dashboard)
+                run_dashboard=1
+                dashboard_files[${#dashboard_files[@]}]="${f#ui/dashboard/}"
                 ;;
             tauri) run_tauri=1 ;;
         esac
@@ -109,6 +116,18 @@ if [ "$run_ui" = 1 ]; then
         (cd ui && githooks_run npx biome check "${ui_files[@]}")
     fi
     (cd ui && githooks_run npm run typecheck)
+fi
+
+if [ "$run_dashboard" = 1 ]; then
+    if [ ! -d ui/dashboard/node_modules ]; then
+        (cd ui/dashboard && githooks_run npm ci)
+    fi
+    if [ "$all" = 1 ]; then
+        (cd ui/dashboard && githooks_run npx biome check .)
+    elif [ "${#dashboard_files[@]}" -gt 0 ]; then
+        (cd ui/dashboard && githooks_run npx biome check "${dashboard_files[@]}")
+    fi
+    (cd ui/dashboard && githooks_run npm run typecheck)
 fi
 
 if [ "$run_tauri" = 1 ]; then

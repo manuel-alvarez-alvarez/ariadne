@@ -24,12 +24,14 @@ fi
 
 run_rust=0
 run_ui=0
+run_dashboard=0
 run_tauri=0
 
 mark_area() {
     case "$1" in
         rust) run_rust=1 ;;
         ui) run_ui=1 ;;
+        dashboard) run_dashboard=1 ;;
         tauri) run_tauri=1 ;;
     esac
 }
@@ -37,6 +39,7 @@ mark_area() {
 if [ "$all" = 1 ]; then
     run_rust=1
     run_ui=1
+    run_dashboard=1
     run_tauri=1
 else
     diff_paths_file="$(mktemp)"
@@ -71,6 +74,7 @@ else
     if [ "$had_line" = 0 ] || [ "$run_all" = 1 ]; then
         run_rust=1
         run_ui=1
+        run_dashboard=1
         run_tauri=1
     fi
 fi
@@ -97,6 +101,16 @@ if [ "$run_ui" = 1 ]; then
     (cd ui && githooks_run npm run lint)
     (cd ui && githooks_run npm run typecheck)
     (cd ui && githooks_run npm run check:unused)
+fi
+
+if [ "$run_dashboard" = 1 ]; then
+    if [ ! -d ui/dashboard/node_modules ]; then
+        (cd ui/dashboard && githooks_run npm ci)
+    fi
+    (cd ui/dashboard && githooks_run npm run check:audit)
+    (cd ui/dashboard && githooks_run npm run lint)
+    (cd ui/dashboard && githooks_run npm run typecheck)
+    (cd ui/dashboard && githooks_run npm run check:unused)
 fi
 
 if [ "$run_tauri" = 1 ]; then

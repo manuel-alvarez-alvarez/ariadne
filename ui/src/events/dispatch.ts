@@ -46,9 +46,6 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
     case "goal_updated": {
       queryClient.setQueryData(qk.goals.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
-      // A goal that moves to completed or cancelled wrote a fact the stats
-      // read.
-      void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
       // The orchestrator's own confirmed-turn and give-up evidence rides on
       // this same event (`Goal::orchestrator_answered_failed_task_ids`,
       // `Goal::orchestrator_given_up_at`) — both a failed task's own item
@@ -84,8 +81,6 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
         // status moved is no longer what it would return now.
         void queryClient.invalidateQueries({ queryKey: qk.tasks.diff(task.id) })
       }
-      // A task that moves is a fact the stats count, or will.
-      void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
       // A failed task is a machine-resource recovery item's own evidence.
       void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
@@ -116,8 +111,6 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
     case "session_updated": {
       queryClient.setQueryData(qk.sessions.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
-      // A session that ended wrote a fact the stats read.
-      void queryClient.invalidateQueries({ queryKey: qk.stats.all() })
       // An `exhausted` flag's own recovery state is a quota item's evidence.
       void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       invalidateWatchedPullRequest(queryClient, event.data.pull_request_id)
@@ -205,6 +198,21 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({
         queryKey: qk.issues.ofRepository(event.data.repository_id),
       })
+      break
+    }
+    case "dashboard_created":
+    case "dashboard_updated": {
+      queryClient.setQueryData(qk.dashboards.detail(event.data.name), event.data)
+      void queryClient.invalidateQueries({ queryKey: qk.dashboards.lists() })
+      break
+    }
+    case "dashboard_deleted": {
+      // Fat like the other two dashboard events — the daemon sends the
+      // whole `DashboardDto` here too, not the generic `DeletedDto` every
+      // other `*_deleted` event carries, since dashboards have no id of
+      // their own for one to name; only `name` is read, to drop the row.
+      queryClient.removeQueries({ queryKey: qk.dashboards.detail(event.data.name) })
+      void queryClient.invalidateQueries({ queryKey: qk.dashboards.lists() })
       break
     }
     default: {

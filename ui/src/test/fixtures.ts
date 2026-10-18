@@ -17,6 +17,7 @@ import type {
   AgentEventDto,
   AiPermissionsStatusDto,
   components,
+  DashboardDto,
   EffortDto,
   ForgeDto,
   GoalDto,
@@ -247,6 +248,18 @@ export function aSkill(overrides: Partial<SkillDto> = {}): SkillDto {
     document: "---\nname: coding\ndescription: Implement a task from its specification.\n---\n",
     document_is_default: true,
     builtin: true,
+    created_at: STAMP,
+    updated_at: STAMP,
+    ...overrides,
+  }
+}
+
+export function aDashboard(overrides: Partial<DashboardDto> = {}): DashboardDto {
+  return {
+    name: "stats",
+    builtin: true,
+    document_is_default: true,
+    document: { kind: "Dashboard", metadata: { name: "stats" }, spec: {} },
     created_at: STAMP,
     updated_at: STAMP,
     ...overrides,
