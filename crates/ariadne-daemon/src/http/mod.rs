@@ -21,6 +21,7 @@ mod logs;
 mod permissions;
 mod pins;
 mod pull_requests;
+mod query;
 mod repositories;
 mod sessions;
 mod skills;
@@ -421,6 +422,7 @@ pub fn router(state: AppState) -> Router {
         // daemon logs
         .route("/v1/logs", get(logs::snapshot))
         .route("/v1/logs/stream", get(logs::stream))
+        .merge(query::routes())
         .merge(stats::routes())
         // attention
         .route("/v1/attention", get(attention::list))

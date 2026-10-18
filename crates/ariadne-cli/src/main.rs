@@ -165,14 +165,12 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
         Command::Task { command } => commands::task::run(&client, command, format).await,
         Command::Session { command } => commands::session::run(&client, command, format).await,
         Command::Models { command } => commands::models::run(&client, command, format).await,
-        Command::Stats {
-            command,
+        Command::Query {
+            expr,
+            at,
             since,
-            repo,
-        } => {
-            let filters = commands::stats::Filters { since, repo };
-            commands::stats::run(&client, command, filters, format).await
-        }
+            step,
+        } => commands::query::run(&client, expr, at, since, step, format).await,
         Command::Attention { watch } => commands::attention::run(&client, watch, format).await,
         Command::Events {
             follow,

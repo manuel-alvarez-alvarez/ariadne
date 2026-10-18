@@ -33,7 +33,7 @@ test that proves it. Conventions for writing and changing one are in
 | 020 | [Outside session resume](020-session-adoption.md) | discover outside conversations and resume them without a task |
 | 021 | [ACP runtime](021-acp-runtime.md) | the daemon-owned ACP agent: child process, protocol, events, kill |
 | 022 | [The `ai` permission mode](022-ai-permission-mode.md) | the fourth mode, the AI permission model's settings and prompts, the Python check and the install |
-| 023 | [Stats](023-stats.md) | the stats ledger, its facts, the stat families, and the route, command and screen over them |
+| 023 | [Stats](023-stats.md) | the stats ledger, its facts, the stat families, and the routes over them |
 | 024 | [Advisory failure diagnosis](024-advisory-failure-diagnosis.md) | the optional local classifier beside a failed session's error, and why it never changes recovery |
 | 025 | [Forge integration](025-forge-integration.md) | the forge a repository's remote is on, enabling it, and the `gh` client |
 | 026 | [Pull requests](026-pull-requests.md) | request identity, three births, held fetch lists, ledger, the request session and its news, CLI, and screen |
@@ -44,4 +44,5 @@ test that proves it. Conventions for writing and changing one are in
 | 031 | [Needs attention](031-needs-attention.md) | the shared item shape, `GET /v1/attention`, the producer registry, the recovery producer, the agent-request producer (a turn-scoped `wait_for_user` hint), and the pull-request producer: an unassigned review request and a confirmed-ready request to merge |
 | 032 | [Babysitting a request by hand](032-babysitting-a-request-by-hand.md) | the `keeper` seat, its worktree and branch, asking by hand on any open request, ending it on the merge or the close, and the desktop panel |
 | 033 | [Telemetry](033-telemetry.md) | the telemetry store, the OpenTelemetry pipeline that feeds it, hourly rollup and retention, and the daemon-log routes read from it |
+| 034 | [Telemetry query APIs](034-telemetry-query.md) | the Prometheus and Loki routes over the telemetry store, the name translation, the supported PromQL and LogQL, and `ariadne query` |
 | 036 | [Dashboards](036-dashboards.md) | editable Perses dashboard documents, their catalog routes, events and CLI |

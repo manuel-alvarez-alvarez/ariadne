@@ -27,7 +27,7 @@ tests:
   - crates/ariadne-cli/src/commands/agent.rs
   - crates/ariadne-cli/src/commands/skill.rs
   - crates/ariadne-cli/src/commands/console.rs
-  - crates/ariadne-cli/src/commands/stats/mod.rs
+  - crates/ariadne-cli/src/commands/query.rs
   - crates/ariadne-cli/src/commands/task/edit.rs
   - crates/ariadne-cli/src/commands/goal.rs
   - crates/ariadne-cli/src/commands/repo.rs
@@ -53,7 +53,7 @@ same binary also serves (013).
 
 1. Every user-facing action exists both here and in the desktop app.
 2. The tree is one verb per action, grouped by entity — `version`, `doctor`,
-   `completions`, `daemon`, `agent`, `models`, `stats`, `skill`, `workflow`
+   `completions`, `daemon`, `agent`, `models`, `query`, `skill`, `workflow`
    (030), `pr` (026), `repo`, `forge` (027), `issue` (028), `permissions`,
    `goal`, `task`, `session`, `events`, `attention`, `attach`, plus the one
    hidden command the agents use (`mcp serve`). Nothing in the tree launches
@@ -278,14 +278,11 @@ same binary also serves (013).
     anything is sent, and the daemon's own refusal of an unknown id or a bad
     scope prints whole. There is no `add` or `edit`. A repository can be an
     id or path, and every verb supports JSON.
-35. `ariadne stats [work|time|spend|models|attention] [--since
-    <duration|date>] [--repo <id>]` prints one stat family off
-    `GET /v1/stats/<family>` (023). `ariadne stats` alone prints `work`.
-    Each of the five is a listing: it takes the table flags, and
-    `--format json` prints the family's DTO whole. The five print one way:
-    the figures as one aligned key-value block, then each table, one blank
-    line before each. `stats models` titles the group of sessions with no
-    seat `LOOSE SESSIONS`.
+35. `ariadne query EXPR [--at RFC3339|SPAN | --since RFC3339|SPAN [--step
+    SPAN]]` evaluates a PromQL expression through the daemon's Prometheus
+    API (034, rules 18 to 20). It is a listing: it takes the table flags,
+    and `--format json` prints the daemon's answer whole. `ariadne stats`
+    is removed.
 36. `ariadne workflow` manages the workflow catalog (030) the way `ariadne
     skill` manages skills: `ls` lists every workflow, shipped and written,
     its `name` column marked `builtin` with the shared `yes_no` wording and
@@ -368,10 +365,10 @@ lists all four values. Add a CLI parser test before relying on this coverage.
 
 ## Acceptance criteria
 
-- Each `ariadne stats <family> --format json` reads its route with the
-  filters given, and `ariadne stats` alone runs `work`
-  (`commands/stats/mod.rs::tests::each_family_reads_its_route_with_the_filters_given`,
-  `::stats_alone_runs_work`).
+- `ariadne query` accepts instant and range flags, and refuses `--at` with
+  `--since` and `--step` without `--since`
+  (`cli/tests.rs::query_takes_instant_and_range_flags`,
+  `::query_refuses_at_with_since_and_step_without_since`).
 
 - `permissions learned` provides list, show and remove commands, and `add`
   and `edit` do not parse

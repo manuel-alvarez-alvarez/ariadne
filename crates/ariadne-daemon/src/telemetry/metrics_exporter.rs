@@ -53,6 +53,26 @@ impl AsF64 for i64 {
     }
 }
 
+/// Put the resource's service name on a point's labels under
+/// [`super::RESOURCE_SERVICE_LABEL`], after its attributes, so the resource
+/// always wins. An attribute that already uses that key moves to an
+/// `exported_` key that is free, so no attribute value is lost.
+fn stamp_service(labels: &mut serde_json::Value, service: &str) {
+    let Some(object) = labels.as_object_mut() else {
+        return;
+    };
+    if let Some(attribute) = object.remove(super::RESOURCE_SERVICE_LABEL) {
+        let moved = super::exported_key(super::RESOURCE_SERVICE_LABEL, |key| {
+            object.contains_key(key)
+        });
+        object.insert(moved, attribute);
+    }
+    object.insert(
+        super::RESOURCE_SERVICE_LABEL.to_string(),
+        serde_json::Value::String(service.to_string()),
+    );
+}
+
 fn non_empty(s: &str) -> Option<String> {
     (!s.is_empty()).then(|| s.to_string())
 }
@@ -189,6 +209,10 @@ impl PushMetricExporter for StoreMetricExporter {
         if count == 0 {
             return Ok(());
         }
+        let service_name = service.as_deref().unwrap_or("ariadned");
+        for point in &mut points {
+            stamp_service(&mut point.labels, service_name);
+        }
         let store = self.store.clone();
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -211,5 +235,36 @@ impl PushMetricExporter for StoreMetricExporter {
 
     fn temporality(&self) -> Temporality {
         Temporality::Cumulative
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn the_resource_service_wins_and_a_colliding_attribute_moves_aside() {
+        let mut plain = json!({"seat": "author"});
+        stamp_service(&mut plain, "worker");
+        assert_eq!(
+            plain,
+            json!({"seat": "author", "__resource_service_name__": "worker"})
+        );
+
+        let mut colliding = json!({
+            "__resource_service_name__": "spoofed",
+            "exported___resource_service_name__": "older",
+        });
+        stamp_service(&mut colliding, "worker");
+        assert_eq!(
+            colliding,
+            json!({
+                "__resource_service_name__": "worker",
+                "exported___resource_service_name__": "older",
+                "exported_exported___resource_service_name__": "spoofed",
+            })
+        );
     }
 }

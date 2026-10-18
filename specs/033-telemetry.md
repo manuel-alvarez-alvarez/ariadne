@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-store/src/telemetry/metrics.rs
   - crates/ariadne-store/src/telemetry/retention.rs
   - crates/ariadne-daemon/src/telemetry/retention.rs
+  - crates/ariadne-daemon/src/telemetry/metrics_exporter.rs
   - crates/ariadne-daemon/src/config.rs
   - crates/ariadne-daemon/tests/it/logs.rs
   - scripts/tests/check-migrations.sh
@@ -120,6 +121,13 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
    `service`, incremented by each exporter with the number of rows it just
    wrote — so the counter's own write is itself collected and exported the
    same way on the next periodic collection.
+   The metric exporter also puts the resource's `service.name` on every
+   point it writes, under the reserved label key
+   `__resource_service_name__`, after the point's attributes, so the
+   resource always wins. An attribute that already uses the key moves to
+   `exported___resource_service_name__` (another `exported_` is added
+   while that key is taken), so no attribute value is lost. The query
+   routes read the service from this key (034, rule 8).
 
 ### The log routes
 
@@ -208,6 +216,10 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
   `::hostile_log_content_survives_sse_framing`,
   `::both_endpoints_are_in_the_openapi_document`,
   `::the_pipeline_counts_exported_log_records_on_its_own_metric`.
+- The metric exporter stores the resource's service name under the
+  reserved key, and moves a colliding attribute aside without losing it
+  (`telemetry/metrics_exporter.rs::tests::the_resource_service_wins_and_a_colliding_attribute_moves_aside`,
+  `logs.rs::the_pipeline_counts_exported_log_records_on_its_own_metric`).
 - `check-migrations.sh` guards `telemetry-migrations/` the same way it
   guards `migrations/`, each numbered from its own `0001`
   (`scripts/tests/check-migrations.sh`: `telemetry-reject-edit`,

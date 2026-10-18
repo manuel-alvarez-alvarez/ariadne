@@ -616,6 +616,28 @@ author keeps its request, what a `pr-reviewer` session does, and the tunnel's fa
 to polling; see [Configuration](configuration.md) for `gh_bin`
 and the webhook keys.
 
+## Query telemetry
+
+`ariadne query` evaluates a PromQL expression over the daemon's metrics and
+prints a table: one column per label of the result, then `VALUE`.
+
+```sh
+ariadne query 'sum by (seat) (ariadne_tokens_total)'
+ariadne query 'ariadne_tokens_total' --at 2026-01-01T10:00:00Z
+ariadne query 'rate(ariadne_tokens_total[5m])' --since 6h --step 1m
+```
+
+An instant query runs at now. `--at` moves it to an RFC 3339 time or a span
+before now. `--since` runs a range query from a span before now (or an RFC
+3339 time) to now, one point per `--step`; the step defaults to the span
+over 250, rounded up to a whole second. A range adds a `TIME` column and
+prints one row per point. The table flags apply, and `--format json` prints
+the daemon's Prometheus answer whole. A refused query prints the daemon's
+`error` sentence, such as `unsupported function stddev`.
+
+`ariadne stats` is gone. See [Telemetry](telemetry.md#querying-metrics-and-logs)
+for the supported PromQL and the metric names.
+
 ## Dashboards
 
 `ariadne dashboard` manages Perses dashboard documents. Use `ls`, `get`, `set`, `reset`, and `rm`.
@@ -739,7 +761,7 @@ the built-in help screen.
 | `task` | `create GOAL --title TEXT --agent STEP[:SKILLS]=MODEL[@EFFORT] [--description] [--depends-on]... [--repo]`; `update ID` accepts `--title`, `--description`, repeatable `--agent` and `--depends-on`, or `--clear-depends-on`; `ls` accepts `--goal`, repeatable `--status`, `-a`, `--step`, and `--watch`; `inspect`, `messages [--full]`, `history`, `cancel [-y]`, `retry`, `diff`, `attach [--seat] [--step]`, and `logs [--seat] [-f] [--tail] [--since] [--kind]...` take an ID. |
 | `session` | `ls` accepts `--kind`, `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `--refresh`, `-a`, and `--watch`; `new --model AGENT:MODEL [--effort] [--dir] [--attach]`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
 | `events`, `attention`, `attach` | `events [-f] [--goal] [--task] [--session] [--kind]...`; `attention [--watch]`; `attach ID [--seat orchestrator\|agent\|reviewer\|keeper] [--agent AGENT]`. |
-| `stats` | `work`, `time`, `spend`, `models`, and `attention`; each accepts `--since` and `--repo`; `models` also accepts `--seat`. |
+| `query` | `query EXPR [--at RFC3339\|SPAN \| --since RFC3339\|SPAN [--step SPAN]]`; evaluates the supported PromQL subset at now, at `--at`, or as a range from `--since`. |
 | `pr`, `issue`, `forge` | `pr ls [--repo] [--mine\|--review-requests] [--watch]`, `inspect REPO NUMBER`, `search --repo REPO QUERY`, `refresh [--repo]`, `review REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`, `babysit REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`; `issue ls --repo REPO [--all]`; `forge tunnel [on\|off]`. |
 | `permissions` | `ai show`, `enable [--wait]`, `disable`, `refresh [--wait]`, `set` with `--allow-threshold`, `--deny-threshold`, `--default-thresholds`, `--flavour`, or `--device`, and `test --tool TEXT --input JSON [--kind] [--option]... [--location]... [--workspace]`; `learned list [--repo]`, `show ID`, `rm ID`, and `scope ID all\|repository`. |
 | `completions`, `mcp` | `completions SHELL [--static]` for bash, elvish, fish, PowerShell, or zsh; `completions install [--shell bash\|zsh\|fish]`; `mcp serve`. |

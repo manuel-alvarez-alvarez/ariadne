@@ -1,8 +1,8 @@
 ---
 id: stats
 status: current
-updated: 2026-10-17
-areas: [api, store, daemon, cli]
+updated: 2026-10-18
+areas: [api, store, daemon]
 commits: []
 tests:
   - crates/ariadne-store/tests/store.rs
@@ -17,8 +17,6 @@ tests:
   - crates/ariadne-daemon/tests/it/stats_attention.rs
   - crates/ariadne-daemon/src/http/stats/mod.rs
   - crates/ariadne-daemon/src/acp.rs
-  - crates/ariadne-cli/src/commands/stats/mod.rs
-  - crates/ariadne-cli/src/cli/tests.rs
 ---
 
 # Stats
@@ -26,7 +24,9 @@ tests:
 What the work did. The daemon writes one fact to a ledger when a thing that
 tells performance happens, and every stat is an aggregate of that ledger. The
 stats are five families, each the answer to one question a user asks, read
-with `GET /v1/stats/<family>` and `ariadne stats <family>`. The desktop app's
+with `GET /v1/stats/<family>`. The CLI no longer reads them: `ariadne stats`
+is gone, and `ariadne query` reads the telemetry query API instead (034).
+The desktop app's
 Stats screen reads this ledger too, through a Perses dashboard rather than a
 family section of its own — see spec 015.
 
@@ -192,9 +192,8 @@ not a change to how they decide it.
     `/v1/stats/`.
 30. Each family is one file in each layer: `stats/<family>.rs` in the
     store (`Store::<family>_stats`), the API and the daemon, where the file
-    owns its handler and its part of the API document; and
-    `commands/stats/<family>.rs` in the CLI. The `mod.rs` beside each
-    registers the five once and holds what they share.
+    owns its handler and its part of the API document. The `mod.rs` beside
+    each registers the five once and holds what they share.
 31. A median averages the two middle values of an even count, and a p90 is
     the nearest-rank value. Both are 0 over no values.
 32. A family that draws a time axis buckets its facts over the span `since`
@@ -206,20 +205,16 @@ not a change to how they decide it.
     Monday of its week (`Bucket::start_of`), written as an RFC 3339 moment.
     The family's own buckets run that whole span, zeros included for a
     bucket with no fact in it.
-33. `ariadne stats [work|time|spend|models|attention] [--since
-    <duration|date>] [--repo <id>]` prints a family. `ariadne stats` alone
-    prints `work`. `--repo` takes an id or a unique prefix of one (014).
-    `--since` is sent to the daemon as it was written. Each of the five is a
-    listing: it takes the table flags (014), and `--format json` prints the
-    DTO whole. The table of a family that holds nothing to show prints one
-    muted sentence.
+33. *(retired with spec 034 — `ariadne stats` is removed, and the CLI no
+    longer reads `/v1/stats/*`; `ariadne query` reads the telemetry query API
+    instead. The daemon still serves every route of rule 29.)*
 34. The desktop app's Stats screen (`#/stats`) no longer renders this ledger
     through family sections of its own: it opens a Perses dashboard, over
     `GET /v1/dashboards` and the daemon's own Prometheus and Loki APIs, whose
     rules live in spec 015. This ledger — the facts, the five families, their
-    aggregates, `GET /v1/stats/<family>` and `ariadne stats` — is unchanged;
+    aggregates and `GET /v1/stats/<family>` — is unchanged;
     only what read it inside the desktop app changed, and nothing in this
-    spec about the CLI or the API describes the Stats screen any more.
+    spec about the API describes the Stats screen any more.
 35. *(retired with rule 34 — the family order, card grid and chart
     primitives it named belonged to the desktop screen alone)*.
 36. *(retired with rule 34 — the query key and event invalidation it named
@@ -256,10 +251,6 @@ changes landed, over time.
     `tasks_cancelled`, `goals_completed` and `landed`. `since` and
     `repo_id` narrow every count, as rule 12 says.
 41. `GET /v1/stats/work` answers `WorkStatsDto`, `work_stats`'s own shape.
-    `ariadne stats work` prints the totals as `label: value` lines, then a
-    table of the buckets, `FROM` (the hour too where the bucket is an hour),
-    `FINISHED`, `FAILED`, `CANCELLED`, `GOALS` and `LANDED`; `--format json`
-    prints the DTO whole.
 
 ### Time
 
@@ -273,8 +264,7 @@ changes landed, over time.
     the value the daemon writes for a person who answered. It answers their
     prompt count, total seconds and median seconds from `wait_ms`. Both the
     task and permission reads honour `since` and `repo`.
-44. `ariadne stats time` prints the lead-time and person-waiting figures as
-    label and value lines, then `STATUS`, `TOTAL`, `MEDIAN` and `SHARE` rows.
+44. *(retired with rule 33 — it named the `ariadne stats time` table)*.
 
 ### Spend
 
@@ -302,12 +292,7 @@ nothing here converts one.
     `share` — `input_tokens + output_tokens` over the same total of every
     model — the heaviest model first. A fact naming no model answers no row.
 50. `GET /v1/stats/spend` answers `SpendStatsDto`, the aggregate's own shape.
-51. `ariadne stats spend` prints the totals and the per-task figures as the
-    aligned key-value block every family uses (014, rule 35), then a table of
-    `by_model` (`MODEL`, `TOKENS` — the usage cell every table prints —
-    `SHARE`), then a table of `buckets` (`FROM` — the hour too where the
-    bucket is an hour — `INPUT`, `CACHED`, `OUTPUT`), one blank line before
-    each table. `--format json` prints the DTO whole.
+51. *(retired with rule 33 — it named the `ariadne stats spend` tables)*.
 52. A family with no ended session is empty.
 
 ### Models
@@ -334,10 +319,7 @@ Cached tokens are already part of input and are never added again.
 `tasks_finished` counts this model's `task_ended` facts with status `finished`: the tasks
 whose last column this model's agent ended.
 
-The CLI prints one comparison table per seat, headed by the seat.
-`--seat orchestrator|agent` belongs only to `stats models` and limits table output.
-JSON output always contains the complete DTO, regardless of `--seat`.
-A seatless row uses the TASKS columns under `LOOSE SESSIONS` in the CLI and remains available in JSON.
+A seatless row stays in the answer.
 
 ### Attention
 
@@ -362,8 +344,6 @@ by these rules:
 nowhere; `total` is the sum of the three counts; `person_secs` sums
 `wait_ms / 1000` of those permissions and `wait_secs` of those attention
 facts. The time and repository filters apply before the counts.
-`ariadne stats attention` prints the interventions total and the person time
-alongside the family's other totals.
 
 ## Acceptance criteria
 
@@ -443,15 +423,6 @@ alongside the family's other totals.
   `stats_work.rs::the_work_stat_answers_the_totals_and_the_buckets`); the
   reviews, switches and outcomes routes answer 404
   (`stats.rs::the_old_families_are_gone`).
-- Each `ariadne stats <family> --format json` reads its own route with the
-  filters given
-  (`commands/stats/mod.rs::tests::each_family_reads_its_route_with_the_filters_given`),
-  and `ariadne stats` alone runs `work`
-  (`commands/stats/mod.rs::tests::stats_alone_runs_work`,
-  `cli/tests.rs::stats_alone_runs_work_and_takes_the_filters_either_side`).
-- The five are classified and take the table flags of a listing
-  (`cli/tests.rs::every_command_in_the_tree_is_classified`,
-  `::the_listing_flags_are_advertised_exactly_where_they_are_honored`).
 - The Stats screen's own acceptance criteria — the dashboard picker, the
   Reset action, the iframe and its message protocol — are spec 015's; none
   of this ledger's own behavior changed underneath it.
@@ -478,12 +449,6 @@ alongside the family's other totals.
   `::work_stats_buckets_by_week_with_no_since_and_facts_over_sixty_days`).
 - `GET /v1/stats/work` answers the totals and the buckets
   (`stats_work.rs::the_work_stat_answers_the_totals_and_the_buckets`).
-- `ariadne stats work --format json` prints the DTO, and the table prints the
-  totals and a row per bucket, an hour bucket's row showing the time of day
-  beside its date
-  (`commands/stats/work.rs::tests::the_totals_print_as_label_value_lines_in_field_order`,
-  `::a_bucket_row_carries_every_count_in_column_order`,
-  `::a_bucket_row_shows_the_time_of_day_for_an_hour_bucket`).
 #### Time
 
 - A finished task records time in every status it passed
@@ -515,15 +480,6 @@ alongside the family's other totals.
 - `GET /v1/stats/spend` answers the totals, the buckets and the models for an
   ended session
   (`stats_spend.rs::the_spend_stat_answers_the_totals_the_buckets_and_the_models_for_an_ended_session`).
-- The table prints the totals and the per-task figures as the shared
-  key-value block every family uses (014, rule 35)
-  (`commands/stats/spend.rs::tests::the_totals_render_as_the_shared_kv_block`),
-  then a model row and a bucket row, one blank line between each block
-  (`commands/stats/spend.rs::tests::the_table_prints_a_model_row_and_a_bucket_row`),
-  an hour bucket's date carrying its time of day too
-  (`commands/stats/spend.rs::tests::bucket_date_carries_the_time_of_day_for_an_hour_bucket`),
-  and a family with no ended session is empty
-  (`commands/stats/spend.rs::tests::a_family_with_no_ended_session_is_empty`).
 
 #### Models
 
@@ -543,12 +499,6 @@ alongside the family's other totals.
   (`stats/models.rs::tests::models_named_in_other_facts_get_rows_under_both_filters`).
 - The route answers the new shape per model and seat under both filters
   (`stats_models.rs::each_model_and_seat_answers_its_figures_under_both_filters`).
-- CLI tables print each seat's columns and figures in seat order, and only the models command accepts `--seat`
-  (`commands/stats/models.rs::tests::each_seat_prints_its_own_columns_and_figures`,
-  `::every_seat_prints_a_table_in_seat_order`,
-  `::the_seat_option_belongs_only_to_models_and_prints_one_table`).
-- JSON preserves the complete DTO with a seat selected
-  (`commands/stats/models.rs::tests::json_reads_the_complete_dto_even_with_a_seat_selected`).
 
 #### Attention
 
@@ -556,16 +506,14 @@ alongside the family's other totals.
   when they remove a flag (`store.rs::attention_clears_write_facts_only_when_a_flag_falls`).
 - The aggregate groups permission answers, flag reasons, failures, stalls and
   exhausted switches under both filters (`stats/attention.rs`).
-- The route and command expose the family, including its decider and flag
-  breakdowns (`stats_attention.rs`, `commands/stats/attention.rs`).
+- The route exposes the family, including its decider and flag breakdowns
+  (`stats_attention.rs`).
 - Interventions count permissions, questions and stalls, exclude
   `waiting_permission`, sum `person_secs`, and obey both filters
   (`stats/attention.rs::tests::interventions_count_permissions_questions_and_stalls_and_exclude_waiting_permission`,
   `::interventions_honour_since_and_repo_id`).
 - `GET /v1/stats/attention` answers the `interventions` object
   (`stats_attention.rs::the_attention_stat_answers_the_interventions_object`).
-- `ariadne stats attention` prints the interventions total and the person
-  time (`commands/stats/attention.rs::tests::the_kv_lines_carry_the_interventions_total_and_the_person_time`).
 
 ## Sources
 
@@ -582,5 +530,4 @@ alongside the family's other totals.
 `crates/ariadne-daemon/src/scheduler/goals.rs`,
 `crates/ariadne-daemon/src/scheduler/sweeps.rs`,
 `crates/ariadne-daemon/src/scheduler/auto_switch.rs`,
-`crates/ariadne-daemon/src/scheduler/tasks.rs`,
-`crates/ariadne-cli/src/commands/stats/`.
+`crates/ariadne-daemon/src/scheduler/tasks.rs`.

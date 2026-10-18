@@ -14,7 +14,7 @@ reads.
 | [Configuration](configuration.md) | every key of `~/.ariadne/config.toml`, and the environment that addresses a daemon |
 | [Telemetry](telemetry.md) | the telemetry database, what it keeps and for how long, and reading the daemon's log |
 | [Permission modes](permissions.md) | automatic, prompted, remembered, and AI-judged ACP permission answers |
-| [Stats](stats.md) | what the work did, in five questions: the filters and `ariadne stats` |
+| [Stats](stats.md) | what the work did, in five questions: the filters and the stats API |
 | [Dashboards](dashboards.md) | the Stats screen's Perses dashboard: editing a panel, saving, resetting, and `ariadne dashboard` |
 | [Resuming a session](resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
 | [How Ariadne works](how-it-works.md) | a goal from planning through its workflow's columns, task lifecycle, and ACP sessions |

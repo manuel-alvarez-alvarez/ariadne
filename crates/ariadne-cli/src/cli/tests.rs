@@ -234,11 +234,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("skill reset", true),
     ("skill rm", true),
     ("skill set", true),
-    ("stats attention", true),
-    ("stats models", true),
-    ("stats spend", true),
-    ("stats time", true),
-    ("stats work", true),
+    ("query", true),
     ("task attach", false),
     ("task cancel", true),
     ("task create", true),
@@ -2175,37 +2171,34 @@ fn advertises(cmd: &clap::Command, path: &[&str], id: &str) -> bool {
         .any(|a| a.get_id() == id && !a.is_hide_set())
 }
 
-/// `ariadne stats` alone names no family, which runs `work`, and the filters
-/// parse on either side of the family.
+/// `ariadne query` accepts instant and range-query flags.
 #[test]
-fn stats_alone_runs_work_and_takes_the_filters_either_side() {
-    let Command::Stats {
-        command,
+fn query_takes_instant_and_range_flags() {
+    let Command::Query {
+        expr,
+        at,
         since,
-        repo,
-    } = parse(&["ariadne", "stats", "--since", "7d"]).command
+        step,
+    } = parse(&["ariadne", "query", "up", "--at", "2026-01-01T00:00:00Z"]).command
     else {
-        panic!("stats");
+        panic!("query");
     };
-    assert!(command.is_none());
-    assert_eq!(since.as_deref(), Some("7d"));
-    assert_eq!(repo, None);
+    assert_eq!(expr, "up");
+    assert_eq!(at.as_deref(), Some("2026-01-01T00:00:00Z"));
+    assert_eq!(since, None);
+    assert_eq!(step, None);
 
-    let Command::Stats {
-        command,
-        since,
-        repo,
-    } = parse(&[
-        "ariadne", "stats", "--repo", "01JREPO", "models", "--since", "24h",
-    ])
-    .command
+    let Command::Query { since, step, .. } =
+        parse(&["ariadne", "query", "up", "--since", "24h", "--step", "30s"]).command
     else {
-        panic!("stats models");
+        panic!("range query");
     };
-    assert!(matches!(
-        command,
-        Some(crate::commands::stats::StatsCommand::Models(_))
-    ));
     assert_eq!(since.as_deref(), Some("24h"));
-    assert_eq!(repo.as_deref(), Some("01JREPO"));
+    assert_eq!(step.as_deref(), Some("30s"));
+}
+
+#[test]
+fn query_refuses_at_with_since_and_step_without_since() {
+    assert!(try_parse(&["ariadne", "query", "up", "--at", "1h", "--since", "2h"]).is_err());
+    assert!(try_parse(&["ariadne", "query", "up", "--step", "30s"]).is_err());
 }

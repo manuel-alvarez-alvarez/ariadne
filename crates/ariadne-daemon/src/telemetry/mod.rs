@@ -118,6 +118,23 @@ impl Telemetry {
     }
 }
 
+/// The label key each stored metric point carries its resource's
+/// `service.name` under. The `__` prefix is Prometheus's reserved one, so no
+/// conventional attribute takes it; the metric exporter moves aside an
+/// attribute that does, and the query routes (034) read the service from
+/// this key alone.
+pub(crate) const RESOURCE_SERVICE_LABEL: &str = "__resource_service_name__";
+
+/// `key` with `exported_` added until `taken` holds no such key: where a
+/// label that must not be overwritten moves to, the Prometheus way.
+pub(crate) fn exported_key(key: &str, taken: impl Fn(&str) -> bool) -> String {
+    let mut moved = format!("exported_{key}");
+    while taken(&moved) {
+        moved = format!("exported_{moved}");
+    }
+    moved
+}
+
 static TELEMETRY_RECORDS: OnceLock<Counter<u64>> = OnceLock::new();
 
 /// Count `count` records of `signal` (`"log"` or `"metric"`) as exported,

@@ -16,7 +16,6 @@ use crate::commands::permissions::PermissionsCommand;
 use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
 use crate::commands::skill::SkillCommand;
-use crate::commands::stats::StatsCommand;
 use crate::commands::task::TaskCommand;
 use crate::commands::workflow::WorkflowCommand;
 use crate::output::{ColorChoice, Format};
@@ -37,6 +36,7 @@ Examples:
   ariadne task ls --goal <goal-id>         # the tasks it was broken into
   ariadne attach <id>                      # a session, task or goal id
 ";
+const QUERY_EXAMPLES: &str = "Examples:\n  ariadne query 'sum by (seat) (ariadne_tokens_total)'\n  ariadne query 'rate(ariadne_tokens_total[5m])' --since 6h --step 1m\n  ariadne query up --at 2026-01-01T10:00:00Z --format json";
 const DASHBOARD_EXAMPLES: &str = "Examples:\n  ariadne dashboard ls\n  ariadne dashboard get stats\n  ariadne dashboard set mine dashboard.json";
 
 /// What each group's help ends with: what that group is most often asked to
@@ -329,21 +329,25 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: ModelsCommand,
     },
-    /// Show what the work did, one question per family
+    /// Evaluate a PromQL expression over the daemon's telemetry
     ///
-    /// Read off the facts the daemon records as work happens. `stats` alone
-    /// runs `stats work`.
-    Stats {
-        #[command(subcommand)]
-        command: Option<StatsCommand>,
-        /// Only what happened since then: a span back from now (30m, 24h,
-        /// 7d, 2w) or an RFC 3339 moment
-        #[arg(long, global = true, value_name = "DURATION|DATE")]
+    /// An instant query runs at now, or at --at. --since runs a range query
+    /// from then to now, one point per --step. The table has a column per
+    /// label of the result, then VALUE; a range adds TIME and one row per
+    /// point. --format json prints the daemon's Prometheus answer whole.
+    #[command(after_help = QUERY_EXAMPLES)]
+    Query {
+        /// PromQL expression
+        expr: String,
+        /// Evaluate at this RFC 3339 time, or this span before now (1h)
+        #[arg(long, conflicts_with = "since")]
+        at: Option<String>,
+        /// Run a range query from this span before now (24h), or RFC 3339 time
+        #[arg(long)]
         since: Option<String>,
-        /// Only what happened in one repository
-        #[arg(long, global = true,
-              add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
-        repo: Option<String>,
+        /// Range query resolution (30s); default: the span over 250
+        #[arg(long, requires = "since")]
+        step: Option<String>,
     },
     /// Manage agent skills
     ///
@@ -589,11 +593,7 @@ const LISTINGS: &[&str] = &[
     "skill ls",
     "repo ls",
     "session ls",
-    "stats attention",
-    "stats models",
-    "stats spend",
-    "stats time",
-    "stats work",
+    "query",
     "task history",
     "task ls",
     "task messages",
@@ -615,6 +615,7 @@ const QUIET_OUTPUT: &[&str] = &[
     "models enable",
     "models ls",
     "pr review",
+    "query",
     "repo add",
     "repo ls",
     "repo rm",

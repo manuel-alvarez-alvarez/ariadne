@@ -36,17 +36,9 @@ bars only once that record is more than 31 days back.
 
 ## From the CLI
 
-```sh
-ariadne stats                       # the same as `ariadne stats work`
-ariadne stats time --since 7d
-ariadne stats spend --repo <repo-id> --format json
-```
-
-The families are `work`, `time`, `spend`, `models` and `attention`.
-`--repo` takes a repository id or a unique prefix of one. Each family takes
-the table flags (`--no-trunc`, `-o`, `--columns`), and `--format json` prints
-what the daemon sent, whole. A family with nothing to show prints one
-sentence that says so.
+The CLI has no `ariadne stats` command any more. Read a family from the API
+below. For the daemon's metrics, use `ariadne query` with a PromQL
+expression — see [Telemetry](telemetry.md#querying-metrics-and-logs).
 
 ## In the desktop app
 
@@ -79,11 +71,6 @@ The totals:
 The chart below them is tasks per bucket, stacked by how each one ended; its
 tooltip also shows goals completed and changes landed for that bucket.
 
-```sh
-ariadne stats work                  # the totals, then a table of the buckets
-ariadne stats work --format json
-```
-
 ## Time
 
 Time shows how long finished tasks took from creation to their ending. It
@@ -115,16 +102,8 @@ share alongside in the tooltip.
 
 Compare models within the same seat to choose who should do the next job.
 
-```sh
-ariadne stats models
-ariadne stats models --seat agent --since 7d
-ariadne stats models --format json
-```
-
-The command shows every seat by default. Use `--seat agent` or `--seat
-orchestrator` to show one table. JSON always returns every seat, even with
-`--seat`. The desktop shows Agents and Orchestrators, with the largest task
-or goal count first. A seat with no rows has no table.
+The answer holds a row per model and seat, the largest task or goal count
+first.
 
 Agents show the model's tasks, tokens, time, messages and finished tasks.
 TASKS counts the distinct tasks a model ran a session on as a column's
@@ -134,9 +113,8 @@ TOKENS is input and output tokens together, cached tokens counted once
 within input. TIME is the sum of that model's session lifetimes in that
 seat, and MESSAGES the count of messages it sent there.
 
-A session with no seat groups under its own table too, headed NONE in the
-CLI; the desktop does not show it. The API and JSON keep every row, seatless
-rows included.
+A session with no seat has its own rows too. The API keeps every row,
+seatless rows included.
 
 ## Attention
 
@@ -148,6 +126,4 @@ made because a model ran out of room.
 
 In the desktop app, the four headline figures are the prompts you answered,
 your mean wait, questions asked and stalled sessions. The charts break down
-permission answers by decider and attention flags by reason. In the CLI,
-`ariadne stats attention` prints those session figures followed by the two
-tables; `--format json` returns the full response.
+permission answers by decider and attention flags by reason.
