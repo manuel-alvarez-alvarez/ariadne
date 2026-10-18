@@ -33,6 +33,25 @@ global one, so a later task can record a metric through
 provider's batch processor and periodic collector run on their own thread,
 with no daemon work waiting on either.
 
+## Sending OTLP data
+
+Any OTLP/HTTP client can send logs to `POST /otlp/v1/logs` and metrics to
+`POST /otlp/v1/metrics`. Both endpoints accept `application/x-protobuf` and
+`application/json`; gzip content is accepted too. The daemon stores each
+record under the resource's `service.name`, or `unknown` if it is absent.
+
+For example, point a standard OTLP exporter at the daemon's TCP listener:
+
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:7432 \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+your-application
+```
+
+The exporter adds `/v1/logs` or `/v1/metrics` to its configured OTLP endpoint;
+for Ariadne, configure the endpoint with its `/otlp` prefix where the exporter
+supports a per-signal URL, such as `http://127.0.0.1:7432/otlp`.
+
 ## Where, and for how long
 
 `telemetry_db_path` in `config.toml` sets where the database lives (default

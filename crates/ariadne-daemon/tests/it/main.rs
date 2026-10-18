@@ -41,6 +41,7 @@ mod learned_permissions;
 mod logs;
 mod managers;
 mod models;
+mod otlp;
 mod outcome_stats;
 mod pins;
 mod plan_finalize;

@@ -139,3 +139,10 @@ fn record_pipeline_count(signal: &'static str, service: &str, count: u64) {
         ],
     );
 }
+
+/// Count records that arrived through an OTLP/HTTP receiver.
+pub(crate) fn record_ingested_count(signal: &'static str, services: &[String]) {
+    for service in services {
+        record_pipeline_count(signal, service, 1);
+    }
+}

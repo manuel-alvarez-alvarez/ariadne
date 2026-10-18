@@ -18,6 +18,7 @@ mod forge;
 mod goals;
 mod issues;
 mod logs;
+mod otlp;
 mod permissions;
 mod pins;
 mod pull_requests;
@@ -181,6 +182,7 @@ impl AppState {
         models::set_enabled,
         models::set_rank,
         logs::snapshot, logs::stream,
+        otlp::logs, otlp::metrics,
         attention::list,
     ),
     components(schemas(
@@ -215,6 +217,7 @@ impl AppState {
         (name = "events", description = "Agent events the ACP runtime reports, and the live domain-event stream"),
         (name = "models", description = "The model catalog discovery found each registry agent offering"),
         (name = "logs", description = "The daemon's own process log"),
+        (name = "telemetry", description = "OpenTelemetry Protocol ingestion"),
         (name = "stats", description = "How work performs, read off the stats ledger"),
         (name = "attention", description = "The authoritative list of what needs a human now"),
     )
@@ -421,6 +424,8 @@ pub fn router(state: AppState) -> Router {
         // daemon logs
         .route("/v1/logs", get(logs::snapshot))
         .route("/v1/logs/stream", get(logs::stream))
+        .route("/otlp/v1/logs", post(otlp::logs))
+        .route("/otlp/v1/metrics", post(otlp::metrics))
         .merge(stats::routes())
         // attention
         .route("/v1/attention", get(attention::list))

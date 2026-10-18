@@ -12,6 +12,7 @@ tests:
   - crates/ariadne-daemon/src/telemetry/retention.rs
   - crates/ariadne-daemon/src/config.rs
   - crates/ariadne-daemon/tests/it/logs.rs
+  - crates/ariadne-daemon/tests/it/otlp.rs
   - scripts/tests/check-migrations.sh
   - ui/src/features/system/daemon-log-stream.test.ts
   - ui/src/features/system/daemon-logs-drawer.test.tsx
@@ -139,7 +140,18 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
    shape the daemon's old in-process capture layer rendered live.
 8. `ariadne daemon logs` gains `--service` and `--level`, each forwarded as
    the matching query parameter to both the snapshot and the stream route.
-9. The desktop logs drawer gains a service filter (all, `ariadned`,
+9. `POST /otlp/v1/logs` and `POST /otlp/v1/metrics` accept OTLP/HTTP on both
+   listeners. They accept `application/x-protobuf` and `application/json`,
+   including gzip content, and return the matching Export response encoding.
+   Each body is limited to 8 MB; malformed data answers 400, an unsupported
+   content type answers 415, and an oversized body answers 413. Resource
+   `service.name` becomes a log's service (or `unknown`); scope, severity,
+   body, attributes, trace ID and span ID persist. Gauges and cumulative sums
+   persist directly; delta sums accumulate by series; histograms and summaries
+   flatten into Prometheus-shaped series. Exponential histograms are refused
+   through OTLP `partial_success`. Accepted records increment
+   `ariadne.telemetry.records` with their signal and service.
+10. The desktop logs drawer gains a service filter (all, `ariadned`,
    `ariadne-desktop`, `ariadne-cli`) and a level filter (all, trace, debug,
    info, warn, error), as two selects beside the drawer's title; picking
    either reopens the stream on the new filter, replacing what was shown.
@@ -219,6 +231,10 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
   `daemon-log-stream.test.ts::daemonLogStreamUrl > carries a service and level filter as query parameters`,
   `::leaves the query string off when the filter picks everything`,
   `daemon-logs-drawer.test.tsx::reconnects with a service and level filter when one is picked`.
+- OTLP/HTTP logs and metrics are decoded and written under the resource service,
+  an unsupported media type is refused, and both routes appear in OpenAPI:
+  `otlp.rs::otlp_logs_and_metrics_are_written_under_the_resource_service`,
+  `::otlp_refuses_bad_media_and_documents_both_routes`.
 
 ## Sources
 

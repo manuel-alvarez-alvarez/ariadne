@@ -169,7 +169,7 @@ dependencies = [
  "http",
  "opentelemetry 0.31.0",
  "opentelemetry-appender-tracing 0.31.1",
- "opentelemetry-proto",
+ "opentelemetry-proto 0.31.0",
  "opentelemetry_sdk 0.31.0",
  "prost",
  "ratatui",
@@ -258,6 +258,7 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
+ "flate2",
  "futures-util",
  "getrandom 0.4.3",
  "hex",
@@ -268,7 +269,9 @@ dependencies = [
  "notify",
  "opentelemetry 0.33.1",
  "opentelemetry-appender-tracing 0.33.1",
+ "opentelemetry-proto 0.33.1",
  "opentelemetry_sdk 0.33.1",
+ "prost",
  "regex",
  "reqwest 0.13.5",
  "rustix",
@@ -2752,6 +2755,20 @@ dependencies = [
  "serde_json",
  "tonic",
  "tonic-prost",
+]
+
+[[package]]
+name = "opentelemetry-proto"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d576f5dddc3299341bcd85a04be17b2564844c0c9563214f02d85f2524d1afae"
+dependencies = [
+ "base64 0.22.1",
+ "const-hex",
+ "opentelemetry 0.33.1",
+ "opentelemetry_sdk 0.33.1",
+ "prost",
+ "serde",
 ]
 
 [[package]]
