@@ -5,14 +5,18 @@
 //! the capabilities it declares, the configuration options it offers, the
 //! reply to each prompt — updates of any kind (message and thought chunks, a
 //! plan, tool calls and as many updates of each as the test lists), a
-//! permission request, the stop reason, an exit mid-turn, or a pause
+//! permission request, the stop reason, an exit mid-turn, a stdin closed
+//! before the turn's answer (`close_stdin`), after which the agent reads
+//! nothing more and stays up until it is killed, or a pause
 //! (`wait_for`) a test holds the turn open on after its updates went out,
 //! during which a `session/cancel` ends the turn as `cancelled`, with the
 //! turn's usage, unless `ignore_cancel` says otherwise, and during which
-//! `updates_when` sends more updates once a file exists — and the
-//! stored sessions a load or resume finds, which `session/list` answers
-//! whole, or `session_page_size` at a time behind a `nextCursor` — and never
-//! answers a page from `session_list_stall_from` on, and how long the agent
+//! `updates_when` sends more updates once a file exists, `new_updates` sends
+//! after `session/new`, and `between_turn_updates` sends once a test creates
+//! its marker file — and the stored sessions a load or resume finds, which
+//! `session/list` answers whole, or `session_page_size` at a time behind a `nextCursor` — and never
+//! answers a page from `session_list_stall_from` on, nor any before the file
+//! `session_list_wait_for` names exists, and how long the agent
 //! takes to come up at all (`start_delay`, in seconds). With `writer_child`
 //! it is codex-acp's shape: the conversation is written by a child process
 //! the agent starts, which outlives the agent by [`WRITER_LINGER_SECS`]
@@ -45,6 +49,10 @@ pub(crate) struct StubAcpAgent {
 }
 
 impl StubAcpAgent {
+    pub(crate) fn set_parent_pid(&self, pid: u32) {
+        let dir = Path::new(&self.bin).parent().unwrap();
+        std::fs::write(dir.join("acp-parent-pid"), pid.to_string()).unwrap();
+    }
     /// Every JSON-RPC message the daemon sent, in the order it arrived.
     pub(crate) fn messages(&self) -> Vec<Value> {
         std::fs::read_to_string(&self.log)
@@ -199,7 +207,57 @@ impl StubAcpAgent {
         }
         dir.as_os_str().to_os_string()
     }
+
+    /// A `PATH` holding this stub under `name` as a pnpm global shim: a
+    /// script, not a symlink, whose own text names the path pnpm resolves it
+    /// through — [`PNPM_LAUNCHER`] names `@agentclientprotocol/claude-agent-acp`
+    /// — so the symlink chain never reaches the package, and only the
+    /// shim's text does.
+    pub(crate) fn path_as_pnpm_shim(&self, name: &str) -> OsString {
+        let dir = Path::new(&self.bin).parent().unwrap();
+        let link = dir.join(name);
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(super::shared_script(PNPM_LAUNCHER), &link).unwrap();
+        dir.as_os_str().to_os_string()
+    }
+
+    /// The same shim, except its text names a path under a package whose
+    /// name only shares a prefix with the real one —
+    /// [`PNPM_LAUNCHER_LEGACY_PREFIX`] names
+    /// `@agentclientprotocol/claude-agent-acp-legacy` — the way a substring
+    /// check would wrongly accept but a path-component check does not.
+    pub(crate) fn path_as_pnpm_shim_for_a_similarly_prefixed_package(
+        &self,
+        name: &str,
+    ) -> OsString {
+        let dir = Path::new(&self.bin).parent().unwrap();
+        let link = dir.join(name);
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(super::shared_script(PNPM_LAUNCHER_LEGACY_PREFIX), &link)
+            .unwrap();
+        dir.as_os_str().to_os_string()
+    }
 }
+
+/// Like [`LAUNCHER`], behind a name a pnpm global shim carries: a real pnpm
+/// shim is a script rather than a symlink, and its own text names the path
+/// pnpm resolves it through — here, a comment naming
+/// `@agentclientprotocol/claude-agent-acp`, the way the real path would.
+const PNPM_LAUNCHER: &str = "#!/bin/sh\n\
+# .pnpm/@agentclientprotocol+claude-agent-acp@0.79.0/node_modules/@agentclientprotocol/claude-agent-acp/bin/claude-agent-acp\n\
+case \"$0\" in */*) dir=${0%/*} ;; *) resolved=$(command -v \"$0\"); dir=${resolved%/*} ;; esac\n\
+IFS= read -r parent < \"$dir/acp-parent-pid\"\n\
+exec python3 -S \"$dir/acp-stub.py\" \"$parent\" \"$dir/acp-script.json\" \"$@\"\n";
+
+/// Like [`PNPM_LAUNCHER`], except the path in its comment names
+/// `claude-agent-acp-legacy`, a package of its own that merely shares the
+/// real one's name as a prefix: a path a substring check would mistake for
+/// the real package, and a path-component check would not.
+const PNPM_LAUNCHER_LEGACY_PREFIX: &str = "#!/bin/sh\n\
+# .pnpm/@agentclientprotocol+claude-agent-acp-legacy@0.1.0/node_modules/@agentclientprotocol/claude-agent-acp-legacy/bin/claude-agent-acp\n\
+case \"$0\" in */*) dir=${0%/*} ;; *) resolved=$(command -v \"$0\"); dir=${resolved%/*} ;; esac\n\
+IFS= read -r parent < \"$dir/acp-parent-pid\"\n\
+exec python3 -S \"$dir/acp-stub.py\" \"$parent\" \"$dir/acp-script.json\" \"$@\"\n";
 
 /// Install `name` on `dir` as a package manager does: `program` under the
 /// directories `package` is unpacked into, and `name` itself a link to it.
@@ -314,6 +372,7 @@ pub(crate) fn stub_acp_agent(dir: &Path, script: Value) -> StubAcpAgent {
     let pid_file = dir.join("acp-agent.pid");
     let script_file = dir.join("acp-script.json");
     write_script_file(&script_file, script, &log, &launches, &pid_file);
+    std::fs::write(dir.join("acp-parent-pid"), std::process::id().to_string()).unwrap();
 
     std::fs::write(dir.join("acp-stub.py"), STUB).unwrap();
     // The launcher is one shared file (see `shared_script`), linked into
@@ -349,16 +408,42 @@ fn write_script_file(
 /// What the registry launches: the stub and the script next to the link
 /// the launcher was started by. `$0` is that link, not the shared file.
 const LAUNCHER: &str = "#!/bin/sh\n\
-dir=$(dirname \"$0\")\n\
-exec python3 \"$dir/acp-stub.py\" \"$dir/acp-script.json\" \"$@\"\n";
+case \"$0\" in */*) dir=${0%/*} ;; *) resolved=$(command -v \"$0\"); dir=${resolved%/*} ;; esac\n\
+IFS= read -r parent < \"$dir/acp-parent-pid\"\n\
+exec python3 -S \"$dir/acp-stub.py\" \"$parent\" \"$dir/acp-script.json\" \"$@\"\n";
 
 /// The stub itself: single-threaded, line-oriented, and honest about order —
 /// it answers exactly what the script says, logs every incoming message, and
 /// exits on stdin closing, the way an ACP agent ends with its client.
 const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, select, subprocess, sys, time
+import json, os, select, subprocess, sys, threading, time
 
-script = json.load(open(sys.argv[1]))
+parent = int(sys.argv[1])
+script = json.load(open(sys.argv[2]))
+def parent_alive():
+    # kill(pid, 0) still succeeds for an unreaped zombie. A direct child is
+    # reparented as soon as its parent dies, so getppid detects that state
+    # without requiring anyone else to reap the former parent first.
+    if os.getppid() != parent:
+        return False
+    try:
+        os.kill(parent, 0)
+    except OSError:
+        return False
+    return True
+def orphaned():
+    # Ends with the test process, however that one ends.
+    while parent_alive():
+        time.sleep(0.2)
+    os._exit(0)
+threading.Thread(target=orphaned, daemon=True).start()
+
+if not parent_alive():
+    os._exit(0)
+if sys.argv[3:5] == ["session", "delete"]:
+    with open(script["log"], "a") as f:
+        f.write(json.dumps({"method": "cli/session/delete", "args": sys.argv[3:]}) + "\n")
+    sys.exit(script.get("delete_exit", 0))
 # An agent slow to come up: nothing is said, and nothing read, until
 # `start_delay` seconds have passed — the window in which the daemon has
 # launched a session and heard nothing from it yet.
@@ -371,7 +456,7 @@ with open(script["pid_file"], "w") as f:
 with open(script["launches"], "a") as f:
     f.write(json.dumps({"ariadne_session": os.environ.get("ARIADNE_SESSION_ID"),
                         "codex_mode": os.environ.get("INITIAL_AGENT_MODE"),
-                        "argv": sys.argv[2:]}) + "\n")
+                        "argv": sys.argv[3:]}) + "\n")
 
 # The process that writes the conversation, as codex-acp's `codex
 # app-server` does: a child of the agent that ends once the agent is gone —
@@ -418,8 +503,8 @@ permissions = 0
 
 
 class Failure(Exception):
-    def __init__(self, code, message):
-        self.code, self.message = code, message
+    def __init__(self, code, message, data=None):
+        self.code, self.message, self.data = code, message, data
 
 
 def log(message):
@@ -435,6 +520,10 @@ def send(message):
 
 
 def read():
+    # A stdin the turn closed reads nothing more: the agent stays up, its
+    # stdout open, until it is killed.
+    while stdin.closed:
+        time.sleep(0.05)
     line = stdin.readline()
     if not line:
         sys.exit(0)
@@ -451,6 +540,23 @@ def cancelled_meanwhile():
         if read().get("method") == "session/cancel":
             return True
     return False
+
+
+def send_updates(session, updates):
+    for update in updates:
+        send({"jsonrpc": "2.0", "method": "session/update",
+              "params": {"sessionId": session, "update": update}})
+
+
+def send_between_turn_updates():
+    between = script.get("between_turn_updates")
+    if not between:
+        return
+    marker = between.get("wait_for")
+    while marker and not os.path.exists(marker):
+        time.sleep(0.01)
+    send_updates(script.get("session_id", "stub-session"), between.get("updates", []))
+    script.pop("between_turn_updates", None)
 
 
 def respond(request):
@@ -472,14 +578,16 @@ def respond(request):
         wanted = request.get("params", {}).get("sessionId")
         if wanted in script.get("stored_sessions", []):
             claim_writer(wanted, resumed=True)
-            for update in script.get("load_updates", []):
-                send({"jsonrpc": "2.0", "method": "session/update",
-                      "params": {"sessionId": wanted, "update": update}})
+            send_updates(wanted, script.get("load_updates", []))
             return {"configOptions": options}
         raise Failure(-32001, "unknown session %s" % wanted)
     if method == "session/close":
         return {}
     if method == "session/list":
+        # An agent that holds its list until the test lets it go.
+        marker = script.get("session_list_wait_for")
+        while marker and not os.path.exists(marker):
+            time.sleep(0.01)
         sessions = script.get("session_list", [])
         size = script.get("session_page_size")
         if not size:
@@ -500,12 +608,19 @@ def respond(request):
         return listed
     if method == "session/set_config_option":
         params = request["params"]
+        if params.get("value") == script.get("reject_config_value"):
+            raise Failure(-32000, "the agent refused the option")
+        # An agent that settles a value on another id of its own.
+        settled = script.get("settle_config_values", {}).get(params.get("value"), params.get("value"))
         for option in options:
             if option.get("id") == params.get("configId"):
-                option["currentValue"] = params.get("value")
+                option["currentValue"] = settled
         return {"configOptions": options}
     if method == "session/prompt":
         turn = prompts.pop(0) if prompts else {}
+        if "error" in turn:
+            error = turn["error"]
+            raise Failure(error["code"], error["message"], error.get("data"))
         if "permission" in turn:
             permissions += 1
             request_permission = dict(turn["permission"])
@@ -514,9 +629,7 @@ def respond(request):
                   "method": "session/request_permission",
                   "params": request_permission})
             read()  # the client's answer, logged like everything else
-        for update in turn.get("updates", []):
-            send({"jsonrpc": "2.0", "method": "session/update",
-                  "params": {"sessionId": sid, "update": update}})
+        send_updates(sid, turn.get("updates", []))
         stop_reason = turn.get("stop_reason", "end_turn")
         wait_for = turn.get("wait_for")
         if wait_for:
@@ -532,9 +645,7 @@ def respond(request):
             late = turn.get("updates_when")
             while not os.path.exists(wait_for):
                 if late and os.path.exists(late["file"]):
-                    for update in late.get("updates", []):
-                        send({"jsonrpc": "2.0", "method": "session/update",
-                              "params": {"sessionId": sid, "update": update}})
+                    send_updates(sid, late.get("updates", []))
                     late = None
                 if cancelled_meanwhile() and not turn.get("ignore_cancel"):
                     stop_reason = "cancelled"
@@ -542,8 +653,14 @@ def respond(request):
                 time.sleep(0.01)
         if "exit" in turn:
             sys.exit(int(turn["exit"]))
+        if turn.get("close_stdin"):
+            # Closed before the answer goes out, so the next request the
+            # client writes finds no reader.
+            stdin.close()
         # A cancelled turn reports what it spent too, as ACP has it.
         response = {"stopReason": stop_reason}
+        if "meta" in turn:
+            response["_meta"] = turn["meta"]
         if "usage" in turn:
             response["usage"] = turn["usage"]
         if "quota" in turn:
@@ -560,7 +677,13 @@ while True:
         continue  # an agent that stops answering, for the client's timeout
     try:
         send({"jsonrpc": "2.0", "id": message["id"], "result": respond(message)})
+        if message["method"] == "session/new":
+            send_updates(script.get("session_id", "stub-session"), script.get("new_updates", []))
+        if message["method"] == "session/prompt":
+            send_between_turn_updates()
     except Failure as failure:
-        send({"jsonrpc": "2.0", "id": message["id"],
-              "error": {"code": failure.code, "message": failure.message}})
+        error = {"code": failure.code, "message": failure.message}
+        if failure.data is not None:
+            error["data"] = failure.data
+        send({"jsonrpc": "2.0", "id": message["id"], "error": error})
 "#;

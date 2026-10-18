@@ -11,12 +11,13 @@ use crate::{AiPermissionSettings, Result, Store, not_found, now};
 #[derive(Debug, Clone, Default)]
 pub struct AiPermissionSettingsUpdate {
     pub enabled: Option<bool>,
-    /// `english` or `all`.
-    pub checkpoints: Option<String>,
-    pub threshold: Option<f64>,
-    /// `Some(None)` clears the daily refresh; `None` keeps it.
-    pub schedule: Option<Option<String>>,
-    pub last_scheduled_refresh: Option<Option<String>>,
+    pub allow_threshold: Option<f64>,
+    pub deny_threshold: Option<f64>,
+    pub thresholds_hand_set: Option<bool>,
+    /// `0.8b`, `4b`, `9b` or `27b`.
+    pub flavour: Option<String>,
+    /// `mlx`, `cuda` or `cpu`.
+    pub device: Option<String>,
     /// `disabled`, `installing`, `ready` or `failed`.
     pub state: Option<String>,
     /// Move `state` only where the row is still enabled; a row turned off
@@ -29,16 +30,12 @@ pub struct AiPermissionSettingsUpdate {
     pub weights_present: Option<bool>,
     pub last_refresh_at: Option<Option<String>>,
     pub last_error: Option<Option<String>>,
-    /// `Some(None)` restores the built-in question; `None` keeps it.
-    pub question: Option<Option<String>>,
-    pub allow_criteria: Option<Option<String>>,
-    pub review_criteria: Option<Option<String>>,
 }
 
-const COLUMNS: &str = "enabled, checkpoints, threshold, schedule, last_scheduled_refresh, state, \
+const COLUMNS: &str = "enabled, allow_threshold, deny_threshold, thresholds_hand_set, \
+                       flavour, device, state, \
                        installed_release, latest_release, weights_present, \
-                       last_refresh_at, last_error, question, allow_criteria, \
-                       review_criteria, updated_at";
+                       last_refresh_at, last_error, updated_at";
 
 impl Store {
     /// The AI permission settings as they stand. The row is seeded by the migration,
@@ -61,17 +58,20 @@ impl Store {
         if update.enabled.is_some() {
             sets.push("enabled = ?");
         }
-        if update.checkpoints.is_some() {
-            sets.push("checkpoints = ?");
+        if update.allow_threshold.is_some() {
+            sets.push("allow_threshold = ?");
         }
-        if update.threshold.is_some() {
-            sets.push("threshold = ?");
+        if update.deny_threshold.is_some() {
+            sets.push("deny_threshold = ?");
         }
-        if update.schedule.is_some() {
-            sets.push("schedule = ?");
+        if update.thresholds_hand_set.is_some() {
+            sets.push("thresholds_hand_set = ?");
         }
-        if update.last_scheduled_refresh.is_some() {
-            sets.push("last_scheduled_refresh = ?");
+        if update.flavour.is_some() {
+            sets.push("flavour = ?");
+        }
+        if update.device.is_some() {
+            sets.push("device = ?");
         }
         if update.state.is_some() {
             sets.push(match update.state_while_enabled {
@@ -94,15 +94,6 @@ impl Store {
         if update.last_error.is_some() {
             sets.push("last_error = ?");
         }
-        if update.question.is_some() {
-            sets.push("question = ?");
-        }
-        if update.allow_criteria.is_some() {
-            sets.push("allow_criteria = ?");
-        }
-        if update.review_criteria.is_some() {
-            sets.push("review_criteria = ?");
-        }
         sets.push("updated_at = ?");
 
         let mut query = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -112,17 +103,20 @@ impl Store {
         if let Some(enabled) = update.enabled {
             query = query.bind(enabled);
         }
-        if let Some(checkpoints) = update.checkpoints {
-            query = query.bind(checkpoints);
-        }
-        if let Some(threshold) = update.threshold {
+        if let Some(threshold) = update.allow_threshold {
             query = query.bind(threshold);
         }
-        if let Some(schedule) = update.schedule {
-            query = query.bind(schedule);
+        if let Some(threshold) = update.deny_threshold {
+            query = query.bind(threshold);
         }
-        if let Some(date) = update.last_scheduled_refresh {
-            query = query.bind(date);
+        if let Some(hand_set) = update.thresholds_hand_set {
+            query = query.bind(hand_set);
+        }
+        if let Some(flavour) = update.flavour {
+            query = query.bind(flavour);
+        }
+        if let Some(device) = update.device {
+            query = query.bind(device);
         }
         if let Some(state) = update.state {
             query = query.bind(state);
@@ -141,15 +135,6 @@ impl Store {
         }
         if let Some(error) = update.last_error {
             query = query.bind(error);
-        }
-        if let Some(question) = update.question {
-            query = query.bind(question);
-        }
-        if let Some(criteria) = update.allow_criteria {
-            query = query.bind(criteria);
-        }
-        if let Some(criteria) = update.review_criteria {
-            query = query.bind(criteria);
         }
         query.bind(now()).execute(self.w()).await?;
 

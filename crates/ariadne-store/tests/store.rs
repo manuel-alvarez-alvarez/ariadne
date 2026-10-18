@@ -1,16 +1,332 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, Landing, MessageKind, PermissionMode, Seat, SessionStatus,
+    Actor, AttentionReason, GoalStatus, MessageKind, PermissionMode, Seat, SessionStatus,
     TaskStatus, TokenUsage,
 };
-use ariadne_store::defaults::default_landing_prompt;
+use ariadne_store::defaults::{DEFAULT_WORKFLOW, PULL_REQUEST_WORKFLOW};
 use ariadne_store::*;
 
 async fn test_store() -> (Store, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path().join("test.db")).await.unwrap();
     (store, dir)
+}
+
+fn bash_choice(repository_id: &str, call_id: &str, selected: &str) -> NewLearnedPermission {
+    NewLearnedPermission {
+        repository_id: repository_id.into(),
+        tool_name: "Bash".into(),
+        key: r#"{"command":"git show <HASH>"}"#.into(),
+        level: "command".into(),
+        family: "git show".into(),
+        risk_tags: vec![],
+        scope: "repository".into(),
+        tool_call: serde_json::json!({
+            "toolCallId": call_id, "title": "git show", "kind": "execute",
+            "rawInput": {"description": "Show", "command": "git show 94f07c0b"},
+        }),
+        options: serde_json::json!([
+            {"optionId": "yes", "kind": "allow_once"},
+            {"optionId": "no", "kind": "reject_once"},
+        ]),
+        selected_option: selected.into(),
+        target: "learn".into(),
+        output: None,
+    }
+}
+
+/// Two choices with one repository, tool name, level and key keep one row:
+/// the second replaces the first, scope included, and keeps its id and
+/// `created_at`; the row carries the key, the level, the family, the tags
+/// and the scope.
+/// The raw input is kept whole, its keys sorted.
+#[tokio::test]
+async fn learned_permissions_keep_one_row_per_repository_tool_level_and_key() {
+    let (store, _dir) = test_store().await;
+    let repo = store
+        .create_repository(NewRepository {
+            default_workflow: None,
+            path: "/tmp/learned-repo".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: Some(PermissionMode::Learn),
+            supervise_posts: None,
+        })
+        .await
+        .unwrap();
+    let mut changes = store.watch_changes().expect("the only watcher");
+    let mut widened = bash_choice(&repo.id, "call-1", "yes");
+    widened.scope = "all".into();
+    let first = store.record_learned_permission(widened).await.unwrap();
+    assert_eq!(first.scope, "all");
+    assert!(matches!(
+        changes.recv().await.unwrap(),
+        Change::LearnedPermissionCreated(_)
+    ));
+    let mut again = bash_choice(&repo.id, "call-2", "no");
+    again.tool_call["rawInput"] =
+        serde_json::json!({"command": "git show ff3c04a5 2>&1", "description": "Show it"});
+    again.risk_tags = vec!["remote".into(), "force".into()];
+    again.target = "ai".into();
+    again.output = Some(serde_json::json!({"label": "deny", "danger": 0.9}));
+    let first_updated_at = chrono::DateTime::parse_from_rfc3339(&first.updated_at)
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let next_millisecond = first_updated_at + chrono::Duration::milliseconds(20);
+    while chrono::Utc::now() < next_millisecond {
+        tokio::task::yield_now().await;
+    }
+    let second = store.record_learned_permission(again).await.unwrap();
+    assert!(matches!(
+        changes.recv().await.unwrap(),
+        Change::LearnedPermissionUpdated(_)
+    ));
+
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.created_at, first.created_at);
+    assert!(second.updated_at > first.updated_at);
+    assert_eq!(second.key, r#"{"command":"git show <HASH>"}"#);
+    assert_eq!(second.level, "command");
+    assert_eq!(second.family, "git show");
+    assert_eq!(second.risk_tags, r#"["remote","force"]"#);
+    assert_eq!(second.scope, "repository", "a later choice sets the scope");
+    assert_eq!(second.selected_option, "no");
+    assert_eq!(second.target, "ai");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(second.output.as_deref().unwrap()).unwrap(),
+        serde_json::json!({"label": "deny", "danger": 0.9})
+    );
+    let tool_call: serde_json::Value = serde_json::from_str(&second.tool_call).unwrap();
+    assert_eq!(tool_call["toolCallId"], "call-2");
+    assert!(
+        second
+            .tool_call
+            .contains(r#""rawInput":{"command":"git show ff3c04a5 2>&1","description":"Show it"}"#),
+        "rawInput is stored whole with sorted keys: {}",
+        second.tool_call
+    );
+    assert_eq!(
+        store
+            .list_learned_permissions(Some(&repo.id))
+            .await
+            .unwrap(),
+        vec![second.clone()]
+    );
+
+    let find = |level: &'static str, key: &'static str| {
+        let store = store.clone();
+        let repo_id = repo.id.clone();
+        async move {
+            store
+                .find_learned_permission(&repo_id, "Bash", level, key)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        find("command", r#"{"command":"git log"}"#).await,
+        None,
+        "another key is another row"
+    );
+    assert_eq!(
+        find("family", r#"{"command":"git show <HASH>"}"#).await,
+        None,
+        "another level is another row"
+    );
+    assert_eq!(
+        find("command", r#"{"command":"git show <HASH>"}"#).await,
+        Some(second.clone())
+    );
+
+    let deleted = store.delete_learned_permission(&first.id).await.unwrap();
+    assert_eq!(deleted.id, first.id);
+    assert!(
+        store
+            .list_learned_permissions(None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// A fresh database holds the learned permissions table with exactly its
+/// fifteen columns.
+#[tokio::test]
+async fn a_fresh_database_holds_the_fifteen_learned_permission_columns() {
+    use sqlx::Connection;
+    let expected = [
+        "id",
+        "repository_id",
+        "tool_name",
+        "key",
+        "level",
+        "family",
+        "risk_tags",
+        "scope",
+        "tool_call",
+        "options",
+        "selected_option",
+        "target",
+        "output",
+        "created_at",
+        "updated_at",
+    ];
+    let (store, dir) = test_store().await;
+    drop(store);
+    let mut fresh = sqlx::SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        dir.path().join("test.db").display()
+    ))
+    .await
+    .unwrap();
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('learned_permissions')")
+            .fetch_all(&mut fresh)
+            .await
+            .unwrap();
+    assert_eq!(columns, expected);
+}
+
+/// A repository's own row for a key wins over an `all` row of another
+/// repository with the same tool name, level and key; an `all` row answers
+/// for a repository that holds none of its own.
+#[tokio::test]
+async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
+    let (store, _dir) = test_store().await;
+    let repo_a = store
+        .create_repository(NewRepository {
+            default_workflow: None,
+            path: "/tmp/learned-repo-a".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: Some(PermissionMode::Learn),
+            supervise_posts: None,
+        })
+        .await
+        .unwrap();
+    let repo_b = store
+        .create_repository(NewRepository {
+            default_workflow: None,
+            path: "/tmp/learned-repo-b".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: Some(PermissionMode::Learn),
+            supervise_posts: None,
+        })
+        .await
+        .unwrap();
+    let repo_c = store
+        .create_repository(NewRepository {
+            default_workflow: None,
+            path: "/tmp/learned-repo-c".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: Some(PermissionMode::Learn),
+            supervise_posts: None,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store
+            .find_learned_permission(
+                &repo_b.id,
+                "Bash",
+                "command",
+                r#"{"command":"git show <HASH>"}"#
+            )
+            .await
+            .unwrap(),
+        None,
+        "no row anywhere yet"
+    );
+
+    let mut widened = bash_choice(&repo_a.id, "call-1", "yes");
+    widened.scope = "all".into();
+    let all_row = store.record_learned_permission(widened).await.unwrap();
+
+    assert_eq!(
+        store
+            .find_learned_permission(
+                &repo_b.id,
+                "Bash",
+                "command",
+                r#"{"command":"git show <HASH>"}"#
+            )
+            .await
+            .unwrap(),
+        Some(all_row.clone()),
+        "the all-scoped row answers a repository that holds none of its own"
+    );
+
+    let own = store
+        .record_learned_permission(bash_choice(&repo_b.id, "call-2", "no"))
+        .await
+        .unwrap();
+    assert_eq!(own.scope, "repository");
+
+    assert_eq!(
+        store
+            .find_learned_permission(
+                &repo_b.id,
+                "Bash",
+                "command",
+                r#"{"command":"git show <HASH>"}"#
+            )
+            .await
+            .unwrap(),
+        Some(own),
+        "the repository's own row wins over another repository's all-scoped row"
+    );
+    assert_eq!(
+        store
+            .find_learned_permission(
+                &repo_c.id,
+                "Bash",
+                "command",
+                r#"{"command":"git show <HASH>"}"#
+            )
+            .await
+            .unwrap(),
+        Some(all_row),
+        "a third repository with no row of its own still gets the all-scoped row"
+    );
+}
+
+/// A fresh database seeds the AI permission settings with the winner's
+/// threshold pair, the `4b` flavour and a `NULL` device for the daemon to fill
+/// at startup, and has no schedule columns.
+#[tokio::test]
+async fn a_fresh_database_seeds_the_ai_permission_defaults() {
+    use sqlx::Connection;
+    let (store, dir) = test_store().await;
+    drop(store);
+    let mut connection = sqlx::SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        dir.path().join("test.db").display()
+    ))
+    .await
+    .unwrap();
+
+    let (allow, deny, flavour, device): (f64, f64, String, Option<String>) = sqlx::query_as(
+        "SELECT allow_threshold, deny_threshold, flavour, device
+         FROM ai_permission_settings WHERE id = 1",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!((allow, deny), (0.0201, 0.6321));
+    assert_eq!(flavour, "4b");
+    assert_eq!(device, None, "the daemon fills it at startup");
+
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('ai_permission_settings')")
+            .fetch_all(&mut connection)
+            .await
+            .unwrap();
+    assert!(!columns.contains(&"schedule".to_string()));
+    assert!(!columns.contains(&"last_scheduled_refresh".to_string()));
 }
 
 #[tokio::test]
@@ -25,6 +341,7 @@ async fn a_loose_session_round_trips_without_a_goal_task_or_seat() {
             model: "stub:test-model".into(),
             effort: None,
             worktree_path: Some("/work/outside".into()),
+            pull_request_id: None,
         })
         .await
         .unwrap();
@@ -143,6 +460,8 @@ async fn the_schema_names_agents_by_registry_id_alone() {
             "launched_at",
             "launch_id",
             "title",
+            "switched_from",
+            "pull_request_id",
         ]
     );
     let config: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info(?)")
@@ -172,10 +491,12 @@ fn default_pin() -> AgentPin {
 async fn seed_repository(store: &Store) -> Repository {
     store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: format!("/tmp/repo-{}", ariadne_core::id::new_id()),
             base_branch: "main".into(),
             description: None,
             permission_mode: None,
+            supervise_posts: None,
         })
         .await
         .unwrap()
@@ -185,6 +506,8 @@ async fn seed_goal(store: &Store) -> (Goal, Repository) {
     let repo = seed_repository(store).await;
     let goal = store
         .create_goal(NewGoal {
+            workflow: None,
+            issue_url: None,
             title: "Test goal".into(),
             description: "desc".into(),
             repository_ids: vec![repo.id.clone()],
@@ -237,15 +560,24 @@ impl World {
                 model: "stub:test-model".into(),
                 effort: None,
                 worktree_path: Some("/tmp/wt".into()),
+                pull_request_id: None,
             })
             .await
             .unwrap()
     }
 
-    /// The author session of this world's task.
-    async fn author_session(&self) -> AgentSession {
-        let author = self.store.task_author(&self.task.id).await.unwrap();
-        self.session(Seat::Author, Some(&author.id), Some(&self.task.id))
+    /// A session of the agent of this world's task's `develop` column: the
+    /// one that works first, and the one most tests mean by "the agent".
+    async fn agent_session(&self) -> AgentSession {
+        let agent = agent_of(&self.store, &self.task, "develop").await;
+        self.session(Seat::Agent, Some(&agent.id), Some(&self.task.id))
+            .await
+    }
+
+    /// A session of the agent of this world's task's `review` column.
+    async fn review_session(&self) -> AgentSession {
+        let agent = agent_of(&self.store, &self.task, "review").await;
+        self.session(Seat::Agent, Some(&agent.id), Some(&self.task.id))
             .await
     }
 
@@ -255,40 +587,78 @@ impl World {
     }
 }
 
-/// The happy path, one move at a time: what a task does between `pending` and
-/// `finished`, and who does each of them.
-const HAPPY_PATH: [(TaskStatus, Actor); 5] = [
-    (TaskStatus::Ready, Actor::Daemon),
-    (TaskStatus::InProgress, Actor::Daemon),
-    (TaskStatus::UnderReview, Actor::Author),
-    (TaskStatus::Approved, Actor::Daemon),
-    (TaskStatus::Finished, Actor::Author),
-];
+/// The commit every task walked to `finished` by [`walk_to`] lands as.
+const LANDED_AS: &str = "abc123";
 
-/// Walk a task up the happy path from wherever it is to `upto`.
+/// Walk a task up the happy path from wherever it is to `upto`: the daemon
+/// readies and starts it at its first column, and from there the agent of
+/// each column moves it to the next one and the last column's agent ends it
+/// as finished, landed as [`LANDED_AS`].
+///
+/// `upto` is one of `ready`, `in_progress` and `finished`; a task already at
+/// or past it is left where it is.
 async fn walk_to(store: &Store, task_id: &str, upto: TaskStatus) -> Task {
-    let now = store.get_task(task_id).await.unwrap().status();
-    let from = HAPPY_PATH
-        .iter()
-        .position(|(status, _)| *status == now)
-        .map_or(0, |at| at + 1);
     let mut task = store.get_task(task_id).await.unwrap();
-    for (status, actor) in &HAPPY_PATH[from..] {
-        let merge_commit = (*status == TaskStatus::Finished).then_some("abc123");
+    if task.status() == TaskStatus::Pending {
         task = store
-            .transition_task(task_id, *status, *actor, None, merge_commit)
+            .transition_task(task_id, TaskStatus::Ready, Actor::Daemon, None, None)
             .await
             .unwrap();
-        if *status == upto {
-            break;
-        }
     }
-    task
+    if upto == TaskStatus::Ready {
+        return task;
+    }
+    if task.status() == TaskStatus::Ready {
+        task = store.start_first_step(task_id).await.unwrap();
+    }
+    if upto == TaskStatus::InProgress {
+        return task;
+    }
+    let steps = store.goal_steps(&task.goal_id).await.unwrap();
+    let at = steps
+        .iter()
+        .position(|step| Some(&step.id) == task.step.as_ref())
+        .expect("a task in progress is in one of its goal's columns");
+    for next in &steps[at + 1..] {
+        store
+            .move_step(task_id, &next.id, Actor::Agent, "done here", None)
+            .await
+            .unwrap();
+    }
+    let last = &steps[steps.len() - 1].id;
+    store
+        .end_step(
+            task_id,
+            last,
+            TaskStatus::Finished,
+            "landed",
+            Some(LANDED_AS),
+        )
+        .await
+        .unwrap()
 }
 
-/// A task's author, which is where its pin lives.
-async fn author_of(store: &Store, task: &Task) -> ariadne_store::TaskAgent {
-    store.task_author(&task.id).await.unwrap()
+/// The agent of one column of a task.
+async fn agent_of(store: &Store, task: &Task, step: &str) -> TaskAgent {
+    store
+        .list_task_agents(&task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|agent| agent.step == step)
+        .unwrap_or_else(|| panic!("task {} has no agent on {step}", task.id))
+}
+
+/// One agent per column of `goal`'s workflow, each on its column's own
+/// skills and on the default pin.
+async fn column_agents(store: &Store, goal: &Goal) -> Vec<NewTaskAgent> {
+    store
+        .goal_steps(&goal.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|step| NewTaskAgent::new(step.id, Vec::<String>::new(), default_pin()))
+        .collect()
 }
 
 async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<String>) -> Task {
@@ -298,12 +668,8 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            agents: vec![
-                NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
-            ],
+            agents: column_agents(store, goal).await,
             depends_on: deps,
-            landing: None,
         })
         .await
         .unwrap()
@@ -395,45 +761,90 @@ async fn repository_crud_and_unique_path_branch() {
     let (store, _dir) = test_store().await;
     let repo = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/repo".into(),
             base_branch: "main".into(),
             description: Some("the one repo".into()),
             permission_mode: None,
+            supervise_posts: None,
         })
         .await
         .unwrap();
     assert_eq!(repo.path, "/tmp/repo");
     assert_eq!(repo.description.as_deref(), Some("the one repo"));
-    // A repository registered without a mode approves on its own.
+    // A repository registered without a mode approves on its own, and one
+    // registered without a workflow lands its goals on the base branch.
     assert_eq!(repo.permission_mode(), PermissionMode::Auto);
+    assert_eq!(repo.default_workflow, DEFAULT_WORKFLOW);
+    // A repository registered without the flag starts supervised.
+    assert!(repo.supervise_posts());
 
     // The same checkout on another branch is a different repository.
     let other = store
         .create_repository(NewRepository {
+            default_workflow: Some(PULL_REQUEST_WORKFLOW.into()),
             path: "/tmp/repo".into(),
             base_branch: "next".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
+            supervise_posts: None,
         })
         .await
         .unwrap();
     assert!(other.description.is_none());
     assert_eq!(other.permission_mode(), PermissionMode::Learn);
+    assert_eq!(other.default_workflow, PULL_REQUEST_WORKFLOW);
     assert_eq!(store.list_repositories().await.unwrap().len(), 2);
+
+    // A default workflow is a reference into the catalog, so a name nothing
+    // answers to is refused, at registration and at an edit alike.
+    assert!(matches!(
+        store
+            .create_repository(NewRepository {
+                default_workflow: Some("no-such-workflow".into()),
+                path: "/tmp/elsewhere".into(),
+                base_branch: "main".into(),
+                description: None,
+                permission_mode: None,
+                supervise_posts: None,
+            })
+            .await,
+        Err(StoreError::NotFound {
+            entity: "workflow",
+            ..
+        })
+    ));
+    assert!(matches!(
+        store
+            .update_repository(
+                &repo.id,
+                RepositoryUpdate {
+                    default_workflow: Some("no-such-workflow".into()),
+                    ..Default::default()
+                },
+            )
+            .await,
+        Err(StoreError::NotFound {
+            entity: "workflow",
+            ..
+        })
+    ));
 
     // (path, base_branch) is unique.
     let dup = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/repo".into(),
             base_branch: "main".into(),
             description: None,
             permission_mode: None,
+            supervise_posts: None,
         })
         .await;
     assert!(matches!(dup, Err(StoreError::Conflict(_))));
 
     // Partial update: the branch moves, the description is cleared, the
-    // mode changes, the path stays exactly as it was.
+    // mode and the workflow change, the path stays exactly as it was.
     let edited = store
         .update_repository(
             &repo.id,
@@ -441,6 +852,8 @@ async fn repository_crud_and_unique_path_branch() {
                 base_branch: Some("trunk".into()),
                 description: Some(None),
                 permission_mode: Some(PermissionMode::Ask),
+                supervise_posts: Some(false),
+                default_workflow: Some(PULL_REQUEST_WORKFLOW.into()),
                 ..Default::default()
             },
         )
@@ -450,8 +863,11 @@ async fn repository_crud_and_unique_path_branch() {
     assert_eq!(edited.base_branch, "trunk");
     assert!(edited.description.is_none());
     assert_eq!(edited.permission_mode(), PermissionMode::Ask);
+    assert_eq!(edited.default_workflow, PULL_REQUEST_WORKFLOW);
+    assert!(!edited.supervise_posts());
 
-    // An update that does not name the mode keeps it.
+    // An update that names neither the mode, the flag, nor the workflow
+    // keeps them.
     let renamed = store
         .update_repository(
             &repo.id,
@@ -463,6 +879,8 @@ async fn repository_crud_and_unique_path_branch() {
         .await
         .unwrap();
     assert_eq!(renamed.permission_mode(), PermissionMode::Ask);
+    assert_eq!(renamed.default_workflow, PULL_REQUEST_WORKFLOW);
+    assert!(!renamed.supervise_posts());
 
     // An update onto a taken (path, base_branch) conflicts like a create.
     assert!(matches!(
@@ -490,71 +908,95 @@ async fn repository_crud_and_unique_path_branch() {
     ));
 }
 
-/// A goal holds references, not copies: what it lists is whatever the
-/// repositories say right now, and so is what its tasks resolve.
-/// How a task ends is the task's own, and the built-in procedure of that
-/// ending is the whole of what its author is briefed with. A repository has
-/// no say in it: it is a checkout and a base branch, and a second answer
-/// stored on it could only disagree with the task's.
+/// How a goal's tasks run is its workflow, chosen once for the whole goal
+/// and snapshotted into its columns. A goal created with no workflow takes
+/// the `default_workflow` of its first repository — the first in the order
+/// goals show their repositories — and a goal that names one runs on that,
+/// whatever its repositories default to.
 #[tokio::test]
-async fn a_task_lands_by_the_ending_it_carries_and_the_repository_has_no_say() {
-    let (store, _dir) = test_store().await;
-    let repo = seed_repository(&store).await;
-    let goal = store
-        .create_goal(NewGoal {
-            title: "Ship it".into(),
-            description: String::new(),
-            repository_ids: vec![repo.id.clone()],
-            pin: default_pin(),
-        })
-        .await
-        .unwrap();
-
-    let staffed = || {
-        vec![
-            NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
-            NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
-        ]
-    };
-    // Nothing said: a task lands on the base branch, which is what most work
-    // does.
-    let default = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
-            title: "Nothing said".into(),
-            description: String::new(),
-            agents: staffed(),
-            depends_on: vec![],
-            landing: None,
-        })
-        .await
-        .unwrap();
-    assert_eq!(default.landing(), Landing::Merge);
-
-    // And each ending is briefed with its own procedure, whatever repository
-    // the task is in.
-    for landing in Landing::ALL {
-        let task = store
-            .create_task(NewTask {
-                goal_id: goal.id.clone(),
-                repo_id: repo.id.clone(),
-                title: format!("Ends in {}", landing.as_str()),
-                description: String::new(),
-                agents: staffed(),
-                depends_on: vec![],
-                landing: Some(landing),
+async fn a_goal_created_with_no_workflow_takes_its_first_repositorys_default() {
+    async fn register(store: &Store, path: String, default_workflow: Option<&str>) -> Repository {
+        store
+            .create_repository(NewRepository {
+                default_workflow: default_workflow.map(str::to_string),
+                path,
+                base_branch: "main".into(),
+                description: None,
+                permission_mode: None,
+                supervise_posts: None,
             })
             .await
-            .unwrap();
-        assert_eq!(task.landing(), landing);
-        assert_eq!(
-            task.landing_prompt_text(),
-            default_landing_prompt(landing),
-            "{}",
-            landing.as_str()
-        );
+            .unwrap()
     }
+    let (store, _dir) = test_store().await;
+    let suffix = ariadne_core::id::new_id();
+    // Two repositories, named so the one that lands by request sorts first.
+    let by_request = register(
+        &store,
+        format!("/tmp/a-{suffix}"),
+        Some(PULL_REQUEST_WORKFLOW),
+    )
+    .await;
+    let by_merge = register(&store, format!("/tmp/b-{suffix}"), None).await;
+    let goal_on = |workflow: Option<&str>, repository_ids: Vec<String>| NewGoal {
+        workflow: workflow.map(str::to_string),
+        issue_url: None,
+        title: "Ship it".into(),
+        description: String::new(),
+        repository_ids,
+        pin: default_pin(),
+    };
+    let column_ids = |steps: Vec<GoalStep>| steps.into_iter().map(|s| s.id).collect::<Vec<_>>();
+
+    // Nothing said, one repository: the goal runs on that repository's
+    // default, and its columns are that workflow's.
+    let goal = store
+        .create_goal(goal_on(None, vec![by_merge.id.clone()]))
+        .await
+        .unwrap();
+    assert_eq!(goal.workflow, DEFAULT_WORKFLOW);
+    assert_eq!(
+        column_ids(store.goal_steps(&goal.id).await.unwrap()),
+        ["develop", "review", "merge"]
+    );
+
+    // Nothing said, two repositories: the first one's default wins, whatever
+    // order the request listed them in.
+    let goal = store
+        .create_goal(goal_on(
+            None,
+            vec![by_merge.id.clone(), by_request.id.clone()],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(goal.workflow, PULL_REQUEST_WORKFLOW);
+    assert_eq!(
+        column_ids(store.goal_steps(&goal.id).await.unwrap()),
+        ["develop", "review", "pr"]
+    );
+
+    // A workflow named on the goal beats every repository default.
+    let goal = store
+        .create_goal(goal_on(Some(DEFAULT_WORKFLOW), vec![by_request.id.clone()]))
+        .await
+        .unwrap();
+    assert_eq!(goal.workflow, DEFAULT_WORKFLOW);
+    assert_eq!(
+        column_ids(store.goal_steps(&goal.id).await.unwrap()).last(),
+        Some(&"merge".to_string())
+    );
+
+    // And a name nothing answers to refuses the whole creation.
+    assert!(matches!(
+        store
+            .create_goal(goal_on(Some("no-such-workflow"), vec![by_merge.id.clone()]))
+            .await,
+        Err(StoreError::NotFound {
+            entity: "workflow",
+            ..
+        })
+    ));
+    assert_eq!(store.list_goals(&[]).await.unwrap().len(), 3);
 }
 
 #[tokio::test]
@@ -565,6 +1007,8 @@ async fn a_goal_reads_its_repositories_live() {
 
     let goal = store
         .create_goal(NewGoal {
+            workflow: None,
+            issue_url: None,
             title: "Two repos".into(),
             description: "desc".into(),
             // The same repository named twice is one reference.
@@ -605,6 +1049,8 @@ async fn a_goal_needs_repositories_that_exist() {
     let (store, _dir) = test_store().await;
     let repo = seed_repository(&store).await;
     let new_goal = |repository_ids: Vec<String>| NewGoal {
+        workflow: None,
+        issue_url: None,
         title: "Goal".into(),
         description: "desc".into(),
         repository_ids,
@@ -635,12 +1081,8 @@ async fn a_goal_needs_repositories_that_exist() {
                 repo_id: unrelated.id,
                 title: "task".into(),
                 description: "do things".into(),
-                agents: vec![
-                    NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
-                    NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
-                ],
+                agents: column_agents(&store, &goal).await,
                 depends_on: vec![],
-                landing: None,
             })
             .await,
         Err(StoreError::Invalid(_))
@@ -676,14 +1118,10 @@ async fn task_branch_is_named_after_the_title() {
         .create_task(NewTask {
             goal_id: w.goal.id.clone(),
             repo_id: w.repo.id.clone(),
-            title: "Fix the landing briefing: real fetch/rebase".into(),
+            title: "Fix the merging briefing: real fetch/rebase".into(),
             description: "d".into(),
-            agents: vec![
-                NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
-            ],
+            agents: column_agents(&w.store, &w.goal).await,
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();
@@ -691,64 +1129,248 @@ async fn task_branch_is_named_after_the_title() {
     let tail = &task.id[task.id.len() - 6..];
     assert_eq!(
         task.branch,
-        format!("fix-the-landing-briefing-real-fetch-{tail}")
+        format!("fix-the-merging-briefing-real-fetch-{tail}")
     );
     assert!(!task.branch.contains("ariadne"), "{}", task.branch);
 }
 
+/// The happy path of a stepped task, one move at a time: the daemon readies
+/// it and starts it at its first column, the agent of each column moves it
+/// to the next one, and the last column's agent ends it as finished with the
+/// commit it landed as. The status is `in_progress` from the first column to
+/// the last; only the column moves, and every move is audited with the
+/// column it left and the one it entered.
 #[tokio::test]
-async fn task_happy_path_to_merged() {
+async fn task_happy_path_to_finished() {
     let w = World::new().await;
+    let store = &w.store;
     assert_eq!(w.task.status(), TaskStatus::Pending);
+    assert_eq!(w.task.step, None, "no column before the first one");
 
-    walk_to(&w.store, &w.task.id, TaskStatus::UnderReview).await;
+    let ready = store
+        .transition_task(&w.task.id, TaskStatus::Ready, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    assert_eq!(ready.status(), TaskStatus::Ready);
+    assert_eq!(ready.step, None);
 
-    let t = walk_to(&w.store, &w.task.id, TaskStatus::Finished).await;
+    let started = store.start_first_step(&w.task.id).await.unwrap();
+    assert_eq!(started.status(), TaskStatus::InProgress);
+    assert_eq!(started.step.as_deref(), Some("develop"));
+
+    let reviewing = store
+        .move_step(&w.task.id, "review", Actor::Agent, "committed", None)
+        .await
+        .unwrap();
+    assert_eq!(reviewing.status(), TaskStatus::InProgress);
+    assert_eq!(reviewing.step.as_deref(), Some("review"));
+
+    let merging = store
+        .move_step(&w.task.id, "merge", Actor::Agent, "passed", None)
+        .await
+        .unwrap();
+    assert_eq!(merging.status(), TaskStatus::InProgress);
+    assert_eq!(merging.step.as_deref(), Some("merge"));
+    assert_eq!(merging.merge_commit, None, "nothing has landed yet");
+
+    let t = store
+        .end_step(
+            &w.task.id,
+            "merge",
+            TaskStatus::Finished,
+            "fast-forwarded",
+            Some("abc123"),
+        )
+        .await
+        .unwrap();
     assert_eq!(t.status(), TaskStatus::Finished);
     assert_eq!(t.merge_commit.as_deref(), Some("abc123"));
 
-    let audit = w.store.list_task_transitions(&t.id).await.unwrap();
-    assert_eq!(audit.len(), 5);
-    assert_eq!(audit[0].from_status, "pending");
-    assert_eq!(audit[4].to_status, "finished");
+    let audit = store.list_task_transitions(&t.id).await.unwrap();
+    assert_eq!(
+        audit
+            .iter()
+            .map(|t| {
+                (
+                    t.from_status.as_str(),
+                    t.to_status.as_str(),
+                    t.from_step.as_deref(),
+                    t.to_step.as_deref(),
+                    t.actor.as_str(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [
+            ("pending", "ready", None, None, "daemon"),
+            ("ready", "in_progress", None, Some("develop"), "daemon"),
+            (
+                "in_progress",
+                "in_progress",
+                Some("develop"),
+                Some("review"),
+                "agent"
+            ),
+            (
+                "in_progress",
+                "in_progress",
+                Some("review"),
+                Some("merge"),
+                "agent"
+            ),
+            (
+                "in_progress",
+                "finished",
+                Some("merge"),
+                Some("merge"),
+                "agent"
+            ),
+        ]
+    );
+    assert_eq!(audit[4].reason.as_deref(), Some("fast-forwarded"));
 }
 
+/// A refused move writes nothing: not the status, not the column, and no
+/// audit row. The status table is the six statuses and who moves between
+/// them; the columns move one at a time, forward or back, by the agent of
+/// the column the task is in or by the daemon.
 #[tokio::test]
 async fn illegal_transitions_are_rejected_and_unaudited() {
     let w = World::new().await;
-    let task = &w.task;
+    let (store, task) = (&w.store, &w.task);
+    let refused = |result: Result<Task>, what: &str| {
+        let err = result
+            .err()
+            .unwrap_or_else(|| panic!("{what} was accepted"));
+        assert!(
+            matches!(err, StoreError::Transition(_)),
+            "{what}: expected a transition error, got {err:?}"
+        );
+    };
 
-    // Illegal edge.
-    assert!(matches!(
-        w.store
+    // Illegal edges: a pending task has no last column to finish from, and
+    // only a failed task is retried.
+    refused(
+        store
             .transition_task(
                 &task.id,
                 TaskStatus::Finished,
-                Actor::Author,
+                Actor::Agent,
                 None,
-                Some("x")
+                Some("x"),
             )
             .await,
-        Err(StoreError::Transition(_))
-    ));
-    // Legal edge, wrong actor.
-    assert!(matches!(
-        w.store
-            .transition_task(&task.id, TaskStatus::Ready, Actor::Reviewer, None, None)
+        "pending -> finished",
+    );
+    refused(
+        store
+            .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
             .await,
-        Err(StoreError::Transition(_))
-    ));
-    // Finished requires a commit.
-    let t = walk_to(&w.store, &task.id, TaskStatus::Approved).await;
+        "pending -> in_progress",
+    );
+    // Legal edges, wrong actor: the daemon readies a task, and the daemon
+    // alone starts it.
+    refused(
+        store
+            .transition_task(&task.id, TaskStatus::Ready, Actor::Agent, None, None)
+            .await,
+        "pending -> ready by the agent",
+    );
+    let audit = store.list_task_transitions(&task.id).await.unwrap();
+    assert!(audit.is_empty(), "nothing was written: {audit:?}");
+
+    // In progress at its first column: a status cannot go back to ready, an
+    // agent cannot finish it from anywhere but the last column, and a column
+    // move skips none and needs a reason.
+    walk_to(store, &task.id, TaskStatus::InProgress).await;
+    refused(
+        store
+            .transition_task(&task.id, TaskStatus::Ready, Actor::User, None, None)
+            .await,
+        "in_progress -> ready",
+    );
+    refused(
+        store
+            .transition_task(&task.id, TaskStatus::Finished, Actor::User, None, Some("x"))
+            .await,
+        "in_progress -> finished by the user",
+    );
     assert!(matches!(
-        w.store
-            .transition_task(&t.id, TaskStatus::Finished, Actor::Author, None, None)
+        store
+            .end_step(&task.id, "merge", TaskStatus::Finished, "done", Some("x"))
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+    assert!(matches!(
+        store
+            .move_step(&task.id, "merge", Actor::Agent, "skip the review", None)
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+    assert!(matches!(
+        store
+            .move_step(&task.id, "review", Actor::Agent, "   ", None)
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+    assert!(matches!(
+        store
+            .move_step(&task.id, "review", Actor::User, "I say so", None)
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+    assert!(matches!(
+        store
+            .move_step(&task.id, "nowhere", Actor::Agent, "lost", None)
             .await,
         Err(StoreError::Invalid(_))
     ));
+    let still = store.get_task(&task.id).await.unwrap();
+    assert_eq!(still.status(), TaskStatus::InProgress);
+    assert_eq!(still.step.as_deref(), Some("develop"));
 
-    let audit = w.store.list_task_transitions(&task.id).await.unwrap();
-    assert_eq!(audit.len(), 4, "failed transitions leave no audit rows");
+    // Failed: only the user or the orchestrator retries it, and it cannot be
+    // failed again.
+    store
+        .transition_task(&task.id, TaskStatus::Failed, Actor::Agent, Some("no"), None)
+        .await
+        .unwrap();
+    refused(
+        store
+            .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
+            .await,
+        "failed -> ready by the daemon",
+    );
+    refused(
+        store
+            .transition_task(&task.id, TaskStatus::Failed, Actor::Daemon, None, None)
+            .await,
+        "failed -> failed",
+    );
+    // Terminal: a finished or cancelled task moves nowhere.
+    store
+        .transition_task(&task.id, TaskStatus::Cancelled, Actor::User, None, None)
+        .await
+        .unwrap();
+    for (to, actor) in [
+        (TaskStatus::Ready, Actor::User),
+        (TaskStatus::Failed, Actor::Daemon),
+        (TaskStatus::Cancelled, Actor::User),
+    ] {
+        refused(
+            store.transition_task(&task.id, to, actor, None, None).await,
+            &format!("cancelled -> {}", to.as_str()),
+        );
+    }
+
+    let audit = store.list_task_transitions(&task.id).await.unwrap();
+    assert_eq!(
+        audit
+            .iter()
+            .map(|t| t.to_status.as_str())
+            .collect::<Vec<_>>(),
+        ["ready", "in_progress", "failed", "cancelled"],
+        "refused transitions leave no audit rows"
+    );
 }
 
 /// Nothing caps how many tasks a goal takes. How a goal breaks down is what
@@ -903,232 +1525,26 @@ async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
     );
 }
 
-/// What a verdict belongs to is the review that was asked for, and asking
-/// again is what supersedes the verdicts before it.
-///
-/// There is no round number any more, so the boundary is the `review_request`
-/// row itself: the verdicts that count are the ones after the last one. A
-/// question asked in between is not a verdict, and a verdict from the review
-/// before is not counted in this one.
-#[tokio::test]
-async fn a_verdict_belongs_to_the_review_that_was_asked_for() {
-    let w = World::new().await;
-    let (store, task) = (&w.store, &w.task);
-    let reviewer = store
-        .list_task_reviewers(&task.id)
-        .await
-        .unwrap()
-        .remove(0)
-        .id;
-    let author = store.task_author(&task.id).await.unwrap().id;
-    let message = |kind: MessageKind, from: Actor, body: &str| NewMessage {
-        goal_id: task.goal_id.clone(),
-        task_id: Some(task.id.clone()),
-        kind,
-        from_actor: from,
-        from_agent_id: Some(match from {
-            Actor::Author => author.clone(),
-            _ => reviewer.clone(),
-        }),
-        from_session: None,
-        to_actor: match from {
-            Actor::Author => Actor::Reviewer,
-            _ => Actor::Author,
-        },
-        to_agent_id: Some(match from {
-            Actor::Author => reviewer.clone(),
-            _ => author.clone(),
-        }),
-        body: body.into(),
-    };
-
-    // Nothing asked for yet, and nothing to read.
-    assert!(store.open_review_request(&task.id).await.unwrap().is_none());
-    assert!(store.open_verdicts(&task.id).await.unwrap().is_empty());
-
-    store
-        .send_message(message(
-            MessageKind::ReviewRequest,
-            Actor::Author,
-            "have a look",
-        ))
-        .await
-        .unwrap();
-    let first = store
-        .open_review_request(&task.id)
-        .await
-        .unwrap()
-        .expect("the review that was asked for");
-
-    store
-        .send_message(message(
-            MessageKind::RequestChanges,
-            Actor::Reviewer,
-            "please fix",
-        ))
-        .await
-        .unwrap();
-    store
-        .send_message(message(
-            MessageKind::Message,
-            Actor::Reviewer,
-            "the flag is read here too",
-        ))
-        .await
-        .unwrap();
-    assert_eq!(
-        store.open_verdicts(&task.id).await.unwrap().len(),
-        1,
-        "a message is not counted as a verdict"
-    );
-
-    // Asked for again: the verdict before it belongs to the review before it.
-    store
-        .send_message(message(MessageKind::ReviewRequest, Actor::Author, "fixed"))
-        .await
-        .unwrap();
-    let second = store.open_review_request(&task.id).await.unwrap().unwrap();
-    assert_ne!(second, first, "a second request is a second review");
-    assert!(
-        store.open_verdicts(&task.id).await.unwrap().is_empty(),
-        "asking again supersedes what was said about the change before it"
-    );
-
-    store
-        .send_message(message(
-            MessageKind::Approve,
-            Actor::Reviewer,
-            "looks right now",
-        ))
-        .await
-        .unwrap();
-    let open = store.open_verdicts(&task.id).await.unwrap();
-    assert_eq!(open.len(), 1);
-    assert_eq!(open[0].kind(), Some(MessageKind::Approve));
-}
-
-/// A review opens in two writes, and the verdicts of the review before it are
-/// not this one's answers in between.
-///
-/// The status commits first and the request rows are written after it, so a
-/// reader in that window finds the newest request row is the review before
-/// this one's. Bounded by that row alone, the answers to that review read as
-/// answers to this one, and a task the author has only just sent for review
-/// is sent straight back for the changes it already made.
-#[tokio::test]
-async fn a_review_still_being_announced_owns_none_of_the_verdicts_before_it() {
-    let w = World::new().await;
-    let (store, task) = (&w.store, &w.task);
-    let reviewer = store
-        .list_task_reviewers(&task.id)
-        .await
-        .unwrap()
-        .remove(0)
-        .id;
-    let author = store.task_author(&task.id).await.unwrap().id;
-    let message = |kind: MessageKind, from: Actor, body: &str| NewMessage {
-        goal_id: task.goal_id.clone(),
-        task_id: Some(task.id.clone()),
-        kind,
-        from_actor: from,
-        from_agent_id: Some(match from {
-            Actor::Author => author.clone(),
-            _ => reviewer.clone(),
-        }),
-        from_session: None,
-        to_actor: match from {
-            Actor::Author => Actor::Reviewer,
-            _ => Actor::Author,
-        },
-        to_agent_id: Some(match from {
-            Actor::Author => reviewer.clone(),
-            _ => author.clone(),
-        }),
-        body: body.into(),
-    };
-    let to = async |status, actor| {
-        store
-            .transition_task(&task.id, status, actor, None, None)
-            .await
-            .unwrap();
-    };
-
-    // One review, asked for and answered with changes.
-    to(TaskStatus::Ready, Actor::Daemon).await;
-    to(TaskStatus::InProgress, Actor::Daemon).await;
-    to(TaskStatus::UnderReview, Actor::Author).await;
-    store
-        .send_message(message(
-            MessageKind::ReviewRequest,
-            Actor::Author,
-            "have a look",
-        ))
-        .await
-        .unwrap();
-    store
-        .send_message(message(
-            MessageKind::RequestChanges,
-            Actor::Reviewer,
-            "please fix",
-        ))
-        .await
-        .unwrap();
-    assert_eq!(store.open_verdicts(&task.id).await.unwrap().len(), 1);
-
-    // The changes made, and the author asks again. This is the window: the
-    // status is committed and the request row of this review is not written
-    // yet.
-    to(TaskStatus::ChangesRequested, Actor::Daemon).await;
-    to(TaskStatus::InProgress, Actor::Daemon).await;
-    to(TaskStatus::UnderReview, Actor::Author).await;
-    assert!(
-        store.open_verdicts(&task.id).await.unwrap().is_empty(),
-        "the answer to the review before it is not an answer to this one"
-    );
-
-    // And the row that lands next leaves it exactly where it was.
-    store
-        .send_message(message(MessageKind::ReviewRequest, Actor::Author, "fixed"))
-        .await
-        .unwrap();
-    assert!(store.open_verdicts(&task.id).await.unwrap().is_empty());
-
-    // The verdict this review does get is this review's.
-    store
-        .send_message(message(
-            MessageKind::Approve,
-            Actor::Reviewer,
-            "looks right now",
-        ))
-        .await
-        .unwrap();
-    let open = store.open_verdicts(&task.id).await.unwrap();
-    assert_eq!(open.len(), 1);
-    assert_eq!(open[0].kind(), Some(MessageKind::Approve));
-}
-
 /// A message goes to exactly one recipient and is delivered once: the stamp is
-/// what says which of them have reached their agent.
+/// what says which of them have reached their agent, and the claim that puts
+/// it there answers true once and false after.
 #[tokio::test]
 async fn a_message_is_delivered_once_and_the_stamp_says_so() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
-    let author = store.task_author(&task.id).await.unwrap().id;
+    let developer = agent_of(store, task, "develop").await.id;
+    let reviewer = agent_of(store, task, "review").await.id;
 
     let asked = store
         .send_message(NewMessage {
             goal_id: task.goal_id.clone(),
             task_id: Some(task.id.clone()),
             kind: MessageKind::Message,
-            from_actor: Actor::Reviewer,
-            from_agent_id: Some(
-                store.list_task_reviewers(&task.id).await.unwrap()[0]
-                    .id
-                    .clone(),
-            ),
+            from_actor: Actor::Agent,
+            from_agent_id: Some(reviewer),
             from_session: None,
-            to_actor: Actor::Author,
-            to_agent_id: Some(author.clone()),
+            to_actor: Actor::Agent,
+            to_agent_id: Some(developer),
             body: "why the retry?".into(),
         })
         .await
@@ -1145,13 +1561,19 @@ async fn a_message_is_delivered_once_and_the_stamp_says_so() {
         .unwrap();
     assert_eq!(waiting.len(), 1);
 
-    store.mark_message_delivered(&asked.id).await.unwrap();
+    assert!(
+        store.mark_message_delivered(&asked.id).await.unwrap(),
+        "the first claim is the one that stamps"
+    );
     let delivered = store.get_message(&asked.id).await.unwrap();
     let at = delivered.delivered_at.clone().expect("stamped");
 
-    // Stamping twice keeps the first time: a message typed twice is a bug in
-    // the caller, and overwriting the stamp would hide it.
-    store.mark_message_delivered(&asked.id).await.unwrap();
+    // A second claim loses and keeps the first time: the prompt and the read
+    // race for one row, and only one of them may hand it over.
+    assert!(
+        !store.mark_message_delivered(&asked.id).await.unwrap(),
+        "a claim on a stamped row answers that it lost"
+    );
     assert_eq!(
         store.get_message(&asked.id).await.unwrap().delivered_at,
         Some(at)
@@ -1208,7 +1630,7 @@ async fn sessions_and_events_round_trip() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
 
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     store
         .set_session_internal_id(&session.id, "uuid-1234")
         .await
@@ -1273,7 +1695,7 @@ async fn record_events(w: &World, session: &AgentSession, count: usize) -> Vec<S
 #[tokio::test]
 async fn a_descending_page_answers_the_newest_events_newest_first() {
     let w = World::new().await;
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     let recorded = record_events(&w, &session, 201).await;
 
     let newest = w
@@ -1303,7 +1725,7 @@ async fn a_descending_page_answers_the_newest_events_newest_first() {
 #[tokio::test]
 async fn a_before_cursor_pages_back_past_the_newest_page() {
     let w = World::new().await;
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     let recorded = record_events(&w, &session, 201).await;
 
     let newest = w
@@ -1340,7 +1762,7 @@ async fn every_launch_of_a_session_is_dated() {
     let w = World::new().await;
     let store = &w.store;
 
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     assert_eq!(
         session.launched_at, None,
         "a row that was created but never launched is dated by nothing"
@@ -1416,7 +1838,7 @@ async fn restarting_a_session_reopens_the_same_row() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
 
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     store
         .set_session_internal_id(&session.id, "uuid-1234")
         .await
@@ -1490,7 +1912,7 @@ async fn session_attention_is_raised_kept_and_cleared() {
     let w = World::new().await;
     let store = &w.store;
 
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     let fresh = store.get_session(&session.id).await.unwrap();
     assert_eq!(fresh.attention_reason(), None);
     assert_eq!(fresh.attention_since, None);
@@ -1593,7 +2015,7 @@ async fn session_attention_is_raised_kept_and_cleared() {
 async fn an_agents_own_event_does_not_clear_the_attention_raised_for_the_user() {
     let w = World::new().await;
     let store = &w.store;
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
 
     // What the agent raised for itself, the agent takes back down.
     store
@@ -1651,7 +2073,7 @@ async fn an_agents_own_event_does_not_clear_the_attention_raised_for_the_user() 
 async fn an_idle_report_clears_only_the_silence_and_the_error() {
     let w = World::new().await;
     let store = &w.store;
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     let reason = async || {
         store
             .get_session(&session.id)
@@ -1705,7 +2127,7 @@ async fn an_idle_report_clears_only_the_silence_and_the_error() {
 async fn an_agents_own_reason_does_not_replace_the_attention_raised_for_the_user() {
     let w = World::new().await;
     let store = &w.store;
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     // Installed after the seeding, so what it holds is this test's writes.
     let mut changes = store.watch_changes().expect("the only watcher");
 
@@ -1779,58 +2201,13 @@ async fn an_agents_own_reason_does_not_replace_the_attention_raised_for_the_user
     );
 }
 
-/// The summary a round was asked for review with is the round's own, read off
-/// the transition that opened it — the latest one, so a second round answers
-/// with what was submitted for it and not for the first.
-#[tokio::test]
-async fn the_review_summary_is_the_reason_of_the_latest_review_request() {
-    let w = World::new().await;
-    let (store, task) = (&w.store, &w.task);
-    assert_eq!(store.review_summary(&task.id).await.unwrap(), None);
-
-    let ask = async |summary: &str| {
-        store
-            .transition_task(
-                &task.id,
-                TaskStatus::UnderReview,
-                Actor::Author,
-                Some(summary),
-                None,
-            )
-            .await
-            .unwrap();
-    };
-    walk_to(store, &task.id, TaskStatus::InProgress).await;
-    ask("the first pass, with a test per lane").await;
-    assert_eq!(
-        store.review_summary(&task.id).await.unwrap().as_deref(),
-        Some("the first pass, with a test per lane")
-    );
-
-    // A round of changes, and a second request with its own summary.
-    for (status, actor) in [
-        (TaskStatus::ChangesRequested, Actor::Daemon),
-        (TaskStatus::InProgress, Actor::Daemon),
-    ] {
-        store
-            .transition_task(&task.id, status, actor, None, None)
-            .await
-            .unwrap();
-    }
-    ask("the lane widths, as asked").await;
-    assert_eq!(
-        store.review_summary(&task.id).await.unwrap().as_deref(),
-        Some("the lane widths, as asked")
-    );
-}
-
 /// Why an ended task ended, read off the transition that ended it: the
-/// author's own `fail_task` reason, or whatever cancelled it.
+/// agent's own `fail_task` reason, or whatever cancelled it.
 ///
 /// Only an ending has one. A task still being worked on carries nothing,
-/// however much has been said in its transitions — a review request's summary
-/// is the round's, not the task's — and a retry that puts it back to work
-/// takes the answer away with it.
+/// however much has been said in its transitions — the reason a column was
+/// completed with is that move's, not the task's — and a retry that puts it
+/// back to work takes the answer away with it.
 #[tokio::test]
 async fn an_ended_task_carries_the_reason_the_transition_that_ended_it_gave() {
     let w = World::new().await;
@@ -1843,11 +2220,11 @@ async fn an_ended_task_carries_the_reason_the_transition_that_ended_it_gave() {
 
     walk_to(store, &task.id, TaskStatus::InProgress).await;
     store
-        .transition_task(
+        .move_step(
             &task.id,
-            TaskStatus::UnderReview,
-            Actor::Author,
-            Some("the first pass, with a test per lane"),
+            "review",
+            Actor::Agent,
+            "the first pass, with a test per lane",
             None,
         )
         .await
@@ -1855,14 +2232,14 @@ async fn an_ended_task_carries_the_reason_the_transition_that_ended_it_gave() {
     assert_eq!(
         reason().await,
         None,
-        "a round's summary is not why the task ended"
+        "a column move's reason is not why the task ended"
     );
 
     store
         .transition_task(
             &task.id,
             TaskStatus::Failed,
-            Actor::Author,
+            Actor::Agent,
             Some("the crate it names was deleted upstream"),
             None,
         )
@@ -1897,11 +2274,8 @@ async fn an_ended_task_carries_the_reason_the_transition_that_ended_it_gave() {
 async fn a_task_is_stalled_while_one_of_its_agents_is() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
-    let author = w.author_session().await;
-    let staffed = w.store.list_task_reviewers(&task.id).await.unwrap();
-    let reviewer = w
-        .session(Seat::Reviewer, Some(&staffed[0].id), Some(&task.id))
-        .await;
+    let author = w.agent_session().await;
+    let reviewer = w.review_session().await;
     assert!(!w.task().await.is_stalled());
 
     store
@@ -1974,7 +2348,7 @@ async fn retiring_a_session_drops_the_prompt_it_can_no_longer_answer() {
     let w = World::new().await;
     let store = &w.store;
 
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     store
         .set_session_attention(&session.id, AttentionReason::WaitingPermission)
         .await
@@ -2009,7 +2383,7 @@ async fn retiring_a_session_drops_the_prompt_it_can_no_longer_answer() {
 
     // What a session ended reporting is not a dialog: it stays up, and stays
     // up through a further status write.
-    let failed = w.author_session().await;
+    let failed = w.agent_session().await;
     store
         .set_session_attention(&failed.id, AttentionReason::AgentError)
         .await
@@ -2036,7 +2410,7 @@ async fn a_prompt_is_only_ever_raised_on_a_session_that_is_still_live() {
 
     // The interleaving spelled out: a caller holding a session it read while
     // it was live, and the retirement landing before it gets to the raise.
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     let as_read = store.get_session(&session.id).await.unwrap();
     assert!(as_read.status().is_live());
     store
@@ -2082,7 +2456,7 @@ async fn a_prompt_is_only_ever_raised_on_a_session_that_is_still_live() {
     // And with the two writes actually racing, either order is fine: the
     // raise loses, or it wins and the retirement takes it down after it.
     for _ in 0..5 {
-        let racing = w.author_session().await;
+        let racing = w.agent_session().await;
         let (retired, raised) = tokio::join!(
             store.set_session_status(&racing.id, SessionStatus::Exited),
             store.set_session_attention(&racing.id, AttentionReason::WaitingInput),
@@ -2115,7 +2489,7 @@ async fn a_status_is_only_ever_written_while_the_session_is_still_live() {
     // The interleaving spelled out: a caller holding a session it read
     // while it was live, and the retirement landing before it gets to write
     // the status its read decided.
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     let as_read = store.get_session(&session.id).await.unwrap();
     assert!(as_read.status().is_live());
     store
@@ -2146,7 +2520,7 @@ async fn a_status_is_only_ever_written_while_the_session_is_still_live() {
     // status write loses, or it wins and the retirement takes it down after
     // it.
     for _ in 0..5 {
-        let racing = w.author_session().await;
+        let racing = w.agent_session().await;
         let (retired, written) = tokio::join!(
             store.set_session_status(&racing.id, SessionStatus::Exited),
             store.set_session_status_if_live(&racing.id, SessionStatus::Idle, None),
@@ -2172,7 +2546,7 @@ async fn a_status_is_only_written_for_the_launch_it_was_decided_for() {
     let w = World::new().await;
     let store = &w.store;
 
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     store
         .set_session_launch(&session.id, "01launchonexxxxxxxxxxxxxxx")
         .await
@@ -2211,7 +2585,7 @@ async fn a_status_is_only_written_for_the_launch_it_was_decided_for() {
     // An event that names no launch, or a row never launched, have neither
     // to compare, and both are believed — matching `ingest_event`'s own
     // superseded check.
-    let never_launched = w.author_session().await;
+    let never_launched = w.agent_session().await;
     store
         .set_session_status_if_live(
             &never_launched.id,
@@ -2428,7 +2802,7 @@ async fn a_dropped_shipped_skill_leaves_an_existing_database_on_reopen() {
 
     // The era of a larger catalog, reproduced: three built-ins this release
     // no longer ships, one of them written over and one of them still loaded
-    // by the task's author.
+    // by the agent of the task's first column.
     let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
         .await
         .unwrap();
@@ -2453,7 +2827,7 @@ async fn a_dropped_shipped_skill_leaves_an_existing_database_on_reopen() {
     sqlx::query(
         "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
          SELECT id, 'dependency-upgrade', 1 FROM task_agents
-          WHERE task_id = ? AND seat = 'author'",
+          WHERE task_id = ? AND step = 'develop'",
     )
     .bind(&task.id)
     .execute(&pool)
@@ -2487,7 +2861,7 @@ async fn a_dropped_shipped_skill_leaves_an_existing_database_on_reopen() {
         loaded.is_builtin(),
         "a dropped built-in an agent still loads stays, so the task still reads"
     );
-    let author = store.task_author(&task.id).await.unwrap();
+    let author = agent_of(&store, &task, "develop").await;
     let names: Vec<String> = store
         .agent_skills(&author.id)
         .await
@@ -2507,6 +2881,70 @@ async fn a_dropped_shipped_skill_leaves_an_existing_database_on_reopen() {
     );
 }
 
+/// `pull-request` left the catalog once opening a request became the
+/// daemon's own tool rather than an agent's skill. An old staffing on it is
+/// the kept-row case any dropped skill proves: the row stays a built-in,
+/// because the task that staffed it still names it, and it reads as an empty
+/// skill since nothing ships under its name any more.
+#[tokio::test]
+async fn an_old_staffing_on_pull_request_keeps_its_row_and_reads_as_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let store = Store::open(&path).await.unwrap();
+    let (goal, repo) = seed_goal(&store).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    drop(store);
+
+    // The era that shipped `pull-request`, reproduced: a row this release no
+    // longer ships, staffed on the agent of the task's first column.
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+         VALUES ('pull-request', NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
+         SELECT id, 'pull-request', 1 FROM task_agents
+          WHERE task_id = ? AND step = 'develop'",
+    )
+    .bind(&task.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    let loaded = store.get_skill("pull-request").await.unwrap();
+    assert!(
+        loaded.is_builtin(),
+        "an old staffing on pull-request keeps its row"
+    );
+    assert_eq!(
+        loaded.document_text(),
+        "",
+        "the dropped skill reads as empty"
+    );
+
+    let author = agent_of(&store, &task, "develop").await;
+    let names: Vec<String> = store
+        .agent_skills(&author.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert!(
+        names.contains(&"pull-request".to_string()),
+        "the task still names it: {names:?}"
+    );
+}
+
 /// A skill that merged into another takes its staffings with it: the rows
 /// that named it name the skill that does its work now, so a task staffed
 /// before the merge still reads as the work it did. An agent staffed on both
@@ -2523,7 +2961,7 @@ async fn a_merged_skill_hands_its_staffings_to_the_skill_that_absorbed_it() {
     drop(store);
 
     // The era before the merge, reproduced: `testing` staffed beside `coding`
-    // on one author, and on its own on the other.
+    // on one task's first agent, and on its own on the other's.
     let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
         .await
         .unwrap();
@@ -2536,7 +2974,7 @@ async fn a_merged_skill_hands_its_staffings_to_the_skill_that_absorbed_it() {
     .unwrap();
     sqlx::query(
         "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
-         SELECT id, 'testing', 1 FROM task_agents WHERE task_id = ? AND seat = 'author'",
+         SELECT id, 'testing', 1 FROM task_agents WHERE task_id = ? AND step = 'develop'",
     )
     .bind(&both.id)
     .execute(&pool)
@@ -2555,7 +2993,7 @@ async fn a_merged_skill_hands_its_staffings_to_the_skill_that_absorbed_it() {
 
     let store = Store::open(&path).await.unwrap();
     for task in [&both, &alone] {
-        let author = store.task_author(&task.id).await.unwrap();
+        let author = agent_of(&store, task, "develop").await;
         let names: Vec<String> = store
             .agent_skills(&author.id)
             .await
@@ -2649,23 +3087,23 @@ async fn an_agent_is_written_on_the_pin_it_was_given_whole() {
             agents: vec![
                 NewTaskAgent {
                     pin: pinned.clone(),
-                    ..NewTaskAgent::new(Seat::Author, ["coding"], default_pin())
+                    ..NewTaskAgent::new("develop", ["coding"], default_pin())
                 },
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
+                NewTaskAgent::new("review", ["code-review"], default_pin()),
+                NewTaskAgent::new("merge", ["merge"], default_pin()),
             ],
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();
 
-    let author = store.task_author(&task.id).await.unwrap();
+    let author = agent_of(&store, &task, "develop").await;
     assert_eq!(author.model, "codex-acp:gpt-5.6-luna");
     assert_eq!(author.effort.as_deref(), Some("max"));
 
-    let reviewers = store.list_task_reviewers(&task.id).await.unwrap();
-    assert_eq!(reviewers[0].model, "stub:test-model");
-    assert_eq!(reviewers[0].effort, None);
+    let reviewer = agent_of(&store, &task, "review").await;
+    assert_eq!(reviewer.model, "stub:test-model");
+    assert_eq!(reviewer.effort, None);
 
     // And the user's later choice replaces it whole, with no half left behind.
     let moved = store
@@ -2745,6 +3183,239 @@ async fn a_database_from_before_the_squash_says_which_file_to_delete() {
     );
 }
 
+/// A database on the old chain of 23 migrations has a `0001_init.sql`
+/// recorded at version 1, the same version this release's one migration
+/// ships — but the squash rewrote the file whole, so the checksum is not
+/// this release's. `Store::open` refuses it the same way it refuses an
+/// unknown version, with the pre-squash message.
+///
+/// The row is planted rather than the old chain replayed, for the same
+/// reason as the test above: a version 1 whose checksum is not this
+/// release's is exactly what every database of the old chain has.
+#[tokio::test]
+async fn a_database_on_the_old_chain_is_refused_with_the_pre_squash_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    drop(Store::open(&path).await.unwrap());
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE _sqlx_migrations SET checksum = x'00' WHERE version = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let message = match Store::open(&path).await {
+        Err(StoreError::Invalid(message)) => message,
+        Err(e) => panic!("opened with the wrong error: {e}"),
+        Ok(_) => panic!("a database on the old chain opened"),
+    };
+    assert!(
+        message.contains(&path.display().to_string()) && message.contains("Delete"),
+        "the message names the file to delete: {message}"
+    );
+    assert!(
+        message.contains("predates the squashed schema"),
+        "and says why: {message}"
+    );
+}
+
+/// A database whose `goal_steps` still carries the single, optional `rank`
+/// column workflow capability bands replaced: there is no way to turn one
+/// snapshotted rank into a nonempty `ranks` list without guessing, so
+/// `Store::open` refuses it before migration `0002` rebuilds the table out
+/// from under it, naming the file to delete the same way a pre-squash
+/// database is refused.
+///
+/// The column is added by a raw `ALTER TABLE` rather than by replaying an
+/// old release, for the same reason the squash tests plant a row: the old
+/// `rank` column, on an otherwise current database, is exactly what every
+/// database written before this change has.
+#[tokio::test]
+async fn a_database_that_still_carries_the_single_rank_column_is_refused_with_a_reset_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pre-ranks.db");
+    // A current database first, so that the only thing wrong with it is the
+    // superseded column.
+    drop(Store::open(&path).await.unwrap());
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE goal_steps ADD COLUMN rank TEXT")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let message = match Store::open(&path).await {
+        Err(StoreError::Invalid(message)) => message,
+        Err(e) => panic!("opened with the wrong error: {e}"),
+        Ok(_) => panic!("a database with the old rank column opened"),
+    };
+    assert!(
+        message.contains(&path.display().to_string()) && message.contains("Delete"),
+        "the message names the file to delete: {message}"
+    );
+    assert!(
+        message.contains("predates workflow rank capability bands"),
+        "and says why: {message}"
+    );
+
+    // And `ariadne doctor` answers the same, which is what the user asks
+    // when the daemon it belongs to will not start.
+    assert_eq!(
+        ariadne_store::pre_ranks_database(&path).await.as_deref(),
+        Some(message.as_str())
+    );
+    // A database this release wrote is not called old.
+    let fresh = dir.path().join("fresh.db");
+    drop(Store::open(&fresh).await.unwrap());
+    assert_eq!(ariadne_store::pre_ranks_database(&fresh).await, None);
+    // Neither is a path with nothing on it.
+    assert_eq!(
+        ariadne_store::pre_ranks_database(dir.path().join("nothing.db")).await,
+        None
+    );
+}
+
+/// `0001_init.sql`'s own `CHECK (kind IN ('github'))` on `forge_integrations`
+/// is what a fresh database's schema actually enforces, not merely what the
+/// typed `SetForgeIntegration::kind: ForgeKind` the ordinary write path
+/// takes can construct — `ForgeKind` has one variant today, so nothing
+/// through that path could ever name an unsupported kind to prove the
+/// column refuses it. A raw insert does: `github` is accepted, and another
+/// forge name, the kind of value an earlier release's wider `CHECK` once
+/// also allowed (025 rule 1a), is refused by the database itself.
+///
+/// Connected by path, after the migrating `Store` is dropped, the same way
+/// the checksum test above reaches `_sqlx_migrations` directly: this is a
+/// probe of the schema itself, not of anything `Store`'s own API exposes.
+#[tokio::test]
+async fn the_forge_integrations_kind_check_accepts_github_and_rejects_other_kinds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("forge-kind.db");
+    drop(Store::open(&path).await.unwrap());
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+
+    // A real `repositories` row for each, distinct from one another: the
+    // `kind` CHECK is what this test means to probe, not the unrelated
+    // foreign key `forge_integrations.repository_id` also carries.
+    sqlx::query(
+        "INSERT INTO repositories (id, path, base_branch, created_at, updated_at)
+         VALUES ('r1', '/repo-1', 'main', '', ''), ('r2', '/repo-2', 'main', '', '')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO forge_integrations
+            (repository_id, kind, host, owner, name, remote, detected_at, updated_at)
+         VALUES ('r1', 'github', 'github.com', 'acme', 'widgets', 'origin', '', '')",
+    )
+    .execute(&pool)
+    .await
+    .expect("github is an accepted kind");
+
+    let rejected = sqlx::query(
+        "INSERT INTO forge_integrations
+            (repository_id, kind, host, owner, name, remote, detected_at, updated_at)
+         VALUES ('r2', 'bitbucket', 'bitbucket.org', 'acme', 'widgets', 'origin', '', '')",
+    )
+    .execute(&pool)
+    .await
+    .expect_err("bitbucket is not an accepted kind");
+    assert!(
+        rejected.to_string().contains("CHECK constraint failed"),
+        "refused for the kind CHECK, not some other reason: {rejected}"
+    );
+
+    pool.close().await;
+}
+
+/// A fresh database already carries every column the old incremental chain
+/// used to add after the first squash — pull-request readiness, the
+/// babysitting and asks-revision columns, a repository's `supervise_posts`
+/// default, the `keeper` seat and `agent_requests` — all folded into the one
+/// shipped migration now, so a fresh store needs no later migration to
+/// reach any of them.
+#[tokio::test]
+async fn a_fresh_database_already_has_every_column_the_old_chain_added() {
+    let (store, _dir, pr) = store_with_my_pull_request().await;
+    assert_eq!(pr.ready_confirmed_at, None);
+    assert_eq!(pr.ready_head_sha, None);
+    assert!(!pr.babysit_asked);
+    assert_eq!(pr.asks_revision, 0);
+
+    let repo = store.get_repository(&pr.repository_id).await.unwrap();
+    assert!(repo.supervise_posts());
+
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Keeper),
+            task_agent_id: None,
+            model: "stub:m".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(pr.id.clone()),
+        })
+        .await
+        .unwrap();
+
+    let (_, created) = store
+        .create_agent_request(&session.id, "pick a model", None)
+        .await
+        .unwrap();
+    assert!(created);
+}
+
+#[tokio::test]
+async fn answering_a_snapshot_keeps_later_agent_requests_pending() {
+    let (store, _dir, pr) = store_with_my_pull_request().await;
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Keeper),
+            task_agent_id: None,
+            model: "stub:m".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(pr.id.clone()),
+        })
+        .await
+        .unwrap();
+    let (opened, created) = store
+        .create_agent_request(&session.id, "First question", None)
+        .await
+        .unwrap();
+    assert!(created);
+    let snapshot = store.pending_agent_request_ids(&session.id).await.unwrap();
+    assert_eq!(snapshot, [opened.id]);
+
+    let (later, created) = store
+        .create_agent_request(&session.id, "New question", None)
+        .await
+        .unwrap();
+    assert!(created);
+    store
+        .answer_agent_requests(&session.id, &snapshot)
+        .await
+        .unwrap();
+
+    let pending = store.pending_agent_requests().await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, later.id);
+}
+
 // -- token usage ------------------------------------------------------------
 
 fn usage(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> TokenUsage {
@@ -2780,7 +3451,7 @@ async fn usage_rows_at(path: &std::path::Path) -> i64 {
 #[tokio::test]
 async fn a_source_replaces_its_own_totals_and_sources_add_up() {
     let w = World::new().await;
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     // Nothing reported is a zero, not an absence.
     assert_eq!(
         w.store.session_usage(&session.id).await.unwrap(),
@@ -2825,27 +3496,22 @@ async fn a_source_replaces_its_own_totals_and_sources_add_up() {
     assert_eq!(usage_rows(&w._dir).await, 2, "one row per source");
 }
 
-/// What a task spent, by the profile that spent it: its author once, and
-/// each reviewer with every round it sat summed into one entry — a reviewer
-/// runs a session per round, and nobody reads them round by round.
+/// What a task spent, by the agent that spent it: one entry per column agent
+/// that has a session on the task, with every session of it summed into one
+/// — an agent returned to its column runs a session per return, and nobody
+/// reads them return by return. The entries come in agent id order, so a
+/// reader sees the same order twice running.
 #[tokio::test]
-async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
+async fn a_tasks_usage_groups_every_session_of_an_agent_together() {
     let w = World::new().await;
-    let author = w.author_session().await;
-    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0]
-        .id
-        .clone();
-    let first_round = w
-        .session(Seat::Reviewer, Some(&reviewer_id), Some(&w.task.id))
-        .await;
-    let second_round = w
-        .session(Seat::Reviewer, Some(&reviewer_id), Some(&w.task.id))
-        .await;
+    let developer = w.agent_session().await;
+    let first_return = w.review_session().await;
+    let second_return = w.review_session().await;
 
     for (session, spent) in [
-        (&author, usage(100, 80, 10)),
-        (&first_round, usage(20, 10, 4)),
-        (&second_round, usage(5, 1, 2)),
+        (&developer, usage(100, 80, 10)),
+        (&first_return, usage(20, 10, 4)),
+        (&second_return, usage(5, 1, 2)),
     ] {
         w.store
             .upsert_session_usage(&session.id, "/x.jsonl", spent)
@@ -2854,59 +3520,51 @@ async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
     }
 
     let grouped = w.store.task_usage(&w.task.id).await.unwrap();
-    assert_eq!(
-        grouped,
-        vec![
-            AgentUsage {
-                seat: Seat::Author,
-                agent_id: author_of(&w.store, &w.task).await.id,
-                usage: usage(100, 80, 10),
-            },
-            AgentUsage {
-                seat: Seat::Reviewer,
-                agent_id: reviewer_id,
-                usage: usage(25, 11, 6),
-            },
-        ]
-    );
+    let mut expected = vec![
+        AgentUsage {
+            agent_id: agent_of(&w.store, &w.task, "develop").await.id,
+            usage: usage(100, 80, 10),
+        },
+        AgentUsage {
+            agent_id: agent_of(&w.store, &w.task, "review").await.id,
+            usage: usage(25, 11, 6),
+        },
+    ];
+    expected.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
+    assert_eq!(grouped, expected);
 }
 
 /// A session that has reported nothing is still one of the task's: it reads
-/// as zeros rather than dropping out, so the reviewer nobody has spent
-/// anything on is still listed.
+/// as zeros rather than dropping out, so the agent nobody has spent anything
+/// on is still listed — and an agent with no session at all is not.
 #[tokio::test]
 async fn a_session_that_has_reported_nothing_reads_as_zeros() {
     let w = World::new().await;
-    let _author = w.author_session().await;
+    let _developer = w.agent_session().await;
     let grouped = w.store.task_usage(&w.task.id).await.unwrap();
     assert_eq!(
         grouped,
         vec![AgentUsage {
-            seat: Seat::Author,
-            agent_id: author_of(&w.store, &w.task).await.id,
+            agent_id: agent_of(&w.store, &w.task, "develop").await.id,
             usage: TokenUsage::default(),
         }]
     );
 }
 
-/// A goal's usage is grouped by seat rather than by agent, and its
+/// A goal's usage is grouped by seat rather than by agent — its orchestrator,
+/// and the agents of every column of every task in one entry — and its
 /// orchestrator counts: an orchestrator session belongs to no task, so
 /// nothing under a task would ever have found it.
 #[tokio::test]
 async fn a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator() {
     let w = World::new().await;
     let orchestrator = w.session(Seat::Orchestrator, None, None).await;
-    let author = w.author_session().await;
-    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0]
-        .id
-        .clone();
-    let reviewer = w
-        .session(Seat::Reviewer, Some(&reviewer_id), Some(&w.task.id))
-        .await;
+    let developer = w.agent_session().await;
+    let reviewer = w.review_session().await;
 
     for (session, spent) in [
         (&orchestrator, usage(40, 30, 8)),
-        (&author, usage(100, 80, 10)),
+        (&developer, usage(100, 80, 10)),
         (&reviewer, usage(20, 10, 4)),
     ] {
         w.store
@@ -2915,21 +3573,22 @@ async fn a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator() {
             .unwrap();
     }
 
-    let grouped = w.store.goal_usage(&w.goal.id).await.unwrap();
+    let mut parts = w
+        .store
+        .goal_parts(std::slice::from_ref(&w.goal.id))
+        .await
+        .unwrap();
+    let grouped = parts.seats.remove(&w.goal.id).unwrap();
     assert_eq!(
         grouped,
         vec![
             SeatUsage {
-                seat: Seat::Author,
-                usage: usage(100, 80, 10),
+                seat: Seat::Agent,
+                usage: usage(120, 90, 14),
             },
             SeatUsage {
                 seat: Seat::Orchestrator,
                 usage: usage(40, 30, 8),
-            },
-            SeatUsage {
-                seat: Seat::Reviewer,
-                usage: usage(20, 10, 4),
             },
         ]
     );
@@ -2940,13 +3599,114 @@ async fn a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator() {
     );
 }
 
+/// Many goals are read in one go, and what each one gets is what reading it
+/// alone gets: its repositories, its columns, and each task's agents with
+/// their skills and what they spent. Nothing of one goal leaks into another,
+/// and a goal with no task reads as one with none.
+#[tokio::test]
+async fn the_parts_of_many_goals_are_what_each_goal_reads_alone() {
+    let w = World::new().await;
+    let (other, other_repo) = seed_goal(&w.store).await;
+    let other_task = seed_task(&w.store, &other, &other_repo, vec![]).await;
+    let (empty, _) = seed_goal(&w.store).await;
+    let developer = w.agent_session().await;
+    w.store
+        .upsert_session_usage(&developer.id, "/x.jsonl", usage(100, 80, 10))
+        .await
+        .unwrap();
+    let reviewer = agent_of(&w.store, &other_task, "review").await;
+    let other_session = w
+        .store
+        .create_session(NewSession {
+            goal_id: Some(other.id.clone()),
+            task_id: Some(other_task.id.clone()),
+            seat: Some(Seat::Agent),
+            task_agent_id: Some(reviewer.id.clone()),
+            model: "stub:test-model".into(),
+            effort: None,
+            worktree_path: Some("/tmp/wt".into()),
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    w.store
+        .upsert_session_usage(&other_session.id, "/x.jsonl", usage(7, 0, 3))
+        .await
+        .unwrap();
+
+    let column_ids = |steps: Vec<GoalStep>| steps.into_iter().map(|s| s.id).collect::<Vec<_>>();
+    let ids = [w.goal.id.clone(), other.id.clone(), empty.id.clone()];
+    let mut parts = w.store.goal_parts(&ids).await.unwrap();
+    for goal_id in &ids {
+        let repositories: Vec<String> = w
+            .store
+            .list_goal_repositories(goal_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(parts.repository_ids.remove(goal_id).unwrap(), repositories);
+
+        let steps = column_ids(w.store.goal_steps(goal_id).await.unwrap());
+        assert_eq!(column_ids(parts.steps.remove(goal_id).unwrap()), steps);
+
+        let tasks = w
+            .store
+            .list_tasks(TaskFilter {
+                goal_id: Some(goal_id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let read = parts.tasks.remove(goal_id).unwrap_or_default();
+        assert_eq!(
+            read.iter().map(|t| t.task_id.clone()).collect::<Vec<_>>(),
+            tasks.iter().map(|t| t.id.clone()).collect::<Vec<_>>()
+        );
+        for (task, read) in tasks.iter().zip(read) {
+            let mut agents = Vec::new();
+            for agent in w.store.list_task_agents(&task.id).await.unwrap() {
+                let skills: Vec<String> = w
+                    .store
+                    .agent_skills(&agent.id)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|s| s.name)
+                    .collect();
+                agents.push((agent.id, skills));
+            }
+            let read_agents: Vec<(String, Vec<String>)> = read
+                .agents
+                .into_iter()
+                .map(|(agent, skills)| (agent.id, skills))
+                .collect();
+            assert_eq!(read_agents, agents);
+            assert_eq!(read.usage, w.store.task_usage(&task.id).await.unwrap());
+            assert!(read.unstaffed_skills.is_empty());
+        }
+    }
+    assert!(
+        parts.seats.remove(&empty.id).is_none(),
+        "a goal with no session spent nothing"
+    );
+    assert_eq!(
+        parts.seats.remove(&other.id).unwrap(),
+        vec![SeatUsage {
+            seat: Seat::Agent,
+            usage: usage(7, 0, 3),
+        }]
+    );
+}
+
 /// Usage belongs to the session that spent it: deleting the goal takes the
 /// sessions with it, and the rows keyed on them go too rather than outliving
 /// the id that names them.
 #[tokio::test]
 async fn usage_goes_when_the_session_it_belonged_to_does() {
     let w = World::new().await;
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     w.store
         .upsert_session_usage(&session.id, "/x.jsonl", usage(100, 80, 10))
         .await
@@ -3009,6 +3769,136 @@ async fn skill_crud_and_the_two_refusals_that_tell_them_apart() {
     ));
 }
 
+/// The name's shape: ASCII letters in either case, digits, hyphens and
+/// underscores, 1 to 64 characters, not leading with a hyphen or a dot. The
+/// store checks the same rule as the route, since nothing names a skill
+/// without going through one or the other.
+#[tokio::test]
+async fn a_skill_name_must_be_shaped_right_and_stay_under_the_skills_directory() {
+    let (store, _dir) = test_store().await;
+
+    store
+        .create_skill(NewSkill {
+            name: "My_Skill2".into(),
+            document: "---\nname: x\n---\n".into(),
+        })
+        .await
+        .unwrap();
+
+    for name in ["-leading", ".hidden", "a/b", "a\\b", "", "api design"] {
+        assert!(
+            matches!(
+                store
+                    .create_skill(NewSkill {
+                        name: name.into(),
+                        document: "---\nname: x\n---\n".into(),
+                    })
+                    .await,
+                Err(StoreError::Invalid(_))
+            ),
+            "{name:?} should be refused"
+        );
+    }
+}
+
+/// A case-insensitive volume maps `Demo` and `demo` to one directory: the
+/// store refuses the second name outright, before `sync_skills` could ever
+/// write both and have one overwrite the other. Checked against a shipped
+/// name too, not only another of the user's own.
+#[tokio::test]
+async fn a_skill_name_differing_only_in_case_from_an_existing_one_is_refused() {
+    let (store, _dir) = test_store().await;
+
+    store
+        .create_skill(NewSkill {
+            name: "Demo".into(),
+            document: "---\nname: x\n---\n".into(),
+        })
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        store
+            .create_skill(NewSkill {
+                name: "demo".into(),
+                document: "---\nname: x\n---\n".into(),
+            })
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+    assert!(matches!(
+        store
+            .create_skill(NewSkill {
+                name: "Coding".into(),
+                document: "---\nname: x\n---\n".into(),
+            })
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+}
+
+/// The case check and the insert are not two separate reads and writes a
+/// second call could land between: run concurrently, `Demo` and `demo`
+/// still leave exactly one of the two created, never both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_creates_differing_only_in_case_do_not_both_succeed() {
+    use std::sync::Arc;
+    use tokio::sync::Barrier;
+
+    let (store, _dir) = test_store().await;
+    let store = Arc::new(store);
+
+    // Real OS threads, released at the same instant by the barrier, so the
+    // two calls' checks can genuinely land before either call's insert —
+    // `tokio::join!` on one task alone never forces that interleaving.
+    for i in 0..50 {
+        let upper = format!("Demo{i}");
+        let lower = format!("demo{i}");
+        let barrier = Arc::new(Barrier::new(2));
+
+        let a = {
+            let store = Arc::clone(&store);
+            let barrier = Arc::clone(&barrier);
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store
+                    .create_skill(NewSkill {
+                        name: upper,
+                        document: "---\nname: x\n---\n".into(),
+                    })
+                    .await
+            })
+        };
+        let b = {
+            let store = Arc::clone(&store);
+            let barrier = Arc::clone(&barrier);
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store
+                    .create_skill(NewSkill {
+                        name: lower,
+                        document: "---\nname: x\n---\n".into(),
+                    })
+                    .await
+            })
+        };
+
+        let (first, second) = tokio::join!(a, b);
+        let (first, second) = (first.unwrap(), second.unwrap());
+
+        let successes = [&first, &second].into_iter().filter(|r| r.is_ok()).count();
+        assert_eq!(
+            successes, 1,
+            "exactly one of two names differing only in case must be created: {first:?} {second:?}"
+        );
+        let refused = if first.is_err() { first } else { second };
+        assert!(
+            matches!(refused, Err(StoreError::Conflict(_))),
+            "{refused:?}"
+        );
+    }
+}
+
 /// Every shipped skill is seeded into a fresh database on the text Ariadne
 /// ships, storing none of it — so a reworded default reaches a database
 /// nobody has touched, and a reset drops what was written rather than copying
@@ -3063,12 +3953,8 @@ async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
             repo_id: repo.id.clone(),
             title: "Shape it".into(),
             description: "do things".into(),
-            agents: vec![
-                NewTaskAgent::new(Seat::Author, ["api-design"], default_pin()),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
-            ],
+            agents: vec![NewTaskAgent::new("develop", ["api-design"], default_pin())],
             depends_on: vec![],
-            landing: None,
         })
         .await
         .unwrap();
@@ -3078,6 +3964,225 @@ async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
         matches!(refused, Err(StoreError::Conflict(_))),
         "{refused:?}"
     );
+}
+
+/// A skill a workflow's own column still names cannot be deleted, even where
+/// no goal and no agent has ever loaded it: a goal created on that workflow
+/// later would snapshot the column onto a skill already gone.
+#[tokio::test]
+async fn a_skill_a_workflow_column_still_names_cannot_be_deleted() {
+    let (store, _dir) = test_store().await;
+    store
+        .create_skill(NewSkill {
+            name: "custom-check".into(),
+            document: "---\nname: custom-check\ndescription: check it\n---\n".into(),
+        })
+        .await
+        .unwrap();
+    store
+        .create_workflow(NewWorkflow {
+            name: "custom-wf".into(),
+            document:
+                "workflow custom-wf\n  build[Build]\n    Do the work.\n    skills: custom-check\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+
+    let refused = store.delete_skill("custom-check").await;
+    assert!(
+        matches!(refused, Err(StoreError::Conflict(_))),
+        "{refused:?}"
+    );
+}
+
+/// A skill no workflow names any more, but a goal already snapshotted onto
+/// its columns, still cannot be deleted: staffing a task on that goal reads
+/// the snapshot, not the catalog, and would fail naming a skill nobody can
+/// explain the loss of.
+#[tokio::test]
+async fn a_skill_a_goals_snapshot_still_names_cannot_be_deleted() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    store
+        .create_skill(NewSkill {
+            name: "custom-check".into(),
+            document: "---\nname: custom-check\ndescription: check it\n---\n".into(),
+        })
+        .await
+        .unwrap();
+    store
+        .create_workflow(NewWorkflow {
+            name: "custom-wf".into(),
+            document:
+                "workflow custom-wf\n  build[Build]\n    Do the work.\n    skills: custom-check\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+    store
+        .create_goal(NewGoal {
+            workflow: Some("custom-wf".into()),
+            issue_url: None,
+            title: "Test goal".into(),
+            description: "desc".into(),
+            repository_ids: vec![repo.id.clone()],
+            pin: default_pin(),
+        })
+        .await
+        .unwrap();
+
+    // The workflow no longer names it, but the goal's own snapshot still
+    // does, and no task has staffed it yet.
+    store
+        .set_workflow_document(
+            "custom-wf",
+            "workflow custom-wf\n  build[Build]\n    Do the work.\n",
+        )
+        .await
+        .unwrap();
+
+    let refused = store.delete_skill("custom-check").await;
+    assert!(
+        matches!(refused, Err(StoreError::Conflict(_))),
+        "{refused:?}"
+    );
+}
+
+/// A workflow save checks a skill it names, and a skill deletion checks the
+/// same thing about every workflow, on the store's one writer: concurrent
+/// calls serialize through that one connection rather than each reading the
+/// other's "before" on a separate read pool, so the two can never both
+/// succeed and leave a workflow naming a skill a deletion already removed.
+///
+/// A held write lock on a connection of its own forces the race a person
+/// racing the two by hand would see: both calls reach their check before
+/// either reaches its write, which is the window the old, separately read
+/// checks let two true writers cross in.
+#[tokio::test]
+async fn concurrent_workflow_creation_and_skill_deletion_never_both_succeed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("race.db");
+    let store = Store::open(&path).await.unwrap();
+    store
+        .create_skill(NewSkill {
+            name: "custom-check".into(),
+            document: "---\nname: custom-check\ndescription: check it\n---\n".into(),
+        })
+        .await
+        .unwrap();
+
+    let lock = raw_pool(&path).await;
+    let mut held = lock.begin().await.unwrap();
+    sqlx::query("UPDATE skills SET updated_at = updated_at WHERE name = 'custom-check'")
+        .execute(&mut *held)
+        .await
+        .unwrap();
+
+    let create = store.create_workflow(NewWorkflow {
+        name: "custom-flow".into(),
+        document:
+            "workflow custom-flow\n  build[Build]\n    Do the work.\n    skills: custom-check\n"
+                .into(),
+    });
+    let delete = store.delete_skill("custom-check");
+    let release = async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        held.rollback().await.unwrap();
+    };
+    let (created, deleted, ()) = tokio::join!(create, delete, release);
+    lock.close().await;
+
+    assert!(
+        !(created.is_ok() && deleted.is_ok()),
+        "never both: created {created:?}, deleted {deleted:?}"
+    );
+    if created.is_ok() {
+        assert!(
+            store.get_skill("custom-check").await.is_ok(),
+            "the skill the created workflow names must survive"
+        );
+    } else {
+        assert!(
+            matches!(
+                store.get_workflow("custom-flow").await,
+                Err(StoreError::NotFound { .. })
+            ),
+            "no workflow was left naming the deleted skill"
+        );
+    }
+}
+
+/// Creating a goal reads the workflow it starts on, the same reference a
+/// workflow save or a skill deletion checks: racing all three never leaves
+/// a goal's own snapshot naming a skill that does not exist.
+#[tokio::test]
+async fn concurrent_goal_creation_never_outruns_a_workflow_edit_or_skill_deletion() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("race.db");
+    let store = Store::open(&path).await.unwrap();
+    let repo = seed_repository(&store).await;
+    store
+        .create_skill(NewSkill {
+            name: "custom-check".into(),
+            document: "---\nname: custom-check\ndescription: check it\n---\n".into(),
+        })
+        .await
+        .unwrap();
+    store
+        .create_workflow(NewWorkflow {
+            name: "custom-flow".into(),
+            document:
+                "workflow custom-flow\n  build[Build]\n    Do the work.\n    skills: custom-check\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+
+    let lock = raw_pool(&path).await;
+    let mut held = lock.begin().await.unwrap();
+    sqlx::query("UPDATE skills SET updated_at = updated_at WHERE name = 'custom-check'")
+        .execute(&mut *held)
+        .await
+        .unwrap();
+
+    let edit = store.set_workflow_document(
+        "custom-flow",
+        "workflow custom-flow\n  build[Build]\n    Do the work.\n",
+    );
+    let delete = store.delete_skill("custom-check");
+    let create = store.create_goal(NewGoal {
+        workflow: Some("custom-flow".into()),
+        issue_url: None,
+        title: "Test goal".into(),
+        description: "desc".into(),
+        repository_ids: vec![repo.id.clone()],
+        pin: default_pin(),
+    });
+    let release = async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        held.rollback().await.unwrap();
+    };
+    let (_edited, deleted, created, ()) = tokio::join!(edit, delete, create, release);
+    lock.close().await;
+
+    if deleted.is_ok() {
+        if let Ok(goal) = created {
+            let steps = store.goal_steps(&goal.id).await.unwrap();
+            assert!(
+                !steps.iter().any(|s| s.skills.contains("custom-check")),
+                "the skill was deleted, so the new goal must not snapshot it"
+            );
+        }
+    } else if let Ok(goal) = created {
+        let steps = store.goal_steps(&goal.id).await.unwrap();
+        if steps.iter().any(|s| s.skills.contains("custom-check")) {
+            assert!(
+                store.get_skill("custom-check").await.is_ok(),
+                "a goal that snapshotted the skill means the deletion must have been refused"
+            );
+        }
+    }
 }
 
 /// An agent can only be staffed on a skill that exists: the name is a
@@ -3093,12 +4198,8 @@ async fn an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to() {
             repo_id: repo.id.clone(),
             title: "Guess".into(),
             description: "do things".into(),
-            agents: vec![
-                NewTaskAgent::new(Seat::Author, ["telepathy"], default_pin()),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
-            ],
+            agents: vec![NewTaskAgent::new("develop", ["telepathy"], default_pin())],
             depends_on: vec![],
-            landing: None,
         })
         .await;
     let message = format!("{:?}", refused.expect_err("no such skill"));
@@ -3120,22 +4221,22 @@ async fn a_task_agent_cannot_be_staffed_on_the_orchestrators_skill() {
             repo_id: repo.id.clone(),
             title: "Plan it".into(),
             description: "do things".into(),
-            agents: vec![
-                NewTaskAgent::new(Seat::Author, ["orchestration"], default_pin()),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
-            ],
+            agents: vec![NewTaskAgent::new(
+                "develop",
+                ["orchestration"],
+                default_pin(),
+            )],
             depends_on: vec![],
-            landing: None,
         })
         .await;
     let message = format!("{:?}", refused.expect_err("the orchestrator's skill"));
     assert!(message.contains("orchestration"), "{message}");
     assert!(message.contains("orchestrator"), "{message}");
 
-    // The same door is closed on a re-staff: a reviewer cannot be moved onto
-    // it either.
+    // The same door is closed on a re-staff: a column's agent cannot be
+    // moved onto it either.
     let task = seed_task(&store, &goal, &repo, vec![]).await;
-    let reviewer = store.list_task_reviewers(&task.id).await.unwrap().remove(0);
+    let reviewer = agent_of(&store, &task, "review").await;
     let refused = store
         .set_agent_skills(&reviewer.id, &["orchestration".to_string()])
         .await;
@@ -3145,133 +4246,234 @@ async fn a_task_agent_cannot_be_staffed_on_the_orchestrators_skill() {
     );
 }
 
-/// The staffing a several-author task is held to: one author or more, each on
-/// a branch of its own, and — with several — at least one reviewer to pick
-/// the winner.
+/// `pr-reviewer` is the daemon's own, loaded onto the session that reviews a
+/// request the user was asked to review (029): no staffing names it, at
+/// creation or by a later edit. `pr-babysit` is a task agent's: the `pr`
+/// column of the shipped request workflow stages it (030), so an agent may
+/// be staffed on it.
 #[tokio::test]
-async fn a_task_takes_several_authors_each_on_a_branch_of_its_own() {
-    let w = World::new().await;
-    let staffed = |authors: usize, reviewers: usize| {
-        let mut agents: Vec<NewTaskAgent> = (0..authors)
-            .map(|_| NewTaskAgent::new(Seat::Author, ["coding"], default_pin()))
-            .collect();
-        agents.extend(
-            (0..reviewers)
-                .map(|_| NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin())),
-        );
-        NewTask {
-            goal_id: w.goal.id.clone(),
-            repo_id: w.repo.id.clone(),
-            title: "Contested work".into(),
+async fn a_task_agent_cannot_be_staffed_on_the_reviewer_sessions_skill() {
+    let (store, _dir) = test_store().await;
+    let (goal, repo) = seed_goal(&store).await;
+    let refused = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Watch it".into(),
             description: "do things".into(),
-            agents,
+            agents: vec![NewTaskAgent::new("develop", ["pr-reviewer"], default_pin())],
             depends_on: vec![],
-            landing: None,
-        }
-    };
+        })
+        .await;
+    let message = format!("{:?}", refused.expect_err("the reviewer session's skill"));
+    assert!(message.contains("loaded by Ariadne itself"), "{message}");
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let author = agent_of(&store, &task, "develop").await;
+    assert!(matches!(
+        store
+            .set_agent_skills(&author.id, &["pr-reviewer".to_string()])
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
 
-    let task = w.store.create_task(staffed(2, 1)).await.unwrap();
-    let authors = w.store.list_task_authors(&task.id).await.unwrap();
-    assert_eq!(authors.len(), 2);
+    store
+        .set_agent_skills(&author.id, &["pr-babysit".to_string()])
+        .await
+        .expect("pr-babysit is a task agent's skill");
     assert_eq!(
-        authors.iter().map(|a| a.ordinal).collect::<Vec<_>>(),
-        [0, 1]
+        store.agent_skills(&author.id).await.unwrap()[0].name,
+        "pr-babysit"
     );
-    // The first author holds the task branch itself, so a one-author task
-    // reads exactly as it always did; the second works beside it.
-    assert_eq!(author_branch(&task.branch, 0), task.branch);
-    assert_eq!(
-        author_branch(&task.branch, 1),
-        format!("{}-a2", task.branch)
-    );
-
-    // No author at all, and several with nobody to pick between them, are
-    // both staffings no task can run on.
-    let none = format!(
-        "{:?}",
-        w.store.create_task(staffed(0, 1)).await.unwrap_err()
-    );
-    assert!(none.contains("at least one author"), "{none}");
-    let unpicked = format!(
-        "{:?}",
-        w.store.create_task(staffed(2, 0)).await.unwrap_err()
-    );
-    assert!(unpicked.contains("needs a reviewer"), "{unpicked}");
 }
 
-/// An edit replaces the author list whole, the way it always replaced the
-/// reviewers — and the one-author pin fields refuse a task that has several,
-/// since each of those names its own model.
+/// An edit replaces the column staffing whole: every column is staffed
+/// with the skills and the pin the edit gave it. An agent already on its
+/// column keeps its row, and with it the sessions and messages that name
+/// it; a column staffed for the first time gets a new row, and a column the
+/// edit leaves out loses its agent. A task is edited while it is not running
+/// — pending, ready, or failed and waiting for a retry, which is when the
+/// orchestrator staffs a column the task lacked an agent on — and never while
+/// it is in progress, where a live session would be replaced under its agent.
 #[tokio::test]
-async fn an_edit_replaces_the_whole_author_list() {
+async fn an_edit_replaces_the_whole_column_staffing() {
     let w = World::new().await;
-    let two_authors = || {
+    let store = &w.store;
+    let before = store.list_task_agents(&w.task.id).await.unwrap();
+    assert_eq!(before.len(), 3);
+    // A session of the develop agent, and a message to it: what a re-staffing
+    // has to keep.
+    let develop_session = w.agent_session().await;
+    let said = store
+        .send_message(NewMessage {
+            goal_id: w.goal.id.clone(),
+            task_id: Some(w.task.id.clone()),
+            kind: MessageKind::Message,
+            from_actor: Actor::Orchestrator,
+            from_agent_id: None,
+            from_session: None,
+            to_actor: Actor::Agent,
+            to_agent_id: Some(before[0].id.clone()),
+            body: "Kept across the edit.".into(),
+        })
+        .await
+        .unwrap();
+    let restaffed = || {
         vec![
-            NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
             NewTaskAgent::new(
-                Seat::Author,
+                "develop",
                 ["coding", "debugging"],
                 pin("codex-acp:gpt-5.6-terra"),
             ),
+            NewTaskAgent::new("review", Vec::<String>::new(), default_pin()),
+            NewTaskAgent::new("merge", Vec::<String>::new(), default_pin()),
         ]
     };
+    let staffing = async |task_id: &str| {
+        let mut rows = Vec::new();
+        for agent in store.list_task_agents(task_id).await.unwrap() {
+            let skills: Vec<String> = store
+                .agent_skills(&agent.id)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|s| s.name)
+                .collect();
+            rows.push((agent.step, agent.model, skills));
+        }
+        rows
+    };
 
-    let task = w
-        .store
+    // Pending: replaced whole.
+    store
         .update_task(
             &w.task.id,
             TaskUpdate {
-                authors: Some(two_authors()),
+                agents: Some(restaffed()),
+                title: Some("Edited".into()),
                 ..Default::default()
             },
         )
         .await
         .unwrap();
-    let authors = w.store.list_task_authors(&task.id).await.unwrap();
-    assert_eq!(authors.len(), 2);
-    assert_eq!(authors[1].model, "codex-acp:gpt-5.6-terra");
-
-    // The task's own model field means "the author's", and it has several
-    // now: the edit is refused rather than guessed about.
-    let refused = format!(
-        "{:?}",
-        w.store
-            .update_task(
-                &w.task.id,
-                TaskUpdate {
-                    pin: Some(default_pin()),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap_err()
+    let after = store.list_task_agents(&w.task.id).await.unwrap();
+    assert_eq!(
+        after.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
+        before.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
+        "an agent already on its column keeps its row"
     );
-    assert!(refused.contains("several authors"), "{refused}");
-
-    // And an edit cannot leave several authors with nobody to pick a winner.
-    let unpicked = format!(
-        "{:?}",
-        w.store
-            .update_task(
-                &w.task.id,
-                TaskUpdate {
-                    reviewers: Some(vec![]),
-                    ..Default::default()
-                },
-            )
+    assert_eq!(
+        store
+            .get_session(&develop_session.id)
             .await
-            .unwrap_err()
+            .unwrap()
+            .task_agent_id
+            .as_deref(),
+        Some(before[0].id.as_str()),
+        "and the session that names it stays"
     );
-    assert!(unpicked.contains("needs a reviewer"), "{unpicked}");
+    assert_eq!(
+        store.get_message(&said.id).await.unwrap().body,
+        "Kept across the edit."
+    );
+    assert_eq!(
+        staffing(&w.task.id).await,
+        [
+            (
+                "develop".to_string(),
+                "codex-acp:gpt-5.6-terra".to_string(),
+                vec!["coding".to_string(), "debugging".to_string()]
+            ),
+            (
+                "review".to_string(),
+                "stub:test-model".to_string(),
+                vec!["code-review".to_string()]
+            ),
+            (
+                "merge".to_string(),
+                "stub:test-model".to_string(),
+                vec!["merge".to_string()]
+            ),
+        ]
+    );
+    assert_eq!(w.task().await.title, "Edited");
 
-    // Back to one author, and the pin fields mean what they always did.
-    w.store
+    // An edit that names no agents leaves the staffing alone.
+    store
         .update_task(
             &w.task.id,
             TaskUpdate {
-                authors: Some(vec![NewTaskAgent::new(
-                    Seat::Author,
-                    ["coding"],
+                description: Some("still the same agents".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .list_task_agents(&w.task.id)
+            .await
+            .unwrap()
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect::<Vec<_>>(),
+        after.iter().map(|a| a.id.as_str()).collect::<Vec<_>>()
+    );
+
+    // Ready: still editable. In progress: refused, and the staffing untouched.
+    walk_to(store, &w.task.id, TaskStatus::Ready).await;
+    store
+        .update_task(
+            &w.task.id,
+            TaskUpdate {
+                agents: Some(column_agents(store, &w.goal).await),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let ready_staffing = store.list_task_agents(&w.task.id).await.unwrap();
+    assert_eq!(ready_staffing[0].model, "stub:test-model");
+    walk_to(store, &w.task.id, TaskStatus::InProgress).await;
+    let refused = store
+        .update_task(
+            &w.task.id,
+            TaskUpdate {
+                agents: Some(restaffed()),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(StoreError::Conflict(_))),
+        "{refused:?}"
+    );
+    assert_eq!(
+        store
+            .list_task_agents(&w.task.id)
+            .await
+            .unwrap()
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect::<Vec<_>>(),
+        ready_staffing
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    // Failed: editable again, which is how a column a failed task lacks an
+    // agent on is staffed before the retry.
+    store
+        .transition_task(&w.task.id, TaskStatus::Failed, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    store
+        .update_task(
+            &w.task.id,
+            TaskUpdate {
+                agents: Some(vec![NewTaskAgent::new(
+                    "develop",
+                    Vec::<String>::new(),
                     default_pin(),
                 )]),
                 ..Default::default()
@@ -3279,82 +4481,70 @@ async fn an_edit_replaces_the_whole_author_list() {
         )
         .await
         .unwrap();
-    w.store
+    let failed = w.task().await;
+    assert_eq!(
+        store.unstaffed_columns(&failed).await.unwrap(),
+        ["review", "merge"]
+    );
+    // The develop agent kept its row through the edit that dropped the other
+    // two columns; the message to it is still there.
+    assert_eq!(
+        store.list_task_agents(&w.task.id).await.unwrap()[0].id,
+        before[0].id
+    );
+    assert_eq!(
+        store.get_message(&said.id).await.unwrap().to_agent_id,
+        Some(before[0].id.clone())
+    );
+    store
         .update_task(
             &w.task.id,
             TaskUpdate {
-                pin: Some(pin("codex-acp:gpt-5.6-terra")),
+                agents: Some(restaffed()),
                 ..Default::default()
             },
         )
         .await
         .unwrap();
-    let author = w.store.task_author(&w.task.id).await.unwrap();
-    assert_eq!(author.model, "codex-acp:gpt-5.6-terra");
-}
+    assert!(store.unstaffed_columns(&failed).await.unwrap().is_empty());
+    assert_eq!(
+        agent_of(store, &failed, "develop").await.model,
+        "codex-acp:gpt-5.6-terra"
+    );
+    // The columns staffed again are new rows: their agents had gone with the
+    // edit that left them out.
+    let again = store.list_task_agents(&w.task.id).await.unwrap();
+    assert_eq!(again[0].id, before[0].id);
+    assert!(
+        again[1..]
+            .iter()
+            .all(|a| before.iter().all(|b| b.id != a.id))
+    );
 
-/// The pick as the store holds it: one row per reviewer, a second one refused
-/// by the reviewer's name, the winner read off the counts with a tie to the
-/// first listed, and a retry clearing the lot.
-#[tokio::test]
-async fn a_reviewer_picks_once_and_the_picks_settle_a_winner() {
-    let w = World::new().await;
-    let task = w
-        .store
+    // A column whose agent has a session or a message behind it cannot be
+    // left out: dropping the agent would drop them.
+    let review_session = w
+        .session(Seat::Agent, Some(&again[1].id), Some(&w.task.id))
+        .await;
+    let refused = store
         .update_task(
             &w.task.id,
             TaskUpdate {
-                authors: Some(vec![
-                    NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
-                    NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
-                ]),
+                agents: Some(vec![NewTaskAgent::new(
+                    "develop",
+                    Vec::<String>::new(),
+                    default_pin(),
+                )]),
                 ..Default::default()
             },
         )
-        .await
-        .unwrap();
-    let authors = w.store.list_task_authors(&task.id).await.unwrap();
-    let reviewer = w
-        .store
-        .list_task_reviewers(&task.id)
-        .await
-        .unwrap()
-        .remove(0);
-
-    w.store
-        .record_pick(&task.id, &reviewer.id, &authors[1].id)
-        .await
-        .unwrap();
-    let again = format!(
-        "{:?}",
-        w.store
-            .record_pick(&task.id, &reviewer.id, &authors[0].id)
-            .await
-            .unwrap_err()
+        .await;
+    assert!(
+        matches!(&refused, Err(StoreError::Conflict(message)) if message.contains("column review")),
+        "{refused:?}"
     );
-    assert!(again.contains(&reviewer.id), "{again}");
-    assert!(again.contains("already picked"), "{again}");
-
-    let picks = w.store.list_task_picks(&task.id).await.unwrap();
-    assert_eq!(picks.len(), 1);
-    assert_eq!(
-        picked_winner(&authors, &picks).map(|a| a.id.as_str()),
-        Some(authors[1].id.as_str())
-    );
-
-    w.store
-        .set_task_picked(&task.id, &authors[1].id)
-        .await
-        .unwrap();
-    assert_eq!(
-        w.task().await.picked_agent_id.as_deref(),
-        Some(authors[1].id.as_str())
-    );
-
-    // A retry reviews everything afresh, so the picks go with it.
-    w.store.clear_task_picks(&task.id).await.unwrap();
-    assert!(w.store.list_task_picks(&task.id).await.unwrap().is_empty());
-    assert_eq!(w.task().await.picked_agent_id, None);
+    assert_eq!(store.list_task_agents(&w.task.id).await.unwrap().len(), 3);
+    assert!(store.get_session(&review_session.id).await.is_ok());
 }
 
 /// An agent event takes its id and is published under one lock. A writer
@@ -3464,7 +4654,7 @@ async fn stored_payloads(dir: &tempfile::TempDir) -> Vec<(Vec<u8>, String)> {
 async fn deleting_a_goal_leaves_no_event_of_its_sessions_or_its_tasks() {
     let w = World::new().await;
     let orchestrator = w.session(Seat::Orchestrator, None, None).await;
-    let author = w.author_session().await;
+    let author = w.agent_session().await;
     for session in [&orchestrator, &author] {
         w.store
             .create_event(NewAgentEvent {
@@ -3502,7 +4692,7 @@ async fn deleting_a_goal_leaves_no_event_of_its_sessions_or_its_tasks() {
 #[tokio::test]
 async fn a_hundred_kilobyte_payload_reads_back_word_for_word() {
     let w = World::new().await;
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     let long: String = (0..2000)
         .map(|n| format!("line {n}: the agent read a file and said something about it\n"))
         .collect();
@@ -3542,7 +4732,7 @@ async fn a_hundred_kilobyte_payload_reads_back_word_for_word() {
 #[tokio::test]
 async fn a_payload_above_a_kilobyte_is_stored_smaller_than_it_reads() {
     let w = World::new().await;
-    let session = w.author_session().await;
+    let session = w.agent_session().await;
     let long = "cargo nextest run -p ariadne-store ".repeat(50);
     let long = serde_json::json!({"tool_name": "Bash", "tool_input": {"command": long}});
     assert!(long.to_string().len() > 1024, "a payload above a kilobyte");
@@ -3591,10 +4781,12 @@ async fn a_checkpoint_folds_the_write_ahead_log_back_in() {
     for n in 0..200 {
         store
             .create_repository(ariadne_store::NewRepository {
+                default_workflow: None,
                 path: dir.path().join(format!("repo-{n}")).display().to_string(),
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
+                supervise_posts: None,
             })
             .await
             .unwrap();
@@ -3621,41 +4813,58 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
 
     let defaults = store.ai_permission_settings().await.unwrap();
     assert!(!defaults.enabled);
-    assert_eq!(defaults.checkpoints, "english");
-    assert_eq!(defaults.threshold, 0.8);
-    assert_eq!(defaults.schedule, None);
+    assert_eq!(defaults.allow_threshold, 0.0201);
+    assert_eq!(defaults.deny_threshold, 0.6321);
+    assert!(
+        !defaults.thresholds_hand_set,
+        "a fresh pair follows the flavour"
+    );
+    assert_eq!(defaults.flavour, "4b");
+    assert_eq!(defaults.device, None);
     assert_eq!(defaults.state, "disabled");
     assert_eq!(defaults.installed_release, None);
     assert_eq!(defaults.latest_release, None);
     assert!(!defaults.weights_present);
     assert_eq!(defaults.last_refresh_at, None);
     assert_eq!(defaults.last_error, None);
-    assert_eq!(defaults.question, None);
-    assert_eq!(defaults.allow_criteria, None);
-    assert_eq!(defaults.review_criteria, None);
 
     // What the user chose.
-    let chosen = store
+    let partly_chosen = store
         .update_ai_permission_settings(AiPermissionSettingsUpdate {
             enabled: Some(true),
-            checkpoints: Some("all".into()),
-            threshold: Some(0.6),
-            schedule: Some(Some("03:30".into())),
-            question: Some(Some("Is this safe?".into())),
-            allow_criteria: Some(Some("reading".into())),
-            review_criteria: Some(Some("writing".into())),
+            allow_threshold: Some(0.2),
+            flavour: Some("9b".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(partly_chosen.allow_threshold, 0.2);
+    assert_eq!(partly_chosen.deny_threshold, 0.6321);
+    let chosen = store
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
+            deny_threshold: Some(0.8),
             ..Default::default()
         })
         .await
         .unwrap();
     assert!(chosen.enabled);
-    assert_eq!(chosen.checkpoints, "all");
-    assert_eq!(chosen.threshold, 0.6);
-    assert_eq!(chosen.schedule.as_deref(), Some("03:30"));
+    assert_eq!(chosen.allow_threshold, 0.2);
+    assert_eq!(chosen.deny_threshold, 0.8);
+    assert!(
+        !chosen.thresholds_hand_set,
+        "the flag moves only when written"
+    );
+    assert_eq!(chosen.flavour, "9b");
+    let hand_set = store
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
+            thresholds_hand_set: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(hand_set.thresholds_hand_set);
+    assert_eq!(hand_set.allow_threshold, 0.2);
     assert_eq!(chosen.state, "disabled", "a choice is not an install");
-    assert_eq!(chosen.question.as_deref(), Some("Is this safe?"));
-    assert_eq!(chosen.allow_criteria.as_deref(), Some("reading"));
-    assert_eq!(chosen.review_criteria.as_deref(), Some("writing"));
 
     // What the installer found, written without touching what the user chose.
     let installed = store
@@ -3673,22 +4882,21 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     assert_eq!(installed.state, "ready");
     assert_eq!(installed.installed_release.as_deref(), Some("v0.1.4"));
     assert!(installed.weights_present);
-    assert_eq!(installed.threshold, 0.6, "the user's choice stayed");
-    assert_eq!(installed.checkpoints, "all");
+    assert_eq!(installed.allow_threshold, 0.2, "the user's choice stayed");
+    assert_eq!(installed.deny_threshold, 0.8, "the user's choice stayed");
 
-    // A `Some(None)` clears a column; an absent field keeps it.
-    let cleared = store
+    // The device the daemon fills in at startup, written without touching
+    // the flavour the user chose.
+    let with_device = store
         .update_ai_permission_settings(AiPermissionSettingsUpdate {
-            schedule: Some(None),
-            question: Some(None),
+            device: Some("mlx".into()),
             ..Default::default()
         })
         .await
         .unwrap();
-    assert_eq!(cleared.schedule, None);
-    assert_eq!(cleared.question, None);
-    assert_eq!(cleared.allow_criteria.as_deref(), Some("reading"));
-    assert_eq!(cleared.installed_release.as_deref(), Some("v0.1.4"));
+    assert_eq!(with_device.device.as_deref(), Some("mlx"));
+    assert_eq!(with_device.flavour, "9b");
+    assert_eq!(with_device.installed_release.as_deref(), Some("v0.1.4"));
 
     // A state written only while enabled lands on an enabled row, and leaves
     // a row turned off at `disabled`: what an install that ends after the model
@@ -3740,7 +4948,9 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     let kept = reopened.ai_permission_settings().await.unwrap();
     assert!(kept.enabled);
     assert_eq!(kept.state, "ready");
-    assert_eq!(kept.threshold, 0.6);
+    assert_eq!(kept.allow_threshold, 0.2);
+    assert_eq!(kept.deny_threshold, 0.8);
+    assert!(kept.thresholds_hand_set);
     assert_eq!(kept.installed_release.as_deref(), Some("v0.1.4"));
 }
 
@@ -3751,10 +4961,12 @@ async fn a_repository_takes_the_ai_permission_mode() {
     let (store, _dir) = test_store().await;
     let repo = store
         .create_repository(NewRepository {
+            default_workflow: None,
             path: "/tmp/ai-repo".into(),
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Ai),
+            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -3771,4 +4983,1486 @@ async fn a_repository_takes_the_ai_permission_mode() {
         .await
         .unwrap();
     assert_eq!(edited.permission_mode(), PermissionMode::Learn);
+}
+
+/// A `session_ended` fact about one run of an agent, on `repo_id`.
+fn ended(repo_id: &str, launch_id: &str, data: serde_json::Value) -> NewStatFact {
+    NewStatFact {
+        kind: "session_ended".into(),
+        repo_id: Some(repo_id.into()),
+        goal_id: Some("01GOAL".into()),
+        task_id: Some("01TASK".into()),
+        session_id: Some("01SESSION".into()),
+        launch_id: Some(launch_id.into()),
+        seat: Some("agent".into()),
+        model: Some("stub:test-model".into()),
+        effort: Some("high".into()),
+        skills: vec!["coding".into(), "migration".into()],
+        data,
+    }
+}
+
+/// The data of a run that ended `status`, flagged `reason`, after
+/// `lifetime_secs`, having spent 1000 in, 800 of it cached, and 100 out.
+fn run(status: &str, reason: Option<&str>, lifetime_secs: i64) -> serde_json::Value {
+    serde_json::json!({
+        "status": status, "attention_reason": reason, "lifetime_secs": lifetime_secs,
+        "turns": 3, "input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 100,
+    })
+}
+
+/// Every fact of `kind` in the ledger of the database under `dir`, oldest
+/// first, as its model and its data. Straight SQL: the store reads the
+/// ledger only as aggregates, and a test of the fact itself needs the row.
+async fn ledger(dir: &std::path::Path, kind: &str) -> Vec<(Option<String>, serde_json::Value)> {
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", dir.join("test.db").display()))
+        .await
+        .unwrap();
+    let rows: Vec<(Option<String>, String)> =
+        sqlx::query_as("SELECT model, data FROM stat_facts WHERE kind = ? ORDER BY id")
+            .bind(kind)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    pool.close().await;
+    rows.into_iter()
+        .map(|(model, data)| (model, serde_json::from_str(&data).unwrap()))
+        .collect()
+}
+
+/// A fact names its goal by id and holds no key to it, so deleting the goal
+/// leaves the fact where it was.
+#[tokio::test]
+async fn a_fact_outlives_the_goal_it_is_about() {
+    let w = World::new().await;
+    let mut fact = ended(&w.repo.id, "launch-1", run("exited", None, 10));
+    fact.goal_id = Some(w.goal.id.clone());
+    fact.task_id = Some(w.task.id.clone());
+    w.store.record_fact(fact).await.unwrap();
+    w.store.delete_goal(&w.goal.id).await.unwrap();
+    assert_eq!(ledger(w._dir.path(), "session_ended").await.len(), 1);
+}
+
+/// One run of a session ends once in the ledger: a second fact of the same
+/// kind for the same launch is refused, and a fact for the next launch is
+/// kept.
+#[tokio::test]
+async fn a_fact_is_recorded_once_per_launch() {
+    let (store, dir) = test_store().await;
+    let first = ended("01REPO", "launch-1", run("exited", None, 10));
+    assert!(
+        store
+            .record_fact_once_per_launch(first.clone())
+            .await
+            .unwrap()
+    );
+    assert!(!store.record_fact_once_per_launch(first).await.unwrap());
+    let next = ended("01REPO", "launch-2", run("exited", None, 10));
+    assert!(store.record_fact_once_per_launch(next).await.unwrap());
+    assert_eq!(ledger(dir.path(), "session_ended").await.len(), 2);
+}
+
+/// The status write that ends a session is announced before its fact exists,
+/// so the fact announces the session again once it is readable: a client
+/// that refetches its stats on that event reads the fact. The same run
+/// refused a second fact announces nothing.
+#[tokio::test]
+async fn a_fact_announces_its_session_once_it_is_readable() {
+    let w = World::new().await;
+    let session = w.agent_session().await;
+    let mut changes = w.store.watch_changes().expect("the only watcher");
+    w.store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    while changes.try_recv().is_ok() {}
+
+    let mut fact = ended(&w.repo.id, "launch-1", run("exited", None, 10));
+    fact.session_id = Some(session.id.clone());
+    assert!(
+        w.store
+            .record_fact_once_per_launch(fact.clone())
+            .await
+            .unwrap()
+    );
+
+    match changes.try_recv() {
+        Ok(Change::SessionUpdated(updated)) => assert_eq!(updated.id, session.id),
+        other => panic!("expected the session announced after its fact: {other:?}"),
+    }
+    assert_eq!(
+        ledger(w._dir.path(), "session_ended").await.len(),
+        1,
+        "the fact is readable on that event"
+    );
+
+    assert!(!w.store.record_fact_once_per_launch(fact).await.unwrap());
+    assert!(
+        changes.try_recv().is_err(),
+        "a refused fact announces nothing"
+    );
+}
+
+/// A session's end answers the row as that write left it: ended, its prompt
+/// flag gone, and the reason it ended carrying kept. The row is read in the
+/// same transaction as the write, so a resume that writes the row next
+/// cannot change what the caller is told.
+#[tokio::test]
+async fn ending_a_session_answers_the_row_its_write_left() {
+    let w = World::new().await;
+    let prompted = w.agent_session().await;
+    w.store
+        .set_session_attention(&prompted.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+    let ended = w
+        .store
+        .set_session_status(&prompted.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    assert_eq!(ended.status(), SessionStatus::Exited);
+    assert!(ended.ended_at.is_some());
+    assert_eq!(ended.attention_reason(), None);
+
+    let stalled = w.review_session().await;
+    w.store
+        .set_session_attention(&stalled.id, AttentionReason::Stalled)
+        .await
+        .unwrap();
+    let ended = w
+        .store
+        .set_session_status(&stalled.id, SessionStatus::Failed)
+        .await
+        .unwrap();
+    assert_eq!(ended.status(), SessionStatus::Failed);
+    assert_eq!(ended.attention_reason(), Some(AttentionReason::Stalled));
+}
+
+/// A `task_ended` fact names its goal by id and holds no key to it, so
+/// deleting the goal leaves the fact where it was. It is filled from the
+/// agent of the column the task ended in: the last column's, for a task that
+/// finished, with the column it ended in and whether the change landed.
+#[tokio::test]
+async fn an_outcome_fact_outlives_the_goal_it_is_about() {
+    let w = World::new().await;
+    walk_to(&w.store, &w.task.id, TaskStatus::Finished).await;
+    w.store.delete_goal(&w.goal.id).await.unwrap();
+    let facts = ledger(w._dir.path(), "task_ended").await;
+    assert_eq!(facts.len(), 1, "{facts:?}");
+    assert_eq!(facts[0].0.as_deref(), Some("stub:test-model"));
+    assert_eq!(facts[0].1["status"], "finished");
+    assert_eq!(facts[0].1["step"], "merge");
+    assert_eq!(facts[0].1["landed"], true);
+}
+
+/// A clear is a completed spell of attention: the agent's event and an idle
+/// report each record the reason and wait, while a no-op adds nothing.
+#[tokio::test]
+async fn attention_clears_write_facts_only_when_a_flag_falls() {
+    let w = World::new().await;
+    let session = w.agent_session().await;
+    w.store
+        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+    w.store.clear_agent_attention(&session.id).await.unwrap();
+    w.store
+        .set_session_attention(&session.id, AttentionReason::Stalled)
+        .await
+        .unwrap();
+    w.store
+        .clear_attention_after_idle(&session.id)
+        .await
+        .unwrap();
+    w.store.clear_session_attention(&session.id).await.unwrap();
+
+    let facts = ledger(w._dir.path(), "attention").await;
+    assert_eq!(facts.len(), 2, "a clear with no flag is not a fact");
+    assert_eq!(facts[0].1["reason"], "waiting_permission");
+    assert_eq!(facts[1].1["reason"], "stalled");
+    assert!(facts.iter().all(|(_, data)| data["wait_secs"].is_number()));
+}
+
+/// The aggregate counts every attention source and applies both fact filters.
+#[tokio::test]
+async fn attention_stats_groups_facts_and_honours_the_filter() {
+    let (store, _dir) = test_store().await;
+    let fact = |kind: &str, repo_id: &str, data| NewStatFact {
+        kind: kind.into(),
+        repo_id: Some(repo_id.into()),
+        goal_id: None,
+        task_id: None,
+        session_id: None,
+        launch_id: None,
+        seat: None,
+        model: None,
+        effort: None,
+        skills: vec![],
+        data,
+    };
+    for data in [
+        serde_json::json!({"decided_by":"console","answer":"allow","wait_ms":10}),
+        serde_json::json!({"decided_by":"console","answer":"deny","wait_ms":30}),
+        serde_json::json!({"decided_by":"auto","answer":"cancelled","wait_ms":5}),
+    ] {
+        store
+            .record_fact(fact("permission", "kept", data))
+            .await
+            .unwrap();
+    }
+    store
+        .record_fact(fact(
+            "attention",
+            "kept",
+            serde_json::json!({"reason":"waiting_input","wait_secs":4}),
+        ))
+        .await
+        .unwrap();
+    store
+        .record_fact(fact(
+            "attention",
+            "kept",
+            serde_json::json!({"reason":"waiting_input","wait_secs":8}),
+        ))
+        .await
+        .unwrap();
+    store
+        .record_fact(fact(
+            "session_ended",
+            "kept",
+            serde_json::json!({"status":"failed","attention_reason":"stalled"}),
+        ))
+        .await
+        .unwrap();
+    store
+        .record_fact(fact(
+            "switch",
+            "kept",
+            serde_json::json!({"reason":"exhausted"}),
+        ))
+        .await
+        .unwrap();
+    store
+        .record_fact(fact(
+            "permission",
+            "other",
+            serde_json::json!({"decided_by":"console","answer":"allow","wait_ms":1}),
+        ))
+        .await
+        .unwrap();
+
+    let stats = store
+        .attention_stats(&StatsFilter {
+            repo_id: Some("kept".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(stats.permissions.total, 3);
+    assert_eq!(stats.permissions.person_share, 2.0 / 3.0);
+    assert_eq!(stats.permissions.by_decider[0].decided_by, "console");
+    assert_eq!(stats.permissions.by_decider[0].allowed, 1);
+    assert_eq!(stats.permissions.by_decider[0].denied, 1);
+    assert_eq!(stats.permissions.by_decider[0].mean_wait_ms, 20.0);
+    let asked = stats
+        .flags
+        .iter()
+        .find(|row| row.reason == "waiting_input")
+        .unwrap();
+    assert_eq!((asked.raised, asked.mean_wait_secs), (2, 6.0));
+    assert_eq!(
+        (
+            stats.sessions_failed,
+            stats.sessions_stalled,
+            stats.exhaustions
+        ),
+        (1, 1, 1)
+    );
+    let none = store
+        .attention_stats(&StatsFilter {
+            since: Some(chrono::Utc::now() + chrono::Duration::seconds(1)),
+            repo_id: Some("kept".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(none.permissions.total, 0);
+}
+
+/// Remaining aggregates ignore an old `tool_call` fact in the append-only ledger.
+#[tokio::test]
+async fn remaining_stats_reads_ignore_legacy_tool_call_facts() {
+    let (store, _dir) = test_store().await;
+    let mut legacy = ended("01REPO", "legacy", serde_json::json!({"tool_name": "Bash"}));
+    legacy.kind = "tool_call".into();
+    store.record_fact(legacy).await.unwrap();
+
+    let filter = StatsFilter::default();
+    store.work_stats(&filter).await.unwrap();
+    store.time_stats(&filter).await.unwrap();
+    store.spend_stats(&filter).await.unwrap();
+    store.model_stats(&filter).await.unwrap();
+    store.attention_stats(&filter).await.unwrap();
+}
+
+/// A forge row as a detection writes it: `acme/widgets` on github.com, not
+/// enabled.
+fn widgets(repository_id: &str) -> SetForgeIntegration {
+    SetForgeIntegration {
+        repository_id: repository_id.into(),
+        kind: ariadne_core::ForgeKind::Github,
+        host: "GitHub.com".into(),
+        owner: "Acme".into(),
+        name: "Widgets".into(),
+        remote: "origin".into(),
+        enabled: false,
+        login: None,
+    }
+}
+
+/// How the last fetch went is written only on a change (026): a failure and
+/// its error, then the fetch that works again. A fetch that works on and on
+/// writes nothing, so a timer fetch every 5 minutes publishes nothing. A
+/// disabled integration fetches nothing, and records nothing.
+#[tokio::test]
+async fn the_last_fetch_error_is_written_only_when_it_changes() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    store
+        .set_forge_integration(widgets(&repo.id))
+        .await
+        .unwrap();
+    assert!(
+        !store
+            .set_forge_fetch_error(&repo.id, Some("gh: HTTP 502"))
+            .await
+            .unwrap()
+    );
+    store
+        .set_forge_integration(SetForgeIntegration {
+            enabled: true,
+            login: Some("me".into()),
+            ..widgets(&repo.id)
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .set_forge_fetch_error(&repo.id, Some("gh: HTTP 502"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .set_forge_fetch_error(&repo.id, Some("gh: HTTP 502"))
+            .await
+            .unwrap()
+    );
+    let read = store.forge_integration(&repo.id).await.unwrap().unwrap();
+    assert_eq!(read.fetch_error.as_deref(), Some("gh: HTTP 502"));
+    assert!(store.set_forge_fetch_error(&repo.id, None).await.unwrap());
+    assert!(!store.set_forge_fetch_error(&repo.id, None).await.unwrap());
+    let read = store.forge_integration(&repo.id).await.unwrap().unwrap();
+    assert_eq!(read.fetch_error, None);
+}
+
+/// A brand-new database starts the tunnel switch off (027): 0001's own seed
+/// writes it off directly. The seed runs once, so a later open of the same
+/// path leaves whichever choice it holds — on or off — exactly as the
+/// caller last set it.
+#[tokio::test]
+async fn a_fresh_database_starts_the_tunnel_off_and_an_existing_one_keeps_its_choice() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let store = Store::open(&path).await.unwrap();
+    assert!(!store.forge_settings().await.unwrap().tunnel_enabled);
+    store.set_tunnel_enabled(true).await.unwrap();
+    store.close().await;
+
+    let reopened = Store::open(&path).await.unwrap();
+    assert!(
+        reopened.forge_settings().await.unwrap().tunnel_enabled,
+        "reopening an existing database must not reset a stored choice"
+    );
+    reopened.set_tunnel_enabled(false).await.unwrap();
+    reopened.close().await;
+
+    let restarted = Store::open(&path).await.unwrap();
+    assert!(
+        !restarted.forge_settings().await.unwrap().tunnel_enabled,
+        "an existing database keeps an off choice too"
+    );
+}
+
+/// sqlx creates `_sqlx_migrations` before it applies the first migration, so
+/// a run killed between that create and 0001's own commit leaves the table
+/// standing with no row in it. Reopening such a database still runs 0001,
+/// tunnel-off seed included, rather than mistaking the empty table for one
+/// already at some version.
+#[tokio::test]
+async fn a_database_with_an_empty_migrations_table_still_runs_every_migration() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
+    let interrupted = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TABLE _sqlx_migrations (
+            version BIGINT PRIMARY KEY,
+            description TEXT NOT NULL,
+            installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            success BOOLEAN NOT NULL,
+            checksum BLOB NOT NULL,
+            execution_time BIGINT NOT NULL
+        )",
+    )
+    .execute(&interrupted)
+    .await
+    .unwrap();
+    interrupted.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    assert!(
+        !store.forge_settings().await.unwrap().tunnel_enabled,
+        "an empty migrations table still lets 0001, tunnel-off seed included, run"
+    );
+}
+
+/// The forge row is read with its repository, lower-cased, in every list a
+/// repository is read through, and goes with the repository.
+#[tokio::test]
+async fn a_forge_integration_is_read_with_its_repository_and_goes_with_it() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    assert!(store.forge_integration(&repo.id).await.unwrap().is_none());
+
+    let written = store
+        .set_forge_integration(widgets(&repo.id))
+        .await
+        .unwrap();
+    let forge = written.forge.expect("the write answers the row");
+    assert_eq!(forge.kind(), ariadne_core::ForgeKind::Github);
+    assert_eq!(
+        (
+            forge.host.as_str(),
+            forge.owner.as_str(),
+            forge.name.as_str()
+        ),
+        ("github.com", "acme", "widgets")
+    );
+    assert_eq!(
+        store.get_repository(&repo.id).await.unwrap().forge,
+        Some(forge.clone())
+    );
+    assert_eq!(
+        store.list_repositories().await.unwrap()[0].forge,
+        Some(forge)
+    );
+    assert!(store.enabled_forge_integrations().await.unwrap().is_empty());
+
+    store.delete_repository(&repo.id).await.unwrap();
+    assert!(store.forge_integration(&repo.id).await.unwrap().is_none());
+}
+
+/// One forge repository is enabled on one repository row at a time; the
+/// refusal names the row that holds it.
+#[tokio::test]
+async fn one_forge_repository_is_enabled_on_one_row() {
+    let (store, _dir) = test_store().await;
+    let (first, second) = (seed_repository(&store).await, seed_repository(&store).await);
+    let enabled = |id: &str| SetForgeIntegration {
+        enabled: true,
+        login: Some("octocat".into()),
+        ..widgets(id)
+    };
+    store
+        .set_forge_integration(enabled(&first.id))
+        .await
+        .unwrap();
+    store
+        .set_forge_integration(widgets(&second.id))
+        .await
+        .unwrap();
+
+    let refused = store
+        .set_forge_integration(enabled(&second.id))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&refused, StoreError::Conflict(m) if m.contains(&first.id)),
+        "{refused}"
+    );
+    assert!(
+        store
+            .forge_enabled_elsewhere(&second.id, "github.com", "acme", "widgets")
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .forge_enabled_elsewhere(&first.id, "github.com", "acme", "widgets")
+            .await
+            .is_ok()
+    );
+
+    store
+        .set_forge_integration(widgets(&first.id))
+        .await
+        .unwrap();
+    store
+        .set_forge_integration(enabled(&second.id))
+        .await
+        .unwrap();
+    let rows = store.enabled_forge_integrations().await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].repository_id, second.id);
+}
+
+/// A row is Ariadne's bookkeeping of a request it works on (026): one per
+/// repository and number, the first task that opened it staying its origin.
+/// Starting and stopping the work says so per repository, and the sessions
+/// that ran on a row outlive it, let go of it.
+#[tokio::test]
+async fn a_pull_request_row_keeps_its_identity_and_origin_and_its_sessions_outlive_it() {
+    let (store, _dir, first) = store_with_my_pull_request().await;
+    assert_eq!(first.role, "author");
+    assert_eq!(first.origin_task_id, None);
+    let mut changes = store.watch_changes().unwrap();
+    let (second, created) = store
+        .upsert_pull_request(NewPullRequest {
+            repository_id: first.repository_id.clone(),
+            number: 7,
+            url: first.url.clone(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    assert!(!created);
+    assert_eq!(second.id, first.id);
+    assert!(matches!(
+        store
+            .upsert_pull_request(NewPullRequest {
+                repository_id: first.repository_id.clone(),
+                number: 8,
+                url: "https://github.com/acme/widgets/pull/8".into(),
+                role: "maintainer".into(),
+                origin_task_id: None,
+            })
+            .await,
+        Err(StoreError::Invalid(_))
+    ));
+    assert_eq!(
+        store
+            .pull_request_by_number(&first.repository_id, 7)
+            .await
+            .unwrap()
+            .map(|row| row.id),
+        Some(first.id.clone())
+    );
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(ariadne_core::Seat::Reviewer),
+            task_agent_id: None,
+            model: "stub:m".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(first.id.clone()),
+        })
+        .await
+        .unwrap();
+    while let Ok(change) = changes.try_recv() {
+        drop(change);
+    }
+    let gone = store.delete_pull_request(&first.id).await.unwrap();
+    assert_eq!(gone.map(|row| row.id), Some(first.id.clone()));
+    loop {
+        match changes.recv().await.unwrap() {
+            Change::PullRequestsChanged(repository) => {
+                assert_eq!(repository, first.repository_id);
+                break;
+            }
+            _ => continue,
+        }
+    }
+    let kept = store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        kept.pull_request_id, None,
+        "the session is let go of the row"
+    );
+    assert!(
+        store
+            .delete_pull_request(&first.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .list_pull_requests(PullRequestFilter::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// A pass that stops working on a request read who asked for it a few
+/// store calls earlier (026). An ask that lands in between — a review, a
+/// keeper, a task adopting it — is one that read never saw, and the row
+/// it would be lost with stays whole, its sessions still on it: the
+/// delete is refused where an ask was written since the read, even one
+/// that leaves the asks as they were read, and goes through where none
+/// was.
+#[tokio::test]
+async fn deleting_a_request_is_refused_where_an_ask_landed_since_the_read() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(ariadne_core::Seat::Keeper),
+            task_agent_id: None,
+            model: "stub:m".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: Some(row.id.clone()),
+        })
+        .await
+        .unwrap();
+    let read = PullRequestAsks::from(&row);
+    assert_eq!(
+        read,
+        PullRequestAsks {
+            origin_task_id: None,
+            review_asked: false,
+            babysit_asked: false,
+            revision: 0,
+        }
+    );
+    let pin = AgentPin {
+        model: "stub:m".into(),
+        effort: None,
+    };
+    store
+        .set_pull_request_babysit_asked(&row.id, Some((&pin, &[])))
+        .await
+        .unwrap();
+    assert!(
+        store
+            .delete_pull_request_unless_asked_since(&row.id, &read)
+            .await
+            .unwrap()
+            .is_none(),
+        "a row asked for since the read stays"
+    );
+    let kept = store.get_pull_request(&row.id).await.unwrap();
+    assert!(kept.babysit_asked, "with the ask that landed on it");
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .pull_request_id,
+        Some(row.id.clone()),
+        "and its sessions still on it"
+    );
+    // Asked again since a read that already saw an ask — taken back and
+    // made again on another pin — leaves the asks as they were read: the
+    // revision still tells the ask the read never saw.
+    let read = PullRequestAsks::from(&kept);
+    store
+        .set_pull_request_babysit_asked(&row.id, None)
+        .await
+        .unwrap();
+    let other = AgentPin {
+        model: "stub:other".into(),
+        effort: None,
+    };
+    let kept = store
+        .set_pull_request_babysit_asked(&row.id, Some((&other, &[])))
+        .await
+        .unwrap();
+    assert_eq!(
+        (kept.review_asked, kept.babysit_asked),
+        (read.review_asked, read.babysit_asked),
+        "the asks read the same"
+    );
+    assert!(
+        store
+            .delete_pull_request_unless_asked_since(&row.id, &read)
+            .await
+            .unwrap()
+            .is_none(),
+        "a row asked for again since the read stays"
+    );
+    assert_eq!(
+        store
+            .get_pull_request(&row.id)
+            .await
+            .unwrap()
+            .babysit_model
+            .as_deref(),
+        Some("stub:other"),
+        "with the ask made again"
+    );
+    let gone = store
+        .delete_pull_request_unless_asked_since(&row.id, &PullRequestAsks::from(&kept))
+        .await
+        .unwrap();
+    assert_eq!(
+        gone.map(|row| row.id),
+        Some(row.id.clone()),
+        "read as it is now, the row goes"
+    );
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .pull_request_id,
+        None,
+        "and the session is let go of it"
+    );
+    assert!(
+        store
+            .delete_pull_request_unless_asked_since(&row.id, &PullRequestAsks::from(&kept))
+            .await
+            .unwrap()
+            .is_none(),
+        "a row already gone is none again"
+    );
+}
+
+/// A store with one enabled GitHub repository, signed in as `me`, and one
+/// open request of mine on it.
+async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequestRow) {
+    let (store, dir) = test_store().await;
+    let repo = store
+        .create_repository(NewRepository {
+            default_workflow: None,
+            path: "/tmp/pull-request-comments".into(),
+            base_branch: "main".into(),
+            description: None,
+            permission_mode: None,
+            supervise_posts: None,
+        })
+        .await
+        .unwrap();
+    store
+        .set_forge_integration(SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (row, _) = store
+        .upsert_pull_request(NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 7,
+            url: "https://github.com/acme/widgets/pull/7".into(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    (store, dir, row)
+}
+
+/// A comment is the forge's; what the store keeps of one is a mark (026):
+/// told, once a claim of the news that names it held, and given back by a
+/// release; posted by a review, once a review session posted it (029). A
+/// claim is a compare and set over the row's told mark and the comments'
+/// marks, so the same news is not claimed twice.
+#[tokio::test]
+async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    let told = PullRequestTold {
+        checks: vec!["lint".into()],
+        behind_base: true,
+        review_decision: "approved".into(),
+        state: "open".into(),
+        check_state: "failure".into(),
+        head_sha: String::new(),
+    };
+    let before = PullRequestTold {
+        checks: Vec::new(),
+        behind_base: false,
+        review_decision: "none".into(),
+        state: "open".into(),
+        check_state: "none".into(),
+        head_sha: String::new(),
+    };
+    let comment = ["rc-1".to_string()];
+    assert!(
+        store
+            .claim_pull_request_news(&row.id, &comment, &before, &told)
+            .await
+            .unwrap()
+    );
+    let claimed = store.get_pull_request(&row.id).await.unwrap();
+    assert!(claimed.news_told_at.is_some());
+    assert_eq!(claimed.told_checks, r#"["lint"]"#);
+    assert_eq!(claimed.told_check_state.as_deref(), Some("failure"));
+    let marks = store.pull_request_comment_marks(&row.id).await.unwrap();
+    assert_eq!(marks.len(), 1);
+    assert!(marks[0].told_at.is_some());
+    assert!(
+        !store
+            .claim_pull_request_news(&row.id, &comment, &told, &told)
+            .await
+            .unwrap(),
+        "a told comment is not claimed twice"
+    );
+    // A claim whose prompt never went out is given back whole.
+    store
+        .release_pull_request_news(&row.id, &comment, &before)
+        .await
+        .unwrap();
+    let released = store.get_pull_request(&row.id).await.unwrap();
+    assert_eq!(released.told_checks, "[]");
+    assert!(!released.told_behind_base);
+    assert!(
+        store.pull_request_comment_marks(&row.id).await.unwrap()[0]
+            .told_at
+            .is_none()
+    );
+    // A news computed from a mark that moved since is refused.
+    let stale = PullRequestTold {
+        review_decision: "changes_requested".into(),
+        ..before.clone()
+    };
+    assert!(
+        !store
+            .claim_pull_request_news(&row.id, &[], &stale, &told)
+            .await
+            .unwrap()
+    );
+    store
+        .mark_review_comments(&row.id, &["rc-1".into(), "ic-2".into()])
+        .await
+        .unwrap();
+    let mut marks = store.pull_request_comment_marks(&row.id).await.unwrap();
+    marks.sort_by(|a, b| a.forge_id.cmp(&b.forge_id));
+    assert!(marks.iter().all(|m| m.from_review));
+    assert!(
+        store
+            .claim_pull_request_news(&row.id, &comment, &before, &told)
+            .await
+            .unwrap(),
+        "a review's mark leaves the comment untold"
+    );
+    store.delete_pull_request(&row.id).await.unwrap();
+    assert!(
+        store
+            .pull_request_comment_marks(&row.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the marks go with the row"
+    );
+}
+
+/// A comment whose reply is held pending in the user's own forge drafts
+/// (026 rule 24) carries the mark once written, beside a mark of another
+/// kind on the same row, and a second mark of the same comment leaves it
+/// as it is rather than erroring: a retried write is not a second row.
+#[tokio::test]
+async fn a_pending_reply_mark_is_written_once_and_kept_beside_others() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    store.mark_pending_reply(&row.id, "ic-1").await.unwrap();
+    store
+        .mark_review_comments(&row.id, &["rc-2".into()])
+        .await
+        .unwrap();
+    store.mark_pending_reply(&row.id, "ic-1").await.unwrap();
+    let mut marks = store.pull_request_comment_marks(&row.id).await.unwrap();
+    marks.sort_by(|a, b| a.forge_id.cmp(&b.forge_id));
+    assert_eq!(marks.len(), 2);
+    assert!(marks[0].pending_reply && !marks[0].from_review);
+    assert!(!marks[1].pending_reply && marks[1].from_review);
+}
+
+/// The ready flag a session reports moves the row, and a repeated ready
+/// report on the same head says nothing moved. A later report of `true` on
+/// a different head moves the row again, even though `ready` itself was
+/// never reported `false` in between (031): the babysitting task may
+/// re-confirm readiness on a new head without an intervening `false`, and
+/// the stored head must move with it.
+#[tokio::test]
+async fn a_pull_request_reports_ready_once_per_head() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    let (ready, moved) = store
+        .set_pull_request_ready(&row.id, true, Some("abc"))
+        .await
+        .unwrap();
+    assert!(ready.ready && moved);
+    assert_eq!(ready.ready_head_sha.as_deref(), Some("abc"));
+    let confirmed_at = ready.ready_confirmed_at.clone();
+    let (_, moved) = store
+        .set_pull_request_ready(&row.id, true, Some("abc"))
+        .await
+        .unwrap();
+    assert!(!moved, "a repeat on the same head moves nothing");
+    let (ready, moved) = store
+        .set_pull_request_ready(&row.id, true, Some("def"))
+        .await
+        .unwrap();
+    assert!(moved, "a later head moves it again");
+    assert_eq!(ready.ready_head_sha.as_deref(), Some("def"));
+    assert_eq!(
+        ready.ready_confirmed_at, confirmed_at,
+        "ready never moved from false, so its own since stays the first one's"
+    );
+    let (ready, moved) = store
+        .set_pull_request_ready(&row.id, false, None)
+        .await
+        .unwrap();
+    assert!(!ready.ready && moved);
+    assert_eq!(ready.ready_head_sha, None);
+    assert_eq!(ready.ready_confirmed_at, None);
+}
+
+/// A reviewer row keeps the head its session last reviewed, and says once
+/// whether that moved (029).
+#[tokio::test]
+async fn a_reviewed_sha_moves_once() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    assert_eq!(row.reviewed_sha, None);
+    let (reviewed, moved) = store
+        .set_pull_request_reviewed(&row.id, "abc")
+        .await
+        .unwrap();
+    assert!(moved);
+    assert_eq!(reviewed.reviewed_sha.as_deref(), Some("abc"));
+    let (_, moved) = store
+        .set_pull_request_reviewed(&row.id, "abc")
+        .await
+        .unwrap();
+    assert!(!moved, "the same sha moves nothing");
+    let (_, moved) = store
+        .set_pull_request_reviewed(&row.id, "def")
+        .await
+        .unwrap();
+    assert!(moved, "a later sha moves it again");
+}
+
+/// Asking to keep a request of mine by hand (032) writes the pin and the
+/// skills; a second ask moves them; `None` clears every one of them.
+#[tokio::test]
+async fn babysitting_a_request_of_mine_writes_its_pin_and_its_skills() {
+    let (store, _dir, row) = store_with_my_pull_request().await;
+    assert!(!row.babysit_asked);
+    let pin = AgentPin {
+        model: "stub:fast".into(),
+        effort: Some("low".into()),
+    };
+    let asked = store
+        .set_pull_request_babysit_asked(&row.id, Some((&pin, &["coding".to_string()])))
+        .await
+        .unwrap();
+    assert!(asked.babysit_asked);
+    assert_eq!(asked.babysit_model.as_deref(), Some("stub:fast"));
+    assert_eq!(asked.babysit_effort.as_deref(), Some("low"));
+    assert_eq!(asked.babysit_skills(), vec!["coding".to_string()]);
+
+    let other_pin = AgentPin {
+        model: "stub:slow".into(),
+        effort: None,
+    };
+    let moved = store
+        .set_pull_request_babysit_asked(&row.id, Some((&other_pin, &[])))
+        .await
+        .unwrap();
+    assert_eq!(moved.babysit_model.as_deref(), Some("stub:slow"));
+    assert_eq!(moved.babysit_effort, None);
+    assert!(moved.babysit_skills().is_empty());
+
+    let stopped = store
+        .set_pull_request_babysit_asked(&row.id, None)
+        .await
+        .unwrap();
+    assert!(!stopped.babysit_asked);
+    assert_eq!(stopped.babysit_model, None);
+    assert_eq!(stopped.babysit_effort, None);
+    assert!(stopped.babysit_skills().is_empty());
+}
+
+/// Every shipped workflow is seeded into a fresh database on the text
+/// Ariadne ships, storing none of it, the same way a skill is.
+#[tokio::test]
+async fn a_fresh_database_is_seeded_with_every_shipped_workflow_on_its_own_text() {
+    let (store, _dir) = test_store().await;
+
+    let workflows = store.list_workflows().await.unwrap();
+    assert_eq!(
+        workflows.len(),
+        ariadne_store::defaults::BUILTIN_WORKFLOWS.len()
+    );
+    assert!(
+        workflows
+            .iter()
+            .all(|w| w.is_builtin() && w.document_is_default()),
+        "every seeded workflow runs on the shipped text"
+    );
+
+    let merge = store.get_workflow("develop-review-merge").await.unwrap();
+    assert_eq!(merge.steps().len(), 3);
+    assert_eq!(merge.steps()[0].id, "develop");
+
+    let pr = store.get_workflow("develop-review-pr").await.unwrap();
+    assert_eq!(pr.steps().len(), 3);
+    assert_eq!(pr.steps()[2].id, "pr");
+}
+
+/// Seeding a workflow is by name and overwrites no document the database
+/// holds: an edit survives a reopen, and nothing is seeded back over it.
+#[tokio::test]
+async fn a_reopen_reseeds_no_workflow_row_the_database_already_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let edited =
+        "workflow develop-review-merge\n  solo[Solo]\n    Do it all.\n    skills: coding\n";
+    let store = Store::open(&path).await.unwrap();
+    store
+        .set_workflow_document("develop-review-merge", edited)
+        .await
+        .unwrap();
+    store
+        .create_workflow(NewWorkflow {
+            name: "api-design".into(),
+            document: "workflow api-design\n  build[Build]\n    Do the work.\n    skills: coding\n"
+                .into(),
+        })
+        .await
+        .unwrap();
+    store.delete_workflow("api-design").await.unwrap();
+    drop(store);
+
+    let store = Store::open(&path).await.unwrap();
+    let reopened = store.get_workflow("develop-review-merge").await.unwrap();
+    assert!(
+        !reopened.document_is_default(),
+        "the edit survived the reopen"
+    );
+    assert_eq!(reopened.steps()[0].id, "solo");
+    assert!(
+        matches!(
+            store.get_workflow("api-design").await,
+            Err(StoreError::NotFound { .. })
+        ),
+        "a deleted workflow of the user's own stays deleted"
+    );
+}
+
+/// A workflow is created, read, written over and deleted by name; a built-in
+/// is reset rather than deleted, and a workflow of the user's own is deleted
+/// rather than reset — there is nothing behind it to go back to.
+#[tokio::test]
+async fn workflow_crud_and_the_two_refusals_that_tell_them_apart() {
+    let (store, _dir) = test_store().await;
+
+    let shipped = store.get_workflow("develop-review-merge").await.unwrap();
+    assert!(shipped.is_builtin());
+    assert!(shipped.document_is_default());
+
+    let mine = store
+        .create_workflow(NewWorkflow {
+            name: "api-design".into(),
+            document: "workflow api-design\n  build[Build]\n    Do the work.\n    skills: coding\n"
+                .into(),
+        })
+        .await
+        .unwrap();
+    assert!(!mine.is_builtin());
+
+    assert!(matches!(
+        store
+            .create_workflow(NewWorkflow {
+                name: "develop-review-merge".into(),
+                document: "workflow develop-review-merge\n  a[A]\n    Do it.\n    skills: coding\n"
+                    .into(),
+            })
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+
+    assert!(matches!(
+        store.delete_workflow("develop-review-merge").await,
+        Err(StoreError::Conflict(_))
+    ));
+    assert!(matches!(
+        store.reset_workflow("api-design").await,
+        Err(StoreError::Conflict(_))
+    ));
+    store.delete_workflow("api-design").await.unwrap();
+    assert!(matches!(
+        store.get_workflow("api-design").await,
+        Err(StoreError::NotFound { .. })
+    ));
+
+    let edited = store
+        .set_workflow_document(
+            "develop-review-merge",
+            "workflow develop-review-merge\n  solo[Solo]\n    Do it all.\n    skills: coding\n",
+        )
+        .await
+        .unwrap();
+    assert!(!edited.document_is_default());
+    let reset = store.reset_workflow("develop-review-merge").await.unwrap();
+    assert!(reset.document_is_default());
+    assert_eq!(reset.steps()[0].id, "develop");
+}
+
+/// A workflow column can only name a skill that exists: the name is a
+/// reference, and the refusal says which name it was.
+#[tokio::test]
+async fn a_workflow_save_refuses_an_unknown_skill_naming_it() {
+    let (store, _dir) = test_store().await;
+    let refused = store
+        .create_workflow(NewWorkflow {
+            name: "api-design".into(),
+            document:
+                "workflow api-design\n  build[Build]\n    Do the work.\n    skills: telepathy\n"
+                    .into(),
+        })
+        .await;
+    let message = format!("{:?}", refused.expect_err("no such skill"));
+    assert!(message.contains("telepathy"), "{message}");
+}
+
+/// A workflow column cannot staff the orchestrator's skill or the one a
+/// reviewer pull request session loads; `pr-babysit` is allowed, since the
+/// shipped `develop-review-pr` workflow stages it on its last column.
+#[tokio::test]
+async fn a_workflow_save_refuses_the_orchestrators_skill_and_the_reviewer_sessions_skill() {
+    let (store, _dir) = test_store().await;
+
+    for forbidden in ["orchestration", "pr-reviewer"] {
+        let refused = store
+            .create_workflow(NewWorkflow {
+                name: "api-design".into(),
+                document: format!(
+                    "workflow api-design\n  build[Build]\n    Do the work.\n    skills: {forbidden}\n"
+                ),
+            })
+            .await;
+        let message = format!("{:?}", refused.expect_err("forbidden skill"));
+        assert!(message.contains(forbidden), "{message}");
+    }
+
+    store
+        .create_workflow(NewWorkflow {
+            name: "api-design".into(),
+            document:
+                "workflow api-design\n  pr[Pull request]\n    Keep it.\n    skills: pr-babysit\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+}
+
+/// A goal that names the shipped `develop-review-merge` workflow outright,
+/// on a repository of its own.
+async fn stepped_goal(store: &Store) -> (Goal, Repository) {
+    let repo = seed_repository(store).await;
+    let goal = store
+        .create_goal(NewGoal {
+            workflow: Some(DEFAULT_WORKFLOW.into()),
+            title: "Run columns".into(),
+            description: "Build a change.".into(),
+            issue_url: None,
+            repository_ids: vec![repo.id.clone()],
+            pin: default_pin(),
+        })
+        .await
+        .unwrap();
+    (goal, repo)
+}
+
+/// One agent per column of `develop-review-merge`, each on its column's own
+/// skills.
+fn step_agents() -> Vec<NewTaskAgent> {
+    ["develop", "review", "merge"]
+        .into_iter()
+        .map(|step| NewTaskAgent::new(step, Vec::<String>::new(), default_pin()))
+        .collect()
+}
+
+/// A staffing is checked against the goal's columns: an agent on a column
+/// the workflow has not got is refused, naming the column and listing the
+/// ones there are, and so is a column staffed twice — and a refused staffing
+/// writes no task. An agent staffed with no skills of its own takes its
+/// column's. While the goal is planned a column may be left unstaffed: the
+/// orchestrator staffs a plan task by task, so `create_task` accepts a
+/// partial staffing and `unstaffed_columns` names what is missing, in column
+/// order, for the plan and the retry that refuse to start on it. Once the
+/// goal runs, a task is runnable as soon as it is written or edited, so a
+/// create or an edit that leaves a column unstaffed is refused by name.
+#[tokio::test]
+async fn a_staffing_names_the_goals_columns_once_each_and_may_leave_some_for_later() {
+    let (store, _dir) = test_store().await;
+    let (goal, repo) = stepped_goal(&store).await;
+    let new = |agents| NewTask {
+        goal_id: goal.id.clone(),
+        repo_id: repo.id.clone(),
+        title: "Build".into(),
+        description: "Build it.".into(),
+        agents,
+        depends_on: vec![],
+    };
+
+    let mut unknown = step_agents();
+    unknown[1].step = "publish".into();
+    let refused = format!("{:?}", store.create_task(new(unknown)).await.unwrap_err());
+    assert!(refused.contains("unknown column publish"), "{refused}");
+    assert!(refused.contains("develop, review, merge"), "{refused}");
+    let mut duplicate = step_agents();
+    duplicate[1].step = "develop".into();
+    let refused = format!("{:?}", store.create_task(new(duplicate)).await.unwrap_err());
+    assert!(refused.contains("develop is staffed twice"), "{refused}");
+    assert!(
+        store
+            .list_tasks(TaskFilter {
+                goal_id: Some(goal.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty(),
+        "a refused staffing writes no task"
+    );
+
+    // Empty skills inherit the column's; named skills are the agent's own.
+    let mut named = step_agents();
+    named[0].skills = vec!["coding".into(), "debugging".into()];
+    let task = store.create_task(new(named)).await.unwrap();
+    let skills_of = async |step: &str| -> Vec<String> {
+        let agent = agent_of(&store, &task, step).await;
+        store
+            .agent_skills(&agent.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.name)
+            .collect()
+    };
+    assert_eq!(skills_of("develop").await, ["coding", "debugging"]);
+    assert_eq!(skills_of("review").await, ["code-review"]);
+    assert_eq!(skills_of("merge").await, ["merge"]);
+    assert!(store.unstaffed_columns(&task).await.unwrap().is_empty());
+
+    // A partial staffing is accepted, and what it lacks is named in column
+    // order, whatever order the agents were given in.
+    let partial = store
+        .create_task(new(vec![NewTaskAgent::new(
+            "review",
+            Vec::<String>::new(),
+            default_pin(),
+        )]))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.unstaffed_columns(&partial).await.unwrap(),
+        ["develop", "merge"]
+    );
+    let mut reversed = step_agents();
+    reversed.reverse();
+    reversed.remove(1);
+    let gapped = store.create_task(new(reversed)).await.unwrap();
+    assert_eq!(store.unstaffed_columns(&gapped).await.unwrap(), ["review"]);
+    let empty = store.create_task(new(vec![])).await.unwrap();
+    assert_eq!(
+        store.unstaffed_columns(&empty).await.unwrap(),
+        ["develop", "review", "merge"]
+    );
+
+    // On an active goal nothing may be left for later: a task written then
+    // starts as soon as its dependencies allow.
+    store
+        .set_goal_status(&goal.id, GoalStatus::Active)
+        .await
+        .unwrap();
+    let refused = format!(
+        "{:?}",
+        store
+            .create_task(new(vec![NewTaskAgent::new(
+                "review",
+                Vec::<String>::new(),
+                default_pin(),
+            )]))
+            .await
+            .unwrap_err()
+    );
+    assert!(refused.contains("none staffs develop, merge"), "{refused}");
+    assert!(refused.contains("active"), "{refused}");
+    let refused = format!(
+        "{:?}",
+        store
+            .update_task(
+                &task.id,
+                TaskUpdate {
+                    agents: Some(vec![NewTaskAgent::new(
+                        "develop",
+                        Vec::<String>::new(),
+                        default_pin(),
+                    )]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err()
+    );
+    assert!(refused.contains("none staffs review, merge"), "{refused}");
+    assert!(store.unstaffed_columns(&task).await.unwrap().is_empty());
+    store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                agents: Some(step_agents()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(store.unstaffed_columns(&task).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn workflow_snapshots_keep_their_columns_and_references_prevent_deletion() {
+    let (store, _dir) = test_store().await;
+    store
+        .create_workflow(NewWorkflow {
+            name: "custom".into(),
+            document: "workflow custom\n build[Build]\n skills: pr-babysit\n".into(),
+        })
+        .await
+        .unwrap();
+    let repo = seed_repository(&store).await;
+    store
+        .update_repository(
+            &repo.id,
+            RepositoryUpdate {
+                default_workflow: Some("custom".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.delete_workflow("custom").await,
+        Err(StoreError::WorkflowInUse(_))
+    ));
+    let make = || NewGoal {
+        workflow: None,
+        title: "Keep columns".into(),
+        description: "Use the default.".into(),
+        issue_url: None,
+        repository_ids: vec![repo.id.clone()],
+        pin: default_pin(),
+    };
+    let goal = store.create_goal(make()).await.unwrap();
+    assert_eq!(goal.workflow, "custom");
+    store
+        .set_workflow_document("custom", "workflow custom\n other[Other]\n")
+        .await
+        .unwrap();
+    assert_eq!(store.goal_steps(&goal.id).await.unwrap()[0].id, "build");
+    let later = store.create_goal(make()).await.unwrap();
+    assert_eq!(store.goal_steps(&later.id).await.unwrap()[0].id, "other");
+    store
+        .update_repository(
+            &repo.id,
+            RepositoryUpdate {
+                default_workflow: Some(DEFAULT_WORKFLOW.into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.delete_workflow("custom").await,
+        Err(StoreError::WorkflowInUse(_))
+    ));
+    let agent = NewTaskAgent::new("build", Vec::<String>::new(), default_pin());
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id,
+            repo_id: repo.id,
+            title: "Keep request".into(),
+            description: "Wait for merge.".into(),
+            agents: vec![agent],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    let agent = &store.list_task_agents(&task.id).await.unwrap()[0];
+    assert_eq!(
+        store.agent_skills(&agent.id).await.unwrap()[0].name,
+        "pr-babysit"
+    );
+}
+
+/// A second connection to the database file a store holds open, for the
+/// reads of the schema itself that no store method makes.
+async fn raw_pool(path: &std::path::Path) -> sqlx::SqlitePool {
+    sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn invalid_stored_column_skills_refuse_staffing_without_writing_a_task() {
+    use sqlx::Connection;
+
+    let (store, dir) = test_store().await;
+    let (goal, repo) = stepped_goal(&store).await;
+    let mut db = sqlx::SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        dir.path().join("test.db").display()
+    ))
+    .await
+    .unwrap();
+    sqlx::query("UPDATE goal_steps SET skills = '{}' WHERE goal_id = ? AND id = 'develop'")
+        .bind(&goal.id)
+        .execute(&mut db)
+        .await
+        .unwrap();
+    let error = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id,
+            title: "Build".into(),
+            description: "Use valid skills.".into(),
+            agents: step_agents(),
+            depends_on: vec![],
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, StoreError::Invalid(_)));
+    assert!(error.to_string().contains("develop"));
+    assert!(
+        store
+            .list_tasks(TaskFilter {
+                goal_id: Some(goal.id),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

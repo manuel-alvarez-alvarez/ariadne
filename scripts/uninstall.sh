@@ -7,7 +7,7 @@
 # Idempotent: safe to run when partially or not installed.
 #
 # Output is a numbered step list; noisy subcommands (launchctl, systemctl) go
-# to $TMPDIR/ariadne-uninstall.log — never into ~/.ariadne, which --purge
+# to a unique file under $TMPDIR — never into ~/.ariadne, which --purge
 # deletes — and are only shown when a step fails.
 #
 # The options are in usage() below, which is what --help prints; they are not
@@ -24,8 +24,7 @@ Ariadne uninstaller - removes what scripts/install.sh installed.
 
 Usage: scripts/uninstall.sh [options]
 
-  --prefix DIR  binaries location if no install manifest exists
-                (default: ~/.local/bin)
+  --prefix DIR  expected binary location (default: ~/.local/bin)
   --purge       also delete ~/.ariadne (database, worktrees, run dirs, logs)
   --verbose     stream subcommand output instead of capturing it
   --quiet       print errors and the final summary only
@@ -54,7 +53,8 @@ trap 'ui_on_err $?' ERR
 # The same locations install.sh writes, as the defaults; the manifest of the
 # install actually being undone then overrides whichever of them it records.
 ui_locations
-LOG_FILE="${TMPDIR:-/tmp}/ariadne-uninstall.log"
+LOG_FILE="$(mktemp "${TMPDIR:-/tmp}/ariadne-uninstall.XXXXXX")" \
+    || { echo "could not create an uninstall log" >&2; exit 1; }
 ARIADNE_PREFIX="$PREFIX"
 # Only ever set by the manifest: an install that skipped the desktop app - and
 # any manifest written before it existed - leaves nothing to remove.
@@ -65,8 +65,64 @@ ARIADNE_DESKTOP_ICON=""
 MANIFEST_FOUND=0
 if [ -f "$ARIADNE_MANIFEST" ]; then
     MANIFEST_FOUND=1
-    # shellcheck disable=SC1090
-    . "$ARIADNE_MANIFEST"
+    ui_read_install_manifest "$ARIADNE_MANIFEST"
+    [ -z "$MANIFEST_PREFIX" ] \
+        || ui_validate_manifest_path ARIADNE_PREFIX "$MANIFEST_PREFIX" "$PREFIX"
+    [ -z "$MANIFEST_BASH_COMPLETION" ] \
+        || ui_validate_manifest_path ARIADNE_BASH_COMPLETION "$MANIFEST_BASH_COMPLETION" "$PREFIX"
+    [ -z "$MANIFEST_ZSH_COMPLETION" ] \
+        || ui_validate_manifest_path ARIADNE_ZSH_COMPLETION "$MANIFEST_ZSH_COMPLETION" "$PREFIX"
+    [ -z "$MANIFEST_PLIST" ] \
+        || ui_validate_manifest_path ARIADNE_PLIST "$MANIFEST_PLIST" "$PREFIX"
+    [ -z "$MANIFEST_UNIT" ] \
+        || ui_validate_manifest_path ARIADNE_UNIT "$MANIFEST_UNIT" "$PREFIX"
+    [ -z "$MANIFEST_APP" ] \
+        || ui_validate_manifest_path ARIADNE_APP "$MANIFEST_APP" "$PREFIX"
+    [ -z "$MANIFEST_DESKTOP_ENTRY" ] \
+        || ui_validate_manifest_path ARIADNE_DESKTOP_ENTRY "$MANIFEST_DESKTOP_ENTRY" "$PREFIX"
+    [ -z "$MANIFEST_DESKTOP_ICON" ] \
+        || ui_validate_manifest_path ARIADNE_DESKTOP_ICON "$MANIFEST_DESKTOP_ICON" "$PREFIX"
+    [ -n "$MANIFEST_PREFIX" ] && ARIADNE_PREFIX="$MANIFEST_PREFIX"
+    [ -n "$MANIFEST_BASH_COMPLETION" ] && ARIADNE_BASH_COMPLETION="$MANIFEST_BASH_COMPLETION"
+    [ -n "$MANIFEST_ZSH_COMPLETION" ] && ARIADNE_ZSH_COMPLETION="$MANIFEST_ZSH_COMPLETION"
+    [ -n "$MANIFEST_PLIST" ] && ARIADNE_PLIST="$MANIFEST_PLIST"
+    [ -n "$MANIFEST_UNIT" ] && ARIADNE_UNIT="$MANIFEST_UNIT"
+    ARIADNE_APP="$MANIFEST_APP"
+    [ -n "$MANIFEST_DESKTOP_ENTRY" ] && ARIADNE_DESKTOP_ENTRY="$MANIFEST_DESKTOP_ENTRY"
+    ARIADNE_DESKTOP_ICON="$MANIFEST_DESKTOP_ICON"
+fi
+
+# Refuse every unsafe recursive target before the first uninstall step. An
+# invalid manifest must leave the installed files exactly as they are.
+if [ -n "$ARIADNE_APP" ]; then
+    case "$OS" in
+        Darwin)
+            case "$ARIADNE_APP" in
+                /Applications/Ariadne.app|"$HOME/Applications/Ariadne.app"|\
+                /Applications/Ariadne\ Desktop.app|"$HOME/Applications/Ariadne Desktop.app") ;;
+                *) ui_die "refusing to remove unexpected desktop app path: $ARIADNE_APP" ;;
+            esac
+            if [ -e "$ARIADNE_APP" ] && [ ! -d "$ARIADNE_APP" ]; then
+                ui_die "refusing to remove unexpected desktop app path: $ARIADNE_APP"
+            fi
+            ;;
+        Linux)
+            [ "$ARIADNE_APP" = "$ARIADNE_PREFIX/ariadne-desktop" ] \
+                || ui_die "refusing to remove unexpected desktop app path: $ARIADNE_APP"
+            ;;
+        *) ui_die "refusing to remove unexpected desktop app path: $ARIADNE_APP" ;;
+    esac
+fi
+if [ "$PURGE" = 1 ]; then
+    case "$ARIADNE_HOME" in
+        ''|/|"$HOME"|"$HOME"/)
+            ui_die "refusing to purge unsafe Ariadne home: $ARIADNE_HOME"
+            ;;
+    esac
+    case "$ARIADNE_HOME" in
+        /*) ;;
+        *) ui_die "refusing to purge unsafe Ariadne home: $ARIADNE_HOME" ;;
+    esac
 fi
 
 SERVICE_DESC="$(ui_service_desc "none on $OS")"
@@ -116,8 +172,12 @@ fi
 APP_REMOVED=0
 if [ -n "$ARIADNE_APP" ]; then
     step_begin
-    if [ -e "$ARIADNE_APP" ]; then
+    if [ "$OS" = Darwin ] && [ -d "$ARIADNE_APP" ]; then
         rm -rf "$ARIADNE_APP"
+        APP_REMOVED=1
+        step_ok
+    elif [ "$OS" = Linux ] && [ -e "$ARIADNE_APP" ]; then
+        rm -f "$ARIADNE_APP"
         APP_REMOVED=1
         step_ok
     else

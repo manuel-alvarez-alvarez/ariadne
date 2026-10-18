@@ -20,7 +20,7 @@ use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agent_client_protocol::schema::{ProtocolVersion, v1};
 use agent_client_protocol::{Agent, Client, ConnectionTo, JsonRpcNotification, JsonRpcRequest};
@@ -33,19 +33,22 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 
-use ariadne_api::events::{AgentEventDto, IngestEventRequest};
+use ariadne_api::events::{AgentEventDto, IngestEventRequest, PermissionReplyDto};
 use ariadne_core::acp::LaunchConfig;
 use ariadne_core::id::new_id;
 use ariadne_core::{PermissionMode, TokenUsage};
-use ariadne_store::Store;
+use ariadne_store::{PullRequestTold, Store};
 
 use crate::acp_calls::PromptTurn;
-use crate::acp_transport::pipes;
+use crate::acp_transport::{PromptWrites, witnessed_pipes};
 use crate::ai_permissions::AiPermissions;
-use crate::ai_permissions::decide::{Decision, decide};
+use crate::ai_permissions::decide::{Decision, decide, prepare};
+use crate::ai_permissions::derive::derive;
 use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
+use crate::learned_key::{Facts, Key, normalize};
 use crate::scheduler::SchedEvent;
+use crate::stats::session_fact;
 use crate::timeouts::Timeouts;
 use crate::transcript::{LaunchTranscript, TranscriptHomes};
 
@@ -53,8 +56,7 @@ use crate::transcript::{LaunchTranscript, TranscriptHomes};
 const CONSOLE_CAPACITY: usize = 1024;
 
 /// What one launch reports of its turns as they go, to whoever waits on the
-/// agent's own word — the daemon ending the turn an author asked for its
-/// review in (004), once the agent says it holds the answer. Each launch
+/// agent's own word. Each launch
 /// reports on channels of its own: a report never comes from the process
 /// before, and none is ever dropped on the way — a follower's channel is
 /// unbounded, and a follower lives only until it has what it waited for.
@@ -112,6 +114,9 @@ pub struct AcpLaunch {
     pub config: LaunchConfig,
     /// Repository this session works in. Learned approvals are scoped here.
     pub repository_id: String,
+    /// That repository's checkout, empty where there is none: a learned
+    /// key names it `<REPO>`.
+    pub repository_path: String,
     /// The repository's permission mode, resolved before the launch.
     pub permission_mode: PermissionMode,
 }
@@ -142,6 +147,10 @@ struct Inner {
     /// relaunch finds no running entry left to take down, and the old agent
     /// still holds the conversation the relaunch resumes.
     ending: Mutex<HashMap<String, Vec<(String, Reaped)>>>,
+    /// The branch each session works on, by Ariadne session id: what a
+    /// learned key names `<BRANCH>`. Shared with the session's runtime, so a
+    /// session moved to another branch keys on that one.
+    branches: Mutex<HashMap<String, SessionBranch>>,
     /// Wakes the scheduler after an event lands, the way the HTTP ingestion
     /// does — present once a scheduler is running.
     scheduler: OnceLock<mpsc::UnboundedSender<SchedEvent>>,
@@ -152,11 +161,55 @@ struct Inner {
     /// kept for as long as an agent runs for it or somebody listens.
     consoles: Mutex<HashMap<String, broadcast::Sender<AgentEventDto>>>,
     ai_permissions: Option<AiPermissions>,
+    exhausted_patterns: Vec<String>,
+    failure_diagnosis: Option<crate::failure_diagnosis::FailureDiagnosis>,
+    /// Serializes a goal's attention decision (`tell_orchestrator`, in the
+    /// scheduler) against the confirmation its own prior delivery's turn
+    /// writes (`prompt_once`, right here), on the daemon's multi-threaded
+    /// runtime where neither otherwise excludes the other: whichever
+    /// acquires this first runs its whole decision, or its whole
+    /// confirm-and-dequeue, to completion before the other so much as
+    /// reads the state the first one is still writing. One lock for every
+    /// goal rather than one per goal: a goal's own attention is not a hot
+    /// path, and a pass over a different goal taking it only waits as
+    /// long as the last one already held it, never on anything of its
+    /// own.
+    goal_attention: Arc<tokio::sync::Mutex<()>>,
 }
+
+/// The branch one session works on, shared between the runtime and the
+/// launcher that moves it.
+type SessionBranch = Arc<Mutex<Option<String>>>;
 
 /// Resolves once a driver has killed and reaped its child. Shared, so that
 /// every launch of the session waits on the same reap.
 type Reaped = Shared<oneshot::Receiver<()>>;
+
+/// What holds a session's next launch back, from [`AcpRuntime::kill_gated`]
+/// until it is dropped. It sits among the agents still ending, so a launch
+/// waits on it as it waits on them.
+pub(crate) struct LaunchGate {
+    inner: Arc<Inner>,
+    session_id: String,
+    key: String,
+    open: Option<oneshot::Sender<()>>,
+}
+
+impl Drop for LaunchGate {
+    fn drop(&mut self) {
+        let mut ending = self.inner.ending.lock().expect("acp ending lock");
+        if let Some(launches) = ending.get_mut(&self.session_id) {
+            launches.retain(|(key, _)| *key != self.key);
+            if launches.is_empty() {
+                ending.remove(&self.session_id);
+            }
+        }
+        drop(ending);
+        if let Some(open) = self.open.take() {
+            let _ = open.send(());
+        }
+    }
+}
 
 /// Where a prompt came from, as `user_prompt_submit` reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -180,6 +233,87 @@ impl PromptSource {
 struct Prompt {
     text: String,
     source: PromptSource,
+    /// What this prompt delivers: an agent message (018) or a pull
+    /// request's news (026). The driver claims it right before the prompt
+    /// goes out. A nudge, a briefing and console input carry none.
+    delivery: Option<Delivery>,
+}
+
+/// What a daemon prompt hands over that the store records as handed, claimed
+/// by the driver right before the prompt goes out and given back where the
+/// prompt was never written.
+#[derive(Debug, Clone)]
+pub(crate) enum Delivery {
+    Step(String),
+    /// An agent message, by id (018).
+    Message(String),
+    /// The news of a pull request (026). Boxed: it carries two marks and a
+    /// list, where a message carries an id.
+    PullRequestNews(Box<NewsDelivery>),
+    /// A goal's failed and stalled tasks (031), named by id with the
+    /// `updated_at` each failure carried at the moment this was queued —
+    /// a later retry of the same task stamps a new one, so an old
+    /// confirmation never answers for a new failure of it. Confirmed only
+    /// once this exact prompt's own turn ends (`prompt_once`), never by an
+    /// unrelated turn landing on the same session: nothing here is written
+    /// to the store until this delivery's own `session/prompt` call
+    /// returns. The key comes off the launch's queue ledger
+    /// (`claim_message`) when that turn ends either way, confirmed or
+    /// not: its only job was keeping this one in-flight attempt from
+    /// being queued twice, and a failed write already leaves the store
+    /// itself reading unconfirmed, which is what makes the next pass
+    /// retry — a key still held over a failed write would instead refuse
+    /// that retry's own attempt to queue, past the point the store was
+    /// already free to correct it. Confirming and taking the key off
+    /// happen under `AcpRuntime::goal_attention_lock`, the same lock a
+    /// scheduler pass holds across its own read of this goal's confirmed
+    /// list and its own send: on the daemon's multi-threaded runtime,
+    /// neither task's lack of an intervening `await` excludes the other
+    /// from running on a different worker at the same moment, so the lock
+    /// is what actually keeps a pass from reading "not confirmed yet" in
+    /// the gap this turn's own confirmation is landing in.
+    GoalAttention {
+        goal_id: String,
+        failed_tasks: Vec<(String, String)>,
+    },
+}
+
+/// One pull request's news, as its prompt delivers it: the comments it
+/// names, the told mark it leaves, and the mark it found, which a prompt
+/// that never went out puts back.
+#[derive(Debug, Clone)]
+pub(crate) struct NewsDelivery {
+    pub(crate) pull_request_id: String,
+    pub(crate) comment_ids: Vec<String>,
+    pub(crate) told: PullRequestTold,
+    pub(crate) before: PullRequestTold,
+}
+
+impl Delivery {
+    /// What tells two queued deliveries apart: one per message, and one per
+    /// pull request, whose next news waits until the queued one is claimed.
+    fn key(&self) -> String {
+        match self {
+            Delivery::Step(id) => format!("step:{id}"),
+            Delivery::Message(id) => format!("message:{id}"),
+            Delivery::PullRequestNews(news) => format!("news:{}", news.pull_request_id),
+            // Signed by its own content, not only the goal: a situation
+            // that changes while the previous one is still queued is a
+            // different delivery, queued beside it rather than dropped.
+            Delivery::GoalAttention {
+                goal_id,
+                failed_tasks,
+            } => format!("goal_attention:{goal_id}:{failed_tasks:?}"),
+        }
+    }
+}
+
+/// The commands the agent most recently offered for this session.
+struct AvailableCommands {
+    /// The agent session the update named.
+    session_id: Value,
+    /// Each command exactly as the agent sent it.
+    commands: Vec<Value>,
 }
 
 /// One run of text: the chunks of one kind, and of one message where the
@@ -213,30 +347,61 @@ struct Turn {
     /// A load replay: keep the first transcript, skip later copies.
     replay: Option<bool>,
     running: bool,
+    /// The prompt this turn represents, while its `wait_for_user` calls can
+    /// mark their requests as current.
+    agent_request_turn_id: Option<String>,
     /// The agent's own session id, as the turn's events name it.
     agent_session: Option<String>,
     /// The run of chunks being written. The next thing the agent reports
     /// ends it — or a chunk of another kind or another message — and it is
     /// stored where it stands (021).
     text: Option<Run>,
-    tools: HashMap<String, Value>,
+    tools: HashMap<String, OpenToolCall>,
+    available_commands: Option<AvailableCommands>,
+}
+
+/// An open tool call.
+struct OpenToolCall {
+    call: Value,
 }
 
 impl Turn {
-    /// The running turn's text so far as the chunk event a console snapshot
-    /// appends: the run still being written, which comes after everything
-    /// stored. None for a turn that is not writing text, and none between
-    /// turns.
+    /// The live state a console snapshot appends after its stored events.
     fn so_far(&self, session_id: &str, task_id: &Option<String>) -> Vec<AgentEventDto> {
-        let Some(run) = self.text.as_ref().filter(|_| self.running) else {
-            return Vec::new();
+        let mut events = Vec::new();
+        if let Some(run) = self.text.as_ref().filter(|_| self.running) {
+            events.push(live_event(
+                session_id,
+                task_id.clone(),
+                &format!("{}_chunk", run.kind),
+                json!({"session_id": self.agent_session, "text": run.text}),
+            ));
+        }
+        if let Some(commands) = &self.available_commands {
+            events.push(live_event(
+                session_id,
+                task_id.clone(),
+                "available_commands_update",
+                json!({"session_id": commands.session_id, "available_commands": commands.commands}),
+            ));
+        }
+        events
+    }
+
+    /// Whether this prompt starts with one of the agent's offered commands.
+    fn is_command(&self, text: &str) -> bool {
+        let Some(word) = text
+            .strip_prefix('/')
+            .and_then(|text| text.split_whitespace().next())
+        else {
+            return false;
         };
-        vec![live_event(
-            session_id,
-            task_id.clone(),
-            &format!("{}_chunk", run.kind),
-            json!({"session_id": self.agent_session, "text": run.text}),
-        )]
+        self.available_commands.as_ref().is_some_and(|commands| {
+            commands
+                .commands
+                .iter()
+                .any(|command| command.get("name").and_then(Value::as_str) == Some(word))
+        })
     }
 
     /// End the run of text being written, and hand it back as the event to
@@ -266,6 +431,12 @@ struct RunningAgent {
     /// sent at once if the agent is between turns and queued, in order,
     /// behind whichever one is running.
     prompts: mpsc::UnboundedSender<Prompt>,
+    switches: mpsc::UnboundedSender<ConfigSwitch>,
+    /// The deliveries in `prompts` that the driver has not taken off yet, by
+    /// [`Delivery::key`]. A scheduler pass hands every unstamped message and
+    /// every untold piece of news again, and one already queued here is not
+    /// queued twice.
+    queued_messages: HashSet<String>,
     /// The reply channel while the agent waits on one permission request.
     permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     /// The turn in flight, shared with the driver that fills it.
@@ -279,6 +450,12 @@ struct RunningAgent {
     /// Closes once the driver has killed and reaped the child: what a
     /// relaunch waits on, so that two agents never serve one conversation.
     ended: Reaped,
+}
+
+struct ConfigSwitch {
+    model: String,
+    effort: Option<String>,
+    done: oneshot::Sender<Result<()>>,
 }
 
 /// The way into a running agent for the one notification sent from outside
@@ -359,11 +536,47 @@ impl AcpRuntime {
                 running: Mutex::new(HashMap::new()),
                 user_resumed: Mutex::default(),
                 ending: Mutex::new(HashMap::new()),
+                branches: Mutex::default(),
                 scheduler: OnceLock::new(),
                 consoles: Mutex::new(HashMap::new()),
                 ai_permissions: None,
+                exhausted_patterns: crate::config::default_exhausted_patterns(),
+                failure_diagnosis: None,
+                goal_attention: Arc::new(tokio::sync::Mutex::new(())),
             }),
         }
+    }
+
+    pub fn with_exhausted_patterns(mut self, patterns: Vec<String>) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("the runtime is not shared while it is configured")
+            .exhausted_patterns = patterns;
+        self
+    }
+
+    /// Set the branch a session works on: its task's. Its learned keys name
+    /// it `<BRANCH>` from the next
+    /// permission request on, a running agent's included.
+    pub fn set_task_branch(&self, session_id: &str, branch: Option<String>) {
+        *self.branch_of(session_id).lock().expect("ACP branch lock") = branch;
+    }
+
+    /// The branch a session works on, where one was set.
+    pub fn task_branch(&self, session_id: &str) -> Option<String> {
+        self.branch_of(session_id)
+            .lock()
+            .expect("ACP branch lock")
+            .clone()
+    }
+
+    fn branch_of(&self, session_id: &str) -> SessionBranch {
+        self.inner
+            .branches
+            .lock()
+            .expect("ACP branches lock")
+            .entry(session_id.to_string())
+            .or_default()
+            .clone()
     }
 
     /// Give this runtime the daemon's AI permission model before it is shared.
@@ -371,6 +584,18 @@ impl AcpRuntime {
         Arc::get_mut(&mut self.inner)
             .expect("a new ACP runtime has one owner")
             .ai_permissions = Some(ai_permissions);
+        self
+    }
+
+    /// Give this runtime the daemon's optional failure classifier (024)
+    /// before it is shared.
+    pub fn with_failure_diagnosis(
+        mut self,
+        failure_diagnosis: crate::failure_diagnosis::FailureDiagnosis,
+    ) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("a new ACP runtime has one owner")
+            .failure_diagnosis = Some(failure_diagnosis);
         self
     }
 
@@ -390,6 +615,14 @@ impl AcpRuntime {
             .contains(session_id)
     }
 
+    /// The lock a goal's attention decision and its own prior delivery's
+    /// confirmation serialize against each other on. An owned clone of the
+    /// `Arc`, so the guard a caller holds across its own awaits never ties
+    /// up a borrow of this runtime itself.
+    pub(crate) fn goal_attention_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.inner.goal_attention.clone()
+    }
+
     /// Give the runtime the scheduler's waker. Called once, from the
     /// scheduler's own start.
     pub(crate) fn connect_scheduler(&self, tx: mpsc::UnboundedSender<SchedEvent>) {
@@ -405,6 +638,51 @@ impl AcpRuntime {
             .contains_key(session_id)
     }
 
+    /// Whether this session's agent is inside a turn: a `session/prompt`
+    /// out and its response not yet in. `None` where no agent is driven here
+    /// for the session, and there is nothing to ask.
+    pub(crate) async fn in_turn(&self, session_id: &str) -> Option<bool> {
+        let turn = self
+            .inner
+            .running
+            .lock()
+            .expect("acp registry lock")
+            .get(session_id)?
+            .turn
+            .clone();
+        Some(turn.lock().await.running)
+    }
+
+    /// Queue an option change ahead of the next prompt. A running turn does
+    /// not hold up the caller; between turns the caller receives the result.
+    pub(crate) async fn switch_pin(
+        &self,
+        session_id: &str,
+        model: &str,
+        effort: Option<&str>,
+    ) -> Result<()> {
+        let (switches, turn) = {
+            let running = self.inner.running.lock().expect("acp registry lock");
+            let agent = running
+                .get(session_id)
+                .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?;
+            (agent.switches.clone(), agent.turn.clone())
+        };
+        let (done, result) = oneshot::channel();
+        let mid_turn = turn.lock().await.running;
+        switches.send(ConfigSwitch {
+            model: model.to_string(),
+            effort: effort.map(str::to_string),
+            done,
+        })?;
+        if mid_turn {
+            return Ok(());
+        }
+        result
+            .await
+            .map_err(|_| anyhow!("the ACP agent ended before changing its pin"))?
+    }
+
     /// Hand the running agent a prompt from the daemon itself — a scheduler
     /// nudge, a review briefing, an agent message. Always a `session/prompt`,
     /// queued in order behind whichever turn runs: unlike console input it
@@ -413,19 +691,114 @@ impl AcpRuntime {
     ///
     /// Errs where there is nobody here to hear it: no agent runs for this
     /// session.
-    pub(crate) fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
-        self.inner
+    pub(crate) fn send_step(&self, session_id: &str, transition: &str, text: String) -> Result<()> {
+        self.queue_daemon_prompt(session_id, text, Some(Delivery::Step(transition.into())))
+    }
+
+    pub fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
+        self.queue_daemon_prompt(session_id, text, None)
+    }
+
+    /// Hand the running orchestrator a prompt naming its goal's failed and
+    /// stalled tasks (031), tagged with exactly the failures named so the
+    /// turn that answers it can confirm exactly those, and no other.
+    pub(crate) fn send_goal_attention(
+        &self,
+        session_id: &str,
+        text: String,
+        goal_id: String,
+        failed_tasks: Vec<(String, String)>,
+    ) -> Result<()> {
+        self.queue_daemon_prompt(
+            session_id,
+            text,
+            Some(Delivery::GoalAttention {
+                goal_id,
+                failed_tasks,
+            }),
+        )
+    }
+
+    /// Hand the running agent a pull request's news as a prompt (026). The
+    /// driver writes the told marks right before the prompt goes out, and
+    /// gives them back where it never went out; news of a request still
+    /// queued is not queued again.
+    pub(crate) fn send_news(
+        &self,
+        session_id: &str,
+        news: NewsDelivery,
+        text: String,
+    ) -> Result<()> {
+        self.queue_daemon_prompt(
+            session_id,
+            text,
+            Some(Delivery::PullRequestNews(Box::new(news))),
+        )
+    }
+
+    /// Hand the running agent an agent message as a prompt, the way
+    /// [`Self::send_prompt`] does. The driver claims the message right
+    /// before the prompt goes out, and skips the prompt where a read took
+    /// the message first (018).
+    ///
+    /// A message still queued for this agent is not queued again: the
+    /// hand-over answers `Ok` and changes nothing.
+    pub(crate) fn send_message(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        text: String,
+    ) -> Result<()> {
+        self.queue_daemon_prompt(
+            session_id,
+            text,
+            Some(Delivery::Message(message_id.to_string())),
+        )
+    }
+
+    fn queue_daemon_prompt(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Option<Delivery>,
+    ) -> Result<()> {
+        let mut running = self.inner.running.lock().expect("acp registry lock");
+        let agent = running
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?;
+        let key = delivery.as_ref().map(Delivery::key);
+        if let Some(key) = &key
+            && !agent.queued_messages.insert(key.clone())
+        {
+            return Ok(());
+        }
+        let sent = agent.prompts.send(Prompt {
+            text,
+            source: PromptSource::Daemon,
+            delivery,
+        });
+        if sent.is_err()
+            && let Some(key) = &key
+        {
+            agent.queued_messages.remove(key);
+        }
+        sent.map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
+    }
+
+    /// Take a delivery off this launch's queue: the driver is about to claim
+    /// it, and a later hand-over may queue it again. A relaunch has a queue
+    /// of its own, which this leaves alone.
+    fn dequeue_message(&self, session_id: &str, launch_id: &str, key: &str) {
+        if let Some(agent) = self
+            .inner
             .running
             .lock()
             .expect("acp registry lock")
-            .get(session_id)
-            .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?
-            .prompts
-            .send(Prompt {
-                text,
-                source: PromptSource::Daemon,
-            })
-            .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
+            .get_mut(session_id)
+            .filter(|agent| agent.launch_id == launch_id)
+        {
+            agent.queued_messages.remove(key);
+        }
     }
 
     /// Test support: leave this session's registry entry exactly as it is —
@@ -438,16 +811,47 @@ impl AcpRuntime {
     /// which is the point: this reproduces the failure without needing the
     /// real window's timing.
     pub fn close_prompt_channel_for_test(&self, session_id: &str) {
+        let _ = self.close_prompt_channel_until_reopened_for_test(session_id);
+    }
+
+    /// Test support: [`Self::close_prompt_channel_for_test`], and a function
+    /// that gives the same agent its working channel back. A test that wants
+    /// the agent to hear again reopens it rather than launching another
+    /// under the session: the launch takes the agent down first, and a pass
+    /// landing in between finds the seat empty and fills it itself.
+    pub fn close_prompt_channel_until_reopened_for_test(
+        &self,
+        session_id: &str,
+    ) -> impl FnOnce() + '_ {
         let (closed, unread) = mpsc::unbounded_channel();
         drop(unread);
-        if let Some(agent) = self
+        let taken = self
             .inner
             .running
             .lock()
             .expect("acp registry lock")
             .get_mut(session_id)
-        {
-            agent.prompts = closed;
+            .map(|agent| {
+                (
+                    agent.launch_id.clone(),
+                    std::mem::replace(&mut agent.prompts, closed),
+                )
+            });
+        let session_id = session_id.to_string();
+        move || {
+            let Some((launch_id, prompts)) = taken else {
+                return;
+            };
+            if let Some(agent) = self
+                .inner
+                .running
+                .lock()
+                .expect("acp registry lock")
+                .get_mut(&session_id)
+                .filter(|agent| agent.launch_id == launch_id)
+            {
+                agent.prompts = prompts;
+            }
         }
     }
 
@@ -473,8 +877,23 @@ impl AcpRuntime {
             .send(Prompt {
                 text,
                 source: PromptSource::Console,
+                delivery: None,
             })
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
+    }
+
+    /// The turn whose `wait_for_user` call the session is making now. A
+    /// request outside a live prompt has no turn marker and is closed by the
+    /// next one that ends.
+    pub(crate) async fn agent_request_turn_id(&self, session_id: &str) -> Option<String> {
+        let turn = self
+            .inner
+            .running
+            .lock()
+            .expect("acp registry lock")
+            .get(session_id)
+            .map(|agent| agent.turn.clone())?;
+        turn.lock().await.agent_request_turn_id.clone()
     }
 
     /// Cancel the turn in flight: ACP `session/cancel`, sent while the
@@ -490,13 +909,6 @@ impl AcpRuntime {
     /// driver.
     pub(crate) async fn cancel(&self, session_id: &str) -> Result<()> {
         self.cancel_turn(session_id, None).await
-    }
-
-    /// [`Self::cancel`], but only while the session still runs under
-    /// `launch_id`: a cancel decided on one launch never lands on the turn a
-    /// relaunch since started.
-    pub(crate) async fn cancel_launch(&self, session_id: &str, launch_id: &str) -> Result<()> {
-        self.cancel_turn(session_id, Some(launch_id)).await
     }
 
     /// Follow the turn reports of the session's agent, as long as it still
@@ -639,6 +1051,7 @@ impl AcpRuntime {
         let (stop, stopped) = oneshot::channel();
         let (reaped, ended) = oneshot::channel();
         let (prompts, queued) = mpsc::unbounded_channel();
+        let (switches, pending_switches) = mpsc::unbounded_channel();
         let reports: Followers = Arc::default();
         let permission = Arc::new(Mutex::new(None));
         let turn = Arc::new(tokio::sync::Mutex::new(Turn::default()));
@@ -656,6 +1069,8 @@ impl AcpRuntime {
                     launch_id: launch.launch_id.clone(),
                     stop,
                     prompts,
+                    switches,
+                    queued_messages: HashSet::new(),
                     permission: permission.clone(),
                     turn: turn.clone(),
                     task_id: task_id.clone(),
@@ -684,6 +1099,7 @@ impl AcpRuntime {
                     },
                     stopped,
                     queued,
+                    pending_switches,
                 )
                 .await;
             drop(reaped);
@@ -709,6 +1125,54 @@ impl AcpRuntime {
     /// does.
     pub(crate) fn kill(&self, session_id: &str) {
         self.take_down(session_id);
+    }
+
+    /// [`Self::kill`], and wait until the driver has cancelled the turn and
+    /// reaped the child: for a caller that starts another agent on the same
+    /// work under another session id, which no launch of this one waits for.
+    pub(crate) async fn kill_and_wait(&self, session_id: &str) {
+        self.take_down(session_id);
+        for reaped in self.ending_for(session_id) {
+            let _ = reaped.await;
+        }
+    }
+
+    /// [`Self::kill`], and a future that resolves once the driver has
+    /// cancelled the turn, reported what it spent and its end, and reaped the
+    /// child: for a caller that must not wait in line, but has work to do
+    /// once the agent's last words are in.
+    ///
+    /// The [`LaunchGate`] holds the session's next launch back until it is
+    /// dropped, the way an agent still ending holds it back: the caller's
+    /// work after the reap reads the session as this agent left it, and no
+    /// agent launched after it can add to that.
+    pub(crate) fn kill_gated(
+        &self,
+        session_id: &str,
+    ) -> (impl Future<Output = ()> + use<>, LaunchGate) {
+        self.take_down(session_id);
+        let reaped = self.ending_for(session_id);
+        let (open, opened) = oneshot::channel();
+        let key = format!("gate:{}", ariadne_core::id::new_id());
+        self.inner
+            .ending
+            .lock()
+            .expect("acp ending lock")
+            .entry(session_id.to_string())
+            .or_default()
+            .push((key.clone(), opened.shared()));
+        let gate = LaunchGate {
+            inner: self.inner.clone(),
+            session_id: session_id.to_string(),
+            key,
+            open: Some(open),
+        };
+        let reaped = async move {
+            for reaped in reaped {
+                let _ = reaped.await;
+            }
+        };
+        (reaped, gate)
     }
 
     /// [`Self::kill`]: the agent moves from the running to the ending.
@@ -749,12 +1213,15 @@ impl AcpRuntime {
     /// Drop a driver's own entry, and only its own: by the time a replaced
     /// driver gets here, the seat's entry is its successor's, and removing
     /// that one would kill the very agent the relaunch just started.
-    fn deregister(&self, session_id: &str, launch_id: &str) {
+    ///
+    /// Answers whether the entry was still this driver's: an agent that
+    /// ended by itself, rather than one a kill or a relaunch took down first.
+    fn deregister(&self, session_id: &str, launch_id: &str) -> bool {
         let mut running = self.inner.running.lock().expect("acp registry lock");
-        if running
+        let own = running
             .get(session_id)
-            .is_some_and(|agent| agent.launch_id == launch_id)
-        {
+            .is_some_and(|agent| agent.launch_id == launch_id);
+        if own {
             running.remove(session_id);
         }
         // The driver has reaped its child by now: a launch that comes later
@@ -777,6 +1244,7 @@ impl AcpRuntime {
         {
             consoles.remove(session_id);
         }
+        own
     }
 
     /// One agent's whole life: the protocol until it ends, is killed, or
@@ -789,6 +1257,7 @@ impl AcpRuntime {
         io: DriverIo,
         stopped: oneshot::Receiver<()>,
         prompts: mpsc::UnboundedReceiver<Prompt>,
+        switches: mpsc::UnboundedReceiver<ConfigSwitch>,
     ) {
         let sink = EventSink {
             runtime: self.clone(),
@@ -802,6 +1271,8 @@ impl AcpRuntime {
         let (turn, permission) = (io.turn.clone(), io.permission.clone());
         let closing = Arc::new(AtomicBool::new(false));
         let turn_ended = Arc::new(Notify::new());
+        let in_flight = MessageInFlight::default();
+        let transport = witnessed_pipes(io.stdin, io.stdout, in_flight.writes.clone());
         // What the connection's handlers need. They run on its dispatch
         // loop, one message at a time, which is the order the transport's own
         // loop gave them.
@@ -809,8 +1280,15 @@ impl AcpRuntime {
             sink: sink.clone(),
             turn: turn.clone(),
             repository_id: launch.repository_id.clone(),
-            repository: launch.cwd.clone(),
             permission_mode: launch.permission_mode,
+            workspace: launch.cwd.display().to_string(),
+            key_facts: Facts {
+                repository: launch.repository_path.clone(),
+                worktree: launch.cwd.display().to_string(),
+                branch: None,
+                home: std::env::var("HOME").unwrap_or_default(),
+            },
+            branch: self.branch_of(&launch.session_id),
             pending_permission: permission.clone(),
             reports: io.reports.clone(),
         };
@@ -835,7 +1313,7 @@ impl AcpRuntime {
                     },
                     agent_client_protocol::on_receive_request!(),
                 )
-                .connect_with(pipes(io.stdin, io.stdout), async |cx| {
+                .connect_with(transport, async |cx| {
                     // Everything that sends from outside the driver waits on
                     // this: a cancel before it simply finds nothing running.
                     let _ = outbound.connection.set(cx.clone());
@@ -848,9 +1326,19 @@ impl AcpRuntime {
                         closing.clone(),
                         turn_ended.clone(),
                     );
+                    rpc.in_flight = in_flight.clone();
+                    rpc.seat_brief = seat_brief_in_turns(&launch.config.system_prompt);
+                    rpc.brief = rpc.seat_brief.clone();
                     protocol_outcome = Some(
-                        run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts, io.ready)
-                            .await,
+                        run_protocol(
+                            &mut rpc,
+                            &launch.cwd,
+                            &launch.config,
+                            prompts,
+                            switches,
+                            io.ready,
+                        )
+                        .await,
                     );
                     Ok(())
                 }),
@@ -874,6 +1362,32 @@ impl AcpRuntime {
         // it held with it — the store's event order among them, which the
         // session's last words below take again.
         drop(protocol);
+        // A claimed delivery whose prompt never reached the agent's stdin —
+        // the write failed, or a kill came first — waits for the next live
+        // agent, or for a read, again (018, 026).
+        if let Some(delivery) = in_flight.unwritten() {
+            let released = match &delivery {
+                Delivery::Step(id) => self.inner.store.release_step_briefing(id).await,
+                Delivery::Message(id) => self.inner.store.unmark_message_delivered(id).await,
+                Delivery::PullRequestNews(news) => {
+                    self.inner
+                        .store
+                        .release_pull_request_news(
+                            &news.pull_request_id,
+                            &news.comment_ids,
+                            &news.before,
+                        )
+                        .await
+                }
+                // Nothing was claimed ahead of the write (`claim_message`),
+                // so there is nothing to release: the next pass over the
+                // goal queues it again on its own.
+                Delivery::GoalAttention { .. } => Ok(()),
+            };
+            if let Err(error) = released {
+                tracing::warn!(session = %launch.session_id, delivery = %delivery.key(), error = %format!("{error:#}"), "releasing the delivery failed");
+            }
+        }
         // The conversation's outcome where it reached one; otherwise the
         // link's, so a connection that failed before the protocol could say
         // anything is still reported.
@@ -896,22 +1410,170 @@ impl AcpRuntime {
         let _ = child.wait().await;
         if let Some(Err(error)) = &outcome {
             tracing::warn!(session = %launch.session_id, error = %format!("{error:#}"), "ACP agent failed");
-            sink.emit(
-                "session.error",
-                json!({
-                    "session_id": sink.agent_session_id(&launch.config),
-                    "error": {"data": {"message": format!("{error:#}")}},
+            let protocol = error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<agent_client_protocol::Error>());
+            let mut reported = match protocol {
+                Some(error) => json!({
+                    "code": i32::from(error.code),
+                    "message": error.message,
+                    "data": error.data,
                 }),
-            )
-            .await;
+                None => json!({"data": {"message": format!("{error:#}")}}),
+            };
+            if let Some(protocol) = protocol
+                && let Some(data) = protocol.data.as_ref()
+                && reported
+                    .pointer("/data/message")
+                    .and_then(Value::as_str)
+                    .is_none_or(|message| message.trim().is_empty())
+            {
+                let detail = acp_error_detail(data);
+                let detail = detail.split_whitespace().collect::<Vec<_>>().join(" ");
+                let line = if detail.is_empty() || detail == protocol.message.trim() {
+                    protocol.message.clone()
+                } else {
+                    format!("{}: {detail}", protocol.message)
+                };
+                if let Some(fields) = reported["data"].as_object_mut() {
+                    fields.insert("message".into(), json!(line));
+                } else {
+                    reported["data"] = json!({"message": line, "details": data});
+                }
+            }
+            let message = protocol
+                .map(|error| error.message.clone())
+                .unwrap_or_else(|| format!("{error:#}"));
+            if let Some(reason) = exhausted_reason(
+                &message,
+                protocol.and_then(|error| error.data.as_ref()),
+                &self.inner.exhausted_patterns,
+            ) {
+                reported["exhausted"] = json!(true);
+                reported["exhausted_reason"] = json!(reason);
+            }
+            let error_event_id = sink
+                .emit(
+                    "session.error",
+                    json!({
+                        "session_id": sink.agent_session_id(&launch.config),
+                        "error": reported,
+                    }),
+                )
+                .await;
+            // The advisory diagnosis is considered only once the session's
+            // own error is recorded and published (024): it never holds
+            // this up, and runs as its own bounded task from here on.
+            if let Some(failure_diagnosis) = &self.inner.failure_diagnosis {
+                failure_diagnosis
+                    .consider(
+                        launch.session_id.clone(),
+                        launch.launch_id.clone(),
+                        error_event_id,
+                        message,
+                        protocol.and_then(|error| error.data.clone()),
+                    )
+                    .await;
+            }
         }
+        turn.lock().await.available_commands = None;
         sink.emit(
             "session_end",
             json!({"session_id": sink.agent_session_id(&launch.config)}),
         )
         .await;
-        self.deregister(&launch.session_id, &launch.launch_id);
+        // Every wake the session's last words sent can be answered by a pass
+        // that still finds this agent registered, and leaves the seat alone
+        // as filled. Only from here does the runtime say nobody runs for it,
+        // so the scheduler is told once more, past any window. An agent a
+        // kill or a relaunch took down is the daemon's own doing, and owes
+        // no pass.
+        if self.deregister(&launch.session_id, &launch.launch_id)
+            && let Some(tx) = self.inner.scheduler.get()
+        {
+            let _ = tx.send(SchedEvent::SessionEnded {
+                session_id: launch.session_id.clone(),
+                launch_id: launch.launch_id.clone(),
+            });
+        }
     }
+}
+
+fn acp_error_detail(data: &Value) -> String {
+    const KEYS: [&str; 6] = [
+        "details",
+        "detail",
+        "error",
+        "reason",
+        "description",
+        "stderr",
+    ];
+    if let Some(detail) = data.as_str() {
+        return detail.to_string();
+    }
+    if let Some(fields) = data.as_object() {
+        for key in KEYS {
+            let Some(value) = fields.get(key) else {
+                continue;
+            };
+            if let Some(detail) = value.as_str().filter(|detail| !detail.trim().is_empty()) {
+                return detail.to_string();
+            }
+            if let Some(nested) = value.as_object() {
+                for nested_key in ["message"].into_iter().chain(KEYS) {
+                    if let Some(detail) = nested
+                        .get(nested_key)
+                        .and_then(Value::as_str)
+                        .filter(|detail| !detail.trim().is_empty())
+                    {
+                        return detail.to_string();
+                    }
+                }
+            }
+        }
+    }
+    let json = data.to_string();
+    let mut chars = json.chars();
+    let mut detail: String = chars.by_ref().take(200).collect();
+    if chars.next().is_some() {
+        detail.push('…');
+    }
+    detail
+}
+
+fn exhausted_reason(message: &str, data: Option<&Value>, patterns: &[String]) -> Option<String> {
+    if let Some(reason) = data
+        .and_then(|data| data.get("codexErrorInfo"))
+        .and_then(Value::as_str)
+        .filter(|reason| *reason == "usageLimitExceeded")
+    {
+        return Some(reason.to_string());
+    }
+    if data
+        .and_then(|data| data.pointer("/_meta/jetbrains/air/sessionFailure/category"))
+        .and_then(Value::as_str)
+        == Some("limit")
+    {
+        return Some("limit".to_string());
+    }
+    if let Some(reason) = data
+        .and_then(|data| data.get("errorKind"))
+        .and_then(Value::as_str)
+        .filter(|reason| *reason == "rate_limit")
+    {
+        return Some(reason.to_string());
+    }
+    // An adapter may say "Internal error" and keep the provider's own words
+    // in its data — claude-acp's 429 on `session/set_config_option` does.
+    let text = match data {
+        Some(data) => format!("{message}\n{}", acp_error_detail(data)),
+        None => message.to_string(),
+    }
+    .to_lowercase();
+    patterns
+        .iter()
+        .find(|pattern| text.contains(&pattern.to_lowercase()))
+        .cloned()
 }
 
 /// What a killed driver needs to let its running turn end the ACP way.
@@ -1031,21 +1693,29 @@ impl EventSink {
     }
 
     /// Event reporting is fail-safe: an event that cannot be recorded costs
-    /// the record, never the agent.
-    async fn emit(&self, kind: &str, payload: Value) {
+    /// the record, never the agent. Returns the id it was stored under,
+    /// where it was stored at all — `None` on a store failure, and for the
+    /// one case nothing is stored (the end of a launch this session has
+    /// moved past) — for a caller that needs to correlate something with
+    /// it (`crate::failure_diagnosis`, with a `session.error`).
+    async fn emit(&self, kind: &str, payload: Value) -> Option<String> {
         let request = IngestEventRequest {
             session_id: self.session_id.clone(),
             launch: Some(self.launch_id.clone()),
             kind: kind.to_string(),
             payload,
         };
-        if let Err(e) = ingest_event(&self.runtime.inner.store, &request).await {
-            tracing::warn!(session = %self.session_id, kind, error = %e, "recording an ACP event failed");
-            return;
-        }
+        let event = match ingest_event(&self.runtime.inner.store, &request).await {
+            Ok(event) => event,
+            Err(e) => {
+                tracing::warn!(session = %self.session_id, kind, error = %e, "recording an ACP event failed");
+                return None;
+            }
+        };
         if let Some(tx) = self.runtime.inner.scheduler.get() {
             let _ = tx.send(SchedEvent::SessionEvent(self.session_id.clone()));
         }
+        event.map(|event| event.id)
     }
 
     /// Keep the session's newest context window report. The report is live
@@ -1076,6 +1746,24 @@ impl EventSink {
         {
             tracing::warn!(session = %self.session_id, error = %e, "recording a transcript's usage failed");
         }
+    }
+
+    /// Append one session fact without making ACP wait on SQLite. Facts are
+    /// observational: a failure is logged after the protocol reply has gone
+    /// out, and does not change the turn.
+    fn record_stat_fact(&self, kind: &'static str, data: Value) {
+        let store = self.runtime.inner.store.clone();
+        let session_id = self.session_id.clone();
+        tokio::spawn(async move {
+            let result = async {
+                let fact = session_fact(&store, &session_id, kind, data).await?;
+                store.record_fact(fact).await
+            }
+            .await;
+            if let Err(error) = result {
+                tracing::warn!(session = %session_id, kind, error = %error, "recording ACP stat fact failed");
+            }
+        });
     }
 
     /// The ACP session id as a payload value: the one setup learned, else the
@@ -1111,6 +1799,14 @@ struct Rpc {
     turn_ended: Arc<Notify>,
     /// This launch's turn reports; nobody listening costs nothing.
     reports: Followers,
+    /// The agent message whose prompt is going out.
+    in_flight: MessageInFlight,
+    /// The seat text and skill index this launch sends in a turn (006).
+    /// None for a session with no seat.
+    seat_brief: Option<String>,
+    /// The seat brief the next turn carries: set at the launch and again
+    /// after a model switch, and taken by the first turn after either.
+    brief: Option<String>,
 }
 
 impl Rpc {
@@ -1133,6 +1829,9 @@ impl Rpc {
             closing,
             turn_ended,
             reports,
+            in_flight: MessageInFlight::default(),
+            seat_brief: None,
+            brief: None,
         }
     }
 
@@ -1159,20 +1858,26 @@ struct RuntimeIncoming {
     sink: EventSink,
     turn: Arc<tokio::sync::Mutex<Turn>>,
     repository_id: String,
-    repository: PathBuf,
     permission_mode: PermissionMode,
+    workspace: String,
+    /// What a learned key replaces with placeholders, but the branch.
+    key_facts: Facts,
+    /// The session's branch, which can change while it runs.
+    branch: SessionBranch,
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     reports: Followers,
 }
 
 impl RuntimeIncoming {
     async fn handle_update(&mut self, params: &Value) -> Result<()> {
-        if self.turn.lock().await.replay == Some(false) {
-            return Ok(());
-        }
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
         let update = params.get("update").cloned().unwrap_or_default();
         let update_kind = update.get("sessionUpdate").and_then(Value::as_str);
+        if self.turn.lock().await.replay == Some(false)
+            && update_kind != Some("available_commands_update")
+        {
+            return Ok(());
+        }
         match update_kind {
             // The text so far is appended and its chunk published under the
             // one lock, so a console opening mid-turn reads a text that ends
@@ -1223,7 +1928,11 @@ impl RuntimeIncoming {
             Some("tool_call") => {
                 self.end_text().await;
                 let (id, call) = tool_call_of(&update);
-                self.turn.lock().await.tools.insert(id, call.clone());
+                self.turn
+                    .lock()
+                    .await
+                    .tools
+                    .insert(id, OpenToolCall { call: call.clone() });
                 self.sink
                     .emit("pre_tool_use", tool_payload(session_id, &call))
                     .await;
@@ -1237,15 +1946,22 @@ impl RuntimeIncoming {
                     let call = turn
                         .tools
                         .entry(id.clone())
-                        .or_insert_with(|| json!({"toolCallId": id}));
-                    merge_tool_call(call, &update);
+                        .or_insert_with(|| OpenToolCall {
+                            call: json!({"toolCallId": id}),
+                        });
+                    merge_tool_call(&mut call.call, &update);
                     match terminal {
-                        true => turn.tools.remove(&id).unwrap_or_default(),
-                        false => call.clone(),
+                        true => turn
+                            .tools
+                            .remove(&id)
+                            .unwrap_or(OpenToolCall { call: Value::Null }),
+                        false => OpenToolCall {
+                            call: call.call.clone(),
+                        },
                     }
                 };
                 if terminal {
-                    let payload = completed_tool_payload(session_id, &merged);
+                    let payload = completed_tool_payload(session_id, &merged.call);
                     let name = payload["tool_name"]
                         .as_str()
                         .unwrap_or_default()
@@ -1256,7 +1972,7 @@ impl RuntimeIncoming {
                     self.sink
                         .emit_live(
                             "tool_call_update",
-                            json!({"session_id": session_id, "tool_call_id": id, "acp": merged}),
+                            json!({"session_id": session_id, "tool_call_id": id, "acp": merged.call}),
                         )
                         .await;
                 }
@@ -1270,6 +1986,24 @@ impl RuntimeIncoming {
                 {
                     self.sink.update_context_window(used, size).await;
                 }
+            }
+            Some("available_commands_update") => {
+                let commands = update
+                    .get("availableCommands")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let mut turn = self.turn.lock().await;
+                turn.available_commands = Some(AvailableCommands {
+                    session_id: session_id.clone(),
+                    commands: commands.clone(),
+                });
+                self.sink
+                    .emit_live(
+                        "available_commands_update",
+                        json!({"session_id": session_id, "available_commands": commands}),
+                    )
+                    .await;
             }
             _ => {}
         }
@@ -1295,108 +2029,333 @@ impl RuntimeIncoming {
     /// Answer one `session/request_permission`, with the params the agent
     /// sent and the result the daemon replies — the connection wraps it.
     async fn handle_permission(&mut self, params: &Value) -> Result<Value> {
+        let requested_at = Instant::now();
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
         let mut payload = tool_payload(session_id.clone(), &params["toolCall"]);
         payload["options"] = params.get("options").cloned().unwrap_or_default();
         let signature = permission_signature(&params["toolCall"]);
+        // The learned row's key and the request's risk tags. The model reads
+        // neither: it is given the raw input.
+        let key = normalize(
+            &signature.tool_name,
+            signature.raw_input.as_ref().unwrap_or(&Value::Null),
+            &Facts {
+                branch: self.branch.lock().expect("ACP branch lock").clone(),
+                ..self.key_facts.clone()
+            },
+        );
+        let request_tags: Vec<String> = derive(
+            &json!({"toolCall": params["toolCall"], "options": params["options"]}),
+            Some(&self.workspace),
+        )
+        .risk_tags
+        .into_iter()
+        .map(str::to_string)
+        .collect();
         let remembers = matches!(
             self.permission_mode,
             PermissionMode::Learn | PermissionMode::Ai
         );
         let ai_permissions_decision = if self.permission_mode == PermissionMode::Ai {
+            let prepared = prepare(
+                &params["toolCall"],
+                &params["options"],
+                Some(&self.workspace),
+            );
             match self.sink.runtime.inner.ai_permissions.as_ref() {
                 Some(ai_permissions) => match ai_permissions.live_once_started().await {
-                    Some(live) => Some(
-                        decide(
-                            &live,
-                            &params["toolCall"],
-                            &params["options"],
-                            &self.repository,
-                            self.sink.runtime.inner.timeouts.ai_permissions_decision,
+                    Some(live) => {
+                        // A permission decision blocks the agent's turn; an
+                        // advisory diagnosis blocks nothing. Abort one
+                        // reaching this same model first, so it never makes
+                        // this decision wait behind it (024).
+                        ai_permissions.preempt_diagnosis();
+                        Some(
+                            decide(
+                                &live,
+                                &prepared,
+                                self.sink.runtime.inner.timeouts.ai_permissions_decision,
+                            )
+                            .await,
                         )
-                        .await,
-                    ),
+                    }
                     None => {
                         tracing::warn!(
                             "AI permission model is unavailable for a permission decision"
                         );
-                        None
+                        Some(prepared.unanswered("unavailable"))
                     }
                 },
                 None => {
                     tracing::warn!("AI permission model is unavailable for a permission decision");
-                    None
+                    Some(prepared.unanswered("unavailable"))
                 }
             }
         } else {
             None
         };
-        let learned = remembers
-            && self
-                .sink
-                .runtime
-                .inner
-                .store
-                .has_learned_permission(&self.repository_id, &signature.tool_name, &signature.kind)
-                .await
-                .unwrap_or(false);
-        let ai_permissions_allow = matches!(ai_permissions_decision, Some(Decision::Allow { .. }))
-            && approved_option(params)
-                .as_deref()
-                .is_some_and(|option| allowing_option(params, option));
-        let waiting = matches!(self.permission_mode, PermissionMode::Ask)
-            || (remembers && !learned && !ai_permissions_allow);
-        let receiver = waiting.then(|| self.begin_permission());
-        self.end_text().await;
-        self.sink.emit("permission_request", payload).await;
-        let (selected, decided_by, label, confidence) = match receiver {
-            Some(receiver) => (
-                self.wait_for_permission(params, receiver).await?,
-                "console",
-                None,
-                None,
-            ),
-            None if ai_permissions_allow => {
-                let Some(Decision::Allow { confidence }) = ai_permissions_decision else {
-                    unreachable!("ai_permissions_allow requires an allowing decision of the model")
-                };
-                (
-                    approved_option(params),
-                    "ai",
-                    Some("allow"),
-                    Some(confidence),
-                )
-            }
-            None if learned => (approved_option(params), "learned", None, None),
-            None => (approved_option(params), "auto", None, None),
+        let learned = if remembers && allowing_agent_option(params).is_some() {
+            self.learned_allow(&signature, &key, &request_tags).await
+        } else {
+            None
         };
-        if remembers
-            && decided_by == "console"
+        let ai_permissions_selection = match &ai_permissions_decision {
+            Some(Decision::Allow { .. }) => {
+                approved_option(params).filter(|option| allowing_option(params, option))
+            }
+            Some(Decision::Deny { .. }) => rejecting_option(params),
+            _ => None,
+        };
+        let deny_without_option = matches!(&ai_permissions_decision, Some(Decision::Deny { .. }))
+            && ai_permissions_selection.is_none();
+        let waiting = matches!(self.permission_mode, PermissionMode::Ask)
+            || deny_without_option
+            || (remembers && learned.is_none() && ai_permissions_selection.is_none());
+        if waiting && remembers {
+            payload["agent_options"] = payload["options"].clone();
+            payload["options"] = learned_choices(params, &key.family);
+        }
+        // What the model made of the request, whoever answers it: the
+        // question shows it while it waits, and the reply keeps it, so a
+        // reader asking why the console was asked finds the score it fell
+        // short with.
+        let label = match &ai_permissions_decision {
+            Some(Decision::Allow { .. }) => Some("allow"),
+            Some(Decision::Ask { .. }) => Some("ask"),
+            Some(Decision::Deny { .. }) => Some("deny"),
+            Some(Decision::Unanswered { .. }) | None => None,
+        };
+        let score = ai_permissions_decision.as_ref().and_then(Decision::score);
+        let danger = score.map(|score| score.danger);
+        let allow_threshold = score.map(|score| score.allow_threshold);
+        let deny_threshold = score.map(|score| score.deny_threshold);
+        let probabilities = score.map(|score| score.probabilities.clone());
+        let ai_error = match &ai_permissions_decision {
+            Some(Decision::Unanswered { reason, .. }) => Some(*reason),
+            _ => None,
+        };
+        let derived = ai_permissions_decision.as_ref().map(Decision::derived);
+        let operation = derived.and_then(|derived| derived.operation);
+        let risk_tags = derived.map(|derived| derived.risk_tags.clone());
+        let cap = ai_permissions_decision.as_ref().and_then(Decision::cap);
+        let request_decided_by = if waiting {
+            None
+        } else if ai_permissions_selection.is_some() {
+            Some("ai")
+        } else if learned.is_some() {
+            Some("learned")
+        } else {
+            Some("auto")
+        };
+        for (key, value) in [
+            ("decided_by", json!(request_decided_by)),
+            ("label", json!(label)),
+            ("danger", json!(danger)),
+            ("allow_threshold", json!(allow_threshold)),
+            ("deny_threshold", json!(deny_threshold)),
+            ("ai_error", json!(ai_error)),
+            ("operation", json!(operation)),
+            ("risk_tags", json!(risk_tags)),
+            ("cap", json!(cap)),
+            ("probabilities", json!(probabilities)),
+            (
+                "learned_id",
+                json!(
+                    learned
+                        .as_ref()
+                        .filter(|_| request_decided_by == Some("learned"))
+                        .map(|row| &row.id)
+                ),
+            ),
+            (
+                "learned_level",
+                json!(
+                    learned
+                        .as_ref()
+                        .filter(|_| request_decided_by == Some("learned"))
+                        .map(|row| &row.level)
+                ),
+            ),
+            (
+                "learned_key",
+                json!(
+                    learned
+                        .as_ref()
+                        .filter(|_| request_decided_by == Some("learned"))
+                        .map(|row| &row.key)
+                ),
+            ),
+        ] {
+            payload[key] = value;
+        }
+        let receiver = waiting.then(|| self.begin_permission());
+        payload["waiting"] = json!(waiting);
+        self.end_text().await;
+        self.sink.emit("permission_request", payload.clone()).await;
+        let (selected, decided_by, console_choice) = match receiver {
+            Some(receiver) => {
+                let choice = self.wait_for_permission(&payload, receiver).await?;
+                let selected = if remembers {
+                    match choice.as_deref() {
+                        Some("once" | "command" | "family") => allowing_agent_option(params),
+                        Some("reject") => console_rejecting_option(params),
+                        _ => None,
+                    }
+                } else {
+                    choice.clone()
+                };
+                (selected, "console", choice)
+            }
+            None if ai_permissions_selection.is_some() => (ai_permissions_selection, "ai", None),
+            None if learned.is_some() => (allowing_agent_option(params), "learned", None),
+            None => (approved_option(params), "auto", None),
+        };
+        if self.permission_mode == PermissionMode::Ai {
+            tracing::info!(
+                tool = %signature.tool_name,
+                decided_by,
+                label,
+                danger,
+                allow_threshold,
+                deny_threshold,
+                ai_error,
+                operation,
+                risk_tags = ?risk_tags,
+                cap,
+                probabilities = ?probabilities,
+                "AI permission decision"
+            );
+        }
+        // Every choice a person makes, and every denial, is training data
+        // for the model: allows the daemon made itself are not.
+        let recorded = match decided_by {
+            "console" => true,
+            "ai" => matches!(&ai_permissions_decision, Some(Decision::Deny { .. })),
+            _ => false,
+        };
+        if let Some(selected_option) = selected.clone().filter(|_| recorded)
             && !self.repository_id.is_empty()
-            && selected
-                .as_deref()
-                .is_some_and(|option| allowing_option(params, option))
         {
+            // An unavailable model has no output.
+            let output = ai_permissions_decision
+                .as_ref()
+                .filter(|decision| {
+                    !matches!(
+                        decision,
+                        Decision::Unanswered {
+                            reason: "unavailable",
+                            ..
+                        }
+                    )
+                })
+                .map(|_| {
+                    json!({"label": label, "danger": danger,
+                       "allow_threshold": allow_threshold, "deny_threshold": deny_threshold,
+                       "probabilities": probabilities, "operation": operation,
+                       "risk_tags": risk_tags, "cap": cap, "ai_error": ai_error})
+                });
+            let level = match (decided_by, console_choice.as_deref()) {
+                ("console", Some("command")) => "command",
+                ("console", Some("family")) => "family",
+                ("console", _) => "once",
+                _ => "command",
+            };
             self.sink
                 .runtime
                 .inner
                 .store
-                .learn_permission(&self.repository_id, &signature.tool_name, &signature.kind)
+                .record_learned_permission(ariadne_store::NewLearnedPermission {
+                    repository_id: self.repository_id.clone(),
+                    tool_name: signature.tool_name.clone(),
+                    key: if level == "family" {
+                        key.family.clone()
+                    } else {
+                        key.key.clone()
+                    },
+                    level: level.into(),
+                    family: key.family.clone(),
+                    risk_tags: request_tags.clone(),
+                    scope: "repository".into(),
+                    tool_call: params["toolCall"].clone(),
+                    options: params.get("options").cloned().unwrap_or_default(),
+                    selected_option,
+                    target: self.permission_mode.as_str().to_string(),
+                    output,
+                })
                 .await
-                .map_err(|error| anyhow!("remembering ACP permission approval: {error}"))?;
+                .map_err(|error| anyhow!("recording ACP permission choice: {error}"))?;
         }
         let outcome = selected.as_ref().map_or_else(
             || json!({"outcome": "cancelled"}),
             |option_id| json!({"outcome": "selected", "optionId": option_id}),
         );
-        self.sink
-            .emit(
-                "permission.replied",
-                json!({"session_id": session_id, "option_id": selected,
-                       "decided_by": decided_by, "label": label, "confidence": confidence}),
-            )
-            .await;
+        let learned_reply = learned.as_ref().filter(|_| decided_by == "learned");
+        let reply = PermissionReplyDto {
+            session_id,
+            option_id: selected,
+            console_option_id: console_choice,
+            decided_by: decided_by.into(),
+            label: label.map(str::to_string),
+            danger,
+            allow_threshold,
+            deny_threshold,
+            ai_error: ai_error.map(str::to_string),
+            operation: operation.map(str::to_string),
+            risk_tags: risk_tags.map(|tags| tags.into_iter().map(str::to_string).collect()),
+            cap: cap.map(str::to_string),
+            probabilities,
+            learned_id: learned_reply.map(|row| row.id.clone()),
+            learned_level: learned_reply.map(|row| row.level.clone()),
+            learned_key: learned_reply.map(|row| row.key.clone()),
+        };
+        self.sink.record_stat_fact("permission", json!({
+            "tool_name": signature.tool_name,
+            "decided_by": decided_by,
+            "answer": permission_answer(reply.option_id.as_deref(), reply.label.as_deref(), params),
+            "console_option_id": reply.console_option_id,
+            "wait_ms": requested_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        }));
+        self.sink.emit("permission.replied", json!(reply)).await;
         Ok(json!({"outcome": outcome}))
+    }
+
+    /// Find an allowing command row, then a family row, whose risk tags hold
+    /// every tag of the request. A
+    /// request with no `rawInput` never matches one.
+    async fn learned_allow(
+        &self,
+        signature: &PermissionSignature,
+        key: &Key,
+        request_tags: &[String],
+    ) -> Option<ariadne_store::LearnedPermission> {
+        if signature.raw_input.is_none() || self.repository_id.is_empty() {
+            return None;
+        }
+        for (level, row_key) in [("command", &key.key), ("family", &key.family)] {
+            if level == "family" && !key.family_safe {
+                continue;
+            }
+            let row = self
+                .sink
+                .runtime
+                .inner
+                .store
+                .find_learned_permission(&self.repository_id, &signature.tool_name, level, row_key)
+                .await
+                .ok()
+                .flatten();
+            if let Some(row) = row {
+                let options = serde_json::from_str::<Value>(&row.options).unwrap_or_default();
+                let row_tags =
+                    serde_json::from_str::<Vec<String>>(&row.risk_tags).unwrap_or_default();
+                if allowing_option(&json!({ "options": options }), &row.selected_option)
+                    && request_tags.iter().all(|tag| row_tags.contains(tag))
+                {
+                    return Some(row);
+                }
+            }
+        }
+        None
     }
 
     /// Make the input path answer the permission request now visible to the
@@ -1410,13 +2369,13 @@ impl RuntimeIncoming {
     /// Wait for the console answer after its request was published.
     async fn wait_for_permission(
         &self,
-        params: &Value,
+        choices: &Value,
         receiver: oneshot::Receiver<String>,
     ) -> Result<Option<String>> {
         let answer = receiver
             .await
             .map_err(|_| anyhow!("ACP permission answer channel closed"))?;
-        Ok(permission_option(params, &answer))
+        Ok(permission_option(choices, &answer))
     }
 }
 
@@ -1428,6 +2387,7 @@ async fn run_protocol(
     cwd: &Path,
     config: &LaunchConfig,
     prompts: mpsc::UnboundedReceiver<Prompt>,
+    switches: mpsc::UnboundedReceiver<ConfigSwitch>,
     ready: Option<oneshot::Sender<()>>,
 ) -> Result<()> {
     let initialized = rpc.call("initialize", initialize()).await?;
@@ -1477,7 +2437,7 @@ async fn run_protocol(
     // A loaded conversation runs on whatever model it ran on, and the row
     // records that one. Every new conversation — a loose one started from
     // scratch included — is put on the model it was pinned to.
-    let options = if loose && resumed {
+    let mut options = if loose && resumed {
         let model = find_config_option(&setup.config_options, &["model"], &["model"])
             .and_then(current_value)
             .unwrap_or(&config.model);
@@ -1489,7 +2449,7 @@ async fn run_protocol(
             .await?;
         setup.config_options
     } else {
-        set_pinned_option(
+        pin_or_fall_back(
             rpc,
             &session_id,
             setup.config_options,
@@ -1498,10 +2458,10 @@ async fn run_protocol(
             "model",
             &config.model,
         )
-        .await?
+        .await
     };
     if let Some(effort) = &config.effort {
-        set_pinned_option(
+        options = pin_or_fall_back(
             rpc,
             &session_id,
             options,
@@ -1510,7 +2470,7 @@ async fn run_protocol(
             "effort",
             effort,
         )
-        .await?;
+        .await;
     }
 
     rpc.sink
@@ -1523,10 +2483,11 @@ async fn run_protocol(
         let prompt = Prompt {
             text: prompt.to_string(),
             source: PromptSource::Daemon,
+            delivery: None,
         };
-        prompt_once(rpc, &session_id, &config.system_prompt, &prompt).await?;
+        prompt_once(rpc, &session_id, &prompt).await?;
     }
-    serve_with_input(rpc, &session_id, &config.system_prompt, prompts).await
+    serve_with_input(rpc, &session_id, prompts, switches, options).await
 }
 
 /// Serve the agent until it exits: the turn is over, and the agent stays up
@@ -1538,29 +2499,163 @@ async fn run_protocol(
 /// `prompts` for this loop to come back around, and is sent the moment it
 /// does. Only one turn is ever in flight — `prompt_once` does not return
 /// until the agent's response does — so nothing here is sent while another
-/// `session/prompt` is outstanding.
+/// `session/prompt` is outstanding. A prompt that carries an agent message
+/// is claimed before it goes out, and skipped where the claim fails.
 async fn serve_with_input(
     rpc: &mut Rpc,
     session_id: &str,
-    system_prompt: &str,
     mut prompts: mpsc::UnboundedReceiver<Prompt>,
+    mut switches: mpsc::UnboundedReceiver<ConfigSwitch>,
+    mut options: Vec<v1::SessionConfigOption>,
 ) -> Result<()> {
     // Once the console side is gone there is nothing left to queue, but the
     // agent may still have plenty to say — the branch is dropped rather than
     // polled into a busy loop of immediate `None`s. An agent being killed
     // starts nothing more either.
     let mut console_open = true;
+    let mut switches_open = true;
     let closing = rpc.closing.clone();
     loop {
         tokio::select! {
+            biased;
+            change = switches.recv(), if switches_open && !closing.load(Ordering::SeqCst) => {
+                match change {
+                    Some(change) => {
+                        let result = async {
+                            options = set_pinned_option(rpc, session_id, options.clone(), &["model"], &["model"], "model", &change.model).await?;
+                            if let Some(effort) = &change.effort {
+                                options = set_pinned_option(rpc, session_id, options.clone(), &["thought_level"], &["effort", "reasoning", "thought_level"], "effort", effort).await?;
+                            }
+                            Ok(())
+                        }.await;
+                        // A new model reads the seat brief again, where
+                        // the agent takes it in a turn.
+                        if result.is_ok() {
+                            rpc.brief = rpc.seat_brief.clone();
+                        }
+                        let _ = change.done.send(result);
+                    }
+                    None => switches_open = false,
+                }
+            }
             prompt = prompts.recv(), if console_open && !closing.load(Ordering::SeqCst) => {
                 match prompt {
-                    Some(prompt) => prompt_once(rpc, session_id, system_prompt, &prompt).await?,
+                    Some(prompt) => {
+                        if !claim_message(rpc, &prompt).await {
+                            continue;
+                        }
+                        // A failed turn leaves its claim to the driver, which
+                        // gives it back where the prompt was never written.
+                        prompt_once(rpc, session_id, &prompt).await?;
+                        rpc.in_flight.settle();
+                    }
                     None => console_open = false,
                 }
             }
             () = rpc.connection.incoming_closed() => return Ok(()),
         }
+    }
+}
+
+/// Claim the delivery a prompt carries, right before the prompt goes out
+/// (018, 026). Answers whether the prompt goes out. A prompt that carries no
+/// delivery always does. One whose message a read already took does not:
+/// the agent has that text, and the prompt would say it twice. A pull
+/// request's news is claimed by writing its told marks.
+async fn claim_message(rpc: &Rpc, prompt: &Prompt) -> bool {
+    let Some(delivery) = &prompt.delivery else {
+        return true;
+    };
+    let sink = &rpc.sink;
+    // A goal's attention stays on the queue's ledger for the whole of its
+    // turn, and comes off it in `prompt_once` once the turn has confirmed
+    // it: what keeps a pass from queuing the same situation again is that
+    // ledger, since the store says nothing about it until the turn ends,
+    // and the session row still reads idle until the turn's first event
+    // lands. Taken off here, a pass in that gap queued it a second time,
+    // behind this turn, and the orchestrator heard the same failure twice.
+    // Every other delivery is claimed in the store right here, so a second
+    // hand-over of it is refused there, and its key comes off now so a
+    // later hand-over may queue it again.
+    if !matches!(delivery, Delivery::GoalAttention { .. }) {
+        sink.runtime
+            .dequeue_message(&sink.session_id, &sink.launch_id, &delivery.key());
+    }
+    let store = &sink.runtime.inner.store;
+    let claimed = match delivery {
+        Delivery::Step(id) => store.claim_step_briefing(id).await,
+        Delivery::Message(id) => store.mark_message_delivered(id).await,
+        Delivery::PullRequestNews(news) => {
+            store
+                .claim_pull_request_news(
+                    &news.pull_request_id,
+                    &news.comment_ids,
+                    &news.before,
+                    &news.told,
+                )
+                .await
+        }
+        // Nothing to claim ahead of the send: the queue's ledger above keeps
+        // this situation from being queued twice, and what this delivery
+        // confirms is written only once its own turn ends (`prompt_once`),
+        // never before.
+        Delivery::GoalAttention { .. } => Ok(true),
+    };
+    match claimed {
+        Ok(true) => {
+            rpc.in_flight.claim(delivery.clone());
+            true
+        }
+        // A message a read took first is routine. A column entry is not: it
+        // is briefed once, and the agent whose briefing went elsewhere has
+        // nothing else to start from.
+        Ok(false) if matches!(delivery, Delivery::Step(_)) => {
+            tracing::warn!(session = %sink.session_id, delivery = %delivery.key(), "the column entry was briefed first, or is no longer current; its briefing is skipped");
+            false
+        }
+        Ok(false) => {
+            tracing::debug!(session = %sink.session_id, delivery = %delivery.key(), "the delivery was taken first, or its news is stale; its prompt is skipped");
+            false
+        }
+        // Unclaimed, so the next scheduler pass hands it again.
+        Err(error) => {
+            tracing::warn!(session = %sink.session_id, delivery = %delivery.key(), error = %format!("{error:#}"), "claiming the delivery failed");
+            false
+        }
+    }
+}
+
+/// The delivery whose prompt is going out, and whether that prompt was
+/// written. It lives outside the protocol, so the driver still reads it after
+/// a failed write or a kill took the protocol down.
+#[derive(Clone, Default)]
+struct MessageInFlight {
+    claimed: Arc<Mutex<Option<Delivery>>>,
+    writes: PromptWrites,
+}
+
+impl MessageInFlight {
+    /// The driver claimed this delivery, and its prompt goes out next.
+    fn claim(&self, delivery: Delivery) {
+        self.writes.reset();
+        *self.claimed.lock().expect("message in flight lock") = Some(delivery);
+    }
+
+    /// The prompt's turn ended: the agent had the text.
+    fn settle(&self) {
+        self.claimed.lock().expect("message in flight lock").take();
+    }
+
+    /// The claimed delivery whose prompt the agent's stdin never took whole.
+    /// A prompt that was written keeps its claim, whatever came after: the
+    /// agent may have read it.
+    fn unwritten(&self) -> Option<Delivery> {
+        let claimed = self
+            .claimed
+            .lock()
+            .expect("message in flight lock")
+            .take()?;
+        (!self.writes.written()).then_some(claimed)
     }
 }
 
@@ -1642,6 +2737,65 @@ async fn session_setup(
     })
 }
 
+/// Pin one option of a launch, or carry on without it.
+///
+/// A launch whose pin does not land — the agent offers no such option,
+/// refuses the value, fails the call, or settles on another value — runs on
+/// whatever the agent runs: its own default, or what the resumed
+/// conversation ran on. A `session.pin_fallback` event names the pin and what
+/// the agent runs instead. The row keeps the pin, so the next launch asks for
+/// it again.
+async fn pin_or_fall_back(
+    rpc: &mut Rpc,
+    session_id: &str,
+    options: Vec<v1::SessionConfigOption>,
+    categories: &[&str],
+    names: &[&str],
+    label: &str,
+    value: &str,
+) -> Vec<v1::SessionConfigOption> {
+    let Unpinned { options, error } =
+        match set_pinned_option(rpc, session_id, options, categories, names, label, value).await {
+            Ok(options) => return options,
+            Err(unpinned) => unpinned,
+        };
+    let running = find_config_option(&options, categories, names)
+        .and_then(current_value)
+        .map(str::to_string);
+    let error = format!("{error:#}");
+    tracing::warn!(session = %rpc.sink.session_id, label, value, ?running, %error, "a pin did not land, running on the agent's own");
+    rpc.sink
+        .emit(
+            "session.pin_fallback",
+            json!({
+                "session_id": session_id,
+                "option": label,
+                "asked": value,
+                "running": running,
+                "error": error,
+            }),
+        )
+        .await;
+    options
+}
+
+/// A pin that did not land, and the options as the agent last reported
+/// them: what a launch carries on from. Where the pin must land — a switch —
+/// it is the error alone.
+#[derive(Debug)]
+struct Unpinned {
+    options: Vec<v1::SessionConfigOption>,
+    error: anyhow::Error,
+}
+
+impl std::fmt::Display for Unpinned {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}", self.error)
+    }
+}
+
+impl std::error::Error for Unpinned {}
+
 async fn set_pinned_option(
     rpc: &mut Rpc,
     session_id: &str,
@@ -1650,11 +2804,12 @@ async fn set_pinned_option(
     names: &[&str],
     label: &str,
     value: &str,
-) -> Result<Vec<v1::SessionConfigOption>> {
-    let config_id = find_config_option(&options, categories, names)
-        .ok_or_else(|| anyhow!("ACP agent did not offer a {label} configuration option"))?
-        .id
-        .clone();
+) -> std::result::Result<Vec<v1::SessionConfigOption>, Unpinned> {
+    let Some(option) = find_config_option(&options, categories, names) else {
+        let error = anyhow!("ACP agent did not offer a {label} configuration option");
+        return Err(Unpinned { options, error });
+    };
+    let config_id = option.id.clone();
     // The value rides flattened into the request, which is what puts a
     // select option's id at `value` and a boolean's `type` beside it.
     let request = v1::SetSessionConfigOptionRequest::new(
@@ -1662,10 +2817,14 @@ async fn set_pinned_option(
         config_id,
         v1::SessionConfigOptionValue::value_id(value.to_string()),
     );
-    let response = rpc
+    let response = match rpc
         .call("session/set_config_option", request)
         .await
-        .with_context(|| format!("setting ACP {label} to `{value}`"))?;
+        .with_context(|| format!("setting ACP {label} to `{value}`"))
+    {
+        Ok(response) => response,
+        Err(error) => return Err(Unpinned { options, error }),
+    };
     let options = match response.config_options.is_empty() {
         true => options,
         false => response.config_options,
@@ -1673,16 +2832,53 @@ async fn set_pinned_option(
     // An agent that took the option answers with it set. One that did not —
     // it read the value and made nothing of it — answers the same way, and
     // the session would run on the agent's own model at the agent's own
-    // effort while Ariadne believed it was pinned. The launch fails instead,
+    // effort while Ariadne believed it was pinned. It is an error instead,
     // so a pin that does not land is heard about rather than paid for.
-    let settled = find_config_option(&options, categories, names).and_then(current_value);
-    match settled {
+    let option = find_config_option(&options, categories, names);
+    match option.and_then(current_value) {
         Some(settled) if settled == value => Ok(options),
-        Some(settled) => bail!("ACP agent kept {label} on `{settled}` when asked for `{value}`"),
+        Some(settled) if option.is_some_and(|option| respelled(option, value, settled)) => {
+            Ok(options)
+        }
+        Some(settled) => {
+            let error = anyhow!("ACP agent kept {label} on `{settled}` when asked for `{value}`");
+            Err(Unpinned { options, error })
+        }
         // Nothing to check against: an agent that reports no current value
         // is taken at its word, as it was before this was checked at all.
         None => Ok(options),
     }
+}
+
+/// Whether `settled` is `asked` under the spelling the agent offers it by
+/// now: the same id without its context hint (`claude-fable-5-1` for
+/// `claude-fable-5-1[1m]`), on an option that no longer offers `asked` at all.
+///
+/// Claude's agent lists a model without the hint on a resumed conversation
+/// that it lists with the hint on a new one — the same row of its picker,
+/// under another id — and settles a pin of the hinted id on that row. Where
+/// the hinted id is still offered beside the bare one, the bare one is a
+/// smaller context window, and a pin that lands on it did not land.
+fn respelled(option: &v1::SessionConfigOption, asked: &str, settled: &str) -> bool {
+    let v1::SessionConfigKind::Select(select) = &option.kind else {
+        return false;
+    };
+    let offered: Vec<&v1::SessionConfigSelectOption> = match &select.options {
+        v1::SessionConfigSelectOptions::Ungrouped(options) => options.iter().collect(),
+        v1::SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let unhinted = asked
+        .strip_suffix(']')
+        .and_then(|rest| rest.rsplit_once('['))
+        .map(|(model, _)| model);
+    unhinted == Some(settled)
+        && !offered
+            .iter()
+            .any(|choice| choice.value.0.as_ref() == asked)
 }
 
 /// What a select option is set to. A boolean one has no id to compare, and
@@ -1737,20 +2933,37 @@ fn category_name(category: &v1::SessionConfigOptionCategory) -> &str {
     }
 }
 
+/// The seat brief a launch sends in a turn: its seat text and skill index,
+/// or None for a session with no seat text.
+///
+/// The MCP server's instructions carry the brief too, but no adapter is
+/// proven to keep them in its real system prompt through a compaction
+/// (006 rule 2). claude-agent-acp hands them to the model as a user-role
+/// attachment, and codex-acp and opencode show no such section. So every
+/// agent gets the brief in a turn.
+fn seat_brief_in_turns(system_prompt: &str) -> Option<String> {
+    (!system_prompt.is_empty()).then(|| system_prompt.to_string())
+}
+
 /// One turn: the prompt out, the turn's chunks as they come — each run of
 /// text stored once the next thing the agent reports arrives — and, once the
 /// response is in, the last run stored, then the `stop`. A turn that fails
 /// stores its last run too, before the error ends the driver.
-async fn prompt_once(
-    rpc: &mut Rpc,
-    session_id: &str,
-    system_prompt: &str,
-    prompt: &Prompt,
-) -> Result<()> {
-    let full = format!("{system_prompt}\n\n{}", prompt.text);
+///
+/// A turn sends its own text alone. The first turn after a launch or a model
+/// switch carries the seat brief ahead of it; a slash command the agent
+/// offers never carries it.
+async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result<()> {
+    let command = rpc.turn.lock().await.is_command(&prompt.text);
+    let full = match rpc.brief.take_if(|_| !command) {
+        Some(brief) => format!("{brief}\n\n{}", prompt.text),
+        None => prompt.text.clone(),
+    };
+    let turn_id = new_id();
     {
         let mut turn = rpc.turn.lock().await;
         turn.running = true;
+        turn.agent_request_turn_id = Some(turn_id.clone());
         turn.agent_session = Some(session_id.to_string());
         turn.text = None;
         // A call the last turn left open is not this turn's to finish.
@@ -1771,7 +2984,7 @@ async fn prompt_once(
     // figure moves before its `stop`.
     let (reading, sink) = (rpc.transcript.clone(), rpc.sink.clone());
     let every = sink.runtime.inner.timeouts.transcript_poll;
-    let response = {
+    let response: Result<Value> = async {
         let prompt = v1::PromptRequest::new(
             session_id.to_string(),
             vec![v1::ContentBlock::Text(v1::TextContent::new(full.clone()))],
@@ -1798,7 +3011,8 @@ async fn prompt_once(
                 }
             }
         }
-    };
+    }
+    .await;
     {
         let mut turn = rpc.turn.lock().await;
         if let Some((kind, payload)) = turn.end_text() {
@@ -1806,7 +3020,28 @@ async fn prompt_once(
         }
         turn.running = false;
     }
+    rpc.sink
+        .runtime
+        .inner
+        .store
+        .finish_agent_request_turn(&rpc.sink.session_id, &turn_id)
+        .await?;
+    rpc.turn.lock().await.agent_request_turn_id = None;
     let response = response?;
+    if response
+        .pointer("/_meta/jetbrains/air/sessionFailure/category")
+        .and_then(Value::as_str)
+        == Some("limit")
+    {
+        return Err(anyhow::Error::new(
+            agent_client_protocol::Error::new(
+                -32603,
+                "the prompt failed because the model limit was reached",
+            )
+            .data(response),
+        ))
+        .context("ACP session/prompt failed");
+    }
     let mut stop = json!({
         "session_id": session_id,
         "stop_reason": response.get("stopReason"),
@@ -1828,6 +3063,60 @@ async fn prompt_once(
             "cached_input_tokens": usage.cached_input_tokens,
             "output_tokens": usage.output_tokens,
         });
+    }
+    // This exact delivery's own turn just ended — not merely some turn on
+    // this session, which could be an unrelated one that landed first.
+    // Confirmed here, directly from what this prompt carried, rather than
+    // from any side record a later pass could race against — and before the
+    // `stop` below, which marks the session idle and wakes the scheduler:
+    // a pass woken by the stop reads the session idle and the failure
+    // confirmed together, so it has nothing to say again. Written after the
+    // `stop`, the gap between the two was a window in which that pass told
+    // the orchestrator the same thing twice.
+    //
+    // Held under the same lock `tell_orchestrator` takes for its own read
+    // of this goal's confirmed list and its own send: on this daemon's
+    // multi-threaded runtime, neither task's lack of an intervening
+    // `await` keeps the other from running on a different worker at the
+    // same moment, so nothing short of a lock either one actually waits
+    // on closes the gap between a pass reading "not confirmed yet" and
+    // this turn confirming it. Whichever of the two acquires it first
+    // runs to completion — the whole confirm-and-dequeue here, or the
+    // whole read-and-send there — before the other even starts its own
+    // read.
+    if let Some(
+        delivery @ Delivery::GoalAttention {
+            goal_id,
+            failed_tasks,
+        },
+    ) = &prompt.delivery
+    {
+        let lock = rpc.sink.runtime.goal_attention_lock();
+        let _guard = lock.lock().await;
+        let _ = rpc
+            .sink
+            .runtime
+            .inner
+            .store
+            .confirm_goal_orchestrator_answered(goal_id, failed_tasks)
+            .await;
+        // Taken off the ledger whether or not the write above landed: the
+        // key's only job is to keep this one in-flight attempt from being
+        // queued twice, and once this turn is over there is no attempt
+        // left for it to protect. Whether to tell the orchestrator again
+        // is answered on the next pass by a fresh read of the store
+        // itself, under this same lock — not by this delivery's own write
+        // having failed, which a key kept open here would otherwise make
+        // permanent: a failed write already leaves the store reading
+        // unconfirmed, which is what makes the next pass retry; a key
+        // still held over it would instead have refused the retry's own
+        // attempt to queue, keeping the failure stuck unconfirmed for the
+        // rest of this launch despite the store being free to correct it.
+        rpc.sink.runtime.dequeue_message(
+            &rpc.sink.session_id,
+            &rpc.sink.launch_id,
+            &delivery.key(),
+        );
     }
     rpc.sink.emit("stop", stop).await;
     rpc.turn_ended.notify_waiters();
@@ -1960,6 +3249,22 @@ fn terminal_tool_status(update: &Value) -> bool {
     )
 }
 
+/// The agent's own name for the tool: `/name`, `/_meta/claudeCode/toolName`,
+/// `/title`, `/toolCallId`, in order; `"ACP tool"` where the call names none.
+/// Used by [`permission_signature`] to name a tool consistently.
+pub(crate) fn tool_name_of(tool_call: &Value) -> String {
+    [
+        "/name",
+        "/_meta/claudeCode/toolName",
+        "/title",
+        "/toolCallId",
+    ]
+    .into_iter()
+    .find_map(|pointer| tool_call.pointer(pointer).and_then(Value::as_str))
+    .unwrap_or("ACP tool")
+    .to_string()
+}
+
 /// The option that approves a permission request: the first the agent marks
 /// as allowing, and the first of any kind where it marks none. `None` only
 /// where there is nothing to select, which the reply spells as cancelled.
@@ -1983,26 +3288,85 @@ fn approved_option(params: &Value) -> Option<String> {
         .or_else(|| options.first().and_then(option_id))
 }
 
-/// A remembered permission is deliberately narrow: the ACP tool's human
-/// name and kind, and the repository the request came from.
-struct PermissionSignature {
-    tool_name: String,
-    kind: String,
+/// Prefer a one-time agent approval for a console or learned answer.
+fn allowing_agent_option(params: &Value) -> Option<String> {
+    let options = params.get("options").and_then(Value::as_array)?;
+    for kind in ["allow_once", "allow_always"] {
+        if let Some(id) = options
+            .iter()
+            .find(|option| option.get("kind").and_then(Value::as_str) == Some(kind))
+            .and_then(|option| option.get("optionId"))
+            .and_then(Value::as_str)
+        {
+            return Some(id.to_string());
+        }
+    }
+    None
 }
 
+/// The choices Ariadne offers when a request in `learn` or `ai` reaches the console.
+fn learned_choices(params: &Value, family: &str) -> Value {
+    let mut choices = Vec::new();
+    if allowing_agent_option(params).is_some() {
+        choices.extend([
+            json!({"optionId": "once", "name": "Allow once", "kind": "allow_once"}),
+            json!({"optionId": "command", "name": "Allow this command", "kind": "allow_always"}),
+            json!({"optionId": "family", "name": format!("Allow every {family} call"), "kind": "allow_always"}),
+        ]);
+    }
+    if console_rejecting_option(params).is_some() {
+        choices.push(json!({"optionId": "reject", "name": "Reject", "kind": "reject_once"}));
+    }
+    Value::Array(choices)
+}
+
+/// The first one-time rejection. A permanent rejection is never selected by
+/// the model because it changes future requests too.
+fn rejecting_option(params: &Value) -> Option<String> {
+    params
+        .get("options")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|option| option.get("kind").and_then(Value::as_str) == Some("reject_once"))?
+        .get("optionId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// Keep a rejection available to a person when the agent offers only a
+/// permanent rejection. A model still uses [`rejecting_option`] alone.
+fn console_rejecting_option(params: &Value) -> Option<String> {
+    rejecting_option(params).or_else(|| {
+        params
+            .get("options")
+            .and_then(Value::as_array)?
+            .iter()
+            .find(|option| option.get("kind").and_then(Value::as_str) == Some("reject_always"))?
+            .get("optionId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    })
+}
+
+/// The key of a learned permission, with the repository the request came
+/// from: the tool name and the tool's input.
+struct PermissionSignature {
+    tool_name: String,
+    raw_input: Option<Value>,
+}
+
+/// The tool name is the agent's own name for the tool where it sends one
+/// (`Bash`, `Read`, `mcp__ariadne__create_task`), else the title.
 fn permission_signature(tool_call: &Value) -> PermissionSignature {
-    let tool_name = tool_call
-        .get("title")
-        .or_else(|| tool_call.get("toolCallId"))
-        .and_then(Value::as_str)
-        .unwrap_or("ACP tool")
-        .to_string();
-    let kind = tool_call
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_string();
-    PermissionSignature { tool_name, kind }
+    let tool_name = tool_name_of(tool_call);
+    let raw_input = tool_call
+        .get("rawInput")
+        .filter(|raw_input| !raw_input.is_null())
+        .cloned();
+    PermissionSignature {
+        tool_name,
+        raw_input,
+    }
 }
 
 /// Resolve a console answer to an option. Option ids are the stable answer
@@ -2026,7 +3390,8 @@ fn permission_option(params: &Value, answer: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Whether the selected option is an approval, rather than a denial.
+/// Whether the selected option is an approval, rather than a denial: its
+/// kind is `allow_once` or `allow_always`.
 fn allowing_option(params: &Value, option_id: &str) -> bool {
     params
         .get("options")
@@ -2035,15 +3400,120 @@ fn allowing_option(params: &Value, option_id: &str) -> bool {
         .flatten()
         .find(|option| option.get("optionId").and_then(Value::as_str) == Some(option_id))
         .and_then(|option| option.get("kind").and_then(Value::as_str))
-        .is_some_and(|kind| kind.starts_with("allow"))
+        .is_some_and(|kind| matches!(kind, "allow_once" | "allow_always"))
+}
+
+/// The normalized outcome of a permission answer. The option is authoritative
+/// where it names an agent choice; a decision label fills the AI case.
+fn permission_answer(option_id: Option<&str>, label: Option<&str>, params: &Value) -> &'static str {
+    let kind = option_id.and_then(|id| {
+        params
+            .get("options")
+            .and_then(Value::as_array)?
+            .iter()
+            .find(|option| option.get("optionId").and_then(Value::as_str) == Some(id))?
+            .get("kind")
+            .and_then(Value::as_str)
+    });
+    if kind.is_some_and(|kind| kind.starts_with("allow")) || label == Some("allow") {
+        "allow"
+    } else if option_id.is_none() {
+        "cancelled"
+    } else {
+        "deny"
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{approved_option, completed_tool_payload, usage_for_prompt_response};
+    use super::{
+        acp_error_detail, approved_option, completed_tool_payload, exhausted_reason,
+        permission_signature, usage_for_prompt_response,
+    };
 
     use ariadne_core::TokenUsage;
     use serde_json::json;
+
+    #[test]
+    fn exhaustion_signals_are_classified_and_a_plain_error_is_not() {
+        let patterns = crate::config::default_exhausted_patterns();
+        assert_eq!(
+            exhausted_reason(
+                "stopped",
+                Some(
+                    &json!({"_meta": {"jetbrains": {"air": {"sessionFailure": {"category": "limit"}}}}})
+                ),
+                &patterns,
+            ),
+            Some("limit".into())
+        );
+        assert_eq!(
+            exhausted_reason("RATE LIMIT reached", Some(&json!({})), &patterns),
+            Some("rate limit".into())
+        );
+        assert_eq!(
+            exhausted_reason(
+                "You've hit your session limit",
+                Some(&json!({"errorKind": "rate_limit"})),
+                &patterns,
+            ),
+            Some("rate_limit".into())
+        );
+        assert_eq!(
+            exhausted_reason(
+                "Internal error",
+                Some(
+                    &json!({"details": "API error: 429 This request would exceed your account's rate limit."})
+                ),
+                &patterns,
+            ),
+            Some("rate limit".into())
+        );
+        assert_eq!(
+            exhausted_reason(
+                "authentication failed",
+                Some(&json!({"kept": true})),
+                &patterns,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn common_error_detail_fields_and_long_json_are_readable() {
+        for (data, expected) in [
+            (json!({"details": "X"}), "X"),
+            (json!({"detail": "X"}), "X"),
+            (json!({"error": {"message": "X"}}), "X"),
+            (json!({"details": "", "reason": "X"}), "X"),
+            (json!("X"), "X"),
+            (json!({"unknown": 7}), "{\"unknown\":7}"),
+        ] {
+            assert_eq!(acp_error_detail(&data), expected, "{data}");
+        }
+        let detail = acp_error_detail(&json!({"unknown": "x".repeat(500)}));
+        assert!(detail.starts_with("{\"unknown\":\""));
+        assert!(detail.ends_with('…'));
+        assert!(detail.chars().count() <= 201);
+    }
+
+    /// The tool name is the first string among `name`, the Claude tool name
+    /// and the title: a null candidate does not hide the next one.
+    #[test]
+    fn the_tool_name_is_the_first_string_candidate() {
+        let name = |tool_call| permission_signature(&tool_call).tool_name;
+        assert_eq!(name(json!({"name": "Bash", "title": "ls"})), "Bash");
+        assert_eq!(
+            name(
+                json!({"name": null, "_meta": {"claudeCode": {"toolName": "Read"}},
+                        "title": "Read /a"})
+            ),
+            "Read"
+        );
+        assert_eq!(name(json!({"name": null, "title": "ls"})), "ls");
+        assert_eq!(name(json!({"toolCallId": "call-1"})), "call-1");
+        assert_eq!(name(json!({})), "ACP tool");
+    }
 
     /// Empty content does not replace the raw output a finished call needs.
     #[test]
@@ -2060,7 +3530,7 @@ mod tests {
         assert_eq!(payload["acp"]["rawOutput"], json!({"stdout": "built"}));
     }
 
-    /// Every permission request is approved: the allowing option wins
+    /// Every permission request is allowed: the allowing option wins
     /// wherever the agent put it, an unmarked list falls back to its first
     /// option, and only an empty one is answered with nothing to select.
     /// A live event takes its id and goes out under the store's event lock,
@@ -2101,6 +3571,58 @@ mod tests {
             "the waiting live event took its id after the lock was released: {} > {meanwhile}",
             event.id
         );
+    }
+
+    /// A kill's gate holds the session's next launch back: the launch waits
+    /// for it as it waits for an agent still ending, and goes on once the
+    /// gate is dropped. Here the launch then fails, on a program that is not
+    /// there, which is the proof that it got past the wait.
+    #[tokio::test]
+    async fn a_launch_waits_for_the_gate_of_a_kill() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ariadne_store::Store::open(dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let runtime = super::AcpRuntime::new(store);
+        let (reaped, gate) = runtime.kill_gated("session");
+        reaped.await;
+        let launching = runtime.clone();
+        let launch = tokio::spawn(async move {
+            launching
+                .launch(super::AcpLaunch {
+                    session_id: "session".into(),
+                    launch_id: "launch".into(),
+                    program: dir.path().join("no-such-agent").display().to_string(),
+                    agent_id: "stub".into(),
+                    args: vec![],
+                    env: vec![],
+                    cwd: dir.path().to_path_buf(),
+                    config: ariadne_core::acp::LaunchConfig {
+                        version: 1,
+                        system_prompt: String::new(),
+                        initial_prompt: None,
+                        model: "stub:test-model".into(),
+                        effort: None,
+                        resume_session_id: None,
+                        mcp_servers: vec![],
+                    },
+                    repository_id: "repo".into(),
+                    repository_path: String::new(),
+                    permission_mode: ariadne_core::PermissionMode::Auto,
+                })
+                .await
+        });
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!launch.is_finished(), "the launch went past the gate");
+
+        drop(gate);
+        let launched = tokio::time::timeout(std::time::Duration::from_secs(10), launch)
+            .await
+            .expect("the launch goes on once the gate is dropped")
+            .unwrap();
+        assert!(launched.is_err(), "the program is not there");
     }
 
     /// The SDK builds `initialize`, so what goes on the pipe is the SDK's

@@ -2,13 +2,13 @@
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::{self, ASK, DIM, FRAME, PICKED, QUESTION, TOOL};
 use crate::transcript::{PermissionOption, Tool, TranscriptItem};
+use crate::wrap;
 
-use super::blocks::{block, command, folded_diff, folded_top, head, wrap};
+use super::blocks::{block, command, folded_diff, folded_top, head};
 
 /// The pending permission question as the picker being answered, in a pane
 /// `height` rows tall: the question, its call's command or diff folded to
@@ -25,6 +25,7 @@ pub(super) fn picker(
         tool,
         options,
         answer,
+        ai_note,
         ..
     } = item
     else {
@@ -38,6 +39,7 @@ pub(super) fn picker(
             question,
             tool,
             options,
+            ai_note.as_deref(),
             answer.as_deref(),
             Some(picked),
             width,
@@ -60,11 +62,15 @@ pub(super) fn picker(
 /// the answer once it is given. The call it asks about is drawn under the
 /// question — its head, and the command or the diff where it carries one,
 /// folded past `fold` lines — so what is being allowed can be read before
-/// it is. Once answered it is the question, the head and the option chosen.
+/// it is. Under the head, while it waits, is why the AI permission model
+/// left it to a person, where it had a part. Once answered it is the
+/// question, the head and the option chosen.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn permission(
     question: &str,
     tool: &Tool,
     options: &[PermissionOption],
+    ai_note: Option<&str>,
     answer: Option<&str>,
     picked: Option<usize>,
     width: usize,
@@ -78,6 +84,13 @@ pub(super) fn permission(
         return lines;
     }
     let (mut lines, below) = frame(question, tool, options, picked, width);
+    if let Some(note) = ai_note {
+        lines.extend(
+            fit(note, width)
+                .into_iter()
+                .map(|row| Line::from(Span::styled(row, DIM))),
+        );
+    }
     lines.extend(body(tool, width, fold));
     lines.extend(below);
     lines
@@ -145,10 +158,16 @@ fn body(tool: &Tool, width: usize, fold: usize) -> Vec<Line<'static>> {
         && command.lines().count() > 1
     {
         lines.extend(folded_top(
-            wrap(command.trim_end(), width.saturating_sub(4))
-                .into_iter()
-                .map(|line| Line::from(vec![Span::raw("    "), Span::styled(line, DIM)]))
-                .collect(),
+            wrap::wrap(
+                command
+                    .split_once('\n')
+                    .map_or(command.as_str(), |(_, rest)| rest)
+                    .trim_end(),
+                width.saturating_sub(4),
+            )
+            .into_iter()
+            .map(|line| Line::from(vec![Span::raw("    "), Span::styled(line, theme::OUTPUT)]))
+            .collect(),
             fold,
         ));
     }
@@ -208,24 +227,9 @@ fn answered(answer: &str, width: usize) -> Vec<Line<'static>> {
 /// so no character is cut.
 fn fit(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
-    wrap(text, width)
+    wrap::wrap(text, width)
         .into_iter()
-        .flat_map(|line| {
-            let mut rows = vec![String::new()];
-            let mut used = 0;
-            for grapheme in line.graphemes(true) {
-                let cells = grapheme.width();
-                if used > 0 && used + cells > width {
-                    rows.push(String::new());
-                    used = 0;
-                }
-                rows.last_mut()
-                    .expect("one row at least")
-                    .push_str(grapheme);
-                used += cells;
-            }
-            rows
-        })
+        .flat_map(|line| wrap::wrap_exact(&line, width))
         .collect()
 }
 
@@ -233,6 +237,7 @@ fn fit(text: &str, width: usize) -> Vec<String> {
 mod tests {
 
     use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
     use serde_json::json;
     use unicode_width::UnicodeWidthStr;
 
@@ -260,6 +265,12 @@ mod tests {
             row_of(&shown, "    cargo nextest run") < row_of(&shown, "❯ 1. Reject"),
             "the whole command is above the options: {shown}"
         );
+        let buffer = terminal.backend().buffer();
+        let y = u16::try_from(row_of(&shown, "    cargo nextest run").unwrap()).unwrap();
+        assert!(
+            !buffer[(4, y)].modifier.contains(Modifier::DIM),
+            "the rest of the command is not dimmed: {shown}"
+        );
 
         let mut console = Console::new(header());
         console.apply(&event(
@@ -280,6 +291,83 @@ mod tests {
             row_of(&shown, "-fn a() {}") < row_of(&shown, "+fn b() {}")
                 && row_of(&shown, "+fn b() {}") < row_of(&shown, "❯ 1. Reject"),
             "the diff is above the options: {shown}"
+        );
+    }
+
+    #[test]
+    fn learned_choices_draw_and_the_answer_names_the_family() {
+        let mut console = Console::new(header());
+        let request = event(
+            "permission_request",
+            "Permission requested for Bash",
+            json!({
+                "tool_name": "Bash", "acp": {"toolCallId": "run", "kind": "execute",
+                    "rawInput": {"command": "git rebase main"}},
+                "options": [
+                    {"optionId": "once", "name": "Allow once", "kind": "allow_once"},
+                    {"optionId": "command", "name": "Allow this command", "kind": "allow_always"},
+                    {"optionId": "family", "name": "Allow every git rebase call", "kind": "allow_always"},
+                    {"optionId": "reject", "name": "Reject", "kind": "reject_once"}
+                ]
+            }),
+        );
+        console.apply(&request);
+        let shown = pane(&console, 80, 12);
+        for choice in [
+            "1. Allow once",
+            "2. Allow this command",
+            "3. Allow every git rebase call",
+            "4. Reject",
+        ] {
+            assert!(shown.contains(choice), "{shown}");
+        }
+        let mut answered_by_console = Console::new(header());
+        answered_by_console.apply(&request);
+        answered_by_console.apply(&event(
+            "permission.replied",
+            "answered",
+            json!({
+                "option_id": "yes", "console_option_id": "family", "decided_by": "console"
+            }),
+        ));
+        let shown = pane(&answered_by_console, 80, 12);
+        assert!(shown.contains("Allow every git rebase call"), "{shown}");
+        console.apply(&event(
+            "permission.replied",
+            "answered",
+            json!({
+                "option_id": "yes", "decided_by": "learned", "learned_level": "family",
+                "learned_key": "git rebase"
+            }),
+        ));
+        let shown = pane(&console, 80, 12);
+        assert!(
+            shown.contains("yes, learned · family git rebase"),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn a_two_line_execute_command_draws_the_first_line_once_in_the_head() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.apply(&event(
+            "permission_request",
+            "Permission requested for Bash",
+            json!({"tool_name": "Bash",
+                   "acp": {"toolCallId": "run", "kind": "execute",
+                           "rawInput": {"command": "cargo build\ncargo nextest run"}},
+                   "options": [{"optionId": "no", "name": "Reject"},
+                               {"optionId": "yes", "name": "Allow"}]}),
+        ));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        assert_eq!(shown.matches("cargo build").count(), 1, "{shown}");
+        assert_eq!(shown.matches("cargo nextest run").count(), 1, "{shown}");
+        assert!(
+            row_of(&shown, "○ $ cargo build") < row_of(&shown, "    cargo nextest run"),
+            "the command body follows its head: {shown}"
         );
     }
 
@@ -502,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn an_ai_answer_names_the_model_and_its_confidence() {
+    fn ai_answers_name_the_model_and_the_danger() {
         let mut console = Console::new(header());
         let mut terminal = terminal();
         console.apply(&asked_with(
@@ -515,14 +603,116 @@ mod tests {
             "permission.replied",
             "answered",
             json!({"option_id": "option-0", "decided_by": "ai",
-                   "label": "allow", "confidence": 0.95}),
+                   "label": "deny", "danger": 0.93,
+                   "allow_threshold": 0.0201, "deny_threshold": 0.6321,
+                   "probabilities": {"0": 0.01, "1": 0.11, "2": 0.88}}),
         ));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));
 
         console.commit(&mut terminal).unwrap();
         let shown = screen(&terminal);
+        let bare = |text: &str| text.split_whitespace().collect::<String>();
 
-        assert!(shown.contains("↳ allowed by AI (0.95)"), "{shown}");
+        assert!(
+            bare(&shown).contains(&bare(
+                "AI denied · allow 1%, deny 88% · danger 93% (allow up to 2%, deny from 63%)"
+            )),
+            "{shown}"
+        );
+
+        let mut console = Console::new(header());
+        let mut terminal = crate::tui::testing::terminal();
+        console.apply(&asked_with(
+            "Allow this edit?",
+            &["Allow", "Reject"],
+            json!({"toolCallId": "edit", "kind": "edit",
+                   "rawInput": {"file_path": "src/main.rs"}}),
+        ));
+        console.apply(&event(
+            "permission.replied",
+            "answered",
+            json!({"option_id": "option-0", "decided_by": "ai",
+                   "label": "allow", "danger": 0.01,
+                   "allow_threshold": 0.0201, "deny_threshold": 0.6321,
+                   "probabilities": {"0": 0.99, "1": 0.008, "2": 0.002}}),
+        ));
+        console.apply(&event("agent_message", "done", json!({"text": "done"})));
+        console.commit(&mut terminal).unwrap();
+        let shown = screen(&terminal);
+        let bare = |text: &str| text.split_whitespace().collect::<String>();
+        assert!(
+            bare(&shown).contains(&bare(
+                "AI allowed · allow 99%, deny 0% · danger 1% (allow up to 2%, deny from 63%)"
+            )),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn a_waiting_question_says_why_the_model_left_it_and_its_answer_does_not() {
+        let mut console = Console::new(header());
+        let mut asked = asked_with(
+            "Allow this edit?",
+            &["Always Allow", "Reject"],
+            json!({"toolCallId": "edit", "kind": "edit",
+                   "rawInput": {"file_path": "src/main.rs"}}),
+        );
+        asked.payload["label"] = json!("ask");
+        asked.payload["danger"] = json!(0.41);
+        asked.payload["allow_threshold"] = json!(0.2);
+        asked.payload["deny_threshold"] = json!(0.8);
+        asked.payload["probabilities"] = json!({"0": 0.62, "1": 0.33, "2": 0.05});
+        console.apply(&asked);
+
+        let waiting = pane(&console, 140, 12);
+        let question = row_of(&waiting, "Allow this edit?").expect("the question is drawn");
+        assert_eq!(
+            row_of(
+                &waiting,
+                "AI said ask · allow 62%, deny 5% · danger 41% (allow up to 20%, deny from 80%)"
+            ),
+            Some(question + 2),
+            "the model's reason is under the head, before the options: {waiting}"
+        );
+
+        let mut terminal = terminal();
+        console.apply(&event(
+            "permission.replied",
+            "answered",
+            json!({"option_id": "option-0", "decided_by": "console",
+                   "label": "ask", "danger": 0.41, "allow_threshold": 0.2,
+                   "deny_threshold": 0.8,
+                   "ai_error": null}),
+        ));
+        console.apply(&event("agent_message", "done", json!({"text": "done"})));
+        console.commit(&mut terminal).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(shown.contains("↳ Always Allow"), "{shown}");
+        assert!(
+            !shown.contains("AI said"),
+            "the answer does not repeat it: {shown}"
+        );
+
+        let mut console = Console::new(header());
+        let mut asked = asked_with(
+            "Allow this edit?",
+            &["Always Allow", "Reject"],
+            json!({"toolCallId": "edit", "kind": "edit",
+                   "rawInput": {"file_path": "src/main.rs"}}),
+        );
+        asked.payload["label"] = json!("ask");
+        asked.payload["danger"] = json!(0.081);
+        asked.payload["allow_threshold"] = json!(0.09);
+        asked.payload["deny_threshold"] = json!(0.63);
+        asked.payload["probabilities"] = json!({"0": 0.82, "1": 0.16, "2": 0.02});
+        asked.payload["cap"] = json!("reviewer_directive");
+        console.apply(&asked);
+        let waiting = pane(&console, 140, 12);
+        assert!(
+            waiting.contains("capped by reviewer_directive"),
+            "{waiting}"
+        );
     }
 
     #[test]

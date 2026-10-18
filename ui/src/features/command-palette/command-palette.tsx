@@ -2,8 +2,8 @@
  * ⌘K: everything the app can show or do, one search away.
  *
  * Mounted once by the shell (`src/components/app-shell.tsx`), so it opens over
- * whatever screen is up and its picks land relative to it — a task stacks its
- * panel on the goal already open, a session opens inside its task's panel.
+ * whatever screen is up and its picks land relative to it — a task replaces
+ * the goal already open, a session opens inside its task's panel.
  *
  * It adds no requests of its own: the five lists it searches are the same
  * cache entries the goals board, the session panels, the skills screen and the
@@ -42,6 +42,7 @@ import {
   SunIcon,
   TargetIcon,
   TriangleAlertIcon,
+  WorkflowIcon,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { type ReactNode, useMemo, useState } from "react"
@@ -68,6 +69,7 @@ import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { skillsQueryOptions } from "@/features/skills/queries"
 import { taskListQueryOptions } from "@/features/tasks"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
+import { workflowsQueryOptions } from "@/features/workflows/queries"
 import { useConnection } from "@/hooks/use-connection"
 import {
   HELP_SHORTCUT,
@@ -152,7 +154,11 @@ export function CommandPalette({
   }
 
   function go(entry: PaletteEntry) {
-    run(() => void navigate(paletteTargetTo(entry.target, search, pathname)))
+    const target = paletteTargetTo(entry.target, search, pathname)
+    // A task target may ask to replace rather than push — see `entries.ts` —
+    // which a plain string target never does.
+    const replace = typeof target === "string" ? undefined : target.replace
+    run(() => void navigate(target, { replace }))
   }
 
   return (
@@ -162,7 +168,7 @@ export function CommandPalette({
         onOpenChange={onOpenChange}
         className="sm:max-w-xl"
         title="Command palette"
-        description="Search goals, tasks, sessions and skills, or run an action."
+        description="Search goals, tasks, sessions, skills and workflows, or run an action."
       >
         {/* The search is cmdk's own state, not React's: cmdk sorts the rows by
             reordering the DOM, and a re-render on every keystroke — which is
@@ -170,7 +176,7 @@ export function CommandPalette({
             order they were written in. The palette is unmounted while closed,
             so that state also starts empty every time. */}
         <Command loop filter={PALETTE_FILTER}>
-          <CommandInput autoFocus placeholder="Search goals, tasks, sessions, skills…" />
+          <CommandInput autoFocus placeholder="Search goals, tasks, sessions, skills, workflows…" />
           <CommandList>
             <CommandEmpty>No matches.</CommandEmpty>
 
@@ -314,7 +320,12 @@ export function CommandPalette({
           // The same landing the goal panel's own button gives it: the new
           // task's panel, over whatever is on screen — or on the board, from
           // the one screen where that panel does not open (`taskPanelFrom`).
-          onCreated={(task) => void navigate(taskPanelFrom(pathname, search, task.id))}
+          // Replaces rather than pushes when that screen had the goal open
+          // (`target.replace`), same as the goal panel's own create button.
+          onCreated={(task) => {
+            const target = taskPanelFrom(pathname, search, task.id)
+            void navigate(target, { replace: target.replace })
+          }}
         />
       ) : null}
     </>
@@ -383,6 +394,7 @@ const PAGES = [
   { label: "Goals", path: paths.goals(), icon: TargetIcon },
   { label: "Sessions", path: paths.sessions(), icon: RadioTowerIcon },
   { label: "Skills", path: paths.skills(), icon: CpuIcon },
+  { label: "Workflows", path: paths.workflows(), icon: WorkflowIcon },
   { label: "Agents", path: paths.agents(), icon: BotIcon },
   { label: "Repositories", path: paths.repositories(), icon: FolderGit2Icon },
 ] as const
@@ -393,6 +405,7 @@ const GROUPS = [
   { key: "tasks", heading: "Tasks", icon: ListChecksIcon },
   { key: "sessions", heading: "Sessions", icon: RadioTowerIcon },
   { key: "skills", heading: "Skills", icon: CpuIcon },
+  { key: "workflows", heading: "Workflows", icon: WorkflowIcon },
   { key: "repositories", heading: "Repositories", icon: FolderGit2Icon },
 ] as const satisfies readonly {
   key: keyof PaletteEntries
@@ -527,6 +540,7 @@ function usePaletteEntries(open: boolean): {
   const tasks = useQuery({ ...taskListQueryOptions(), enabled: open })
   const sessions = useQuery({ ...sessionsQueryOptions(), enabled: open })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
+  const workflows = useQuery({ ...workflowsQueryOptions(), enabled: open })
   const repositories = useQuery({ ...repositoriesQueryOptions(), enabled: open })
 
   const entries = useMemo(
@@ -536,9 +550,10 @@ function usePaletteEntries(open: boolean): {
         tasks: tasks.data,
         sessions: sessions.data,
         skills: skills.data,
+        workflows: workflows.data,
         repositories: repositories.data,
       }),
-    [goals.data, tasks.data, sessions.data, skills.data, repositories.data],
+    [goals.data, tasks.data, sessions.data, skills.data, repositories.data, workflows.data],
   )
 
   return { entries, goals: goals.data }

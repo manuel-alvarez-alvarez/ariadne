@@ -14,8 +14,7 @@
  * Success is always a toast, whichever kind it was: there is nothing left on
  * screen to say it in.
  *
- * Toasts land top-right: near the header and the row actions that raise them,
- * rather than in the opposite corner of the window from every trigger. They
+ * Toasts land bottom-left, clear of the header and the pane. They
  * carry a close button because an error is read at the reader's pace, and an
  * explicit duration so "the daemon refused" is not gone in three seconds.
  */
@@ -40,7 +39,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme={theme as ToasterProps["theme"]}
       className="toaster group"
-      position="top-right"
+      position="bottom-left"
       closeButton
       duration={TOAST_DURATION_MS}
       icons={{

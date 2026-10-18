@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.8/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["**", "!**/openapi.json", "!src/api/schema.d.ts"]
+    "includes": ["**", "!**/openapi.json", "!src/api/schema.d.ts", "!dashboard"]
   },
   "formatter": {
     "enabled": true,
@@ -18,7 +18,17 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended"
+      "preset": "recommended",
+      "style": {
+        "noRestrictedGlobals": {
+          "level": "error",
+          "options": {
+            "deniedGlobals": {
+              "status": "window.status is a leftover browser API. Name the local you meant instead."
+            }
+          }
+        }
+      }
     }
   },
   "javascript": {
@@ -51,6 +61,9 @@
           },
           "suspicious": {
             "noArrayIndexKey": "off"
+          },
+          "security": {
+            "noDangerouslySetInnerHtml": "off"
           }
         }
       }

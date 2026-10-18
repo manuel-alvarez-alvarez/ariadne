@@ -7,7 +7,7 @@ members = ["crates/*"]
 exclude = ["ui/src-tauri"]
 
 [workspace.package]
-version = "0.9.0"
+version = "0.11.0"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -26,6 +26,8 @@ tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }
 # Download the ACP registry index over HTTPS on an explicit refresh.
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# The webhook tunnel client (027). MIT. rustls, not the platform TLS.
+localtunnel-client = { version = "0.1.8", default-features = false, features = ["rustls-tls"] }
 # The WebSocket client the daemon tests connect to that console with.
 tokio-tungstenite = "0.29"
 # A terminal emulator for the tests: what the console's bytes draw, read
@@ -41,9 +43,17 @@ futures-util = { version = "0.3", default-features = false }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 
+# Signed forge deliveries and per-integration secrets.
+# hmac and sha2 must use the same digest release series.
+hmac = "0.13"
+sha2 = "0.11"
+hex = "0.4"
+getrandom = "0.4"
+
 # openapi
-utoipa = { version = "5", features = ["axum_extras"] }
-utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
+# Swagger UI must use the same utoipa major version as the document builder.
+utoipa = { version = "6", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "10", features = ["axum", "vendored"] }
 
 # Turns tokio's child pipes into the `futures` streams the ACP SDK's
 # transport takes, so the daemon keeps owning the process.
@@ -53,7 +63,7 @@ tokio-util = { version = "0.7", features = ["compat"] }
 # `session/*` method the daemon speaks. Stable features only — nothing the
 # daemon needs is behind an `unstable_` flag, so an SDK release cannot take
 # one out from under it.
-agent-client-protocol = "2.2"
+agent-client-protocol = "3.3"
 
 # database
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate"] }
@@ -61,8 +71,10 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate"] }
 # serialization / config
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+regex = "1"
 serde_urlencoded = "0.7"
-toml = "0.9"
+toml = "1.1"
+url = "2"
 
 # cli
 clap = { version = "4.6", features = ["derive", "env", "unstable-ext"] }
@@ -86,7 +98,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 # The line diff of a tool call's file change: an ACP agent sends the old text
 # and the new text of a file, and the console shows the hunks between them,
 # with context, rather than every old line and then every new one.
-similar = "2"
+similar = "3"
 # The grammars that colour a fenced code block by its language, and nothing
 # else: `parsing` gives the parser that turns a line into scopes,
 # `default-syntaxes` the Sublime Text grammars built into the binary, and
@@ -112,6 +124,12 @@ anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# The telemetry pipeline (033): `tracing` events and recorded metrics flow
+# through the OpenTelemetry SDK to the telemetry store, rather than the
+# daemon writing its own log/metric rows directly.
+opentelemetry = "0.33"
+opentelemetry_sdk = "0.33"
+opentelemetry-appender-tracing = "0.33"
 
 # misc
 # Safe wrappers over the POSIX calls std does not expose. Used for access(2):

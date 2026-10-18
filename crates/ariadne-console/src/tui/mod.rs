@@ -24,6 +24,7 @@
 //! takes the backend as an argument, so one that answers no cursor query
 //! proves the viewport still opens, and still grows and shrinks.
 
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::time::Duration;
@@ -35,18 +36,18 @@ use ratatui::Terminal;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Widget};
 use tokio::time::{Instant, interval};
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::usage::TokenUsageDto;
 
 use crate::transcript::{self, PermissionOption, TranscriptItem};
+use crate::wrap;
 
 mod banner;
 mod blocks;
 mod chrome;
+mod commands;
 mod input;
 mod picker;
 mod viewport;
@@ -54,11 +55,12 @@ mod viewport;
 #[cfg(test)]
 mod scenario;
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;
 
 pub use viewport::{Anchored, Screen, open};
 
 use blocks::block;
+use commands::Command;
 use input::Input;
 
 /// How often the spinner turns while a turn runs.
@@ -121,6 +123,18 @@ pub struct Header {
 }
 
 impl Header {
+    /// Build the header from a session and its task or goal context.
+    pub fn for_session(
+        session: &SessionDto,
+        title: Option<String>,
+        repository: Option<String>,
+    ) -> Self {
+        let mut header = Self::of(Some(session));
+        header.task = title;
+        header.repository = repository;
+        header
+    }
+
     pub fn of(session: Option<&SessionDto>) -> Self {
         session.map_or_else(
             || Self {
@@ -144,13 +158,6 @@ impl Header {
                 usage: session.usage,
             },
         )
-    }
-
-    /// Add the task (or goal) and repository the session row does not hold.
-    pub fn with_task(mut self, title: Option<String>, repository: Option<String>) -> Self {
-        self.task = title;
-        self.repository = repository;
-        self
     }
 }
 
@@ -202,12 +209,39 @@ pub struct Console {
     /// transcript again at the new size ([`Console::redraws_whole_on_resize`]).
     whole_on_resize: bool,
     /// Whether a fold in the pane draws every line instead: a tool's output,
-    /// a diff, a thought and a daemon prompt. Folded at each attach, and
+    /// a diff and a daemon prompt. Folded at each attach, and
     /// toggled by Ctrl-O for as long as the attach lasts. A block moved to
     /// the scrollback while this is set carries every line of it, since a
     /// block already there cannot be drawn again; a block part-way there
     /// keeps the fold its first lines had.
     whole: bool,
+    /// The slash commands the agent lists, in its order: the latest list,
+    /// which replaces the one before it whole.
+    commands: Vec<Command>,
+    /// The pick of the suggestion list, among the commands that match.
+    suggested: usize,
+    /// The first match the suggestion list draws: it scrolls to keep the
+    /// pick on the screen.
+    scrolled: Cell<usize>,
+    /// Escape closed the suggestion list: it stays closed until the box is
+    /// empty again.
+    dismissed: bool,
+    /// Rendered transcript blocks, reused until their input, width or fold changes.
+    blocks: RefCell<BlockCache>,
+    /// The pending question found for the current transcript state.
+    asking: Cell<Option<Option<usize>>>,
+}
+
+#[derive(Default)]
+struct BlockCache {
+    width: u16,
+    whole: bool,
+    lines: Vec<Option<CachedBlock>>,
+}
+
+struct CachedBlock {
+    queued: bool,
+    lines: Vec<Line<'static>>,
 }
 
 /// Where the attach banner is.
@@ -243,7 +277,18 @@ impl Console {
             launches: BTreeMap::new(),
             whole_on_resize: false,
             whole: false,
+            commands: Vec::new(),
+            suggested: 0,
+            scrolled: Cell::new(0),
+            dismissed: false,
+            blocks: RefCell::new(BlockCache::default()),
+            asking: Cell::new(None),
         }
+    }
+
+    fn invalidate_blocks(&mut self) {
+        self.blocks.get_mut().lines.clear();
+        self.asking.set(None);
     }
 
     /// Draw the whole transcript again, from a cleared terminal, once a
@@ -314,6 +359,7 @@ impl Console {
         events: &[AgentEventDto],
         now: chrono::DateTime<chrono::Utc>,
     ) {
+        self.invalidate_blocks();
         self.input.sync_history(
             events
                 .iter()
@@ -340,7 +386,11 @@ impl Console {
         // while the stream was down counts from its prompt, not the old one.
         let finished = self.settled();
         let mut items = Vec::new();
+        self.commands = Vec::new();
         for event in events {
+            if self.follow_commands(event) {
+                continue;
+            }
             absorb(&mut items, event);
             self.follow_turn(event, now);
             self.follow_usage(event);
@@ -359,6 +409,10 @@ impl Console {
     /// as `now` rather than at the moment the event is folded in. See
     /// [`Console::snapshot_at`].
     pub(crate) fn apply_at(&mut self, event: &AgentEventDto, now: chrono::DateTime<chrono::Utc>) {
+        self.invalidate_blocks();
+        if self.follow_commands(event) {
+            return;
+        }
         self.follow_turn(event, now);
         self.follow_usage(event);
         // A daemon that predates `source` and `text` (021) names neither.
@@ -490,6 +544,7 @@ impl Console {
     /// The turn goes back to idle with it: nothing was asked of the agent, so
     /// a spinner saying it is thinking would be a spinner over nothing.
     pub fn failed(&mut self, text: &str) {
+        self.invalidate_blocks();
         // A typed prompt the daemon refused is never confirmed: it is no
         // longer queued, and holds nothing after it out of the scrollback.
         if self
@@ -501,11 +556,13 @@ impl Console {
         }
         self.items.push(TranscriptItem::Error {
             meta: transcript::ItemMeta {
+                id: String::new(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 kinds: vec!["session.error".into()],
                 closed_by: None,
             },
             text: text.to_string(),
+            ai_note: None,
         });
         self.set_turn(Turn::Idle, Instant::now());
     }
@@ -548,12 +605,17 @@ impl Console {
 
     /// The pending permission question, if one is waiting for an answer.
     fn question(&self) -> Option<usize> {
-        self.items.iter().rposition(|item| {
+        if let Some(asking) = self.asking.get() {
+            return asking;
+        }
+        let asking = self.items.iter().rposition(|item| {
             matches!(
                 item,
                 TranscriptItem::PermissionQuestion { answer: None, .. }
             )
-        })
+        });
+        self.asking.set(Some(asking));
+        asking
     }
 
     fn options(&self, at: usize) -> &[PermissionOption] {
@@ -590,6 +652,7 @@ impl Console {
         }
         if ctrl && key.code == KeyCode::Char('o') {
             self.whole = !self.whole;
+            self.invalidate_blocks();
             return Action::None;
         }
 
@@ -621,7 +684,10 @@ impl Console {
             }
         }
 
-        match key.code {
+        if let Some(action) = self.suggest_key(key) {
+            return action;
+        }
+        let action = match key.code {
             KeyCode::Esc if self.turn.running() => Action::Cancel,
             KeyCode::Enter if modified_enter => {
                 self.input.newline();
@@ -646,15 +712,19 @@ impl Console {
                 self.input.key(key);
                 Action::None
             }
-        }
+        };
+        self.edited();
+        action
     }
 
     /// Put a just-typed prompt on the transcript straight away, rather than
     /// after the round trip that confirms it.
     fn show_pending(&mut self, text: &str) {
+        self.invalidate_blocks();
         self.pending.push_back(self.items.len());
         self.items.push(TranscriptItem::UserPrompt {
             meta: transcript::ItemMeta {
+                id: String::new(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 kinds: vec!["user_prompt_submit".into()],
                 closed_by: None,
@@ -674,6 +744,7 @@ impl Console {
     pub fn paste(&mut self, text: &str) {
         self.armed = false;
         self.input.paste(text);
+        self.edited();
     }
 
     /// How many leading items are finished with: their lines are stable,
@@ -741,20 +812,47 @@ impl Console {
             pieces.push(lines);
         }
         let end = self.settled().max(next);
-        for item in self.items.iter().take(end).skip(next) {
-            pieces.push(self.piece(item, width));
+        for (at, item) in self.items.iter().enumerate().take(end).skip(next) {
+            pieces.push(self.piece(at, item, width));
         }
         (pieces, end)
     }
 
     /// The lines one item takes in the scrollback: its block, and the blank
     /// line under it where the block draws anything.
-    fn piece(&self, item: &TranscriptItem, width: u16) -> Vec<Line<'static>> {
-        let mut lines = block(item, usize::from(width), None, self.whole);
+    fn piece(&self, at: usize, item: &TranscriptItem, width: u16) -> Vec<Line<'static>> {
+        let mut lines = self.block(at, item, width, false);
         if !lines.is_empty() {
             lines.push(Line::default());
         }
         lines
+    }
+
+    fn block(
+        &self,
+        at: usize,
+        item: &TranscriptItem,
+        width: u16,
+        queued: bool,
+    ) -> Vec<Line<'static>> {
+        let mut cache = self.blocks.borrow_mut();
+        if cache.width != width || cache.whole != self.whole {
+            cache.width = width;
+            cache.whole = self.whole;
+            cache.lines.clear();
+        }
+        if cache.lines.len() <= at {
+            cache.lines.resize_with(at + 1, || None);
+        }
+        let cached = &mut cache.lines[at];
+        if cached.as_ref().is_none_or(|cached| cached.queued != queued) {
+            let lines = match queued {
+                true => blocks::queued(item, usize::from(width), self.whole),
+                false => block(item, usize::from(width), None, self.whole),
+            };
+            *cached = Some(CachedBlock { queued, lines });
+        }
+        cached.as_ref().expect("cached above").lines.clone()
     }
 
     /// Move every finished line into the terminal's own buffer, whether it
@@ -782,18 +880,30 @@ impl Console {
     /// pane's top row for it — and no draw repaints more than the cells that
     /// changed.
     pub fn show<B: Screen>(&mut self, terminal: &mut Terminal<Anchored<B>>) -> Result<()> {
+        self.show_at(terminal, Instant::now())
+    }
+
+    /// [`Console::show`], with the turn clock read at `now`.
+    pub(crate) fn show_at<B: Screen>(
+        &mut self,
+        terminal: &mut Terminal<Anchored<B>>,
+        now: Instant,
+    ) -> Result<()> {
         if terminal.backend().lost() {
             return Ok(());
         }
         viewport::fit(terminal, self.rows(terminal.size()?))?;
         let size = terminal.size()?;
-        let room = size.height.saturating_sub(self.pinned_rows(size.width));
+        let room = size.height.saturating_sub(
+            self.pinned_rows(size.width) + self.suggestion_rows(size.width, size.height),
+        );
         let (pieces, from) = self.finished(size.width);
         let finished: usize = pieces.iter().map(Vec::len).sum();
-        let written = self.unfinished(from, size.width, room).len();
+        let asking = self.question();
+        let written = self.unfinished(from, size.width, room, asking).len();
         let over = (finished + written).saturating_sub(usize::from(room));
         self.emit(terminal, pieces, over.min(finished))?;
-        terminal.draw(|frame| self.render(frame))?;
+        terminal.draw(|frame| self.render_with_question(frame, asking, now))?;
         Ok(())
     }
 
@@ -814,8 +924,8 @@ impl Console {
         // Every item is done with now, the one being written and an
         // unanswered question too: each goes as the block it is.
         let (mut pieces, from) = self.finished(width);
-        for item in self.items.iter().skip(from) {
-            pieces.push(self.piece(item, width));
+        for (at, item) in self.items.iter().enumerate().skip(from) {
+            pieces.push(self.piece(at, item, width));
         }
         let count = pieces.iter().map(Vec::len).sum();
         self.emit(terminal, pieces, count)?;
@@ -876,27 +986,31 @@ fn rewrap(lines: &[Line<'static>], width: u16) -> Vec<Line<'static>> {
             rows.push(line.clone());
             continue;
         }
-        let mut row: Vec<Span<'static>> = Vec::new();
-        let mut used = 0;
+        let full: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        let mut bounds = Vec::with_capacity(line.spans.len());
+        let mut at = 0;
         for span in &line.spans {
-            let mut text = String::new();
-            for grapheme in span.content.graphemes(true) {
-                let columns = grapheme.width();
-                if used > 0 && used + columns > width {
-                    if !text.is_empty() {
-                        row.push(Span::styled(std::mem::take(&mut text), span.style));
-                    }
-                    rows.push(Line::from(std::mem::take(&mut row)).style(line.style));
-                    used = 0;
-                }
-                used += columns;
-                text.push_str(grapheme);
-            }
-            if !text.is_empty() {
-                row.push(Span::styled(text, span.style));
-            }
+            let start = at;
+            at += span.content.len();
+            bounds.push((start, at, span.style));
         }
-        rows.push(Line::from(row).style(line.style));
+        let mut offset = 0;
+        for text in wrap::wrap_exact(&full, width) {
+            let end = offset + text.len();
+            let spans: Vec<_> = bounds
+                .iter()
+                .filter_map(|&(start, stop, style)| {
+                    let (from, to) = (start.max(offset), stop.min(end));
+                    (from < to).then(|| Span::styled(full[from..to].to_string(), style))
+                })
+                .collect();
+            rows.push(Line::from(spans).style(line.style));
+            offset = end;
+        }
     }
     rows
 }
@@ -1289,6 +1403,32 @@ mod tests {
         }
 
         assert_eq!(crate::markdown::GRAMMARS_BUILT.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn an_unchanged_live_block_renders_once_until_its_width_or_fold_changes() {
+        let mut terminal = pane();
+        let mut console = Console::new(header());
+        let text = "# Report\n\n```rust\nfn main() { println!(\"hello\"); }\n```\n".repeat(20);
+        console.apply(&event(
+            "agent_message_chunk",
+            "chunk",
+            json!({"text": text}),
+        ));
+        blocks::reset_renders();
+
+        console.show(&mut terminal).unwrap();
+        console.show(&mut terminal).unwrap();
+        console.show(&mut terminal).unwrap();
+        assert_eq!(blocks::renders(), 1, "idle ticks reuse the rendered block");
+
+        terminal.backend_mut().under_mut().resize(60, 36);
+        console.show(&mut terminal).unwrap();
+        assert_eq!(blocks::renders(), 2, "a resize renders at the new width");
+
+        console.key(ctrl('o'));
+        console.show(&mut terminal).unwrap();
+        assert_eq!(blocks::renders(), 3, "ctrl-o renders at the new fold state");
     }
 
     /// A cancelled turn leaves its call as it was, and nothing will end it:

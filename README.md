@@ -25,8 +25,8 @@
 
 <p align="center">
   You describe a goal. A daemon (<code>ariadned</code>) breaks it into tasks with an <b>orchestrator</b> agent,<br>
-  hands each task to an <b>author</b> agent that owns it until it lands,<br>
-  and gates that landing behind one or more <b>reviewer</b> agents.
+  and steps each task through a <b>workflow</b>: a kanban of columns, one agent per column,<br>
+  that builds, reviews and finishes the change in order.
 </p>
 
 <p align="center">
@@ -37,13 +37,20 @@
   any compatible agent. A goal picks each agent's model and effort.
 </p>
 
-<p align="center">
-  <img src="assets/demo.gif" alt="Creating a goal and watching its tasks run from the terminal">
-</p>
-
-<p align="center">
-  <sub>One goal, its tasks, and the agents running them — from the terminal.</sub>
-</p>
+<table>
+<tr>
+<td width="50%" align="center">
+<a href="assets/demo.gif"><img src="assets/demo.gif" alt="Creating a goal and watching its tasks run from the terminal"></a>
+<br>
+<sub>Creating a goal and watching its tasks run — from the terminal.</sub>
+</td>
+<td width="50%" align="center">
+<a href="assets/demo-ui.gif"><img src="assets/demo-ui.gif" alt="Creating the same goal and opening one of its tasks in Ariadne Desktop"></a>
+<br>
+<sub>The same goal, opened on one of its tasks — in Ariadne Desktop.</sub>
+</td>
+</tr>
+</table>
 
 ## Features
 
@@ -64,14 +71,15 @@ until the plan is finalized, and <code>ariadne task update</code> is yours until
 </tr>
 <tr>
 <td width="50%" valign="top">
-<h4>✅ Review gates every landing</h4>
-Reviewers read the diff in detached read-only worktrees and approve or request changes. A change
-request resumes the author with the feedback.
+<h4>✅ A workflow for every goal</h4>
+A task steps through its workflow's columns in order — build, review, finish — one agent per
+column, failing a step back for changes rather than passing broken work on.
 </td>
 <td width="50%" valign="top">
-<h4>🚢 Three ways a task can end</h4>
-<code>merge</code> squashes onto the base branch, <code>pull_request</code> opens a request and
-sees it through the forge, and <code>none</code> lands nothing at all.
+<h4>🚢 Two shipped workflows, and your own</h4>
+<code>develop-review-merge</code> squashes and fast-forwards onto the base branch;
+<code>develop-review-pr</code> opens a request through the forge and keeps it until a human
+merges it. Write your own in a plain-text document, column by column.
 </td>
 </tr>
 <tr>
@@ -97,7 +105,24 @@ markdown as it streams, a picker for permissions, Escape to cancel a turn.
 <h4>⚡ Nothing polls</h4>
 The daemon streams: events, agent consoles and its own log, over a REST API with OpenAPI at
 <code>/api-docs/openapi.json</code> and SSE at <code>/v1/events/stream</code>. A session's
-console is also served as terminal bytes over a WebSocket, for a terminal emulator.
+console is also served as terminal bytes over a WebSocket, for a terminal emulator. A signed
+forge webhook wakes the same way, and a fallback timer is the one thing that still polls.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<h4>🔄 Switch agents or models live</h4>
+<code>ariadne session switch</code> moves to another agent or model mid-conversation: stop, start fresh with
+what the old session knew, and the seat follows. When a model exhausts its quota, the daemon switches
+automatically.
+</td>
+<td width="50%" valign="top">
+<h4>🔀 GitHub, hands off</h4>
+Enable a registered repository's forge and Ariadne reads <code>gh</code> for
+you: the agent of a task's <code>pr</code> column keeps the request it opened with
+<code>pr-babysit</code>, answering every comment and clearing every check until you merge it, a
+<code>pr-reviewer</code> session posts findings by priority on the ones you are asked to review,
+and none ever approves or merges in your name.
 </td>
 </tr>
 </table>
@@ -109,10 +134,6 @@ event stream. It is a pure REST/SSE client of the daemon's TCP listener — the
 same code runs in a browser tab and in the packaged [Tauri
 2](https://v2.tauri.app) app — and `scripts/install.sh` installs it beside the
 CLI.
-
-<p align="center">
-  <img src="assets/demo-ui.gif" alt="Ariadne Desktop showing a goal, its tasks and an agent console">
-</p>
 
 > [!NOTE]
 > The daemon's TCP listener is off by default. Set `tcp_listen` in
@@ -152,22 +173,28 @@ The [manual](docs/README.md) has the rest.
 └─────────┘                              └──────┬───────────────────────┘
      ▲                                          │ spawns (ACP agents, worktree per task)
      │ MCP (stdio)                              ▼
-     │        ┌──────────────┐   ┌────────┐   ┌──────────┐
-     └─────── │ orchestrator │   │ author │   │ reviewer │  · ACP events report progress
-              └──────────────┘   └────────┘   └──────────┘  · tools via `ariadne mcp serve`
+     │        ┌──────────────┐   ┌───────────────────────────┐
+     └─────── │ orchestrator │   │ one agent per workflow step │  · ACP events report progress
+              └──────────────┘   └───────────────────────────┘  · tools via `ariadne mcp serve`
 ```
 
 [How Ariadne works](docs/how-it-works.md) follows one goal from the question
-the orchestrator asks to the commit on the base branch.
+the orchestrator asks to the last column of its workflow.
 
 <details>
 <summary><b>The top-level tree</b></summary>
 
 ```
+.github/         CI, release-please and the release-assets workflows — see
+                 .github/AGENTS.md and .github/RELEASING.md
+assets/          branding and the two demo GIFs — see assets/AGENTS.md
+bench/           reproducible experiments that select production defaults — see
+                 bench/README.md
 crates/          the Rust workspace: ariadned, the ariadne CLI and the libraries
                  they share — crate by crate in crates/AGENTS.md
 docs/            the manual: install, the CLI, events, configuration
 scripts/         install.sh / uninstall.sh + lib.sh, their shared step output
+specs/           what each subsystem does, as it stands — see specs/README.md
 ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the daemon's
                  TCP listener, outside the cargo workspace — see ui/AGENTS.md and
                  ui/README.md
@@ -179,14 +206,19 @@ ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the dae
 
 | Page | What it covers |
 | --- | --- |
-| [Installing Ariadne](docs/install.md) | the installer, ACP agents, the release assets, the desktop app, and the daemon service |
+| [Installing Ariadne](docs/install.md) | `scripts/install.sh`, ACP agents, the release assets, the desktop app, and the daemon service |
 | [Shell completion](docs/shell-completion.md) | dynamic completions for bash, zsh and fish, and the static fallback |
-| [Using the CLI](docs/cli.md) | the command tour, the reference, and how tables and colour are printed |
-| [Following what happens](docs/following-events.md) | events, the log streams and the `--watch` tables |
+| [Using the CLI](docs/cli.md) | the command tour, the reference, `ariadne doctor`, and how tables and colour are printed |
+| [Workflows](docs/workflows.md) | the document syntax, the two shipped workflows, every gate, and a repository's default and a goal's override |
+| [Following what happens](docs/following-events.md) | `ariadne events`, the log streams and the `--watch` tables |
 | [Configuration](docs/configuration.md) | every key of `~/.ariadne/config.toml`, and the environment that addresses a daemon |
-| [Permission modes](docs/permissions.md) | automatic, prompted, and remembered ACP permission answers |
+| [Telemetry](docs/telemetry.md) | the telemetry database, what it keeps and for how long, and reading the daemon's log |
+| [Permission modes](docs/permissions.md) | automatic, prompted, remembered, and AI-judged ACP permission answers |
+| [Stats](docs/stats.md) | what the work did, in five questions: the filters and `ariadne stats` |
+| [Dashboards](docs/dashboards.md) | the Stats screen's Perses dashboard: editing a panel, saving, resetting, and `ariadne dashboard` |
 | [Resuming a session](docs/resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
-| [How Ariadne works](docs/how-it-works.md) | planning, authoring, review, landing, and ACP sessions |
+| [How Ariadne works](docs/how-it-works.md) | a goal from planning through its workflow's columns, task lifecycle, and ACP sessions |
+| [The forge integration](docs/forge.md) | enabling GitHub, the pull request and review sessions, webhooks and the tunnel, issues |
 | [Ariadne Desktop](ui/README.md) | running the desktop app |
 
 ## Development
@@ -196,7 +228,8 @@ the commit types included — they are written down there and nowhere else — a
 points at the file each area keeps: [`crates/AGENTS.md`](crates/AGENTS.md) for
 the Rust workspace and its cargo commands,
 [`ui/AGENTS.md`](ui/AGENTS.md) for the desktop app. [`specs/`](specs/README.md)
-describes what each subsystem does, as it stands. The release loop is in
+describes what each subsystem does, as it stands. [`bench/`](bench/README.md)
+holds reproducible experiments that select production defaults. The release loop is in
 [`.github/RELEASING.md`](.github/RELEASING.md).
 
 ## License

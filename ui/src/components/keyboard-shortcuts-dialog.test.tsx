@@ -10,6 +10,8 @@
 import { render, screen } from "@testing-library/react"
 import { expect, it } from "vitest"
 
+import { shortcutLabel } from "@/lib/shortcuts"
+
 import { KeyboardShortcutsDialog } from "./keyboard-shortcuts-dialog"
 
 /** Every chord the README documents, as the sheet spells it. */
@@ -21,10 +23,16 @@ it("lists every chord, screen by screen", () => {
   for (const chord of CHORDS) {
     expect(screen.getByText(chord)).toBeTruthy()
   }
-  // The two ⌘ chords are spelled for the platform the sheet is read on, so
-  // they are matched by what they do rather than by their glyph.
+  // The ⌘ chords are spelled for the platform the sheet is read on, so
+  // the held ones are matched by what they do rather than by a hardcoded
+  // glyph — except ⌘Escape, whose key cell is asserted below, computed the
+  // same way the row itself is.
   expect(screen.getByText("Open the command palette")).toBeTruthy()
   expect(screen.getByText("Open settings")).toBeTruthy()
+  expect(screen.getByText(shortcutLabel({ key: "Esc" }))).toBeTruthy()
+  expect(
+    screen.getByText("Leave a focused console for the pane or the modal around it"),
+  ).toBeTruthy()
   // The screens are named, not just keyed.
   expect(screen.getByText("Go to Sessions")).toBeTruthy()
 })

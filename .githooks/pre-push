@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Runs every CI check but the test suites for every area a push touches: the
+# Rust workspace, the UI, and the Tauri shell. CI alone runs cargo nextest
+# and npm test.
+# Run by hand: .githooks/pre-push --all
+set -euo pipefail
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$HOOK_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+# shellcheck source=lib.sh disable=SC1091
+. "$HOOK_DIR/lib.sh"
+
+ZERO_SHA="0000000000000000000000000000000000000000"
+
+all=0
+remote_name="origin"
+if [ "${1:-}" = "--all" ]; then
+    all=1
+else
+    remote_name="${1:-origin}"
+fi
+
+run_rust=0
+run_ui=0
+run_dashboard=0
+run_tauri=0
+
+mark_area() {
+    case "$1" in
+        rust) run_rust=1 ;;
+        ui) run_ui=1 ;;
+        dashboard) run_dashboard=1 ;;
+        tauri) run_tauri=1 ;;
+    esac
+}
+
+if [ "$all" = 1 ]; then
+    run_rust=1
+    run_ui=1
+    run_dashboard=1
+    run_tauri=1
+else
+    diff_paths_file="$(mktemp)"
+    trap 'rm -f "$diff_paths_file"' EXIT
+
+    had_line=0
+    run_all=0
+    while read -r _ local_sha _ remote_sha; do
+        [ -z "${local_sha:-}" ] && continue
+        had_line=1
+        if [ "$local_sha" = "$ZERO_SHA" ]; then
+            continue
+        fi
+        if [ "$remote_sha" = "$ZERO_SHA" ]; then
+            if ! start="$(git merge-base "$local_sha" "$remote_name/main" 2>/dev/null)"; then
+                run_all=1
+                continue
+            fi
+        else
+            start="$remote_sha"
+        fi
+        if ! git diff --name-only -z "$start".."$local_sha" > "$diff_paths_file" 2>/dev/null; then
+            run_all=1
+            continue
+        fi
+        while IFS= read -r -d '' path; do
+            [ -z "$path" ] && continue
+            mark_area "$(githooks_area_for "$path")"
+        done < "$diff_paths_file"
+    done
+
+    if [ "$had_line" = 0 ] || [ "$run_all" = 1 ]; then
+        run_rust=1
+        run_ui=1
+        run_dashboard=1
+        run_tauri=1
+    fi
+fi
+
+if [ "$run_rust" = 1 ] || [ "$run_tauri" = 1 ]; then
+    githooks_run cargo machete .
+fi
+
+if [ "$run_rust" = 1 ]; then
+    githooks_run cargo audit
+    githooks_run cargo build --locked --workspace --bins
+    githooks_run cargo test --doc --workspace
+    githooks_run cargo clippy --workspace --all-targets -- -D warnings
+    githooks_run cargo fmt --all -- --check
+    githooks_run scripts/check-unused-rust
+    githooks_run scripts/check-migrations.sh
+fi
+
+if [ "$run_ui" = 1 ]; then
+    if [ ! -d ui/node_modules ]; then
+        (cd ui && githooks_run npm ci)
+    fi
+    (cd ui && githooks_run npm run check:audit)
+    (cd ui && githooks_run npm run lint)
+    (cd ui && githooks_run npm run typecheck)
+    (cd ui && githooks_run npm run check:unused)
+fi
+
+if [ "$run_dashboard" = 1 ]; then
+    if [ ! -d ui/dashboard/node_modules ]; then
+        (cd ui/dashboard && githooks_run npm ci)
+    fi
+    (cd ui/dashboard && githooks_run npm run check:audit)
+    (cd ui/dashboard && githooks_run npm run lint)
+    (cd ui/dashboard && githooks_run npm run typecheck)
+    (cd ui/dashboard && githooks_run npm run check:unused)
+fi
+
+if [ "$run_tauri" = 1 ]; then
+    (cd ui/src-tauri && githooks_run cargo fmt --all -- --check)
+    (cd ui/src-tauri && githooks_run cargo check)
+fi

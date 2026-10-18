@@ -12,6 +12,14 @@
  * and the effort that model is run at. A model is required and the empty effort
  * uses the model's default effort.
  *
+ * The workflow the goal's tasks move through is picked here too, and starts
+ * out as the first repository's own default: a preselect the dialog makes,
+ * not the user, so it must not be what makes an otherwise untouched form ask
+ * about walking away. Picking the workflow by hand before or after that
+ * stands. The workflow says how a task ends, so the dialog sends no landing:
+ * a goal with no workflow ends its tasks the way its repository's default
+ * landing says.
+ *
  * Everything else the daemon still validates: the client only catches what it
  * can know on its own (empty title, nothing picked) and shows the daemon's
  * error envelope verbatim.
@@ -19,6 +27,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useQuery } from "@tanstack/react-query"
+import { useEffect, useRef } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
@@ -44,6 +53,7 @@ import { PinPicker } from "@/features/models/pin-picker"
 import { modelsQueryOptions } from "@/features/models/queries"
 import { NoRepositories as SharedNoRepositories } from "@/features/repositories/no-repositories"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
+import { pickedWorkflow, WorkflowSelect } from "@/features/workflows/workflow-select"
 import { paths } from "@/routes/paths"
 
 import { useCreateGoal } from "./queries"
@@ -59,6 +69,8 @@ const formSchema = z.object({
   // whatever the agent runs it at.
   effort: z.string(),
   repository_ids: z.array(z.string()).min(1, "Pick at least one repository."),
+  // A workflow's name, or empty for none.
+  workflow: z.string(),
 })
 
 type CreateGoalForm = z.infer<typeof formSchema>
@@ -69,16 +81,19 @@ const DEFAULT_VALUES: CreateGoalForm = {
   model: "",
   effort: "",
   repository_ids: [],
+  workflow: "",
 }
 
 export function CreateGoalDialog({
   open,
   onOpenChange,
   onCreated,
+  initial,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated?: (goal: GoalDto) => void
+  initial?: { title: string; description: string; repository_id: string; issue_url: string }
 }) {
   const repositories = useQuery({ ...repositoriesQueryOptions(), enabled: open })
   const models = useQuery({ ...modelsQueryOptions(), enabled: open })
@@ -90,22 +105,52 @@ export function CreateGoalDialog({
   })
   const errors = form.formState.errors
 
-  useResetOnOpen(open, form, DEFAULT_VALUES, createGoal)
+  useResetOnOpen(
+    open,
+    form,
+    initial
+      ? {
+          ...DEFAULT_VALUES,
+          title: initial.title,
+          description: initial.description,
+          repository_ids: [initial.repository_id],
+        }
+      : DEFAULT_VALUES,
+    createGoal,
+  )
   useClearErrorOnEdit(form, createGoal)
 
   // The effort the orchestrator is pinned at, which the picker holds beside
   // the model: one control, two fields.
   const chosenEffort = form.watch("effort")
 
+  // The workflow starts out as the first picked repository's own default — a
+  // preselect the dialog makes, not a sync kept up past a pick by hand, so a
+  // workflow the user already picked is never taken back.
+  const firstRepositoryId = form.watch("repository_ids")[0]
+  const workflowPicked = useRef(false)
+  useEffect(() => {
+    if (open) workflowPicked.current = false
+  }, [open])
+  useEffect(() => {
+    if (!firstRepositoryId || workflowPicked.current) return
+    const repository = repositories.data?.find((one) => one.id === firstRepositoryId)
+    if (!repository) return
+    form.setValue("workflow", repository.default_workflow ?? "", { shouldDirty: false })
+  }, [firstRepositoryId, repositories.data, form])
+
   async function onSubmit(values: CreateGoalForm) {
     const model = values.model.trim()
     const effort = values.effort.trim()
+    const workflow = pickedWorkflow(values.workflow)
     const body: CreateGoalRequest = {
       title: values.title.trim(),
       description: values.description,
+      ...(initial ? { issue_url: initial.issue_url } : {}),
       model,
       ...(effort.length > 0 ? { effort } : {}),
       repository_ids: values.repository_ids,
+      ...(workflow ? { workflow } : {}),
     }
     try {
       const goal = await createGoal.mutateAsync(body)
@@ -200,6 +245,24 @@ export function CreateGoalDialog({
               </Field>
             )}
           />
+
+          <Field>
+            <FieldLabel htmlFor="goal-workflow">Workflow</FieldLabel>
+            <WorkflowSelect
+              control={form.control}
+              name="workflow"
+              id="goal-workflow"
+              enabled={open}
+              allowInherit
+              onValueChange={() => {
+                workflowPicked.current = true
+              }}
+            />
+            <FieldDescription>
+              The columns every task of this goal moves through, one agent each. Starts from the
+              first repository picked above.
+            </FieldDescription>
+          </Field>
 
           <Field data-invalid={errors.model ? "" : undefined}>
             <FieldLabel htmlFor="goal-pin">Orchestrator runs on</FieldLabel>

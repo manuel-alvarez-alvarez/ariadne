@@ -21,16 +21,17 @@ use std::collections::HashMap;
 use anyhow::Result;
 use serde::Serialize;
 
+use ariadne_api::attention::{AttentionCause, AttentionListDto};
 use ariadne_api::goals::GoalDto;
-use ariadne_api::sessions::SessionDto;
+use ariadne_api::sessions::{SessionEntryDto, SessionKind, SessionPageDto, SessionPageQuery};
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, SseEvent};
 use ariadne_core::{AttentionReason, TaskStatus};
 
-use super::follow;
+use super::{follow, query_path};
 
 use crate::output::table::{check_columns, heading as heading_style, quiet_lines, render_groups};
-use crate::output::{Format, View, empty_state, note, print_json, view};
+use crate::output::{Format, View, age, empty_state, note, print_json, view};
 use board::{Attention, Group, ROWS, group, heading, rows, task_titles};
 
 /// Why a row is on the list — the task reasons and the session reasons in one
@@ -47,6 +48,7 @@ enum Reason {
     WaitingUser,
     AgentError,
     Disconnected,
+    Exhausted,
 }
 
 impl Reason {
@@ -60,24 +62,27 @@ impl Reason {
             Reason::WaitingUser => "waiting for you",
             Reason::AgentError => "agent error",
             Reason::Disconnected => "disconnected",
+            Reason::Exhausted => "exhausted",
         }
     }
 }
 
-/// Whether this task wants the user, and what for. Kept identical to
-/// `taskAttentionReason` in the UI.
-///
-/// `changes_requested` is deliberately not one of them: the reviewer has
-/// spoken and the daemon resumes the author itself, so that task waits on an
-/// agent. A resume that does not happen shows up as the session's own
-/// `disconnected` or `stalled` flag. And `stalled` is checked last because it
-/// is a flag on top of a status — the task's column mirrors any of its
-/// sessions carrying `stalled` and comes down when that session's does — so a
-/// task that also failed reads as failed.
+/// Whether this task wants the user on the strength of its bare status
+/// alone, kept only as the fallback a recovery read that could not be
+/// read in full leaves standing: `failed` is terminal, and once
+/// `GET /v1/attention` can see it, its own recovery item — named and
+/// actionable, and silent exactly where recovery is still the one
+/// working it — is what this board shows for it instead (`group`, gated
+/// on `recovery.complete`). `stalled` is never reported here at
+/// all: it is a flag *on top of* a status, raised while automatic
+/// recovery (a nudge, then a relaunch) is still working the agent, and
+/// showing it immediately would be exactly the "automatic recovery still
+/// trying" row 009's attention contract asks never to raise. If the
+/// relaunch also fails, the task fails, and that is this board's business
+/// again, the same way any other failure is.
 fn task_reason(task: &TaskDto) -> Option<Reason> {
     match task.status {
         TaskStatus::Failed => Some(Reason::Failed),
-        _ if task.stalled => Some(Reason::Stalled),
         _ => None,
     }
 }
@@ -91,6 +96,7 @@ impl From<AttentionReason> for Reason {
             AttentionReason::AgentError => Reason::AgentError,
             AttentionReason::Disconnected => Reason::Disconnected,
             AttentionReason::Stalled => Reason::Stalled,
+            AttentionReason::Exhausted => Reason::Exhausted,
         }
     }
 }
@@ -102,26 +108,100 @@ pub(crate) fn reason_label(reason: AttentionReason) -> &'static str {
     Reason::from(reason).label()
 }
 
-/// Whether this session wants the user, and what for. The stored reason is the
-/// whole rule, as in the UI's `sessionAttention`.
-///
-/// A dead session raises no reason of its own on purpose: the daemon flags the
-/// agent it still owes work to and leaves the rest alone, so a reviewer that
-/// exited after voting is finished, not stuck — and reading `status` here
-/// would put it back on the list the daemon kept it off.
-fn session_reason(session: &SessionDto) -> Option<Reason> {
-    session.attention_reason.map(Into::into)
+/// Whether this session wants the user, and what for. The stored reason is
+/// the whole rule, as in the UI's `sessionAttention` — except `exhausted`,
+/// which this board no longer raises a row for on its own: automatic model
+/// switching may still clear the bare flag on the very next tick, so
+/// whether it is still worth a person's time is `GET /v1/attention`'s own
+/// call, not a flag read here. A `quota` item carries the session's own
+/// subject already (`recovery_items_section`), so folding it into this
+/// board's rows would say the same thing twice. A pull request session's
+/// `waiting_user` is the same (029): the `pull_request` attention
+/// producer reads the forge's own evidence against the request's claim,
+/// rather than this board re-deriving a reason from the bare flag a review
+/// posted or a ready report alone used to raise.
+fn session_reason(session: &SessionEntryDto) -> Option<Reason> {
+    match session.attention_reason {
+        Some(AttentionReason::Exhausted) => None,
+        Some(AttentionReason::WaitingUser) if session.pull_request_id.is_some() => None,
+        reason => reason.map(Into::into),
+    }
+}
+
+/// Every item `GET /v1/attention` currently finds, printed as its own
+/// section below the per-goal board: cause, summary, the one action that
+/// clears it, how long it has waited, and what it affects. None of these
+/// belongs to one goal the way a task or a loose session's row does, so
+/// they stand apart from the board rather than inside one of its groups.
+fn recovery_items_section(
+    recovery: &AttentionListDto,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
+    if recovery.items.is_empty() {
+        return None;
+    }
+    let mut lines = vec!["NEEDS ATTENTION".to_string()];
+    for item in &recovery.items {
+        lines.push(format!(
+            "- [{}] {} ({} old)",
+            cause_label(item.reason),
+            item.summary,
+            age(&item.since, now)
+        ));
+        lines.push(format!("  action: {}", item.required_action));
+        if let ariadne_api::attention::AttentionTarget::Console { session_id } = &item.target {
+            lines.push(format!("  attach: ariadne attach {session_id}"));
+        }
+        // The id leads so every affected entry stays reachable on its own —
+        // `ariadne attach <id>` or `session switch <id>` — not only the
+        // item's own single target, which a grouped item can answer with
+        // only one of several affected sessions.
+        for subject in &item.affected {
+            lines.push(format!("  affects: {} ({})", subject.id, subject.label));
+        }
+    }
+    Some(lines.join("\n"))
+}
+
+/// `-q`'s rows: every goal's own, and one per recovery item — a
+/// configuration-only blocker with no goal of its own would otherwise
+/// print nothing under `-q` while the table still showed it.
+fn quiet_rows(
+    attention: &Attention,
+    titles: &HashMap<String, String>,
+    now: chrono::DateTime<chrono::Utc>,
+    recovery: &AttentionListDto,
+) -> Vec<Vec<String>> {
+    let mut rows: Vec<Vec<String>> = attention
+        .goals
+        .iter()
+        .flat_map(|group| board::rows(group, titles, now))
+        .collect();
+    rows.extend(recovery.items.iter().map(|item| vec![item.id.clone()]));
+    rows
+}
+
+/// The table spelling of a recovery cause.
+fn cause_label(cause: AttentionCause) -> &'static str {
+    match cause {
+        AttentionCause::Access => "access",
+        AttentionCause::Quota => "quota",
+        AttentionCause::Configuration => "configuration",
+        AttentionCause::Resource => "resource",
+        AttentionCause::Unknown => "unknown",
+    }
 }
 
 /// When this session's row last moved: when its reason was raised, else the
 /// death that put it here — and `created_at` only for a session the daemon has
 /// not stamped an end on yet. The UI's rows age by the same three.
-fn session_at(session: &SessionDto) -> &str {
+fn session_at(session: &SessionEntryDto) -> &str {
     session
         .attention_since
         .as_deref()
         .or(session.ended_at.as_deref())
-        .unwrap_or(&session.created_at)
+        .or(session.created_at.as_deref())
+        .unwrap_or_default()
 }
 
 /// The events that can put a row on this list or take one off it: a task's
@@ -138,6 +218,15 @@ fn relevant(frame: &SseEvent) -> bool {
             | "task_updated"
             | "session_created"
             | "session_updated"
+            // A repository's forge fetch error is a configuration recovery
+            // item's own evidence, and its removal or a goal's is what
+            // takes a stale one down (`GET /v1/attention`).
+            | "repository_updated"
+            | "repository_deleted"
+            // A reviewer session's own give-up, set or cleared, is a
+            // recovery item's own evidence
+            // (`PullRequestRow::reviewer_given_up_at`).
+            | "pull_requests_changed"
     )
 }
 
@@ -204,41 +293,109 @@ pub(crate) async fn run(client: &Client, watch: bool, format: Format) -> Result<
     .await
 }
 
+/// Every Ariadne-kind session, over however many pages `GET /v1/sessions`
+/// paged them into — an outside conversation carries no `attention_reason`
+/// and is no business of this board, so the daemon is asked to leave it out
+/// before the first page is even fetched.
+///
+/// Unfiltered otherwise, and narrowed by [`session_reason`] below rather than
+/// by the daemon's `attention` filter: filtering here is what keeps the rule
+/// — "the daemon raised a reason for it" — in one place with the UI, which
+/// reads the same unfiltered list. `all` is set so a session that ended, or
+/// last moved, more than 7 days ago is still seen: the daemon flags it for
+/// exactly that, outstanding work owed to a dead agent, however old.
+async fn ariadne_sessions(client: &Client) -> Result<Vec<SessionEntryDto>> {
+    let query = SessionPageQuery {
+        kind: Some(SessionKind::Ariadne),
+        all: Some(true),
+        ..SessionPageQuery::default()
+    };
+    let mut page: SessionPageDto = client
+        .get_json(&query_path("/v1/sessions", &query)?)
+        .await?;
+    let mut sessions = page.sessions;
+    while let Some(cursor) = page.next_cursor {
+        page = client
+            .get_json(&query_path(
+                "/v1/sessions",
+                &SessionPageQuery {
+                    cursor: Some(cursor),
+                    ..query.clone()
+                },
+            )?)
+            .await?;
+        sessions.extend(page.sessions);
+    }
+    Ok(sessions)
+}
+
 /// The list as it stands, read afresh: a redraw is the current answer, never
 /// the last one patched up from the events that woke it.
 async fn render(client: &Client, format: Format) -> Result<()> {
     let goals: Vec<GoalDto> = client.get_json("/v1/goals").await?;
     let tasks: Vec<TaskDto> = client.get_json("/v1/tasks").await?;
-    // Unfiltered, and narrowed by `session_reason` below rather than by the
-    // daemon's `attention` filter: filtering here is what keeps the rule — "the
-    // daemon raised a reason for it" — in one place with the UI, which reads
-    // the same unfiltered list.
-    let sessions: Vec<SessionDto> = client.get_json("/v1/sessions").await?;
+    let sessions = ariadne_sessions(client).await?;
+    let recovery: AttentionListDto = client.get_json("/v1/attention").await?;
+    let now = chrono::Utc::now();
+    let recovery_section = recovery_items_section(&recovery, now);
 
     // Every task, not only the ones on the list: a session's row is named by
     // the task it was run for, which is usually a task that is doing fine.
     let titles = task_titles(&tasks);
-    let attention = group(goals, tasks, sessions);
-    let now = chrono::Utc::now();
+    let attention = group(goals, tasks, sessions, recovery.complete);
+    // A producer that could not read its evidence costs the list its own
+    // items, not an all-clear: an empty board under an incomplete read is
+    // unknown, never "nothing needs attention" (009).
+    let incomplete = !recovery.complete;
     match format {
-        Format::Json => print_json(&attention)?,
+        Format::Json => print_json(&serde_json::json!({
+            "goals": &attention.goals,
+            "count": attention.count + recovery.items.len(),
+            "recovery": &recovery.items,
+            "complete": recovery.complete,
+        }))?,
         // `-q` is the same promise here as in every `ls`: the ids, one per
         // line, so what is stuck can be piped into whatever unsticks it. The
         // goal headings are for eyes and go with the table.
         Format::Table if view().quiet => {
-            let rows: Vec<Vec<String>> = attention
-                .goals
-                .iter()
-                .flat_map(|group| rows(group, &titles, now))
-                .collect();
+            let rows = quiet_rows(&attention, &titles, now, &recovery);
             if !rows.is_empty() {
                 println!("{}", quiet_lines(&rows));
             }
+            // A bare identifier stream has no field to carry `complete` in,
+            // so an incomplete read says so the only way it can: failing
+            // the command rather than succeeding silently on whatever ids
+            // it did get, which a script piping them could not tell apart
+            // from a read that saw everything.
+            if incomplete {
+                anyhow::bail!(
+                    "some of what needs attention could not be read; the ids above are not the \
+                     whole list"
+                );
+            }
         }
-        Format::Table if attention.goals.is_empty() => {
-            note(&empty_state("Nothing needs attention.", None));
+        Format::Table if attention.goals.is_empty() && recovery_section.is_none() => {
+            if incomplete {
+                note("Some of what needs attention could not be read; showing what is known.");
+            } else {
+                note(&empty_state("Nothing needs attention.", None));
+            }
         }
-        Format::Table => println!("{}", board(&attention, &titles, now, view())?),
+        Format::Table => {
+            if !attention.goals.is_empty() {
+                println!("{}", board(&attention, &titles, now, view())?);
+            }
+            if let Some(section) = recovery_section {
+                if !attention.goals.is_empty() {
+                    println!();
+                }
+                println!("{section}");
+            }
+            if incomplete {
+                println!();
+                note("Some of what needs attention could not be read; showing what is known.");
+            }
+        }
     }
     Ok(())
 }
@@ -247,34 +404,78 @@ async fn render(client: &Client, format: Format) -> Result<()> {
 pub(crate) mod tests {
     use super::*;
 
+    use ariadne_api::attention::AttentionSubjectKind;
     use ariadne_core::SessionStatus;
 
     use crate::commands::fixtures::{self, NOW};
     use crate::output::style;
 
+    fn frame(event: &str) -> SseEvent {
+        SseEvent {
+            event: event.into(),
+            data: String::new(),
+            id: None,
+        }
+    }
+
+    /// `--watch` redraws on a reviewer session's own give-up evidence
+    /// (`PullRequestRow::reviewer_given_up_at`), which rides on
+    /// `pull_requests_changed`, the same as it already does on a goal's
+    /// own confirmed-turn and give-up evidence, which rides on
+    /// `goal_updated`.
+    #[test]
+    fn watch_redraws_on_a_goals_or_a_pull_requests_own_recovery_evidence() {
+        assert!(relevant(&frame("goal_updated")));
+        assert!(relevant(&frame("pull_requests_changed")));
+        assert!(!relevant(&frame("ai_permissions_updated")));
+    }
+
     /// A failed session the daemon raised nothing for — which is nobody's
     /// business. `flagged` and `dead` are the ones that are on the list.
-    pub(crate) fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
-        SessionDto {
-            status: SessionStatus::Failed,
-            ..fixtures::session(id, goal_id, task_id)
+    pub(crate) fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionEntryDto {
+        SessionEntryDto {
+            kind: SessionKind::Ariadne,
+            id: id.into(),
+            agent_id: "stub".into(),
+            title: None,
+            goal_id: Some(goal_id.into()),
+            task_id: task_id.map(Into::into),
+            seat: Some(match task_id {
+                Some(_) => ariadne_core::Seat::Agent,
+                None => ariadne_core::Seat::Orchestrator,
+            }),
+            task_agent_id: Some("01DEVELOP".into()),
+            model: Some("stub:test-model".into()),
+            effort: None,
+            internal_session_id: None,
+            working_directory: None,
+            status: Some(SessionStatus::Failed),
+            attention_reason: None,
+            attention_since: None,
+            last_activity_at: None,
+            usage: Some(Default::default()),
+            context_used: None,
+            context_size: None,
+            created_at: Some(NOW.into()),
+            ended_at: None,
+            pull_request_id: None,
         }
     }
 
     /// A live session the daemon has flagged: still running, and on the list
     /// because of the flag — the only way onto it.
-    pub(crate) fn flagged(id: &str, goal_id: &str, reason: AttentionReason) -> SessionDto {
-        SessionDto {
+    pub(crate) fn flagged(id: &str, goal_id: &str, reason: AttentionReason) -> SessionEntryDto {
+        SessionEntryDto {
             attention_reason: Some(reason),
             attention_since: Some("2026-08-18T11:00:00Z".into()),
-            ..fixtures::session(id, goal_id, Some("01T9"))
+            ..session(id, goal_id, Some("01T9"))
         }
     }
 
     /// A dead session the daemon still owes work to: flagged, so on the list,
     /// and aged by its death since no `attention_since` was stamped.
-    pub(crate) fn dead(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
-        SessionDto {
+    pub(crate) fn dead(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionEntryDto {
+        SessionEntryDto {
             attention_reason: Some(AttentionReason::Disconnected),
             ..session(id, goal_id, task_id)
         }
@@ -301,26 +502,27 @@ pub(crate) mod tests {
         let reason = |status, stalled| task_reason(&task("01T", "01G", status, stalled));
         assert_eq!(reason(TaskStatus::Failed, false), Some(Reason::Failed));
         assert_eq!(reason(TaskStatus::Failed, true), Some(Reason::Failed));
-        assert_eq!(reason(TaskStatus::InProgress, true), Some(Reason::Stalled));
+        // `stalled` is never reported here: it is a flag raised while
+        // automatic recovery (a nudge, then a relaunch) is still trying,
+        // and showing it immediately would be the "still trying" row this
+        // list never raises.
+        assert_eq!(reason(TaskStatus::InProgress, true), None);
         assert_eq!(reason(TaskStatus::InProgress, false), None);
         assert_eq!(reason(TaskStatus::Finished, false), None);
 
-        // Waiting on an agent, not on a person — but a stall on top of either
-        // is still a stall.
-        for status in [TaskStatus::ChangesRequested, TaskStatus::Approved] {
-            assert_eq!(reason(status, false), None, "{}", status.as_str());
-            assert_eq!(reason(status, true), Some(Reason::Stalled));
-        }
+        // A task on its `pr` column waits on the forge, not on a person.
         let published = TaskDto {
             pr_url: Some("https://github.com/owner/repo/pull/12".into()),
-            ..task("01T", "01G", TaskStatus::Approved, false)
+            ..task("01T", "01G", TaskStatus::InProgress, false)
         };
         assert_eq!(task_reason(&published), None);
     }
 
     /// The reasons the UI reports for a session: the daemon's flag, and
     /// nothing else — an agent nothing is owed to is nobody's business,
-    /// whether it is working or long dead.
+    /// whether it is working or long dead. `exhausted` is never one of
+    /// them: this board leaves it to `GET /v1/attention`'s own `quota`
+    /// item entirely (`recovery_items_section`).
     #[test]
     fn a_session_is_reported_for_the_reason_the_ui_would_give() {
         for (flag, expected) in [
@@ -341,6 +543,28 @@ pub(crate) mod tests {
                 flag.as_str()
             );
         }
+        assert_eq!(
+            session_reason(&flagged("01S", "01GA", AttentionReason::Exhausted)),
+            None
+        );
+
+        // A pull request session's own `waiting_user` raises nothing of
+        // its own any more: the `pull_request` attention producer reads
+        // the forge's own evidence against the request's claim instead
+        // (029), rather than this board re-deriving a reason from the bare
+        // flag.
+        let pull_request_session = SessionEntryDto {
+            goal_id: None,
+            task_id: None,
+            pull_request_id: Some("01PR".into()),
+            ..flagged("01S", "01GA", AttentionReason::WaitingUser)
+        };
+        assert_eq!(session_reason(&pull_request_session), None);
+        let reviewer_session = SessionEntryDto {
+            seat: Some(ariadne_core::Seat::Reviewer),
+            ..pull_request_session
+        };
+        assert_eq!(session_reason(&reviewer_session), None);
 
         // Dead with nothing owed to it — the daemon deliberately raises no
         // flag for a reviewer that exited after voting — so it is not here.
@@ -351,8 +575,8 @@ pub(crate) mod tests {
             Some(Reason::Disconnected)
         );
         // A flag survives the death that followed it.
-        let died_after = SessionDto {
-            status: SessionStatus::Failed,
+        let died_after = SessionEntryDto {
+            status: Some(SessionStatus::Failed),
             ..flagged("01S", "01GA", AttentionReason::AgentError)
         };
         assert_eq!(session_reason(&died_after), Some(Reason::AgentError));
@@ -363,12 +587,71 @@ pub(crate) mod tests {
             SessionStatus::Idle,
             SessionStatus::Exited,
         ] {
-            let healthy = SessionDto {
-                status,
+            let healthy = SessionEntryDto {
+                status: Some(status),
                 ..session("01S", "01GA", None)
             };
             assert_eq!(session_reason(&healthy), None, "{}", status.as_str());
         }
+    }
+
+    fn attention_item(
+        reason: AttentionCause,
+        affected: Vec<(AttentionSubjectKind, &str)>,
+    ) -> ariadne_api::attention::AttentionItemDto {
+        use ariadne_api::attention::{AttentionProducer, AttentionSubjectDto, AttentionTarget};
+        ariadne_api::attention::AttentionItemDto {
+            id: "01I".into(),
+            producer: AttentionProducer::Recovery,
+            reason,
+            summary: "a blocker".into(),
+            required_action: "clear it".into(),
+            since: NOW.into(),
+            affected: affected
+                .into_iter()
+                .map(|(kind, id)| AttentionSubjectDto {
+                    kind,
+                    id: id.into(),
+                    label: id.into(),
+                })
+                .collect(),
+            target: AttentionTarget::Settings {
+                section: "forge".into(),
+            },
+        }
+    }
+
+    /// Every item `GET /v1/attention` finds is its own section, whatever
+    /// its cause — a `quota` item included, since this board no longer
+    /// derives a session row from the bare `exhausted` flag at all — and
+    /// each line names the cause, how long it has waited, the action that
+    /// clears it, and what it affects.
+    #[test]
+    fn every_recovery_item_prints_in_its_own_section() {
+        let now = NOW.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
+        let recovery = AttentionListDto {
+            items: vec![attention_item(
+                AttentionCause::Quota,
+                vec![(AttentionSubjectKind::Session, "01S")],
+            )],
+            complete: true,
+        };
+        let section = recovery_items_section(&recovery, now).expect("a quota item has a section");
+        assert!(section.contains("[quota]"), "{section}");
+        assert!(section.contains("a blocker"), "{section}");
+        assert!(section.contains("clear it"), "{section}");
+        assert!(section.contains("01S"), "{section}");
+
+        assert_eq!(
+            recovery_items_section(
+                &AttentionListDto {
+                    items: Vec::new(),
+                    complete: true
+                },
+                now
+            ),
+            None
+        );
     }
 
     /// The three stamps the UI ages a session row by, in its order.
@@ -377,7 +660,7 @@ pub(crate) mod tests {
         let waiting = flagged("01S", "01GA", AttentionReason::WaitingPermission);
         assert_eq!(session_at(&waiting), "2026-08-18T11:00:00Z");
 
-        let died = SessionDto {
+        let died = SessionEntryDto {
             ended_at: Some("2026-08-18T12:00:00Z".into()),
             ..dead("01S", "01GA", None)
         };
@@ -421,6 +704,7 @@ pub(crate) mod tests {
             vec![goal("01GA", "Older goal"), goal("01GB", "Newer goal")],
             tasks,
             Vec::new(),
+            false,
         );
         let screen = board(&attention, &titles, chrono::Utc::now(), &View::plain()).expect("board");
 
@@ -475,10 +759,17 @@ pub(crate) mod tests {
         ];
         let titles = task_titles(&tasks);
         let now = chrono::Utc::now();
+        // `agent_error`, not `disconnected`: a task-tied disconnection is
+        // this board's business only once the task itself fails.
+        let session = SessionEntryDto {
+            attention_reason: Some(AttentionReason::AgentError),
+            ..dead("01S1", "01GA", Some("01T1"))
+        };
         let attention = group(
             vec![goal("01GA", "Older goal"), goal("01GB", "Newer goal")],
             tasks,
-            vec![dead("01S1", "01GA", Some("01T1"))],
+            vec![session],
+            false,
         );
         let all: Vec<Vec<String>> = attention
             .goals
@@ -486,5 +777,184 @@ pub(crate) mod tests {
             .flat_map(|group| rows(group, &titles, now))
             .collect();
         assert_eq!(quiet_lines(&all), "01T2\n01T1\n01S1");
+    }
+
+    /// `-q` is the ids of every recovery item too, not only the per-goal
+    /// board's: a configuration-only blocker has no goal of its own, so it
+    /// would otherwise print nothing under `-q` while the table still
+    /// showed it.
+    #[test]
+    fn quiet_rows_also_names_every_recovery_item() {
+        let attention = group(Vec::new(), Vec::new(), Vec::new(), false);
+        let recovery = AttentionListDto {
+            items: vec![attention_item(
+                AttentionCause::Configuration,
+                vec![(AttentionSubjectKind::Repository, "01R")],
+            )],
+            complete: true,
+        };
+        let rows = quiet_rows(&attention, &HashMap::new(), chrono::Utc::now(), &recovery);
+        assert_eq!(quiet_lines(&rows), "01I");
+    }
+
+    /// The daemon answers `GET /v1/sessions` with a page object, not a bare
+    /// array — decoding it as the latter is exactly the bug this command had.
+    #[tokio::test]
+    async fn the_board_renders_against_a_paged_sessions_response() {
+        use axum::Router;
+        use axum::routing::get;
+
+        async fn goals() -> axum::Json<Vec<GoalDto>> {
+            axum::Json(vec![goal("01GA", "Ship the board")])
+        }
+        async fn tasks() -> axum::Json<Vec<TaskDto>> {
+            axum::Json(vec![task("01T1", "01GA", TaskStatus::Failed, false)])
+        }
+        async fn sessions() -> axum::Json<SessionPageDto> {
+            axum::Json(SessionPageDto {
+                sessions: vec![flagged("01S1", "01GA", AttentionReason::WaitingPermission)],
+                next_cursor: None,
+                total: 1,
+                snapshot_at: NOW.into(),
+            })
+        }
+        async fn attention() -> axum::Json<AttentionListDto> {
+            axum::Json(AttentionListDto {
+                items: Vec::new(),
+                complete: true,
+            })
+        }
+
+        let app = Router::new()
+            .route("/v1/goals", get(goals))
+            .route("/v1/tasks", get(tasks))
+            .route("/v1/sessions", get(sessions))
+            .route("/v1/attention", get(attention));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = Client::tcp(format!("http://{address}"));
+        let rendered = render(&client, Format::Json).await;
+        server.abort();
+
+        rendered.expect("a page object decodes, where a bare array once failed");
+    }
+
+    /// `-q` under an incomplete recovery read fails the command: a bare
+    /// identifier stream has no field to carry `complete` in, so a script
+    /// piping those ids has to be told some other way that they are not
+    /// the whole list.
+    #[tokio::test]
+    async fn quiet_mode_fails_on_an_incomplete_recovery_read() {
+        use axum::Router;
+        use axum::routing::get;
+
+        crate::output::init(crate::output::View {
+            quiet: true,
+            ..crate::output::View::plain()
+        });
+
+        async fn goals() -> axum::Json<Vec<GoalDto>> {
+            axum::Json(Vec::new())
+        }
+        async fn tasks() -> axum::Json<Vec<TaskDto>> {
+            axum::Json(Vec::new())
+        }
+        async fn sessions() -> axum::Json<SessionPageDto> {
+            axum::Json(SessionPageDto {
+                sessions: Vec::new(),
+                next_cursor: None,
+                total: 0,
+                snapshot_at: NOW.into(),
+            })
+        }
+        async fn attention() -> axum::Json<AttentionListDto> {
+            axum::Json(AttentionListDto {
+                items: Vec::new(),
+                complete: false,
+            })
+        }
+
+        let app = Router::new()
+            .route("/v1/goals", get(goals))
+            .route("/v1/tasks", get(tasks))
+            .route("/v1/sessions", get(sessions))
+            .route("/v1/attention", get(attention));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = Client::tcp(format!("http://{address}"));
+        let rendered = render(&client, Format::Table).await;
+        server.abort();
+
+        let error = rendered.expect_err("an incomplete read under -q must fail the command");
+        assert!(error.to_string().contains("could not be read"), "{error}");
+    }
+
+    /// A board with more sessions than fit in one page still sees every one
+    /// of them: the Ariadne kind alone is asked for, and every `next_cursor`
+    /// is followed until the page is the last.
+    #[tokio::test]
+    async fn every_page_of_ariadne_sessions_is_fetched() {
+        use std::collections::VecDeque;
+        use std::sync::{Arc, Mutex};
+
+        use axum::Router;
+        use axum::extract::{RawQuery, State};
+        use axum::routing::get;
+
+        #[derive(Clone)]
+        struct Api {
+            pages: Arc<Mutex<VecDeque<SessionPageDto>>>,
+            queries: Arc<Mutex<Vec<String>>>,
+        }
+
+        async fn listed(
+            State(api): State<Api>,
+            RawQuery(query): RawQuery,
+        ) -> axum::Json<SessionPageDto> {
+            api.queries.lock().unwrap().push(query.unwrap_or_default());
+            axum::Json(api.pages.lock().unwrap().pop_front().expect("page"))
+        }
+
+        let queries = Arc::new(Mutex::new(Vec::new()));
+        let api = Api {
+            pages: Arc::new(Mutex::new(VecDeque::from(vec![
+                SessionPageDto {
+                    sessions: vec![flagged("01S1", "01GA", AttentionReason::WaitingPermission)],
+                    next_cursor: Some("after-one".into()),
+                    total: 2,
+                    snapshot_at: NOW.into(),
+                },
+                SessionPageDto {
+                    sessions: vec![flagged("01S2", "01GA", AttentionReason::WaitingInput)],
+                    next_cursor: None,
+                    total: 2,
+                    snapshot_at: NOW.into(),
+                },
+            ]))),
+            queries: queries.clone(),
+        };
+        let app = Router::new()
+            .route("/v1/sessions", get(listed))
+            .with_state(api);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = Client::tcp(format!("http://{address}"));
+        let sessions = ariadne_sessions(&client).await.unwrap();
+        server.abort();
+
+        assert_eq!(
+            sessions.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["01S1", "01S2"],
+            "both pages reach the board"
+        );
+        let queries = queries.lock().unwrap();
+        assert!(queries[0].contains("kind=ariadne"), "{queries:?}");
+        assert!(queries[1].contains("cursor=after-one"), "{queries:?}");
     }
 }

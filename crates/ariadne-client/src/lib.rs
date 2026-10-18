@@ -22,7 +22,11 @@ use ariadne_api::agents::{AcpAgentDto, AgentConfigDto, UpdateAgentConfigRequest}
 use ariadne_api::doctor::DaemonReportDto;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::models::{ModelDto, SetModelRankRequest};
-use ariadne_api::permissions::{AiPermissionsStatusDto, UpdateAiPermissionsRequest};
+use ariadne_api::permissions::{
+    AiPermissionsStatusDto, LearnedPermissionDto, LearnedPermissionScope,
+    LearnedPermissionsResponse, TestAiPermissionRequest, TestAiPermissionResponse,
+    UpdateAiPermissionsRequest, UpdateLearnedPermissionRequest,
+};
 use ariadne_api::skills::SkillDto;
 use ariadne_api::{HealthResponse, VersionResponse};
 
@@ -74,6 +78,9 @@ pub enum ClientError {
         status: StatusCode,
         code: String,
         message: String,
+        /// Structured detail of the refusal, where the code carries more
+        /// than a sentence — `workflow_invalid`'s `line`, for one.
+        details: Option<Box<serde_json::Value>>,
     },
     #[error("failed to decode daemon response: {0}")]
     Decode(#[from] serde_json::Error),
@@ -119,13 +126,13 @@ impl ClientError {
             Self::Unreachable { .. } => Some("is it running? try: ariadne daemon start".into()),
             // The model (022): the daemon's message already says what is wrong,
             // and this is the one thing to do about it — on `permissions
-            // enable|refresh|set` and on `repo add|update --permission-mode
+            // ai enable|refresh|set` and on `repo add|update --permission-mode
             // ai` alike, since both refuse the same way.
             Self::Api { code, .. } if code == "ai_disabled" => {
-                Some("run ariadne permissions enable".into())
+                Some("run ariadne permissions ai enable".into())
             }
             Self::Api { code, .. } if code == "python_unavailable" => {
-                Some("install Python 3.10 or newer, or set python_bin in config.toml".into())
+                Some("install Python 3.12 or 3.13, or set python_bin in config.toml".into())
             }
             _ => None,
         }
@@ -139,6 +146,15 @@ impl ClientError {
             Self::Api { code, .. } => code,
             Self::Decode(_) => "invalid_response",
             Self::Timeout => "timeout",
+        }
+    }
+
+    /// Structured detail of the refusal, where the code carries more than a
+    /// sentence — `workflow_invalid`'s `line`, for one.
+    pub fn details(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Api { details, .. } => details.as_deref(),
+            _ => None,
         }
     }
 }
@@ -308,8 +324,8 @@ impl Client {
     /// Change the AI permission settings. Only the fields `req` names are sent — an
     /// absent field leaves the daemon's own value alone, which is the whole
     /// point of a partial update: `UpdateAiPermissionsRequest`'s own `Serialize`
-    /// writes every field, `schedule` excepted, so it is built by hand here
-    /// rather than serialized whole.
+    /// writes every field as `null` where it is absent, so it is built by
+    /// hand here rather than serialized whole.
     pub async fn update_ai_permissions(
         &self,
         req: &UpdateAiPermissionsRequest,
@@ -321,6 +337,55 @@ impl Client {
     /// Run the model install again, on the settings as they stand.
     pub async fn refresh_ai_permissions(&self) -> Result<AiPermissionsStatusDto, ClientError> {
         self.post_empty("/v1/permissions/ai/refresh").await
+    }
+
+    pub async fn list_learned_permissions(
+        &self,
+        repository: Option<&str>,
+    ) -> Result<LearnedPermissionsResponse, ClientError> {
+        let path = repository.map_or_else(
+            || "/v1/permissions/learned".to_string(),
+            |id| format!("/v1/permissions/learned?repository={id}"),
+        );
+        self.get_json(&path).await
+    }
+
+    pub async fn get_learned_permission(
+        &self,
+        id: &str,
+    ) -> Result<LearnedPermissionDto, ClientError> {
+        self.get_json(&format!("/v1/permissions/learned/{id}"))
+            .await
+    }
+
+    /// Widen a row to every repository, or narrow it back to its own.
+    pub async fn update_learned_permission(
+        &self,
+        id: &str,
+        scope: LearnedPermissionScope,
+    ) -> Result<LearnedPermissionDto, ClientError> {
+        self.put_json(
+            &format!("/v1/permissions/learned/{id}"),
+            &UpdateLearnedPermissionRequest { scope },
+        )
+        .await
+    }
+
+    pub async fn delete_learned_permission(&self, id: &str) -> Result<(), ClientError> {
+        self.send_no_content::<()>(
+            Method::DELETE,
+            &format!("/v1/permissions/learned/{id}"),
+            None,
+        )
+        .await
+    }
+
+    /// Score one request with the AI permission model without changing permission state.
+    pub async fn test_ai_permission(
+        &self,
+        req: &TestAiPermissionRequest,
+    ) -> Result<TestAiPermissionResponse, ClientError> {
+        self.post_json("/v1/permissions/ai/test", req).await
     }
 
     /// Set or clear a catalog entry's user rank. `None` clears it.
@@ -355,6 +420,29 @@ impl Client {
 
     pub async fn post_empty<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
         self.request(Method::POST, path, None::<&()>).await
+    }
+
+    /// Post an opaque payload through this client's configured transport.
+    ///
+    /// OTLP uses protobuf rather than JSON, but must reach the same Unix
+    /// socket or TCP endpoint as the rest of the caller's daemon requests.
+    pub async fn post_bytes(
+        &self,
+        path: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Result<(), ClientError> {
+        let builder = Request::builder()
+            .method(Method::POST)
+            .header(header::CONTENT_TYPE, content_type);
+        let response = self.send(builder, path, Bytes::from(body)).await?;
+        let status = response.status();
+        let bytes = self.collect(response).await?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(self.api_error(status, bytes))
+        }
     }
 
     pub async fn put_json<T: DeserializeOwned, B: Serialize>(
@@ -514,11 +602,13 @@ impl Client {
                 status,
                 code: body.error.code,
                 message: body.error.message,
+                details: body.error.details,
             },
             Err(_) => ClientError::Api {
                 status,
                 code: "unknown_error".into(),
                 message: String::from_utf8_lossy(&bytes).into_owned(),
+                details: None,
             },
         }
     }
@@ -600,28 +690,32 @@ impl SseStream {
 
 /// [`Client::update_ai_permissions`]'s body: only the fields `req` names, so an absent
 /// one reaches the daemon absent rather than as an explicit `null` — which
-/// `UpdateAiPermissionsRequest`'s own `Serialize` cannot do for `enabled`,
-/// `checkpoints` and `threshold`, only for `schedule` and the prompts.
+/// `UpdateAiPermissionsRequest`'s own `Serialize` cannot do for any of them.
 fn ai_permissions_update_body(req: &UpdateAiPermissionsRequest) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     if let Some(enabled) = req.enabled {
         body.insert("enabled".into(), enabled.into());
     }
-    if let Some(checkpoints) = req.checkpoints {
-        body.insert("checkpoints".into(), checkpoints.as_str().into());
+    if let Some(threshold) = req.allow_threshold {
+        body.insert("allow_threshold".into(), threshold.into());
     }
-    if let Some(threshold) = req.threshold {
-        body.insert("threshold".into(), threshold.into());
+    if let Some(threshold) = req.deny_threshold {
+        body.insert("deny_threshold".into(), threshold.into());
     }
-    for (field, value) in [
-        ("schedule", &req.schedule),
-        ("question", &req.question),
-        ("allow_criteria", &req.allow_criteria),
-        ("review_criteria", &req.review_criteria),
-    ] {
-        if let Some(value) = value {
-            body.insert(field.into(), value.clone().into());
-        }
+    if req.default_thresholds {
+        body.insert("default_thresholds".into(), true.into());
+    }
+    if let Some(flavour) = req.flavour {
+        body.insert(
+            "flavour".into(),
+            serde_json::to_value(flavour).expect("Flavour serializes"),
+        );
+    }
+    if let Some(device) = req.device {
+        body.insert(
+            "device".into(),
+            serde_json::to_value(device).expect("Device serializes"),
+        );
     }
     serde_json::Value::Object(body)
 }
@@ -778,6 +872,7 @@ mod tests {
             status: StatusCode::NOT_FOUND,
             code: "not_found".into(),
             message: "task not found: badid123".into(),
+            details: None,
         };
         assert_eq!(err.human(), "task not found: badid123");
         assert!(err.hint().is_none());
@@ -785,7 +880,7 @@ mod tests {
     }
 
     /// The two AI permission model refusals (022) each carry the one command that answers
-    /// them, on `permissions enable|refresh|set` and on `repo
+    /// them, on `permissions ai enable|refresh|set` and on `repo
     /// add|update --permission-mode ai` alike, since both send the same code.
     #[test]
     fn an_ai_refusal_carries_the_command_that_answers_it() {
@@ -793,34 +888,29 @@ mod tests {
             status: StatusCode::CONFLICT,
             code: "ai_disabled".into(),
             message: "the `ai` permission mode needs the AI permission model".into(),
+            details: None,
         };
         assert_eq!(
             disabled.hint().as_deref(),
-            Some("run ariadne permissions enable")
+            Some("run ariadne permissions ai enable")
         );
 
         let unavailable = ClientError::Api {
             status: StatusCode::CONFLICT,
             code: "python_unavailable".into(),
-            message: "the AI permission model needs Python 3.10 or newer".into(),
+            message: "the AI permission model needs Python 3.12 or 3.13".into(),
+            details: None,
         };
         assert_eq!(
             unavailable.hint().as_deref(),
-            Some("install Python 3.10 or newer, or set python_bin in config.toml")
+            Some("install Python 3.12 or 3.13, or set python_bin in config.toml")
         );
     }
 
     /// Only the fields a caller actually set reach the wire: `enabled` alone
-    /// stays `{"enabled": true}`, never `{"enabled": true, "checkpoints":
-    /// null, "threshold": null}` — which is what `UpdateAiPermissionsRequest`'s own
-    /// `Serialize` would have written, `enabled` and `checkpoints` and
-    /// `threshold` having no `skip_serializing_if` of their own. `schedule`
-    /// and the prompts are the fields where an explicit `null` is a value in
-    /// its own right.
+    /// stays `{"enabled": true}`, without null threshold fields.
     #[test]
     fn an_ai_permissions_update_sends_only_the_fields_that_were_set() {
-        use ariadne_api::permissions::AiPermissionsCheckpoints;
-
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest {
                 enabled: Some(true),
@@ -830,31 +920,32 @@ mod tests {
         );
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest {
-                threshold: Some(0.6),
+                allow_threshold: Some(0.2),
+                deny_threshold: Some(0.8),
                 ..Default::default()
             }),
-            serde_json::json!({"threshold": 0.6})
+            serde_json::json!({"allow_threshold": 0.2, "deny_threshold": 0.8})
         );
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest {
-                checkpoints: Some(AiPermissionsCheckpoints::All),
-                schedule: Some(None),
+                default_thresholds: true,
                 ..Default::default()
             }),
-            serde_json::json!({"checkpoints": "all", "schedule": null})
+            serde_json::json!({"default_thresholds": true})
         );
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest {
-                question: Some(Some("Is it safe?".into())),
-                allow_criteria: Some(None),
-                review_criteria: Some(Some("anything else".into())),
+                flavour: Some(ariadne_api::permissions::Flavour::Kev9B),
                 ..Default::default()
             }),
-            serde_json::json!({
-                "question": "Is it safe?",
-                "allow_criteria": null,
-                "review_criteria": "anything else",
-            })
+            serde_json::json!({"flavour": "9b"})
+        );
+        assert_eq!(
+            ai_permissions_update_body(&UpdateAiPermissionsRequest {
+                device: Some(ariadne_api::permissions::Device::Cuda),
+                ..Default::default()
+            }),
+            serde_json::json!({"device": "cuda"})
         );
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest::default()),
@@ -869,6 +960,7 @@ mod tests {
             status: StatusCode::BAD_GATEWAY,
             code: "unknown_error".into(),
             message: String::new(),
+            details: None,
         };
         assert_eq!(err.human(), "daemon returned 502 Bad Gateway");
     }

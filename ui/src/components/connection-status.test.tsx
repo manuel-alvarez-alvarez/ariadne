@@ -1,27 +1,24 @@
 // @vitest-environment jsdom
 
 /**
- * The footer's daemon-status button, in every state the connection can be in.
+ * The sidebar foot's daemon-status button, in every state the connection can
+ * be in, and its rail variant — the dot alone.
  *
  * `useConnection` is mocked because the states under test are exactly its
  * outputs, and driving a real event stream through them would test the mock
  * traffic rather than the readout — how the stream produces those states is
  * `events/provider.test.tsx`. The dot's tone-and-pulse rules are the semantics
- * the old sidebar badge had, so they are asserted literally; the shell case
- * pins down where the indicator now lives — the footer, and no longer the
- * sidebar.
+ * the old sidebar badge had, so they are asserted literally; where the
+ * indicator lives now — the sidebar's own foot, and no footer of the shell's
+ * own — is `app-shell.test.tsx`'s to pin down.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import { expect, it, vi } from "vitest"
 
-import { AppShell } from "@/components/app-shell"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import type { useConnection } from "@/hooks/use-connection"
-import { startAt } from "@/test/harness"
 
 import { ConnectionStatus } from "./connection-status"
 
@@ -48,14 +45,14 @@ function conn(over: Partial<Connection> = {}): Connection {
   }
 }
 
-function mountStatus(over: Partial<Connection> = {}) {
+function mountStatus(over: Partial<Connection> = {}, { collapsed = false } = {}) {
   state.current = conn(over)
   render(
     <TooltipProvider delay={0}>
-      <ConnectionStatus />
+      <ConnectionStatus collapsed={collapsed} />
     </TooltipProvider>,
   )
-  return screen.getByRole("button", { name: "Daemon status — open logs" })
+  return screen.getByRole("button", { name: /^Daemon status/ })
 }
 
 /** The status dot — the button's one presentational span. */
@@ -103,24 +100,14 @@ it("says why the connection went, once it is gone", async () => {
   expect(screen.getByText("no heartbeat from the daemon")).toBeTruthy()
 })
 
-it("lives in the shell's footer, and no longer in the sidebar", () => {
-  state.current = conn()
-  startAt("/")
-  const router = createBrowserRouter([
-    { path: "/", element: <AppShell />, children: [{ index: true, element: <div /> }] },
-  ])
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(
-    <QueryClientProvider client={client}>
-      <TooltipProvider delay={0}>
-        <RouterProvider router={router} />
-      </TooltipProvider>
-    </QueryClientProvider>,
-  )
+it("shows the dot alone in the rail, named by a tooltip instead of a label", async () => {
+  const button = mountStatus({}, { collapsed: true })
 
-  const button = screen.getByRole("button", { name: "Daemon status — open logs" })
-  expect(screen.getByRole("contentinfo").contains(button)).toBe(true)
-  const sidebar = document.querySelector("aside")
-  if (!sidebar) throw new Error("no sidebar in the shell")
-  expect(sidebar.contains(button)).toBe(false)
+  expect(button.textContent).toBe("")
+  expect(dot(button).contains("bg-status-done")).toBe(true)
+  expect(button.getAttribute("aria-label")).toBe("Daemon status: ariadned 0.3.1")
+
+  const user = userEvent.setup()
+  await user.hover(button)
+  expect(await screen.findByText("ariadned 0.3.1")).toBeTruthy()
 })

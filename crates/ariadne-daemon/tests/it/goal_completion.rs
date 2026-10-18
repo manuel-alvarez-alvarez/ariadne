@@ -18,7 +18,7 @@ use axum::http::StatusCode;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::goals::GoalDto;
-use ariadne_core::{Actor, GoalStatus, Seat, TaskStatus};
+use ariadne_core::{Actor, GoalStatus, TaskStatus};
 
 use common::{Cast, Harness, as_session, harness, post_json};
 
@@ -26,24 +26,20 @@ fn complete_uri(cast: &Cast) -> String {
     format!("/v1/goals/{}/complete", cast.goal.id)
 }
 
-/// Walk the goal's one task all the way to finished.
+/// Walk the goal's one task all the way to finished: through every column to
+/// the last, and out of it with the merge commit its gate asks for.
 async fn land(h: &Harness, cast: &Cast) {
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
-    for (status, actor) in [
-        (TaskStatus::Approved, Actor::Daemon),
-        (TaskStatus::Finished, Actor::Author),
-    ] {
-        h.store
-            .transition_task(
-                &cast.task.id,
-                status,
-                actor,
-                None,
-                (status == TaskStatus::Finished).then_some("cafe1234"),
-            )
-            .await
-            .unwrap();
-    }
+    h.advance_to(&cast.task, "merge").await;
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Finished,
+            Actor::Daemon,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
 }
 
 /// The orchestrator ends the goal it planned, once its tasks are done.
@@ -87,13 +83,14 @@ async fn the_user_completes_a_goal_of_their_own() {
 }
 
 /// A task still going is what the daemon can see, and it is enough to refuse:
-/// the message names the tasks, so whoever asked knows what is left.
+/// the message names the tasks, so whoever asked knows what is left. A task in
+/// its last column is still going.
 #[tokio::test]
 async fn a_goal_with_a_task_still_going_is_refused_by_name() {
     let h = harness().await;
     let cast = h.active_cast().await;
     let orchestrator = h.orchestrator_session(&cast.goal).await;
-    h.advance(&cast.task, TaskStatus::InProgress).await;
+    h.advance_to(&cast.task, "merge").await;
 
     let envelope: ErrorBody = h
         .json(
@@ -148,19 +145,16 @@ async fn a_cancelled_task_is_no_bar_to_completing_the_goal() {
     assert_eq!(goal.status, GoalStatus::Completed);
 }
 
-/// Neither an author nor a reviewer may end the goal: each of them sees one
-/// task, and the goal is the plan that holds them all.
+/// No column's agent may end the goal: each of them sees one task, and the
+/// goal is the plan that holds them all.
 #[tokio::test]
 async fn an_agent_below_the_orchestrator_may_not_complete_the_goal() {
     let h = harness().await;
     let cast = h.active_cast().await;
     land(&h, &cast).await;
 
-    for (seat, agent) in [
-        (Seat::Author, &cast.author.id),
-        (Seat::Reviewer, &cast.reviewer.id),
-    ] {
-        let session = h.session(&cast.goal, Some(&cast.task), seat, agent).await;
+    for step in ["develop", "review", "merge"] {
+        let session = h.agent_session(&cast, step).await;
         let (status, _) = h
             .send(as_session(
                 &complete_uri(&cast),
@@ -168,7 +162,7 @@ async fn an_agent_below_the_orchestrator_may_not_complete_the_goal() {
                 serde_json::json!({}),
             ))
             .await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{seat:?}");
+        assert_eq!(status, StatusCode::FORBIDDEN, "the {step} agent");
     }
     assert_eq!(
         h.store.get_goal(&cast.goal.id).await.unwrap().status(),

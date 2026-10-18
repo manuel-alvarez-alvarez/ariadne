@@ -10,7 +10,7 @@ use std::time::Duration;
 use agent_client_protocol::schema::{ProtocolVersion, v1};
 use agent_client_protocol::{Agent, Client, ConnectionTo};
 use anyhow::{Context, Result, anyhow, bail};
-use futures_util::future::join_all;
+use futures_util::future::{BoxFuture, join_all};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::sync::RwLock;
@@ -26,6 +26,7 @@ use ariadne_store::Store;
 use crate::acp::{apply_agent_launch_environment, find_config_option};
 use crate::acp_calls::call;
 use crate::acp_index;
+pub use crate::acp_index::ManagerHomes;
 use crate::acp_transport::pipes;
 use crate::timeouts::Timeouts;
 
@@ -43,12 +44,16 @@ pub struct AgentRegistry {
     custom: Arc<Vec<AcpAgentConfig>>,
     path: Arc<OsString>,
     index: Arc<str>,
+    manager_homes: Arc<ManagerHomes>,
     discovery: Arc<tokio::sync::Mutex<()>>,
     results: Arc<RwLock<Vec<Discovery>>>,
     probe_cwd: Arc<PathBuf>,
     /// Where each agent's catalog is kept across restarts, under its version.
     store: Store,
     timeouts: Timeouts,
+    /// How a registry index's bytes are fetched: [`HttpsFetch`] outside
+    /// tests.
+    fetch: Arc<dyn IndexFetch>,
 }
 
 #[derive(Clone)]
@@ -64,6 +69,11 @@ struct RegistryEntry {
     /// nobody's in particular, so a probe that shows the program is not an
     /// ACP agent takes the entry off the registry rather than listing it.
     named_by_package: bool,
+    /// Set where `named_by_package` is true and neither the symlink chain
+    /// nor a package manager's own file proved it: the registry package,
+    /// unpinned, that the probe's `agentInfo.name` has to answer before this
+    /// entry is kept at all, timeout included.
+    unproven_package: Option<String>,
     /// Why this entry is refused outright, where it is: a configuration
     /// error, permanent until the config changes. A duplicate id is already
     /// another entry's, and only that one may answer for it. A refused entry
@@ -109,6 +119,26 @@ struct Discovery {
     /// probe that got that far answered for the agent, whatever it failed at
     /// afterwards.
     refuted: bool,
+    /// Whether the probe ran out of its time rather than answering, however
+    /// much it showed before then.
+    timed_out: bool,
+    /// The `agentInfo.name` the probe's `initialize` answered, once it
+    /// answered at all: what an unproven entry's package name is checked
+    /// against.
+    agent_info_name: Option<String>,
+}
+
+impl Discovery {
+    /// Whether this probe proved the program behind an unproven package name
+    /// is `expected`'s own: it negotiated the protocol, did not merely run
+    /// out of time doing so, and named itself as that package, unpinned. A
+    /// probe that reached this far but was rejected for some other gap — no
+    /// model option, say — still proved the identity; the rejection stands.
+    fn proves_package(&self, expected: &str) -> bool {
+        self.agent.capabilities.protocol_v1
+            && !self.timed_out
+            && self.agent_info_name.as_deref() == Some(expected)
+    }
 }
 
 /// What one `session/new` said about an agent's configuration.
@@ -142,7 +172,14 @@ impl AgentRegistry {
     /// holds, and the configured agents over them. Probes run in `probe_cwd`,
     /// and the catalogs they read are kept in `store`.
     pub fn new(custom: &[AcpAgentConfig], probe_cwd: PathBuf, store: Store, path: &OsStr) -> Self {
-        Self::build(custom, probe_cwd, store, path, SHIPPED_INDEX)
+        Self::build(
+            custom,
+            probe_cwd,
+            store,
+            path,
+            SHIPPED_INDEX,
+            ManagerHomes::from_env(),
+        )
     }
 
     /// The same registry over an index the caller writes, so a test says
@@ -155,8 +192,9 @@ impl AgentRegistry {
         store: Store,
         path: &OsStr,
         index: &str,
+        manager_homes: ManagerHomes,
     ) -> Self {
-        Self::build(custom, probe_cwd, store, path, index)
+        Self::build(custom, probe_cwd, store, path, index, manager_homes)
     }
 
     fn build(
@@ -165,25 +203,44 @@ impl AgentRegistry {
         store: Store,
         path: &OsStr,
         index: &str,
+        manager_homes: ManagerHomes,
     ) -> Self {
-        let entries = Self::entries(custom, path, index);
+        let manager_homes = Arc::new(manager_homes);
+        let entries = Self::entries(custom, path, index, &manager_homes);
         let results = entries.iter().map(not_probed).collect();
         Self {
             entries: Arc::new(std::sync::RwLock::new(entries)),
             custom: Arc::new(custom.to_vec()),
             path: Arc::new(path.to_os_string()),
             index: Arc::from(index),
+            manager_homes,
             discovery: Arc::default(),
             results: Arc::new(RwLock::new(results)),
             probe_cwd: Arc::new(probe_cwd),
             store,
             timeouts: Timeouts::default(),
+            fetch: Arc::new(HttpsFetch),
         }
     }
 
-    fn entries(custom: &[AcpAgentConfig], path: &OsStr, index: &str) -> Vec<RegistryEntry> {
+    /// The same registry, fetching a registry index over `fetch` rather
+    /// than real HTTPS: a test's own stand-in, which proves this module's
+    /// handling of a downloaded index without opening a socket, let alone a
+    /// TLS one, to prove it.
+    #[doc(hidden)]
+    pub fn with_index_fetch(mut self, fetch: Arc<dyn IndexFetch>) -> Self {
+        self.fetch = fetch;
+        self
+    }
+
+    fn entries(
+        custom: &[AcpAgentConfig],
+        path: &OsStr,
+        index: &str,
+        manager_homes: &ManagerHomes,
+    ) -> Vec<RegistryEntry> {
         let mut found_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut entries: Vec<RegistryEntry> = acp_index::installed(index, path)
+        let mut entries: Vec<RegistryEntry> = acp_index::installed(index, path, manager_homes)
             .into_iter()
             .map(|found| {
                 let refused = refusal(&found.id, &found_ids);
@@ -194,6 +251,7 @@ impl AgentRegistry {
                     program: found.program,
                     source: AcpAgentSource::Registry,
                     named_by_package: found.named_by_package,
+                    unproven_package: found.unproven_package,
                     refused,
                 }
             })
@@ -213,6 +271,7 @@ impl AgentRegistry {
                 program: agent.command.first().cloned().unwrap_or_default().into(),
                 source: AcpAgentSource::Config,
                 named_by_package: false,
+                unproven_package: None,
                 refused,
             };
             let discovered = entries
@@ -264,16 +323,11 @@ impl AgentRegistry {
     }
 
     async fn download_index(&self, url: &str) -> Result<String> {
-        let bytes = reqwest::Client::builder()
-            .timeout(self.timeouts.registry_download)
-            .build()?
-            .get(url)
-            .send()
-            .await?
-            .error_for_status()?
-            .bytes()
+        refuse_insecure_registry_url(url)?;
+        let document = self
+            .fetch
+            .fetch(url, self.timeouts.registry_download)
             .await?;
-        let document = String::from_utf8(bytes.to_vec())?;
         acp_index::validate(&document)?;
         self.store.put_acp_registry_index(url, &document).await?;
         Ok(document)
@@ -293,10 +347,14 @@ impl AgentRegistry {
             let snapshot = chrono::DateTime::parse_from_rfc3339(SHIPPED_INDEX_DATE)
                 .expect("the shipped index date is valid");
             if fetched.is_ok_and(|fetched| fetched > snapshot) {
-                match acp_index::validate(&kept.document) {
-                    Ok(()) => return kept.document,
-                    Err(error) => {
-                        tracing::warn!(error = %error, "reading the kept ACP registry index failed");
+                if let Err(error) = refuse_insecure_registry_url(&kept.url) {
+                    tracing::warn!(error = %error, "the kept ACP registry index has no https provenance");
+                } else {
+                    match acp_index::validate(&kept.document) {
+                        Ok(()) => return kept.document,
+                        Err(error) => {
+                            tracing::warn!(error = %error, "reading the kept ACP registry index failed");
+                        }
                     }
                 }
             }
@@ -311,7 +369,7 @@ impl AgentRegistry {
             Some(index) => index.to_string(),
             None => self.selected_index().await,
         };
-        let entries = Self::entries(&self.custom, &self.path, &index);
+        let entries = Self::entries(&self.custom, &self.path, &index, &self.manager_homes);
         // Every kept catalog is on hand, a refresh included: a refresh reads
         // the catalogs again rather than trusting these, but a probe that
         // runs out of time still falls back on the one it did not replace.
@@ -332,14 +390,21 @@ impl AgentRegistry {
         });
         let discovered = join_all(probes).await;
         // A name only a package gives is another program's as easily as the
-        // agent's. One that answered for nothing is that other program, and
-        // the entry stands for nothing here: the registry holds it no more
-        // than it holds an agent the `PATH` never had.
+        // agent's. One proven by the symlink chain or a manager's own file
+        // stands unless the probe shows it is no ACP agent at all; one
+        // unproven stands only where the probe itself named it the package,
+        // unpinned — timeout included, since silence proves nothing here.
+        // Either way, what fails to stand is registered no more than an
+        // agent the `PATH` never had.
         let (entries, discovered): (Vec<RegistryEntry>, Vec<Discovery>) = entries
             .into_iter()
             .zip(discovered)
             .filter(|(entry, result)| {
-                let mistaken = entry.named_by_package && result.refuted;
+                let mistaken = entry.refused.is_none()
+                    && match &entry.unproven_package {
+                        Some(expected) => !result.proves_package(expected),
+                        None => entry.named_by_package && result.refuted,
+                    };
                 if mistaken {
                     tracing::info!(
                         agent = entry.id,
@@ -560,6 +625,76 @@ impl AgentRegistry {
     }
 }
 
+/// Refuse a registry index URL that is not `https`: the index names the
+/// command every ACP agent on this machine is started with, so a plain
+/// `http` source — on the wire or a redirect's `Location` reached while
+/// following one — is never trusted, loopback included. [`HttpsFetch`]
+/// checks the first hop here and every redirect the same way; a test
+/// substitutes [`IndexFetch`] entirely rather than being let through this
+/// check on a loophole.
+fn refuse_insecure_registry_url(url: &str) -> Result<()> {
+    let parsed =
+        reqwest::Url::parse(url).with_context(|| format!("invalid registry URL: {url}"))?;
+    if parsed.scheme() != "https" {
+        bail!("the ACP registry index must be fetched over https: {url}");
+    }
+    Ok(())
+}
+
+/// How the registry index's bytes are fetched. [`HttpsFetch`] is the only
+/// implementation a daemon ever runs on: real HTTPS, with every redirect
+/// hop checked the same way the first URL is. A test substitutes its own
+/// implementation — one that never opens a socket — so what it proves is
+/// this module's own logic (the scheme refusal, the storage, the fallback
+/// on a failed or refused document), not a second TLS stack built only to
+/// be trusted by a test.
+#[doc(hidden)]
+pub trait IndexFetch: Send + Sync {
+    fn fetch<'a>(&'a self, url: &'a str, timeout: Duration) -> BoxFuture<'a, Result<String>>;
+}
+
+/// The production [`IndexFetch`]: plain `reqwest`, redirects followed by
+/// hand rather than by the client, so a hop to `http` is refused instead of
+/// silently taken — `reqwest` follows a redirect regardless of scheme by
+/// default, which would undo the check on the URL that was configured.
+#[doc(hidden)]
+pub struct HttpsFetch;
+
+/// However many redirects [`HttpsFetch`] follows before it gives up: the
+/// same ceiling `reqwest`'s own default policy uses.
+const MAX_REGISTRY_REDIRECTS: usize = 10;
+
+impl IndexFetch for HttpsFetch {
+    fn fetch<'a>(&'a self, url: &'a str, timeout: Duration) -> BoxFuture<'a, Result<String>> {
+        Box::pin(async move {
+            let client = reqwest::Client::builder()
+                .timeout(timeout)
+                .redirect(reqwest::redirect::Policy::none())
+                .build()?;
+            let mut current = url.to_string();
+            for _ in 0..MAX_REGISTRY_REDIRECTS {
+                let response = client.get(&current).send().await?;
+                if !response.status().is_redirection() {
+                    let bytes = response.error_for_status()?.bytes().await?;
+                    return Ok(String::from_utf8(bytes.to_vec())?);
+                }
+                let location = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                    .ok_or_else(|| anyhow!("redirected from {current} with no Location header"))?;
+                let next = reqwest::Url::parse(&current)
+                    .and_then(|base| base.join(location))
+                    .with_context(|| format!("invalid redirect Location from {current}"))?
+                    .to_string();
+                refuse_insecure_registry_url(&next)?;
+                current = next;
+            }
+            bail!("too many redirects fetching the registry index from {url}");
+        })
+    }
+}
+
 fn not_probed(entry: &RegistryEntry) -> Discovery {
     match &entry.refused {
         Some(reason) => rejected(entry, reason.clone()),
@@ -568,7 +703,14 @@ fn not_probed(entry: &RegistryEntry) -> Discovery {
 }
 
 fn rejected(entry: &RegistryEntry, reason: String) -> Discovery {
-    rejected_with(entry, AcpCapabilitiesDto::default(), reason, false)
+    rejected_with(
+        entry,
+        AcpCapabilitiesDto::default(),
+        reason,
+        false,
+        false,
+        None,
+    )
 }
 
 fn rejected_with(
@@ -576,6 +718,8 @@ fn rejected_with(
     capabilities: AcpCapabilitiesDto,
     reason: String,
     refuted: bool,
+    timed_out: bool,
+    agent_info_name: Option<String>,
 ) -> Discovery {
     Discovery {
         agent: AcpAgentDto {
@@ -590,6 +734,8 @@ fn rejected_with(
         catalog: Catalog::default(),
         version: None,
         refuted,
+        timed_out,
+        agent_info_name,
     }
 }
 
@@ -640,6 +786,8 @@ async fn probe(
     // The timeout sits inside the probe so a slow agent is still reported
     // with every capability it showed before it stopped answering.
     let mut discovered = None;
+    let mut opened_session = None;
+    let mut agent_info_name = None;
     let result = tokio::time::timeout(
         timeout,
         Client
@@ -647,8 +795,18 @@ async fn probe(
             .name("ariadne-discovery")
             .connect_with(pipes(stdin, stdout), async |cx| {
                 let shortcut = cached.clone().filter(|_| !reread);
-                discovered =
-                    Some(probe_protocol(&entry, &cx, cwd, shortcut, &mut capabilities).await);
+                discovered = Some(
+                    probe_protocol(
+                        &entry,
+                        &cx,
+                        cwd,
+                        shortcut,
+                        &mut opened_session,
+                        &mut capabilities,
+                        &mut agent_info_name,
+                    )
+                    .await,
+                );
                 Ok(())
             }),
     )
@@ -664,13 +822,25 @@ async fn probe(
     };
     let _ = child.start_kill();
     let _ = child.wait().await;
+    if is_opencode(&entry.id)
+        && let Some(session_id) = opened_session
+    {
+        delete_opencode_catalog_session(&entry, cwd, &session_id, timeout).await;
+    }
     match result {
         Ok(discovery) => discovery,
         Err(error) => {
             // Nothing spoke ACP here, and time is not what it ran out of:
             // whatever this program is, it is not the agent.
             let refuted = !capabilities.protocol_v1 && !timed_out;
-            let mut rejection = rejected_with(&entry, capabilities, format!("{error:#}"), refuted);
+            let mut rejection = rejected_with(
+                &entry,
+                capabilities,
+                format!("{error:#}"),
+                refuted,
+                timed_out,
+                agent_info_name,
+            );
             // A probe out of time said nothing about the models. The catalog
             // the store kept for this very command is still the agent's last
             // word, and it stays on offer until an answer replaces it: a busy
@@ -689,12 +859,18 @@ async fn probe_protocol(
     cx: &ConnectionTo<Agent>,
     cwd: &Path,
     cached: Option<CachedCatalog>,
+    opened_session: &mut Option<String>,
     capabilities: &mut AcpCapabilitiesDto,
+    agent_info_name: &mut Option<String>,
 ) -> Result<Discovery> {
     let initialized = call(cx, "initialize", initialize())
         .await
         .context("initialize failed")?;
     capabilities.protocol_v1 = initialized.protocol_version == ProtocolVersion::V1;
+    *agent_info_name = initialized
+        .agent_info
+        .as_ref()
+        .map(|info| info.name.clone());
     if !capabilities.protocol_v1 {
         bail!("agent did not negotiate ACP version 1");
     }
@@ -721,7 +897,7 @@ async fn probe_protocol(
         }
         None => {
             let closes = advertised.session_capabilities.close.is_some();
-            read_catalog(cx, cwd, closes, capabilities).await?
+            read_catalog(entry, cx, cwd, closes, opened_session, capabilities).await?
         }
     };
 
@@ -750,32 +926,38 @@ async fn probe_protocol(
         catalog,
         version,
         refuted: false,
+        timed_out: false,
+        agent_info_name: agent_info_name.clone(),
     })
 }
 
-/// Open a session to read the agent's catalog off it, then close it again
-/// where the agent can (`closes`), so it holds nothing for a session nobody
-/// will prompt.
+/// Open a session to read the agent's catalog, then release the session.
 async fn read_catalog(
+    entry: &RegistryEntry,
     cx: &ConnectionTo<Agent>,
     cwd: &Path,
     closes: bool,
+    opened_session: &mut Option<String>,
     capabilities: &mut AcpCapabilitiesDto,
 ) -> Result<Catalog> {
     let setup = call(cx, "session/new", v1::NewSessionRequest::new(cwd))
         .await
         .context("session/new failed")?;
-    let session_id = setup.session_id.clone();
+    let session_id = setup.session_id.to_string();
+    *opened_session = Some(session_id.clone());
     capabilities.session_new = true;
     if closes {
         // Best effort: the catalog is read either way, and the process is
         // gone as soon as the probe ends.
-        let _ = call(
+        if let Err(error) = call(
             cx,
             "session/close",
-            v1::CloseSessionRequest::new(session_id.to_string()),
+            v1::CloseSessionRequest::new(session_id.clone()),
         )
-        .await;
+        .await
+        {
+            tracing::warn!(agent = %entry.id, session_id = %session_id, error = %error, "closing discovery session failed");
+        }
     }
     let options = setup.config_options.unwrap_or_default();
     let model = find_config_option(&options, &["model"], &["model"]);
@@ -802,6 +984,43 @@ async fn read_catalog(
             .and_then(crate::acp::current_value)
             .map(str::to_string),
     })
+}
+
+/// Whether `id` names OpenCode: the shipped registry id, or the legacy
+/// `opencode-acp` a configured agent may still carry over from before the
+/// rename.
+fn is_opencode(id: &str) -> bool {
+    id == "opencode" || id == "opencode-acp"
+}
+
+/// Delete the database row left by OpenCode's catalog session. This runs
+/// after the ACP probe so a failed or stalled CLI cannot reject its catalog.
+async fn delete_opencode_catalog_session(
+    entry: &RegistryEntry,
+    cwd: &Path,
+    session_id: &str,
+    timeout: Duration,
+) {
+    let mut command = Command::new(&entry.program);
+    command
+        .args(["session", "delete", session_id])
+        .current_dir(cwd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    apply_agent_launch_environment(&mut command, &entry.id);
+    match tokio::time::timeout(timeout, command.status()).await {
+        Ok(Ok(status)) if status.success() => {}
+        Ok(Ok(status)) => {
+            tracing::warn!(agent = %entry.id, session_id, %status, "deleting discovery session failed");
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(agent = %entry.id, session_id, error = %error, "deleting discovery session failed");
+        }
+        Err(_) => {
+            tracing::warn!(agent = %entry.id, session_id, "deleting discovery session timed out");
+        }
+    }
 }
 
 /// What a probe tells an agent it is, on `initialize`.
@@ -943,4 +1162,57 @@ fn choices(option: &v1::SessionConfigOption) -> Vec<Choice> {
         });
     }
     choices
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_https_registry_url_is_accepted() {
+        refuse_insecure_registry_url("https://cdn.agentclientprotocol.com/registry.json").unwrap();
+    }
+
+    #[test]
+    fn a_plain_http_registry_url_is_refused() {
+        assert!(refuse_insecure_registry_url("http://evil.example/registry.json").is_err());
+    }
+
+    /// `http` is refused even to a loopback host: nothing excuses the
+    /// scheme, and the test stand-in below proves the download logic
+    /// without ever needing such an exception.
+    #[test]
+    fn http_to_a_loopback_host_is_still_refused() {
+        assert!(refuse_insecure_registry_url("http://127.0.0.1:4000/index.json").is_err());
+        assert!(refuse_insecure_registry_url("http://localhost:4000/index.json").is_err());
+    }
+
+    /// `reqwest` follows a redirect regardless of scheme by default, which
+    /// would undo the check on the URL that was configured. `HttpsFetch`
+    /// disables that and checks each hop itself: a redirect from an
+    /// `https` start to an `http` `Location` is refused rather than
+    /// followed. The start here is plain `http` on purpose — proving the
+    /// hop check needs no TLS stand-in of its own, since what it proves
+    /// does not depend on the first request's own scheme, only on what it
+    /// does with the `Location` of a redirect.
+    #[tokio::test]
+    async fn https_fetch_refuses_a_redirect_to_a_plain_http_location() {
+        let app = axum::Router::new().route(
+            "/start",
+            axum::routing::get(|| async {
+                (
+                    axum::http::StatusCode::FOUND,
+                    [(axum::http::header::LOCATION, "http://insecure.example/next")],
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/start", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let result = HttpsFetch.fetch(&url, Duration::from_secs(5)).await;
+        let error = result.expect_err("a redirect to http must be refused");
+        assert!(format!("{error:#}").contains("https"), "{error:#}");
+        server.abort();
+    }
 }

@@ -6,21 +6,27 @@ pub(crate) mod attention;
 pub(crate) mod completions;
 pub(crate) mod console;
 pub(crate) mod daemon;
+pub(crate) mod dashboard;
 pub(crate) mod doctor;
 pub(crate) mod events;
 #[cfg(test)]
 pub(crate) mod fixtures;
 pub(crate) mod follow;
+pub(crate) mod forge;
 pub(crate) mod goal;
+pub(crate) mod issue;
 pub(crate) mod mcp;
 pub(crate) mod models;
 pub(crate) mod permissions;
+pub(crate) mod pr;
 pub(crate) mod repo;
 pub(crate) mod resolve;
 pub(crate) mod session;
 pub(crate) mod skill;
+pub(crate) mod stats;
 pub(crate) mod task;
 pub(crate) mod transcript;
+pub(crate) mod workflow;
 
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
@@ -170,6 +176,19 @@ pub(crate) fn agent_label(skills: &[String]) -> String {
     match skills.is_empty() {
         true => "no skills".to_string(),
         false => skills.join(", "),
+    }
+}
+
+/// A column's capability band, as `workflow check` and `goal inspect` show
+/// it: every rank it named, joined, or a dash where it named none.
+pub(crate) fn ranks_label(ranks: &[ariadne_core::models::ModelRank]) -> String {
+    match ranks.is_empty() {
+        true => "-".to_string(),
+        false => ranks
+            .iter()
+            .map(|r| r.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
     }
 }
 
@@ -360,11 +379,11 @@ mod tests {
                 "/v1/tasks",
                 &TaskListQuery {
                     goal: Some("a b&c".into()),
-                    status: Some(TaskStatus::UnderReview),
+                    status: Some(TaskStatus::InProgress),
                 }
             )
             .unwrap(),
-            "/v1/tasks?goal=a+b%26c&status=under_review"
+            "/v1/tasks?goal=a+b%26c&status=in_progress"
         );
         assert_eq!(
             query_path(

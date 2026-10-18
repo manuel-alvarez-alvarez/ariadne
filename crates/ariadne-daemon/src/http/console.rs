@@ -630,6 +630,7 @@ pub(super) async fn take_input(state: &AppState, id: &str, text: String) -> ApiR
     let title = (session.title.is_none() && session.goal_id.is_none() && session.task_id.is_none())
         .then(|| crate::launcher::loose_title(&text))
         .flatten();
+    let requests = state.store.pending_agent_request_ids(id).await?;
     state
         .launcher
         .acp
@@ -639,6 +640,7 @@ pub(super) async fn take_input(state: &AppState, id: &str, text: String) -> ApiR
         state.store.set_session_title_if_unset(id, &title).await?;
     }
     state.store.clear_session_attention(id).await?;
+    state.store.answer_agent_requests(id, &requests).await?;
     state.notify_scheduler_session(id);
     Ok(())
 }
@@ -893,15 +895,19 @@ mod tests {
     async fn session_in(store: &Store) -> String {
         let repository = store
             .create_repository(ariadne_store::NewRepository {
+                default_workflow: None,
                 path: "/tmp/probe".into(),
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
+                supervise_posts: None,
             })
             .await
             .unwrap();
         let goal = store
             .create_goal(ariadne_store::NewGoal {
+                workflow: None,
+                issue_url: None,
                 title: "probe".into(),
                 description: String::new(),
                 repository_ids: vec![repository.id.clone()],
@@ -921,6 +927,7 @@ mod tests {
                 model: "stub:test-model".into(),
                 effort: None,
                 worktree_path: None,
+                pull_request_id: None,
             })
             .await
             .unwrap()
@@ -964,7 +971,10 @@ mod tests {
     async fn opening_a_console_on_a_long_session_reads_a_page_of_the_newest_events() {
         let (store, _dir) = test_store().await;
         let session = session_in(&store).await;
-        let recorded = 2_000;
+        // Enough past one page to prove the truncation and the order; ten
+        // pages' worth proves nothing more and only multiplies the commits
+        // this test waits on.
+        let recorded = SNAPSHOT_EVENTS as usize + 50;
         let mut committed = Vec::new();
         for _ in 0..recorded {
             committed.push(commit(&store, &session, "agent_message").await);

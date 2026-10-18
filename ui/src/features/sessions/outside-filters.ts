@@ -108,7 +108,7 @@ export function useOutsideSessionFilters(): OutsideFiltersState {
     const next = new URLSearchParams(search)
     for (const [param, value] of Object.entries(changes)) {
       if (value === undefined || value === "" || value === ALL) next.delete(param)
-      else next.set(param, value)
+      else next.set(param, param === "dir" || param === "q" ? value.trim() : value)
     }
     // A filter is not a place: Back leaves the screen rather than walking back
     // through every narrowing, as the status and seat filters do.

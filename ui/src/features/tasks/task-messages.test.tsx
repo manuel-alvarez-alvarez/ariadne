@@ -1,123 +1,124 @@
 // @vitest-environment jsdom
 
-/**
- * The channel a task's agents talk on, as the panel shows it.
- *
- * One list carries every kind, so what is worth pinning is that they are told
- * apart — the two verdicts are the ones that move the task and read like it,
- * and a question is not dressed as one — and that both ends of a message are
- * named by something a reader can act on. An agent has no name, so a message
- * that said "01AGENT… → 01AGENT…" would say nothing at all.
- */
+import { act, screen } from "@testing-library/react"
+import { beforeEach, expect, it } from "vitest"
 
-import { screen, within } from "@testing-library/react"
-import { describe, expect, it } from "vitest"
-
-import { type MessageDto, qk, type TaskDto } from "@/api"
-import { aTask } from "@/test/fixtures"
+import { type DomainEvent, type MessageDto, qk } from "@/api"
+import { EventStreamProvider } from "@/events/provider"
+import { type FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
+import { aGoal, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
-import { TaskMessages } from "./task-messages"
 
-const TASK: TaskDto = aTask({
+import { TaskPanel } from "./task-panel"
+
+const TASK = aTask({
   agents: [
-    { id: "01AUTHOR", seat: "author", skills: ["coding"], model: "codex-acp:gpt-5.6" },
-    {
-      id: "01REVIEWER",
-      seat: "reviewer",
-      skills: ["code-review"],
-      model: "codex-acp:gpt-5.6",
-    },
+    { id: "author", step: "develop", skills: ["coding", "testing"], model: "codex-acp:o3" },
+    { id: "reviewer", step: "review", skills: ["code-review"], model: "codex-acp:o3" },
   ],
 })
 
-function message(over: Partial<MessageDto>): MessageDto {
+function aMessage(overrides: Partial<MessageDto> = {}): MessageDto {
   return {
-    id: "01MSG0000000000000000000A",
+    id: "01JMESSAGE0000000000000001",
     goal_id: TASK.goal_id,
     task_id: TASK.id,
     kind: "message",
-    from_actor: "reviewer",
-    from_agent_id: "01REVIEWER",
-    to_actor: "author",
-    to_agent_id: "01AUTHOR",
-    body: "said something",
+    from_actor: "agent",
+    from_agent_id: "author",
+    from_session: null,
+    to_actor: "agent",
+    to_agent_id: "reviewer",
+    body: "First message.",
+    delivered_at: null,
     created_at: "2026-01-01T00:00:00Z",
-    ...over,
+    ...overrides,
   }
 }
 
-/** The channel, with the task already in the cache the panel shares. */
-function render(messages: MessageDto[]) {
-  daemonFetch.mockImplementation(async () => jsonResponse(messages))
-  return renderScreen(<TaskMessages taskId={TASK.id} />, {
-    seed: (queryClient) => {
-      queryClient.setQueryData(qk.tasks.detail(TASK.id), TASK)
-      queryClient.setQueryData(qk.tasks.messages(TASK.id), messages)
-    },
+function stubMessages(messages: MessageDto[] | (() => MessageDto[])): void {
+  daemonFetch.mockImplementation((input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    if (
+      request.method === "GET" &&
+      new URL(request.url).pathname === `/v1/tasks/${TASK.id}/messages`
+    ) {
+      return Promise.resolve(jsonResponse(typeof messages === "function" ? messages() : messages))
+    }
+    return new Promise(() => {})
   })
 }
 
-describe("the channel", () => {
-  it("says so when the agents have said nothing", () => {
-    render([])
-    expect(screen.getByText("The agents have said nothing yet")).toBeDefined()
+function renderMessages({ stream = false }: { stream?: boolean } = {}): void {
+  const goal = aGoal({ id: TASK.goal_id })
+  renderScreen(
+    stream ? (
+      <EventStreamProvider>
+        <TaskPanel taskId={TASK.id} onClose={() => {}} />
+      </EventStreamProvider>
+    ) : (
+      <TaskPanel taskId={TASK.id} onClose={() => {}} />
+    ),
+    {
+      route: "/goals?tab=messages",
+      seed: (client) => {
+        client.setQueryData(qk.tasks.detail(TASK.id), TASK)
+        client.setQueryData(qk.goals.detail(goal.id), goal)
+      },
+    },
+  )
+}
+
+beforeEach(() => stubEventSource())
+
+it("lists task messages oldest first and names both agents by their skills", async () => {
+  stubMessages([
+    aMessage({ body: "First message." }),
+    aMessage({
+      id: "01JMESSAGE0000000000000002",
+      from_agent_id: "reviewer",
+      to_agent_id: "author",
+      body: "Second message.",
+      created_at: "2026-01-02T00:00:00Z",
+    }),
+  ])
+
+  renderMessages()
+
+  expect(await screen.findByText("First message.")).toBeTruthy()
+  expect(screen.getAllByText("coding, testing").length).toBeGreaterThan(0)
+  expect(screen.getAllByText("code-review").length).toBeGreaterThan(0)
+  expect(
+    screen.getByText("First message.").compareDocumentPosition(screen.getByText("Second message.")),
+  ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  expect(screen.getByRole("tab", { name: /Messages2 messages/ })).toBeTruthy()
+})
+
+it("says when agents have said nothing", async () => {
+  stubMessages([])
+  renderMessages()
+
+  expect(await screen.findByText("The agents have said nothing yet")).toBeTruthy()
+})
+
+it("refetches an open messages tab when a message is sent", async () => {
+  let messages = [aMessage()]
+  stubMessages(() => messages)
+  renderMessages({ stream: true })
+
+  expect(await screen.findByText("First message.")).toBeTruthy()
+  const stream: FakeEventSource = latestSource()
+  act(() => {
+    stream.succeed()
+    stream.beat()
   })
+  messages = [aMessage({ body: "New message." })]
 
-  /// The daemon serves the channel oldest first, which is what an agent
-  /// reading it as context wants. A person opening the tab wants what just
-  /// happened, and a channel that only grows would put it under everything
-  /// else.
-  it("reads as one list, newest first", () => {
-    render([
-      message({ id: "01MSGONE", body: "said first" }),
-      message({ id: "01MSGTWO", body: "said after" }),
-    ])
+  const event: DomainEvent = {
+    event: "message_sent",
+    data: aMessage({ id: "01JMESSAGE0000000000000002", body: "New message." }),
+  }
+  act(() => stream.emit(event.event, event.data))
 
-    const bodies = screen.getAllByRole("article").map((card) => card.textContent ?? "")
-    expect(bodies[0]).toContain("said after")
-    expect(bodies[1]).toContain("said first")
-    expect(screen.getByText("2 messages")).toBeDefined()
-  })
-
-  it("names both ends by the skills they work with", () => {
-    render([message({ kind: "message", body: "Why is the retry unbounded?" })])
-
-    const card = screen.getByText("Why is the retry unbounded?").closest("article")
-    expect(card).not.toBeNull()
-    expect(within(card as HTMLElement).getByText(/code-review/).textContent).toContain("coding")
-  })
-
-  it("names the orchestrator by what it is, since it has no id", () => {
-    render([
-      message({
-        kind: "message",
-        to_actor: "orchestrator",
-        to_agent_id: null,
-        body: "Does this cover the CLI?",
-      }),
-    ])
-
-    const card = screen.getByText("Does this cover the CLI?").closest("article")
-    expect(within(card as HTMLElement).getByText(/orchestrator/)).toBeDefined()
-  })
-
-  it("falls back to the id for an agent the task staffs no longer", () => {
-    render([message({ from_agent_id: "01GONE", body: "left behind" })])
-
-    const card = screen.getByText("left behind").closest("article")
-    expect(within(card as HTMLElement).getByText(/01GONE/)).toBeDefined()
-  })
-
-  it("tells every kind apart, and reads the two verdicts as verdicts", () => {
-    render([
-      message({ id: "01A", kind: "review_request", body: "please look" }),
-      message({ id: "01B", kind: "message", body: "the flag moved" }),
-      message({ id: "01D", kind: "request_changes", body: "rename it" }),
-      message({ id: "01E", kind: "approve", body: "looks right" }),
-    ])
-
-    for (const label of ["Review requested", "Message", "Changes requested", "Approved"]) {
-      expect(screen.getByText(label), label).toBeDefined()
-    }
-  })
+  expect(await screen.findByText("New message.")).toBeTruthy()
 })

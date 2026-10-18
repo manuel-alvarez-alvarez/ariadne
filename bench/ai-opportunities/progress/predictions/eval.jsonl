@@ -1,0 +1,265 @@
+{"decision": "continue", "detail": "quiet 30s < nudge threshold 180s", "latency_ms": 0.01074979081749916, "policy": "baseline", "window_id": "progress-steady-eval-00"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0066659413278102875, "policy": "repetition", "window_id": "progress-steady-eval-00"}
+{"decision": "continue", "detail": "baseline stands: quiet 30s < nudge threshold 180s", "latency_ms": 0.005791895091533661, "policy": "combined_repetition", "window_id": "progress-steady-eval-00"}
+{"decision": "continue", "detail": "quiet 31s < nudge threshold 180s", "latency_ms": 0.002583954483270645, "policy": "baseline", "window_id": "progress-steady-eval-01"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0029578804969787598, "policy": "repetition", "window_id": "progress-steady-eval-01"}
+{"decision": "continue", "detail": "baseline stands: quiet 31s < nudge threshold 180s", "latency_ms": 0.002375338226556778, "policy": "combined_repetition", "window_id": "progress-steady-eval-01"}
+{"decision": "continue", "detail": "quiet 32s < nudge threshold 180s", "latency_ms": 0.0017080456018447876, "policy": "baseline", "window_id": "progress-steady-eval-02"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0014593824744224548, "policy": "repetition", "window_id": "progress-steady-eval-02"}
+{"decision": "continue", "detail": "baseline stands: quiet 32s < nudge threshold 180s", "latency_ms": 0.002040993422269821, "policy": "combined_repetition", "window_id": "progress-steady-eval-02"}
+{"decision": "continue", "detail": "quiet 33s < nudge threshold 180s", "latency_ms": 0.00162515789270401, "policy": "baseline", "window_id": "progress-steady-eval-03"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0009578652679920197, "policy": "repetition", "window_id": "progress-steady-eval-03"}
+{"decision": "continue", "detail": "baseline stands: quiet 33s < nudge threshold 180s", "latency_ms": 0.0017075799405574799, "policy": "combined_repetition", "window_id": "progress-steady-eval-03"}
+{"decision": "continue", "detail": "quiet 34s < nudge threshold 180s", "latency_ms": 0.0014579854905605316, "policy": "baseline", "window_id": "progress-steady-eval-04"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0008749775588512421, "policy": "repetition", "window_id": "progress-steady-eval-04"}
+{"decision": "continue", "detail": "baseline stands: quiet 34s < nudge threshold 180s", "latency_ms": 0.0015832483768463135, "policy": "combined_repetition", "window_id": "progress-steady-eval-04"}
+{"decision": "continue", "detail": "mid-turn: left to the thresholds behind the nudge (rule 11)", "latency_ms": 0.0017080456018447876, "policy": "baseline", "window_id": "progress-long-tool-eval-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0009168870747089386, "policy": "repetition", "window_id": "progress-long-tool-eval-00"}
+{"decision": "continue", "detail": "baseline stands: mid-turn: left to the thresholds behind the nudge (rule 11)", "latency_ms": 0.001916196197271347, "policy": "combined_repetition", "window_id": "progress-long-tool-eval-00"}
+{"decision": "continue", "detail": "mid-turn: left to the thresholds behind the nudge (rule 11)", "latency_ms": 0.0015837140381336212, "policy": "baseline", "window_id": "progress-long-tool-eval-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0005420297384262085, "policy": "repetition", "window_id": "progress-long-tool-eval-01"}
+{"decision": "continue", "detail": "baseline stands: mid-turn: left to the thresholds behind the nudge (rule 11)", "latency_ms": 0.001416075974702835, "policy": "combined_repetition", "window_id": "progress-long-tool-eval-01"}
+{"decision": "escalate_stalled", "detail": "quiet 720s >= flag threshold 600s", "latency_ms": 0.0019585713744163513, "policy": "baseline", "window_id": "progress-long-tool-eval-02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0005406327545642853, "policy": "repetition", "window_id": "progress-long-tool-eval-02"}
+{"decision": "escalate_stalled", "detail": "baseline stands: quiet 720s >= flag threshold 600s", "latency_ms": 0.00200001522898674, "policy": "combined_repetition", "window_id": "progress-long-tool-eval-02"}
+{"decision": "escalate_stalled", "detail": "quiet 1740s >= flag threshold 600s", "latency_ms": 0.0019171275198459625, "policy": "baseline", "window_id": "progress-long-tool-eval-03"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004591420292854309, "policy": "repetition", "window_id": "progress-long-tool-eval-03"}
+{"decision": "escalate_stalled", "detail": "baseline stands: quiet 1740s >= flag threshold 600s", "latency_ms": 0.0017075799405574799, "policy": "combined_repetition", "window_id": "progress-long-tool-eval-03"}
+{"decision": "continue", "detail": "quiet 25s < nudge threshold 180s", "latency_ms": 0.0015422701835632324, "policy": "baseline", "window_id": "progress-retry-eval-00"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.00200001522898674, "policy": "repetition", "window_id": "progress-retry-eval-00"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0019171275198459625, "policy": "combined_repetition", "window_id": "progress-retry-eval-00"}
+{"decision": "continue", "detail": "quiet 25s < nudge threshold 180s", "latency_ms": 0.0014579854905605316, "policy": "baseline", "window_id": "progress-retry-eval-01"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0012922100722789764, "policy": "repetition", "window_id": "progress-retry-eval-01"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0017909333109855652, "policy": "combined_repetition", "window_id": "progress-retry-eval-01"}
+{"decision": "continue", "detail": "quiet 25s < nudge threshold 180s", "latency_ms": 0.0014998950064182281, "policy": "baseline", "window_id": "progress-retry-eval-02"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0010421499609947205, "policy": "repetition", "window_id": "progress-retry-eval-02"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0015827827155590057, "policy": "combined_repetition", "window_id": "progress-retry-eval-02"}
+{"decision": "continue", "detail": "quiet 25s < nudge threshold 180s", "latency_ms": 0.001375097781419754, "policy": "baseline", "window_id": "progress-retry-eval-03"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.001125037670135498, "policy": "repetition", "window_id": "progress-retry-eval-03"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0014579854905605316, "policy": "combined_repetition", "window_id": "progress-retry-eval-03"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.0014998950064182281, "policy": "baseline", "window_id": "progress-testloop-freq-eval-00"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0010421499609947205, "policy": "repetition", "window_id": "progress-testloop-freq-eval-00"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.0015832483768463135, "policy": "combined_repetition", "window_id": "progress-testloop-freq-eval-00"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.0014998950064182281, "policy": "baseline", "window_id": "progress-testloop-freq-eval-01"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.000833999365568161, "policy": "repetition", "window_id": "progress-testloop-freq-eval-01"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.0014998950064182281, "policy": "combined_repetition", "window_id": "progress-testloop-freq-eval-01"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.0014170072972774506, "policy": "baseline", "window_id": "progress-testloop-freq-eval-02"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0008330680429935455, "policy": "repetition", "window_id": "progress-testloop-freq-eval-02"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.0014579854905605316, "policy": "combined_repetition", "window_id": "progress-testloop-freq-eval-02"}
+{"decision": "continue", "detail": "quiet 80s < nudge threshold 180s", "latency_ms": 0.001416075974702835, "policy": "baseline", "window_id": "progress-testloop-freq-eval-03"}
+{"decision": "continue", "detail": "no tool name repeats often enough in the window", "latency_ms": 0.0008330680429935455, "policy": "repetition", "window_id": "progress-testloop-freq-eval-03"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 0.0014998950064182281, "policy": "combined_repetition", "window_id": "progress-testloop-freq-eval-03"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00020815059542655945, "policy": "baseline", "window_id": "progress-completed-eval-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0006668269634246826, "policy": "repetition", "window_id": "progress-completed-eval-00"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00037532299757003784, "policy": "combined_repetition", "window_id": "progress-completed-eval-00"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016670674085617065, "policy": "baseline", "window_id": "progress-completed-eval-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0003748573362827301, "policy": "repetition", "window_id": "progress-completed-eval-01"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.000250060111284256, "policy": "combined_repetition", "window_id": "progress-completed-eval-01"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 8.42846930027008e-05, "policy": "baseline", "window_id": "progress-completed-eval-02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0003343448042869568, "policy": "repetition", "window_id": "progress-completed-eval-02"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.000250060111284256, "policy": "combined_repetition", "window_id": "progress-completed-eval-02"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0014998950064182281, "policy": "baseline", "window_id": "loop-identical-eval-00-s01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.000541098415851593, "policy": "repetition", "window_id": "loop-identical-eval-00-s01"}
+{"decision": "continue", "detail": "baseline stands: quiet 55s < nudge threshold 180s", "latency_ms": 0.0015827827155590057, "policy": "combined_repetition", "window_id": "loop-identical-eval-00-s01"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.001375097781419754, "policy": "baseline", "window_id": "loop-identical-eval-00-s02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.000541098415851593, "policy": "repetition", "window_id": "loop-identical-eval-00-s02"}
+{"decision": "continue", "detail": "baseline stands: quiet 55s < nudge threshold 180s", "latency_ms": 0.001541338860988617, "policy": "combined_repetition", "window_id": "loop-identical-eval-00-s02"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.001375097781419754, "policy": "baseline", "window_id": "loop-identical-eval-00-s03"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0011669471859931946, "policy": "repetition", "window_id": "loop-identical-eval-00-s03"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0017918646335601807, "policy": "combined_repetition", "window_id": "loop-identical-eval-00-s03"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.001458916813135147, "policy": "baseline", "window_id": "loop-identical-eval-00-s04"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.002791639417409897, "policy": "repetition", "window_id": "loop-identical-eval-00-s04"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.00200001522898674, "policy": "combined_repetition", "window_id": "loop-identical-eval-00-s04"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.001375097781419754, "policy": "baseline", "window_id": "loop-identical-eval-00-s05"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0012079253792762756, "policy": "repetition", "window_id": "loop-identical-eval-00-s05"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0015827827155590057, "policy": "combined_repetition", "window_id": "loop-identical-eval-00-s05"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0014170072972774506, "policy": "baseline", "window_id": "loop-identical-eval-01-s01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.000500120222568512, "policy": "repetition", "window_id": "loop-identical-eval-01-s01"}
+{"decision": "continue", "detail": "baseline stands: quiet 55s < nudge threshold 180s", "latency_ms": 0.0014170072972774506, "policy": "combined_repetition", "window_id": "loop-identical-eval-01-s01"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.001375097781419754, "policy": "baseline", "window_id": "loop-identical-eval-01-s02"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004591420292854309, "policy": "repetition", "window_id": "loop-identical-eval-01-s02"}
+{"decision": "continue", "detail": "baseline stands: quiet 55s < nudge threshold 180s", "latency_ms": 0.0015832483768463135, "policy": "combined_repetition", "window_id": "loop-identical-eval-01-s02"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.001375097781419754, "policy": "baseline", "window_id": "loop-identical-eval-01-s03"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.001000240445137024, "policy": "repetition", "window_id": "loop-identical-eval-01-s03"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0014998950064182281, "policy": "combined_repetition", "window_id": "loop-identical-eval-01-s03"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.0013331882655620575, "policy": "baseline", "window_id": "loop-identical-eval-01-s04"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0010407529771327972, "policy": "repetition", "window_id": "loop-identical-eval-01-s04"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0014579854905605316, "policy": "combined_repetition", "window_id": "loop-identical-eval-01-s04"}
+{"decision": "continue", "detail": "quiet 55s < nudge threshold 180s", "latency_ms": 0.001375097781419754, "policy": "baseline", "window_id": "loop-identical-eval-01-s05"}
+{"decision": "escalate_unproductive", "detail": "'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.0009578652679920197, "policy": "repetition", "window_id": "loop-identical-eval-01-s05"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: 'execute' called 3 times in the last 3 tool calls", "latency_ms": 0.001541338860988617, "policy": "combined_repetition", "window_id": "loop-identical-eval-01-s05"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.0005420297384262085, "policy": "baseline", "window_id": "waiting-permission-eval-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.00037532299757003784, "policy": "repetition", "window_id": "waiting-permission-eval-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_permission", "latency_ms": 0.0006249174475669861, "policy": "combined_repetition", "window_id": "waiting-permission-eval-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.00029103830456733704, "policy": "baseline", "window_id": "waiting-permission-eval-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.00024959444999694824, "policy": "repetition", "window_id": "waiting-permission-eval-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_permission", "latency_ms": 0.00033294782042503357, "policy": "combined_repetition", "window_id": "waiting-permission-eval-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.00024959444999694824, "policy": "baseline", "window_id": "waiting-permission-eval-02"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_permission", "latency_ms": 0.00020908191800117493, "policy": "repetition", "window_id": "waiting-permission-eval-02"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_permission", "latency_ms": 0.00029103830456733704, "policy": "combined_repetition", "window_id": "waiting-permission-eval-02"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.000250060111284256, "policy": "baseline", "window_id": "waiting-input-eval-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.000250060111284256, "policy": "repetition", "window_id": "waiting-input-eval-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_input", "latency_ms": 0.00033387914299964905, "policy": "combined_repetition", "window_id": "waiting-input-eval-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.0001671724021434784, "policy": "baseline", "window_id": "waiting-input-eval-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.00012479722499847412, "policy": "repetition", "window_id": "waiting-input-eval-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_input", "latency_ms": 0.000250060111284256, "policy": "combined_repetition", "window_id": "waiting-input-eval-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.00016577541828155518, "policy": "baseline", "window_id": "waiting-input-eval-02"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_input", "latency_ms": 0.00012526288628578186, "policy": "repetition", "window_id": "waiting-input-eval-02"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_input", "latency_ms": 0.00033294782042503357, "policy": "combined_repetition", "window_id": "waiting-input-eval-02"}
+{"decision": "waiting_user", "detail": "idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 0.0005420297384262085, "policy": "baseline", "window_id": "waiting-planning-eval-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0006249174475669861, "policy": "repetition", "window_id": "waiting-planning-eval-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 0.0005420297384262085, "policy": "combined_repetition", "window_id": "waiting-planning-eval-00"}
+{"decision": "waiting_user", "detail": "idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 0.000250060111284256, "policy": "baseline", "window_id": "waiting-planning-eval-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00041583552956581116, "policy": "repetition", "window_id": "waiting-planning-eval-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 0.0002905726432800293, "policy": "combined_repetition", "window_id": "waiting-planning-eval-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: agent_error", "latency_ms": 0.000250060111284256, "policy": "baseline", "window_id": "waiting-agent-error-eval-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: agent_error", "latency_ms": 0.000250060111284256, "policy": "repetition", "window_id": "waiting-agent-error-eval-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: agent_error", "latency_ms": 0.0002919696271419525, "policy": "combined_repetition", "window_id": "waiting-agent-error-eval-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: agent_error", "latency_ms": 0.0002076849341392517, "policy": "baseline", "window_id": "waiting-agent-error-eval-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: agent_error", "latency_ms": 0.0001671724021434784, "policy": "repetition", "window_id": "waiting-agent-error-eval-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: agent_error", "latency_ms": 0.000250060111284256, "policy": "combined_repetition", "window_id": "waiting-agent-error-eval-01"}
+{"decision": "waiting_user", "detail": "a flag already raised for the user is left alone (rule 18)", "latency_ms": 0.001708976924419403, "policy": "baseline", "window_id": "waiting-user-flag-eval-00"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_user", "latency_ms": 0.0002919696271419525, "policy": "repetition", "window_id": "waiting-user-flag-eval-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: a flag already raised for the user is left alone (rule 18)", "latency_ms": 0.00162515789270401, "policy": "combined_repetition", "window_id": "waiting-user-flag-eval-00"}
+{"decision": "waiting_user", "detail": "a flag already raised for the user is left alone (rule 18)", "latency_ms": 0.0012922100722789764, "policy": "baseline", "window_id": "waiting-user-flag-eval-01"}
+{"decision": "waiting_user", "detail": "explicit wait guard: waiting_user", "latency_ms": 0.000250060111284256, "policy": "repetition", "window_id": "waiting-user-flag-eval-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: a flag already raised for the user is left alone (rule 18)", "latency_ms": 0.0014579854905605316, "policy": "combined_repetition", "window_id": "waiting-user-flag-eval-01"}
+{"decision": "continue", "detail": "no activity timestamp to measure quiet from", "latency_ms": 0.0006672926247119904, "policy": "baseline", "window_id": "insufficient-missing-ts-eval-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0005420297384262085, "policy": "repetition", "window_id": "insufficient-missing-ts-eval-00"}
+{"decision": "continue", "detail": "baseline stands: no activity timestamp to measure quiet from", "latency_ms": 0.0005830079317092896, "policy": "combined_repetition", "window_id": "insufficient-missing-ts-eval-00"}
+{"decision": "continue", "detail": "no activity timestamp to measure quiet from", "latency_ms": 0.00029103830456733704, "policy": "baseline", "window_id": "insufficient-missing-ts-eval-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0004172325134277344, "policy": "repetition", "window_id": "insufficient-missing-ts-eval-01"}
+{"decision": "continue", "detail": "baseline stands: no activity timestamp to measure quiet from", "latency_ms": 0.0003748573362827301, "policy": "combined_repetition", "window_id": "insufficient-missing-ts-eval-01"}
+{"decision": "continue", "detail": "quiet 60s < nudge threshold 180s", "latency_ms": 0.0015827827155590057, "policy": "baseline", "window_id": "insufficient-truncated-eval-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00045821070671081543, "policy": "repetition", "window_id": "insufficient-truncated-eval-00"}
+{"decision": "continue", "detail": "baseline stands: quiet 60s < nudge threshold 180s", "latency_ms": 0.0015827827155590057, "policy": "combined_repetition", "window_id": "insufficient-truncated-eval-00"}
+{"decision": "continue", "detail": "quiet 60s < nudge threshold 180s", "latency_ms": 0.001334119588136673, "policy": "baseline", "window_id": "insufficient-truncated-eval-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00033294782042503357, "policy": "repetition", "window_id": "insufficient-truncated-eval-01"}
+{"decision": "continue", "detail": "baseline stands: quiet 60s < nudge threshold 180s", "latency_ms": 0.0014579854905605316, "policy": "combined_repetition", "window_id": "insufficient-truncated-eval-01"}
+{"decision": "continue", "detail": "quiet 60s < nudge threshold 180s", "latency_ms": 0.0014998950064182281, "policy": "baseline", "window_id": "insufficient-gap-eval-00"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.001875218003988266, "policy": "repetition", "window_id": "insufficient-gap-eval-00"}
+{"decision": "continue", "detail": "baseline stands: quiet 60s < nudge threshold 180s", "latency_ms": 0.00162515789270401, "policy": "combined_repetition", "window_id": "insufficient-gap-eval-00"}
+{"decision": "continue", "detail": "quiet 60s < nudge threshold 180s", "latency_ms": 0.001375097781419754, "policy": "baseline", "window_id": "insufficient-gap-eval-01"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.000541098415851593, "policy": "repetition", "window_id": "insufficient-gap-eval-01"}
+{"decision": "continue", "detail": "baseline stands: quiet 60s < nudge threshold 180s", "latency_ms": 0.0014579854905605316, "policy": "combined_repetition", "window_id": "insufficient-gap-eval-01"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.0001671724021434784, "policy": "baseline", "window_id": "real-01m45n5k-tail-eval"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0007092021405696869, "policy": "repetition", "window_id": "real-01m45n5k-tail-eval"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.000250060111284256, "policy": "combined_repetition", "window_id": "real-01m45n5k-tail-eval"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016670674085617065, "policy": "baseline", "window_id": "real-01m45py0-tail-eval"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.0006253831088542938, "policy": "repetition", "window_id": "real-01m45py0-tail-eval"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.0003334134817123413, "policy": "combined_repetition", "window_id": "real-01m45py0-tail-eval"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.0002919696271419525, "policy": "baseline", "window_id": "real-01m45yz6-tail-eval"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.000500120222568512, "policy": "repetition", "window_id": "real-01m45yz6-tail-eval"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.0002919696271419525, "policy": "combined_repetition", "window_id": "real-01m45yz6-tail-eval"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016670674085617065, "policy": "baseline", "window_id": "real-01m460hw-tail-eval"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00045821070671081543, "policy": "repetition", "window_id": "real-01m460hw-tail-eval"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.000250060111284256, "policy": "combined_repetition", "window_id": "real-01m460hw-tail-eval"}
+{"decision": "continue", "detail": "nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00016577541828155518, "policy": "baseline", "window_id": "real-01m462s0-tail-eval"}
+{"decision": "continue", "detail": "fewer than 3 recent tool calls to count", "latency_ms": 0.00045867636799812317, "policy": "repetition", "window_id": "real-01m462s0-tail-eval"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 0.00020908191800117493, "policy": "combined_repetition", "window_id": "real-01m462s0-tail-eval"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 1459.7616670653224, "policy": "kev", "window_id": "progress-steady-eval-00"}
+{"decision": "continue", "detail": "baseline stands: quiet 30s < nudge threshold 180s", "latency_ms": 1459.7616670653224, "policy": "combined_kev", "window_id": "progress-steady-eval-00"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 624.2681248113513, "policy": "kev", "window_id": "progress-steady-eval-01"}
+{"decision": "continue", "detail": "baseline stands: quiet 31s < nudge threshold 180s", "latency_ms": 624.2681248113513, "policy": "combined_kev", "window_id": "progress-steady-eval-01"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 813.9244578778744, "policy": "kev", "window_id": "progress-steady-eval-02"}
+{"decision": "continue", "detail": "baseline stands: quiet 32s < nudge threshold 180s", "latency_ms": 813.9244578778744, "policy": "combined_kev", "window_id": "progress-steady-eval-02"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 799.1977497003973, "policy": "kev", "window_id": "progress-steady-eval-03"}
+{"decision": "continue", "detail": "baseline stands: quiet 33s < nudge threshold 180s", "latency_ms": 799.1977497003973, "policy": "combined_kev", "window_id": "progress-steady-eval-03"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 726.5033749863505, "policy": "kev", "window_id": "progress-steady-eval-04"}
+{"decision": "continue", "detail": "baseline stands: quiet 34s < nudge threshold 180s", "latency_ms": 726.5033749863505, "policy": "combined_kev", "window_id": "progress-steady-eval-04"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 519.8488752357662, "policy": "kev", "window_id": "progress-long-tool-eval-00"}
+{"decision": "continue", "detail": "baseline stands: mid-turn: left to the thresholds behind the nudge (rule 11)", "latency_ms": 519.8488752357662, "policy": "combined_kev", "window_id": "progress-long-tool-eval-00"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 530.8932079933584, "policy": "kev", "window_id": "progress-long-tool-eval-01"}
+{"decision": "continue", "detail": "fallback to baseline (no usable advisory signal): mid-turn: left to the thresholds behind the nudge (rule 11)", "latency_ms": 530.8932079933584, "policy": "combined_kev", "window_id": "progress-long-tool-eval-01"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 508.51841643452644, "policy": "kev", "window_id": "progress-long-tool-eval-02"}
+{"decision": "escalate_stalled", "detail": "fallback to baseline (no usable advisory signal): quiet 720s >= flag threshold 600s", "latency_ms": 508.51841643452644, "policy": "combined_kev", "window_id": "progress-long-tool-eval-02"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 511.1947921104729, "policy": "kev", "window_id": "progress-long-tool-eval-03"}
+{"decision": "escalate_stalled", "detail": "fallback to baseline (no usable advisory signal): quiet 1740s >= flag threshold 600s", "latency_ms": 511.1947921104729, "policy": "combined_kev", "window_id": "progress-long-tool-eval-03"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 662.095207720995, "policy": "kev", "window_id": "progress-retry-eval-00"}
+{"decision": "continue", "detail": "baseline stands: quiet 25s < nudge threshold 180s", "latency_ms": 662.095207720995, "policy": "combined_kev", "window_id": "progress-retry-eval-00"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 682.8135829418898, "policy": "kev", "window_id": "progress-retry-eval-01"}
+{"decision": "continue", "detail": "baseline stands: quiet 25s < nudge threshold 180s", "latency_ms": 682.8135829418898, "policy": "combined_kev", "window_id": "progress-retry-eval-01"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 656.3427918590605, "policy": "kev", "window_id": "progress-retry-eval-02"}
+{"decision": "continue", "detail": "baseline stands: quiet 25s < nudge threshold 180s", "latency_ms": 656.3427918590605, "policy": "combined_kev", "window_id": "progress-retry-eval-02"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 681.0217499732971, "policy": "kev", "window_id": "progress-retry-eval-03"}
+{"decision": "continue", "detail": "baseline stands: quiet 25s < nudge threshold 180s", "latency_ms": 681.0217499732971, "policy": "combined_kev", "window_id": "progress-retry-eval-03"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 935.4414171539247, "policy": "kev", "window_id": "progress-testloop-freq-eval-00"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 935.4414171539247, "policy": "combined_kev", "window_id": "progress-testloop-freq-eval-00"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 891.5953328832984, "policy": "kev", "window_id": "progress-testloop-freq-eval-01"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 891.5953328832984, "policy": "combined_kev", "window_id": "progress-testloop-freq-eval-01"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 914.4335840828717, "policy": "kev", "window_id": "progress-testloop-freq-eval-02"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 914.4335840828717, "policy": "combined_kev", "window_id": "progress-testloop-freq-eval-02"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 887.7477920614183, "policy": "kev", "window_id": "progress-testloop-freq-eval-03"}
+{"decision": "continue", "detail": "baseline stands: quiet 80s < nudge threshold 180s", "latency_ms": 887.7477920614183, "policy": "combined_kev", "window_id": "progress-testloop-freq-eval-03"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 545.7930830307305, "policy": "kev", "window_id": "progress-completed-eval-00"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 545.7930830307305, "policy": "combined_kev", "window_id": "progress-completed-eval-00"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 563.3338750340044, "policy": "kev", "window_id": "progress-completed-eval-01"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 563.3338750340044, "policy": "combined_kev", "window_id": "progress-completed-eval-01"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 580.1536669023335, "policy": "kev", "window_id": "progress-completed-eval-02"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 580.1536669023335, "policy": "combined_kev", "window_id": "progress-completed-eval-02"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 575.2470409497619, "policy": "kev", "window_id": "loop-identical-eval-00-s01"}
+{"decision": "continue", "detail": "fallback to baseline (no usable advisory signal): quiet 55s < nudge threshold 180s", "latency_ms": 575.2470409497619, "policy": "combined_kev", "window_id": "loop-identical-eval-00-s01"}
+{"decision": "escalate_unproductive", "detail": "kev label: repetitive_failure", "latency_ms": 620.7435000687838, "policy": "kev", "window_id": "loop-identical-eval-00-s02"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: kev label: repetitive_failure", "latency_ms": 620.7435000687838, "policy": "combined_kev", "window_id": "loop-identical-eval-00-s02"}
+{"decision": "escalate_unproductive", "detail": "kev label: repetitive_failure", "latency_ms": 694.7828750126064, "policy": "kev", "window_id": "loop-identical-eval-00-s03"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: kev label: repetitive_failure", "latency_ms": 694.7828750126064, "policy": "combined_kev", "window_id": "loop-identical-eval-00-s03"}
+{"decision": "escalate_unproductive", "detail": "kev label: repetitive_failure", "latency_ms": 725.9718752466142, "policy": "kev", "window_id": "loop-identical-eval-00-s04"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: kev label: repetitive_failure", "latency_ms": 725.9718752466142, "policy": "combined_kev", "window_id": "loop-identical-eval-00-s04"}
+{"decision": "escalate_unproductive", "detail": "kev label: repetitive_failure", "latency_ms": 842.8422501310706, "policy": "kev", "window_id": "loop-identical-eval-00-s05"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: kev label: repetitive_failure", "latency_ms": 842.8422501310706, "policy": "combined_kev", "window_id": "loop-identical-eval-00-s05"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 584.7237077541649, "policy": "kev", "window_id": "loop-identical-eval-01-s01"}
+{"decision": "continue", "detail": "fallback to baseline (no usable advisory signal): quiet 55s < nudge threshold 180s", "latency_ms": 584.7237077541649, "policy": "combined_kev", "window_id": "loop-identical-eval-01-s01"}
+{"decision": "escalate_unproductive", "detail": "kev label: repetitive_failure", "latency_ms": 612.8034996800125, "policy": "kev", "window_id": "loop-identical-eval-01-s02"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: kev label: repetitive_failure", "latency_ms": 612.8034996800125, "policy": "combined_kev", "window_id": "loop-identical-eval-01-s02"}
+{"decision": "escalate_unproductive", "detail": "kev label: repetitive_failure", "latency_ms": 725.0792500562966, "policy": "kev", "window_id": "loop-identical-eval-01-s03"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: kev label: repetitive_failure", "latency_ms": 725.0792500562966, "policy": "combined_kev", "window_id": "loop-identical-eval-01-s03"}
+{"decision": "escalate_unproductive", "detail": "kev label: repetitive_failure", "latency_ms": 775.9464578703046, "policy": "kev", "window_id": "loop-identical-eval-01-s04"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: kev label: repetitive_failure", "latency_ms": 775.9464578703046, "policy": "combined_kev", "window_id": "loop-identical-eval-01-s04"}
+{"decision": "escalate_unproductive", "detail": "kev label: repetitive_failure", "latency_ms": 822.3699168302119, "policy": "kev", "window_id": "loop-identical-eval-01-s05"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: kev label: repetitive_failure", "latency_ms": 822.3699168302119, "policy": "combined_kev", "window_id": "loop-identical-eval-01-s05"}
+{"decision": "waiting_user", "detail": "kev label: waiting_user_input", "latency_ms": 508.3947922103107, "policy": "kev", "window_id": "waiting-permission-eval-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_permission", "latency_ms": 508.3947922103107, "policy": "combined_kev", "window_id": "waiting-permission-eval-00"}
+{"decision": "waiting_user", "detail": "kev label: waiting_user_input", "latency_ms": 545.4073338769376, "policy": "kev", "window_id": "waiting-permission-eval-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_permission", "latency_ms": 545.4073338769376, "policy": "combined_kev", "window_id": "waiting-permission-eval-01"}
+{"decision": "waiting_user", "detail": "kev label: waiting_user_input", "latency_ms": 519.0112078562379, "policy": "kev", "window_id": "waiting-permission-eval-02"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_permission", "latency_ms": 519.0112078562379, "policy": "combined_kev", "window_id": "waiting-permission-eval-02"}
+{"decision": "waiting_user", "detail": "kev label: waiting_user_input", "latency_ms": 510.42270800098777, "policy": "kev", "window_id": "waiting-input-eval-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_input", "latency_ms": 510.42270800098777, "policy": "combined_kev", "window_id": "waiting-input-eval-00"}
+{"decision": "waiting_user", "detail": "kev label: waiting_user_input", "latency_ms": 505.17612509429455, "policy": "kev", "window_id": "waiting-input-eval-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_input", "latency_ms": 505.17612509429455, "policy": "combined_kev", "window_id": "waiting-input-eval-01"}
+{"decision": "waiting_user", "detail": "kev label: waiting_user_input", "latency_ms": 540.4641670174897, "policy": "kev", "window_id": "waiting-input-eval-02"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: waiting_input", "latency_ms": 540.4641670174897, "policy": "combined_kev", "window_id": "waiting-input-eval-02"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 526.3023748993874, "policy": "kev", "window_id": "waiting-planning-eval-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 526.3023748993874, "policy": "combined_kev", "window_id": "waiting-planning-eval-00"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 517.2931673005223, "policy": "kev", "window_id": "waiting-planning-eval-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: idle planning orchestrator is waiting on the user, not silent (rule 31)", "latency_ms": 517.2931673005223, "policy": "combined_kev", "window_id": "waiting-planning-eval-01"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 513.8394581153989, "policy": "kev", "window_id": "waiting-agent-error-eval-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: agent_error", "latency_ms": 513.8394581153989, "policy": "combined_kev", "window_id": "waiting-agent-error-eval-00"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 519.1914159804583, "policy": "kev", "window_id": "waiting-agent-error-eval-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: explicit wait guard: agent_error", "latency_ms": 519.1914159804583, "policy": "combined_kev", "window_id": "waiting-agent-error-eval-01"}
+{"decision": "waiting_user", "detail": "kev label: waiting_user_input", "latency_ms": 519.87429196015, "policy": "kev", "window_id": "waiting-user-flag-eval-00"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: a flag already raised for the user is left alone (rule 18)", "latency_ms": 519.87429196015, "policy": "combined_kev", "window_id": "waiting-user-flag-eval-00"}
+{"decision": "waiting_user", "detail": "kev label: waiting_user_input", "latency_ms": 525.6122080609202, "policy": "kev", "window_id": "waiting-user-flag-eval-01"}
+{"decision": "waiting_user", "detail": "preserved explicit wait over advisory: a flag already raised for the user is left alone (rule 18)", "latency_ms": 525.6122080609202, "policy": "combined_kev", "window_id": "waiting-user-flag-eval-01"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 462.14362466707826, "policy": "kev", "window_id": "insufficient-missing-ts-eval-00"}
+{"decision": "continue", "detail": "fallback to baseline (no usable advisory signal): no activity timestamp to measure quiet from", "latency_ms": 462.14362466707826, "policy": "combined_kev", "window_id": "insufficient-missing-ts-eval-00"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 479.31308299303055, "policy": "kev", "window_id": "insufficient-missing-ts-eval-01"}
+{"decision": "continue", "detail": "fallback to baseline (no usable advisory signal): no activity timestamp to measure quiet from", "latency_ms": 479.31308299303055, "policy": "combined_kev", "window_id": "insufficient-missing-ts-eval-01"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 545.0582504272461, "policy": "kev", "window_id": "insufficient-truncated-eval-00"}
+{"decision": "continue", "detail": "fallback to baseline (no usable advisory signal): quiet 60s < nudge threshold 180s", "latency_ms": 545.0582504272461, "policy": "combined_kev", "window_id": "insufficient-truncated-eval-00"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 551.677375100553, "policy": "kev", "window_id": "insufficient-truncated-eval-01"}
+{"decision": "continue", "detail": "fallback to baseline (no usable advisory signal): quiet 60s < nudge threshold 180s", "latency_ms": 551.677375100553, "policy": "combined_kev", "window_id": "insufficient-truncated-eval-01"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 541.3465830497444, "policy": "kev", "window_id": "insufficient-gap-eval-00"}
+{"decision": "continue", "detail": "fallback to baseline (no usable advisory signal): quiet 60s < nudge threshold 180s", "latency_ms": 541.3465830497444, "policy": "combined_kev", "window_id": "insufficient-gap-eval-00"}
+{"decision": "insufficient_evidence", "detail": "kev label: insufficient_evidence", "latency_ms": 529.9524171277881, "policy": "kev", "window_id": "insufficient-gap-eval-01"}
+{"decision": "continue", "detail": "fallback to baseline (no usable advisory signal): quiet 60s < nudge threshold 180s", "latency_ms": 529.9524171277881, "policy": "combined_kev", "window_id": "insufficient-gap-eval-01"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 2034.781875088811, "policy": "kev", "window_id": "real-01m45n5k-tail-eval"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 2034.781875088811, "policy": "combined_kev", "window_id": "real-01m45n5k-tail-eval"}
+{"decision": "escalate_unproductive", "detail": "kev label: repetitive_failure", "latency_ms": 1910.959499888122, "policy": "kev", "window_id": "real-01m45py0-tail-eval"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: kev label: repetitive_failure", "latency_ms": 1910.959499888122, "policy": "combined_kev", "window_id": "real-01m45py0-tail-eval"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 1926.7150829546154, "policy": "kev", "window_id": "real-01m45yz6-tail-eval"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 1926.7150829546154, "policy": "combined_kev", "window_id": "real-01m45yz6-tail-eval"}
+{"decision": "continue", "detail": "kev label: useful_progress", "latency_ms": 1868.2639580219984, "policy": "kev", "window_id": "real-01m460hw-tail-eval"}
+{"decision": "continue", "detail": "baseline stands: nobody is waiting on this session's work (rule 16)", "latency_ms": 1868.2639580219984, "policy": "combined_kev", "window_id": "real-01m460hw-tail-eval"}
+{"decision": "escalate_unproductive", "detail": "kev label: repetitive_failure", "latency_ms": 1961.6848332807422, "policy": "kev", "window_id": "real-01m462s0-tail-eval"}
+{"decision": "escalate_unproductive", "detail": "advisory added what the baseline cannot see: kev label: repetitive_failure", "latency_ms": 1961.6848332807422, "policy": "combined_kev", "window_id": "real-01m462s0-tail-eval"}

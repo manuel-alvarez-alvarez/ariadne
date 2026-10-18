@@ -1,0 +1,1291 @@
+//! The forge a repository's remote is on, and the CLI that speaks to it (025).
+//!
+//! Ariadne talks to a forge only through its own CLI, `gh` for GitHub, run as
+//! a child process: the user signs in once, with the tool they already have,
+//! and Ariadne holds no token of its own. Each forge is a directory of its
+//! own, so a later forge is added beside `github`, and what it teaches that
+//! forge never reaches this one.
+
+pub mod github;
+pub mod hooks;
+pub mod live;
+pub mod news;
+pub mod poll;
+pub mod pulls;
+pub mod tunnel;
+
+use std::path::{Path, PathBuf};
+use std::process::Output;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+use ariadne_api::issues::IssueDto;
+use chrono::{DateTime, Utc};
+use tracing::warn;
+
+pub use ariadne_core::ForgeKind;
+use ariadne_store::{ForgeIntegration, ForgeWrite, Repository, SetForgeIntegration, Store};
+
+use crate::config::Config;
+
+/// How long one forge CLI call may take. `gh api` goes over the network, so
+/// this is longer than a local probe, and still bounded: a CLI waiting on a
+/// prompt must not hold a request open.
+const CLI_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The remote Ariadne reads, where the checkout has it.
+const ORIGIN: &str = "origin";
+
+/// A forge repository, as a remote URL names it: lower-cased throughout. A
+/// nested owner, `group/subgroup`, reads as one `owner` whole: a forge that
+/// nests repositories under a group path still parses here, even though
+/// GitHub does not use one today.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Remote {
+    pub host: String,
+    pub owner: String,
+    pub name: String,
+}
+
+impl Remote {
+    /// Read a remote URL: `git@host:owner/name.git`, `ssh://git@host/owner/name`,
+    /// `https://host/owner/name.git/` and the like, with or without `.git` and
+    /// a trailing slash. None for anything that names no host and repository —
+    /// a local path, a `file://` URL.
+    pub fn parse(url: &str) -> Option<Remote> {
+        let url = url.trim();
+        let (authority, path) = match url.split_once("://") {
+            Some((scheme, rest)) => {
+                if !matches!(scheme, "https" | "http" | "ssh" | "git" | "git+ssh") {
+                    return None;
+                }
+                rest.split_once('/')?
+            }
+            // The scp form, `[user@]host:path`. A path with a slash before
+            // the colon is a local path, not a host.
+            None => {
+                let (authority, path) = url.split_once(':')?;
+                if authority.contains('/') {
+                    return None;
+                }
+                (authority, path)
+            }
+        };
+        let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+        let host = host.split_once(':').map_or(host, |(h, _)| h);
+        let path = path.trim_matches('/');
+        let path = path
+            .strip_suffix(".git")
+            .unwrap_or(path)
+            .trim_end_matches('/');
+        let (owner, name) = path.rsplit_once('/')?;
+        let owner = owner.trim_start_matches('/');
+        if host.is_empty() || owner.is_empty() || name.is_empty() {
+            return None;
+        }
+        Some(Remote {
+            host: host.to_lowercase(),
+            owner: owner.to_lowercase(),
+            name: name.to_lowercase(),
+        })
+    }
+
+    /// `url`, with its own repository swapped for `target`'s: the same
+    /// scheme, host, user and port, whichever `url` names, so a fork is
+    /// reached the way the configured remote reaches its own repository
+    /// rather than the HTTPS URL the forge always reports for a head
+    /// (032) — the credentials a private fork needs are the ones already
+    /// set up for the base, not a plain clone URL nobody signed in on.
+    /// None for a `url` [`Self::parse`] itself would refuse.
+    pub fn rewrite(url: &str, target: &Remote) -> Option<String> {
+        let url = url.trim();
+        match url.split_once("://") {
+            Some((scheme, rest)) => {
+                if !matches!(scheme, "https" | "http" | "ssh" | "git" | "git+ssh") {
+                    return None;
+                }
+                let (authority, _) = rest.split_once('/')?;
+                Some(format!(
+                    "{scheme}://{authority}/{}/{}.git",
+                    target.owner, target.name
+                ))
+            }
+            None => {
+                let (authority, path) = url.split_once(':')?;
+                if authority.contains('/') {
+                    return None;
+                }
+                let _ = path;
+                Some(format!("{authority}:{}/{}.git", target.owner, target.name))
+            }
+        }
+    }
+}
+
+/// The only identity of a pull request: its registered repository and number.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullRequestRef {
+    pub repository_id: String,
+    pub number: i64,
+}
+
+impl PullRequestRef {
+    pub fn parse(url: &str, integration: &ForgeIntegration) -> Option<Self> {
+        let url = reqwest::Url::parse(url).ok()?;
+        if !matches!(url.scheme(), "http" | "https")
+            || !url.host_str()?.eq_ignore_ascii_case(&integration.host)
+        {
+            return None;
+        }
+        let path = url.path().trim_end_matches('/');
+        let (repository, number) = match integration.kind() {
+            ForgeKind::Github => path.rsplit_once("/pull/")?,
+        };
+        if !repository.eq_ignore_ascii_case(&format!("/{}/{}", integration.owner, integration.name))
+            || number.is_empty()
+            || !number.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let number = number.parse::<i64>().ok().filter(|n| *n > 0)?;
+        Some(Self {
+            repository_id: integration.repository_id.clone(),
+            number,
+        })
+    }
+}
+
+/// What a checkout's remote says: the forge, the remote's name and the
+/// repository on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Detected {
+    pub kind: ForgeKind,
+    pub remote: String,
+    pub repo: Remote,
+}
+
+/// Read the forge off a checkout: `origin`, or the one remote where there is
+/// no `origin`. `github.com` is GitHub; another host is GitHub Enterprise if
+/// `gh` is signed in to it. None where there is no such remote, its URL names
+/// no repository, or `gh` does not know the host.
+pub async fn detect(cfg: &Config, checkout: &Path) -> Option<Detected> {
+    let remote = remote_name(checkout).await?;
+    let url = git(checkout, &["remote", "get-url", &remote]).await?;
+    let repo = Remote::parse(&url)?;
+    let kind = match repo.host.as_str() {
+        "github.com" => ForgeKind::Github,
+        host => {
+            ForgeClient::new(cfg, ForgeKind::Github)
+                .auth_status(host)
+                .await
+                .ok()?;
+            ForgeKind::Github
+        }
+    };
+    Some(Detected { kind, remote, repo })
+}
+
+/// Detect a repository's forge again and write what changed: a row for a
+/// remote that appeared, none for one that went away, and the new remote for
+/// one that moved. A remote that now names another forge repository is
+/// disabled, keeping its pins: the sign-in and the one enabled row per forge
+/// repository were both checked against the old one. Answers the repository
+/// as it now stands.
+pub async fn redetect(
+    store: &Store,
+    cfg: &Config,
+    repository: Repository,
+) -> ariadne_store::Result<Repository> {
+    let detected = detect(cfg, Path::new(&repository.path)).await;
+    let row = merged(&repository.id, repository.forge.as_ref(), detected.as_ref());
+    let previous = repository.forge.clone();
+    let repository = written(store, repository, row).await?;
+    hooks::remove_replaced(cfg, previous.as_ref(), repository.forge.as_ref()).await;
+    Ok(repository)
+}
+
+/// Write the forge row a repository is to have, where it differs from the
+/// one it has. Answers the repository as it now stands.
+async fn written(
+    store: &Store,
+    repository: Repository,
+    row: Option<SetForgeIntegration>,
+) -> ariadne_store::Result<Repository> {
+    match change(&repository, row) {
+        ForgeWrite::Keep => Ok(repository),
+        ForgeWrite::Clear(id) => {
+            store.clear_forge_integration(&id).await?;
+            store.get_repository(&id).await
+        }
+        ForgeWrite::Set(row) => store.set_forge_integration(*row).await,
+    }
+}
+
+/// What it takes to leave `repository` with the forge row `row`: nothing,
+/// a dropped row, or a written one.
+pub fn change(repository: &Repository, row: Option<SetForgeIntegration>) -> ForgeWrite {
+    match row {
+        None if repository.forge.is_none() => ForgeWrite::Keep,
+        None => ForgeWrite::Clear(repository.id.clone()),
+        Some(row) if repository.forge.as_ref().map(stored).as_ref() == Some(&row) => {
+            ForgeWrite::Keep
+        }
+        Some(row) => ForgeWrite::Set(Box::new(row)),
+    }
+}
+
+/// The row a detection leaves: the detected remote, over what the repository
+/// already keeps (`current`). None where nothing was detected.
+pub fn merged(
+    repository_id: &str,
+    current: Option<&ForgeIntegration>,
+    detected: Option<&Detected>,
+) -> Option<SetForgeIntegration> {
+    let detected = detected?;
+    let fresh = SetForgeIntegration {
+        repository_id: repository_id.to_string(),
+        kind: detected.kind,
+        host: detected.repo.host.clone(),
+        owner: detected.repo.owner.clone(),
+        name: detected.repo.name.clone(),
+        remote: detected.remote.clone(),
+        enabled: false,
+        login: None,
+    };
+    let Some(current) = current else {
+        return Some(fresh);
+    };
+    let same = current.kind() == fresh.kind
+        && current.host == fresh.host
+        && current.owner == fresh.owner
+        && current.name == fresh.name;
+    Some(SetForgeIntegration {
+        enabled: same && current.enabled,
+        login: current.login.clone().filter(|_| same),
+        ..fresh
+    })
+}
+
+/// A stored row as the write that would leave it.
+fn stored(row: &ForgeIntegration) -> SetForgeIntegration {
+    SetForgeIntegration {
+        repository_id: row.repository_id.clone(),
+        kind: row.kind(),
+        host: row.host.clone(),
+        owner: row.owner.clone(),
+        name: row.name.clone(),
+        remote: row.remote.clone(),
+        enabled: row.enabled,
+        login: row.login.clone(),
+    }
+}
+
+/// Detect the forge of every registered repository, once, as the daemon
+/// starts: a remote changed while the daemon was down is read here.
+pub async fn detect_all(store: &Store, cfg: &Config) {
+    let repositories = match store.list_repositories().await {
+        Ok(repositories) => repositories,
+        Err(e) => {
+            warn!(error = %e, "cannot list the repositories to detect their forges");
+            return;
+        }
+    };
+    for repository in repositories {
+        let id = repository.id.clone();
+        if let Err(e) = redetect(store, cfg, repository).await {
+            warn!(repository = %id, error = %e, "cannot detect the forge of a repository");
+        }
+    }
+}
+
+/// The remote to read: `origin`, else the only one there is.
+async fn remote_name(checkout: &Path) -> Option<String> {
+    let names = git(checkout, &["remote"]).await?;
+    let names: Vec<&str> = names
+        .lines()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .collect();
+    match names.as_slice() {
+        names if names.contains(&ORIGIN) => Some(ORIGIN.to_string()),
+        [only] => Some(only.to_string()),
+        _ => None,
+    }
+}
+
+/// What a git command printed, trimmed, or None where it failed.
+async fn git(checkout: &Path, args: &[&str]) -> Option<String> {
+    let output = tokio::process::Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .args(args)
+        .kill_on_drop(true)
+        .output()
+        .await
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// The CLI of one forge.
+#[derive(Debug, Clone)]
+pub enum ForgeClient {
+    Github(github::Github),
+}
+
+impl ForgeClient {
+    /// Every open request of the repository, and which of them ask for
+    /// `login`'s review.
+    pub async fn list_open_pull_requests(
+        &self,
+        repository: &str,
+        login: &str,
+    ) -> Result<pulls::Listed, String> {
+        let listed = match self {
+            Self::Github(cli) => cli.list_open_pull_requests(repository, login).await,
+        };
+        self.cli()
+            .remember_list_rate_limit(listed.as_ref().err().map(String::as_str));
+        listed
+    }
+    pub async fn pull_request(
+        &self,
+        repository: &str,
+        number: i64,
+    ) -> Result<pulls::ForgePullRequest, String> {
+        match self {
+            Self::Github(cli) => cli.pull_request(repository, number).await,
+        }
+    }
+    pub async fn search_pull_requests(
+        &self,
+        repository: &str,
+        query: &str,
+    ) -> Result<Vec<pulls::ForgePullRequest>, String> {
+        match self {
+            Self::Github(cli) => cli.search_pull_requests(repository, query).await,
+        }
+    }
+
+    /// Everything a request holds beyond the list fetch's fields (026),
+    /// bounded by `within` ([`crate::timeouts::Timeouts::forge_details`]).
+    /// `login` is read only for the viewer's own unsubmitted drafts (031):
+    /// GitHub's own pending review, among the reviews this same call
+    /// already reads, is told apart from everyone else's by it.
+    pub async fn details(
+        &self,
+        repository: &str,
+        number: i64,
+        within: Duration,
+        login: &str,
+    ) -> Result<pulls::ForgeDetails, String> {
+        let read = async {
+            match self {
+                Self::Github(cli) => cli.details(repository, number, login).await,
+            }
+        };
+        tokio::time::timeout(within, read)
+            .await
+            .unwrap_or_else(|_| {
+                Err(format!(
+                    "the details of request {number} did not arrive in {} seconds",
+                    within.as_secs()
+                ))
+            })
+    }
+
+    /// Reply to one stored comment of request `number` with `body`, and
+    /// answer the forge id of the reply.
+    pub async fn reply(
+        &self,
+        repository: &str,
+        number: i64,
+        comment: &ariadne_store::PullRequestComment,
+        body: &str,
+    ) -> Result<String, String> {
+        match self {
+            Self::Github(cli) => cli.reply(repository, number, comment, body).await,
+        }
+    }
+
+    /// Reply to one stored comment of request `number` with `body`, held
+    /// back, unposted, in the user's own forge drafts rather than posted
+    /// (026 rule 24): a pending review on GitHub, under `login`, which it
+    /// finds or creates. Answers the forge id of the pending item.
+    pub async fn reply_pending(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+        comment: &ariadne_store::PullRequestComment,
+        body: &str,
+    ) -> Result<String, String> {
+        match self {
+            Self::Github(cli) => {
+                cli.reply_pending(repository, number, login, comment, body)
+                    .await
+            }
+        }
+    }
+
+    /// Resolve the thread one stored comment of request `number` is in: a
+    /// thread a reviewer session opened, once a push fixed it (029).
+    pub async fn resolve(
+        &self,
+        repository: &str,
+        number: i64,
+        comment: &ariadne_store::PullRequestComment,
+    ) -> Result<(), String> {
+        match self {
+            Self::Github(cli) => cli.resolve(repository, number, comment).await,
+        }
+    }
+
+    /// Post one review of request `number` in the name of `login`, and
+    /// answer what it posted, as comments of that login (029). The review
+    /// asks for changes or comments; no call here approves.
+    pub async fn submit_review(
+        &self,
+        repository: &str,
+        number: i64,
+        review: &pulls::ReviewDraft,
+        login: &str,
+    ) -> Result<Vec<ariadne_store::NewPullRequestComment>, String> {
+        match self {
+            Self::Github(cli) => cli.submit_review(repository, number, review, login).await,
+        }
+    }
+
+    /// Post one review of request `number` in the name of `login`, held
+    /// unposted in the user's own forge drafts rather than submitted (026
+    /// rule 24 / 029 rule 13a, where the repository holds posts back): each
+    /// inline comment is added to GitHub's one pending review. Nothing here
+    /// submits a review or posts a note outside the user's drafts. Answers
+    /// what it held, as comments of `login`.
+    pub async fn submit_review_pending(
+        &self,
+        repository: &str,
+        number: i64,
+        review: &pulls::ReviewDraft,
+        login: &str,
+    ) -> Result<Vec<ariadne_store::NewPullRequestComment>, String> {
+        match self {
+            Self::Github(cli) => {
+                cli.submit_review_pending(repository, number, review, login)
+                    .await
+            }
+        }
+    }
+
+    /// Edit the body of one of the viewer's own pending forge posts, a
+    /// pending review comment, by its own forge id (026 rule 25). Answers
+    /// the same forge id, or [`PendingEditError::NotPending`] where the user
+    /// already submitted the review it was in.
+    pub(crate) async fn edit_pending_comment(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+        forge_id: &str,
+        body: &str,
+    ) -> Result<String, PendingEditError> {
+        match self {
+            Self::Github(cli) => {
+                cli.edit_pending_comment(repository, number, login, forge_id, body)
+                    .await
+            }
+        }
+    }
+
+    /// Delete one of the viewer's own pending forge posts, by its own
+    /// forge id (026 rule 25). [`PendingEditError::NotPending`] the same way
+    /// [`Self::edit_pending_comment`] answers it.
+    pub(crate) async fn delete_pending_comment(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+        forge_id: &str,
+    ) -> Result<(), PendingEditError> {
+        match self {
+            Self::Github(cli) => {
+                cli.delete_pending_comment(repository, number, login, forge_id)
+                    .await
+            }
+        }
+    }
+
+    /// Replace the body of the viewer's own pending review outright (026
+    /// rule 25). Answers the pending review's own forge id, or
+    /// [`PendingEditError::NotPending`] where the user already submitted it,
+    /// or where there is none.
+    pub(crate) async fn edit_pending_review_body(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+        body: &str,
+    ) -> Result<String, PendingEditError> {
+        match self {
+            Self::Github(cli) => {
+                cli.replace_pending_review_body(repository, number, login, body)
+                    .await
+            }
+        }
+    }
+
+    /// The current body of the viewer's own pending review, with its own
+    /// forge id, read fresh (026 rule 25).
+    pub(crate) async fn pending_review_body(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+    ) -> Result<Option<(String, String)>, String> {
+        match self {
+            Self::Github(cli) => cli.pending_review_body(repository, number, login).await,
+        }
+    }
+
+    /// Whether request `number`, which no list holds now, still asks for
+    /// the review of `login` (029). GitHub reads the request's timeline,
+    /// since it stops listing a request once the reviewer reviewed it.
+    pub async fn review_still_requested(
+        &self,
+        repository: &str,
+        number: i64,
+        login: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::Github(cli) => cli.review_still_requested(repository, number, login).await,
+        }
+    }
+
+    pub async fn list_open_issues(
+        &self,
+        repository: &str,
+        assignee: Option<&str>,
+    ) -> Result<Vec<IssueDto>, String> {
+        match self {
+            Self::Github(cli) => cli.list_open_issues(repository, assignee).await,
+        }
+    }
+
+    pub async fn issue(&self, repository: &str, number: i64) -> Result<IssueDto, String> {
+        match self {
+            Self::Github(cli) => cli.issue(repository, number).await,
+        }
+    }
+    /// The CLI of a kind of forge, as the config names it.
+    pub fn new(cfg: &Config, kind: ForgeKind) -> ForgeClient {
+        match kind {
+            ForgeKind::Github => {
+                ForgeClient::Github(github::Github::new(Cli::new(cfg.gh_bin.as_deref(), "gh")))
+            }
+        }
+    }
+
+    /// The CLI of the forge a repository's remote is on.
+    pub fn for_repository(cfg: &Config, forge: &ForgeIntegration) -> ForgeClient {
+        ForgeClient::new(cfg, forge.kind())
+    }
+
+    /// Whether the CLI is installed and signed in to `host`. The error is the
+    /// CLI's own words, or what stopped it from answering.
+    pub async fn auth_status(&self, host: &str) -> Result<(), String> {
+        match self {
+            ForgeClient::Github(cli) => cli.auth_status(host).await,
+        }
+    }
+
+    /// Whether the forge itself has actually rejected the CLI's
+    /// credentials for `host` — a conclusive, read answer, not merely
+    /// that some check returned an error. Reads the same account call
+    /// [`Self::whoami`] already makes (`api user`, a real round trip to
+    /// the forge, not `auth status`'s own composite of config and SSO
+    /// checks that can fail before ever reaching the forge) and asks only
+    /// whether the forge's own answer was `HTTP 401` or `HTTP 403`
+    /// (`Refusal::is_unauthorized`). A missing binary, a spawn or write
+    /// failure, a timeout, or a network or server error
+    /// of the forge's own answers nothing about the credentials
+    /// themselves, and stays `false`: read reactively, after a fetch has
+    /// already failed (`forge/poll.rs`), so this can tell the two apart
+    /// before naming either as the fetch's cause.
+    pub(crate) async fn confirmed_signed_out(&self, host: &str) -> bool {
+        let cli = self.cli();
+        if cli.takes_list_rate_limit() {
+            return false;
+        }
+        cli.call(&["api", "user", "--hostname", host])
+            .await
+            .err()
+            .is_some_and(|refusal| refusal.ran() && refusal.is_unauthorized())
+    }
+
+    /// When the forge's rate limit resets, read with no quota of its own
+    /// (GitHub's `gh api rate_limit`) — the latest reset of a resource with
+    /// no remaining calls. `None` where the read itself failed, or every
+    /// resource has calls left: the caller falls back to
+    /// [`crate::timeouts::Timeouts::forge_rate_limit_pause`] from now
+    /// (`forge/poll.rs::worker`).
+    pub(crate) async fn rate_limit_reset(&self, host: &str) -> Option<DateTime<Utc>> {
+        match self {
+            ForgeClient::Github(cli) => cli.rate_limit_reset(host).await,
+        }
+    }
+
+    /// The account the CLI is signed in to `host` as.
+    pub async fn whoami(&self, host: &str) -> Result<String, String> {
+        match self {
+            ForgeClient::Github(cli) => cli.whoami(host).await,
+        }
+    }
+
+    /// Open a pull request from `head` onto `base` in `owner/name`, titled
+    /// and bodied as asked, and answer its URL.
+    pub async fn open(
+        &self,
+        repo: &str,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+        draft: bool,
+    ) -> Result<String, String> {
+        match self {
+            ForgeClient::Github(cli) => cli.open(repo, head, base, title, body, draft).await,
+        }
+    }
+
+    fn cli(&self) -> &Cli {
+        match self {
+            Self::Github(client) => &client.cli,
+        }
+    }
+}
+
+/// One forge CLI: the program the config names, found the way `python_bin`
+/// is found — a path as it stands, a bare name on the daemon's PATH.
+#[derive(Debug, Clone)]
+pub struct Cli {
+    configured: Option<String>,
+    program: &'static str,
+    /// How long one call may take, its input written and its output read:
+    /// [`CLI_TIMEOUT`].
+    timeout: Duration,
+    /// Whether the just-failed request-list read already established that
+    /// the forge is rate limited. The reactive sign-out check reads and
+    /// clears this so the protected fetch path can keep calling
+    /// `confirmed_signed_out` unchanged.
+    list_rate_limited: Arc<AtomicBool>,
+}
+
+impl Cli {
+    fn new(configured: Option<&str>, program: &'static str) -> Cli {
+        Cli {
+            configured: configured.map(str::to_string),
+            program,
+            timeout: CLI_TIMEOUT,
+            list_rate_limited: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn remember_list_rate_limit(&self, failure: Option<&str>) {
+        self.list_rate_limited.store(
+            failure.is_some_and(|failure| Refusal::of(failure).is_rate_limited()),
+            Ordering::Release,
+        );
+    }
+
+    fn takes_list_rate_limit(&self) -> bool {
+        self.list_rate_limited.swap(false, Ordering::AcqRel)
+    }
+
+    /// Where the program is, or why it is not there.
+    fn binary(&self) -> Result<PathBuf, String> {
+        let name = self.configured.as_deref().unwrap_or(self.program);
+        let found = match name.contains('/') {
+            true => Some(PathBuf::from(name)).filter(|p| ariadne_core::is_executable(p)),
+            false => {
+                let path = std::env::var_os("PATH").unwrap_or_default();
+                ariadne_core::which(&path, name)
+            }
+        };
+        found.ok_or_else(|| {
+            format!(
+                "`{name}` is not installed on the daemon's PATH; install it, or set {}_bin \
+                 in config.toml",
+                self.program
+            )
+        })
+    }
+
+    /// Run the CLI to completion, bounded by [`CLI_TIMEOUT`], with `input`
+    /// on its standard input where there is one. The input is written while
+    /// the output is read, under the same deadline: a CLI that stalls before
+    /// it reads an input larger than the pipe holds would otherwise block
+    /// the write past any deadline, and one that writes much before it reads
+    /// would deadlock against it. A call that runs out kills the CLI.
+    async fn run(&self, args: &[&str], input: Option<&str>) -> Result<Output, String> {
+        use tokio::io::AsyncWriteExt;
+        let binary = self.binary()?;
+        let stdin = match input {
+            Some(_) => std::process::Stdio::piped(),
+            None => std::process::Stdio::null(),
+        };
+        let spawned = tokio::process::Command::new(&binary)
+            .args(args)
+            .stdin(stdin)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn();
+        let mut child = spawned.map_err(|e| format!("cannot run `{}`: {e}", binary.display()))?;
+        let pipe = child.stdin.take();
+        let write = async move {
+            if let (Some(input), Some(mut pipe)) = (input, pipe) {
+                pipe.write_all(input.as_bytes()).await?;
+                // Dropped here: the CLI reads the end of its input.
+            }
+            Ok::<(), std::io::Error>(())
+        };
+        let work = async { tokio::join!(write, child.wait_with_output()) };
+        match tokio::time::timeout(self.timeout, work).await {
+            Ok((Err(e), _)) => Err(format!("cannot write to `{}`: {e}", binary.display())),
+            Ok((Ok(()), Ok(output))) => Ok(output),
+            Ok((Ok(()), Err(e))) => Err(format!("cannot run `{}`: {e}", binary.display())),
+            Err(_) => Err(format!(
+                "`{} {}` did not answer in {} seconds",
+                self.program,
+                args.join(" "),
+                self.timeout.as_secs_f64()
+            )),
+        }
+    }
+
+    /// Run the CLI and answer its standard output, or its own words on why
+    /// it failed.
+    async fn answer(&self, args: &[&str]) -> Result<String, String> {
+        self.call(args).await.map_err(|refusal| refusal.to_string())
+    }
+
+    /// Run the CLI and answer its standard output, or the refusal: what the
+    /// forge said, kept apart from the command, whose arguments carry a
+    /// comment's whole text.
+    pub(crate) async fn call(&self, args: &[&str]) -> Result<String, Refusal> {
+        self.call_with_input(args, None).await
+    }
+
+    /// [`Cli::call`], with `input` on the CLI's standard input: a JSON body
+    /// `gh api --input -` sends as it is.
+    pub(crate) async fn call_with_input(
+        &self,
+        args: &[&str],
+        input: Option<&str>,
+    ) -> Result<String, Refusal> {
+        let command = format!("{} {}", self.program, args.join(" "));
+        let output = self.run(args, input).await.map_err(|message| Refusal {
+            said: None,
+            answer: None,
+            executed: false,
+            message,
+        })?;
+        if output.status.success() {
+            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+        }
+        // `gh api` writes the forge's own answer — `{"message": ..., "errors":
+        // [...]}`, which says why it refused — to stdout, and only a line
+        // such as "gh: Unprocessable Entity (HTTP 422)" to stderr: both are
+        // kept, or the reason is lost.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let said = [stderr.trim(), stdout.trim()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" — ");
+        let message = match said.is_empty() {
+            true => format!("`{command}` failed with {}", output.status),
+            false => format!("`{command}`: {said}"),
+        };
+        Err(Refusal {
+            answer: Some(stdout.trim().to_string()).filter(|answer| !answer.is_empty()),
+            said: Some(said).filter(|said| !said.is_empty()),
+            executed: true,
+            message,
+        })
+    }
+}
+
+/// Why editing, deleting or replacing one of the viewer's own pending forge
+/// posts failed (026 rule 25): the target is no longer pending — the user already
+/// submitted the review it was in, or published the draft note, or there
+/// never was one — the forge call itself failed — or `forge_id` itself
+/// names no comment or draft note of any shape, a caller's own mistake
+/// rather than anything the forge said.
+#[derive(Debug)]
+pub(crate) enum PendingEditError {
+    NotPending,
+    Forge(String),
+    BadForgeId(String),
+}
+
+impl From<String> for PendingEditError {
+    fn from(error: String) -> Self {
+        PendingEditError::Forge(error)
+    }
+}
+
+/// A forge CLI call that failed: what the CLI and the forge said, apart
+/// from the command it ran. Only what was said is read for why: the
+/// command's arguments hold a comment's whole text, which can say anything.
+#[derive(Debug, Clone)]
+pub(crate) struct Refusal {
+    /// The CLI's and the forge's words; None where nothing answered — the
+    /// CLI did not start, or did not answer in time.
+    said: Option<String>,
+    /// The forge's own answer alone, as the CLI printed it to standard
+    /// output: `gh api`'s JSON, `{"message": ..., "errors": [...]}`.
+    answer: Option<String>,
+    /// Whether the CLI process actually ran to an exit code, however it
+    /// answered — `false` only where [`Cli::run`] itself failed: the
+    /// binary is missing, could not be spawned, could not be written to,
+    /// or did not answer in time. Read by [`Self::ran`].
+    executed: bool,
+    message: String,
+}
+
+impl Refusal {
+    /// A refusal as only its own final words, for a reactive classification
+    /// after the fact: the fetch path that answers [`Self::is_rate_limited`]
+    /// here (`forge/poll.rs::worker`) already turned its own `Refusal` into
+    /// a plain stored error before the worker ever saw it.
+    pub(crate) fn of(said: impl Into<String>) -> Refusal {
+        let said = said.into();
+        Refusal {
+            said: Some(said.clone()),
+            answer: None,
+            executed: true,
+            message: said,
+        }
+    }
+
+    /// Whether the forge itself answered that the credentials are no
+    /// good — positive evidence of exactly that, not merely a forbidden
+    /// response: `HTTP 401` is unambiguous (the API never answers it for
+    /// anything else), and `Bad credentials` is the forge's own fixed
+    /// words for a rejected or revoked token. A network failure, a
+    /// timeout, or a server error of its own is neither, and proves
+    /// nothing about the credentials themselves.
+    ///
+    /// A bare `HTTP 403` is deliberately *not* read as a sign-out: GitHub
+    /// answers the same `HTTP 403` for primary and secondary rate
+    /// limiting, with otherwise valid credentials (GitHub's own REST
+    /// rate-limit documentation), and for restrictions an authenticated
+    /// user can still be caught by — an IP allow list, SAML enforcement
+    /// (GitHub's own network access restriction documentation) — neither
+    /// of which a sign-in answers for. `401` is a single, unambiguous case
+    /// the forge means one thing by; `403` is not, so it takes no action
+    /// here on its own, leaving a 403 with no positive credential evidence
+    /// to raise nothing at all (`configuration`'s own cause, or silence,
+    /// rather than a guessed one).
+    pub(crate) fn is_unauthorized(&self) -> bool {
+        self.said
+            .as_deref()
+            .is_some_and(|said| said.contains("HTTP 401") || said.contains("Bad credentials"))
+    }
+
+    /// Whether the forge answered that its rate limit was hit: GitHub's
+    /// primary and secondary rate limiting both say "rate limit" — in the
+    /// REST (`gh api`) and GraphQL (`gh api graphql`) answers alike, the
+    /// secondary wording being a superset of the primary's. Read for
+    /// positive evidence, the same convention [`Self::is_unauthorized`]
+    /// already follows.
+    pub(crate) fn is_rate_limited(&self) -> bool {
+        self.said.as_deref().is_some_and(|said| {
+            let said = said.to_ascii_lowercase();
+            said.contains("rate limit")
+                || said.contains("http 429")
+                || said.contains("429 too many requests")
+        })
+    }
+
+    /// The forge's own answer as JSON, where it gave one.
+    pub(crate) fn answer(&self) -> Option<serde_json::Value> {
+        self.answer
+            .as_deref()
+            .and_then(|answer| serde_json::from_str(answer).ok())
+    }
+
+    /// Whether the CLI actually ran to an exit code, however it answered —
+    /// as opposed to [`Cli::run`] itself having failed (a missing binary,
+    /// a spawn or write failure, or a timeout), which is no word from the
+    /// CLI about what was asked at all.
+    pub(crate) fn ran(&self) -> bool {
+        self.executed
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A refusal is read for what the forge said, never for the command:
+    /// a summary whose text says "HTTP 404" is no 404 from the forge.
+    /// A CLI that stalls before it reads an input larger than the pipe holds
+    /// is stopped by the deadline, the write with it, and its call answers
+    /// that it did not answer.
+    #[tokio::test]
+    async fn a_cli_that_reads_no_input_is_stopped_by_the_deadline() {
+        let cli = Cli {
+            timeout: Duration::from_millis(500),
+            ..Cli::new(Some("/bin/sleep"), "gh")
+        };
+        let input = "x".repeat(1024 * 1024);
+        let started = std::time::Instant::now();
+        let refused = cli
+            .call_with_input(&["30"], Some(&input))
+            .await
+            .expect_err("a stalled CLI answers nothing");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(refused.to_string().contains("did not answer"), "{refused}");
+        assert!(!refused.ran(), "a deadline is not the CLI having answered");
+    }
+
+    /// One shell script, written once for the whole run of this test
+    /// binary and shared by every test below, rather than a fresh
+    /// executable per call: macOS checks each executable before it starts,
+    /// so a test that wrote its own would pay that cost per test
+    /// (crates/AGENTS.md). Each test instead gets its own directory of
+    /// *data* — `stderr`, `exit`, and an optional `hold` that makes the
+    /// script sleep well past any call's deadline — and a `gh` link
+    /// pointing at this one script, which reads `$(dirname "$0")`: its own
+    /// link's directory, not the shared script's, exactly as
+    /// `tests/it/common/acp.rs::stub_acp_agent` and
+    /// `tests/it/common/forge.rs::stub_forge_cli` already share theirs.
+    /// Unreachable from here, in a different compilation unit (this is a
+    /// `src/`-level unit test, not part of the separate `tests/it`
+    /// integration binary), so reimplemented locally rather than imported.
+    fn shared_gh_script() -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        // `exec` on the hold branch replaces this shell with `sleep`
+        // itself, rather than running it as a child the shell would then
+        // wait on: `Cli::run`'s timeout kills only the one process it
+        // spawned (`kill_on_drop`), and a `sleep` left as that process's
+        // own *child* would simply be orphaned onto init rather than
+        // killed with it. With `exec`, the process the daemon spawned and
+        // the one that is sleeping are the same pid, so killing it ends
+        // the hold too.
+        const SCRIPT: &str = "#!/bin/sh\n\
+dir=$(dirname \"$0\")\n\
+if [ -f \"$dir/hold\" ]; then exec sleep 3600; fi\n\
+if [ -f \"$dir/stderr\" ]; then cat \"$dir/stderr\" 1>&2; fi\n\
+exit \"$(cat \"$dir/exit\")\"\n";
+        // Named for the script's own content, as
+        // `tests/it/common/mod.rs::shared_script` names its shared files:
+        // a script edited since a previous run of this binary gets a
+        // fresh path rather than silently reusing a stale file left on
+        // disk from before the edit — the exact way the pre-`exec`
+        // version of this script once lingered under a fixed name and
+        // kept orphaning `sleep` well after the fix landed.
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        SCRIPT.hash(&mut hasher);
+        let name = format!("gh-stub-{:016x}", hasher.finish());
+        let dir = std::env::temp_dir().join("ariadne-forge-mod-test-scripts");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        if !path.exists() {
+            // Tests run in processes of their own: write aside and rename,
+            // so no test ever launches a file another test is still
+            // writing.
+            let partial = dir.join(format!("gh-stub.{}", std::process::id()));
+            std::fs::write(&partial, SCRIPT).unwrap();
+            std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::rename(&partial, &path).unwrap();
+        }
+        path
+    }
+
+    /// A `gh` link to the one shared script, reading `stderr` and `exit`
+    /// from the per-test directory it was given, so
+    /// [`ForgeClient::confirmed_signed_out`] can be driven through a real
+    /// process without a real forge.
+    fn fake_gh(dir: &std::path::Path, stderr: &str, exit: i32) -> String {
+        std::fs::write(dir.join("stderr"), stderr).unwrap();
+        std::fs::write(dir.join("exit"), exit.to_string()).unwrap();
+        let link = dir.join("gh");
+        std::os::unix::fs::symlink(shared_gh_script(), &link).unwrap();
+        link.display().to_string()
+    }
+
+    /// A `gh` link to the shared script that holds every call open well
+    /// past any deadline a test gives it, so a real timeout is actually
+    /// exercised rather than a `/bin/sleep` that errors out immediately on
+    /// `api user`'s own arguments.
+    fn fake_gh_held(dir: &std::path::Path) -> String {
+        std::fs::write(dir.join("hold"), "").unwrap();
+        let link = dir.join("gh");
+        std::os::unix::fs::symlink(shared_gh_script(), &link).unwrap();
+        link.display().to_string()
+    }
+
+    fn github_client(binary: &str) -> ForgeClient {
+        ForgeClient::Github(github::Github::new(Cli {
+            timeout: Duration::from_secs(5),
+            ..Cli::new(Some(binary), "gh")
+        }))
+    }
+
+    /// The forge's own `HTTP 401` is a confirmed rejection: sign-out is
+    /// the one thing the daemon can say for certain happened.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_true_on_the_forges_own_401() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: HTTP 401: Bad credentials (https://api.github.com/user)",
+            1,
+        ));
+        assert!(client.confirmed_signed_out("github.com").await);
+    }
+
+    /// GitHub answers `HTTP 403` for primary and secondary rate limiting
+    /// too, with otherwise valid credentials — a rate-limited `api user`
+    /// read is no proof of sign-out, and raising `access` for it would be
+    /// a false sign-in action over a retryable condition.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_rate_limited_403() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: API rate limit exceeded for user ID 1. (HTTP 403)",
+            1,
+        ));
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// A 403 naming no credential problem at all — GitHub's own wording
+    /// for an IP allow list or SAML enforcement restriction, which an
+    /// already-signed-in, already-valid token can still be caught by — is
+    /// no more a confirmed sign-out than the rate-limited one above: a
+    /// 403 is read for positive evidence of a credential rejection, never
+    /// inferred from the status alone.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_generic_forbidden_403() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: Although you appear to have the correct authorization credentials, \
+             the acme organization has an IP allow list enabled, and your IP address \
+             is not permitted to access this resource. (HTTP 403)",
+            1,
+        ));
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// A server error of the forge's own, with no `401`/`403` in it, is
+    /// not a credential rejection — raising `access` for it would be
+    /// exactly the speculative classification this read exists to avoid.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_an_unrelated_server_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: Internal Server Error (HTTP 500)",
+            1,
+        ));
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// A network failure or a configuration error the CLI reports before
+    /// ever reaching the forge is the same kind of answer as a 500: the
+    /// CLI ran and said something, but said nothing about credentials.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_network_or_configuration_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = github_client(&fake_gh(
+            dir.path(),
+            "gh: could not resolve host: api.github.com",
+            1,
+        ));
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// A timeout is the check never actually running at all —
+    /// [`Refusal::ran`] reads `false` — which answers nothing about the
+    /// credentials either way. Held open by the shared stub's own `hold`
+    /// file until the deadline, rather than `/bin/sleep` given `api user
+    /// --hostname <host>`, which exits immediately on its own usage error
+    /// and so never actually exercises the deadline at all.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = ForgeClient::Github(github::Github::new(Cli {
+            timeout: Duration::from_millis(200),
+            ..Cli::new(Some(&fake_gh_held(dir.path())), "gh")
+        }));
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// A missing executable never runs at all either — [`Cli::binary`]
+    /// fails before [`Cli::run`] even spawns anything.
+    #[tokio::test]
+    async fn confirmed_signed_out_is_false_on_a_missing_executable() {
+        let client = github_client("/no/such/gh/binary/here");
+        assert!(!client.confirmed_signed_out("github.com").await);
+    }
+
+    /// `ran()` is what tells a confirmed refusal — the CLI reached an exit
+    /// code and said something — apart from [`Cli::run`] itself never
+    /// managing to ask: a missing binary, a spawn or write failure, or a
+    /// timeout, none of which is the CLI having answered the question at
+    /// all. [`ForgeClient::confirmed_signed_out`] reads this, alongside
+    /// [`Refusal::is_unauthorized`], before naming a forge fetch's
+    /// failure a credential rejection.
+    #[test]
+    fn a_refusal_has_run_only_where_the_cli_reached_an_exit_code() {
+        let executed = Refusal {
+            said: Some("gh: not logged in to any hosts".into()),
+            answer: None,
+            executed: true,
+            message: "`gh auth status`: gh: not logged in to any hosts".into(),
+        };
+        let never_ran = Refusal {
+            said: None,
+            answer: None,
+            executed: false,
+            message: "cannot run `gh`: No such file or directory".into(),
+        };
+        assert!(executed.ran());
+        assert!(!never_ran.ran());
+    }
+
+    /// GitHub's primary limit and its secondary limit both read as a rate
+    /// limit; a 404 and a timeout read as neither.
+    #[test]
+    fn a_refusal_is_rate_limited_on_either_forges_own_words() {
+        let refusal = |said: Option<&str>| Refusal {
+            said: said.map(str::to_string),
+            answer: None,
+            executed: said.is_some(),
+            message: "`gh pr list`".into(),
+        };
+        assert!(
+            refusal(Some(
+                "gh: API rate limit exceeded for user ID 1. (HTTP 403)"
+            ))
+            .is_rate_limited()
+        );
+        assert!(
+            refusal(Some(
+                "gh: You have exceeded a secondary rate limit. Please wait a few \
+                 minutes before you try again. (HTTP 403)"
+            ))
+            .is_rate_limited()
+        );
+        assert!(!refusal(Some("gh: Not Found (HTTP 404)")).is_rate_limited());
+        assert!(
+            !refusal(None).is_rate_limited(),
+            "a timeout is no rate limit"
+        );
+    }
+
+    #[test]
+    fn pull_request_urls_share_the_repository_and_number_only() {
+        let integration = ForgeIntegration {
+            webhook_id: None,
+            webhook_secret: None,
+            webhook_url: None,
+            webhook_state: "polling".into(),
+            webhook_error: None,
+            webhook_last_delivery_at: None,
+            fetch_error: None,
+            repository_id: "repository".into(),
+            kind: "github".into(),
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            detected_at: String::new(),
+            updated_at: String::new(),
+        };
+        let expected = Some(PullRequestRef {
+            repository_id: "repository".into(),
+            number: 42,
+        });
+        for url in [
+            "https://github.com/acme/widgets/pull/42",
+            "http://GITHUB.com/ACME/Widgets/pull/42/",
+            "https://github.com/acme/widgets/pull/42?diff=split#comment-1",
+        ] {
+            assert_eq!(PullRequestRef::parse(url, &integration), expected, "{url}");
+        }
+        for url in [
+            "https://github.com/other/widgets/pull/42",
+            "https://evil.example/acme/widgets/pull/42",
+            "https://github.com/acme/widgets/issues/42",
+            "file://github.com/acme/widgets/pull/42",
+            "https://github.com/acme/widgets/pull/0",
+            "https://github.com/acme/widgets/pull/42/files",
+        ] {
+            assert_eq!(PullRequestRef::parse(url, &integration), None, "{url}");
+        }
+    }
+
+    fn remote(host: &str, owner: &str, name: &str) -> Option<Remote> {
+        Some(Remote {
+            host: host.into(),
+            owner: owner.into(),
+            name: name.into(),
+        })
+    }
+
+    /// Every spelling a clone URL takes reads as the same repository,
+    /// lower-cased; a local path names none.
+    #[test]
+    fn a_remote_url_is_read_in_its_ssh_and_https_forms() {
+        let ariadne = remote("github.com", "acme", "ariadne");
+        for url in [
+            "git@github.com:acme/ariadne.git",
+            "git@github.com:acme/ariadne",
+            "git@github.com:Acme/Ariadne.git/",
+            "ssh://git@github.com/acme/ariadne.git",
+            "ssh://git@github.com:22/acme/ariadne",
+            "https://github.com/acme/ariadne.git",
+            "https://github.com/acme/ariadne",
+            "https://github.com/acme/ariadne/",
+            "https://user:token@GitHub.com/acme/ariadne.git",
+        ] {
+            assert_eq!(Remote::parse(url), ariadne, "{url}");
+        }
+        assert_eq!(
+            Remote::parse("git@forge.example.com:group/sub/proj.git"),
+            remote("forge.example.com", "group/sub", "proj")
+        );
+        for url in [
+            "/srv/git/ariadne.git",
+            "../ariadne",
+            "file:///srv/git/ariadne.git",
+            "https://github.com/ariadne",
+            "",
+        ] {
+            assert_eq!(Remote::parse(url), None, "{url}");
+        }
+    }
+}

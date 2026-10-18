@@ -3,18 +3,37 @@
 `~/.ariadne/config.toml` (all optional):
 
 ```toml
-socket_path = "/Users/me/.ariadne/ariadne.sock"
-db_path = "/Users/me/.ariadne/ariadne.db"
-worktree_root = "/Users/me/.ariadne/worktrees"
-run_dir = "/Users/me/.ariadne/run"
+socket_path = "/Users/me/.ariadne/ariadne.sock"   # (default: <home>/ariadne.sock)
+db_path = "/Users/me/.ariadne/ariadne.db"         # (default: <home>/ariadne.db)
+telemetry_db_path = "/Users/me/.ariadne/telemetry.db"
+                                   # (default: <home>/telemetry.db); see Telemetry
+telemetry_samples_days = 30       # days a raw metric sample is kept before
+                                   # retention deletes it (default shown)
+telemetry_logs_days = 14          # days a log record is kept before retention
+                                   # deletes it (default shown)
+telemetry_rollups_days = 365      # days an hourly metric rollup is kept before
+                                   # retention deletes it (default shown)
+worktree_root = "/Users/me/.ariadne/worktrees"    # (default: <home>/worktrees)
+run_dir = "/Users/me/.ariadne/run"                # (default: <home>/run)
+skills_dir = "/Users/me/.ariadne/skills"          # (default: <home>/skills)
 tcp_listen = "127.0.0.1:7676"     # enables the TCP listener (for web/desktop UIs)
+                                   # (default: unix socket only, no TCP listener)
+tcp_allowed_origins = ["https://console.example"]
+                                   # extra browser origins allowed on the TCP listener
 log_filter = "info,ariadne_daemon=debug"
+                                   # the tracing filter the daemon logs at
+                                   # (default: "info"); RUST_LOG overrides it
 cli_bin = "/usr/local/bin/ariadne" # runs the Ariadne MCP server for ACP sessions
-                                   # (default: sibling of ariadned)
-delete_merged_worktrees = true     # remove task worktrees after merge (default);
-                                   # false keeps them for inspecting finished work
-delete_merged_branches = true      # only applies when worktrees are deleted too:
-                                   # a kept author worktree pins the task branch
+                                   # (default: sibling of ariadned, else
+                                   # `ariadne` on the daemon's own PATH)
+delete_merged_worktrees = true     # remove task worktrees after merge, and every
+                                   # task's worktree once its goal is cancelled or
+                                   # completed (default); false keeps them all for
+                                   # inspecting the work
+delete_merged_branches = true      # only applies to a merged task's branch, when
+                                   # worktrees are deleted too: a kept task worktree
+                                   # pins its branch, and cancelling or completing a
+                                   # goal never deletes a branch
 prevent_sleep = true               # hold a system sleep inhibition while any agent
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
@@ -22,30 +41,53 @@ acp_registry_url = "https://cdn.agentclientprotocol.com/registry/v1/latest/regis
                                    # download the index only on an explicit refresh
 python_bin = "/opt/python3.12/bin/python3"
                                    # the Python that the AI permission model
-                                   # installs into; it has to be 3.10 or newer
-                                   # (default: python3 on the daemon's PATH).
+                                   # installs into; it has to be Python 3.12 or 3.13
+                                   # (default: python3.13, python3.12, then python3 on PATH).
                                    # See Permission modes.
-ai_permissions_release_url = "https://api.github.com/repos/NandhaKishorM/laya/releases/latest"
-                                   # where the model's release is read from: its tag,
-                                   # and the wheel an install takes
+nvidia_smi_bin = "/opt/bin/nvidia-smi"
+                                   # the nvidia-smi the AI permission model's hardware
+                                   # probe runs to find a GPU (default: nvidia-smi on PATH).
+auto_switch = true                 # automatically switch to a different agent
+                                   # or model when the current one is exhausted
+                                   # (default); false keeps waiting for input
+exhausted_patterns = [             # case-insensitive text that marks a model
+  "quota exceeded",                # exhausted; replaces the shipped list of
+  "rate limited",                  # eight if set. Each one is matched as
+]                                  # plain text, never a regex, against the
+                                   # error message (default: "hit your usage
+                                   # limit", "usage limit reached", "usage
+                                   # limit", "session limit", "weekly limit",
+                                   # "rate limit", "quota", "try again at")
+ai_failure_diagnosis = true        # ask the AI permission model's local Kev
+                                    # service for an advisory opinion on a
+                                    # failed session's error (default false).
+                                    # Never changes auto_switch or
+                                    # exhausted_patterns; see Failure diagnosis.
+gh_bin = "/opt/homebrew/bin/gh"    # the `gh` the GitHub integration runs
+                                   # (default: gh on this daemon's PATH)
+webhook_listen = "127.0.0.1:7677"  # the signed webhook listener's address
+                                   # (default: 127.0.0.1:0, a random free port)
+webhook_public_url = "https://hooks.example.com"
+                                   # the public URL forwarded to the webhook
+                                   # listener; set, the daemon opens no tunnel
+tunnel_host = "https://localtunnel.me"
+                                   # the localtunnel server the webhook tunnel
+                                   # registers with when webhook_public_url is
+                                   # unset (default shown)
+tunnel_subdomain = "my-ariadne"    # the subdomain the tunnel asks for
+                                   # (default: the one already stored, else a
+                                   # random one kept on first use)
 
 [[acp_agents]]                     # an agent of your own, or one the registry
-id = "my-agent"                    # names under another command
+id = "my-agent"                    # names under another command (default: [])
 command = ["my-agent", "acp"]      # program followed by its arguments
 ```
 
-The agents of a daemon are the agents of the ACP registry whose command is on
-its `PATH`: Ariadne ships a snapshot of that index — `claude-acp`,
-`codex-acp`, `goose`, `opencode` and 37 more — and installs none of them. An
-`[[acp_agents]]` entry adds an agent the registry does not name, and one whose
-id the registry does name replaces it, command and all. The daemon probes
-every entry at startup. Where an agent is found under the name of its package
-rather than its own — `claude-acp` is installed as `claude-agent-acp` — the
-command has to be the file that package installed, and it has to answer as an
-ACP agent: a program that only shares the name, as Visual Studio Code's `code`
-shares MiniMax Code's, is not started and is not listed. See [Installing Ariadne](install.md) to add an agent,
-and [Permission modes](permissions.md) to choose, per repository, how it
-handles tool requests.
+An `[[acp_agents]]` entry adds an ACP agent the shipped registry snapshot
+does not name, or replaces one it does name, command and all, by reusing its
+id. See [Installing Ariadne](install.md) for how the daemon discovers and
+probes agents, and [Permission modes](permissions.md) to choose, per
+repository, how it handles tool requests.
 
 `POST /v1/acp-agents/refresh` downloads the index from `acp_registry_url`,
 then searches `PATH` again and probes every agent. The download has a
@@ -58,28 +100,80 @@ Startup downloads nothing. It uses the kept index only when its fetch time
 is after the snapshot date at midnight UTC. Otherwise, it uses the shipped
 snapshot. Changing the URL does not discard the last good copy.
 
-`python_bin` and `ai_permissions_release_url` belong to the AI permission
-model, the model the `ai` permission mode answers with. `python_bin` is the
-interpreter the model's virtual environment is built from — set it where the
-`python3` on the daemon's own `PATH` is older than 3.10, or where you want the
-model on a different one. Nothing is installed into that interpreter: the
-package and PyTorch go into `~/.ariadne/ai-permissions/venv`.
-`ai_permissions_release_url` is the release document the install reads its
-tag and its wheel from; the download has a 30-second timeout. Neither key
-turns the model on — [Permission modes](permissions.md) does that.
+`python_bin` names the interpreter the AI permission model's install runs
+on — set it where the first supported Python on the daemon's own `PATH` is
+not 3.12 or 3.13, or where you want the model on a different interpreter.
+`nvidia_smi_bin` is the `nvidia-smi` its hardware probe runs to find a GPU
+and its VRAM, when one is not on the daemon's own `PATH` under that name.
+Neither key turns the model on, or says what the install puts where — see
+[Permission modes](permissions.md) for both.
+
+`ai_failure_diagnosis` reuses that same model, once it is on and ready, to
+read a failed session's error and suggest which of five categories it falls
+into — quota exhaustion, a temporary failure, an authentication or
+configuration problem, a task failure, or insufficient evidence. It is
+advisory only: on or off, it never changes whether a session retries,
+switches models, or needs you, which stays exactly what `auto_switch` and
+`exhausted_patterns` above decide. See [Following what happens](following-events.md)
+for where the result shows up.
+
+`gh_bin` is a path taken as it stands, or a bare name
+looked up on the daemon's own `PATH`, as `python_bin` is above — the `gh`
+the daemon itself runs for a repository's forge integration; no agent
+ever runs it. `webhook_listen` is the address the signed webhook listener
+binds; left unset, the daemon binds a random free loopback port. With no
+`webhook_public_url` configured, Ariadne opens a tunnel to that listener on
+`tunnel_host`, asking for `tunnel_subdomain` where one is set. See [The forge
+integration](forge.md) for enabling a repository's integration and what each
+of these keys is for.
+
+`tcp_listen` must use a loopback address: `127.0.0.1` or `[::1]`. The daemon
+refuses a wildcard or LAN address at startup, and `ariadned --check-config`
+reports the same refusal. Use an SSH tunnel to reach the daemon from another
+host.
+
+The TCP listener accepts only `Host` values for `localhost`, `127.0.0.1`, or
+`[::1]`, with an optional port. It also accepts a request without an `Origin`
+header, or one from the packaged Tauri app, the development server, or an
+exact serialized origin in `tcp_allowed_origins`: `scheme://host[:port]`,
+without a path or trailing slash. Other Host and Origin values receive a `403
+forbidden` envelope, including event streams and terminal WebSockets. The unix
+socket ignores these TCP checks.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the
-daemon that is already running. `ariadned --help` lists every key above and
-the two environment variables (`ARIADNE_HOME`, `RUST_LOG`) with a line each.
+daemon that is already running. `ariadned --help` lists every key above but
+`ai_failure_diagnosis`, and the two environment variables (`ARIADNE_HOME`,
+`RUST_LOG`) with a line each.
+
+`telemetry_samples_days`, `telemetry_logs_days` and `telemetry_rollups_days`
+each have to be a positive number of days; a non-positive value is refused
+at startup and by `--check-config`, by name, the same way a non-loopback
+`tcp_listen` is. See [Telemetry](telemetry.md) for what each retention
+window keeps, and for `ariadne daemon logs`'s own `--service` and `--level`
+flags.
 
 ## The database of an earlier release
 
-`db_path` has to be deleted before this version is started for the first time:
-the schema's 29 migrations are squashed into one, so a database written by an
-earlier release records migrations this one no longer ships and cannot be
-opened. There is no upgrade from it — Ariadne is pre-1.0, and a database is
-recreated rather than migrated. Delete it (with its `-wal` and `-shm` files)
+`db_path` has to be deleted before this version is started for the first time.
+This release squashes the eight migrations that had accumulated since the
+previous squash back into the one shipped migration, as a final, one-time
+reset of the pre-1.0 schema: a database written by an earlier release
+records migrations this one no longer ships and cannot be opened. There is
+no upgrade from it — Ariadne is pre-1.0, and a database is recreated rather
+than migrated; that loss of history is accepted. From here on, a schema
+change ships as a new migration file rather than another squash, with one
+named exception — see [Install, service and
+release](../specs/016-install-service-and-release.md), rule 9.
+
+That exception is narrowing the forge integration to GitHub alone: it
+tightened the one shipped migration's `kind` check to `github` alone, in
+place, on the migration itself, rather than adding a new one. A database
+written by a release that still shipped the wider check carries a checksum
+this one does not recognize either, and is refused at open the same way, by
+the same rule — every goal, task and
+session it held is lost, the same loss rule 9 already accepts, for the same
+pre-1.0 reason. Delete the old database (with its `-wal` and `-shm` files)
 and the daemon writes a fresh one on its next start; `ariadned` and `ariadne
 doctor` both say so, by name, if it is still there.
 
@@ -101,3 +195,22 @@ overrides that with a socket path or `http://host:port`, and so does
 `ARIADNE_ENDPOINT` — read after the flag and before the home, with the older
 `ARIADNE_SOCKET`, which every agent session is still spawned with, honoured
 after it.
+
+`ARIADNE_COMPLETE_DEBUG`, set to anything, makes `ariadne`'s shell-completion
+code print diagnostics to stderr: a round that timed out, a failed daemon
+request, or a failure writing the model cache. It says nothing of a
+request that succeeded.
+
+## What a session's environment carries
+
+Most of these are never yours to set: the daemon writes them into the
+environment of the `ariadne mcp serve` process it launches for each
+session, so that session's tool calls scope themselves to the right task
+without asking. `ARIADNE_SESSION_ID` names the session. `ARIADNE_SEAT` is
+`orchestrator`, `agent`, or — beside a pull request session — `reviewer` or
+`keeper`.
+An orchestrator's session gets `ARIADNE_GOAL_ID` alone; a task's column
+agent gets `ARIADNE_GOAL_ID` and `ARIADNE_TASK_ID` both.
+`ARIADNE_PULL_REQUEST_ID` is set instead, on a session reviewing or keeping a
+pull request. `ARIADNE_STEP` is the odd one out: the MCP server reads it as the
+task's current column if it is set, but no launcher sets it today.

@@ -1,0 +1,42 @@
+[
+  {
+    "id": "TU-01",
+    "title": "Attribute scheduler deliveries before considering coalescing",
+    "evidence": "Selected traces include review returns with distinct reviewed SHAs and short continuation prompts. They prove delivery volume, but not redundant work or per-delivery tokens.",
+    "scope": "Add diagnostic delivery IDs, causes, and completion outcomes at the scheduler/ACP boundary. Do not suppress a delivery, change a workflow column, or change prompt text.",
+    "benefit": "No claimed saving until matched evidence identifies duplicate deliveries. It enables a bounded later coalescing experiment.",
+    "confidence": "high for measurement; no savings estimate",
+    "measurement": "Compare delivery causes, completed responses, prompt characters, canonical uncached input, selected completion lead time, and finish/review outcomes under unchanged checks.",
+    "counter_evidence": "The largest reviewed cycle contains distinct review revisions. Treating it as duplicate wake-up work would weaken correction quality."
+  },
+  {
+    "id": "TU-02",
+    "title": "Measure and tighten handoff selection at the existing character budget",
+    "evidence": "The code already folds and ranks handoff history, but cumulative session usage cannot show which selected entries caused input. Long/restarted sessions are identifiable in the trace sample, making this a bounded observability-first candidate.",
+    "scope": "Add offline/diagnostic handoff selection metrics and a fixture corpus before changing the ranking policy. Do not shrink the configured budget or discard corrections, blockers, failed commands, edits, or decisive checks without an outcome comparison.",
+    "benefit": "Estimated lower repeated input and faster resume turns where a handoff is much smaller than raw history.",
+    "confidence": "low",
+    "measurement": "For matched resumes, record candidate/selected character counts, continuation turns, canonical tokens, time to next useful state, and task outcome. Preserve existing handoff behavior as the control.",
+    "counter_evidence": "The existing rules intentionally protect high-value evidence. A smaller handoff that causes re-reading, wrong changes, or review churn is a regression."
+  },
+  {
+    "id": "TU-03",
+    "title": "Keep verification policy unchanged; add no suppression candidate",
+    "evidence": "Transcript-backed command inputs recover repeated exact completed commands. They lack revision and prior-result attribution, so they do not identify avoidable verification.",
+    "scope": "Do not change checks or add command suppression. Revisit only if future attribution records an identical command, unchanged revision, and completed prior result.",
+    "benefit": "No expected saving from this baseline.",
+    "confidence": "high",
+    "measurement": "Keep required checks unchanged. If a later duplicate is found, compare tool duration, retry rate, review findings, and task outcomes before any change.",
+    "counter_evidence": "The selected traces have substantial review-cycle work, but that is different revisions and corrections, not duplicate verification."
+  },
+  {
+    "id": "TU-04",
+    "title": "Bound broad tool-result retention with task-aware summaries",
+    "evidence": "The trace indicators count large stored tool-result payloads. Tool outputs may be echoed into agent context or handoffs, but this database does not record prompt assembly per turn, so causal token savings are untested.",
+    "scope": "First add a report of large result payloads by tool, role, and outcome. Any later truncation must keep exit status, failing lines, paths, diffs, and an explicit way to retrieve full output.",
+    "benefit": "Potentially lower input context and handoff size, plus faster model turns on noisy command output.",
+    "confidence": "low",
+    "measurement": "Compare prompt/handoff size, canonical token categories, diagnosis success, retry rate, and reviewer findings on matched command-heavy tasks.",
+    "counter_evidence": "Full output can contain the only failure clue. Do not truncate before a representative trace review demonstrates redundant material."
+  }
+]

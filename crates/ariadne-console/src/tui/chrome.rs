@@ -11,13 +11,13 @@ use ratatui::Frame as Draw;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
+use tokio::time::Instant;
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::usage::TokenUsageDto;
 
 use crate::theme::{AGENT, DIM, GAP, SEPARATOR, SPINNER, TOKENS_IN, TOKENS_OUT, TOOL};
 
-use super::blocks::{block, queued};
 use super::picker::picker;
 use super::{Console, Link, Turn};
 
@@ -95,25 +95,42 @@ impl Console {
         STATUS_ROWS + self.input.height(width) + FOOTER_ROWS
     }
 
-    /// Draw the viewport: what is being written, the status row, the box and
-    /// the footer.
+    /// Draw the viewport: what is being written, the status row, the
+    /// suggestion list while it is open, the box and the footer.
     pub fn render(&self, frame: &mut Draw) {
+        self.render_at(frame, Instant::now());
+    }
+
+    /// [`Console::render`], with the turn clock read at `now`.
+    pub(crate) fn render_at(&self, frame: &mut Draw, now: Instant) {
+        self.render_with_question(frame, self.question(), now);
+    }
+
+    pub(super) fn render_with_question(
+        &self,
+        frame: &mut Draw,
+        asking: Option<usize>,
+        now: Instant,
+    ) {
         let area = frame.area();
+        let suggested = self.suggestion_rows(area.width, area.height);
         let [live, pinned] = Layout::vertical([
             Constraint::Min(0),
-            Constraint::Length(self.pinned_rows(area.width)),
+            Constraint::Length(self.pinned_rows(area.width) + suggested),
         ])
         .areas(area);
-        let [status, input, footer] = Layout::vertical([
+        let [status, suggestions, input, footer] = Layout::vertical([
             Constraint::Length(STATUS_ROWS),
+            Constraint::Length(suggested),
             Constraint::Min(0),
             Constraint::Length(FOOTER_ROWS),
         ])
         .areas(pinned);
 
-        self.draw_live(frame, live);
-        self.draw_status(frame, status);
-        self.input.draw(frame, input);
+        self.draw_live(frame, live, asking);
+        self.draw_status(frame, status, now);
+        self.draw_suggestions(frame, suggestions);
+        self.input.draw(frame, input, self.hint());
         self.draw_footer(frame, footer);
     }
 
@@ -124,9 +141,18 @@ impl Console {
     /// line separates two blocks, as in the scrollback. The head of a long
     /// block is in it too: the area draws the tail, on its last rows (008).
     pub fn live_lines(&self, width: u16, height: u16) -> Vec<Line<'static>> {
+        self.live_lines_with_question(width, height, self.question())
+    }
+
+    fn live_lines_with_question(
+        &self,
+        width: u16,
+        height: u16,
+        asking: Option<usize>,
+    ) -> Vec<Line<'static>> {
         let (pieces, from) = self.finished(width);
         let mut lines = pieces.concat();
-        lines.extend(self.unfinished(from, width, height));
+        lines.extend(self.unfinished(from, width, height, asking));
         lines
     }
 
@@ -135,19 +161,22 @@ impl Console {
     /// waiting for its answer, folded to `height` rows, one blank line
     /// between two of them. They are under the finished ones, which end on
     /// their blank line, and go into the scrollback once they are finished.
-    pub(super) fn unfinished(&self, from: usize, width: u16, height: u16) -> Vec<Line<'static>> {
-        let width = usize::from(width);
+    pub(super) fn unfinished(
+        &self,
+        from: usize,
+        width: u16,
+        height: u16,
+        asking: Option<usize>,
+    ) -> Vec<Line<'static>> {
+        let block_width = width;
+        let width = usize::from(block_width);
         let height = usize::from(height);
-        let asking = self.question();
         let mut blocks = Vec::new();
         for (at, item) in self.items.iter().enumerate().skip(from) {
             if Some(at) == asking {
                 continue;
             }
-            blocks.push(match self.pending.contains(&at) {
-                true => queued(item, width, self.whole),
-                false => block(item, width, None, self.whole),
-            });
+            blocks.push(self.block(at, item, block_width, self.pending.contains(&at)));
         }
         // The picker is what the keys act on, so it is drawn last, above the
         // box, whatever came after it — a snapshot taken mid-turn ends on the
@@ -174,8 +203,8 @@ impl Console {
     /// last rows: the live area is bottom-aligned, so the transcript ends
     /// where the status row begins, and the rows over it are blank only
     /// while it is shorter than the area (008).
-    fn draw_live(&self, frame: &mut Draw, area: Rect) {
-        let lines = self.live_lines(area.width, area.height);
+    fn draw_live(&self, frame: &mut Draw, area: Rect, asking: Option<usize>) {
+        let lines = self.live_lines_with_question(area.width, area.height, asking);
         // The tail is what is happening now; the head of a long block in
         // work is held back from the scrollback until the block is finished.
         let skip = lines.len().saturating_sub(usize::from(area.height));
@@ -191,9 +220,9 @@ impl Console {
         frame.render_widget(Paragraph::new(Text::from(lines)), tail);
     }
 
-    fn draw_status(&self, frame: &mut Draw, area: Rect) {
+    fn draw_status(&self, frame: &mut Draw, area: Rect, now: Instant) {
         let room = usize::from(area.width).saturating_sub(2 * MARGIN.len());
-        let mut parts = self.status();
+        let mut parts = self.status(now);
         fit(&mut parts, |parts| width(parts) <= room);
         let mut line = vec![Span::raw(MARGIN)];
         line.extend(spans(parts));
@@ -203,7 +232,7 @@ impl Console {
     /// The status row: who is answering, on what, and what it is doing. The
     /// session's status goes last as the row narrows, then what the turn is
     /// doing, its clock, the seat and the model.
-    fn status(&self) -> Vec<Part> {
+    fn status(&self, now: Instant) -> Vec<Part> {
         let mut parts = vec![
             Part::new(
                 2,
@@ -246,7 +275,10 @@ impl Console {
             parts.push(Part::new(
                 3,
                 " ",
-                vec![Span::styled(clock(since.elapsed()), DIM)],
+                vec![Span::styled(
+                    clock(now.saturating_duration_since(since)),
+                    DIM,
+                )],
             ));
         }
         parts
@@ -788,7 +820,7 @@ mod tests {
         )
     }
 
-    const LONG_TOOL: &str = "mcp__ariadne__request_review_of_the_whole_branch";
+    const LONG_TOOL: &str = "mcp__ariadne__report_pull_request_of_the_whole_branch";
     const TOKENS: &str = "↑ 12.4k ↓ 3.1k";
 
     /// One state of the console, and every part of its two rows as the

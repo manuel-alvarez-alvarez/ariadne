@@ -1,6 +1,6 @@
 //! Where a task's branch points, followed rather than asked for.
 //!
-//! A commit an author makes in its worktree is not a store write: nothing in
+//! A commit an agent makes in the task's worktree is not a store write: nothing in
 //! the database moves, so none of the domain events the bus pump fattens says
 //! that the task's diff against its base is no longer the one a client
 //! fetched. Asking `git rev-parse` for every live task on the scheduler tick
@@ -116,17 +116,11 @@ impl BranchWatchers {
     /// Follow `task`'s branch in `repo`, from wherever it points now.
     ///
     /// Idempotent: a task already followed on the same branch keeps the watch
-    /// it has, so an author respawned into the worktree it left does not
+    /// it has, so an agent respawned into the worktree it left does not
     /// stack a second one. Nothing is published for where the branch stands at
     /// this moment — only for where it moves next.
     pub(crate) fn watch(&self, task: &Task, repo: &Path) {
         self.watch_keyed(task.id.clone(), task, &task.branch, repo);
-    }
-
-    /// Follow one author's branch of a task staffed with several: one watch
-    /// per author, beside its siblings rather than in place of them.
-    pub(crate) fn watch_author(&self, task: &Task, agent_id: &str, branch: &str, repo: &Path) {
-        self.watch_keyed(author_key(&task.id, agent_id), task, branch, repo);
     }
 
     fn watch_keyed(&self, key: String, task: &Task, branch: &str, repo: &Path) {
@@ -194,41 +188,18 @@ impl BranchWatchers {
         );
     }
 
-    /// Stop following a task's branches — the task's own watch and every
-    /// author's: its worktrees are gone, or the task is.
+    /// Stop following a task's branch: its worktree is gone, or the task is.
     pub fn unwatch(&self, task_id: &str) {
-        let prefix = author_key(task_id, "");
         let mut state = self.lock();
-        let count = state.branches.len();
-        state
-            .branches
-            .retain(|key, _| key != task_id && !key.starts_with(&prefix));
-        Self::drop_unused_repositories(&mut state);
-        if state.branches.len() < count {
+        if state.branches.remove(task_id).is_some() {
+            Self::drop_unused_repositories(&mut state);
             debug!(task = %task_id, "no longer following the task branch");
         }
     }
 
-    /// Stop following one author's branch: the pick passed it over.
-    pub(crate) fn unwatch_author(&self, task_id: &str, agent_id: &str) {
-        let mut state = self.lock();
-        if state
-            .branches
-            .remove(&author_key(task_id, agent_id))
-            .is_some()
-        {
-            Self::drop_unused_repositories(&mut state);
-            debug!(task = %task_id, agent = %agent_id, "no longer following the author branch");
-        }
-    }
-
-    /// Whether any branch of a task is being followed right now.
+    /// Whether the branch of a task is being followed right now.
     pub fn is_watching(&self, task_id: &str) -> bool {
-        let prefix = author_key(task_id, "");
-        self.lock()
-            .branches
-            .keys()
-            .any(|key| key == task_id || key.starts_with(&prefix))
+        self.lock().branches.contains_key(task_id)
     }
 
     fn drop_unused_repositories(state: &mut State) {
@@ -248,19 +219,13 @@ impl BranchWatchers {
     }
 }
 
-/// The registry key of one author's watch. Task ids never carry `/`, so the
-/// separator keeps an author key from colliding with a task's own.
-fn author_key(task_id: &str, agent_id: &str) -> String {
-    format!("{task_id}/{agent_id}")
-}
-
 /// What one watch is about.
 struct Followed {
     task_id: String,
     goal_id: String,
     branch: String,
     /// The repository the branch lives in — the checkout registered with the
-    /// daemon, not the author's worktree.
+    /// daemon, not the task's worktree.
     repo: PathBuf,
 }
 
@@ -477,6 +442,7 @@ mod tests {
 
     fn task(repo: &Path) -> Task {
         Task {
+            step: None,
             id: "task-1".into(),
             goal_id: "goal-1".into(),
             repo_id: "repo-1".into(),
@@ -484,12 +450,10 @@ mod tests {
             description: String::new(),
             status: "in_progress".into(),
             branch: "work".into(),
-            landing: "merge".into(),
             worktree_path: Some(repo.display().to_string()),
             stalled: 0,
             merge_commit: None,
             pr_url: None,
-            picked_agent_id: None,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -504,33 +468,42 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
-    fn open_descriptors() -> usize {
+    fn open_descriptors(repo: &Path) -> usize {
+        let git_dir = repo.join(".git").canonicalize().unwrap();
         let out = Command::new("lsof")
             .args(["-a", "-p", &std::process::id().to_string(), "-Fn"])
             .output()
             .unwrap();
         assert!(out.status.success(), "lsof failed");
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter(|line| {
-                line.strip_prefix('f')
-                    .and_then(|fd| fd.chars().next())
-                    .is_some_and(|first| first.is_ascii_digit())
-            })
-            .count()
+        let mut descriptor = false;
+        let mut count = 0;
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            if let Some(fd) = line.strip_prefix('f') {
+                descriptor = fd
+                    .chars()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_digit());
+            } else if descriptor
+                && line
+                    .strip_prefix('n')
+                    .is_some_and(|name| Path::new(name).starts_with(&git_dir))
+            {
+                count += 1;
+            }
+        }
+        count
     }
 
     #[cfg(target_os = "macos")]
-    async fn settled_descriptors() -> usize {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+    async fn settled_descriptors(repo: &Path) -> usize {
         let deadline = tokio::time::Instant::now() + PATIENCE;
         let mut last = usize::MAX;
         let mut same = 0;
         loop {
-            let current = open_descriptors();
+            let current = open_descriptors(repo);
             if current == last {
                 same += 1;
-                if same == 5 {
+                if same == 2 {
                     return current;
                 }
             } else {
@@ -543,6 +516,18 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn create_branches(repo: &Path, prefix: &str, count: usize) {
+        sh(
+            repo,
+            &format!(
+                "n=0; while [ $n -lt {count} ]; do \\
+                 printf 'create refs/heads/{prefix}-%s HEAD\\n' $n; n=$((n + 1)); done | \\
+                 git update-ref --stdin"
+            ),
+        );
     }
 
     /// The head the next `task_branch_updated` carries.
@@ -731,20 +716,16 @@ mod tests {
     async fn twelve_followed_branches_share_one_repository_watch() {
         let dir = tempfile::tempdir().unwrap();
         let repo = repo(dir.path());
-        for n in 0..100 {
-            sh(&repo, &format!("git branch work-{n}"));
-        }
-        let baseline = settled_descriptors().await;
+        create_branches(&repo, "work", 100);
+        let baseline = settled_descriptors(&repo).await;
         let events = EventBus::new();
         let watchers = BranchWatchers::new(events);
         for n in 0..12 {
             watchers.watch(&task_on(&repo, n), &repo);
         }
-        let _ = settled_descriptors().await;
-        for n in 0..20 {
-            sh(&repo, &format!("git branch late-{n}"));
-        }
-        let twelve = settled_descriptors().await;
+        let _ = settled_descriptors(&repo).await;
+        create_branches(&repo, "late", 20);
+        let twelve = settled_descriptors(&repo).await;
         assert!(
             twelve <= baseline + 8,
             "descriptors grew with followed tasks: baseline={baseline}, twelve={twelve}"
@@ -758,15 +739,13 @@ mod tests {
     async fn packing_refs_releases_deleted_ref_descriptors() {
         let dir = tempfile::tempdir().unwrap();
         let repo = repo(dir.path());
-        let baseline = settled_descriptors().await;
+        let baseline = settled_descriptors(&repo).await;
         let events = EventBus::new();
         let watchers = BranchWatchers::new(events);
         watchers.watch(&task(&repo), &repo);
-        let _ = settled_descriptors().await;
-        for n in 0..100 {
-            sh(&repo, &format!("git branch packed-{n}"));
-        }
-        let loose = settled_descriptors().await;
+        let _ = settled_descriptors(&repo).await;
+        create_branches(&repo, "packed", 100);
+        let loose = settled_descriptors(&repo).await;
         // Every ref creation wakes and recreates the watcher. Therefore the
         // descriptors do not accumulate before packing either. Removing that
         // re-arm makes this assertion fail by about the number of new refs.
@@ -776,7 +755,7 @@ mod tests {
         );
 
         sh(&repo, "git pack-refs --all");
-        let packed = settled_descriptors().await;
+        let packed = settled_descriptors(&repo).await;
         assert!(
             packed <= baseline + 8,
             "deleted loose refs stayed open: baseline={baseline}, loose={loose}, packed={packed}"

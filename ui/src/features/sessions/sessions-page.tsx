@@ -34,6 +34,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import {
   ListChecksIcon,
+  Loader2Icon,
   type LucideIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -45,17 +46,21 @@ import { useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 
-import type { GoalDto, SessionDto, TaskDto } from "@/api"
-import { DataTable } from "@/components/data-table"
+import { ApiError, type GoalDto, type SessionDto, type TaskDto } from "@/api"
+import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
+import { ScrollableTable } from "@/components/scroll-edge"
 import { TokenFigure } from "@/components/token-figure"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { TableCell, TableRow } from "@/components/ui/table"
+import { Skeleton } from "@/components/ui/skeleton"
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { When } from "@/components/when"
 import { goalsQueryOptions } from "@/features/goals/queries"
 import { parseModelRef, pinLabel } from "@/features/models/model-ref"
+import { PullRequestLink } from "@/features/pull-requests/pull-request-link"
 import { taskListQueryOptions } from "@/features/tasks/queries"
+import { sessionColumn } from "@/features/tasks/steps"
 import { cn, describeError, SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, sessionPanelFrom, sessionTerminalFrom } from "@/routes/paths"
 import {
@@ -97,13 +102,34 @@ import {
   sessionsQueryOptions,
   useResumeOutsideSession,
 } from "./queries"
-import { SESSION_STATUS_META, SessionAttentionBadge, SessionStatusBadge } from "./session-display"
+import {
+  SESSION_STATUS_META,
+  SessionAttentionBadge,
+  SessionStatusBadge,
+  shownAttention,
+} from "./session-display"
 import { useSessionFilters } from "./use-session-filters"
 
 /** One row of the merged table, told apart by which listing it came from. */
 type Row =
   | { kind: "ariadne"; session: SessionDto }
   | { kind: "outside"; session: OutsideSessionDto }
+
+const LOADING_ROWS = ["first", "second", "third"]
+const SESSION_COLUMNS = [
+  { key: "title", header: "Title", className: "min-w-56" },
+  { key: "status", header: "Status" },
+  { key: "work", header: "Work", className: "min-w-48" },
+  { key: "agent", header: "Agent" },
+  { key: "tokens", header: "Tokens", className: "text-right" },
+  { key: "activity", header: "Last activity", className: "text-right" },
+]
+const NETWORK_ERROR_DESCRIPTION =
+  "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
+
+function errorDescription(error: unknown): string | undefined {
+  return ApiError.is(error) && error.isNetworkError ? NETWORK_ERROR_DESCRIPTION : undefined
+}
 
 function rowKey(row: Row): string {
   return row.kind === "ariadne"
@@ -262,9 +288,7 @@ export function SessionsPage() {
     )
   }
 
-  const isPending = ariadneSessions.isPending || (outsideEligible && outsideSessions.isPending)
-  const isError = ariadneSessions.isError || outsideSessions.isError
-  const error = ariadneSessions.error ?? outsideSessions.error
+  const outsidePending = outsideEligible && outsideSessions.isPending
 
   return (
     <div className="flex flex-col gap-4">
@@ -312,7 +336,11 @@ export function SessionsPage() {
 
           <div className="ml-auto flex items-center gap-3">
             {outsideEligible ? (
-              <p className="text-sm text-muted-foreground tabular-nums">{`${rows.length} of ${total} sessions`}</p>
+              <p className="text-sm text-muted-foreground tabular-nums">
+                {outsidePending
+                  ? `${ariadneRows.length} sessions · looking for outside conversations`
+                  : `${rows.length} of ${total} sessions`}
+              </p>
             ) : null}
             <Button
               variant="outline"
@@ -391,54 +419,34 @@ export function SessionsPage() {
 
       <ScopeChips goal={goal} task={task} onClear={filterBy} />
 
-      <DataTable
-        query={{
-          data: isPending ? undefined : rows,
-          isPending,
-          isError,
-          error,
-          refetch: () => {
+      {ariadneSessions.isError ? (
+        <ErrorState
+          title="Could not load sessions"
+          error={ariadneSessions.error}
+          description={errorDescription(ariadneSessions.error)}
+          onRetry={() => {
             void ariadneSessions.refetch()
             void outsideSessions.refetch()
-          },
-        }}
-        errorTitle="Could not load sessions"
-        columns={[
-          { header: "Title", className: "min-w-56" },
-          { header: "Status" },
-          { header: "Work", className: "min-w-48" },
-          { header: "Agent" },
-          { header: "Tokens", className: "text-right" },
-          { header: "Last activity", className: "text-right" },
-        ]}
-        empty={
-          <p className="px-4 py-8 text-center text-sm text-muted-foreground">No sessions found.</p>
-        }
-        rowKey={rowKey}
-        renderRow={(row) => (
-          <SessionRow
-            key={rowKey(row)}
-            row={row}
-            title={
-              row.kind === "ariadne"
-                ? ariadneTitle(row.session, goalsById, tasksById)
-                : row.session.first_prompt
-            }
-            goalTitle={
-              row.kind === "ariadne" && row.session.goal_id
-                ? goalsById.get(row.session.goal_id)?.title
-                : undefined
-            }
-            taskTitle={
-              row.kind === "ariadne" && row.session.task_id
-                ? tasksById.get(row.session.task_id)?.title
-                : undefined
-            }
-            resuming={resumingKey === rowKey(row)}
-            onSelect={() => handleSelect(row)}
-            onScope={filterBy}
-          />
-        )}
+          }}
+        />
+      ) : null}
+      {outsideSessions.isError ? (
+        <ErrorState
+          title="Could not load outside conversations"
+          error={outsideSessions.error}
+          description={errorDescription(outsideSessions.error)}
+          onRetry={() => void outsideSessions.refetch()}
+        />
+      ) : null}
+      <SessionsTable
+        rows={rows}
+        ariadnePending={ariadneSessions.isPending}
+        outsidePending={outsidePending}
+        goalsById={goalsById}
+        tasksById={tasksById}
+        resumingKey={resumingKey}
+        onSelect={handleSelect}
+        onScope={filterBy}
       />
       {outsideEligible && outsideSessions.hasNextPage ? (
         <Button
@@ -454,11 +462,122 @@ export function SessionsPage() {
   )
 }
 
+function SessionsTable({
+  rows,
+  ariadnePending,
+  outsidePending,
+  goalsById,
+  tasksById,
+  resumingKey,
+  onSelect,
+  onScope,
+}: {
+  rows: Row[]
+  ariadnePending: boolean
+  outsidePending: boolean
+  goalsById: Map<string, GoalDto>
+  tasksById: Map<string, TaskDto>
+  resumingKey: string | null
+  onSelect: (row: Row) => void
+  onScope: (param: FilterParam, id: string) => void
+}) {
+  return (
+    <ScrollableTable className="rounded-xl border">
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          {SESSION_COLUMNS.map((column) => (
+            <TableHead key={column.key} className={column.className}>
+              {column.header}
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {ariadnePending ? (
+          <SessionLoadingRows />
+        ) : rows.length ? (
+          rows.map((row) => (
+            <SessionRow
+              key={rowKey(row)}
+              row={row}
+              title={
+                row.kind === "ariadne"
+                  ? ariadneTitle(row.session, goalsById, tasksById)
+                  : row.session.first_prompt
+              }
+              goalTitle={
+                row.kind === "ariadne" && row.session.goal_id
+                  ? goalsById.get(row.session.goal_id)?.title
+                  : undefined
+              }
+              taskTitle={
+                row.kind === "ariadne" && row.session.task_id
+                  ? tasksById.get(row.session.task_id)?.title
+                  : undefined
+              }
+              column={
+                row.kind === "ariadne"
+                  ? sessionColumn(
+                      row.session,
+                      tasksById.get(row.session.task_id ?? ""),
+                      goalsById.get(row.session.goal_id ?? ""),
+                    )
+                  : undefined
+              }
+              resuming={resumingKey === rowKey(row)}
+              onSelect={() => onSelect(row)}
+              onScope={onScope}
+            />
+          ))
+        ) : outsidePending ? null : (
+          <TableRow className="hover:bg-transparent">
+            <TableCell colSpan={SESSION_COLUMNS.length} className="p-0">
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                No sessions found.
+              </p>
+            </TableCell>
+          </TableRow>
+        )}
+        {outsidePending ? <OutsideLoadingRow /> : null}
+      </TableBody>
+    </ScrollableTable>
+  )
+}
+
+function SessionLoadingRows() {
+  return LOADING_ROWS.map((row) => (
+    <TableRow key={row} className="hover:bg-transparent">
+      {SESSION_COLUMNS.map((column) => (
+        <TableCell key={column.key}>
+          <Skeleton className="h-4 w-full" />
+        </TableCell>
+      ))}
+    </TableRow>
+  ))
+}
+
+function OutsideLoadingRow() {
+  return (
+    <TableRow className="hover:bg-transparent">
+      <TableCell
+        colSpan={SESSION_COLUMNS.length}
+        className="py-3 text-center text-sm text-muted-foreground"
+      >
+        <span className="inline-flex items-center gap-2">
+          <Loader2Icon className="size-4 animate-spin" aria-hidden />
+          Looking for outside conversations…
+        </span>
+      </TableCell>
+    </TableRow>
+  )
+}
+
 function SessionRow({
   row,
   title,
   goalTitle,
   taskTitle,
+  column,
   resuming,
   onSelect,
   onScope,
@@ -467,6 +586,8 @@ function SessionRow({
   title: string
   goalTitle: string | undefined
   taskTitle: string | undefined
+  /** The workflow column a step agent staffs, which names it in place of its seat. */
+  column: string | undefined
   resuming: boolean
   onSelect: () => void
   /** Narrow the table to a goal or a task picked in the row. */
@@ -476,11 +597,20 @@ function SessionRow({
     row.kind === "outside" ? row.session.working_directory : row.session.worktree_path
   return (
     <TableRow
-      className="cursor-pointer"
+      tabIndex={0}
+      className="cursor-pointer bg-background focus-visible:outline-none focus-visible:-outline-offset-2 focus-visible:ring-2 focus-visible:ring-ring/50"
       aria-busy={resuming}
+      aria-label={title}
       onClick={(event) => {
         const target = event.target as Element
         if (event.currentTarget.contains(target) && !target.closest("button, a")) onSelect()
+      }}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onSelect()
+        }
       }}
     >
       <TableCell className="max-w-72">
@@ -508,9 +638,7 @@ function SessionRow({
         ) : (
           <div className="flex flex-wrap items-center gap-1.5">
             <SessionStatusBadge status={row.session.status} />
-            {row.session.attention_reason ? (
-              <SessionAttentionBadge attention={row.session.attention_reason} />
-            ) : null}
+            <RowAttention session={row.session} />
           </div>
         )}
       </TableCell>
@@ -520,6 +648,7 @@ function SessionRow({
             session={row.session}
             goalTitle={goalTitle}
             taskTitle={taskTitle}
+            column={column}
             onScope={onScope}
           />
         ) : (
@@ -542,31 +671,45 @@ function SessionRow({
   )
 }
 
+/** The reason badge of an Ariadne row, in the words the attention list uses. */
+function RowAttention({ session }: { session: SessionDto }) {
+  const attention = shownAttention(session)
+  return attention ? <SessionAttentionBadge attention={attention} /> : null
+}
+
 /**
  * What an Ariadne session works on, in one cell: the seat it holds, the goal
- * it is under, and the task under that. The seat is a badge of one width, so
+ * it is under, and the task under that — a step agent's seat named by the
+ * workflow column it staffs. The seat is a badge of one width, so
  * the goals and tasks of every row line up beside it. Picking the goal or the
  * task narrows the table to its sessions, the way the chips above it do. A
- * loose session holds no seat and has neither.
+ * pull request session has neither: its request stands in their place, by
+ * title, linked to the forge. A loose session holds no seat and has none of
+ * them.
  */
 function WorkCell({
   session,
   goalTitle,
   taskTitle,
+  column,
   onScope,
 }: {
   session: SessionDto
   goalTitle: string | undefined
   taskTitle: string | undefined
+  column: string | undefined
   onScope: (param: FilterParam, id: string) => void
 }) {
-  const { goal_id: goalId, task_id: taskId, seat } = session
-  if (!goalId && !taskId && !seat) return <Dash />
+  const { goal_id: goalId, task_id: taskId, seat, pull_request_id: pullRequestId } = session
+  if (!goalId && !taskId && !seat && !pullRequestId) return <Dash />
   return (
     <div className="flex min-w-0 items-start gap-2 text-xs">
       {seat ? (
-        <Badge variant="outline" className="w-22 shrink-0 font-normal text-muted-foreground">
-          {SEAT_LABELS[seat]}
+        <Badge
+          variant="outline"
+          className="w-22 shrink-0 truncate font-normal text-muted-foreground"
+        >
+          {column ?? SEAT_LABELS[seat]}
         </Badge>
       ) : null}
       <div className="flex min-w-0 flex-col gap-0.5 pt-px">
@@ -587,6 +730,7 @@ function WorkCell({
             className="text-muted-foreground"
           />
         ) : null}
+        {pullRequestId ? <PullRequestLink id={pullRequestId} title={session.title} /> : null}
       </div>
     </div>
   )
@@ -686,12 +830,12 @@ function ScopeChip({
       </span>
       <Button
         variant="ghost"
-        size="icon-xs"
+        size="icon"
         aria-label={`Show sessions for every ${what.toLowerCase()}`}
         onClick={onClear}
-        className="size-4 rounded-full text-muted-foreground hover:text-foreground"
+        className="size-6 rounded-full text-muted-foreground hover:text-foreground"
       >
-        <XIcon />
+        <XIcon className="size-4" />
       </Button>
     </Badge>
   )

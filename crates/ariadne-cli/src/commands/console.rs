@@ -19,7 +19,7 @@ use ariadne_api::sessions::ConsoleInputRequest;
 use ariadne_client::{Client, SseEvent};
 
 use super::follow::{self, Ending, Next};
-use ariadne_console::transcript::{Filters, fold};
+use ariadne_console::transcript::{Filters, PermissionOption, fold, permission_options};
 
 use super::transcript;
 use crate::output::{Format, note, pager, print_json, view};
@@ -209,7 +209,7 @@ async fn render_to<W: AsyncWrite + Unpin>(
 ) -> Result<Option<Vec<PermissionOption>>> {
     output.write_all(render(event).as_bytes()).await?;
     output.write_all(b"\n").await?;
-    let options = permission_options(event);
+    let options = (event.kind == "permission_request").then(|| permission_options(&event.payload));
     if let Some(options) = &options {
         for (index, option) in options.iter().enumerate() {
             output
@@ -219,34 +219,6 @@ async fn render_to<W: AsyncWrite + Unpin>(
     }
     output.flush().await?;
     Ok(options)
-}
-
-/// The option identifiers a permission question offers, in display order.
-#[derive(Debug, Clone)]
-struct PermissionOption {
-    id: String,
-    name: String,
-}
-
-fn permission_options(event: &AgentEventDto) -> Option<Vec<PermissionOption>> {
-    (event.kind == "permission_request").then(|| {
-        event
-            .payload
-            .get("options")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|option| {
-                let id = option.get("optionId")?.as_str()?.to_string();
-                let name = option
-                    .get("name")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or(&id)
-                    .to_string();
-                Some(PermissionOption { id, name })
-            })
-            .collect()
-    })
 }
 
 /// A permission question accepts its displayed number. The selected option

@@ -34,11 +34,10 @@ pub struct MessageDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SendMessageRequest {
-    pub kind: MessageKind,
     /// Who it is for. `orchestrator` needs no agent id — a goal has one.
     pub to_actor: Actor,
     /// The staffed agent it is for, as `GET /v1/tasks/{id}` lists them.
-    /// Required for `author` and `reviewer`, refused for the orchestrator.
+    /// Required for `agent`, refused for the orchestrator.
     #[serde(default)]
     pub to_agent_id: Option<String>,
     pub body: String,

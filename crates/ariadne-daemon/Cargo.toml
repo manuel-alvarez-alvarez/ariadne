@@ -20,6 +20,14 @@ name = "it"
 path = "tests/it/main.rs"
 
 [dependencies]
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+getrandom = { workspace = true }
+localtunnel-client = { workspace = true }
+# `localtunnel-client` sets TCP keepalive retries, which socket2 0.5 offers
+# only with its `all` feature, and the client does not ask for it.
+socket2 = { version = "0.5", features = ["all"] }
 agent-client-protocol = { workspace = true }
 tokio-util = { workspace = true }
 ariadne-core = { workspace = true }
@@ -41,7 +49,11 @@ clap = { workspace = true }
 crossterm = { workspace = true }
 futures-util = { workspace = true }
 notify = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
 reqwest = { workspace = true }
+regex = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -52,6 +64,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
+url = { workspace = true }
 
 # Sleep inhibition (see `src/sleep.rs`), per target because neither dependency
 # means anything anywhere else — platforms with no backend get the stub.
@@ -73,6 +86,10 @@ tempfile = "3"
 tokio-tungstenite = { workspace = true }
 tower = { workspace = true }
 vt100 = { workspace = true }
+
+[package.metadata.cargo-machete]
+# Named only for its `all` feature, which `localtunnel-client` needs.
+ignored = ["socket2"]
 
 [lints]
 workspace = true

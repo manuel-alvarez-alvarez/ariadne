@@ -1,16 +1,15 @@
 // @vitest-environment jsdom
 
 /**
- * The one chord whose *binding* is worth a test of its own: `?`.
- *
- * `lib/shortcuts.test.ts` pins the match — `?` carries the Shift it takes to
- * type it, so `isBareKey` cannot guard it — and what is left is whether the
- * shell's listener asks the same question at the same point as it does for the
- * bare letters: after the guards, and never where the keystroke is text or
- * belongs to something layered over the screen.
+ * Two things worth a test of their own, beyond what `lib/shortcuts.test.ts`
+ * already pins: the one typed chord that carries the Shift it takes to type
+ * it (`?`, which `isBareKey` cannot guard), and the one place the ⌘ chords
+ * and the typed ones part ways — a held chord fires from a text field or a
+ * session's console, where a typed one never would, but neither fires once
+ * a dialog is up.
  */
 
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it, vi } from "vitest"
 
@@ -25,12 +24,17 @@ const handlers = {
   onToggleSidebar: vi.fn(),
 }
 
-/** A screen with the chords bound, a text field, and something layered over it. */
+/**
+ * A screen with the chords bound, a text field, a session's console — a
+ * bare `<textarea>` stands in for it here, since `isTypingTarget` cannot
+ * tell the two apart — and something layered over it.
+ */
 function Screen() {
   useGlobalShortcuts(handlers)
   return (
     <>
       <input aria-label="Title" />
+      <textarea aria-label="Console" />
       <div role="dialog">
         <button type="button">In a dialog</button>
       </div>
@@ -69,4 +73,31 @@ it("leaves it to whatever is layered over the screen", async () => {
   await user.keyboard("?")
 
   expect(handlers.onOpenShortcuts).not.toHaveBeenCalled()
+})
+
+it("opens the palette on ⌘K from a text field", () => {
+  mount()
+
+  fireEvent.keyDown(screen.getByLabelText("Title"), { key: "k", metaKey: true })
+
+  expect(handlers.onOpenPalette).toHaveBeenCalledTimes(1)
+})
+
+it("opens the palette on ⌘K from a session's console", () => {
+  mount()
+
+  fireEvent.keyDown(screen.getByLabelText("Console"), { key: "k", metaKey: true })
+
+  expect(handlers.onOpenPalette).toHaveBeenCalledTimes(1)
+})
+
+it("does nothing on ⌘K while a dialog is up", () => {
+  mount()
+
+  fireEvent.keyDown(screen.getByRole("button", { name: "In a dialog" }), {
+    key: "k",
+    metaKey: true,
+  })
+
+  expect(handlers.onOpenPalette).not.toHaveBeenCalled()
 })

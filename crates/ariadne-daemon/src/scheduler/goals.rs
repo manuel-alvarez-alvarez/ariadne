@@ -47,7 +47,7 @@ impl super::Scheduler {
             // A goal under way wants its orchestrator too. It is the one agent
             // that outlives its own hand-off: the user talks to it about work
             // already running, and the daemon has somebody to tell when a task
-            // needs a decision no author can make. What it is *not* under way
+            // needs a decision no column's agent can make. What it is *not* under way
             // is quiet — an orchestrator with every task running has nothing
             // to do — so no watchdog nudges it here. It is woken by what
             // happened, and by nothing else.
@@ -71,14 +71,15 @@ impl super::Scheduler {
             // Cancelled: tear everything down; tasks are cancelled on behalf
             // of the user who cancelled the goal.
             GoalStatus::Cancelled => {
-                for task in self
+                let tasks = self
                     .store
                     .list_tasks(TaskFilter {
                         goal_id: Some(goal.id.clone()),
                         status: None,
                     })
-                    .await?
-                {
+                    .await?;
+                let live = self.live_task_ids(&goal.id).await;
+                for task in &tasks {
                     if !task.status().is_terminal() && task.status() != TaskStatus::Failed {
                         let _ = self
                             .store
@@ -91,7 +92,9 @@ impl super::Scheduler {
                             )
                             .await;
                     }
-                    let _ = self.launcher.cleanup_task(&task.id, false, false).await;
+                    if task.worktree_path.is_some() || live.contains(&task.id) {
+                        self.remove_tasks_worktree(&task.id).await;
+                    }
                 }
                 self.kill_goal_sessions(&goal.id).await;
             }
@@ -103,9 +106,66 @@ impl super::Scheduler {
             // machine awake with it. Every other arm converges on each tick;
             // so does this one. Sessions are killed at most once in practice,
             // because a killed one is no longer live.
-            GoalStatus::Completed => self.kill_goal_sessions(&goal.id).await,
+            //
+            // A task's own worktree is removed the same way a cancelled
+            // goal's is: a task failed or cancelled on its own while this
+            // goal was still active kept its worktree for a retry that is no
+            // longer coming, now the goal it belonged to is over (rule 10).
+            // A finished task has usually lost its worktree already, to the
+            // per-task cleanup `reconcile_steps` ran on it (030); the check
+            // below is what catches one a daemon restart raced past that,
+            // and what stops a goal settled long ago from paying a worktree
+            // and a session query, every task, every tick, for ever.
+            GoalStatus::Completed => {
+                let tasks = self
+                    .store
+                    .list_tasks(TaskFilter {
+                        goal_id: Some(goal.id.clone()),
+                        status: None,
+                    })
+                    .await?;
+                let live = self.live_task_ids(&goal.id).await;
+                for task in &tasks {
+                    if task.worktree_path.is_some() || live.contains(&task.id) {
+                        self.remove_tasks_worktree(&task.id).await;
+                    }
+                }
+                self.kill_goal_sessions(&goal.id).await;
+            }
         }
         Ok(())
+    }
+
+    /// Every task of this goal with a live session, by task id: one query
+    /// for the whole goal rather than one per task, the same shape
+    /// `reconcile_entities` reads to decide which terminal task of an active
+    /// goal still needs a look.
+    async fn live_task_ids(&self, goal_id: &str) -> std::collections::HashSet<String> {
+        self.store
+            .list_sessions(SessionFilter {
+                goal_id: Some(goal_id.to_string()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|s| s.task_id)
+            .collect()
+    }
+
+    /// Take a task's worktree down now the goal that owns it is over,
+    /// whatever the task's own status is — never its branch, which
+    /// `delete_merged_branches` only ever reaches through a merge (rule 10
+    /// of `002-repositories-branches-and-worktrees.md`). Idempotent, like
+    /// [`crate::launcher::Launcher::cleanup_task`] itself: a goal that stays
+    /// `cancelled` or `completed` calls this on a task again only while that
+    /// task still has a worktree or a live session to account for.
+    async fn remove_tasks_worktree(&self, task_id: &str) {
+        let _ = self
+            .launcher
+            .cleanup_task(task_id, self.launcher.cfg.delete_merged_worktrees, false)
+            .await;
     }
 
     /// Whether to have another go at starting this goal's orchestrator.
@@ -117,7 +177,7 @@ impl super::Scheduler {
     /// machine can perform (a model the agent does not know, an agent that
     /// is not installed) would put a fresh alarm on the strip every tick, for
     /// ever. [`SPAWN_RETRY_BUDGET`] attempts is what it gets, the same budget
-    /// a task's author spends, out of the same map.
+    /// a task's agents spend, out of the same map.
     ///
     /// What holds the daemon back afterwards is the alarm itself rather than
     /// the count, which is how a task retried out of `failed` gets a clean
@@ -175,6 +235,15 @@ impl super::Scheduler {
             .store
             .set_session_attention(&alarm, AttentionReason::Disconnected)
             .await;
+        // Distinct from the flag above: that one is also what an ordinary
+        // crash raises, and the liveness sweep may still resolve it on its
+        // own. This mark is the budget actually running out — the
+        // attention producer's own evidence that nothing automatic is
+        // coming for this goal any more.
+        let _ = self
+            .store
+            .set_goal_orchestrator_given_up(&goal.id, false)
+            .await;
     }
 
     /// Leave one row of this goal saying anything about an orchestrator that
@@ -201,6 +270,7 @@ impl super::Scheduler {
                     .store
                     .set_session_status(&session.id, SessionStatus::Exited)
                     .await;
+                crate::stats::record_session_end(&self.store, &session.id).await;
             }
             if session.id != alarm
                 && session.attention_reason() == Some(AttentionReason::Disconnected)
@@ -252,12 +322,36 @@ impl super::Scheduler {
             .await?;
         if let Some(orchestrator) = live.first() {
             self.spent_on_a_dead_launch(&goal.id, &goal.id, orchestrator);
+            // A live process is not by itself genuine recovery: the
+            // watchdog's own exhausted-relaunch give-up
+            // (`quiet::relaunch_wedged`) leaves a wedged session's process
+            // running, silent, exactly as it was — and that same
+            // still-live, still-silent session must not clear its own
+            // give-up mark on every later pass that merely finds it still
+            // there. Only a session that has reported *something* since
+            // the mark was set — its own `last_activity_at` moved past
+            // `orchestrator_given_up_at` — is the genuine progress that
+            // answers for it.
+            if let Some(given_up) = goal.orchestrator_given_up_at.as_deref()
+                && orchestrator
+                    .last_activity_at
+                    .as_deref()
+                    .is_some_and(|at| at > given_up)
+            {
+                let _ = self.store.clear_goal_orchestrator_given_up(&goal.id).await;
+            }
             return Ok(());
         }
         let last = self
             .orchestrator_sessions(&goal.id)
             .await
             .and_then(|orchestrators| orchestrators.last().cloned());
+        if last
+            .as_ref()
+            .is_some_and(|session| session.attention_reason() == Some(AttentionReason::Exhausted))
+        {
+            return Ok(());
+        }
         if let Some(last) = &last
             && self.spent_on_a_dead_launch(&goal.id, &goal.id, last)
         {
@@ -292,10 +386,13 @@ impl super::Scheduler {
             self.orchestrator_could_not_start(goal).await;
             return Err(e);
         }
+        let _ = self.store.clear_goal_orchestrator_given_up(&goal.id).await;
         Ok(())
     }
 
-    /// Tell the orchestrator what its tasks need, once per situation.
+    /// Tell the orchestrator what its tasks need, once per situation —
+    /// and again, whatever `goal_told` says, until every failure it names
+    /// is actually confirmed.
     ///
     /// Three things it is woken for, and the text names whichever of them is
     /// true: a task that failed, a task that has gone quiet, and a goal with
@@ -303,18 +400,37 @@ impl super::Scheduler {
     /// exactly what the orchestrator delegated and has no business
     /// interrupting.
     ///
-    /// Once per situation rather than once per pass: the line the tasks render
-    /// to is the key, so a second task failing is news and the same one still
-    /// failed is not. Sent as a prompt to the live agent rather than as a
-    /// resume, since the session is up and the user may be mid-conversation
-    /// with it.
+    /// Once per situation rather than once per pass, with one exception:
+    /// `goal_told` is an in-memory cache of what was *handed off*, not of
+    /// what actually reached a confirmed turn — a prompt whose write
+    /// failed, or whose turn never finished before the connection it ran
+    /// under ended, leaves the cache believing a failure was told that
+    /// was not. So the cache alone never suppresses a resend while any
+    /// currently failed task is still missing from
+    /// `Goal::orchestrator_answered_failed_task_ids`: only once every one
+    /// of them is actually confirmed does the identical situation stop
+    /// being re-queued. Sent as a prompt to the live agent rather than as
+    /// a resume, since the session is up and the user may be mid-
+    /// conversation with it.
     async fn tell_orchestrator(&mut self, goal: &Goal, tasks: &[Task]) -> anyhow::Result<()> {
         let Some(situation) = goal_attention(tasks) else {
             self.goal_told.remove(&goal.id);
             return Ok(());
         };
-        if self.goal_told.get(&goal.id) == Some(&situation) {
-            return Ok(());
+        // Tagged with exactly the failed tasks this prompt would name,
+        // each with the id of the transition that actually failed it —
+        // stable evidence a later metadata edit (`Store::update_task`,
+        // allowed on a `failed` task) does not move, unlike
+        // `Task::updated_at`.
+        let mut failed_tasks: Vec<(String, String)> = Vec::new();
+        for task in tasks.iter().filter(|t| t.status() == TaskStatus::Failed) {
+            if let Some(transition_id) = self
+                .store
+                .latest_transition_to(&task.id, TaskStatus::Failed)
+                .await?
+            {
+                failed_tasks.push((task.id.clone(), transition_id));
+            }
         }
         let orchestrators = self
             .live_sessions(&goal.id, None, Seat::Orchestrator)
@@ -328,13 +444,38 @@ impl super::Scheduler {
             // finds it idle says it then.
             return Ok(());
         };
+        // Locked against `acp::prompt_once` confirming this exact goal's
+        // last delivery: on the daemon's multi-threaded runtime, no
+        // ordering inside this pass excludes that confirmation landing on
+        // another worker between the read below and the send further
+        // down, however few lines separate them — nothing short of a lock
+        // either side actually waits on closes that gap. Whichever of the
+        // two acquires it first — this pass's whole read-and-send, or that
+        // turn's whole confirm-and-dequeue — runs to completion before the
+        // other even starts its own read, so the read below always sees
+        // either the confirmation whole or not at all, never half-landed.
+        let goal_attention_lock = self.launcher.acp.goal_attention_lock();
+        let _goal_attention_guard = goal_attention_lock.lock().await;
+        let confirmed: Vec<(String, String)> = self
+            .store
+            .get_goal(&goal.id)
+            .await?
+            .orchestrator_answered_failed_task_ids
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+        let all_confirmed = failed_tasks.iter().all(|pair| confirmed.contains(pair));
+        if self.goal_told.get(&goal.id) == Some(&situation) && all_confirmed {
+            return Ok(());
+        }
         let template = prompts::template_for(PromptKind::GoalAttention);
         let text = prompts::goal_attention_briefing(template, goal, &situation);
-        // Counted as told only once the prompt has actually gone out: the
-        // orchestrator's runtime entry can be gone in the moment between the
-        // liveness check above and this hand-off. Marked at the attempt
-        // regardless, this situation would never be said again.
-        if !self.hand_prompt(orchestrator, text) {
+        // The delivery itself carries its own confirmation evidence,
+        // written only once this exact prompt's own turn ends
+        // (`acp::prompt_once`), so an unrelated turn landing on the
+        // same session first can never confirm a failure it never
+        // carried.
+        if !self.hand_goal_attention(orchestrator, text, &goal.id, failed_tasks) {
             return Ok(());
         }
         info!(goal = %goal.id, session = %orchestrator.id, "the goal's tasks need the orchestrator");
@@ -372,7 +513,7 @@ fn alarm_row(orchestrators: &[AgentSession]) -> Option<&AgentSession> {
 /// `None` where they need nothing.
 ///
 /// Three situations, and a goal can be in more than one. A failed task and a
-/// stalled task are both decisions somebody has to make and no author can:
+/// stalled task are both decisions somebody has to make and no column's agent can:
 /// retry it, rewrite it, staff it differently, or give it up. A goal whose
 /// tasks are all done is the one moment `complete_goal` is called.
 ///
@@ -381,10 +522,11 @@ fn alarm_row(orchestrators: &[AgentSession]) -> Option<&AgentSession> {
 fn goal_attention(tasks: &[Task]) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     for task in tasks {
+        let title = &task.title;
         match task.status() {
-            TaskStatus::Failed => lines.push(format!("- {} ({}) failed", task.title, task.id)),
+            TaskStatus::Failed => lines.push(format!("- {title} ({}) failed", task.id)),
             _ if task.is_stalled() => {
-                lines.push(format!("- {} ({}) has gone quiet", task.title, task.id));
+                lines.push(format!("- {title} ({}) has gone quiet", task.id));
             }
             _ => {}
         }
@@ -410,6 +552,7 @@ mod tests {
 
     fn task(title: &str, status: &str, stalled: bool) -> Task {
         Task {
+            step: None,
             id: format!("01{title}"),
             goal_id: "01goal".into(),
             repo_id: "01repo".into(),
@@ -417,12 +560,10 @@ mod tests {
             description: String::new(),
             status: status.into(),
             branch: title.into(),
-            landing: "merge".into(),
             worktree_path: None,
             stalled: stalled as i64,
             merge_commit: None,
             pr_url: None,
-            picked_agent_id: None,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -433,17 +574,14 @@ mod tests {
     #[test]
     fn a_goal_whose_tasks_are_running_needs_nothing() {
         assert_eq!(
-            goal_attention(&[
-                task("a", "in_progress", false),
-                task("b", "under_review", false)
-            ]),
+            goal_attention(&[task("a", "in_progress", false), task("b", "ready", false)]),
             None
         );
         // Nor is a goal with no tasks at all, which is a plan being written.
         assert_eq!(goal_attention(&[]), None);
     }
 
-    /// The two decisions no author can make, each named with the task it is
+    /// The two decisions no column's agent can make, each named with the task it is
     /// about: the orchestrator has to know which one to act on.
     #[test]
     fn a_failed_task_and_a_quiet_one_are_each_named() {
@@ -478,5 +616,35 @@ mod tests {
             ]),
             None
         );
+    }
+
+    /// Every line `goal_attention` writes is Simplified Technical English
+    /// (006 rule 11).
+    #[test]
+    fn goal_attention_lines_are_simplified_technical_english() {
+        use ariadne_store::defaults::ste;
+
+        let lines = goal_attention(&[
+            task("Build the widget importer", "failed", false),
+            task("Wire up the exporter", "in_progress", true),
+        ])
+        .expect("two tasks need it");
+        let done = goal_attention(&[task("a", "finished", false), task("b", "cancelled", false)])
+            .expect("the goal is over");
+
+        for text in [lines, done] {
+            for sentence in ste::sentences(&text) {
+                let words = sentence.split_whitespace().count();
+                assert!(
+                    words <= ste::MAX_WORDS,
+                    "a goal attention line runs a sentence of {words} words: {sentence}"
+                );
+            }
+            assert_eq!(
+                ste::banned_word(&text),
+                None,
+                "a goal attention line: {text}"
+            );
+        }
     }
 }

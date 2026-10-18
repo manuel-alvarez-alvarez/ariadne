@@ -1,9 +1,9 @@
 ---
 id: outside-session-resume
 status: current
-updated: 2026-09-25
+updated: 2026-10-10
 areas: [api, daemon, store]
-commits: []
+commits: [101f2918, 263b92bb, e224efc0, 7f235a40, 457bedf9, 4da841a9, 7ef3d01d, c2b2316a, 73b17e2b, 726a456e, 996b094c, c525ecd8]
 tests:
   - crates/ariadne-daemon/tests/it/acp_session_resume.rs
   - crates/ariadne-daemon/tests/it/session_list.rs
@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-daemon/tests/it/stored_conversations.rs
   - crates/ariadne-daemon/tests/it/stored_conversations_opencode.rs
   - crates/ariadne-daemon/src/stored_conversations.rs
+  - crates/ariadne-daemon/src/acp_sessions.rs
   - crates/ariadne-store/tests/store.rs
 ---
 
@@ -47,11 +48,19 @@ The ACP runtime belongs to 021.
    in-memory snapshot of every agent's stored sessions and the moment it was
    taken, resumed ones included, over both sources (items 17 and 18); nothing
    of it is written to disk. The
-   snapshot is taken on the first listing request, again when a request
-   carries `refresh=true`, and again when it is older than 60 seconds at
-   request time. A request inside that minute asks no agent, and neither
-   does a request no outside session can answer: `kind=ariadne`, or one
-   narrowed by a goal, task, status, seat or attention.
+   daemon takes the first snapshot in the background when it starts, once
+   its first discovery has run; a request that comes while it is taken
+   waits for it. The snapshot is taken again when a request carries
+   `refresh=true`, and again when it is older than 60 seconds at request
+   time. A request inside that minute asks no agent, and neither does a
+   request no outside session can answer: `kind=ariadne`, or one narrowed
+   by a goal, task, status, seat or attention.
+   A snapshot asks the agents over `session/list` and reads the disk at the
+   same time. Requests that find the snapshot stale together wait for one
+   refresh, so each agent is asked once; a `refresh=true` request takes a
+   snapshot started after it came. A refresh holds up no request that
+   reads a fresh snapshot, and no request no outside session can answer:
+   that one reads the snapshot as it stands.
 3. A session whose agent and internal id already occur on an Ariadne session
    row is not an outside session and is never listed. A row's agent is read
    off its `model` column, which always holds `<agent>:<model>`. The rows
@@ -143,8 +152,10 @@ The ACP runtime belongs to 021.
     discovery did not find ready is not read at all: no row of it could be
     resumed.
 18. The two sources are merged by `(agent_id, internal_session_id)`. A session
-    `session/list` answered with is listed as it answered it, whatever the
-    disk holds; only a title it has none of is taken from the disk. A
+    `session/list` answered with is listed as it answered it, except an
+    `opencode-acp` row absent from a readable OpenCode database. An unreadable
+    database keeps every ACP row. Other agents keep every ACP row whatever
+    the disk holds. Only a title the ACP row lacks comes from the disk. A
     transcript with neither a user turn nor an assistant turn is no
     conversation of anybody's and is not listed, and that rule takes away no
     row `session/list` answered with.
@@ -159,7 +170,15 @@ The ACP runtime belongs to 021.
     file of one of its own rows, and neither read is made again while the file
     stands where it did. The two reads stand for one moment: a file a page finds
     grown is read again for the listing as well, so the next listing shows what
-    it holds now.
+    it holds now. The Claude and Codex readers save their listing reads together
+    in one versioned JSON file under Ariadne's home. Each saved entry holds its
+    path, stamp, working directory, title, turn presence and last activity;
+    model, effort and usage figures stay in memory. A new reader uses an entry
+    only while its path has the saved stamp, removes entries for files now gone,
+    and writes the cache only after its contents change. A write replaces the
+    file atomically through a temporary file. A missing or malformed file, or
+    one with an unknown version, is no cache: the readers scan the transcripts
+    and replace it with the current version.
 21. OpenCode's reader goes to its own database instead of its files:
     `$XDG_DATA_HOME/opencode`, else `~/.local/share/opencode`, then
     `opencode.db`, one SQLite file OpenCode itself may hold open. It is opened
@@ -226,6 +245,18 @@ The ACP runtime belongs to 021.
 - A request no outside session can answer asks no agent, even with
   `refresh=true`
   (`session_list.rs::a_page_with_no_room_for_an_outside_session_asks_no_agent`).
+- The first `kind=outside` request after start and discovery reads the
+  snapshot taken at start and asks no agent again
+  (`session_list.rs::the_first_outside_request_after_start_reads_the_warm_snapshot`),
+  and a request that comes while that snapshot is taken waits for it and
+  takes no second one
+  (`::a_request_during_the_start_snapshot_waits_for_it`).
+- A `kind=ariadne` request returns while an outside refresh still runs
+  (`session_list.rs::an_ariadne_page_returns_while_an_outside_refresh_runs`).
+- Requests that find the snapshot stale together ask each agent once
+  (`session_list.rs::concurrent_stale_requests_ask_each_agent_once`).
+- A snapshot asks the agents and reads the disk at the same time
+  (`crates/ariadne-daemon/src/acp_sessions.rs::tests::the_two_sources_are_asked_at_the_same_time`).
 - A resumed outside session is in the page once, as an Ariadne session, and
   without a refresh
   (`session_list.rs::a_resumed_outside_session_is_listed_once_as_an_ariadne_session`).
@@ -258,6 +289,18 @@ The ACP runtime belongs to 021.
 - A conversation that grew after a page read its figures is listed by what it
   holds now
   (`stored_conversations.rs::a_transcript_that_grew_under_a_page_is_listed_by_what_it_holds_now`).
+- New Claude and Codex readers return the same rows from saved listing fields
+  without reading unchanged transcripts again
+  (`stored_conversations.rs::a_new_reader_reads_no_unchanged_transcript_again`).
+- A new reader reads a transcript with a changed stamp and returns its new
+  listing fields
+  (`stored_conversations.rs::a_new_reader_reads_a_transcript_that_changed_after_the_save`).
+- A new reader drops a deleted transcript from both its listing and the saved
+  cache
+  (`stored_conversations.rs::a_new_reader_removes_a_deleted_transcripts_saved_entry`).
+- Corrupt and unknown-version listing caches cause a full scan and are replaced
+  with the current cache version
+  (`stored_conversations.rs::corrupt_and_unknown_listing_caches_fall_back_to_a_full_scan`).
 - The disk half keeps the order, the cursor and the 7-day window of the
   listing
   (`stored_conversations.rs::the_disk_half_keeps_the_order_the_cursor_and_the_window`).
@@ -276,8 +319,14 @@ The ACP runtime belongs to 021.
   neither is a root session with no message
   (`::a_session_with_no_message_is_not_listed`).
 - A row the agent listed stays listed whatever `opencode.db` says of it,
-  including a row absent from it entirely
+  when the database is missing
   (`stored_conversations_opencode.rs::a_row_the_agent_lists_stays_listed_whatever_the_disk_says`).
+- An OpenCode ACP row with no message leaves the page when the database is
+  readable (`stored_conversations_opencode.rs::an_empty_session_the_agent_lists_is_not_in_the_page`).
+- An OpenCode ACP row with a message stays under the agent's title
+  (`stored_conversations_opencode.rs::a_session_with_messages_the_agent_lists_stays_in_the_page`).
+- An unreadable OpenCode database keeps every ACP row
+  (`stored_conversations_opencode.rs::an_unreadable_database_keeps_every_agent_row`).
 - A missing `opencode.db` leaves the listing working and is never created by
   the reader
   (`stored_conversations_opencode.rs::a_missing_database_leaves_the_listing_working`).

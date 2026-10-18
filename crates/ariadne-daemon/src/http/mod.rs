@@ -2,41 +2,53 @@
 
 pub use events::ingest_event;
 
+mod agent_requests;
+mod attention;
 mod caller;
 mod catalog;
+mod channel;
 pub(crate) mod classify;
 mod console;
 pub(crate) mod convert;
+mod dashboards;
 mod doctor;
 mod error;
 pub(crate) mod events;
+mod forge;
 mod goals;
-mod landing;
+mod issues;
 mod logs;
 mod permissions;
 mod pins;
+mod pull_requests;
 mod repositories;
 mod sessions;
 mod skills;
 mod sse;
+mod stats;
+mod steps;
 mod stream;
 mod tasks;
 mod terminal;
+mod workflows;
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::extract::State;
+use axum::extract::{Request, State};
+use axum::http::{HeaderName, HeaderValue, Method, header};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, SecondsFormat, Utc};
 use tokio::sync::mpsc;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use ariadne_api::stream::HeartbeatDto;
-use ariadne_api::{HealthResponse, VersionResponse};
+use ariadne_api::{HealthResponse, SESSION_HEADER, VersionResponse};
 use ariadne_store::Store;
 
 use crate::acp_discovery::AgentRegistry;
@@ -46,12 +58,13 @@ use catalog::{acp_agents, agents, models};
 use crate::ai_permissions::AiPermissions;
 use crate::bus::EventBus;
 use crate::launcher::Launcher;
-use crate::log::LogBuffer;
 use crate::scheduler::SchedEvent;
+use crate::telemetry::LogStream;
 
 /// Shared handler state.
 #[derive(Clone)]
 pub struct AppState {
+    pub forge_poll: crate::forge::poll::ForgePoll,
     pub store: Store,
     /// Monotonic, so uptime is immune to the clock being set.
     pub started_at: Instant,
@@ -63,8 +76,11 @@ pub struct AppState {
     pub sched_tx: Option<mpsc::UnboundedSender<SchedEvent>>,
     /// Fan-out of domain events to `/v1/events/stream` subscribers.
     pub events: EventBus,
-    /// Recent daemon log lines, served by `/v1/logs`.
-    pub logs: LogBuffer,
+    /// The telemetry database: every log record and metric sample (033).
+    pub telemetry_store: ariadne_store::telemetry::TelemetryStore,
+    /// Live feed of new log records, fed by the telemetry log exporter;
+    /// `/v1/logs/stream` follows it after its opening snapshot.
+    pub log_stream: LogStream,
     /// ACP commands and their cached discovery snapshot.
     pub agent_registry: AgentRegistry,
     /// The snapshot of every agent's stored sessions that the outside half
@@ -72,6 +88,12 @@ pub struct AppState {
     pub outside_sessions: OutsideSessions,
     /// the model's settings, its Python check and its install (022).
     pub ai_permissions: AiPermissions,
+    /// The webhook tunnel and its switch (027).
+    pub tunnel: crate::forge::tunnel::Tunnel,
+    /// One lock per pull request a reply posts to (026): held from before
+    /// the once check through the forge call, so two replies racing for the
+    /// same comment cannot both read it unanswered before either is stored.
+    pub reply_locks: pull_requests::ReplyLocks,
 }
 
 impl AppState {
@@ -104,6 +126,10 @@ impl AppState {
     pub fn notify_scheduler_goal(&self, goal_id: &str) {
         self.wake(SchedEvent::GoalChanged(goal_id.to_string()));
     }
+
+    pub(crate) fn notify_scheduler_pull_request(&self, pull_request_id: &str) {
+        self.wake(SchedEvent::PullRequestChanged(pull_request_id.to_string()));
+    }
 }
 
 #[derive(OpenApi)]
@@ -120,53 +146,143 @@ impl AppState {
         agents::list, agents::update, acp_agents::list, acp_agents::refresh,
         skills::create, skills::list, skills::get, skills::update, skills::delete,
         skills::reset_document,
+        workflows::create, workflows::list, workflows::get, workflows::update,
+        workflows::delete, workflows::reset, workflows::parse,
+        dashboards::create, dashboards::list, dashboards::get, dashboards::update, dashboards::delete, dashboards::reset,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
+        forge::detect, forge::get_tunnel, forge::set_tunnel,
+        issues::list, issues::get,
+        pull_requests::list, pull_requests::get, pull_requests::get_by_number, pull_requests::refresh, pull_requests::search,
+        pull_requests::comments, pull_requests::comment, pull_requests::reply, pull_requests::resolve,
+        pull_requests::edit_pending_comment, pull_requests::delete_pending_comment,
+        pull_requests::edit_pending_review_body,
+        pull_requests::report,
+        pull_requests::diff, pull_requests::submit_review, pull_requests::ask_review,
+        pull_requests::ask_babysit,
         permissions::get, permissions::update, permissions::refresh,
+        permissions::list_learned, permissions::get_learned, permissions::delete_learned,
+        permissions::update_learned,
+        permissions::test,
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
         tasks::create, tasks::list, tasks::get, tasks::update,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
-        landing::list_task_messages, landing::post_task_message,
-        goals::list_goal_messages, goals::post_goal_message, landing::diff,
-        landing::record_pull_request, landing::pick_winner,
+        channel::list_task_messages, channel::post_task_message,
+        goals::list_goal_messages, goals::post_goal_message, channel::diff,
+        channel::open_pull_request, steps::complete, steps::fail,
         sessions::list, sessions::create, sessions::resume_outside,
-        sessions::get, sessions::kill, sessions::resume,
+        sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
+        agent_requests::create, agent_requests::withdraw,
         terminal::terminal,
         events::list, stream::stream,
         models::list,
         models::set_enabled,
         models::set_rank,
         logs::snapshot, logs::stream,
+        attention::list,
     ),
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
         ariadne_api::stream::HeartbeatDto,
         ariadne_api::events::AgentEventDto, ariadne_api::events::AgentEventSummaryDto,
-        ariadne_api::events::EventOrder,
+        ariadne_api::events::EventOrder, ariadne_api::events::PermissionReplyDto,
         ariadne_api::logs::LogLineDto, ariadne_api::logs::LogSnapshotResponse,
+        ariadne_api::attention::AttentionListDto, ariadne_api::attention::AttentionItemDto,
+        ariadne_api::attention::AttentionProducer, ariadne_api::attention::AttentionCause,
+        ariadne_api::attention::AttentionSubjectDto,
+        ariadne_api::attention::AttentionSubjectKind, ariadne_api::attention::AttentionTarget,
+        ariadne_api::attention::CreateAgentRequest,
+        ariadne_api::pull_requests::PendingReplyDto,
+        ariadne_api::pull_requests::PendingReviewDto,
+        ariadne_api::pull_requests::PendingEditDto,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
         (name = "agents", description = "Per-agent launch configuration: the flags behind each registry command"),
         (name = "acp-agents", description = "The ACP agent registry: what's on PATH or configured, and what discovery found"),
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
+        (name = "workflows", description = "The kanban of columns a task is staged through"),
+        (name = "dashboards", description = "Editable Perses dashboards"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "permissions", description = "The AI permission model: the local model the `ai` permission mode answers with"),
         (name = "goals", description = "Goals and their plans"),
+        (name = "pull-requests", description = "The tracked pull request ledger"),
+        (name = "issues", description = "Open issues read from enabled forges"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
         (name = "sessions", description = "Agent sessions, and the console each one is driven through"),
         (name = "events", description = "Agent events the ACP runtime reports, and the live domain-event stream"),
         (name = "models", description = "The model catalog discovery found each registry agent offering"),
         (name = "logs", description = "The daemon's own process log"),
+        (name = "stats", description = "How work performs, read off the stats ledger"),
+        (name = "attention", description = "The authoritative list of what needs a human now"),
     )
 )]
 struct ApiDoc;
 
+/// The whole API document: the routes declared above, and the stats
+/// families, each of which declares its own.
+fn api_doc() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi().merge_from(stats::openapi())
+}
+
 /// Build the daemon router.
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/v1/pull-requests", get(pull_requests::list))
+        .route("/v1/pull-requests/refresh", post(pull_requests::refresh))
+        .route("/v1/pull-requests/{id}", get(pull_requests::get))
+        .route(
+            "/v1/repositories/{id}/pull-requests/{number}",
+            get(pull_requests::get_by_number),
+        )
+        .route(
+            "/v1/repositories/{id}/pull-requests/search",
+            get(pull_requests::search),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments",
+            get(pull_requests::comments),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/{comment_id}",
+            get(pull_requests::comment),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/{comment_id}/reply",
+            post(pull_requests::reply),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/{comment_id}/resolve",
+            post(pull_requests::resolve),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/edit",
+            post(pull_requests::edit_pending_comment),
+        )
+        .route(
+            "/v1/pull-requests/{id}/comments/delete",
+            post(pull_requests::delete_pending_comment),
+        )
+        .route(
+            "/v1/pull-requests/{id}/pending-review/body",
+            post(pull_requests::edit_pending_review_body),
+        )
+        .route("/v1/pull-requests/{id}/report", post(pull_requests::report))
+        .route("/v1/pull-requests/{id}/diff", get(pull_requests::diff))
+        .route(
+            "/v1/pull-requests/{id}/reviews",
+            post(pull_requests::submit_review),
+        )
+        .route(
+            "/v1/repositories/{id}/pull-requests/{number}/ariadne-review",
+            put(pull_requests::ask_review),
+        )
+        .route(
+            "/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit",
+            put(pull_requests::ask_babysit),
+        )
         .route("/v1/health", get(health))
         .route("/v1/version", get(version))
         .route("/v1/doctor", get(doctor::report))
@@ -185,6 +301,30 @@ pub fn router(state: AppState) -> Router {
             "/v1/skills/{name}/document/reset",
             post(skills::reset_document),
         )
+        // workflows
+        .route(
+            "/v1/workflows",
+            post(workflows::create).get(workflows::list),
+        )
+        .route(
+            "/v1/workflows/{name}",
+            get(workflows::get)
+                .put(workflows::update)
+                .delete(workflows::delete),
+        )
+        .route("/v1/workflows/{name}/reset", post(workflows::reset))
+        .route("/v1/workflows/parse", post(workflows::parse))
+        .route(
+            "/v1/dashboards",
+            post(dashboards::create).get(dashboards::list),
+        )
+        .route(
+            "/v1/dashboards/{name}",
+            get(dashboards::get)
+                .put(dashboards::update)
+                .delete(dashboards::delete),
+        )
+        .route("/v1/dashboards/{name}/reset", post(dashboards::reset))
         // repositories
         .route(
             "/v1/repositories",
@@ -196,12 +336,27 @@ pub fn router(state: AppState) -> Router {
                 .put(repositories::update)
                 .delete(repositories::delete),
         )
+        .route("/v1/forge/detect", post(forge::detect))
+        .route(
+            "/v1/forge/tunnel",
+            get(forge::get_tunnel).put(forge::set_tunnel),
+        )
+        .route("/v1/repositories/{id}/issues", get(issues::list))
+        .route("/v1/repositories/{id}/issues/{number}", get(issues::get))
         // permissions
         .route(
             "/v1/permissions/ai",
             get(permissions::get).put(permissions::update),
         )
         .route("/v1/permissions/ai/refresh", post(permissions::refresh))
+        .route("/v1/permissions/learned", get(permissions::list_learned))
+        .route(
+            "/v1/permissions/learned/{id}",
+            get(permissions::get_learned)
+                .delete(permissions::delete_learned)
+                .put(permissions::update_learned),
+        )
+        .route("/v1/permissions/ai/test", post(permissions::test))
         // goals
         .route("/v1/goals", post(goals::create).get(goals::list))
         .route("/v1/goals/{id}", get(goals::get).delete(goals::delete))
@@ -224,13 +379,14 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/tasks/{id}/retry", post(tasks::retry))
         .route(
             "/v1/tasks/{id}/messages",
-            get(landing::list_task_messages).post(landing::post_task_message),
+            get(channel::list_task_messages).post(channel::post_task_message),
         )
-        .route("/v1/tasks/{id}/diff", get(landing::diff))
-        .route("/v1/tasks/{id}/pick", post(landing::pick_winner))
+        .route("/v1/tasks/{id}/diff", get(channel::diff))
+        .route("/v1/tasks/{id}/step/complete", post(steps::complete))
+        .route("/v1/tasks/{id}/step/fail", post(steps::fail))
         .route(
             "/v1/tasks/{id}/pull-request",
-            post(landing::record_pull_request),
+            post(channel::open_pull_request),
         )
         // sessions
         .route("/v1/sessions", get(sessions::list).post(sessions::create))
@@ -241,9 +397,18 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}", get(sessions::get))
         .route("/v1/sessions/{id}/kill", post(sessions::kill))
         .route("/v1/sessions/{id}/resume", post(sessions::resume))
+        .route("/v1/sessions/{id}/switch", post(sessions::switch))
         .route("/v1/sessions/{id}/console", get(console::snapshot))
         .route("/v1/sessions/{id}/console/stream", get(console::stream))
         .route("/v1/sessions/{id}/console/input", post(console::input))
+        .route(
+            "/v1/sessions/{id}/agent-requests",
+            post(agent_requests::create),
+        )
+        .route(
+            "/v1/sessions/{session_id}/agent-requests/{request_id}",
+            post(agent_requests::withdraw),
+        )
         .route("/v1/sessions/{id}/console/cancel", post(console::cancel))
         .route(
             "/v1/sessions/{id}/console/terminal",
@@ -256,19 +421,97 @@ pub fn router(state: AppState) -> Router {
         // daemon logs
         .route("/v1/logs", get(logs::snapshot))
         .route("/v1/logs/stream", get(logs::stream))
+        .merge(stats::routes())
+        // attention
+        .route("/v1/attention", get(attention::list))
         // events
         .route("/v1/events", get(events::list))
         .route("/v1/events/stream", get(stream::stream))
         // debug spawn (manual agent launch until the scheduler lands)
         .route("/internal/spawn", post(sessions::debug_spawn))
         // docs (SwaggerUi also serves the spec at /api-docs/openapi.json)
-        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        // Wide open on purpose: the trust boundary is the unix socket / the
-        // loopback bind (see auth.rs), not the browser origin. Without this a
-        // webview (`tauri://localhost`, `http://localhost:*`) cannot call the
-        // TCP listener at all.
-        .layer(CorsLayer::permissive())
+        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", api_doc()))
         .with_state(state)
+}
+
+/// Build the TCP router. The unix socket serves the unwrapped [`router`].
+pub fn tcp_router(state: AppState, configured_origins: &[String]) -> Router {
+    let allowed_origins = tcp_origins(configured_origins);
+    let cors_origins = allowed_origins.clone();
+
+    router(state)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::list(cors_origins))
+                .allow_methods([
+                    Method::GET,
+                    Method::POST,
+                    Method::PUT,
+                    Method::PATCH,
+                    Method::DELETE,
+                ])
+                .allow_headers([
+                    header::CONTENT_TYPE,
+                    HeaderName::from_static(SESSION_HEADER),
+                ]),
+        )
+        .layer(middleware::from_fn(move |request: Request, next: Next| {
+            let allowed_origins = allowed_origins.clone();
+            async move { guard_tcp_request(request, next, &allowed_origins).await }
+        }))
+}
+
+const BUILTIN_TCP_ORIGINS: &[&str] = &[
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+];
+
+fn tcp_origins(configured_origins: &[String]) -> Vec<HeaderValue> {
+    BUILTIN_TCP_ORIGINS
+        .iter()
+        .copied()
+        .chain(configured_origins.iter().map(String::as_str))
+        .map(|origin| origin.parse().expect("Config validates TCP origins"))
+        .collect()
+}
+
+async fn guard_tcp_request(
+    request: Request,
+    next: Next,
+    allowed_origins: &[HeaderValue],
+) -> Response {
+    if !request
+        .headers()
+        .get(header::HOST)
+        .is_some_and(is_loopback_host)
+    {
+        return error::ApiError::forbidden("the TCP listener only serves loopback Host headers")
+            .into_response();
+    }
+
+    if let Some(origin) = request.headers().get(header::ORIGIN)
+        && !allowed_origins.iter().any(|allowed| allowed == origin)
+    {
+        return error::ApiError::forbidden("the TCP listener does not allow this Origin")
+            .into_response();
+    }
+
+    next.run(request).await
+}
+
+fn is_loopback_host(host: &HeaderValue) -> bool {
+    let Ok(host) = host.to_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    ["localhost", "127.0.0.1", "[::1]"].into_iter().any(|name| {
+        host == name
+            || host
+                .strip_prefix(&format!("{name}:"))
+                .is_some_and(|port| port.parse::<u16>().is_ok())
+    })
 }
 
 /// Daemon liveness probe.

@@ -1,0 +1,38 @@
+# Configuration for `cargo audit` (crates/AGENTS.md, .github/AGENTS.md).
+#
+# `cargo audit` denies no warning category by default. Exceptions below
+# document an upstream maintenance notice and three archive-extraction
+# advisories confined to the vendored Swagger UI build dependency.
+[advisories]
+ignore = [
+# bincode 1.3.3 is pulled in by syntect 5.3.0 (crates/ariadne-console), the
+# newest syntect release published. syntect has not moved off bincode 1, so
+# there is no upgrade that clears this without dropping syntax highlighting.
+# Revisit when syntect ships a release on a maintained serializer.
+    "RUSTSEC-2025-0141",
+
+# Added 2026-10-17: zip 8.6.0 is used only by utoipa-swagger-ui 10.0.1's
+# build script, never by the shipped daemon. The workspace enables
+# `vendored`: the archive is the Cargo.lock-pinned, checksummed
+# utoipa-swagger-ui-vendored 0.2.0's bundled Swagger UI 5.32.6, not an
+# archive supplied by a user or downloaded by the build script.
+# The build script copies enclosed dist entries rather than calling
+# ZipArchive::extract or ZipStreamReader::extract. The bundled dist was
+# inspected: it contains no symlinks, escaping paths or SUID/SGID/sticky
+# bits. These exceptions do not apply to a runtime archive-extraction use.
+# Remove them when utoipa-swagger-ui supports zip >=9, and reassess them
+# whenever its build script, vendored archive or feature selection changes.
+    "RUSTSEC-2026-0367", # privileged Unix permission bits
+    "RUSTSEC-2026-0368", # symlinks pointing outside the destination
+    "RUSTSEC-2026-0369", # applying permissions through symlinks
+]
+
+# Not ignorable here: zip 8.6.0 (pulled in by utoipa-swagger-ui 10.0.1's build
+# script, crates/ariadne-daemon) is yanked, but so is every other version of
+# `zip` ever published except 9.0.3 and 9.0.4, and no release of
+# utoipa-swagger-ui up to its own latest, 10.0.1, depends on a zip in that
+# range (10.0.1 still pins "8.6", itself fully yanked). `cargo audit`'s
+# yanked check has no per-package allowlist, only the all-or-nothing
+# `[yanked] enabled` switch, which would also hide a future, unrelated yank -
+# so this is left as the one warning `cargo audit` prints and does not deny.
+# Revisit when utoipa-swagger-ui publishes against a non-yanked zip.

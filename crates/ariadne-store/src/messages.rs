@@ -1,15 +1,15 @@
 //! What the agents say to each other.
 //!
-//! One channel for all of it. A verdict used to be a table of its own, and the
-//! consequence was that the only thing a reviewer could say to an author was
-//! approve or request changes — a reviewer that did not understand the change
-//! had nowhere to ask. Everything an agent says is a message now, and what
-//! tells them apart is [`MessageKind`].
+//! One channel for all of it: a question of one agent to another, and the
+//! answer back. A review used to run on it too; a workflow column moves a
+//! task through the step routes now, and what is left on the channel is what
+//! the agents say ([`MessageKind`]).
 //!
-//! A message has exactly one recipient. The daemon hands it to that
-//! recipient as a prompt and stamps `delivered_at`, so an undelivered message
-//! is one still waiting for its recipient to be free — see
-//! `scheduler::messages`.
+//! A message has exactly one recipient. `delivered_at` says the recipient's
+//! agent has the text. It is stamped when the prompt that carries it goes
+//! out, or when a delivering read returns it, and never when a prompt is only
+//! queued. An undelivered message is one its agent does not have yet, and a
+//! read still hands it over — see `scheduler::messages`.
 
 use ariadne_core::id::new_id;
 use ariadne_core::{Actor, MessageKind};
@@ -121,168 +121,29 @@ impl Store {
             .await
     }
 
-    /// The review the author last asked for, as the id of its first request
-    /// row — the identity of "this review", where a number used to be.
+    /// Claim a message for delivery: stamp it, and answer whether this call
+    /// is the one that did.
     ///
-    /// One request goes to every reviewer, so a review is several rows; the
-    /// smallest id of the last batch is the one that names it. None where the
-    /// task has never been sent for review.
-    pub async fn open_review_request(&self, task_id: &str) -> Result<Option<String>> {
-        // `MAX` over no rows is one row holding NULL, not no row at all, so
-        // the scalar is read as an option and flattened.
-        Ok(sqlx::query_scalar::<_, Option<String>>(
-            "SELECT MAX(id) FROM messages WHERE task_id = ? AND kind = 'review_request'",
-        )
-        .bind(task_id)
-        .fetch_optional(self.r())
-        .await?
-        .flatten())
-    }
-
-    /// The verdicts on the review that is open now: the ones sent since the
-    /// author last asked for one.
-    ///
-    /// What a verdict belongs to is the request it answers, not a number kept
-    /// beside it. Ids are ULIDs, so "after the last `review_request`" is a
-    /// comparison on the id itself — and asking for a review again is what
-    /// supersedes the verdicts before it, in one write, with nothing to reset.
-    ///
-    /// A task nobody has asked to have reviewed has no request to read from,
-    /// and every verdict on it counts: there is nothing before them.
-    ///
-    /// The transition that opened the review bounds them too, because a review
-    /// opens in two writes and a reader can land between them: the status
-    /// commits here, and the daemon writes one request row per reviewer after
-    /// it. In that window the newest request row is the review before this
-    /// one's, and the verdicts it bounds are that review's answers — read as
-    /// this review's, they would close a review the author has only just
-    /// asked for. A verdict written before the author asked answers what it
-    /// asked before, whichever of the two bounds says so. The two ids compare
-    /// because every id in the database is a ULID of the one monotonic
-    /// generator ([`ariadne_core::id::new_id`]), so their order is the order
-    /// they were written in, table to table.
-    pub async fn open_verdicts(&self, task_id: &str) -> Result<Vec<Message>> {
-        Ok(sqlx::query_as::<_, Message>(
-            "SELECT * FROM messages
-              WHERE task_id = ?1 AND kind IN ('approve', 'request_changes')
-                AND id > COALESCE(
-                      (SELECT MAX(id) FROM messages
-                        WHERE task_id = ?1 AND kind = 'review_request'), '')
-                AND id > COALESCE(
-                      (SELECT id FROM task_transitions
-                        WHERE task_id = ?1 AND to_status = 'under_review'
-                        ORDER BY id DESC LIMIT 1), '')
-              ORDER BY id",
-        )
-        .bind(task_id)
-        .fetch_all(self.r())
-        .await?)
-    }
-
-    /// The review one author last asked for, as the id of its first request
-    /// row: the per-author reading of [`Store::open_review_request`], for a
-    /// task staffed with several authors whose reviews run side by side.
-    ///
-    /// A request is from the author that asked (`from_agent_id`), so that is
-    /// what scopes it. None where this author has never asked.
-    pub async fn open_review_request_of(
-        &self,
-        task_id: &str,
-        author_agent_id: &str,
-    ) -> Result<Option<String>> {
-        Ok(sqlx::query_scalar::<_, Option<String>>(
-            "SELECT MAX(id) FROM messages
-              WHERE task_id = ? AND kind = 'review_request' AND from_agent_id = ?",
-        )
-        .bind(task_id)
-        .bind(author_agent_id)
-        .fetch_optional(self.r())
-        .await?
-        .flatten())
-    }
-
-    /// The verdicts on one author's open review: the ones addressed to that
-    /// author since it last asked. The per-author reading of
-    /// [`Store::open_verdicts`], scoped the way a verdict is addressed — a
-    /// verdict is a message to the author whose change it judges.
-    pub async fn open_verdicts_of(
-        &self,
-        task_id: &str,
-        author_agent_id: &str,
-    ) -> Result<Vec<Message>> {
-        Ok(sqlx::query_as::<_, Message>(
-            "SELECT * FROM messages
-              WHERE task_id = ?1 AND to_agent_id = ?2
-                AND kind IN ('approve', 'request_changes')
-                AND id > COALESCE(
-                      (SELECT MAX(id) FROM messages
-                        WHERE task_id = ?1 AND kind = 'review_request'
-                          AND from_agent_id = ?2), '')
-              ORDER BY id",
-        )
-        .bind(task_id)
-        .bind(author_agent_id)
-        .fetch_all(self.r())
-        .await?)
-    }
-
-    /// The summary one author last asked for review with: the body of its
-    /// latest request, which is what `request_review` wrote there. None where
-    /// this author has never asked.
-    pub async fn author_review_summary(
-        &self,
-        task_id: &str,
-        author_agent_id: &str,
-    ) -> Result<Option<String>> {
-        Ok(sqlx::query_scalar::<_, Option<String>>(
-            "SELECT body FROM messages
-              WHERE task_id = ? AND kind = 'review_request' AND from_agent_id = ?
-              ORDER BY id DESC LIMIT 1",
-        )
-        .bind(task_id)
-        .bind(author_agent_id)
-        .fetch_optional(self.r())
-        .await?
-        .flatten())
-    }
-
-    /// Stamp one author's review requests to one reviewer as delivered: the
-    /// reviewer's briefing for that review is what carried them.
-    ///
-    /// On a task staffed with several authors a review request is not handed
-    /// to a reviewer as a bare message — the summary alone names
-    /// neither the author nor the branch, and the reviewer's worktree may
-    /// still stand on another author's. The full briefing is the delivery,
-    /// and this is the stamp that keeps the channel's record true to it.
-    pub async fn mark_review_requests_delivered(
-        &self,
-        task_id: &str,
-        author_agent_id: &str,
-        reviewer_agent_id: &str,
-    ) -> Result<()> {
-        sqlx::query(
-            "UPDATE messages SET delivered_at = ?
-              WHERE task_id = ? AND kind = 'review_request'
-                AND from_agent_id = ? AND to_agent_id = ?
-                AND delivered_at IS NULL",
+    /// The runtime claims a message right before its prompt goes out, and a
+    /// delivering read claims what it returns. The two can race for one
+    /// row, and the claim is one write gated on the row being unstamped, so
+    /// exactly one of them wins. The first stamp is the one kept: a second
+    /// claim answers false and leaves the time as it was.
+    pub async fn mark_message_delivered(&self, id: &str) -> Result<bool> {
+        let claimed = sqlx::query(
+            "UPDATE messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL",
         )
         .bind(now())
-        .bind(task_id)
-        .bind(author_agent_id)
-        .bind(reviewer_agent_id)
+        .bind(id)
         .execute(self.w())
         .await?;
-        Ok(())
+        Ok(claimed.rows_affected() == 1)
     }
 
-    /// Stamp a message as delivered: the runtime handed it to the recipient's
-    /// agent as a prompt.
-    ///
-    /// Idempotent, and the first stamp is the one kept: a message handed twice
-    /// is a bug in the caller, and overwriting the time would hide it.
-    pub async fn mark_message_delivered(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL")
-            .bind(now())
+    /// Give a claim back: the prompt it was made for never went out, so the
+    /// message waits for the next live agent again.
+    pub async fn unmark_message_delivered(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE messages SET delivered_at = NULL WHERE id = ?")
             .bind(id)
             .execute(self.w())
             .await?;

@@ -34,7 +34,16 @@ import {
   type RepositoryDto,
   type TaskDto,
 } from "@/api"
-import { aGoal, aLayaStatus, aRepository, aSession, aTask } from "@/test/fixtures"
+import {
+  aDashboard,
+  aGoal,
+  aLearnedPermission,
+  anAiPermissionsStatus,
+  aRepository,
+  aSession,
+  aTask,
+  aWorkflow,
+} from "@/test/fixtures"
 import { dispatchDomainEvent, invalidateEverything } from "./dispatch"
 
 const REPOSITORY: RepositoryDto = aRepository({
@@ -261,19 +270,131 @@ describe("session events", () => {
   })
 })
 
-describe("laya events", () => {
+describe("pull request session events", () => {
+  /** A client holding a pull request list and its detail, as its screen and panel do. */
+  function withPullRequest(): QueryClient {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(qk.pullRequests.list(), [])
+    queryClient.setQueryData(qk.pullRequests.detail("pull-42"), {})
+    return queryClient
+  }
+
+  it("refetches the request a session watches when that session starts or moves, for its session_id", () => {
+    for (const event of ["session_created", "session_updated"] as const) {
+      const queryClient = withPullRequest()
+
+      dispatch(queryClient, { event, data: aSession({ pull_request_id: "pull-42" }) })
+
+      expect(stale(queryClient, qk.pullRequests.list())).toBe(true)
+      expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(true)
+    }
+  })
+
+  it("reads every request again on pull_requests_changed, which carries none", () => {
+    const queryClient = withPullRequest()
+    queryClient.setQueryData(qk.pullRequests.detail("repo:42"), {})
+
+    dispatch(queryClient, { event: "pull_requests_changed", data: { repository_id: "repo" } })
+
+    expect(stale(queryClient, qk.pullRequests.list())).toBe(true)
+    expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(true)
+    expect(stale(queryClient, qk.pullRequests.detail("repo:42"))).toBe(true)
+  })
+
+  it("leaves the pull requests alone for a session that watches none", () => {
+    for (const event of ["session_created", "session_updated"] as const) {
+      const queryClient = withPullRequest()
+
+      dispatch(queryClient, { event, data: aSession() })
+
+      expect(stale(queryClient, qk.pullRequests.list())).toBe(false)
+      expect(stale(queryClient, qk.pullRequests.detail("pull-42"))).toBe(false)
+    }
+  })
+})
+
+describe("ai permissions events", () => {
   it("replaces the cached status whole, so a card that read installing reads ready", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    queryClient.setQueryData(qk.permissions.laya(), aLayaStatus({ state: "installing" }))
+    queryClient.setQueryData(qk.permissions.ai(), anAiPermissionsStatus({ state: "installing" }))
 
     dispatch(queryClient, {
-      event: "laya_updated",
-      data: aLayaStatus({ state: "ready", installed_release: "v0.1.4" }),
+      event: "ai_permissions_updated",
+      data: anAiPermissionsStatus({ state: "ready", installed_release: "v0.1.4" }),
     })
 
-    expect(queryClient.getQueryData(qk.permissions.laya())).toEqual(
-      aLayaStatus({ state: "ready", installed_release: "v0.1.4" }),
+    expect(queryClient.getQueryData(qk.permissions.ai())).toEqual(
+      anAiPermissionsStatus({ state: "ready", installed_release: "v0.1.4" }),
     )
+  })
+})
+
+describe("forge settings events", () => {
+  it("replaces the cached tunnel whole, so a screen that read up reads off", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const up = {
+      enabled: true,
+      state: "up" as const,
+      url: "https://amber-104233.loca.lt",
+      listen: "127.0.0.1:49152",
+      since: "2026-10-08T10:00:00.000Z",
+      error: null,
+    }
+    queryClient.setQueryData(qk.forge.tunnel(), up)
+    const off = { ...up, enabled: false, state: "off" as const, url: null }
+
+    dispatch(queryClient, { event: "forge_settings_updated", data: off })
+
+    expect(queryClient.getQueryData(qk.forge.tunnel())).toEqual(off)
+  })
+})
+
+describe("issue events", () => {
+  it("refetches both assignment filters of the repository whose issues moved, and no other", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    for (const key of [
+      qk.issues.list("repo-1", "me"),
+      qk.issues.list("repo-1", "all"),
+      qk.issues.list("repo-2", "me"),
+    ]) {
+      queryClient.setQueryData(key, [])
+    }
+
+    dispatch(queryClient, { event: "issues_changed", data: { repository_id: "repo-1" } })
+
+    expect(stale(queryClient, qk.issues.list("repo-1", "me"))).toBe(true)
+    expect(stale(queryClient, qk.issues.list("repo-1", "all"))).toBe(true)
+    expect(stale(queryClient, qk.issues.list("repo-2", "me"))).toBe(false)
+  })
+})
+
+describe("learned permission events", () => {
+  const learned = aLearnedPermission({
+    repository_id: REPOSITORY.id,
+  })
+
+  it("patches created and updated details and refetches lists", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const list = qk.learnedPermissions.list({ repository: REPOSITORY.id })
+    queryClient.setQueryData(list, { items: [] })
+    dispatch(queryClient, { event: "learned_permission_created", data: learned })
+    expect(queryClient.getQueryData(qk.learnedPermissions.detail(learned.id))).toEqual(learned)
+    expect(stale(queryClient, list)).toBe(true)
+
+    const updated = { ...learned, tool_name: "Shell" }
+    dispatch(queryClient, { event: "learned_permission_updated", data: updated })
+    expect(queryClient.getQueryData(qk.learnedPermissions.detail(learned.id))).toEqual(updated)
+    expect(stale(queryClient, list)).toBe(true)
+  })
+
+  it("removes a deleted detail and refetches lists", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const list = qk.learnedPermissions.list({})
+    queryClient.setQueryData(list, { items: [learned] })
+    queryClient.setQueryData(qk.learnedPermissions.detail(learned.id), learned)
+    dispatch(queryClient, { event: "learned_permission_deleted", data: learned })
+    expect(queryClient.getQueryData(qk.learnedPermissions.detail(learned.id))).toBeUndefined()
+    expect(stale(queryClient, list)).toBe(true)
   })
 })
 
@@ -296,5 +417,66 @@ describe("agent events", () => {
     })
 
     expect(stale(queryClient, activity)).toBe(true)
+  })
+})
+
+describe("recovery attention", () => {
+  it("refetches the attention list on a goal's own confirmed-turn or give-up evidence", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(qk.attention.list(), { items: [], complete: true })
+
+    dispatch(queryClient, { event: "goal_updated", data: GOAL })
+
+    expect(stale(queryClient, qk.attention.list())).toBe(true)
+  })
+
+  it("refetches the attention list on a reviewer session's own give-up evidence", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(qk.attention.list(), { items: [], complete: true })
+
+    dispatch(queryClient, {
+      event: "pull_requests_changed",
+      data: { repository_id: "repo" },
+    })
+
+    expect(stale(queryClient, qk.attention.list())).toBe(true)
+  })
+})
+
+describe("workflow events", () => {
+  it("patches created and updated workflows, then drops a deleted workflow", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const workflow = aWorkflow()
+    queryClient.setQueryData(qk.workflows.list(), [workflow])
+
+    dispatch(queryClient, { event: "workflow_created", data: workflow })
+    expect(queryClient.getQueryData(qk.workflows.detail(workflow.name))).toEqual(workflow)
+    expect(stale(queryClient, qk.workflows.list())).toBe(true)
+
+    const updated = { ...workflow, document: `${workflow.document}\n  done[Done]` }
+    dispatch(queryClient, { event: "workflow_updated", data: updated })
+    expect(queryClient.getQueryData(qk.workflows.detail(workflow.name))).toEqual(updated)
+
+    dispatch(queryClient, { event: "workflow_deleted", data: { id: workflow.name } })
+    expect(queryClient.getQueryData(qk.workflows.detail(workflow.name))).toBeUndefined()
+  })
+})
+
+describe("dashboard events", () => {
+  it("patches created and updated dashboards, then drops a deleted dashboard", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const dashboard = aDashboard()
+    queryClient.setQueryData(qk.dashboards.list(), [dashboard])
+
+    dispatch(queryClient, { event: "dashboard_created", data: dashboard })
+    expect(queryClient.getQueryData(qk.dashboards.detail(dashboard.name))).toEqual(dashboard)
+    expect(stale(queryClient, qk.dashboards.list())).toBe(true)
+
+    const updated = { ...dashboard, document_is_default: false }
+    dispatch(queryClient, { event: "dashboard_updated", data: updated })
+    expect(queryClient.getQueryData(qk.dashboards.detail(dashboard.name))).toEqual(updated)
+
+    dispatch(queryClient, { event: "dashboard_deleted", data: updated })
+    expect(queryClient.getQueryData(qk.dashboards.detail(dashboard.name))).toBeUndefined()
   })
 })

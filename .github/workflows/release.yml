@@ -18,9 +18,10 @@
 #   ariadne-desktop-<target>.tar.gz      Ariadne Desktop binary + icon (Linux)
 #   checksums-<target>.txt               sha256 of the assets above
 #
-# Nothing here is signed or notarized: the artifacts ship unsigned and the
-# installer clears the macOS quarantine attribute itself. What the assets do
-# carry is a build provenance attestation, verifiable with
+# macOS artifacts are signed with the project's self-signed certificate, but
+# are not notarized, so the installer clears the macOS quarantine attribute
+# itself. What the assets carry is also a build provenance attestation,
+# verifiable with
 # `gh attestation verify <asset> --repo <owner>/<repo>`.
 name: Release assets
 
@@ -79,6 +80,7 @@ jobs:
             platform: linux
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      SIGNING_AVAILABLE: false
     steps:
       # The checkout below pins the sources to the tag whatever ref the run was
       # started on, but the attestation can only record `github.ref`. Say so
@@ -142,11 +144,13 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Install Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: ui/package-lock.json
+          cache-dependency-path: |
+            ui/package-lock.json
+            ui/dashboard/package-lock.json
 
       - name: Build ariadne and ariadned
         run: cargo build --release --locked --package ariadne-cli --package ariadne-daemon
@@ -155,19 +159,103 @@ jobs:
         working-directory: ui
         run: npm ci
 
-      # `--bundles app` skips the dmg: the release ships the .app tarball only.
-      - name: Build Ariadne Desktop (.app)
+      # `npm run build` in `ui/` (`beforeBuildCommand` below) builds this
+      # package too (`ui/AGENTS.md`), so its own dependencies — Perses and
+      # its plugins — have to be installed before that runs, the same as
+      # `ui/`'s own just above; neither package is an npm workspace of the
+      # other, so one `npm ci` never reaches the other's tree.
+      - name: Install the dashboard's dependencies
+        working-directory: ui/dashboard
+        run: npm ci
+
+      # Compiles the frontend (`beforeBuildCommand`) and the Tauri shell's
+      # Rust, with no bundle and so no signing attempt, while the signing
+      # keychain does not exist yet: every install script `npm ci` above ran,
+      # and every `build.rs`, ran with no certificate in reach. `tauri
+      # bundle` below packages what this step already built, rather than
+      # compiling again, once the certificate is imported.
+      - name: Compile Ariadne Desktop
         if: matrix.platform == 'macos'
         working-directory: ui
-        run: npm run tauri build -- --bundles app
+        run: npm run tauri build -- --no-bundle
 
       # A bundled Linux package carries the runner's own glib and Mesa, and
       # aborts on a host whose gio module needs a newer glib symbol; the
       # host's own webkit2gtk works, so ship a plain binary that links it.
+      # Linux never signs, so this, too, runs before any certificate exists.
       - name: Build Ariadne Desktop (no bundle)
         if: matrix.platform == 'linux'
         working-directory: ui
         run: npm run tauri build -- --no-bundle
+
+      - name: Import the macOS signing certificate
+        if: matrix.platform == 'macos'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_CERTIFICATE_PASSWORD" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::warning::macOS signing secrets are unavailable; releasing unsigned macOS assets"
+            exit 0
+          fi
+
+          certificate="$RUNNER_TEMP/ariadne-signing-cert.p12"
+          keychain="$RUNNER_TEMP/ariadne-signing.keychain-db"
+          echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          keychain_password=$(openssl rand -hex 32)
+          printf '%s' "$APPLE_CERTIFICATE" | base64 -D > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "SIGNING_AVAILABLE=true" >> "$GITHUB_ENV"
+
+      # `tauri bundle` packages and signs what `Compile Ariadne Desktop`
+      # above already built — unlike `tauri build`, it does not compile or
+      # run `beforeBuildCommand` again, so nothing runs a second time while
+      # the keychain below is unlocked. `--bundles app` skips the dmg: the
+      # release ships the .app tarball only.
+      - name: Bundle and sign Ariadne Desktop (.app)
+        if: matrix.platform == 'macos'
+        working-directory: ui
+        # The import step exports the identity only after it succeeds. Tauri
+        # finds it in that keychain; passing the p12 values would make Tauri
+        # create and remove a second keychain the CLI signing cannot use.
+        run: npm run tauri bundle -- --bundles app
+
+      - name: Sign the macOS command-line binaries
+        if: matrix.platform == 'macos' && env.SIGNING_AVAILABLE == 'true'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          codesign --force --options runtime -s "$APPLE_SIGNING_IDENTITY" target/release/ariadne
+          codesign --force --options runtime -s "$APPLE_SIGNING_IDENTITY" target/release/ariadned
+
+      - name: Verify the signed macOS assets
+        if: matrix.platform == 'macos' && env.SIGNING_AVAILABLE == 'true'
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict "ui/src-tauri/target/release/bundle/macos/Ariadne Desktop.app"
+          codesign --verify --deep --strict target/release/ariadne
+          codesign --verify --deep --strict target/release/ariadned
+
+      # Right after signing is over, rather than deferred to the end of the
+      # job: nothing past this point (staging, attesting, uploading) touches
+      # the keychain, so nothing past this point should find it unlocked.
+      - name: Delete the temporary macOS signing keychain
+        if: always() && matrix.platform == 'macos'
+        run: |
+          set -euo pipefail
+          if [ -n "${SIGNING_KEYCHAIN:-}" ] && [ -e "$SIGNING_KEYCHAIN" ]; then
+            security delete-keychain "$SIGNING_KEYCHAIN"
+          fi
+          rm -f "$RUNNER_TEMP/ariadne-signing-cert.p12"
 
       - name: Stage the release assets
         env:
@@ -226,3 +314,36 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: gh release upload "$TAG" dist/* --clobber
+
+  # Rewrites the Release page itself: the changelog text alone, which is all
+  # release-please ever writes there, leaves a reader with no install steps
+  # and no asset list. Runs once, after every target has staged and uploaded
+  # its checksums file, so the asset table is complete.
+  notes:
+    name: Write the release notes
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # read and rewrite the release body
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the checksums files
+        run: gh release download "$TAG" --pattern 'checksums-*.txt' --dir dist
+
+      - name: Read the current release body
+        run: gh release view "$TAG" --json body --jq .body > dist/body.md
+
+      - name: Write the new release body
+        run: |
+          scripts/release-notes.sh "$TAG" dist/body.md dist/checksums-*.txt > dist/new-body.md
+          gh release edit "$TAG" --notes-file dist/new-body.md

@@ -1,367 +1,348 @@
 // @vitest-environment jsdom
-
-/**
- * The repository dialog against a stubbed daemon, from both ends of the form.
- *
- * Almost nothing here is client-side validation, and that is the point: only
- * the daemon can open a checkout, resolve a branch and check it has commits,
- * so the dialog's job is to send the right body and to put the daemon's answer
- * where the user can act on it. Each test is one of the ways that must not
- * curdle — an omitted branch has to reach the daemon as *absent* (which is
- * what asks for the repo's current branch) rather than as an empty string,
- * clearing a description has to reach it as an empty one (which is what clears
- * it), and a 400 has to land on the field it is about instead of a banner that
- * says "bad request" over a form that looks fine.
- */
-
 import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { expect, it, vi } from "vitest"
 
-import type { RepositoryDto } from "@/api"
-import { aRepository } from "@/test/fixtures"
-import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
+import { aForge, aRepository, aWorkflow } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { RepositoryFormDialog } from "./repository-form-dialog"
 
-const REPOSITORY: RepositoryDto = aRepository({
-  id: "01JREPO00000000000000ARI",
-})
-
-interface Recorded {
-  method: string
-  path: string
-  body: {
-    path?: string
-    base_branch?: string | null
-    description?: string | null
-    permission_mode?: string
-  } | null
-}
-
-let requests: Recorded[] = []
-
-/** The last write that went out, whatever it was. */
-function lastWrite(): Recorded | undefined {
-  return requests.filter((one) => one.method !== "GET").at(-1)
-}
-
-/**
- * The daemon: `GET /v1/merge-strategies` answers with the fixed catalog, and
- * every write echoes back — or is refused, as `failure` says.
- */
-function stubDaemon(failure?: { status: number; code: string; message: string }) {
+/** Routes `GET /v1/workflows` and `POST /v1/forge/detect` the same way every
+ * create-form test needs them, plus whatever `extra` wants. */
+function stubDaemon(
+  detected: unknown,
+  extra?: (
+    pathname: string,
+    request: Request,
+  ) => Response | Promise<Response | undefined> | undefined,
+) {
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     const { pathname } = new URL(request.url)
-    const raw = await request.text()
-    const body = raw.length > 0 ? JSON.parse(raw) : null
-    requests.push({ method: request.method, path: pathname, body })
+    if (pathname === "/v1/workflows") return jsonResponse([aWorkflow({ name: "build-test" })])
+    if (pathname === "/v1/forge/detect" && request.method === "POST") return jsonResponse(detected)
+    const extraResponse = await extra?.(pathname, request)
+    if (extraResponse) return extraResponse
+    return new Response("not found", { status: 404 })
+  })
+}
 
-    if (failure) {
-      const { status, code, message } = failure
-      return errorResponse(status, code, message)
+/** Registering with no workflow picked is refused before it reaches the daemon. */
+it("refuses to register without a workflow picked", async () => {
+  const user = userEvent.setup()
+  const post = vi.fn(async () => new Response("not found", { status: 404 }))
+  stubDaemon(null, (pathname, request) => {
+    if (pathname === "/v1/repositories" && request.method === "POST") return post()
+    return undefined
+  })
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={null} />)
+
+  await user.type(await screen.findByLabelText("Path"), "/home/me/dev/widgets")
+  await user.click(screen.getByRole("button", { name: /register/i }))
+
+  expect(await screen.findByText("Pick a workflow.")).toBeDefined()
+  expect(post).not.toHaveBeenCalled()
+})
+
+/** Turning the switch off sends `supervise_posts: false` on save. */
+it("saves the supervise posts switch", async () => {
+  const user = userEvent.setup()
+  const repository = aRepository({ supervise_posts: true, forge: aForge({ enabled: true }) })
+  const put = vi.fn(async () => jsonResponse({ ...repository, supervise_posts: false }))
+  let sentBody: unknown
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init)
+    const { pathname } = new URL(request.url)
+    if (pathname === "/v1/workflows") return jsonResponse([aWorkflow({ name: "build-test" })])
+    if (pathname === `/v1/repositories/${repository.id}` && request.method === "PUT") {
+      sentBody = await request.clone().json()
+      return put()
     }
-    return new Response(JSON.stringify({ ...REPOSITORY, ...body }), {
-      status: request.method === "POST" ? 201 : 200,
-      headers: { "content-type": "application/json" },
-    })
+    return new Response("not found", { status: 404 })
   })
-}
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={repository} />)
 
-function renderDialog(
-  repository: RepositoryDto | null,
-  onOpenChange: (open: boolean) => void = () => {},
-) {
-  return renderScreen(
-    <RepositoryFormDialog open onOpenChange={onOpenChange} repository={repository} />,
+  const switchControl = await screen.findByRole("switch", { name: "Supervise posts" })
+  expect(switchControl.getAttribute("aria-checked")).toBe("true")
+  await user.click(switchControl)
+  await user.click(screen.getByRole("button", { name: /save changes/i }))
+
+  expect(put).toHaveBeenCalled()
+  expect(sentBody).toMatchObject({ supervise_posts: false })
+})
+
+/** The create form probes `POST /v1/forge/detect` once the path loses focus. */
+it("shows the forge switch, off, once a path with a forge is entered", async () => {
+  const user = userEvent.setup()
+  stubDaemon({
+    kind: "github",
+    host: "github.com",
+    owner: "acme",
+    name: "widgets",
+    remote: "origin",
+  })
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={null} />)
+
+  await user.type(await screen.findByLabelText("Path"), "/home/me/dev/widgets")
+  await user.tab()
+
+  const switchControl = await screen.findByRole("switch", { name: "GitHub integration" })
+  expect(switchControl.getAttribute("aria-checked")).toBe("false")
+  expect(screen.getByTestId("forge-remote").textContent).toContain("github.com/acme/widgets")
+})
+
+/** A checkout with no forge remote Ariadne supports shows no switch at all. */
+it("shows no forge switch for a path with no forge", async () => {
+  const user = userEvent.setup()
+  stubDaemon(null)
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={null} />)
+
+  await user.type(await screen.findByLabelText("Path"), "/home/me/dev/widgets")
+  await user.tab()
+
+  await screen.findByLabelText("Base branch") // Something settled before asserting an absence.
+  expect(screen.queryByRole("switch", { name: /integration/i })).toBeNull()
+})
+
+/** Turning the detected switch on sends `forge: {enabled: true}` on register. */
+it("sends forge enabled in the create request once the switch is turned on", async () => {
+  const user = userEvent.setup()
+  const post = vi.fn(async () =>
+    jsonResponse(aRepository({ forge: aForge({ enabled: true }) }), 201),
   )
-}
+  let sentBody: unknown
+  stubDaemon(
+    { kind: "github", host: "github.com", owner: "acme", name: "widgets", remote: "origin" },
+    async (pathname, request) => {
+      if (pathname === "/v1/repositories" && request.method === "POST") {
+        sentBody = await request.clone().json()
+        return post()
+      }
+      return undefined
+    },
+  )
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={null} />)
 
-beforeEach(() => {
-  requests = []
-  stubDaemon()
-})
+  await user.type(await screen.findByLabelText("Path"), "/home/me/dev/widgets")
+  await user.tab()
+  await user.click(await screen.findByRole("switch", { name: "GitHub integration" }))
+  await user.click(screen.getByLabelText("Default workflow"))
+  await user.click(await screen.findByRole("option", { name: "build-test" }))
+  await user.click(screen.getByRole("button", { name: /register/i }))
 
-describe("registering a repository", () => {
-  it("sends an omitted branch as absent, which is what asks for the current one", async () => {
-    const user = userEvent.setup()
-    renderDialog(null)
-
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.click(screen.getByRole("button", { name: "Register repository" }))
-
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()).toMatchObject({ method: "POST", path: "/v1/repositories" })
-    expect(lastWrite()?.body).toEqual({
-      path: "/home/me/dev/new",
-      base_branch: null,
-      description: null,
-      permission_mode: "auto",
-    })
-  })
-
-  it("sends the permission mode picked for it", async () => {
-    const user = userEvent.setup()
-    renderDialog(null)
-
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.click(screen.getByRole("combobox", { name: "Permission requests" }))
-    await user.click(await screen.findByRole("option", { name: /^Learn/ }))
-    await user.click(screen.getByRole("button", { name: "Register repository" }))
-
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()?.body?.permission_mode).toBe("learn")
-  })
-
-  it("offers AI among the permission modes, and sends it as ai", async () => {
-    const user = userEvent.setup()
-    renderDialog(null)
-
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.click(screen.getByRole("combobox", { name: "Permission requests" }))
-    await user.click(await screen.findByRole("option", { name: /^AI/ }))
-    await user.click(screen.getByRole("button", { name: "Register repository" }))
-
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()?.body?.permission_mode).toBe("ai")
-  })
-
-  it("puts a laya_disabled refusal on the permission mode field, pointing at the Permissions screen", async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    stubDaemon({
-      status: 409,
-      code: "laya_disabled",
-      message:
-        "the `ai` permission mode needs Laya; turn it on with `ariadne permissions enable` first",
-    })
-    renderDialog(null, onOpenChange)
-
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.click(screen.getByRole("combobox", { name: "Permission requests" }))
-    await user.click(await screen.findByRole("option", { name: /^AI/ }))
-    await user.click(screen.getByRole("button", { name: "Register repository" }))
-
-    // On the field, not the daemon's own CLI-flavoured words, and the dialog
-    // is left open to fix it.
-    const message = await screen.findByText("Enable Laya on the Permissions screen first")
-    expect(message.closest("[data-slot=field]")?.textContent).toContain("Permission requests")
-    expect(onOpenChange).not.toHaveBeenCalled()
-  })
-
-  it("refuses a relative path itself, without asking the daemon", async () => {
-    const user = userEvent.setup()
-    renderDialog(null)
-
-    await user.type(screen.getByLabelText("Path"), "dev/relative")
-    await user.click(screen.getByRole("button", { name: "Register repository" }))
-
-    expect(await screen.findByText("The path must be absolute.")).toBeDefined()
-    expect(requests.filter((one) => one.method !== "GET")).toEqual([])
-  })
-
-  it("puts a bad path back on the path field, in the daemon's own words", async () => {
-    const user = userEvent.setup()
-    stubDaemon({
-      status: 400,
-      code: "bad_request",
-      message: "/home/me/dev/new is not a git work tree",
-    })
-    renderDialog(null)
-
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.click(screen.getByRole("button", { name: "Register repository" }))
-
-    // On the field, not in the banner above the buttons.
-    const message = await screen.findByText(/is not a git work tree/)
-    expect(message.closest("[data-slot=field]")?.textContent).toContain("Path")
-  })
-
-  it("puts an unknown branch on the branch field, which is the one to fix", async () => {
-    const user = userEvent.setup()
-    stubDaemon({
-      status: 400,
-      code: "bad_request",
-      message: "branch nope does not exist in /home/me/dev/new",
-    })
-    renderDialog(null)
-
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.type(screen.getByLabelText("Base branch"), "nope")
-    await user.click(screen.getByRole("button", { name: "Register repository" }))
-
-    const message = await screen.findByText(/branch nope does not exist/)
-    expect(message.closest("[data-slot=field]")?.textContent).toContain("Base branch")
-  })
-
-  it("shows the pair already being registered above the buttons, where no field is at fault", async () => {
-    const user = userEvent.setup()
-    stubDaemon({
-      status: 409,
-      code: "conflict",
-      message: "/home/me/dev/new on main is already registered",
-    })
-    renderDialog(null)
-
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.click(screen.getByRole("button", { name: "Register repository" }))
-
-    const alert = await screen.findByRole("alert")
-    expect(alert.textContent).toContain("already registered")
-  })
+  expect(post).toHaveBeenCalled()
+  expect(sentBody).toMatchObject({ forge: { enabled: true } })
 })
 
 /**
- * A repository says nothing about how work ends in it: that is the task's own
- * ending. The fields that used to say it are gone, and so is the request that
- * fed them.
+ * Supervise posts sits below the forge switch and only shows while it is on,
+ * in both forms; turning the forge off hides it without losing what it held.
  */
-describe("what a repository is", () => {
-  it("takes a path, a base branch, a description and a permission mode, and nothing about landing", async () => {
-    renderDialog(null)
-
-    expect(await screen.findByLabelText("Path")).toBeDefined()
-    expect(screen.getByLabelText("Base branch")).toBeDefined()
-    expect(screen.getByLabelText("Description")).toBeDefined()
-    expect(screen.getByRole("combobox", { name: "Permission requests" })).toBeDefined()
-
-    expect(screen.queryByLabelText("Merge strategy")).toBeNull()
-    expect(screen.queryByLabelText("Landing briefing")).toBeNull()
-    expect(screen.queryByRole("button", { name: "Reset to default" })).toBeNull()
+it("hides supervise posts under an off forge switch, keeping its value", async () => {
+  const user = userEvent.setup()
+  const repository = aRepository({ supervise_posts: true, forge: aForge({ enabled: true }) })
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init)
+    const { pathname } = new URL(request.url)
+    if (pathname === "/v1/workflows") return jsonResponse([aWorkflow({ name: "build-test" })])
+    return new Response("not found", { status: 404 })
   })
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={repository} />)
 
-  it("asks the daemon for nothing but the repositories", async () => {
-    renderDialog(null)
-    await screen.findByLabelText("Path")
+  const forgeSwitch = await screen.findByRole("switch", { name: "GitHub integration" })
+  const superviseSwitch = screen.getByRole("switch", { name: "Supervise posts" })
+  await user.click(superviseSwitch) // off, while still shown
 
-    expect(requests.every((one) => !one.path.includes("merge-strategies"))).toBe(true)
-  })
-})
+  await user.click(forgeSwitch) // forge off: supervise posts disappears
+  expect(screen.queryByRole("switch", { name: "Supervise posts" })).toBeNull()
 
-describe("editing a repository", () => {
-  it("starts from what is stored, and sends the branch back with the rest", async () => {
-    const user = userEvent.setup()
-    renderDialog(REPOSITORY)
-
-    expect((screen.getByLabelText("Path") as HTMLInputElement).value).toBe(REPOSITORY.path)
-    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe(
-      REPOSITORY.description,
-    )
-
-    await user.type(screen.getByLabelText("Description"), " Now with repositories.")
-    await user.click(screen.getByRole("button", { name: "Save changes" }))
-
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()).toMatchObject({
-      method: "PUT",
-      path: `/v1/repositories/${REPOSITORY.id}`,
-    })
-    expect(lastWrite()?.body).toEqual({
-      path: REPOSITORY.path,
-      base_branch: "main",
-      description: "The orchestrator itself. Now with repositories.",
-      permission_mode: "auto",
-    })
-  })
-
-  it("starts from the stored permission mode, and sends a new one", async () => {
-    const user = userEvent.setup()
-    renderDialog({ ...REPOSITORY, permission_mode: "learn" })
-
-    const picker = screen.getByRole("combobox", { name: "Permission requests" })
-    expect(picker.textContent).toContain("Learn")
-
-    await user.click(picker)
-    await user.click(await screen.findByRole("option", { name: /^Ask/ }))
-    await user.click(screen.getByRole("button", { name: "Save changes" }))
-
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()?.body?.permission_mode).toBe("ask")
-  })
-
-  it("clears a description with the empty string the daemon spells it as", async () => {
-    const user = userEvent.setup()
-    renderDialog(REPOSITORY)
-
-    await user.clear(screen.getByLabelText("Description"))
-    await user.click(screen.getByRole("button", { name: "Save changes" }))
-
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()?.body?.description).toBe("")
-  })
+  await user.click(forgeSwitch) // forge back on: its value held at off
+  expect(screen.getByRole("switch", { name: "Supervise posts" }).getAttribute("aria-checked")).toBe(
+    "false",
+  )
 })
 
 /**
- * The form holds a path nobody enjoys typing twice, so an outside press is not
- * an instruction to delete it — but an untouched form is still a form the user
- * gets to walk away from without being asked anything.
+ * A re-probed path answers differently than the one the switch was turned
+ * on for, so the stale "on" must not survive it — neither the switch itself,
+ * which this path no longer has one for, nor supervise posts below it.
  */
-describe("dismissing the dialog", () => {
-  it("closes an untouched form straight away", async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    renderDialog(REPOSITORY, onOpenChange)
-
-    await user.click(screen.getByRole("button", { name: "Cancel" }))
-
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-    expect(screen.queryByText("Discard changes?")).toBeNull()
+it("resets the switch and hides supervise posts once a re-probed path has no forge", async () => {
+  const user = userEvent.setup()
+  const detected = {
+    kind: "github",
+    host: "github.com",
+    owner: "acme",
+    name: "widgets",
+    remote: "origin",
+  }
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init)
+    const { pathname } = new URL(request.url)
+    if (pathname === "/v1/workflows") return jsonResponse([aWorkflow({ name: "build-test" })])
+    if (pathname === "/v1/forge/detect" && request.method === "POST") {
+      const body = (await request.clone().json()) as { path: string }
+      return jsonResponse(body.path === "/home/me/dev/widgets" ? detected : null)
+    }
+    return new Response("not found", { status: 404 })
   })
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={null} />)
 
-  it("asks before dropping what was typed, and keeps it when the answer is no", async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    renderDialog(null, onOpenChange)
+  const pathInput = await screen.findByLabelText("Path")
+  await user.type(pathInput, "/home/me/dev/widgets")
+  await user.tab()
+  const forgeSwitch = await screen.findByRole("switch", { name: "GitHub integration" })
+  await user.click(forgeSwitch)
+  expect(forgeSwitch.getAttribute("aria-checked")).toBe("true")
+  expect(screen.getByRole("switch", { name: "Supervise posts" })).toBeDefined()
 
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.keyboard("{Escape}")
+  await user.clear(pathInput)
+  await user.type(pathInput, "/home/me/dev/other")
+  await user.tab()
 
-    expect(await screen.findByText("Discard changes?")).toBeDefined()
-    expect(onOpenChange).not.toHaveBeenCalled()
+  await waitFor(() => expect(screen.queryByRole("switch", { name: /integration/i })).toBeNull())
+  expect(screen.queryByRole("switch", { name: "Supervise posts" })).toBeNull()
+})
 
-    await user.click(screen.getByRole("button", { name: "Keep editing" }))
-
-    expect((screen.getByLabelText("Path") as HTMLInputElement).value).toBe("/home/me/dev/new")
-    expect(onOpenChange).not.toHaveBeenCalled()
+/**
+ * A path that turns relative after a forge was detected and switched on
+ * answers no detection at all — the probe never asks the daemon about a
+ * path that cannot be a checkout — so the stale switch must still clear.
+ */
+it("resets the switch once the path turns relative after a forge was detected", async () => {
+  const user = userEvent.setup()
+  stubDaemon({
+    kind: "github",
+    host: "github.com",
+    owner: "acme",
+    name: "widgets",
+    remote: "origin",
   })
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={null} />)
 
-  it("closes a saved form on the spot, with no draft left to ask about", async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    renderDialog(null, onOpenChange)
+  const pathInput = await screen.findByLabelText("Path")
+  await user.type(pathInput, "/home/me/dev/widgets")
+  await user.tab()
+  const forgeSwitch = await screen.findByRole("switch", { name: "GitHub integration" })
+  await user.click(forgeSwitch)
 
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.click(screen.getByRole("button", { name: "Register repository" }))
+  await user.clear(pathInput)
+  await user.type(pathInput, "relative/dir")
+  await user.tab()
 
-    await waitFor(() => {
-      expect(onOpenChange).toHaveBeenCalledWith(false)
-    })
-    expect(lastWrite()).toMatchObject({ method: "POST", path: "/v1/repositories" })
-    expect(screen.queryByText("Discard changes?")).toBeNull()
+  await waitFor(() => expect(screen.queryByRole("switch", { name: /integration/i })).toBeNull())
+  expect(screen.queryByRole("switch", { name: "Supervise posts" })).toBeNull()
+})
+
+/**
+ * Clicking the switch blurs the path field first, since it still holds
+ * focus from typing — a second probe of the same, unchanged path, right as
+ * the click turns the switch on. That redundant answer must not undo it.
+ */
+it("keeps the switch on through a redundant probe of the same path, and sends it enabled", async () => {
+  const user = userEvent.setup()
+  let detectCalls = 0
+  const post = vi.fn(async () =>
+    jsonResponse(aRepository({ forge: aForge({ enabled: true }) }), 201),
+  )
+  let sentBody: unknown
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init)
+    const { pathname } = new URL(request.url)
+    if (pathname === "/v1/workflows") return jsonResponse([aWorkflow({ name: "build-test" })])
+    if (pathname === "/v1/forge/detect" && request.method === "POST") {
+      detectCalls += 1
+      return jsonResponse({
+        kind: "github",
+        host: "github.com",
+        owner: "acme",
+        name: "widgets",
+        remote: "origin",
+      })
+    }
+    if (pathname === "/v1/repositories" && request.method === "POST") {
+      sentBody = await request.clone().json()
+      return post()
+    }
+    return new Response("not found", { status: 404 })
   })
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={null} />)
 
-  it("closes and drops the draft once the discard is confirmed", async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    renderDialog(null, onOpenChange)
+  const pathInput = await screen.findByLabelText("Path")
+  await user.type(pathInput, "/home/me/dev/widgets")
+  await user.tab()
+  const forgeSwitch = await screen.findByRole("switch", { name: "GitHub integration" })
+  expect(detectCalls).toBe(1)
 
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.click(screen.getByRole("button", { name: "Cancel" }))
-    await user.click(await screen.findByRole("button", { name: "Discard" }))
+  await user.click(pathInput) // focus back on the path field, nothing typed
+  await user.click(forgeSwitch) // its own mousedown blurs the field first
+  await waitFor(() => expect(detectCalls).toBe(2))
+  expect(forgeSwitch.getAttribute("aria-checked")).toBe("true")
 
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-    expect(requests.filter((one) => one.method !== "GET")).toEqual([])
+  await user.click(screen.getByLabelText("Default workflow"))
+  await user.click(await screen.findByRole("option", { name: "build-test" }))
+  await user.click(screen.getByRole("button", { name: /register/i }))
+
+  expect(post).toHaveBeenCalled()
+  expect(sentBody).toMatchObject({ forge: { enabled: true } })
+})
+
+/**
+ * Changing the path after enabling its detected forge, then registering
+ * before the next probe (the blur fires) returns, must not carry the
+ * previous path's choice along: neither enabling a different forge the user
+ * never chose, nor failing to register over a stale selection.
+ */
+it("drops the stale forge choice from a changed path submitted before its next probe returns", async () => {
+  const user = userEvent.setup()
+  const post = vi.fn(async () => jsonResponse(aRepository({ forge: null }), 201))
+  let sentBody: unknown
+  let detectCalls = 0
+  let resolveSecondDetect: (() => void) | undefined
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init)
+    const { pathname } = new URL(request.url)
+    if (pathname === "/v1/workflows") return jsonResponse([aWorkflow({ name: "build-test" })])
+    if (pathname === "/v1/forge/detect" && request.method === "POST") {
+      detectCalls += 1
+      if (detectCalls === 1) {
+        return jsonResponse({
+          kind: "github",
+          host: "github.com",
+          owner: "acme",
+          name: "widgets",
+          remote: "origin",
+        })
+      }
+      return new Promise<Response>((resolve) => {
+        resolveSecondDetect = () => resolve(jsonResponse(null))
+      })
+    }
+    if (pathname === "/v1/repositories" && request.method === "POST") {
+      sentBody = await request.clone().json()
+      return post()
+    }
+    return new Response("not found", { status: 404 })
   })
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={null} />)
+
+  const pathInput = await screen.findByLabelText("Path")
+  await user.type(pathInput, "/home/me/dev/widgets")
+  await user.tab()
+  const forgeSwitch = await screen.findByRole("switch", { name: "GitHub integration" })
+  await user.click(forgeSwitch)
+  expect(forgeSwitch.getAttribute("aria-checked")).toBe("true")
+
+  await user.type(pathInput, "2") // the switch's choice no longer describes this path
+  expect(screen.queryByRole("switch", { name: /integration/i })).toBeNull()
+  await user.tab() // starts the next probe, left unresolved
+  await waitFor(() => expect(detectCalls).toBe(2))
+
+  await user.click(screen.getByLabelText("Default workflow"))
+  await user.click(await screen.findByRole("option", { name: "build-test" }))
+  await user.click(screen.getByRole("button", { name: /register/i }))
+
+  expect(post).toHaveBeenCalled()
+  expect(sentBody).not.toHaveProperty("forge")
+  resolveSecondDetect?.()
 })

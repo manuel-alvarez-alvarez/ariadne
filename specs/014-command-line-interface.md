@@ -1,10 +1,11 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-26
+updated: 2026-10-18
 areas: [cli]
-commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
+commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
+  - crates/ariadne-cli/src/commands/workflow.rs
   - crates/ariadne-cli/src/cli/tests.rs
   - crates/ariadne-cli/src/output.rs
   - crates/ariadne-cli/src/commands/models.rs
@@ -13,6 +14,7 @@ tests:
   - crates/ariadne-cli/src/commands/session.rs
   - crates/ariadne-cli/src/commands/task.rs
   - crates/ariadne-cli/src/error.rs
+  - crates/ariadne-cli/src/telemetry.rs
   - crates/ariadne-cli/src/complete.rs
   - crates/ariadne-daemon/tests/it/doctor.rs
   - crates/ariadne-cli/src/commands/doctor.rs
@@ -25,6 +27,12 @@ tests:
   - crates/ariadne-cli/src/commands/agent.rs
   - crates/ariadne-cli/src/commands/skill.rs
   - crates/ariadne-cli/src/commands/console.rs
+  - crates/ariadne-cli/src/commands/stats/mod.rs
+  - crates/ariadne-cli/src/commands/task/edit.rs
+  - crates/ariadne-cli/src/commands/goal.rs
+  - crates/ariadne-cli/src/commands/repo.rs
+  - crates/ariadne-cli/src/commands/attach.rs
+  - crates/ariadne-cli/src/commands/pr.rs
 ---
 
 # Command-line interface
@@ -44,12 +52,24 @@ same binary also serves (013).
 ## Behavior
 
 1. Every user-facing action exists both here and in the desktop app.
-2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
-   `models`, `skill`, `repo`, `permissions`, `goal`, `task`, `session`,
-   `events`, `attention`, `attach`, `doctor`, `completions`,
-   plus the one hidden command the agents use (`mcp serve`). Nothing in the tree launches
+2. The tree is one verb per action, grouped by entity — `version`, `doctor`,
+   `completions`, `daemon`, `agent`, `models`, `stats`, `skill`, `workflow`
+   (030), `pr` (026), `repo`, `forge` (027), `issue` (028), `permissions`,
+   `goal`, `task`, `session`, `events`, `attention`, `attach`, plus the one
+   hidden command the agents use (`mcp serve`). Nothing in the tree launches
    an agent or reports on one's behalf: the daemon's ACP runtime does both
    (021).
+2a. `ariadne daemon start` launches `ariadned` where it is not already
+    answering; `ariadne daemon stop` waits for its socket to go; `ariadne
+    daemon restart` runs the service manager's own restart where one manages
+    this home, and a stop followed by a start where none does; `ariadne
+    daemon status` reads its health and, on this machine, the pid and the
+    service that manages it; `ariadne daemon logs [-f]` reads its ring
+    buffer over the API, falling back to the log file when the daemon does
+    not answer.
+2b. `ariadne forge tunnel [on|off]` shows the webhook tunnel or switches it;
+    the tunnel itself, what it carries and what stays registered without it,
+    are 027's own.
 3. The root and every group share one help-screen shape, and no help screen
    leaks the endpoint of the shell it runs in.
 4. Display flags (`--format`, and the listing flags) parse on either side of
@@ -61,21 +81,27 @@ same binary also serves (013).
    lists the real ones.
 7. A model is chosen for every agent on the line, with an effort beside it,
    and it is required: `goal create --model` and the `=MODEL` half of every
-   `--author`/`--reviewer` slot must be written, a bare agent names no model,
-   and `task update --model` refuses `default` — only `--effort` still takes
-   that word. A missing model, a model naming no agent, an effort with no
-   meaning and a reviewer slot missing a half are usage errors, refused
-   before anything is sent. Which agents exist is the daemon's registry: an
-   agent id is sent as typed, and the daemon refuses one it does not hold
-   (011).
+   `--agent` slot must be written, a bare agent names no model, and
+   `--model default` is refused — only `--effort` still takes that word. A
+   missing model, a model naming no agent, an effort with no meaning and an
+   agent slot missing a half are usage errors, refused before anything is
+   sent. Which agents exist is the daemon's registry: an agent id is sent as
+   typed, and the daemon refuses one it does not hold (011).
+7a. `ariadne models ls` lists what every agent can be pinned to, narrowed to
+    one agent on request; `ariadne models show` shows one model and the
+    efforts it takes; `ariadne models enable` and `ariadne models disable`
+    let agents be staffed on a model again or stop them; `ariadne models
+    rank` sets or clears the user's rank of a model, the staffing ladder's
+    own (011).
 8. The empty list is a flag of its own wherever a repeatable flag names one,
    since a repeatable flag cannot be given zero times on purpose:
-   `--no-reviewer` for a task with nothing to review, `--clear-depends-on` for
-   one with nothing to wait for.
-9. Every judgement the orchestrator makes about a task can be made from here
-   too: how it ends (`task create|update --landing`), whether it is reviewed
-   (`--reviewer`, `--no-reviewer`), and whether the goal is over
-   (`goal complete`).
+   `--clear-depends-on` for a task with nothing to wait for.
+9. Every judgement about a goal's work can be made from here too: the
+   workflow its tasks run through (`goal create --workflow`, fixed once the
+   goal is created, and the first repository's default where it is not
+   given: 030), how each task is staffed (`--agent`, rule 38), and whether
+   the goal is over (`goal complete`) or cancelled outright, with every task
+   under it (`goal cancel`), behind the usual confirmation.
 10. What the agents said to each other is readable from here: `task messages`
     lists the whole channel of a task, oldest first (018); `--full` prints
     each one whole, through `$PAGER`, since the table cuts a body to its
@@ -83,12 +109,15 @@ same binary also serves (013).
 11. `task history` is a table too: each row is one transition, `from` and
     `to` painted with the same status glyphs every other status cell carries.
 12. `ariadne events` prints one line per event, `time · kind · subject ·
-    detail`. An agent event's detail is the `summary` the daemon builds onto
-    its DTO (012), and a recorded event reads the same as a live one. The
+    detail`. An agent event's detail is the daemon's non-empty `summary`; a
+    recorded tool call with no summary names its tool and first argument, and
+    a recorded tool result reads its tool and argument from its matching
+    opener instead of its tool-use id. The
     snapshot it opens with is the 200 most recent recorded events, asked for
     newest first and printed oldest first, so `-f` goes on in the same
     direction. `--goal` narrows that snapshot at the daemon (012), like
     `--task` and `--session`.
+
 13. A failure prints `error: <sentence>` and nothing else: no `Caused by:`
    block, no transport detail, no repeated envelope. Attach failures keep
    recovery commands in the rendered hint on that same line. `--format json`
@@ -98,7 +127,8 @@ same binary also serves (013).
    its own; it is documented in `ariadne --help`.
 15. Completions are generated for bash and zsh and complete against live data:
     candidates newest first, live sessions before ended ones when attaching,
-    the efforts an entry lists and no others.
+    the efforts an entry lists and no others. `completions install <shell>`
+    writes the registration into that shell's own startup file.
 16. `ariadne doctor` answers why the daemon will not start — including a
     database written by a release whose migrations this one no longer ships,
     which it names along with the file to delete (016).
@@ -107,12 +137,15 @@ same binary also serves (013).
     cannot start a task in a repository with no commits (002), which is a
     warning naming that one case, on this PATH and on the daemon's alike.
 18. `skill ls` marks an orchestrator-only skill while leaving it available to
-    inspect, edit and reset.
+    inspect, edit and reset; `skill inspect` shows one skill's summary, scope
+    and source beside its whole document, and `skill get` prints that
+    document alone, raw, ready to pipe to a file a `skill set --file` can
+    read back.
 19. `doctor` reports every ACP registry entry from the daemon's cached probe.
     It shows measured capabilities, every degraded feature, and the rejection
     reason when the agent cannot satisfy the required contract. One ready
     agent is enough; a registry with none is a failure, since no session can
-    be spawned. Beside the agents it checks `git`, `gh` and `glab`, on this
+    be spawned. Beside the agents it checks `git` and `gh`, on this
     PATH and on the daemon's.
 20. Each `doctor` section is a shared output table: its check, verdict and
     detail columns fit the terminal, and `--no-trunc` prints their cells whole.
@@ -121,7 +154,8 @@ same binary also serves (013).
     over a short settle window so one change is one redraw, until Ctrl-C.
     Every filter the command takes still narrows what a redraw shows, the
     redraw escapes only reach a real terminal, and `--watch` is advertised
-    only on these four commands.
+    only on these four commands. `goal ls` redraws after task creation and
+    task updates, because its task progress column changes with them.
 22. A screen of several tables is fitted once, across every group of rows:
     `ariadne attention` prints a section per goal, and a column is the same
     width under every heading — on a `--watch` redraw too. A `--columns`
@@ -133,6 +167,9 @@ same binary also serves (013).
     listing, it reads no `--columns` and so refuses none.
 24. Human mutation output is one styled line. Quiet mutation output is only
     the affected id. Inspect keys use lowercase space-separated words.
+    `ariadne goal inspect` shows its workflow and its columns (rule 40), and
+    no landing and no goal branch. `pr inspect` prints a fixed reading order
+    of its own, the body last after a `---` line (rule 42).
     Missing session goals, tasks and seats print a dash.
     A row's subject column is `title`, except that the agent listing keeps `agent`.
     Boolean columns use the shared `yes_no` wording. Every empty listing states
@@ -150,8 +187,9 @@ same binary also serves (013).
     `--columns`. An outside row leaves status, goal and task empty. It sends
     `--kind`, `--agent`, `--status`, `--seat`, `--goal`, `--task`, `--attention`,
     `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`,
-    `--refresh` and `--all` to the daemon; `--search` becomes `q`, and agent
-    flags complete registry agent ids. A date activity bound is the start of
+    `--refresh`, `--all` and `--pull-request` to the daemon, the last as
+    `SessionPageQuery`'s own `pull_request` (026); `--search` becomes `q`,
+    and agent flags complete registry agent ids. A date activity bound is the start of
     its UTC day for `--since` and the end for `--until`. The table ends with
     `<shown> of <total> sessions` and a reusable next-page command when the
     daemon returns a cursor. `--all` follows every cursor into one table and
@@ -173,36 +211,180 @@ same binary also serves (013).
 30. `session inspect` shows a reported context window as `<used> / <size>`
     with the compact token spelling. It shows no context line when the agent
     has not reported one, and it never shows a cost.
+30a. `session inspect` prints `title` after `id`, and `continues` after
+    `internal id`. `continues` is the id of the session a `session switch`
+    replaced on its seat. Each prints a dash where the DTO carries none.
 31. `session new --model AGENT:MODEL [--effort E] [--dir PATH] [--attach]`
     starts a loose session (020): a new conversation with no goal or task,
     in `--dir` or the current directory, sent to the daemon as an absolute
     path. It prints the session's status line, or with `--attach` opens its
     console at once. The first prompt typed into it is its title.
-32. `ariadne permissions` manages Laya, the model behind the `ai` permission
-    mode (022). `show` is a key-value block of the whole status, `--format
-    json` the DTO unchanged. `enable` and `disable` turn it on and off,
-    `refresh` reinstalls it, and each of the two that starts an install takes
-    `--wait`: it blocks until `state` leaves `installing` by following
-    `laya_updated` on `/v1/events/stream`, and exits 1 with `last_error` where
-    it settles on `failed`. `set` changes `--checkpoints`, `--threshold` and
-    `--schedule` (or `--no-schedule`, which turns the daily refresh off);
-    at least one of the four is required, `--schedule` and `--no-schedule`
-    refuse each other, and only the flags actually given reach the daemon —
-    an absent one is left out of the request rather than sent as `null`. A
-    bad `--threshold` or `--schedule` is refused locally, in the same words
-    the daemon would use, before anything is sent. A `laya_disabled` refusal
-    — here and on `repo add|update --permission-mode ai` alike — carries the
-    hint `run ariadne permissions enable`; a `python_unavailable` one carries
-    `install Python 3.10 or newer, or set python_bin in config.toml`.
-33. `ariadne doctor` reports the Python interpreter Laya's install would run
+31a. `session switch <id> --model AGENT:MODEL [--effort EFFORT]` switches
+    the session to a new conversation on the requested pin, preserving its
+    seat. It refuses `--model default` locally; `--effort default` leaves
+    effort unpinned. It prints the new session id and pin, or the full DTO
+    with `--format json`; daemon refusals print whole.
+31b. `session resume <id>` revives an ended session on a fresh agent
+    process, the same conversation, and says whether a relaunch was needed;
+    `session kill <id>` kills its agent process and retires the row, behind
+    the usual confirmation.
+32. `ariadne permissions ai` manages the AI permission model behind the `ai`
+    permission mode (022); `ariadne permissions` prints the group help and
+    accepts no flat command. `show` is a key-value block of the whole status,
+    and `--format json` prints the DTO unchanged. `enable` and `disable` turn
+    it on and off, `refresh` reinstalls
+    it, and each of the two that starts an install takes `--wait`: it blocks
+    until `state` leaves `installing` by following `ai_permissions_updated` on
+    `/v1/events/stream`, and exits 1 with `last_error` where it settles on
+    `failed`. `set` changes `--threshold`, `--flavour` or `--device` (022,
+    flavours and devices); at least one setting is required, and only the
+    flags actually given reach the daemon. A bad `--threshold`, `--flavour`
+    or `--device` is
+    refused locally, in the same words the daemon would use, before anything
+    is sent; the daemon's own `flavour_unsupported` refusal survives whole. An `ai_disabled` refusal — here and on `repo add|update
+    --permission-mode ai` alike — carries the hint `run ariadne permissions ai
+    enable`; a `python_unavailable` one carries `install Python 3.12 or 3.13,
+    or set python_bin in config.toml`.
+33. `ariadne permissions ai test --tool <title> [--kind <K>] --input <json>
+    [--option <name>]... [--location <path>]... [--workspace <dir>]` sends one
+    request to the AI permission model without selecting or recording an
+    approval. `--tool` is the tool call title the model sees, not the tool
+    name. It refuses invalid input JSON locally,
+    prints one score line for people and the response unchanged with
+    `--format json`.
+34. `ariadne doctor` reports the Python interpreter the AI permission model's install would run
     on, next to the daemon's own environment (rule 19), and where the install
     itself stands. Neither ever fails the report, since `ai` is one
     permission mode among four: `python` is `ok` with the version found, or a
     warning naming the version that is too old or that none was found;
-    `laya` is `ok` for `disabled`, `installing` and `ready <release>`, and a
+    `ai permissions` is `ok` for `disabled`, `installing` and `ready <release>`, and a
     warning for `failed: <last_error>`.
+34b. Every command exports one command count and duration to the daemon's OTLP
+    endpoints. The count has its command path and outcome. Warnings and
+    errors export as OTLP logs. `ARIADNE_TELEMETRY=off` disables this pipeline.
+    Prompt and message values never enter telemetry. Exit flushes both signals
+    within 250 ms. `mcp serve` and `attach` export every 30 seconds. `daemon
+    start` exports nothing until its daemon answers.
+34a. `ariadne permissions learned` lists, shows, removes and widens or narrows
+    learned permissions. `list` shows the columns id, repository, tool, level,
+    family, key, scope, target, selected, ai, created and updated; it has no
+    source column. The AI column shows the label and danger to four decimal
+    places, or a dash where the model did not score the row. `show` prints
+    every field: the level, the family, the key, the risk tags and the scope
+    among them, and the JSON fields pretty-printed, the raw input in the
+    tool call included. `scope <id> <all|repository>` sends the chosen scope
+    to `PUT /v1/permissions/learned/{id}` (012, rule 26) and prints the
+    updated row; a scope that is neither word is refused locally, before
+    anything is sent, and the daemon's own refusal of an unknown id or a bad
+    scope prints whole. There is no `add` or `edit`. A repository can be an
+    id or path, and every verb supports JSON.
+35. `ariadne stats [work|time|spend|models|attention] [--since
+    <duration|date>] [--repo <id>]` prints one stat family off
+    `GET /v1/stats/<family>` (023). `ariadne stats` alone prints `work`.
+    Each of the five is a listing: it takes the table flags, and
+    `--format json` prints the family's DTO whole. The five print one way:
+    the figures as one aligned key-value block, then each table, one blank
+    line before each. `stats models` titles the group of sessions with no
+    seat `LOOSE SESSIONS`.
+36. `ariadne workflow` manages the workflow catalog (030) the way `ariadne
+    skill` manages skills: `ls` lists every workflow, shipped and written,
+    its `name` column marked `builtin` with the shared `yes_no` wording and
+    its `columns` column the titles of its steps joined with ` → `; `show`
+    prints the document whole, through `$PAGER` as `task messages --full`
+    does, and `--format json` prints the DTO; `create --file <path>|-` and
+    `update --file <path>|-` read the document from `--file`, or from stdin
+    where none is named or where `-` names it, and send `{document}`; `reset`
+    puts a shipped workflow back on the text Ariadne
+    ships, and `rm` deletes one of the user's own, each behind the usual
+    confirmation. `check --file <path>|-` posts the document to the parse
+    route without saving it anywhere: it prints the columns of a document
+    that parses, or the daemon's `workflow_invalid` refusal read apart from
+    the rest — the line named in its `details` beside the sentence next to
+    it, `line <N>: <message>` — as a usage error; every other daemon refusal
+    of a workflow command prints whole, the way any other command's does.
+37. A goal is run through a workflow with `goal create --workflow <name>`;
+    `repo add --workflow <name>` and `repo update --workflow <name>` set a
+    repository's own default, which `repo ls` and `repo inspect` show. Both
+    complete the name against `GET /v1/workflows`. There is no `--landing`:
+    a workflow's own gates decide how a task ends (030). `repo rm` deletes a
+    registered repository, behind the usual confirmation.
+38. A task is staffed with `--agent STEP[:SKILLS]=MODEL[@EFFORT]`,
+    repeatable, one per column, sent as `agents`. `SKILLS` is optional and
+    comma-separated; left out, the column stages its own. `task update
+    --agent` replaces the task's whole staffing, and `task update` takes no
+    `--model` or `--effort` of its own: a pin belongs to a column's agent.
+    There is no `--author`, `--reviewer` or `--no-reviewer`, and no help
+    text names an author, a reviewer or a landing.
+39. `task ls` carries a `step` column after `status`; `--step <id>` narrows
+    the list to it, client-side, the way every filter the daemon's own
+    listing does not know narrows elsewhere in this tree. `task inspect`
+    prints the task's `workflow`, its current `step`, and one line per
+    column of the goal's workflow — the column, its skills, its pin and its
+    session, a column nobody has staffed yet included. `task history`
+    paints the column a move left and the one it entered beside the from and
+    to statuses.
+39a. `task cancel` cancels a task, behind the usual confirmation; `task retry`
+    retries a failed one; `task diff` shows the task branch's diff against
+    its base, coloured and paged on a terminal, the daemon's bytes alone in
+    a pipe.
+40. `goal ls` prints each goal's non-cancelled task progress after its status,
+    with failed and stalled task counts. `goal inspect` prints the lane task
+    summary, the goal's workflow and, one line per column, its capability
+    band — every rank it lists (030) — and its gate.
+41. `task attach --step <id>` opens the console of that column's agent,
+    live or revived, whether or not it is the task's current column; left
+    out, `task attach`, `ariadne attach` and `task logs` resolve the task's
+    current column first and pick that column's agent's session, live or
+    revived, however the sessions of the columns the task has left are
+    listed. `--seat` takes `orchestrator`, `agent`, `reviewer` or `keeper`
+    wherever a seat is, and `session ls --seat agent`
+    lists every column session. A status filter takes the six statuses of
+    001 and no other word.
+42. `pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
+    S]... [--attach]` asks Ariadne to review a request of your own (029);
+    `--model` takes the spelling every other `--model` takes and refuses
+    `default`, a review pinning a model of its own. `--model` is required
+    with no `--stop`: there is no repository pin to fall back to, so
+    leaving it out is a usage error naming `--model`. `--attach` waits for
+    the review session to start and opens its console, as `session new
+    --attach` does. `pr review <repo> <number> --stop` sends `{asked:
+    false}` alone and conflicts with `--model`, `--effort`, `--skill` and
+    `--attach`. It prints one styled mutation line, the request id with
+    `-q`, and the DTO with `--format json`.
+42a. `pr search --repo <repo> <query>` searches the last fetched open
+    requests of that enabled repository that are not yours; `pr refresh
+    [--repo <repo>]` requests a fetch for that repository's requests, or
+    every enabled repository's where none is named. It returns after the
+    fetch wakes, so a following `pr ls` can still show the previous list.
+
+## Known gap
+
+Live agent events contain no payload. `ariadne events -f` therefore cannot
+derive a tool detail when their summary is empty.
+
+The CLI test for `--seat` parses `orchestrator`, `agent` and `reviewer`, but
+does not parse `keeper`. `Seat::Keeper` is a valid value. The core seat test
+lists all four values. Add a CLI parser test before relying on this coverage.
 
 ## Acceptance criteria
+
+- Each `ariadne stats <family> --format json` reads its route with the
+  filters given, and `ariadne stats` alone runs `work`
+  (`commands/stats/mod.rs::tests::each_family_reads_its_route_with_the_filters_given`,
+  `::stats_alone_runs_work`).
+
+- `permissions learned` provides list, show and remove commands, and `add`
+  and `edit` do not parse
+  (`cli/tests.rs::every_learned_permissions_verb_parses_and_add_and_edit_are_gone`).
+- `list` and `show` print the level, the family, the key and the scope,
+  and `show` the raw input
+  (`commands::permissions::tests::learned_list_and_show_print_the_new_fields`).
+- `scope` parses `all` and `repository` and refuses any other value locally
+  (`cli/tests.rs::permissions_learned_scope_parses_and_refuses_a_bad_value_locally`),
+  sends `{"scope": "all"}` and nothing else
+  (`commands::permissions::tests::scope_sends_the_new_scope_and_nothing_else`),
+  and prints the daemon's refusal of an unknown id whole
+  (`::scope_prints_the_daemons_not_found_refusal`).
 
 - The command tree is well formed and every command is classified
   (`cli/tests.rs::the_command_tree_is_well_formed`,
@@ -217,9 +399,10 @@ same binary also serves (013).
   `::the_listing_flags_are_advertised_exactly_where_they_are_honored`), and
   parse on either side (`::the_display_flags_parse_on_either_side_of_the_subcommand`).
 - A status is spelled in kebab or snake, and so is every other enum a flag
-  takes — `repo add --permission-mode` among them, `ai` included, while
-  `task create` takes no permission mode; several statuses ride on one flag,
-  and a non-status lists the real ones
+  takes — `--seat` and `repo add --permission-mode` among them, `ai`
+  included, while `task create` takes no permission mode; several statuses
+  ride on one flag, a non-status lists the six real ones, and a retired
+  status word is one of them
   (`::a_status_is_spelled_in_kebab_or_in_snake`, `::several_statuses_ride_on_one_flag`,
   `::a_status_that_is_no_spelling_of_one_lists_the_real_ones`,
   `::repo_add_permission_mode_ai_parses`).
@@ -229,7 +412,7 @@ same binary also serves (013).
 - Model and effort misuse is a usage error
   (`::a_model_naming_no_agent_is_a_usage_error`,
   `::an_effort_that_says_nothing_is_a_usage_error`,
-  `::a_reviewer_that_names_no_real_agent_is_a_usage_error`), and so is a line
+  `::an_agent_slot_that_names_no_real_agent_is_a_usage_error`), and so is a line
   with no model (`::a_line_with_no_model_is_a_usage_error`), while an agent id
   is the daemon's to check (`::an_agent_id_is_the_daemons_to_check`).
 - `models ls` narrows to an agent and `models show` takes and refuses a model
@@ -255,9 +438,14 @@ same binary also serves (013).
   and the plain line protocol is unchanged behind it
   (`console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,
   `::a_permission_question_renders_and_delivers_the_selected_answer`).
-- `ariadne events` prints the daemon's summary in an agent event's detail
-  (`commands/events.rs::an_event_reads_as_time_kind_subject_and_detail`,
-  `::an_agent_event_reads_the_same_recorded_as_it_does_live`), and its
+- `ariadne events` derives a recorded tool call's detail from its tool and
+  first argument when the summary is empty, derives a tool result from its
+  opener, and preserves a non-empty summary
+  (`commands/events.rs::a_tool_call_without_a_summary_names_its_first_argument`,
+  `::a_tool_result_uses_its_openers_name_and_first_argument`,
+  `::an_unpaired_tool_result_never_prints_its_call_id`,
+  `::an_agent_event_keeps_its_summary`). It spells the AI permission subject
+  `ai permissions` (`::an_ai_permissions_event_names_its_subject`), and its
   snapshot is the newest page of the listing, printed oldest first
   (`::the_snapshot_asks_for_the_newest_page_and_prints_it_oldest_first`).
 - `task history` paints `from` and `to`, and a row carries a dash for a
@@ -291,43 +479,105 @@ same binary also serves (013).
   (`commands/doctor/agents.rs::acp_probe_results_show_rejections_and_gaps`),
   and fails only where no agent is ready
   (`::no_ready_agent_fails_the_report_and_one_is_enough`).
-- `doctor` reports the Python interpreter Laya needs without ever failing on
-  it, and reports the four states of the Laya install
+- `doctor` reports the Python interpreter the AI permission model needs without ever failing on
+  it, and reports the four states of the model install
   (`commands/doctor/agents.rs::python_never_fails_and_names_what_it_found`,
-  `::laya_reports_its_four_states_and_never_fails`).
-- Every `permissions` verb parses, `set` with no flag and `--schedule` with
-  `--no-schedule` are usage errors, and a bad threshold or schedule is
+  `::ai_permissions_reports_its_four_states_and_never_fails`).
+- Every `permissions ai` verb parses, the group prints help, the former flat
+  commands are refused, `set` with no flag is a usage error, and a bad
+  threshold, flavour or device is
   refused locally in the daemon's own words
   (`cli/tests.rs::every_permissions_verb_parses`,
+  `::permissions_group_prints_help_and_refuses_the_old_flat_commands`,
   `::permissions_set_with_no_flag_is_a_usage_error`,
-  `::permissions_set_schedule_and_no_schedule_are_a_usage_error`,
-  `::permissions_set_refuses_a_bad_threshold_or_schedule_locally`).
-- `show` renders every field of the status; `enable` sends only `{"enabled":
-  true}`, `set --no-schedule` only a `null` schedule, and `set --threshold`
-  only the threshold — never the other fields as an explicit `null`
+  `::permissions_set_refuses_a_bad_threshold_flavour_or_device_locally`).
+- `permissions ai test` parses its request, rejects invalid JSON locally, and
+  prints its score line and JSON response
+  (`cli/tests.rs::every_permissions_verb_parses`,
+  `::permissions_test_refuses_bad_json_locally`,
+  `commands/permissions.rs::tests::test_prints_the_score_line_and_names_no_answer`).
+- `show` renders every status field except built-in configuration, and the
+  flavour and device table; `enable` sends only `{"enabled": true}`, and
+  `set --flavour` sends only the flavour
   (`commands/permissions.rs::show_renders_every_field`,
+  `::show_omits_the_built_in_configuration`,
+  `::flavour_rows_lists_every_flavour_and_device`,
   `::enable_sends_enabled_true_and_nothing_else`,
-  `::set_no_schedule_sends_a_null_schedule`,
-  `::set_threshold_sends_only_threshold`).
+  `::set_flavour_sends_the_flavour_alone`).
 - `enable --wait` and `refresh --wait` block on the event stream until the
   install leaves `installing`, and a failed install exits with its
   `last_error`
   (`commands/permissions.rs::enable_wait_returns_once_the_stream_answers_ready`,
   `::enable_wait_fails_with_the_last_error_on_a_failed_install`).
-- A `laya_disabled` refusal keeps the daemon's message and adds the command
+- An `ai_disabled` refusal keeps the daemon's message and adds the command
   that answers it, on `permissions` and on `repo add|update
   --permission-mode ai` alike
-  (`commands/permissions.rs::refresh_keeps_the_daemons_message_and_adds_the_hint_on_laya_disabled`,
-  `ariadne-client/src/lib.rs::a_laya_refusal_carries_the_command_that_answers_it`).
+  (`commands/permissions.rs::refresh_keeps_the_daemons_message_and_adds_the_hint_on_ai_disabled`,
+  `ariadne-client/src/lib.rs::an_ai_refusal_carries_the_command_that_answers_it`).
 - A git below the floor is a warning that names what it cannot do, and a
   version line is read down to its major and minor
   (`checks.rs::a_git_below_the_floor_is_a_warning_about_repositories_with_no_commits`,
   `::a_version_line_reads_down_to_its_major_and_minor`).
 - The skill listing marks an orchestrator-only skill
   (`skill.rs::a_listing_marks_an_orchestrator_only_skill`).
+- Every `workflow` verb parses and is classified
+  (`cli/tests.rs::every_workflow_verb_parses_and_is_classified`); `--format`
+  and the listing flags are advertised exactly where they are honoured, with
+  `workflow ls` a listing and `workflow show` paged, by the same checks as
+  every other command
+  (`cli/tests.rs::format_is_advertised_exactly_where_it_is_honored`,
+  `::the_listing_flags_are_advertised_exactly_where_they_are_honored`).
+- `workflow ls` joins a workflow's columns and marks a built-in; `create` and
+  `update` read a file and stdin and send `{document}`; `check` reads a
+  `workflow_invalid` refusal's line out of its `details` and exits as a
+  usage error, and reads back the columns of a document that parses
+  (`commands/workflow.rs::the_columns_label_joins_their_titles`,
+  `::a_listing_marks_a_built_in_with_the_shared_boolean_wording`,
+  `::create_and_update_send_the_document_whole_and_nothing_else`,
+  `::check_prints_the_line_of_a_refusal_as_a_usage_error`,
+  `::check_reads_back_the_columns_of_a_good_document`).
+- `goal create --workflow` sends the name, and `--landing` does not parse
+  (`cli/tests.rs::goal_create_workflow_sends_the_name_and_landing_is_gone`).
+  `repo add --workflow` and `repo update --workflow` send `default_workflow`,
+  and `repo ls` and `repo inspect` show it
+  (`commands/repo.rs::repo_add_and_update_take_the_workflow_flag`).
+- `--agent STEP[:SKILLS]=MODEL[@EFFORT]` stages one workflow column; the
+  skills half is optional, and left out the column stages its own. `task
+  create` sends one `agents` entry per `--agent`; `task update --agent`
+  replaces the whole staffing, and `--author`, `--reviewer`,
+  `--no-reviewer`, `task update --model` and `task update --effort` do not
+  parse
+  (`cli/tests.rs::an_agent_slot_names_its_column_skills_model_and_effort`,
+  `commands/task/edit.rs::an_agent_slot_names_its_column_skills_model_and_effort`,
+  `::only_the_flags_that_were_given_reach_the_daemon`).
+- No help screen names an author, a reviewer or a landing
+  (`cli/tests.rs::no_help_screen_names_an_author_a_reviewer_or_a_landing`).
+- `task ls` carries a `step` column after `status`, and `--step` narrows the
+  list to it client-side; `task inspect` prints a stepped task's `workflow`,
+  `step`, and one line per column — its skills, its pin and its session,
+  unstaffed columns included; `task history` paints the column a move left
+  and the one it entered beside the statuses
+  (`commands/task.rs::step_narrows_the_list_to_the_named_column`,
+  `::a_task_lists_its_workflow_and_every_columns_agent`,
+  `::a_history_row_paints_the_columns_a_move_crossed`).
+- `goal ls` prints non-cancelled task progress and failed and stalled marks;
+  `goal inspect` prints the lane task summary and aligns continuation lines
+  under its value column (`commands/goal.rs::a_mixed_goals_task_counts_match_its_lane`,
+  `::goal_inspect_continuations_align_under_the_longest_key`).
+- `task attach --step` resolves the named column's session whether or not it
+  is the task's current one; without it, attach, logs and the revive pick
+  the current column's session with the sessions of two columns live and
+  the left column listed first; `--seat` parses `orchestrator`, `agent` and
+  `reviewer`, while the core seat test also lists `keeper`; no CLI parser test
+  covers `keeper` yet
+  (`commands/attach.rs::resolve_step_finds_the_named_columns_session`,
+  `::resolve_live_and_revive_pick_the_current_columns_session`,
+  `cli/tests.rs::a_filter_takes_only_the_values_the_daemon_knows`,
+  `ariadne-core/src/lib.rs::the_seats_are_the_orchestrator_the_agent_the_pull_request_reviewer_and_the_keeper`).
 - `--watch` is advertised on exactly `task ls`, `goal ls`, `session ls` and
   `attention`, and nowhere else
-  (`cli/tests.rs::the_watch_flag_is_advertised_exactly_where_it_is_honored`).
+  (`cli/tests.rs::the_watch_flag_is_advertised_exactly_where_it_is_honored`,
+  `commands/goal.rs::goal_watch_responds_when_a_task_changes`).
 - Several row groups are fitted together, and drop and cut the same columns
   (`table.rs::columns_are_fitted_once_across_every_group`,
   `::every_group_drops_and_cuts_the_same_columns`), which is what aligns the
@@ -344,6 +594,11 @@ same binary also serves (013).
   (`attention.rs::quiet_output_is_the_ids_of_every_group`), and only a run
   that prints a table refuses a `--columns`
   (`::a_columns_flag_is_refused_only_where_a_table_is_printed`).
+- `ariadne attention` reads `GET /v1/sessions` as a page object, asking for
+  the Ariadne kind alone and following every `next_cursor` until the last
+  page, so a session the first page left off still reaches the board
+  (`attention.rs::the_board_renders_against_a_paged_sessions_response`,
+  `::every_page_of_ariadne_sessions_is_fetched`).
 - Mutation lines and empty listings share their output forms
   (`output.rs::quiet_mutations_print_only_the_id`,
   `::an_empty_state_puts_the_next_command_on_its_own_line`).
@@ -351,15 +606,17 @@ same binary also serves (013).
 - Inspect keys contain no underscores
   (`task.rs::the_inspect_block_types_its_id_title_and_status`).
 - Session and model subject columns use `title`, and model booleans use
-  `yes` or `no` (`session.rs::the_session_subject_column_is_title`,
+  `yes` or `no` (`session.rs::the_session_table_has_the_unified_columns_and_empty_outside_fields`,
   `models.rs::the_description_drops_before_the_efforts_do`,
   `::a_row_stars_the_default_effort_and_dashes_what_is_unsaid`).
 - A loose session prints dashes for absent goal, task and seat fields
   (`session.rs::a_loose_session_prints_dashes_for_missing_fields`).
 - `session inspect` shows a reported context window with compact token counts
-  and omits an unreported one
-  (`session.rs::the_inspect_block_shows_the_reported_context_window`,
-  `::the_inspect_block_hides_an_unreported_context_window`).
+  (`session.rs::the_inspect_block_shows_the_reported_context_window`).
+- `session inspect` prints `title` and `continues`, dashed where the DTO
+  carries neither
+  (`session.rs::a_switched_session_shows_its_title_and_what_it_continues`,
+  `::a_session_with_neither_shows_a_dash_for_title_and_continues`).
 - `agent update` takes flags, a clear or a reset but only one, and keeps a
   flag that looks like a flag as it is
   (`cli/tests.rs::updating_an_agent_takes_flags_or_clear_or_reset_but_only_one`,
@@ -382,6 +639,7 @@ same binary also serves (013).
   `::an_outside_row_without_model_or_usage_keeps_both_cells_empty`,
   `::an_ariadne_row_keeps_its_agent_model_and_token_columns`,
   `::columns_select_the_model_by_header_name`,
+  `::pull_request_reaches_its_own_query_parameter`,
   `cli/tests.rs::session_ls_takes_filters_pages_refresh_and_all`,
   `::session_ls_all_and_cursor_are_exclusive`). Outside ids resume through
   the resume endpoint and a shared id requires `--agent`
@@ -395,10 +653,24 @@ same binary also serves (013).
   (`cli/tests.rs::session_send_takes_an_id_and_the_text_to_send`);
   `session new` starts a loose session on a model, in the current directory
   or the one `--dir` names, sent as an absolute path
-  (`commands/session.rs::new_starts_a_session_in_the_directory_as_an_absolute_path`); and
+  (`commands/session.rs::new_starts_a_session_in_the_directory_as_an_absolute_path`);
+  `session switch` posts its pin and prints the returned session, while
+  `default` is refused locally
+  (`session.rs::switch_posts_the_pin_and_returns_the_new_session`,
+  `cli/tests.rs::session_switch_requires_a_model_and_accepts_effort_default`); and
   `session logs` reads the snapshot and follows the console stream
   (`commands/console.rs::a_transcript_log_uses_its_snapshot_for_table_and_json_output`,
   `::a_followed_log_uses_the_console_event_stream`).
+- `pr review` sends the asking pin whole and the stop body alone
+  (`commands/pr.rs::pr_review_sends_the_ask_body_with_its_pin_and_the_stop_body_alone`),
+  and is refused, naming `--model`, with no model and no `--stop`
+  (`::pr_review_with_no_model_and_no_stop_is_refused`). `--stop`
+  conflicts with every asking flag, and `--model default` is refused
+  (`::pr_review_refuses_stop_combined_with_an_asking_flag_and_a_bare_default_model`).
+  `pr inspect` prints a fixed reading order of lowercase keys, the body last
+  (`::pr_inspect_prints_readable_keys_in_order_with_the_body_last`), and
+  `pr ls` carries the branches and the session
+  (`::pr_ls_shows_the_branches_and_session_columns`).
 
 ## Sources
 

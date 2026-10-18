@@ -15,10 +15,20 @@
  * strip exists to keep in sight.
  */
 
-import { useQuery } from "@tanstack/react-query"
+import { queryOptions, useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 
-import type { GoalDto, SessionDto, TaskDto } from "@/api"
+import {
+  type AttentionCause,
+  type AttentionItemDto,
+  type AttentionListDto,
+  api,
+  type GoalDto,
+  qk,
+  type SessionDto,
+  type TaskDto,
+  unwrap,
+} from "@/api"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import {
   SESSION_ATTENTION_META,
@@ -27,31 +37,35 @@ import {
   sessionAttention,
 } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META, taskListQueryOptions } from "@/features/tasks"
+import { sessionColumn } from "@/features/tasks/steps"
 import { shortId } from "@/lib/format"
-import { sessionPanelFrom, sessionTerminalFrom, taskPanelFrom } from "@/routes/paths"
+import { paths, sessionPanelFrom, sessionTerminalFrom, taskPanelFrom } from "@/routes/paths"
 
 import { goalsQueryOptions } from "./queries"
+
+/** `GET /v1/attention`: the daemon's own authoritative recovery list. */
+function attentionListQueryOptions() {
+  return queryOptions({
+    queryKey: qk.attention.list(),
+    queryFn: () => unwrap(api().GET("/v1/attention")),
+  })
+}
 
 /** Why a task is on the list, strongest first. */
 export type AttentionReason = "failed" | "stalled"
 
 /**
- * Whether this task wants the user, and what for.
- *
- * A task in `changes_requested` is deliberately not one of them: the reviewer
- * has spoken and the daemon resumes the author itself, so what that task
- * waits on is an agent, not a person. A resume that does not happen shows up
- * as the session's own `disconnected` or `stalled` flag, which is where the
- * daemon decides a human is wanted.
- *
- * `stalled` is checked last because it is a flag *on top of* a status: the
- * task's column mirrors any of its sessions carrying the daemon's `stalled`
- * flag, and comes down when that session's does, so a task that also failed is
- * reported as failed.
+ * Whether this task wants the user on the strength of its bare status
+ * alone — `failed` only, kept as the fallback a recovery read that could
+ * not be read in full leaves standing. `stalled` is never reported here:
+ * it is a flag raised while automatic recovery (a nudge, then a relaunch)
+ * is still working the agent, and reporting it immediately would be
+ * exactly the "automatic recovery still trying" row 009's attention
+ * contract asks never to raise. If the relaunch also fails, the task
+ * fails, and `failed` covers it the same as any other failure.
  */
 export function taskAttentionReason(task: TaskDto): AttentionReason | null {
-  if (task.status === "failed") return "failed"
-  return task.stalled ? "stalled" : null
+  return task.status === "failed" ? "failed" : null
 }
 
 /**
@@ -91,6 +105,14 @@ export interface AttentionItem {
    */
   session: SessionDto | undefined
   sessionReason: SessionAttention | null
+  /**
+   * A recovery item with no goal or session of its own — a machine resource
+   * or a daemon configuration blocker — read straight off `GET /v1/attention`
+   * rather than derived here. Set only on a row no task or session fields
+   * above describe; `attentionSubject`/`attentionDetail`/`attentionTarget`
+   * check it first.
+   */
+  recovery?: AttentionItemDto
 }
 
 interface Attention {
@@ -111,6 +133,18 @@ interface Attention {
   refetch: () => void
 }
 
+/**
+ * A synthetic error for the one case that is not a query failure: the
+ * recovery producer answered 200 but said `complete: false`. Folded into
+ * the same `error`/`partial` path every other failure already takes, so an
+ * empty board under an incomplete read is never read as "nothing needs
+ * attention" (009) without a second code path to keep in step with the
+ * first.
+ */
+const INCOMPLETE_RECOVERY_READ = new Error(
+  "the recovery producer could not read all of its evidence",
+)
+
 export function useAttention(): Attention {
   const goals = useQuery(goalsQueryOptions())
   const tasks = useQuery(taskListQueryOptions())
@@ -123,23 +157,34 @@ export function useAttention(): Attention {
   // outside conversation — has no goal, task or seat, and every reader below
   // falls back accordingly.
   const sessions = useQuery(sessionsQueryOptions())
+  // The daemon's own recovery producer: gates `exhausted` (see
+  // `recoveryExhaustedSessions`) and supplies the rows — a machine resource
+  // or a daemon configuration blocker — that name no goal or session of
+  // their own.
+  const recovery = useQuery(attentionListQueryOptions())
 
   const items = useMemo(
-    () => collectAttention(goals.data, tasks.data, sessions.data),
-    [goals.data, tasks.data, sessions.data],
+    () => collectAttention(goals.data, tasks.data, sessions.data, recovery.data),
+    [goals.data, tasks.data, sessions.data, recovery.data],
   )
 
-  const error = goals.error ?? tasks.error ?? sessions.error
+  const error =
+    goals.error ??
+    tasks.error ??
+    sessions.error ??
+    recovery.error ??
+    (recovery.data?.complete === false ? INCOMPLETE_RECOVERY_READ : null)
 
   return {
     items,
-    isPending: goals.isPending || tasks.isPending || sessions.isPending,
+    isPending: goals.isPending || tasks.isPending || sessions.isPending || recovery.isPending,
     error,
     partial: error !== null && items.length > 0,
     refetch: () => {
       void goals.refetch()
       void tasks.refetch()
       void sessions.refetch()
+      void recovery.refetch()
     },
   }
 }
@@ -166,9 +211,19 @@ function collectAttention(
   goals: GoalDto[] | undefined,
   tasks: TaskDto[] | undefined,
   sessions: SessionDto[] | undefined,
+  recovery: AttentionListDto | undefined,
 ): AttentionItem[] {
   const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
   const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
+  // Once the recovery read is complete, it is authoritative for every
+  // failed task — including by staying silent while its orchestrator is
+  // still the one answering it (the daemon's recovery producer raises an
+  // item for a failed task only once it has given up on it). Falling back
+  // to the bare status whenever a task merely goes unnamed by a recovery
+  // item would undo that silence the moment `collectAttention` ran, so the
+  // fallback is reserved for a read that could not be trusted at all —
+  // absent, or itself marked `complete: false`.
+  const recoveryTrustworthy = recovery?.complete ?? false
   /** Keyed by what identifies a row, which is what folds the two kinds. */
   const rows = new Map<string, AttentionItem>()
   /**
@@ -179,6 +234,7 @@ function collectAttention(
   const flaggedAt = new Map<string, string>()
 
   for (const task of tasks ?? []) {
+    if (recoveryTrustworthy) continue
     const reason = taskAttentionReason(task)
     if (!reason) continue
     rows.set(task.id, {
@@ -197,6 +253,19 @@ function collectAttention(
   for (const session of sessions ?? []) {
     const reason = sessionAttention(session)
     if (!reason) continue
+    // `exhausted` is never a row of its own here: automatic switching may
+    // still clear the bare flag on the very next tick, and whether it is
+    // still worth a person's time is the recovery producer's own `quota`
+    // item to say, read below with every other cause.
+    if (reason === "exhausted") continue
+    // A session's stall or disconnection is never this list's own business,
+    // task-tied or not: while the agent is still being nudged or
+    // relaunched, automatic recovery is still trying it, and whichever
+    // recovery item eventually covers it — the task's own, once it
+    // actually fails, or the taskless orchestrator's or reviewer's own
+    // give-up item — says the same thing with the cause and the action a
+    // bare flag cannot.
+    if (reason === "stalled" || reason === "disconnected") continue
     const at = sessionAttentionAt(session)
     const taskId = session.task_id ?? null
     const key = taskId ?? session.id
@@ -220,6 +289,25 @@ function collectAttention(
       taskReason: row?.taskReason ?? null,
       session,
       sessionReason: reason,
+    })
+  }
+
+  // Every recovery item is its own row, whatever its cause: none of them
+  // belongs to one goal the way a task or a loose session's row does, and
+  // a `quota` item's own summary, action and target say more than this
+  // board could derive from the bare `exhausted` flag alone.
+  for (const item of recovery?.items ?? []) {
+    rows.set(item.id, {
+      id: item.id,
+      goalId: "",
+      goal: undefined,
+      at: item.since,
+      taskId: null,
+      task: undefined,
+      taskReason: null,
+      session: undefined,
+      sessionReason: null,
+      recovery: item,
     })
   }
 
@@ -286,6 +374,8 @@ function collectBoardAttention(sessions: SessionDto[] | undefined): BoardAttenti
     // A session with no task is an orchestrator's, and lands on its goal's lane.
     const index = session.task_id ? byTask : byGoal
     const key = session.task_id ?? session.goal_id ?? ""
+    // A pull request's session, or a loose one, has no card and no lane.
+    if (!key) continue
     const held = index.get(key)
     if (!held || held.at.localeCompare(at) < 0) index.set(key, { reason, at })
   }
@@ -314,18 +404,27 @@ function reasons(index: Map<string, Flagged>): Map<string, SessionAttention> {
  *
  * Everything else lands where it always did — the task's panel for a row that
  * is about a task, the session's for one that is only about a session — since
- * a death or a stall is something to read rather than something to answer.
+ * a death or a stall is something to read rather than something to answer. A
+ * pull request that is ready to merge is one of the latter: its session's
+ * panel links to the request, where the merge is done.
  *
  * The screen it is answered *from* matters as well as its params: the list
  * carries onto every screen (`attention-alerts.tsx`), and the sessions one
  * reads `?goal=`/`?task=` as its own filters rather than as panels. The
  * `…From` helpers are where that is settled.
  */
+/**
+ * Where an attention row navigates: an internal route, for `<Link to={…}>`
+ * and `useNavigate()` alike.
+ */
+export type AttentionNavTarget = { pathname?: string; search: string; replace?: boolean }
+
 export function attentionTarget(
   item: AttentionItem,
   current: URLSearchParams,
   pathname: string,
-): { pathname?: string; search: string } {
+): AttentionNavTarget {
+  if (item.recovery) return recoveryTarget(item.recovery, current, pathname)
   const { session, sessionReason, taskId } = item
   if (session && (sessionReason === "waiting_permission" || sessionReason === "waiting_input")) {
     return sessionTerminalFrom(pathname, current, session.id)
@@ -337,6 +436,40 @@ export function attentionTarget(
 }
 
 /**
+ * Where a recovery row's own target (`GET /v1/attention`) lands: the console
+ * of the session it names, the panel of the task it names, or the
+ * Repositories screen for a configuration blocker — the daemon names a
+ * section of it, but there is no per-section route to deep-link into yet.
+ */
+function recoveryTarget(
+  item: AttentionItemDto,
+  current: URLSearchParams,
+  pathname: string,
+): AttentionNavTarget {
+  switch (item.target.kind) {
+    case "console":
+      return sessionTerminalFrom(pathname, current, item.target.session_id)
+    case "task":
+      return taskPanelFrom(pathname, current, item.target.task_id)
+    case "pull_request": {
+      const [path, search] = paths.pullRequest(item.target.pull_request_id, current).split("?")
+      return { pathname: path, search: `?${search}` }
+    }
+    case "settings":
+      return { pathname: paths.repositories(), search: "" }
+  }
+}
+
+/**
+ * The agent behind a row's session: its seat, or for a step agent the
+ * workflow column it staffs.
+ */
+export function agentLabel(item: AttentionItem): string {
+  if (!item.session) return ""
+  return sessionColumn(item.session, item.task, item.goal) ?? seatLabel(item.session.seat)
+}
+
+/**
  * What the row is about, in one line: the task the agent was working on, or —
  * for an orchestrator, which has none — its seat and the goal it is planning.
  *
@@ -345,10 +478,16 @@ export function attentionTarget(
  * nobody can tell apart from the next one.
  */
 export function attentionSubject(item: AttentionItem): string {
+  if (item.recovery) return item.recovery.summary
   if (item.task) return item.task.title
   if (item.taskId) return `Task ${shortId(item.taskId)}`
+  // A pull request's session works for no goal: the request is its subject.
+  const pullRequestId = item.session?.pull_request_id
+  if (pullRequestId) {
+    return `Pull request · ${item.session?.title ?? shortId(pullRequestId)}`
+  }
   return item.session
-    ? `${seatLabel(item.session.seat)} · ${item.goal?.title ?? `Goal ${shortId(item.goalId)}`}`
+    ? `${agentLabel(item)} · ${item.goal?.title ?? `Goal ${shortId(item.goalId)}`}`
     : `Goal ${shortId(item.goalId)}`
 }
 
@@ -362,11 +501,74 @@ export function attentionSubject(item: AttentionItem): string {
  * so instead; the badge beside it already names the status.
  */
 export function attentionDetail(item: AttentionItem): string {
+  if (item.recovery) return item.recovery.required_action
   if (item.session && item.sessionReason) {
     const hint = SESSION_ATTENTION_META[item.sessionReason].hint
     // A task-less session already says its seat in the subject.
-    return item.taskId ? `${seatLabel(item.session.seat)} · ${hint}` : hint
+    return item.taskId ? `${agentLabel(item)} · ${hint}` : hint
   }
   const reason = item.taskReason
   return `Task · ${reason === "stalled" ? STALLED_META.hint : TASK_STATUS_META.failed.hint}`
+}
+
+/**
+ * A recovery row's own short title, read by its producer and cause rather
+ * than guessed from a task or session reason it carries neither of — a
+ * `pull_request` item's own two shapes get their own words, since
+ * "configuration" and "unknown" mean something different for every other
+ * producer's item under the same cause.
+ */
+const RECOVERY_CAUSE_TITLE: Record<AttentionCause, string> = {
+  access: "Sign-in needed",
+  quota: "Quota exhausted",
+  configuration: "Configuration needed",
+  resource: "Resource exhausted",
+  unknown: "Needs attention",
+}
+
+export function recoveryHeadline(item: AttentionItemDto): string {
+  if (item.producer === "pull_request") {
+    return item.reason === "configuration" ? "Review needed" : "Ready to merge"
+  }
+  return RECOVERY_CAUSE_TITLE[item.reason]
+}
+
+/**
+ * What a recovery row's blocker affects, as one line of labels — null for
+ * every other row, which already names its one task or session in the
+ * subject. A grouped item (a model exhausted on three sessions, a machine
+ * resource shortage across two tasks) would otherwise say only the first
+ * of them.
+ */
+export function attentionAffected(item: AttentionItem): string | null {
+  if (!item.recovery || item.recovery.affected.length === 0) return null
+  return item.recovery.affected.map((subject) => subject.label).join(", ")
+}
+
+/** One affected session, reachable on its own. */
+interface AttentionAffectedLink {
+  id: string
+  label: string
+  to: { pathname?: string; search: string }
+}
+
+/**
+ * Every affected session a grouped recovery item names, each with its own
+ * link to its console — not only the item's single `target`, which a
+ * group of several can answer with only one of them. `null` below two
+ * entries: a lone session is already where the row's own link goes, and a
+ * second line saying the same thing is noise.
+ */
+export function attentionAffectedLinks(
+  item: AttentionItem,
+  current: URLSearchParams,
+  pathname: string,
+): AttentionAffectedLink[] | null {
+  const sessions = item.recovery?.affected.filter((subject) => subject.kind === "session") ?? []
+  if (sessions.length < 2) return null
+  return sessions.map((subject) => ({
+    id: subject.id,
+    label: subject.label,
+    to: sessionTerminalFrom(pathname, current, subject.id),
+  }))
 }

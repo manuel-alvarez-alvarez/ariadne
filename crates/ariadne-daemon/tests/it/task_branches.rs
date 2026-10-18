@@ -1,54 +1,77 @@
 //! What clients hear when a task branch moves.
 //!
-//! Nothing in the store changes when an author commits, so the daemon
+//! Nothing in the store changes when an agent commits, so the daemon
 //! watches the branch ref itself and publishes `task_branch_updated` off that
-//! watch. `git` is real here: the commits are made in the author's worktree
-//! by the test, exactly where the agent would have made them. The author is
-//! the harness's stub agent, which answers its briefing and then says
-//! nothing.
+//! watch. `git` is real here: the commits are made in the task's worktree by
+//! the test, exactly where the agent of its first column would have made
+//! them. That agent is the harness's stub agent, which answers its briefing
+//! and then says nothing.
 
 use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use axum::http::StatusCode;
+
+use ariadne_api::goals::GoalDto;
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::{Actor, SessionStatus, TaskStatus};
 use ariadne_daemon::bus::BusEvent;
 use ariadne_store::Task;
 use tokio::sync::broadcast::Receiver;
 
-use common::{Harness, QUIET, Sse, TIMEOUT, eventually, get, harness, next_sse, parse_sse, sh};
+use common::{
+    Harness, QUIET, Sse, TIMEOUT, as_session, eventually, get, harness, next_sse, parse_sse,
+    post_json, sh, test_pin,
+};
 
-/// How long one commit is given to come back over the stream: a filesystem
-/// notification, a debounce and a couple of `git` processes, on a machine
-/// running the rest of the suite beside it.
-const PATIENCE: Duration = Duration::from_secs(20);
-
-/// A task whose author has been spawned: a real repository, a worktree
-/// checked out on the task branch, and the daemon following it.
+/// Bring any task of an already active goal up to its develop column for
+/// real: a worktree checked out on its branch, its agent started by the
+/// scheduler, and its first turn answered.
 ///
-/// The harness is the caller's, so that the tests about what the scheduler
-/// does can run one.
+/// Read off the store rather than through [`Harness::step_session`]: that
+/// helper reads the harness's own default stub's log, which is not the agent
+/// a test on a home of its own ([`HarnessBuilder::home`]) registers.
+async fn develop_column(h: &Harness, task: &Task) -> Task {
+    h.advance(task, TaskStatus::InProgress).await;
+    h.notify(&task.id);
+    let agent_id = h
+        .store
+        .list_task_agents(&task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|a| a.step == "develop")
+        .expect("the task has a develop agent")
+        .id;
+    // The stub answers its briefing at once; what the tests hear from here on
+    // is the branch, not the agent's turn.
+    eventually(TIMEOUT, "the develop agent's first turn to end", || async {
+        h.sessions_of(&task.id).await.iter().any(|s| {
+            s.task_agent_id.as_deref() == Some(agent_id.as_str())
+                && s.status() == SessionStatus::Idle
+        })
+    })
+    .await;
+    h.store.get_task(&task.id).await.unwrap()
+}
+
+/// A task whose first column's agent the scheduler has started: a real
+/// repository, a worktree checked out on the task branch, and the daemon
+/// following it.
+///
+/// The harness is the caller's, and it runs a scheduler: a column's agent is
+/// started by nothing else.
 async fn at_work(h: &Harness) -> (Task, PathBuf, PathBuf) {
     let repo = h.git_repo("repo");
     let cast = h.active_cast().await;
-    let author = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    // The stub answers its briefing at once; what the tests hear from here on
-    // is the branch, not the agent's turn.
-    eventually(TIMEOUT, "the author's first turn to end", || async {
-        h.session_status(&author).await == SessionStatus::Idle
-    })
-    .await;
-    let task = h.store.get_task(&cast.task.id).await.unwrap();
-    let worktree = task
-        .worktree_path
-        .clone()
-        .expect("the author has a worktree");
+    let task = develop_column(h, &cast.task).await;
+    let worktree = task.worktree_path.clone().expect("the task has a worktree");
     (task, repo, PathBuf::from(worktree))
 }
 
-/// A commit in the author's worktree, and the sha it landed as.
+/// A commit in the task's worktree, and the sha it landed as.
 fn commit(worktree: &Path, what: &str) -> String {
     sh(
         worktree,
@@ -82,14 +105,20 @@ async fn next_event(
 
 /// The head of the next `task_branch_updated` on the stream, or a failed test.
 async fn next_head(body: &mut axum::body::Body, task: &Task) -> String {
-    let Some((kind, payload)) = next_event(body, PATIENCE).await else {
-        panic!("no task_branch_updated within the patience");
-    };
-    assert_eq!(kind, "task_branch_updated");
-    assert_eq!(payload["task_id"], task.id);
-    assert_eq!(payload["goal_id"], task.goal_id);
-    assert_eq!(payload["branch"], task.branch);
-    payload["head"].as_str().unwrap().to_string()
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let within = deadline.saturating_duration_since(Instant::now());
+        let Some((kind, payload)) = next_event(body, within).await else {
+            panic!("no task_branch_updated within the timeout");
+        };
+        if kind != "task_branch_updated" {
+            continue;
+        }
+        assert_eq!(payload["task_id"], task.id);
+        assert_eq!(payload["goal_id"], task.goal_id);
+        assert_eq!(payload["branch"], task.branch);
+        return payload["head"].as_str().unwrap().to_string();
+    }
 }
 
 /// Assert the stream has nothing to say for a while.
@@ -108,7 +137,7 @@ async fn stays_quiet(body: &mut axum::body::Body, why: &str) {
 /// `packed-refs`, and the next commit writes it back.
 #[tokio::test]
 async fn a_commit_on_the_task_branch_reaches_the_stream() {
-    let h = harness().await;
+    let h = harness().scheduler().await;
     let (task, repo, worktree) = at_work(&h).await;
     let mut body = h
         .stream(get(&format!("/v1/events/stream?task={}", task.id)))
@@ -161,7 +190,7 @@ async fn commit_until_seen(worktree: &Path, rx: &mut Receiver<BusEvent>) {
 /// running the startup sweep is what a restart amounts to from in here.
 #[tokio::test]
 async fn the_startup_sweep_follows_the_worktrees_it_finds() {
-    let h = harness().await;
+    let h = harness().scheduler().await;
     let (task, _repo, worktree) = at_work(&h).await;
     h.launcher.branches.unwatch(&task.id);
     assert!(!h.launcher.branches.is_watching(&task.id));
@@ -202,7 +231,7 @@ async fn a_failed_task_stops_being_followed() {
         async || !h.launcher.branches.is_watching(&task.id),
     )
     .await;
-    // The worktree is still there: a retry puts the author back in it.
+    // The worktree is still there: a retry puts the agent back in it.
     assert!(worktree.is_dir());
     h.launcher.watch_task_branches().await.unwrap();
     assert!(
@@ -211,6 +240,8 @@ async fn a_failed_task_stops_being_followed() {
     );
 
     commit(&worktree, "after-the-failure");
+    // A dropped watch publishes nothing to wait for instead: the absence is
+    // the proof.
     tokio::time::sleep(QUIET).await;
     while let Ok(event) = rx.try_recv() {
         assert!(
@@ -224,7 +255,7 @@ async fn a_failed_task_stops_being_followed() {
 /// away takes the watch with it, and the startup sweep does not put it back.
 #[tokio::test]
 async fn the_watch_goes_with_the_worktree() {
-    let h = harness().await;
+    let h = harness().scheduler().await;
     let (task, _repo, _worktree) = at_work(&h).await;
     assert!(h.launcher.branches.is_watching(&task.id));
 
@@ -248,5 +279,211 @@ async fn the_watch_goes_with_the_worktree() {
     assert!(
         !h.launcher.branches.is_watching(&task.id),
         "a finished task must not be picked up by the sweep"
+    );
+}
+
+/// A goal cancelled while its tasks stand in every shape cleanup can find
+/// them: one still running, one already failed on its own, one already
+/// cancelled on its own. Rule 10 takes the worktree of every one of them
+/// once the goal itself is over, whatever each task's own status is — and
+/// cancelling a goal never deletes a branch, which may hold commits nobody
+/// has looked at yet.
+#[tokio::test]
+async fn a_cancelled_goal_removes_every_tasks_worktree_but_keeps_its_branches() {
+    let h = harness().scheduler().await;
+    let repo = h.git_repo("repo");
+    let cast = h.active_cast().await;
+    let failing = h
+        .task_on(&cast.goal, &cast.repo, "failing task", test_pin())
+        .await;
+    let shelved = h
+        .task_on(&cast.goal, &cast.repo, "shelved task", test_pin())
+        .await;
+
+    let running = develop_column(&h, &cast.task).await;
+    let failing = develop_column(&h, &failing).await;
+    let shelved = develop_column(&h, &shelved).await;
+
+    h.store
+        .transition_task(
+            &failing.id,
+            TaskStatus::Failed,
+            Actor::Daemon,
+            Some("broke"),
+            None,
+        )
+        .await
+        .unwrap();
+    h.store
+        .transition_task(
+            &shelved.id,
+            TaskStatus::Cancelled,
+            Actor::User,
+            Some("not needed"),
+            None,
+        )
+        .await
+        .unwrap();
+    h.notify(&failing.id);
+    h.notify(&shelved.id);
+    h.flush_scheduler().await;
+
+    let tasks = [&running, &failing, &shelved];
+    let worktrees: Vec<PathBuf> = tasks
+        .iter()
+        .map(|t| PathBuf::from(t.worktree_path.as_deref().expect("the task has a worktree")))
+        .collect();
+    for worktree in &worktrees {
+        assert!(
+            worktree.is_dir(),
+            "a task whose goal is still active keeps its worktree"
+        );
+    }
+
+    let _goal: GoalDto = h
+        .json(
+            post_json(
+                &format!("/v1/goals/{}/cancel", cast.goal.id),
+                serde_json::json!({}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    h.flush_scheduler().await;
+
+    for (task, worktree) in tasks.into_iter().zip(&worktrees) {
+        assert!(
+            !worktree.exists(),
+            "{}'s worktree should be gone once its goal is cancelled",
+            task.title
+        );
+        assert!(
+            h.launcher
+                .git
+                .branch_exists(&repo, &task.branch)
+                .await
+                .unwrap(),
+            "cancelling a goal must not delete {}'s branch",
+            task.branch
+        );
+    }
+}
+
+/// A goal completed while one of its tasks was already cancelled on its own
+/// keeps that task's worktree only as long as the goal itself runs:
+/// completing the goal takes it down, the same way cancelling the goal does.
+#[tokio::test]
+async fn completing_a_goal_removes_a_cancelled_tasks_worktree() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    let orchestrator = h.orchestrator_session(&cast.goal).await;
+    let shelved = h
+        .task_on(&cast.goal, &cast.repo, "shelved task", test_pin())
+        .await;
+    let shelved = develop_column(&h, &shelved).await;
+    let worktree = PathBuf::from(
+        shelved
+            .worktree_path
+            .as_deref()
+            .expect("the task has a worktree"),
+    );
+
+    h.store
+        .transition_task(
+            &shelved.id,
+            TaskStatus::Cancelled,
+            Actor::User,
+            Some("not needed after all"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        worktree.is_dir(),
+        "a cancelled task keeps its worktree while its goal is still active"
+    );
+
+    h.advance_to(&cast.task, "merge").await;
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Finished,
+            Actor::Daemon,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
+
+    let _goal: GoalDto = h
+        .json(
+            as_session(
+                &format!("/v1/goals/{}/complete", cast.goal.id),
+                &orchestrator.id,
+                serde_json::json!({}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    h.flush_scheduler().await;
+
+    assert!(
+        !worktree.exists(),
+        "a completed goal must take down a cancelled task's worktree too"
+    );
+}
+
+/// A home whose `config.toml` registers the stub and turns
+/// `delete_merged_worktrees` off, the way [`common::acp::registry_home`]
+/// registers the stub alone.
+fn home_keeping_worktrees(stub: &common::acp::StubAcpAgent) -> PathBuf {
+    let home = Path::new(&stub.bin).parent().unwrap().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        format!(
+            "delete_merged_worktrees = false\n[[acp_agents]]\nid = \"stub\"\ncommand = [{:?}]\n",
+            stub.bin
+        ),
+    )
+    .unwrap();
+    home
+}
+
+/// `delete_merged_worktrees = false` keeps a cancelled goal's worktrees
+/// exactly as it already keeps a finished task's: the flag is one setting
+/// for both ends of a task's life.
+#[tokio::test]
+async fn delete_merged_worktrees_false_keeps_a_cancelled_goals_worktrees() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = common::acp::stub_acp_agent(agent_dir.path(), common::acp::script());
+    let h = harness()
+        .scheduler()
+        .home(home_keeping_worktrees(&stub))
+        .await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    let task = develop_column(&h, &cast.task).await;
+    let worktree = PathBuf::from(
+        task.worktree_path
+            .as_deref()
+            .expect("the task has a worktree"),
+    );
+
+    let _goal: GoalDto = h
+        .json(
+            post_json(
+                &format!("/v1/goals/{}/cancel", cast.goal.id),
+                serde_json::json!({}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    h.flush_scheduler().await;
+
+    assert!(
+        worktree.is_dir(),
+        "delete_merged_worktrees = false must keep a cancelled goal's worktrees"
     );
 }

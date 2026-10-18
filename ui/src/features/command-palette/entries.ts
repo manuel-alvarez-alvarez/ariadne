@@ -12,10 +12,17 @@
  * the live search params.
  */
 
-import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto } from "@/api"
-import { type AttentionItem, attentionSubject, attentionTarget } from "@/features/goals/attention"
+import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto, WorkflowDto } from "@/api"
+import {
+  type AttentionItem,
+  type AttentionNavTarget,
+  agentLabel,
+  attentionSubject,
+  attentionTarget,
+} from "@/features/goals/attention"
 import { SESSION_ATTENTION_META, seatLabel } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
+import { sessionColumn } from "@/features/tasks/steps"
 import { folderName, shortId } from "@/lib/format"
 import { paths, taskPanelFrom, taskSessionPanelFrom } from "@/routes/paths"
 
@@ -64,6 +71,7 @@ interface PaletteSource {
   sessions: SessionDto[] | undefined
   skills: SkillDto[] | undefined
   repositories: RepositoryDto[] | undefined
+  workflows: WorkflowDto[] | undefined
 }
 
 /** One group of rows per entity, in the order the palette lists them. */
@@ -73,6 +81,7 @@ export interface PaletteEntries {
   sessions: PaletteEntry[]
   skills: PaletteEntry[]
   repositories: PaletteEntry[]
+  workflows: PaletteEntry[]
 }
 
 export function buildPaletteEntries({
@@ -81,9 +90,12 @@ export function buildPaletteEntries({
   sessions,
   skills,
   repositories,
+  workflows,
 }: PaletteSource): PaletteEntries {
   const goalTitles = new Map((goals ?? []).map((goal) => [goal.id, goal.title]))
   const taskTitles = new Map((tasks ?? []).map((task) => [task.id, task.title]))
+  const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
+  const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
 
   return {
     goals: (goals ?? []).map((goal) => ({
@@ -113,7 +125,13 @@ export function buildPaletteEntries({
       const of =
         (session.task_id ? taskTitles.get(session.task_id) : undefined) ??
         goalTitles.get(session.goal_id ?? "")
-      const seat = seatLabel(session.seat)
+      // A step agent is named by the workflow column it staffs.
+      const seat =
+        sessionColumn(
+          session,
+          tasksById.get(session.task_id ?? ""),
+          goalsById.get(session.goal_id ?? ""),
+        ) ?? seatLabel(session.seat)
       return {
         value: `${seat} ${of ?? ""} ${shortId(session.id)}`,
         label: of ? `${seat} · ${of}` : seat,
@@ -138,6 +156,14 @@ export function buildPaletteEntries({
       target: { kind: "page", path: paths.skill(skill.name) },
     })),
 
+    workflows: (workflows ?? []).map((workflow) => ({
+      value: workflow.name,
+      label: workflow.name,
+      detail: workflow.steps.map((step) => step.title).join(" · "),
+      keywords: [workflow.name, workflow.builtin ? "shipped" : "yours"],
+      target: { kind: "page", path: paths.workflow(workflow.name) },
+    })),
+
     // A repository has no panel either, and no screen of its own to open on
     // one: a pick lands on the list that holds every registered checkout.
     repositories: (repositories ?? []).map((repository) => ({
@@ -152,8 +178,8 @@ export function buildPaletteEntries({
 
 /**
  * The route a picked entry navigates to, against the screen the palette was
- * opened over — which is what makes a task stack on the goal that is already
- * open rather than replacing it.
+ * opened over — which is what makes a task open on whatever screen is
+ * showing, replacing a goal already open on it rather than sitting over it.
  *
  * The screen is its `pathname` as well as its params, because a task panel does
  * not open on every screen: the sessions one reads `?task=` as a filter of its
@@ -163,12 +189,17 @@ export function buildPaletteEntries({
  * A session is shown inside the panel of the task it ran; an orchestrator session
  * belongs to no task, and the goal panel only exists on the board, so that one
  * leaves the current screen for it.
+ *
+ * A task target's `replace` (set by `taskPanelTo` in `routes/paths.ts`) rides
+ * along on every kind built on it — `task`, `attention`, and `session` inside
+ * a task — so `go` only has to read it off what comes back, never work it
+ * out again.
  */
 export function paletteTargetTo(
   target: PaletteTarget,
   search: URLSearchParams,
   pathname: string,
-): string | { pathname?: string; search: string } {
+): string | AttentionNavTarget {
   switch (target.kind) {
     case "goal":
       return paths.goal(target.goalId)
@@ -212,7 +243,7 @@ export function attentionEntries(items: AttentionItem[]): PaletteEntry[] {
       item.session?.id ?? "",
       item.taskReason ?? "",
       item.sessionReason ?? "",
-      item.session ? seatLabel(item.session.seat) : "",
+      agentLabel(item),
       item.task?.branch ?? "",
       item.goal?.title ?? "",
     ],

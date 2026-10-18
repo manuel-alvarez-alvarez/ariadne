@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -16,6 +17,7 @@ use ariadne_core::probe::which;
 
 /// One agent of the index that this machine holds: its registry id, the
 /// command it is run and listed by, and the file the `PATH` search found.
+#[derive(Debug)]
 pub(crate) struct Installed {
     pub(crate) id: String,
     pub(crate) command: Vec<String>,
@@ -24,11 +26,53 @@ pub(crate) struct Installed {
     /// package's, and another package's command can carry it, so a probe has
     /// the last word on it.
     pub(crate) named_by_package: bool,
+    /// Set where a name only the package gives passed neither the symlink
+    /// check nor a package manager's own file, to the registry package,
+    /// unpinned: what the probe's `agentInfo.name` has to answer before the
+    /// entry is kept. `None` where the symlink or a manager file already
+    /// proved it, or where the name is not the package's alone.
+    pub(crate) unproven_package: Option<String>,
     /// What a probe starts. Discovery already chose one file out of the
     /// `PATH` it searched, and starting that file is what it decided —
     /// searching again by name would answer from whatever `PATH` the process
     /// carries, which is not always the one discovery read.
     pub(crate) program: PathBuf,
+}
+
+/// Where each package manager keeps its own record of what it installed.
+/// Every check here only reads a file: proving a package this way starts no
+/// process, unlike the ACP probe that decides what neither check reaches.
+#[derive(Clone)]
+pub struct ManagerHomes {
+    /// Volta's own directory: `$VOLTA_HOME`, or `~/.volta`.
+    pub volta: PathBuf,
+    /// asdf's data directory: `$ASDF_DATA_DIR`, or `~/.asdf`.
+    pub asdf: PathBuf,
+    /// mise's data directory: `$MISE_DATA_DIR`, else `$XDG_DATA_HOME/mise`,
+    /// else `~/.local/share/mise`.
+    pub mise: PathBuf,
+}
+
+impl ManagerHomes {
+    /// The homes the daemon's own environment names.
+    pub fn from_env() -> Self {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        let dir = |var: &str, default: PathBuf| {
+            std::env::var_os(var)
+                .filter(|value| !value.is_empty())
+                .map_or(default, PathBuf::from)
+        };
+        Self {
+            volta: dir("VOLTA_HOME", home.join(".volta")),
+            asdf: dir("ASDF_DATA_DIR", home.join(".asdf")),
+            mise: dir(
+                "MISE_DATA_DIR",
+                dir("XDG_DATA_HOME", home.join(".local/share")).join("mise"),
+            ),
+        }
+    }
 }
 
 /// Accept a downloaded document only when the discovery parser can read it.
@@ -41,7 +85,7 @@ pub(crate) fn validate(document: &str) -> Result<(), serde_json::Error> {
 /// An index that cannot be read leaves the registry with the configured
 /// agents alone: a snapshot Ariadne cannot parse is a defect in Ariadne, and
 /// stopping a daemon over it would take the user's own agents down with it.
-pub(crate) fn installed(index: &str, path: &OsStr) -> Vec<Installed> {
+pub(crate) fn installed(index: &str, path: &OsStr, homes: &ManagerHomes) -> Vec<Installed> {
     let index: Index = match serde_json::from_str(index) {
         Ok(index) => index,
         Err(error) => {
@@ -58,8 +102,125 @@ pub(crate) fn installed(index: &str, path: &OsStr) -> Vec<Installed> {
     index
         .agents
         .iter()
-        .filter_map(|agent| found(agent, &path))
+        .filter_map(|agent| found(agent, &path, homes))
+        .filter(|installed| {
+            let shell = names_a_shell(&installed.command);
+            let split = uses_env_split_string(&installed.command);
+            if shell || split {
+                tracing::warn!(
+                    agent = installed.id,
+                    command = installed.command.join(" "),
+                    reason = if shell {
+                        "names a shell interpreter"
+                    } else {
+                        "uses env -S or --split-string"
+                    },
+                    "refusing the entry"
+                );
+            }
+            !(shell || split)
+        })
         .collect()
+}
+
+/// Program names of a shell interpreter: an index entry naming one as its
+/// command runs whatever its arguments say rather than speaking ACP, so it
+/// is refused whatever distribution it claims.
+const SHELL_INTERPRETERS: &[&str] = &[
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "fish",
+    "cmd",
+    "powershell",
+    "pwsh",
+];
+
+/// `base` with a trailing `.exe` removed, compared ASCII-case-insensitively:
+/// `PWSH.EXE` names the same program `pwsh.exe` does.
+fn strip_exe_suffix(base: &str) -> &str {
+    if base.len() >= 4 && base[base.len() - 4..].eq_ignore_ascii_case(".exe") {
+        &base[..base.len() - 4]
+    } else {
+        base
+    }
+}
+
+/// Every word of every element of `command`, split and quote-removed the
+/// way a shell — and `env -S`, documented as using "the same syntax as the
+/// shell" — reads a line: `s''h -'c'` is the two words `sh` and `-c` to
+/// either, not the literal text `names_a_shell` would see by splitting on
+/// whitespace alone.
+fn words(command: &[String]) -> Vec<String> {
+    command
+        .iter()
+        .flat_map(|part| crate::ai_permissions::derive::shell_words(part))
+        .collect()
+}
+
+/// Whether `command` names a shell interpreter anywhere in it, or carries a
+/// `-c`-shaped flag among its words — the flag every one of them runs a
+/// string of as a command.
+///
+/// A shell is refused by name wherever it sits, not only at the start of
+/// `command`: `env sh -lc payload` runs the shell exactly as `sh -lc
+/// payload` does, with `env` — a program of its own, never refused by name
+/// — as the one `PATH` answers for. The name is compared case-insensitively:
+/// a volume that answers `SH` the same file `sh` names does not make it a
+/// different program. Every shell takes its command string on `-c`, which
+/// getopt lets a caller bundle behind other single-letter flags (`-lc`,
+/// `-ic`): a short option that is not `--` and ends the bundle on `c` is
+/// refused the same as a bare `-c`.
+fn names_a_shell(command: &[String]) -> bool {
+    let words = words(command);
+    words.iter().any(|word| {
+        let base = word.rsplit(['/', '\\']).next().unwrap_or(word);
+        let base = strip_exe_suffix(base);
+        SHELL_INTERPRETERS
+            .iter()
+            .any(|interpreter| base.eq_ignore_ascii_case(interpreter))
+    }) || words
+        .iter()
+        .any(|word| word.starts_with('-') && !word.starts_with("--") && word.ends_with('c'))
+}
+
+/// Whether `command` runs `env` with `-S` or `--split-string`: the flag a
+/// shebang line uses to pass several arguments through one interpreter
+/// line, which re-splits its own argument with escapes of its own —
+/// `\_` a literal, non-splitting space among them — that are `env`'s own
+/// grammar, not a shell's, and not one this check promises to read
+/// correctly. A registry entry's `args` array already says whatever it
+/// would otherwise pack into one split string, so the flag is refused
+/// outright, whatever it holds, rather than parsed.
+///
+/// `-S` takes its argument the way every short option does: attached to
+/// the same token (`-Ssh\_-c\_'printf marker'`), or after other no-argument
+/// short options bundled before it (`-vS...`) — getopt consumes the rest
+/// of the token as `-S`'s own value either way, so a bare `-S` or a long
+/// `--split-string` are not the only shapes this holds. Any short-option
+/// token that carries a capital `S` is refused the same way: `env` has no
+/// other flag that letter could answer for, so refusing one over-eagerly
+/// costs nothing a real agent command would ever need.
+///
+/// GNU getopt_long also accepts any unambiguous prefix of a long option, so
+/// `--s`, `--sp`, and every other prefix of `--split-string` up to the
+/// whole word — `=value` attached or not — name the same flag: no other
+/// long option of `env` starts with `s`, so every one of these prefixes is
+/// unambiguous and accepted. Refusing only the full spelling would let
+/// `--s=sh\_-c\_'...'` straight through.
+fn uses_env_split_string(command: &[String]) -> bool {
+    let names_env = command.iter().any(|part| {
+        let base = part.rsplit(['/', '\\']).next().unwrap_or(part);
+        let base = strip_exe_suffix(base);
+        base.eq_ignore_ascii_case("env")
+    });
+    names_env
+        && command.iter().any(|arg| {
+            let name = arg.split('=').next().unwrap_or(arg);
+            (name.len() > 2 && "--split-string".starts_with(name))
+                || (arg.starts_with('-') && !arg.starts_with("--") && arg.contains('S'))
+        })
 }
 
 /// The entries of `path` that name a directory outright, in their own order.
@@ -79,33 +240,139 @@ fn searchable(path: &OsStr) -> OsString {
 ///
 /// A name the package gives rather than the agent has to be the package's
 /// own file as well: `@minimax-ai/code` installs `code`, and so does an
-/// editor that has nothing to do with ACP. Such a name is passed over where
-/// the file behind it belongs to no such package, and the next name is
-/// tried.
-fn found(agent: &IndexAgent, path: &OsStr) -> Option<Installed> {
+/// editor that has nothing to do with ACP. Three checks prove it, in order,
+/// and the first to prove it stops the rest: the symlink chain
+/// ([`installs`]), a package manager's own file ([`package_files`]), and —
+/// unless the name is on [`SKIPPED_PROGRAMS`] — the ACP probe itself, which
+/// decides from the entry's [`Installed::unproven_package`].
+fn found(agent: &IndexAgent, path: &OsStr, homes: &ManagerHomes) -> Option<Installed> {
     candidates(agent).into_iter().find_map(|candidate| {
         let program = which(path, &candidate.name)?;
-        if let Some(package) = &candidate.package
-            && !installs(&program, package)
-        {
-            tracing::debug!(
-                agent = agent.id,
-                name = candidate.name,
-                program = %program.display(),
-                package = package.join("/"),
-                "a program of the name the package installs is not the package's own; passing it over"
-            );
-            return None;
-        }
+        let unproven_package = match &candidate.package {
+            None => None,
+            Some(package)
+                if installs(&program, package)
+                    || package_files(&program, &candidate.name, package, homes) =>
+            {
+                None
+            }
+            Some(_) if SKIPPED_PROGRAMS.contains(&candidate.name.as_str()) => {
+                tracing::debug!(
+                    agent = agent.id,
+                    name = candidate.name,
+                    program = %program.display(),
+                    "a program of a skipped name proved nothing of its package; passing it over"
+                );
+                return None;
+            }
+            Some(package) => Some(package.join("/")),
+        };
         Some(Installed {
             id: agent.id.clone(),
             named_by_package: candidate.package.is_some(),
+            unproven_package,
             command: std::iter::once(candidate.name)
                 .chain(candidate.args)
                 .collect(),
             program,
         })
     })
+}
+
+/// Program names that never reach the ACP probe on an unproven package name:
+/// another program of this name is common enough, and known enough by name,
+/// that starting it on a guess is not worth the ACP probe getting to say no.
+/// `code` is MiniMax Code's command, and also most editors'.
+const SKIPPED_PROGRAMS: &[&str] = &["code"];
+
+/// Whether a package manager's own file proves `program` — found under
+/// `name` — is `package`'s, without starting anything: Volta's record of
+/// what it linked, a pnpm shim naming the path it points into, or an asdf or
+/// mise install that itself passes the symlink check.
+fn package_files(program: &Path, name: &str, package: &[String], homes: &ManagerHomes) -> bool {
+    volta_installs(name, package, &homes.volta)
+        || pnpm_installs(program, package)
+        || plugin_installs(&homes.asdf, name, package)
+        || plugin_installs(&homes.mise, name, package)
+}
+
+/// Volta links every tool under one shim and tells them apart by name alone,
+/// so the chain from `name` never reaches the package: only Volta's own
+/// record of what it linked — `tools/user/bins/<name>.json`, whose
+/// `package` field names the package — says whether this one does.
+fn volta_installs(name: &str, package: &[String], volta_home: &Path) -> bool {
+    let file = volta_home
+        .join("tools/user/bins")
+        .join(format!("{name}.json"));
+    let Ok(contents) = std::fs::read_to_string(&file) else {
+        return false;
+    };
+    let Ok(recorded) = serde_json::from_str::<VoltaBin>(&contents) else {
+        return false;
+    };
+    package_dirs(&recorded.package).join("/") == package.join("/")
+}
+
+#[derive(Deserialize)]
+struct VoltaBin {
+    package: String,
+}
+
+/// A pnpm global shim is a script, not a symlink, so the chain from it never
+/// reaches the package either: its own text names the path pnpm resolves it
+/// through, and one of its path-like words has to stand under the
+/// package's own directories — the same test [`installs`] runs on a link,
+/// run here on a word of the text instead. A substring would answer yes to
+/// `@scope/name-legacy` for `@scope/name`; a whole path component does not.
+fn pnpm_installs(program: &Path, package: &[String]) -> bool {
+    let Ok(file) = std::fs::File::open(program) else {
+        return false;
+    };
+    let mut text = String::new();
+    // A shim is a short script; bounding the read keeps a native binary
+    // found under the same name from being read whole first.
+    if file
+        .take(PNPM_SHIM_READ_LIMIT)
+        .read_to_string(&mut text)
+        .is_err()
+    {
+        return false;
+    }
+    pnpm_shim_words(&text).any(|word| under(Path::new(word), package))
+}
+
+/// How much of a program's text [`pnpm_installs`] reads before giving up:
+/// generous for a shim script, and not the whole of a native binary found
+/// under the same name.
+const PNPM_SHIM_READ_LIMIT: u64 = 64 * 1024;
+
+/// The path-like words of a shim script's text: split on whitespace and the
+/// characters a shell line quotes, assigns or separates arguments with.
+fn pnpm_shim_words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| c.is_whitespace() || "\"'=:;".contains(c))
+        .filter(|word| !word.is_empty())
+}
+
+/// asdf and mise both shim by plugin and version rather than by symlink, and
+/// each keeps the real install at `<data dir>/installs/<plugin>/<version>/bin/<name>`
+/// — a file the symlink check ([`installs`]) still answers for, once it is
+/// found rather than chained to.
+fn plugin_installs(data_dir: &Path, name: &str, package: &[String]) -> bool {
+    let Ok(plugins) = std::fs::read_dir(data_dir.join("installs")) else {
+        return false;
+    };
+    for plugin in plugins.flatten() {
+        let Ok(versions) = std::fs::read_dir(plugin.path()) else {
+            continue;
+        };
+        for version in versions.flatten() {
+            let candidate = version.path().join("bin").join(name);
+            if installs(&candidate, package) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Whether `program` is a file `package` installs: it, or a link on the way
@@ -296,4 +563,271 @@ struct Package {
     package: String,
     #[serde(default)]
     args: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file on `dir` that `which` accepts: present, and executable.
+    fn executable(dir: &Path, name: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// An index can name a shell as an agent's command — directly, as its
+    /// own id, or hidden behind `-c` among its arguments. Either is refused,
+    /// and an entry beside it that names neither still registers: refusing
+    /// one program the `PATH` holds is not reason to distrust the rest of
+    /// the index.
+    #[test]
+    fn an_index_entry_naming_a_shell_is_refused_and_the_rest_of_the_index_still_installs() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "sh");
+        executable(dir.path(), "innocuous");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+
+        let index = serde_json::json!({"agents": [
+            {"id": "sh", "distribution": {"npx": {"package": "evil-cli@1"}}},
+            {"id": "dash-c", "distribution": {
+                "npx": {"package": "innocuous@1", "args": ["-c", "rm -rf /"]}
+            }},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// A shell hidden behind a launcher program — `env sh -lc payload` runs
+    /// the shell exactly as `sh -lc payload` does — is refused the same way:
+    /// `env` is not itself a shell name, and `-lc` is not literally `-c`, so
+    /// neither check alone catches it; both together do.
+    #[test]
+    fn a_shell_behind_env_and_a_bundled_dash_c_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            // No binary distribution reaches this machine's platform; the
+            // claim this test proves does not apply here.
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-shell", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["sh", "-lc", "payload"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// `env -S STRING` re-splits `STRING` on whitespace and execs the first
+    /// word of it: `env -S "sh -c 'printf marker'"` runs `sh` with `-c` and
+    /// `printf marker` exactly as if they had been separate elements of
+    /// `command` to begin with. Neither word stands as its own element of
+    /// `command` here — both ride inside the one argument `-S` takes — so
+    /// catching this needs the words of every element, not just the
+    /// elements themselves.
+    #[test]
+    fn env_dash_cap_s_splitting_a_shell_command_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-split-shell", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["-S", "sh -c 'printf marker'"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// `env -S` reads its argument with shell quoting, not only whitespace:
+    /// `s''h` is the one word `sh` once its two empty quotes are dropped,
+    /// and `-'c'` is `-c` the same way. Splitting on whitespace alone would
+    /// see neither as a word that matches a shell name or a `-c`-shaped
+    /// flag; reading the quoting the way `env -S` itself does catches both.
+    #[test]
+    fn env_dash_cap_s_with_shell_quoting_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-split-quoted-shell", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["-S", "s''h -'c' 'printf marker'"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// `env -S` reads its own escapes — `\_` a literal, non-splitting space
+    /// among them — which is `env`'s own grammar, not a shell's: a check
+    /// that only reads shell quoting does not promise to read this
+    /// correctly, so `-S` and `--split-string` are refused outright,
+    /// whatever they hold.
+    #[test]
+    fn env_dash_cap_s_is_refused_outright_whatever_it_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-split-escaped", "distribution": {"binary": {
+                key.clone(): {"cmd": "env", "args": ["-S", "sh\\_-c\\_'printf marker'"]}
+            }}},
+            {"id": "env-split-string-long-form", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["--split-string=harmless --flag"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// `-S` takes its value attached to the same token — `-SSTRING`, no
+    /// space — or bundled after other short options with no argument of
+    /// their own — `-vSSTRING`. A check that only matches a bare `-S` or a
+    /// long `--split-string` misses both.
+    #[test]
+    fn env_dash_cap_s_attached_or_bundled_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-split-attached", "distribution": {"binary": {
+                key.clone(): {"cmd": "env", "args": ["-Ssh\\_-c\\_'printf marker'"]}
+            }}},
+            {"id": "env-split-bundled", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["-vSsh\\_-c\\_'printf marker'"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// GNU `env` accepts any unambiguous prefix of a long option, so `--s`
+    /// is `--split-string` the same as the word spelled out in full — no
+    /// other long option of `env` starts with `s`. A check for only the
+    /// whole spelling would let this abbreviation straight through.
+    #[test]
+    fn env_dash_cap_s_abbreviated_long_form_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "env");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "env-split-abbreviated", "distribution": {"binary": {
+                key: {"cmd": "env", "args": ["--s=sh\\_-c\\_'echo marker'"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// The shell name is matched without case: a case-insensitive volume —
+    /// the macOS default — answers `SH` the same file `sh` names, so the
+    /// index must not tell them apart either.
+    #[test]
+    fn an_uppercase_shell_name_is_refused_the_same_as_lowercase() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "SH");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+
+        // The agent's own id is its first candidate name for an `npx`
+        // distribution, so naming it `SH` has `which` resolve the
+        // executable this test made under that exact name.
+        let index = serde_json::json!({"agents": [
+            {"id": "SH", "distribution": {"npx": {"package": "evil-cli@1"}}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
+
+    /// The `.exe` suffix is stripped the same way whatever case it is
+    /// spelled in: `PWSH.EXE -File payload.ps1` runs the same shell
+    /// `pwsh.exe` does.
+    #[test]
+    fn an_uppercase_exe_suffix_on_a_shell_name_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "PWSH.EXE");
+        executable(dir.path(), "widget");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let Some(key) = platform_key() else {
+            // No binary distribution reaches this machine's platform; the
+            // claim this test proves does not apply here.
+            return;
+        };
+
+        let index = serde_json::json!({"agents": [
+            {"id": "pwsh-shell", "distribution": {"binary": {
+                key: {"cmd": "PWSH.EXE", "args": ["-File", "payload.ps1"]}
+            }}},
+            {"id": "widget", "distribution": {"npx": {"package": "widget@1"}}}
+        ]})
+        .to_string();
+
+        let found = installed(&index, &path, &ManagerHomes::from_env());
+        let ids: Vec<&str> = found.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["widget"], "{found:#?}");
+    }
 }

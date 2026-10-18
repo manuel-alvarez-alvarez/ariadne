@@ -17,7 +17,13 @@ does all three from the commit history.
    the `release: published` event. A release event runs on the tag rather than
    on `main`, which is what makes the build provenance attestation name the
    tag as the origin of the assets; a rerun started by hand should pick the tag
-   in the ref dropdown for the same reason, and warns if it does not.
+   in the ref dropdown for the same reason, and warns if it does not. Once
+   every target has built, that workflow's `notes` job downloads the
+   `checksums-*.txt` assets and rewrites the Release body with
+   `scripts/release-notes.sh`: a short install section, a table of every
+   asset with a download link, target and SHA-256 digest, and a compare link
+   to the previous tag when one is known, all ahead of the changelog entry
+   release-please wrote, which stays unchanged below them.
 4. Not merging it costs nothing — commits accumulate into the same PR.
 
 ## Commit messages
@@ -29,6 +35,12 @@ notes nor moves the version.
 **The allowed types and what each one does to a release are in
 [`AGENTS.md`](../AGENTS.md#commit-messages)**, which is what anyone writing a
 commit here reads first; they are written down there and nowhere else.
+
+Release-please puts automatic breaking changes first.
+Its `changelog-sections` array in `release-please-config.json` then adds ✨
+Features, 🐛 Bug fixes, ⚡ Performance, and ⏪ Reverts.
+It hides `docs`, `refactor`, `test`, `chore`, `style`, `build`, and `ci` from
+the release notes.
 
 One thing here is configuration rather than convention: `feat!:` deliberately
 does not jump to 1.0.0 while the project is pre-1.0, which is what
@@ -66,6 +78,35 @@ exist here and is skipped with a warning.
 release-please's source of truth and is updated by the release PR too.
 
 `CHANGELOG.md` is created by the first release PR — it is not hand-written.
+
+## The signing certificate
+
+macOS privacy grants follow an app's code signature. Release builds sign the
+desktop app and both command-line binaries with a self-signed certificate so
+an update keeps the identity the operating system recognizes. The assets are
+not notarized; the installer still clears their quarantine attribute.
+
+`npm ci`, the frontend build and the Tauri shell's own Rust compile all run
+before the certificate is imported into a temporary keychain, so no install
+script and no `build.rs` ever runs with that keychain unlocked. The
+certificate is imported only to bundle and sign the already-built app, and
+the temporary keychain is deleted right after signing and verifying, rather
+than deferred to the end of the job.
+
+The release repository needs these three secrets:
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Base64-encoded `.p12` certificate |
+| `APPLE_CERTIFICATE_PASSWORD` | Password for that `.p12` file |
+| `APPLE_SIGNING_IDENTITY` | Certificate common name, `Ariadne Code Signing` |
+
+Run `scripts/make-signing-cert.sh` to create the certificate and its secret
+values. Keep the `.p12` file and password safe: if either is lost, create a
+replacement with that script, update all three repository secrets, and expect
+macOS to treat the replacement certificate as a new signing identity. Rotate a
+certificate the same way, retaining the old certificate until releases signed
+with it no longer need to preserve their existing grants.
 
 ## The release token
 

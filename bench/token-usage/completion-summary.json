@@ -1,0 +1,15 @@
+{
+  "cancelled": 22,
+  "ending_facts": 204,
+  "failed": 0,
+  "finished": 157,
+  "lead_time_seconds": {
+    "count": 179,
+    "maximum": 70935,
+    "median": 9132,
+    "minimum": 114,
+    "p90": 24667
+  },
+  "rule": "latest task_ended fact per retained task; earlier ending facts remain retry evidence",
+  "tasks_with_selected_ending": 179
+}

@@ -153,6 +153,63 @@ describe("the document", () => {
     rerender(<SkillEditor skill={REWRITTEN} onDeleted={vi.fn()} />)
     expect(box().value).toBe(REWRITTEN.document)
   })
+
+  it("keeps a dirty draft when the row changes underneath it, and says so", async () => {
+    const user = userEvent.setup()
+    const { rerender } = renderScreen(<SkillEditor skill={SHIPPED} onDeleted={vi.fn()} />)
+
+    await user.type(box(), "mine")
+    // The same skill, updated from elsewhere — the CLI, or another window —
+    // while a draft is still sitting in the box.
+    const changed: SkillDto = { ...SHIPPED, document: `${SHIPPED.document}from elsewhere` }
+    rerender(<SkillEditor skill={changed} onDeleted={vi.fn()} />)
+
+    expect(box().value).toBe(`${SHIPPED.document}mine`)
+    expect(screen.getByText("This skill changed elsewhere")).toBeDefined()
+  })
+
+  it("loads the new version on request, replacing the draft", async () => {
+    const user = userEvent.setup()
+    const { rerender } = renderScreen(<SkillEditor skill={SHIPPED} onDeleted={vi.fn()} />)
+
+    await user.type(box(), "mine")
+    const changed: SkillDto = { ...SHIPPED, document: `${SHIPPED.document}from elsewhere` }
+    rerender(<SkillEditor skill={changed} onDeleted={vi.fn()} />)
+
+    await user.click(screen.getByRole("button", { name: "Load new version" }))
+
+    expect(box().value).toBe(changed.document)
+    expect(screen.queryByText("This skill changed elsewhere")).toBeNull()
+  })
+
+  it("keeps text typed after a click on Save, once the saved document comes back", async () => {
+    const user = userEvent.setup()
+    const { rerender } = renderScreen(<SkillEditor skill={SHIPPED} onDeleted={vi.fn()} />)
+
+    await user.type(box(), "saved")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    // Typed before the daemon's refetch of the save lands.
+    await user.type(box(), "more")
+
+    const saved: SkillDto = { ...SHIPPED, document: `${SHIPPED.document}saved` }
+    rerender(<SkillEditor skill={saved} onDeleted={vi.fn()} />)
+
+    expect(box().value).toBe(`${saved.document}more`)
+    expect(screen.queryByText("This skill changed elsewhere")).toBeNull()
+  })
+
+  it("tells its caller when the draft turns dirty, and when it turns clean again", async () => {
+    const user = userEvent.setup()
+    const onDirtyChange = vi.fn()
+    renderScreen(<SkillEditor skill={SHIPPED} onDeleted={vi.fn()} onDirtyChange={onDirtyChange} />)
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false)
+
+    await user.type(box(), "x")
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true)
+
+    await user.click(screen.getByRole("button", { name: "Discard" }))
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false)
+  })
 })
 
 describe("a skill Ariadne ships", () => {

@@ -12,16 +12,18 @@
 //! reporting. What the scheduler says to an agent goes out through
 //! [`Scheduler::hand_prompt`].
 
+pub(crate) mod auto_switch;
 mod coalesce;
 mod goals;
 mod messages;
+mod pull_requests;
 mod quiet;
 mod sweeps;
 mod tasks;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -33,10 +35,11 @@ use crate::launcher::Launcher;
 use crate::sleep::SleepInhibitor;
 use crate::timeouts::Timeouts;
 
+use auto_switch::ExhaustedNotice;
 use coalesce::Coalesced;
 use quiet::Quiet;
 
-/// Events that wake the scheduler for a scoped reconciliation.
+/// Events that wake the scheduler for reconciliation.
 pub enum SchedEvent {
     /// A task's status, reviews or deps changed.
     TaskChanged(String),
@@ -44,6 +47,22 @@ pub enum SchedEvent {
     GoalChanged(String),
     /// An agent session reported activity.
     SessionEvent(String),
+    /// An agent session's process is gone and the runtime has let it go.
+    /// Reconciled at once rather than folded into the session's window: it
+    /// comes once per launch, and it is the first moment a pass can see the
+    /// seat empty — every wake before it may have found the agent still
+    /// registered.
+    SessionEnded {
+        session_id: String,
+        launch_id: String,
+    },
+    /// A pull request of the ledger changed: a fetch read it, a session
+    /// reported on it, or it was closed with its integration (026).
+    PullRequestChanged(String),
+    /// Test support: reconcile every row, as the periodic tick does.
+    FullReconcile,
+    /// Test support: reconcile every row with this retry clock.
+    FullReconcileAt(Instant),
     /// Test support: answered the moment this event is dequeued, which is
     /// only once every event sent before it has been reconciled to
     /// completion — the loop below awaits each one fully before it asks the
@@ -82,7 +101,7 @@ pub const SPAWN_RETRY_BUDGET: u32 = 3;
 /// wakes. Leave time for another task to end before spending another attempt.
 const DESCRIPTOR_RETRY: Duration = Duration::from_secs(30);
 const SPAWN_FAILURE_REASON: &str = "the agent could not be started";
-const DESCRIPTOR_LIMIT_REASON: &str =
+pub const DESCRIPTOR_LIMIT_REASON: &str =
     "the agent could not start because the daemon reached its open file descriptor limit";
 /// How long a session may report nothing before it is nudged: told to get on
 /// with the work in front of it.
@@ -97,11 +116,11 @@ pub const QUIET_NUDGE_SECS: i64 = 180;
 /// spare.
 ///
 /// Ten minutes. Unlike the nudge this one is spent whatever the agent is
-/// doing, so it has to clear the longest wait an agent is *told* to take: the
-/// landing briefing sends an author to `sleep` at most five minutes at a time
-/// while it waits for a pull request to be merged, and this is twice that. A flag
-/// raised over a tool call that ran longer still is not the end of anything —
-/// the agent's next event takes it down again.
+/// doing, so it has to clear the longest tool call an agent is *told* to
+/// make: a whole test suite run with a timeout of up to ten minutes, which is
+/// what the review and merge columns run. A flag raised over a tool call that
+/// ran longer still is not the end of anything — the agent's next event takes
+/// it down again.
 pub const QUIET_FLAG_SECS: i64 = 600;
 /// And before the agent is killed and put back on its feet: the flag
 /// plus enough of a wait for a person to have looked at it first — twenty
@@ -111,11 +130,10 @@ pub const QUIET_RELAUNCH_SECS: i64 = 1_800;
 /// The watchdog is one timeline, and the order of its thresholds is what
 /// makes it one: nudged before the user is told, told before an agent is
 /// killed under them. The flag has a floor of its own — it is spent whatever
-/// the agent is doing, so it has to clear the longest wait an agent is *told*
-/// to take, which is the five-minute `sleep` the landing briefing sends an
-/// author to while a pull request waits to be merged. Checked here rather
-/// than in a test, so that a number edited into the wrong order does not
-/// build.
+/// the agent is doing, so it has to clear the longest tool call an agent is
+/// *told* to make, which is the ten-minute suite run a column's skill allows.
+/// Checked here rather than in a test, so that a number edited into the wrong
+/// order does not build.
 const _: () = assert!(
     QUIET_NUDGE_SECS < QUIET_FLAG_SECS,
     "an agent is nudged before the user is told about it"
@@ -126,7 +144,7 @@ const _: () = assert!(
 );
 const _: () = assert!(
     QUIET_FLAG_SECS >= 600,
-    "the flag stays clear of a five-minute sleep, with margin"
+    "the flag stays clear of a ten-minute suite run"
 );
 
 pub(crate) struct Scheduler {
@@ -150,10 +168,10 @@ pub(crate) struct Scheduler {
     dead_launch: HashMap<String, String>,
     /// The launch each seat last gave its budget back for, keyed like the map
     /// above: a launch that was heard from gives the attempts back once, not
-    /// on every pass. A task's agents share one budget, so an author that
-    /// keeps reporting would otherwise refund, pass after pass, every attempt
-    /// its reviewer failed, and a reviewer that cannot be started would be
-    /// tried for ever without the task ever failing.
+    /// on every pass. A task's agents share one budget, so one column's agent
+    /// that keeps reporting would otherwise refund, pass after pass, every
+    /// attempt the next column's agent failed, and an agent that cannot be
+    /// started would be tried for ever without the task ever failing.
     refunded_launch: HashMap<String, String>,
     /// What the quiet-clock watchdog has done about each session it has had
     /// to act on, by session id (in memory like the map above).
@@ -165,27 +183,16 @@ pub(crate) struct Scheduler {
     /// a wake too many costs a turn, one too few leaves a goal with nobody
     /// deciding.
     goal_told: HashMap<String, String>,
-    /// Tasks whose author has been handed the landing briefing, by task id.
-    /// In memory like the maps above: what it prevents is briefing the same
-    /// approved task twice while the daemon that approved it is running, and
-    /// a daemon that restarts over an approved task wants to say it again.
-    landing_briefed: HashSet<String>,
-    /// Reviewers already asked to pick a contested task's winner, by (task,
-    /// reviewer). In memory like `landing_briefed`, and for the same reason:
-    /// a daemon that restarts over an open pick asks once more.
-    pick_briefed: HashSet<(String, String)>,
-    /// Reviews a live reviewer has already been briefed on, by (reviewer,
-    /// review request). A reviewer whose agent survived the last one is
-    /// handed the next one's briefing the moment it owes it — once, and in
-    /// memory like the sets above: a daemon that restarts over an open review
-    /// says it once more.
-    ///
-    /// The request is the row addressed to that reviewer, not the newest on
-    /// the task: an announcement writes one row per reviewer, so the newest
-    /// moves while it runs. A briefing sent before that row was written is
-    /// stamped under the author it is for, and the row that lands next takes
-    /// the stamp over: see `adopt_briefing_sent_before_the_request`.
-    review_briefed: HashSet<(String, String)>,
+    /// Exhausted switches the task's orchestrator has not received yet.
+    exhausted_notices: HashMap<String, ExhaustedNotice>,
+    pull_request_cleanup_retry: HashMap<String, std::time::Instant>,
+    /// Next permitted periodic forge read of an open kept request.
+    pull_request_read_retry: HashMap<String, Instant>,
+    /// The skills a request's live keeper session last ran with, by pull
+    /// request id: in memory, since nothing but a later ask ever moves
+    /// them, and a session already running them needs no backfill but the
+    /// first pass that sees it (032).
+    keeper_skills_applied: HashMap<String, Vec<String>>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
     sleep: SleepInhibitor,
@@ -213,9 +220,10 @@ pub fn start(
         refunded_launch: HashMap::new(),
         quiet: HashMap::new(),
         goal_told: HashMap::new(),
-        landing_briefed: HashSet::new(),
-        pick_briefed: HashSet::new(),
-        review_briefed: HashSet::new(),
+        exhausted_notices: HashMap::new(),
+        pull_request_cleanup_retry: HashMap::new(),
+        pull_request_read_retry: HashMap::new(),
+        keeper_skills_applied: HashMap::new(),
         sleep: SleepInhibitor::new(),
         prevent_sleep,
     };
@@ -227,35 +235,78 @@ pub fn start(
         let mut wakes = Coalesced::new(timeouts.session_wake);
         loop {
             tokio::select! {
-                event = rx.recv() => match event {
-                    Some(SchedEvent::TaskChanged(id)) => scheduler.reconcile(Target::Task(&id)).await,
-                    Some(SchedEvent::GoalChanged(id)) => scheduler.reconcile(Target::Goal(&id)).await,
-                    Some(SchedEvent::SessionEvent(id)) => {
-                        if wakes.wake(&id, tokio::time::Instant::now()) {
-                            scheduler.reconcile_session(&id).await;
-                            wakes.reconciled(&id, tokio::time::Instant::now());
+                event = rx.recv() => {
+                    let Some(event) = event else { break }; // daemon shutting down
+                    scheduler.handle(event, &mut wakes).await;
+                    // Then what the channel already holds, and no more. A
+                    // burst that queued behind a slow pass is folded whole
+                    // into the window that pass opened, before that window
+                    // may end: taken one event per turn of this loop, the
+                    // window could end with the rest of the burst still in
+                    // the channel — a loop held off the CPU for longer than
+                    // the window, under exactly the load the folding is
+                    // for — and the wakes behind it would cost a pass of
+                    // their own. Bounded by what was queued when the batch
+                    // began, so a stream of wakes that never pauses still
+                    // lets every window end, right below, and the tick
+                    // come round, at the select above.
+                    for _ in 0..rx.len() {
+                        match rx.try_recv() {
+                            Ok(event) => scheduler.handle(event, &mut wakes).await,
+                            Err(_) => break,
                         }
                     }
-                    Some(SchedEvent::Flush(done)) => {
-                        for id in wakes.take_all() {
-                            scheduler.reconcile_session(&id).await;
-                            wakes.reconciled(&id, tokio::time::Instant::now());
-                        }
-                        let _ = done.send(());
-                    }
-                    None => break, // daemon shutting down
-                },
-                _ = window_end(wakes.next_window_end()) => {
-                    for id in wakes.due(tokio::time::Instant::now()) {
-                        scheduler.reconcile_session(&id).await;
-                        wakes.reconciled(&id, tokio::time::Instant::now());
-                    }
+                    scheduler.settle_due(&mut wakes).await;
                 }
+                _ = window_end(wakes.next_window_end()) => scheduler.settle_due(&mut wakes).await,
                 _ = tick.tick() => scheduler.reconcile_all().await,
             }
         }
     });
     tx
+}
+
+impl Scheduler {
+    /// One event off the channel, acted on.
+    async fn handle(&mut self, event: SchedEvent, wakes: &mut Coalesced) {
+        match event {
+            SchedEvent::TaskChanged(id) => self.reconcile(Target::Task(&id)).await,
+            SchedEvent::GoalChanged(id) => self.reconcile(Target::Goal(&id)).await,
+            SchedEvent::PullRequestChanged(id) => self.reconcile_pull_request(&id).await,
+            SchedEvent::FullReconcile => self.reconcile_all().await,
+            SchedEvent::FullReconcileAt(now) => self.reconcile_all_at(now).await,
+            SchedEvent::SessionEvent(id) => {
+                if wakes.wake(&id, tokio::time::Instant::now()) {
+                    self.reconcile_session(&id).await;
+                    wakes.reconciled(&id, tokio::time::Instant::now());
+                }
+            }
+            SchedEvent::SessionEnded {
+                session_id,
+                launch_id,
+            } => {
+                self.retire_ended(&session_id, &launch_id).await;
+                self.reconcile_session(&session_id).await;
+                wakes.reconciled(&session_id, tokio::time::Instant::now());
+            }
+            SchedEvent::Flush(done) => {
+                for id in wakes.take_all() {
+                    self.reconcile_session(&id).await;
+                    wakes.reconciled(&id, tokio::time::Instant::now());
+                }
+                let _ = done.send(());
+            }
+        }
+    }
+
+    /// The pass each window that has ended is owed, for the wakes folded
+    /// into it.
+    async fn settle_due(&mut self, wakes: &mut Coalesced) {
+        for id in wakes.due(tokio::time::Instant::now()) {
+            self.reconcile_session(&id).await;
+            wakes.reconciled(&id, tokio::time::Instant::now());
+        }
+    }
 }
 
 /// Wait for the earliest open window to end, or for ever where no session is
@@ -287,7 +338,45 @@ impl Scheduler {
     /// One it refused — no agent runs for the session — gives a nudge spent
     /// on it back, so the next pass over this session sends it again.
     fn hand_prompt(&mut self, session: &AgentSession, text: String) -> bool {
-        match self.launcher.acp.send_prompt(&session.id, text) {
+        let handed = self.launcher.acp.send_prompt(&session.id, text);
+        self.handed(session, handed)
+    }
+
+    /// [`Self::hand_prompt`] for a goal's own attention briefing (031),
+    /// tagged with the failed tasks it names so the turn that answers it
+    /// can confirm exactly those once it ends, through the ACP driver —
+    /// never from an ambient session status.
+    fn hand_goal_attention(
+        &mut self,
+        session: &AgentSession,
+        text: String,
+        goal_id: &str,
+        failed_tasks: Vec<(String, String)>,
+    ) -> bool {
+        let handed = self.launcher.acp.send_goal_attention(
+            &session.id,
+            text,
+            goal_id.to_string(),
+            failed_tasks,
+        );
+        self.handed(session, handed)
+    }
+
+    /// [`Self::hand_prompt`] for an agent message: the runtime stamps it
+    /// when the prompt goes out, and queues it once however many passes
+    /// hand it.
+    fn hand_message(&mut self, session: &AgentSession, message_id: &str, text: String) {
+        let handed = self
+            .launcher
+            .acp
+            .send_message(&session.id, message_id, text);
+        self.handed(session, handed);
+    }
+
+    /// Whether the runtime took a prompt, with a refused one's nudge given
+    /// back.
+    pub(super) fn handed(&mut self, session: &AgentSession, handed: anyhow::Result<()>) -> bool {
+        match handed {
             Ok(()) => true,
             Err(e) => {
                 warn!(session = %session.id, error = %format!("{e:#}"), "handing the agent a prompt failed");
@@ -378,13 +467,21 @@ impl Scheduler {
     }
 
     async fn reconcile_all(&mut self) {
+        self.reconcile_all_at(Instant::now()).await;
+    }
+
+    /// Run every periodic pass, using `now` for pull-request retry waits.
+    async fn reconcile_all_at(&mut self, now: Instant) {
         // The sweep is the one place that sees every session, so its count
         // decides whether the machine stays awake. `None` means the store did
         // not answer: leave the inhibition as it is rather than guess.
         if let Some(live) = self.liveness_sweep().await {
             self.sleep.set_active(self.prevent_sleep && live > 0);
         }
+        self.exhausted_sweep().await;
+        self.tell_exhausted_notices().await;
         self.reconcile_entities().await;
+        self.reconcile_pull_requests_at(now).await;
         self.stale_attention_sweep().await;
     }
 
@@ -446,6 +543,7 @@ impl Scheduler {
     /// are the busiest thing the daemon hears, and a pass per event is what
     /// read the store out of connections.
     async fn reconcile_session(&mut self, session_id: &str) {
+        self.tell_exhausted_notices().await;
         debug!(session = %session_id, "reconciling what a session's wake is about");
         let Ok(session) = self.store.get_session(session_id).await else {
             return;
@@ -453,13 +551,12 @@ impl Scheduler {
         if self.launcher.acp.is_user_resumed(&session.id) {
             return;
         }
-        match &session.task_id {
-            Some(task) => self.reconcile(Target::Task(task)).await,
-            None => {
-                if let Some(goal_id) = &session.goal_id {
-                    self.reconcile(Target::Goal(goal_id)).await;
-                }
-            }
+        self.auto_switch_exhausted(&session).await;
+        match (&session.task_id, &session.goal_id, &session.pull_request_id) {
+            (Some(task), _, _) => self.reconcile(Target::Task(task)).await,
+            (None, Some(goal_id), _) => self.reconcile(Target::Goal(goal_id)).await,
+            (None, None, Some(pull_request)) => self.reconcile_pull_request(pull_request).await,
+            (None, None, None) => {}
         }
     }
 }
@@ -477,8 +574,8 @@ impl Scheduler {
     /// spawn that never got off the ground spends, one per launch, and the
     /// caller says what running out of it means for the seat.
     /// `seat` names the seat the launch was for — the goal for an
-    /// orchestrator, the task for its author, the session row for one of
-    /// several reviewers — and `budget` the count it spends, which for every
+    /// orchestrator, the staffed agent for a column's agent, the request for
+    /// a review session — and `budget` the count it spends, which for every
     /// agent of a task is the task's own.
     pub(super) fn spent_on_a_dead_launch(
         &mut self,
@@ -486,9 +583,9 @@ impl Scheduler {
         budget: &str,
         last: &AgentSession,
     ) -> bool {
-        // Once per launch, and per launch rather than per row: an author and
-        // a reviewer are put back on their feet under the id they already
-        // have, so the row says nothing about which run of it died. Every
+        // Once per launch, and per launch rather than per row: a column's
+        // agent is put back on its feet under the id it already has, so the
+        // row says nothing about which run of it died. Every
         // pass over the same dead launch would otherwise spend the budget
         // again, and no relaunch of a session would ever spend it once. The
         // same holds for giving it back: a launch heard from refunds once.
@@ -542,7 +639,8 @@ struct Cost {
 /// started, so it spends no attempt. Under load the write pool hands out a
 /// timeout instead of a connection, and every task's reconciliation fails
 /// together for as long as that lasts: counted as spawn attempts, three ticks
-/// of it fail a task whose agent was never asked for.
+/// of it fail a task whose agent was never asked for — which is how a pool
+/// timeout under load failed two tasks whose agents had already committed.
 ///
 /// A descriptor shortage is waited out whichever layer noticed it, and
 /// `short_of_descriptors` is that state asked of the machine rather than read
@@ -634,7 +732,7 @@ mod tests {
                 id: "gone".into(),
             },
             StoreError::Conflict("already landed".into()),
-            StoreError::Invalid("no author".into()),
+            StoreError::Invalid("no agent".into()),
             StoreError::Transition(TransitionError::IllegalTransition {
                 from: TaskStatus::Failed,
                 to: TaskStatus::InProgress,

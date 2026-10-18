@@ -1,15 +1,21 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-09-26
+updated: 2026-10-16
 areas: [daemon]
-commits: []
+commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-daemon/tests/it/transcript_usage.rs
+  - crates/ariadne-daemon/tests/it/auto_switch.rs
+  - crates/ariadne-daemon/tests/it/ai_permissions_decisions.rs
+  - crates/ariadne-daemon/tests/it/switch.rs
+  - crates/ariadne-daemon/tests/it/seat_brief.rs
+  - crates/ariadne-daemon/src/learned_key.rs
+  - crates/ariadne-store/tests/store.rs
 ---
 
 # ACP runtime
@@ -20,7 +26,8 @@ Client Protocol.
 `ariadned` spawns the agent executable with piped standard input and output,
 speaks ACP version 1 over those pipes, and reports what the agent does through
 the daemon's one event ingestion path. Every seat of every session runs this
-way — orchestrator, author and reviewer. The runtime is
+way — the orchestrator, the agent of a column and the reviewer of a pull
+request. The runtime is
 `crates/ariadne-daemon/src/acp.rs`; the launch it consumes — the command and
 the launch file — is described in 007.
 
@@ -53,8 +60,23 @@ delivery, liveness, and the kill.
 
 Out: the registry, discovery, and what a launch is made of (007), which model
 is pinned (011), what the session is briefed with (006), the console a person
-reads and types into (008), and the sweep that retires a row whose agent is
-gone (009).
+reads and types into (008), the sweep that retires a row whose agent is gone
+(009), and the optional advisory diagnosis a `session.error` may later carry
+beside it, which reads what this spec's rule 14 already decided and never
+changes it (024).
+
+Discovery closes each catalog session when the agent advertises `session/close`.
+For OpenCode — the shipped registry id `opencode`, and the legacy
+`opencode-acp` a configured agent may still carry — it then runs the
+registry entry's program as `session delete <session id>` with the probe's
+launch environment and a discovery timeout, on the session id the probe's
+`session/new` returned, once, after the probe ends whether it accepted the
+agent or rejected its catalog. A failed close or delete is logged as a
+warning and does not reject the agent or discard its catalog. A catalog
+read from the store rather than a fresh `session/new` opens no session, so
+it leaves nothing to delete. Metadata listing (rule 5, `GET /v1/sessions`'s
+outside half) opens no session either: it asks only `initialize` and
+`session/list`.
 
 ## Behavior
 
@@ -76,15 +98,40 @@ gone (009).
    category `model`, or, where no option has that category, on the option
    whose id or name is `model`. The effort is set the same way, on category
    `thought_level` with `effort`, `reasoning` and `thought_level` as the
-   id-or-name fallback, and only when the launch carries one. An agent that
-   offers no matching option fails the launch rather than run on a default
-   (see Known gap).
+   id-or-name fallback, and only when the launch or a same-agent switch carries one.
+   The value the agent answers with is read back. A model pin settled on the
+   same id without its trailing context hint (`claude-fable-5-1` for
+   `claude-fable-5-1[1m]`) has landed, if the option no longer offers the
+   hinted id: Claude's agent lists the model that way on a resumed
+   conversation (`acp_runtime.rs::a_pin_settled_on_its_id_without_the_context_hint_lands`).
+   A launch pin that does not land — no matching option, a refused or failed
+   call, or another value settled on — does not stop the launch: the session
+   runs on whatever the agent runs, its own default or what the resumed
+   conversation ran on, and a `session.pin_fallback` event names the pin, the
+   value the agent runs instead and the reason. The row keeps the pin, so the
+   next launch asks for it again
+   (`::a_refused_model_pin_runs_on_the_agents_own_model`). Where the hinted
+   id is still offered beside the bare one, the bare one is a smaller context
+   window, and a pin settled there falls back the same way
+   (`::a_pin_settled_on_the_bare_id_beside_the_hinted_one_falls_back`).
+   A same-agent switch also calls `session/set_config_option` on the live
+   conversation, after its running turn and before queued prompts
+   (`switch.rs::a_same_agent_switch_keeps_the_row_and_conversation`,
+   `::a_same_agent_switch_during_a_turn_precedes_queued_input`). A switch
+   pin must land: a refused option fails a switch between turns with the
+   agent's reason, and the session keeps its old pin
+   (`::a_refused_same_agent_option_keeps_the_old_pin`).
    Loose sessions instead retain and record the loaded model (020).
-4. Every prompt the runtime sends is the system prompt, a blank line, and
-   the text of the prompt. The first prompt of a launch is the one its launch
-   file carries, if any. `user_prompt_submit` carries the whole as `prompt`,
-   the text alone as `text`, and a `source`: `console` for console input
-   (008), `daemon` for everything the daemon itself says.
+4. A prompt the runtime sends is its own text. The first prompt of a launch
+   and the first after a model switch carry the system prompt and a blank
+   line ahead of that text (006 rule 2). A command never carries it: where text from any
+   source starts with `/` and its first word, without `/`, equals the `name`
+   of a command the agent last offered, the runtime sends the text alone,
+   and the brief waits for the next turn. The first prompt of a launch is
+   the one its launch file carries, if any. `user_prompt_submit`
+   carries the whole as `prompt`, the text alone as `text`, and a `source`:
+   `console` for console input (008), `daemon` for everything the daemon
+   itself says.
 5. What the agent does becomes agent events on the ingestion path (012):
    `session_start` with the agent's own session id, `user_prompt_submit`,
    tool calls as `pre_tool_use` and `post_tool_use`, `plan` with the entries
@@ -104,6 +151,13 @@ gone (009).
    reports both.
    A `usage_update` keeps its latest `used` and `size` on the session while
    the turn runs. Its `cost`, when present, is ignored.
+   An `available_commands_update` keeps the agent's latest complete command
+   list while it runs, including between turns and through every `session/load`
+   replay. It goes live to the console alone as
+   `available_commands_update` with `{session_id, available_commands}`; each
+   command is the ACP JSON the agent sent. It is never stored. A later list,
+   including an empty one, replaces the earlier list. The list is dropped
+   when the agent ends.
 6. A turn's text is stored run by run, where the agent wrote it. A run is
    the chunks of one kind in a row, and of one message where the chunks
    carry an ACP `messageId`; it ends at a chunk of the other kind, a chunk
@@ -140,26 +194,132 @@ gone (009).
    each on an unbounded channel so that no report is ever dropped, followed
    by session and launch and refused for a launch that is not the one
    running, so a report of the process before never passes for the current
-   one. The turn an author asked for its review in is ended that way
-   (004): its own launch's report of the review call ended, then the cancel,
-   which never lands on the next launch's briefing.
+   one.
 9. The ACP permission mode is the repository's (002), read at launch: a
    task's sessions take its repository's, an orchestrator its goal's first
    repository's, and a loose session (020) the registered repository its
    directory lies deepest in — `auto` when it lies in none. `auto` selects the
    first allowing option, then the first option, and cancels only an empty
    list. `ask` records the request in the console, raises session attention
-   and blocks until console input selects an option. `learn` does the same on
-   the first request for one repository, tool name and tool kind; an allowing
-   answer is stored and later matching requests are selected automatically.
-   A denial is not stored. In `ai`, the AI permission model decides first (022), then `learn`
-   handles every answer that is not a confident allow.
+   and blocks until console input selects an option. `learn` does the same
+   for a request that no allowing row answers. In `learn` and `ai`, a console
+   question offers `once` (Allow once), `command` (Allow this command),
+   `family` (Allow every `<family>` call), then `reject` (Reject). It offers
+   the allow choices only if the agent offers an allowing option, and Reject
+   only if the agent offers a rejecting option. The request keeps the agent's
+   options as `agent_options`; `ask` keeps them as `options`. A console answer
+   selects the agent's first `allow_once`, else first `allow_always`, or its
+   first `reject_once`, else its first `reject_always` when that is its only
+   rejecting kind. The tool name is
+   `toolCall.name`, else `toolCall._meta.claudeCode.toolName`, else
+   `toolCall.title`, else `toolCall.toolCallId`.
+   The table `learned_permissions` keeps one row per repository, tool name,
+   level and key (`learned_key::normalize`). The key is made from
+   `rawInput` in four steps:
+   - The fields per tool. `Bash` keeps `command`. `Edit`, `Write`, `Read`,
+     `MultiEdit` and `NotebookEdit` keep `file_path`. An `mcp__` tool keeps every field but
+     `body`, `summary`, `description`, `title` and `reason`. `WebFetch` keeps
+     the host of `url` as `{"host": …}`. `WebSearch` keeps no field. Every
+     other tool keeps every field but `description`.
+   - The Bash command. A leading `cd <path>` followed by `&&`, `;` or a
+     newline goes, where the path is the worktree, the repository or a
+     directory under one of them; a relative path without `..` counts as
+     under the worktree. Every `2>&1` goes. A trailing pipe chain goes where
+     every program in it is `tail`, `head`, `wc`, `cat`, `sort` or `uniq`,
+     and every argument after the program is a value-free flag or an accepted
+     count. `tail` and `head` accept `-40`, or a number immediately after
+     `-n`, `-c`, `--lines` or `--bytes`. A pipe remains where a filter
+     redirects, substitutes, names a file or a program (`-o`, `--output`,
+     `--compress-program`, `-T` or `--files0-from`), has a bare operand or
+     has an option with `=`.
+   - The placeholders, in every string value. The repository path becomes
+     `<REPO>`, the worktree `<WORKTREE>` and the session's branch
+     `<BRANCH>`, the longest first, then the home directory `<HOME>`. Then
+     a `/tmp/…` or `/private/tmp/…` path becomes `<TMP>`, a whole word of 7
+     to 64 hex characters in either case, with a letter and a digit,
+     `<HASH>`, and an Ariadne id (`0` and 25 of `[0-9a-z]`, a whole word)
+     `<ID>`. Numbers stay. An
+     orchestrator and a loose session have no branch. A column agent's
+     branch is its task's, shared by every column of the task (030).
+   - The key is the compact JSON of the kept fields with sorted keys:
+     `git rebase main 2>&1 | tail -40` with a `description` is
+     `{"command":"git rebase main"}`, and a `merge_commit` of any SHA is
+     `{"merge_commit":"<HASH>"}`.
+   The family of a `Bash` request is the program of the first simple command
+   of the normalized command, after `NAME=value` assignments and the wrappers
+   `sudo`, `env`, `time`, `nohup`, `timeout`, `nice`, `command` and `exec`,
+   with their options, the value of an option that takes one (`time -f`,
+   `-o`), and the duration of `timeout`. For `git`, `cargo`, `npm`, `npx`,
+   `pnpm`, `yarn`, `go`, `docker`, `gh`, `make`, `kubectl`, `pip`, `pip3`
+   and `brew`, the
+   first argument that does not start with `-` follows, after the global
+   options of `git`: `git push`, `cargo nextest`, `ls`. The family of every
+   other tool is the tool name. A family row for `Bash` answers only one
+   simple command and its stripped output-filter tail. It does not answer a
+   command with `&&`, `||`, `;`, a newline, command substitution, or a pipe
+   that the key did not strip. It does not answer a command with an unquoted
+   `>` or `<`, a `NAME=value` assignment before its program, including one
+   `env` takes, or an option that selects a program or an output file. Only
+   these programs can use a Bash family row; every other program asks again:
+   - Git rejects `-c`, `--config-env` and `--exec-path` before its subcommand.
+     It rejects `-O` and `--open-files-in-pager` for `grep`, `--output` for
+     `diff`, `log` and `format-patch`, `-o` for `format-patch`, `--upload-pack`,
+     `--receive-pack` and `-u` for `fetch`, `clone` and `ls-remote`,
+     `--receive-pack` for `push`, `-x` and `--exec` for `rebase`, and `-x` and
+     `--extcmd` for `difftool`.
+   - Cargo rejects `--config`; Go rejects `-exec` and `-toolexec`; Make rejects
+     `NAME=value`, `--eval`, `-f`, `--file` and `--makefile`; npm, pnpm and Yarn
+     reject `--script-shell` and `--node-options`.
+   - Find rejects `-exec`, `-execdir`, `-ok`, `-okdir`, `-delete`, `-fprint`,
+     `-fprint0`, `-fprintf` and `-fls`. Ripgrep rejects `--pre`. Sort rejects
+     `-o`, `--output`, `--compress-program`, `-T` and `--files0-from`.
+   A listed one-letter short option is rejected in a one-hyphen option bundle
+   or with an attached value. A long option is rejected as its full name, or as
+   a prefix of at least three letters, with or without `=value`. Go rejects its
+   two options with either one or two hyphens.
+   The level is `once`, `command` or `family`, and the scope `repository` or
+   `all`. Each row keeps the key, the level, the family, the request's
+   derived risk tags (022) in `derive` order, the scope, the whole `toolCall`
+   with its `rawInput` keys sorted, the `options`, the selected option, the
+   `target` and the model `output`. `target` is the permission mode at the
+   time of the decision. A console choice in `learn` or `ai` writes a row at
+   level `once`, `command`, `family`, or `once` for the four choices in that
+   order. A `family` row uses its family as its key; every other row uses the
+   normalized key. A console choice in `ask` writes at level `once`. All use
+   scope `repository`. A
+   model deny, a rule deny and a cap deny write it too. A model allow, a
+   learned allow and an `auto` allow write nothing. A write on an existing
+   key keeps its id and `created_at`, and replaces the rest, the scope
+   included. In `learn` and `ai` only, an allowing `command` row for the
+   normalized key answers first, then an allowing `family` row for the family.
+   At each level, the repository's own row takes precedence where one exists;
+   otherwise a row of scope `all` from any repository can answer when its
+   tool name, level and key match. The selected agent option must have kind
+   `allow_once` or `allow_always`. At both levels, every derived risk tag of
+   the request must be among the row's tags. A row is written with scope
+   `repository`, and a person widens it to `all`, or narrows it back, with
+   `PUT /v1/permissions/learned/{id}` (012, rule 26), which keeps its key,
+   its level and everything else about it. A `once` row never answers a later
+   request. A denied row
+   never auto-allows and never auto-denies. A request with no `rawInput`
+   never auto-allows, and a session outside every repository records and
+   answers nothing. The AI permission model reads the raw input, not the key.
+   In `ai`, the AI permission model decides first (022), then `learn`
+   handles every answer that is not a confident allow or deny.
+   The answering row's id, level and key appear on `permission_request` and
+   `permission.replied`; all three are null if no row answered.
 10. After a turn ends the agent stays up and the runtime keeps serving it.
    Everything the daemon says to the agent after the launch — a scheduler
    nudge, a review briefing, an agent message — is a `session/prompt`, sent
    at once between turns and queued in order behind a running one. Console
-   input (008) arrives the same way, except that a pending `ask` takes it as
-   the answer (rule 9): only a person's input ever answers a permission.
+   input (008) arrives the same way, except that a pending permission question takes it as
+   the answer (rule 9): only a person's input selects a console choice.
+   A prompt that carries an agent message is claimed right before it goes
+   out, and skipped when the claim fails: a read took the message first
+   (018). A message already in the queue is not queued again. The runtime
+   watches the agent's stdin for each `session/prompt` line written whole. A
+   claimed prompt that was never written gives its claim back when its launch
+   ends. A written one keeps it, an error answer included.
 11. The child is reaped whenever it ends. Its own exit ends the session on
    the record: `session.error` first if the protocol failed, then
    `session_end`. Killing the session kills the child and retires the row;
@@ -178,17 +338,90 @@ gone (009).
 13. Liveness is the runtime's own registry of running agents, and it always
     answers. After a daemon restart no child of the old daemon is running,
     and a revive reaches the stored conversation through a new process.
+14. A failed prompt is exhausted when `data.codexErrorInfo` is
+    `usageLimitExceeded`, when `_meta.jetbrains.air.sessionFailure.category`
+    in its error or response is `limit`, when `data.errorKind` is
+    `rate_limit`, or when its message or the detail line of its data
+    contains one configured exhausted pattern without regard to case. `session.error`
+    preserves the JSON-RPC code and message, and adds `exhausted: true`
+    plus the structured value or matching pattern as `exhausted_reason`.
+    For every ACP agent, an error with data and no non-empty string
+    `data.message` adds one line there. It takes a data string first, then
+    the first non-empty string at `details`, `detail`, `error`, `reason`,
+    `description`, or `stderr`, including a string one object level below
+    those keys. Otherwise it takes compact JSON, cut to 200 characters.
+    It puts the ACP message before the detail unless they are equal. It
+    keeps every other data key. For data that is not an object, it also
+    keeps the original value in `data.details`. An error without data and
+    one with a non-empty string `data.message` stay unchanged.
 
 ## Acceptance criteria
 
-- An author runs end to end — the handshake in order, the worktree, the
-  `ariadne` MCP server, the model and effort pins, the briefing behind the
-  system prompt as the first prompt, the events in the store, the captured
+- A model-read probe for `opencode`, the shipped id, closes and deletes the
+  session id returned by `session/new`, once
+  (`acp_discovery.rs::an_opencode_probe_closes_and_deletes_its_catalog_session`).
+- The legacy `opencode-acp` id gets the same cleanup
+  (`acp_discovery.rs::a_legacy_opencode_acp_probe_also_deletes_its_catalog_session`).
+- A catalog rejected for want of a model option still deletes the session
+  `session/new` returned
+  (`acp_discovery.rs::a_rejected_opencode_catalog_still_deletes_its_session`).
+- A failed OpenCode delete keeps the agent ready with its catalog, and does
+  not reject it
+  (`acp_discovery.rs::a_failed_opencode_delete_keeps_the_agent_ready_with_its_catalog`).
+- A cached catalog, read at an earlier probe of the same agent version, opens
+  no session, so a later probe runs no deletion
+  (`acp_discovery.rs::a_cached_opencode_catalog_probe_creates_no_session_and_runs_no_deletion`).
+- A non-OpenCode probe does not run session delete
+  (`acp_discovery.rs::a_non_opencode_probe_runs_no_session_delete`).
+- Metadata listing — `initialize` then `session/list`, outside any catalog
+  probe — opens no session and runs no OpenCode delete
+  (`acp_discovery.rs::metadata_listing_opens_no_session_and_runs_no_delete_for_opencode`),
+  which a real OpenCode CLI confirms too, in its own isolated data directory,
+  where this machine has one on `PATH`
+  (`acp_discovery.rs::real_opencode_metadata_listing_creates_no_session`).
+- An ACP error with `data.details` records the ACP message and detail in
+  `session.error` while keeping the other fields
+  (`acp_runtime.rs::an_acp_error_reports_its_details_in_the_event_message`).
+- The event summary and the transcript used by `ariadne session logs` show
+  the combined line
+  (`acp_runtime.rs::an_acp_error_detail_reaches_the_event_summary_and_session_logs`).
+- A string `data.message` stays unchanged, while string and other JSON data
+  supply readable error messages
+  (`acp_runtime.rs::an_acp_error_keeps_an_existing_message_and_reads_other_data_shapes`).
+- Common detail keys, nested errors, strings, and compact JSON all supply
+  readable messages for any ACP agent. Long JSON is cut
+  (`acp.rs::tests::common_error_detail_fields_and_long_json_are_readable`).
+- An error without data stays unchanged, and an empty `data.message` takes
+  the reason from another field
+  (`acp_runtime.rs::an_acp_error_without_data_stays_unchanged_and_an_empty_message_is_filled`).
+- A detail equal to the ACP message appears only once
+  (`acp_runtime.rs::an_acp_error_does_not_repeat_its_message_as_the_detail`).
+- `learn` publishes four choices and preserves the agent choices, records a
+  family answer, reuses it for another call in that family, and asks about a
+  different family
+  (`acp_console.rs::family_choice_answers_later_rebase_calls_but_not_other_families`).
+- A `git push` family row with `remote` does not answer a force push with the
+  extra `force` tag (`acp_console.rs::a_family_row_keeps_the_force_tag_guard`).
+- `once` and `reject` record only a one-time row and ask again
+  (`acp_console.rs::once_and_reject_choices_record_once_and_ask_again`).
+- A console Reject choice remains available when the agent offers only
+  `reject_always` (`ai_permissions_decisions.rs::a_console_reject_uses_the_only_agent_rejection_option`).
+- `ask` keeps the agent's choices and records a one-time row
+  (`acp_console.rs::ask_records_the_console_choice_and_never_auto_allows`).
+- A column's agent runs end to end — the handshake in order, the worktree, the
+  `ariadne` MCP server, the model and effort pins, the briefing as the first
+  prompt, the events in the store, the captured
   agent session id, and the agent still up after the turn
   (`acp_runtime.rs::an_acp_author_runs_on_daemon_stdio`).
 - An orchestrator seat runs the same way, with the ariadne MCP server in
   `session/new` (`acp_runtime.rs::an_orchestrator_runs_on_the_registry_agent`).
-- A reviewer seat runs the same way, in its detached worktree
+- Codex, Claude, and configured message signals classify exhausted prompts,
+  a pattern also in the detail of the error's data, while another error
+  remains plain. The stub preserves configured error data
+  (`auto_switch.rs::a_codex_exhaustion_switches_to_another_agent_at_the_same_rank`,
+  `acp.rs::tests::exhaustion_signals_are_classified_and_a_plain_error_is_not`,
+  `auto_switch.rs::a_plain_error_does_not_switch`).
+- The review column's agent runs the same way, in the task's one worktree
   (`acp_runtime.rs::a_reviewer_runs_on_the_registry_agent`).
 - Killing the session kills the agent process and retires the row
   (`acp_runtime.rs::killing_an_acp_session_kills_its_agent_process`), and
@@ -219,17 +452,79 @@ gone (009).
 - A repository set to `ask` raises session attention and console input
   unblocks the turn
   (`acp_console.rs::ask_raises_attention_and_a_console_answer_unblocks_the_turn`).
-- A repository set to `learn` remembers an approval across a daemon restart,
-  and does not remember a denial
+- A repository set to `learn` records a console denial, asks again after it,
+  replaces the row with the approval that follows, and auto-allows from that
+  row across a daemon restart
   (`acp_console.rs::learn_remembers_an_approval_per_repository_across_a_daemon_restart`).
+- A console choice in `ask` writes a row with `target = ask` and the tool name
+  from `toolCall.name`, and `ask` never auto-allows from a row
+  (`acp_console.rs::ask_records_the_console_choice_and_never_auto_allows`).
+- An allowed `Bash` row does not auto-allow another command
+  (`acp_console.rs::an_allowed_row_does_not_allow_another_command_of_the_same_tool`).
+- A request with no `rawInput` gets a row but never auto-allows
+  (`acp_console.rs::a_request_without_raw_input_never_auto_allows`).
+- `learn` answers a request that differs from an approved one only by a SHA,
+  a `description` and a `2>&1 | tail -60`
+  (`acp_console.rs::learn_answers_a_request_that_differs_only_by_one_time_values`),
+  and a row whose risk tags lack one of the request's does not answer it
+  (`::a_row_without_the_requests_risk_tags_does_not_answer_it`).
+- The key keeps the fields of each tool, drops a `cd` into the worktree, a
+  `2>&1` and an output filter with only inert flags and numbers, and replaces
+  one-time values in order
+  (`learned_key.rs::the_four_forms_of_one_rebase_give_one_key`,
+  `::two_complete_step_inputs_with_different_shas_give_one_key`,
+  `::two_edits_of_one_file_give_one_key`,
+  `::two_step_returns_with_different_bodies_give_one_key`,
+  `::a_cd_into_the_worktree_and_an_output_filter_are_dropped`,
+  `::a_cd_elsewhere_and_a_writing_filter_are_kept`,
+  `::the_worktree_the_repository_the_branch_and_the_home_are_replaced_in_order`,
+  `::a_session_without_a_branch_keeps_the_branch_name`,
+  `::one_time_values_are_placeholders_and_numbers_are_kept`,
+  `::an_uppercase_hash_is_a_placeholder`,
+  `::only_the_sessions_own_branch_is_the_branch_placeholder`,
+  `::a_fetch_keys_on_its_host_and_a_search_on_nothing`,
+  `::a_filter_with_an_output_or_program_option_stays_in_the_key`), and the
+  family is the program and its subcommand
+  (`::the_family_is_the_program_and_its_subcommand`,
+  `::a_family_covers_one_command_and_safe_output_filters`).
+- A family row asks for a chained Bash command, a redirect, unsafe program
+  setup or an unlisted program rather than answering it
+  (`acp_console.rs::a_family_row_does_not_answer_a_chained_command`).
+- A command row answers `tail` and `head` output filters, but asks again for
+  filters that can write a file or run a program
+  (`acp_console.rs::a_command_row_answers_only_safe_output_filters`).
+- Two writes with one repository, tool name, level and key keep one row: the
+  second keeps the id and `created_at` and sets the scope, and the row
+  carries the key, the level, the family, the tags and the scope
+  (`store.rs::learned_permissions_keep_one_row_per_repository_tool_level_and_key`).
+- A fresh database holds the table with its fifteen columns
+  (`store.rs::a_fresh_database_holds_the_fifteen_learned_permission_columns`).
+- A repository's own row wins over another repository's `all`-scoped row of
+  the same tool name, level and key, and the `all`-scoped row answers for a
+  repository that holds none of its own
+  (`store.rs::a_repository_row_wins_over_an_all_row_of_another_repository`).
+- A console choice in one repository is asked again in a second repository;
+  widening that row to `all` with `PUT` then answers the second repository's
+  matching request as `learned`, without attention
+  (`acp_console.rs::widening_a_row_to_all_answers_a_second_repository`).
 - A repository set to `ai` asks the AI permission model first. A confident
   allow proceeds; every other outcome uses a learned approval or asks the
   console
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`,
   `::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`,
-  `::a_review_answer_waits_for_the_console`).
+  `::a_deny_without_a_rejecting_option_waits_for_the_console`), and the model reads the raw
+  input (`::the_model_receives_the_raw_input_and_not_the_learned_key`).
 - Console input reaches the agent and queues behind a running turn
   (`acp_console.rs::posted_input_reaches_the_agent_and_queues_behind_a_running_turn`).
+- An offered command, and every prompt after the first, reaches the agent as
+  its own text alone
+  (`acp_console.rs::only_available_slash_commands_skip_the_system_prompt`,
+  `::console_input_is_reported_as_its_text_from_the_console`). The seat brief
+  rides the first turn and the first after a model switch, on every agent
+  (`seat_brief.rs::an_agent_gets_the_seat_brief_on_the_first_turn_and_after_a_switch`,
+  `::a_claude_agent_gets_the_seat_brief_first_and_each_later_turn_word_for_word`).
+- An unknown session update leaves the session running
+  (`acp_runtime.rs::an_unknown_session_update_does_not_fail_the_session`).
 - A scheduler nudge arrives at the agent as a `session/prompt`
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
 - Message chunks reach the console stream before the turn ends
@@ -244,7 +539,7 @@ gone (009).
   and an agent that dies mid-turn keeps the run it was writing
   (`acp_runtime.rs::an_agent_that_dies_mid_turn_keeps_the_text_it_was_writing`);
   neither `GET /v1/events` nor `/v1/events/stream` carries a chunk
-  (`::the_events_listing_and_the_domain_stream_carry_no_chunk`).
+  (`acp_console.rs::the_events_listing_and_the_domain_stream_carry_no_chunk`).
 - `post_tool_use` stores its output once, keeps the opening input on
   `pre_tool_use`, and is smaller than its uncompact form
   (`acp_console.rs::post_tool_use_stores_text_once_and_keeps_the_opening_input`).
@@ -252,17 +547,7 @@ gone (009).
   (`acp_console.rs::console_input_is_reported_as_its_text_from_the_console`).
 - A cancel ends the running turn as `cancelled`
   (`acp_console.rs::cancelling_a_running_turn_ends_it_as_cancelled`), and is
-  refused between turns (`::cancel_with_no_turn_running_is_refused`); an
-  author's review request draws one such cancel once the agent reports the
-  call ended, keeps what the turn spent, and leaves the agent up for the
-  verdict's prompt
-  (`::an_authors_review_request_ends_its_turn_and_the_verdict_still_reaches_it`),
-  and a launch's turn reports are its own: the process before reports to
-  nobody but itself
-  (`::a_prior_launchs_late_review_report_does_not_end_the_new_launchs_turn`);
-  a burst of reports before the review call's loses none of them, and the
-  cancel still follows
-  (`::a_burst_of_reports_before_the_review_calls_loses_none_and_the_cancel_follows`).
+  refused between turns (`::cancel_with_no_turn_running_is_refused`).
 - Prompt usage keeps cache writes in input and counts only cache reads as
   cached input, prefers quota, adds up one
   launch's turns, adds a resumed launch, and leaves an absent report at zero
@@ -286,10 +571,11 @@ gone (009).
 
 ## Known gap
 
-Two refusals of rules 2 and 3 are proven only at discovery, not at launch:
-an agent on another protocol version, and an agent with no model option.
-Discovery rejects both (007), and no pin can name a model of a rejected
-agent (011), so no test launches one.
+An agent on another protocol version (rule 2) is refused only at discovery,
+not at launch: discovery rejects it (007), and no pin can name a model of a
+rejected agent (011), so no test launches one. Discovery rejects an agent
+with no model option the same way, so the fallback of rule 3 for a missing
+option is proven only by the refused pin, which takes the same path.
 
 ## Sources
 
@@ -300,5 +586,7 @@ transport), `crates/ariadne-daemon/src/acp_calls.rs` (the methods it calls),
 SDK's),
 `crates/ariadne-daemon/src/transcript.rs` (the transcript reader),
 `crates/ariadne-daemon/src/launcher.rs` (the launch, liveness and kill),
+`crates/ariadne-daemon/src/learned_key.rs` (the learned key and family),
+`crates/ariadne-store/src/permissions.rs` (the learned rows),
 `crates/ariadne-daemon/src/scheduler/mod.rs` (the prompt delivery),
 `crates/ariadne-daemon/tests/it/common/acp.rs` (the scriptable stub agent).

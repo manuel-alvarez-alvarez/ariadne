@@ -46,6 +46,12 @@ pub struct SessionDto {
     /// resumed, or the first one typed into it. Null on a task's or a goal's
     /// session, which goes by its work's title.
     pub title: Option<String>,
+    /// The session this one replaced on its seat, when a switch started it
+    /// (`POST /v1/sessions/{id}/switch`); null otherwise.
+    pub switched_from: Option<String>,
+    /// The pull request this session watches (026); null for every other
+    /// session.
+    pub pull_request_id: Option<String>,
 }
 
 /// A stored session of an ACP agent that Ariadne did not start, listed over
@@ -76,6 +82,20 @@ pub struct NewSessionRequest {
     pub effort: Option<String>,
     /// The absolute path of an existing directory the agent works in.
     pub working_directory: String,
+}
+
+/// Switch a session to another model or agent: the old session ends, and a
+/// new one starts on the same seat, on this pin, in a new conversation.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SwitchSessionRequest {
+    /// The model to run, `<agent>:<model>`: a registry agent (`GET
+    /// /v1/acp-agents`) and a model of it (`GET /v1/models`).
+    #[schema(example = "claude-acp:sonnet")]
+    pub model: String,
+    /// The effort to run that model at; omitted = the agent's own.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 /// Resume a stored conversation without a goal, task or seat.
@@ -138,6 +158,8 @@ pub struct SessionEntryDto {
     /// When Ariadne created the row; None on an outside row.
     pub created_at: Option<String>,
     pub ended_at: Option<String>,
+    /// The pull request this session watches; None for every other session.
+    pub pull_request_id: Option<String>,
 }
 
 /// One page of `GET /v1/sessions`, newest activity first.
@@ -183,6 +205,8 @@ pub struct SessionPageQuery {
     pub goal: Option<String>,
     /// Filter by task id. No outside session has one.
     pub task: Option<String>,
+    /// Filter by pull request id. No outside session has one.
+    pub pull_request: Option<String>,
     /// Filter by status. No outside session has one. A named status also
     /// lists sessions that have ended, as `all` does.
     pub status: Option<SessionStatus>,

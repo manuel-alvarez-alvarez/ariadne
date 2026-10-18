@@ -4,10 +4,9 @@
 //! one timeline on it: a nudge, then the user, then the agent killed and put
 //! back on its feet. The three thresholds are the scheduler's own,
 //! read from it rather than copied, so a test says "past the nudge" and means
-//! whatever that is today. Every seat
-//! is under it, since every seat can go quiet: the orchestrator of a goal still
-//! being planned, the reviewers a round is waiting on, and the author —
-//! which is the only one whose task carries a flag of its own next to the
+//! whatever that is today. Every seat is under it, since every seat can go
+//! quiet: the orchestrator of a goal still being planned, and the agent of
+//! the column a task is in — whose task carries a flag of its own next to the
 //! session's. An agent that dies while its work is still going says so too,
 //! rather than ending quietly.
 //!
@@ -35,9 +34,7 @@ use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing_subscriber::layer::SubscriberExt;
 
-use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
-};
+use ariadne_core::{Actor, AttentionReason, GoalStatus, Seat, SessionStatus, TaskStatus};
 // The watchdog's timeline and the orchestrator's budget come from the scheduler
 // rather than being written down again here, so that moving a threshold moves
 // the tests with it instead of leaving them backdating clocks past a number
@@ -47,11 +44,12 @@ use ariadne_daemon::scheduler::{
     QUIET_RELAUNCH_SECS as RELAUNCH_SECS, START_GRACE_SECS, SchedEvent,
 };
 use ariadne_daemon::timeouts::Timeouts;
+use ariadne_store::defaults::PULL_REQUEST_WORKFLOW;
 use ariadne_store::{AgentSession, Goal, NewTaskAgent, SessionFilter, Task};
 
 #[cfg(unix)]
 use common::sh;
-use common::{Harness, eventually, harness, test_pin};
+use common::{Harness, RUNS_OUT, eventually, harness, test_pin};
 
 /// The budget the goal's orchestrator spends: how many attempts starting one is
 /// worth, as the scheduler has it.
@@ -74,6 +72,10 @@ const LONG_WINDOW: Duration = Duration::from_secs(2);
 /// test about a pass that outlives its own window: launching an agent starts
 /// a process, which no machine does in ten milliseconds.
 const BRIEF_WINDOW: Duration = Duration::from_millis(10);
+/// How many thousand-wake batches a stream hands the scheduler before it
+/// gives up on seeing a window end under it: a bound on the test rather
+/// than a wait, since the stream stops the moment the window is seen to end.
+const STREAM_BATCHES: usize = 1_000;
 /// A tick for a test about what the liveness sweep concludes, which runs on
 /// the tick and on nothing else. Short so that the sweep comes round while
 /// the test watches, rather than five seconds into it; nothing the test waits
@@ -86,34 +88,50 @@ const DESCRIPTOR_RETRY_CHILD: &str = "ARIADNE_DESCRIPTOR_RETRY_CHILD";
 /// the daemon captures it behind `/v1/logs`. A `#[tokio::test]` runs its
 /// tasks on the thread it is on, so the scheduler's lines land here too.
 fn capture(h: &Harness) -> tracing::subscriber::DefaultGuard {
-    tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()))
+    tracing::subscriber::set_default(tracing_subscriber::registry().with(h.telemetry.log_layer()))
+}
+
+/// Every message the capture has recorded so far, rendered the way
+/// `GET /v1/logs` would. Flushes the telemetry pipeline first, so this is
+/// exact rather than a snapshot of whatever had already left the batch
+/// queue.
+async fn captured_messages(h: &Harness) -> Vec<String> {
+    h.telemetry.flush();
+    h.telemetry_store
+        .read_logs(Default::default())
+        .await
+        .unwrap()
+        .iter()
+        .map(|record| ariadne_api::logs::render_message(record.body.as_deref(), &record.attributes))
+        .collect()
 }
 
 /// How many passes the scheduler has run over what this session's wakes are
 /// about: what the folding of those wakes is measured by, read from the line
 /// `Scheduler::reconcile_session` logs.
-fn reconciles_of(h: &Harness, session: &AgentSession) -> usize {
-    h.logs
-        .snapshot()
+async fn reconciles_of(h: &Harness, session: &AgentSession) -> usize {
+    captured_messages(h)
+        .await
         .iter()
-        .filter(|line| {
-            line.message
-                .starts_with("reconciling what a session's wake is about")
-                && line.message.contains(&session.id)
+        .filter(|message| {
+            message.starts_with("reconciling what a session's wake is about")
+                && message.contains(&session.id)
         })
         .count()
 }
 
-/// How many attempts at starting this task's reviewer the scheduler has made:
-/// what a retry held off by the descriptor delay is measured by, read from the
-/// line `Scheduler::reconcile_task` logs before each attempt. It covers a
-/// resume of a row that is already there as well as a spawn that writes one.
-fn reviewer_starts_of(h: &Harness, task: &Task) -> usize {
-    h.logs
-        .snapshot()
+/// How many attempts at starting this task's column agent the scheduler has
+/// made: what a retry held off by the descriptor delay is measured by, read
+/// from the line `Scheduler::reconcile_steps` logs before each attempt. It
+/// covers a resume of a row that is already there as well as a spawn that
+/// writes one.
+async fn agent_starts_of(h: &Harness, task: &Task) -> usize {
+    captured_messages(h)
+        .await
         .iter()
-        .filter(|line| {
-            line.message.starts_with("starting reviewer") && line.message.contains(&task.id)
+        .filter(|message| {
+            message.starts_with("the column has no live agent, starting one")
+                && message.contains(&task.id)
         })
         .count()
 }
@@ -127,8 +145,10 @@ struct World {
     h: Harness,
     goal: Goal,
     task: Task,
-    author: String,
-    reviewer: String,
+    /// The agent of the task's first column, `develop`.
+    develop: String,
+    /// The agent of its second column, `review`.
+    review: String,
 }
 
 impl Deref for World {
@@ -141,13 +161,21 @@ impl Deref for World {
 impl World {
     /// An active goal with one task on it.
     async fn active() -> World {
-        World::build(harness().await, 1).await
+        World::build(harness().await).await
     }
 
-    /// The same with two reviewers on the task: a round one verdict does not
-    /// close is where a reviewer sits with its work done.
-    async fn reviewed_by(reviewers: usize) -> World {
-        World::build(harness().await, reviewers).await
+    /// An active goal on the `develop-review-pr` workflow, whose last column
+    /// keeps the request the task opens.
+    async fn on_pull_requests() -> World {
+        let h = harness().await;
+        let cast = h.active_cast_running(Some(PULL_REQUEST_WORKFLOW)).await;
+        World {
+            develop: cast.develop().id.clone(),
+            review: cast.review().id.clone(),
+            h,
+            goal: cast.goal,
+            task: cast.task,
+        }
     }
 
     /// An active goal whose scheduler reconciles everything once, at the
@@ -163,7 +191,7 @@ impl World {
                 ..Timeouts::default()
             })
             .await;
-        World::build(h, 1).await
+        World::build(h).await
     }
 
     /// A daemon that cannot start anything: the registry's agent names no
@@ -175,19 +203,31 @@ impl World {
     /// replacement can happen, and the one about the replacement runs where it
     /// can.
     async fn cannot_spawn() -> World {
-        World::build(harness().cannot_spawn().await, 1).await
+        World::build(harness().cannot_spawn().await).await
     }
 
-    async fn build(h: Harness, reviewers: usize) -> World {
-        let cast = h.cast_reviewed_by(reviewers).await;
+    async fn build(h: Harness) -> World {
+        let cast = h.cast().await;
         let goal = h.activate(&cast.goal).await;
         World {
+            develop: cast.develop().id.clone(),
+            review: cast.review().id.clone(),
             h,
             goal,
             task: cast.task,
-            author: cast.author.id,
-            reviewer: cast.reviewer.id,
         }
+    }
+
+    /// The agent of column `step` on the world's task.
+    async fn agent_of(&self, step: &str) -> String {
+        self.store
+            .list_task_agents(&self.task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.step == step)
+            .unwrap_or_else(|| panic!("the task has no agent on column {step}"))
+            .id
     }
 
     /// Another task on the same goal, with the same agents behind it.
@@ -205,25 +245,57 @@ impl World {
                 title: title.into(),
                 description: "do things".into(),
                 agents: vec![
-                    NewTaskAgent::new(Seat::Author, ["coding"], test_pin()),
-                    NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
+                    NewTaskAgent::new("develop", ["coding"], test_pin()),
+                    NewTaskAgent::new("review", ["code-review"], test_pin()),
+                    NewTaskAgent::new("merge", ["merge"], test_pin()),
                 ],
                 depends_on: vec![],
-                landing: None,
             })
             .await
             .unwrap()
     }
 
-    /// The author of a task walked to `status`, with a stub agent running
-    /// under it: the opening most of these tests share.
-    async fn author_on(&self, task: &Task, status: TaskStatus) -> AgentSession {
+    /// The develop agent of a task walked to `status`, with a stub agent
+    /// running under it: the opening most of these tests share.
+    async fn agent_on(&self, task: &Task, status: TaskStatus) -> AgentSession {
         self.advance(task, status).await;
+        if status == TaskStatus::InProgress {
+            // Briefed already: what the watchdog watches is the silence
+            // after the column's briefing, not the briefing itself.
+            self.briefed(task).await;
+        }
+        let develop = self.develop_of(task).await;
         let session = self
-            .session(&self.goal, Some(task), Seat::Author, &self.author)
+            .session(&self.goal, Some(task), Seat::Agent, &develop)
             .await;
         self.agent_runs(&session).await;
         session
+    }
+
+    /// The develop agent of a task whose column moved on to `review`: an
+    /// agent nothing is waiting on any more, with a stub running under it.
+    async fn agent_left_behind(&self, task: &Task) -> AgentSession {
+        self.advance_to(task, "review").await;
+        self.briefed(task).await;
+        let develop = self.develop_of(task).await;
+        let session = self
+            .session(&self.goal, Some(task), Seat::Agent, &develop)
+            .await;
+        self.agent_runs(&session).await;
+        session
+    }
+
+    /// The develop agent of `task`, which is this world's own on its own
+    /// task and another task's own on that one.
+    async fn develop_of(&self, task: &Task) -> String {
+        self.store
+            .list_task_agents(&task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.step == "develop")
+            .expect("a task has a develop column")
+            .id
     }
 
     /// The scheduler, started over everything seeded so far. Its first tick is
@@ -263,6 +335,16 @@ impl Sched {
             .unwrap();
     }
 
+    /// Report a launch ending after its successor has already started.
+    fn ended(&self, session: &AgentSession, launch_id: &str) {
+        self.0
+            .send(SchedEvent::SessionEnded {
+                session_id: session.id.clone(),
+                launch_id: launch_id.to_string(),
+            })
+            .unwrap();
+    }
+
     /// Block until every event sent so far has been reconciled to
     /// completion — see [`ariadne_daemon::scheduler::flush_for_test`].
     async fn flush(&self) {
@@ -270,9 +352,9 @@ impl Sched {
     }
 }
 
-/// The author's resume template, as its profile has it: the words the daemon
-/// nudges an idle author with.
-const RESUME: &str = r#"Continue "task" on"#;
+/// The agent's resume template, rendered for the world's task on its first
+/// column: the words the daemon nudges an idle column agent with.
+const RESUME: &str = "Not a new request: continue task at Develop. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
 
 // -- the timeline -----------------------------------------------------------
 
@@ -321,41 +403,43 @@ async fn an_idle_planning_orchestrator_is_never_nudged_or_flagged() {
     );
 }
 
-/// A reviewer the round is still waiting on is watched the same way.
+/// The agent of a later column is watched the same way once its column is
+/// the task's.
 #[tokio::test]
-async fn a_reviewer_idle_past_the_threshold_is_raised_on_its_session() {
+async fn a_review_column_agent_idle_past_the_threshold_is_raised_on_its_session() {
     let w = World::active().await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
+    w.advance_to(&w.task, "review").await;
     let session = w
-        .session(&w.goal, Some(&w.task), Seat::Reviewer, &w.reviewer)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.review)
         .await;
     w.agent_runs(&session).await;
     w.idle_for(&session, NUDGE_SECS + 60).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
-    eventually(TIMEOUT, "the reviewer to be nudged", async || {
+    eventually(TIMEOUT, "the review agent to be nudged", async || {
         w.nudged(&session).await
     })
     .await;
     w.idle_for(&session, FLAG_SECS + 60).await;
     sched.task(&w.task);
-    eventually(TIMEOUT, "the reviewer to be raised", async || {
+    eventually(TIMEOUT, "the review agent to be raised", async || {
         w.attention(&session).await == Some(AttentionReason::Stalled)
     })
     .await;
 }
 
-/// The author keeps its task-level flag, and now says it on its session too.
+/// The current column's agent keeps its task-level flag, and says it on its
+/// session too.
 #[tokio::test]
-async fn an_author_stall_flags_the_task_and_its_session() {
+async fn a_step_agent_stall_flags_the_task_and_its_session() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.idle_for(&session, NUDGE_SECS + 60).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
-    eventually(TIMEOUT, "the author to be nudged", async || {
+    eventually(TIMEOUT, "the agent to be nudged", async || {
         w.nudged(&session).await
     })
     .await;
@@ -378,7 +462,7 @@ async fn an_author_stall_flags_the_task_and_its_session() {
 #[tokio::test]
 async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.idle_for(&session, NUDGE_SECS + 60).await;
 
     let sched = w.scheduler();
@@ -392,7 +476,7 @@ async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
     // A second task's agent, quiet in the same way from now on: its nudge is
     // what says the passes the first one went through are over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.idle_for(&control, NUDGE_SECS + 60).await;
     // And the first one is as quiet as ever, still in the situation it was
     // nudged for.
@@ -423,13 +507,13 @@ async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
 #[tokio::test]
 async fn a_session_waiting_on_a_person_is_never_nudged() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.idle_for(&session, NUDGE_SECS + 60).await;
     w.raise(&session, AttentionReason::WaitingPermission).await;
     // A second task, idle in exactly the same way but blocked on nothing: its
     // nudge is what says the pass the blocked one went through is over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.idle_for(&control, NUDGE_SECS + 60).await;
 
     let sched = w.scheduler();
@@ -462,13 +546,27 @@ async fn a_session_waiting_on_a_person_is_never_nudged() {
 #[tokio::test]
 async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    // The agent holds the turn it is handed open until the test ends.
+    let hold = w.dir.path().join("held-turn");
+    let mut script = common::acp::script();
+    script["prompts"] =
+        serde_json::json!([{"wait_for": hold.display().to_string(), "updates": []}]);
+    w.agent.reprogram(script);
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.launcher
+        .acp
+        .send_prompt(&session.id, "Work on it.".into())
+        .unwrap();
+    eventually(TIMEOUT, "the agent inside its turn", async || {
+        hold.with_extension("reached").exists()
+    })
+    .await;
     w.launched_ago(&session, NUDGE_SECS + 60).await;
 
     // A second task's author, idle in the same silence: its nudge is what
     // says the pass the working one went through is over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.idle_for(&control, NUDGE_SECS + 60).await;
 
     let sched = w.scheduler();
@@ -481,14 +579,38 @@ async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
 
     assert_eq!(
         w.prompts_to(&session).len(),
-        0,
-        "nothing is sent to an agent that is working"
+        1,
+        "nothing more is sent to an agent that is working"
     );
     assert_eq!(
         w.attention(&session).await,
         None,
         "nor is it raised for the user this early"
     );
+}
+
+/// An agent that came up and was never handed a prompt reads `running` from
+/// its `session_start`, but it is between turns: past the first threshold it
+/// is nudged like any idle agent, rather than left until the relaunch.
+#[tokio::test]
+async fn an_agent_up_and_never_prompted_is_nudged() {
+    let w = World::active().await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.launched_ago(&session, NUDGE_SECS + 60).await;
+
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    eventually(TIMEOUT, "the agent to be nudged", async || {
+        !w.prompts_to(&session).is_empty()
+    })
+    .await;
+
+    assert!(
+        w.prompted(&session).contains(RESUME),
+        "{}",
+        w.prompted(&session)
+    );
+    assert_eq!(w.attention(&session).await, None);
 }
 
 /// An agent that reported an error is already asking for the user by name.
@@ -498,13 +620,13 @@ async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
 #[tokio::test]
 async fn an_agent_that_reported_an_error_is_left_alone() {
     let w = World::active().await;
-    let errored = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let errored = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.launched_ago(&errored, RELAUNCH_SECS + 60).await;
     w.raise(&errored, AttentionReason::AgentError).await;
     // And an agent whose silence nothing explains, whose flag says the passes
     // are over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.launched_ago(&control, FLAG_SECS + 60).await;
 
     let launched = w.launched_at(&errored).await;
@@ -585,9 +707,10 @@ async fn a_vanished_agent_with_work_still_active_is_flagged_disconnected() {
     }
 
     // And it stays raised: a session that ended needing attention keeps the
-    // reason until it is resumed or replaced.
+    // reason until it is resumed or replaced. Flushed rather than waited
+    // out, so the pass this send started is known done, not merely likely.
     sched.goal(&goal);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    sched.flush().await;
     assert_eq!(
         h.attention(&session).await,
         Some(AttentionReason::Disconnected),
@@ -595,17 +718,17 @@ async fn a_vanished_agent_with_work_still_active_is_flagged_disconnected() {
     );
 }
 
-/// The author of an active task with no live session is resumed blind, and
-/// when even that cannot get off the ground the session it tried to bring back
-/// is the thing the user has to look at.
+/// The current column's agent of an active task with no live session is
+/// resumed blind, and when even that cannot get off the ground the session it
+/// tried to bring back is the thing the user has to look at.
 #[tokio::test]
-async fn an_author_that_cannot_be_resumed_is_flagged_disconnected() {
+async fn a_step_agent_that_cannot_be_resumed_is_flagged_disconnected() {
     let w = World::cannot_spawn().await;
     w.advance(&w.task, TaskStatus::InProgress).await;
     // Ended, with no agent conversation to resume and no git repository to
     // spawn a fresh one in: the resume attempt cannot succeed.
     let session = w
-        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.develop)
         .await;
     w.set_status(&session, SessionStatus::Exited).await;
 
@@ -618,31 +741,21 @@ async fn an_author_that_cannot_be_resumed_is_flagged_disconnected() {
 }
 
 /// An agent going away when nobody is waiting on it is just a session
-/// ending: the author of a task under review is waiting on its reviewers and
-/// is woken by id when they answer, a reviewer that has voted is finished
-/// however long the round runs on, and a cancelled task is owed nothing at
-/// all. All three are retired, and none of them raised.
+/// ending: the develop agent of a task that moved on to its review column is
+/// finished however long that column runs on, and a cancelled task is owed
+/// nothing at all. Both are retired, and neither is raised.
 #[tokio::test]
 async fn a_vanished_agent_nobody_is_waiting_on_is_not_raised() {
-    // Two approvals wanted, one given: the round stays open around a reviewer
-    // that has nothing left to do, so the status is not what makes it quiet.
-    let w = World::reviewed_by(2).await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
-    // Entering review opens a round: the verdict belongs to that one.
-    let under_review = w.store.get_task(&w.task.id).await.unwrap();
-
-    let author = w
-        .session(&w.goal, Some(&under_review), Seat::Author, &w.author)
-        .await;
-    let voted = w
-        .session(&w.goal, Some(&under_review), Seat::Reviewer, &w.reviewer)
-        .await;
-    w.verdict_from(&under_review, &voted, MessageKind::Approve, "looks right")
+    let w = World::active().await;
+    w.advance_to(&w.task, "review").await;
+    let in_review = w.store.get_task(&w.task.id).await.unwrap();
+    let left_behind = w
+        .session(&w.goal, Some(&in_review), Seat::Agent, &w.develop)
         .await;
 
     let cancelled_task = w.extra_task("cancelled").await;
     let cancelled = w
-        .session(&w.goal, Some(&cancelled_task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&cancelled_task), Seat::Agent, &w.develop)
         .await;
     w.store
         .transition_task(
@@ -655,28 +768,31 @@ async fn a_vanished_agent_nobody_is_waiting_on_is_not_raised() {
         .await
         .unwrap();
 
-    // All three had launched and were running when their agents went: a session
+    // Both had launched and were running when their agents went: a session
     // still starting is inside the sweep's grace window, and left alone
     // whoever it belongs to.
-    for gone in [&author, &voted, &cancelled] {
+    for gone in [&left_behind, &cancelled] {
         w.launched_ago(gone, 60).await;
     }
 
-    let _sched = w.scheduler();
-    for gone in [&author, &voted, &cancelled] {
+    let sched = w.scheduler();
+    for gone in [&left_behind, &cancelled] {
         eventually(TIMEOUT, "the vanished session to be retired", async || {
             w.session_status(gone).await == SessionStatus::Exited
         })
         .await;
     }
-    // Whatever else that pass had to say about them would have been said now.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The retirement just observed is the sweep's own write; the rest of
+    // that same pass — whatever else it had to say about them — is only
+    // known done once a flush sent after it is answered.
+    sched.flush().await;
+    let task = w.store.get_task(&in_review.id).await.unwrap();
     assert_eq!(
-        w.store.get_task(&under_review.id).await.unwrap().status(),
-        TaskStatus::UnderReview,
-        "the round is still open, so the status is not what makes this quiet"
+        (task.status(), task.step.as_deref()),
+        (TaskStatus::InProgress, Some("review")),
+        "the task is still in its review column, so the status is not what makes this quiet"
     );
-    for gone in [&author, &voted, &cancelled] {
+    for gone in [&left_behind, &cancelled] {
         assert_eq!(
             w.attention(gone).await,
             None,
@@ -739,10 +855,7 @@ async fn an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row() {
     let goal = h.planning_goal().await;
     std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
     let session = h.orchestrator_session(&goal).await;
-    h.store
-        .set_session_internal_id(&session.id, "uuid-1234")
-        .await
-        .unwrap();
+    h.seed_conversation(&session.id, "uuid-1234").await;
     h.set_status(&session, SessionStatus::Exited).await;
     h.raise(&session, AttentionReason::Disconnected).await;
 
@@ -776,6 +889,127 @@ async fn an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row() {
     assert_eq!(h.attention(&session).await, None, "and the alarm is down");
 }
 
+/// A taskless orchestrator that goes quiet again after every relaunch has
+/// no task to fail instead — unlike a column's agent, whose task carries
+/// why it ended. This exhausted-relaunch decision is its own give-up,
+/// recorded the same way the spawn-retry path's own give-up already is
+/// (`Goal::orchestrator_given_up_at`), so `GET /v1/attention` still
+/// raises one item for it rather than leaving only the bare `stalled`
+/// flag the watchdog itself has stopped acting on.
+#[tokio::test]
+async fn an_orchestrator_that_wedges_after_every_relaunch_is_given_up_on_without_a_task_to_fail() {
+    let h = harness().await;
+    let goal = h.planning_goal().await;
+    std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
+    let session = h.orchestrator_session(&goal).await;
+    h.agent_runs(&session).await;
+
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
+    sched.goal(&goal);
+
+    // Two relaunches out of the budget of three, each one wedging again.
+    for relaunch in 1..=2 {
+        h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+        let launched = h.launched_at(&session).await;
+        sched.goal(&goal);
+        eventually(TIMEOUT, &format!("relaunch {relaunch}"), async || {
+            h.relaunched(&session, &launched).await
+        })
+        .await;
+    }
+    assert!(
+        h.store
+            .get_goal(&goal.id)
+            .await
+            .unwrap()
+            .orchestrator_given_up_at
+            .is_none(),
+        "not given up on while a relaunch is still being tried"
+    );
+
+    // And it wedges once more: the budget runs out.
+    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    sched.goal(&goal);
+
+    eventually(
+        TIMEOUT,
+        "the goal's orchestrator to be given up on",
+        async || {
+            h.store
+                .get_goal(&goal.id)
+                .await
+                .unwrap()
+                .orchestrator_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(
+        list.items[0].reason,
+        ariadne_api::attention::AttentionCause::Unknown
+    );
+    assert_eq!(list.items[0].affected[0].id, goal.id);
+    let goal_row = h.store.get_goal(&goal.id).await.unwrap();
+    assert!(
+        goal_row.orchestrator_given_up_wedged,
+        "the budget ran out on a relaunch, not a spawn that never started"
+    );
+    // The jump straight from the first pass to the relaunch threshold
+    // (`h.launched_ago(&session, RELAUNCH_SECS + 60)`) skips the flag
+    // threshold entirely, so the alarm session never actually carries
+    // `AttentionReason::Stalled` — the summary's cause must still read
+    // right, read from the persisted mark rather than inferred from that
+    // flag. Only two relaunches actually ran: the third call gave up in
+    // place of relaunching, per `SPAWN_RETRY_BUDGET - 1`.
+    assert!(
+        list.items[0]
+            .summary
+            .contains("stopped answering after 2 relaunches"),
+        "{}",
+        list.items[0].summary
+    );
+    let given_up_at = goal_row
+        .orchestrator_given_up_at
+        .expect("already given up on");
+
+    // The exhausted relaunch left the wedged session alive, still silent.
+    // A later pass finding that same, still-live session must not clear
+    // the give-up mark, re-set it with a new `since`, or otherwise change
+    // the item a client already has: no genuine recovery happened.
+    // Flushed, not merely slept past: this waits for the two passes just
+    // sent to have actually been reconciled to completion before the
+    // assertion below reads their effect.
+    sched.goal(&goal);
+    sched.flush().await;
+    sched.goal(&goal);
+    sched.flush().await;
+
+    assert_eq!(
+        h.store
+            .get_goal(&goal.id)
+            .await
+            .unwrap()
+            .orchestrator_given_up_at,
+        Some(given_up_at.clone()),
+        "the give-up mark and its since must survive ordinary reconciliation \
+         of the same wedged session"
+    );
+    let still: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(
+        still.items, list.items,
+        "the item must not flap across later passes"
+    );
+    assert_eq!(still.complete, list.complete);
+}
+
 /// Resuming an agent is the recovery: whatever it needed the user for goes
 /// with the relaunch, so a session that came back drops off the attention
 /// list.
@@ -783,15 +1017,14 @@ async fn an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row() {
 async fn resuming_a_session_clears_its_attention() {
     let w = World::active().await;
     let session = w
-        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.develop)
         .await;
     w.make_resumable(&w.task, &session).await;
     w.set_status(&session, SessionStatus::Exited).await;
     w.raise(&session, AttentionReason::Disconnected).await;
 
     let resumed = w
-        .launcher
-        .resume_author(&w.task.id, "Continue where you left off.")
+        .resume_agent(&w.task, "develop", "Continue where you left off.")
         .await
         .unwrap();
 
@@ -806,14 +1039,14 @@ async fn resuming_a_session_clears_its_attention() {
 
 /// A flag raised by an agent event is only ever taken down by another one, and
 /// a session waiting on an answer reports nothing: the sweep is what lets go of
-/// an author that was blocked on a permission prompt when its task moved on
-/// to its reviewers — and only then. An agent the work is still waiting on
+/// an agent that was blocked on a permission prompt when its task moved on
+/// to its next column — and only then. An agent the work is still waiting on
 /// keeps its flag, down to the moment it went up, since how long it has been
 /// stuck is the half of it the user acts on.
 #[tokio::test]
 async fn the_sweep_lets_go_of_a_blocked_agent_only_once_its_work_moved_on() {
     let w = World::cannot_spawn().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.raise(&session, AttentionReason::WaitingPermission).await;
     let raised_at = w
         .store
@@ -822,17 +1055,17 @@ async fn the_sweep_lets_go_of_a_blocked_agent_only_once_its_work_moved_on() {
         .unwrap()
         .attention_since;
 
-    // A second author, blocked in exactly the same way but on a task that
-    // has gone to its reviewers: whatever the prompt was about, it got past it
-    // and sent the task for review, and nothing more will ever be reported on
-    // that session.
-    let handed_over = w.extra_task("under review").await;
-    let control = w.author_on(&handed_over, TaskStatus::UnderReview).await;
+    // A second develop agent, blocked in exactly the same way but on a task
+    // that has gone to its review column: whatever the prompt was about, it
+    // got past it and completed its step, and nothing more will ever be
+    // reported on that session.
+    let handed_over = w.extra_task("in review").await;
+    let control = w.agent_left_behind(&handed_over).await;
     w.raise(&control, AttentionReason::WaitingPermission).await;
 
     // The sweep runs on the tick, and the first tick is immediate.
     let _sched = w.scheduler();
-    eventually(TIMEOUT, "the finished author to be let go", async || {
+    eventually(TIMEOUT, "the finished agent to be let go", async || {
         w.attention(&control).await.is_none()
     })
     .await;
@@ -882,14 +1115,12 @@ async fn a_prompt_flag_does_not_outlive_the_session_it_was_raised_on() {
     let goal = h.activate(&cast.goal).await;
     h.advance(&cast.task, TaskStatus::InProgress).await;
     let author_session = h
-        .session(&goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .session(&goal, Some(&cast.task), Seat::Agent, &cast.develop().id)
         .await;
-    let review = h
-        .task_on(&goal, &cast.repo, "under review", 1, test_pin())
-        .await;
-    h.advance(&review, TaskStatus::UnderReview).await;
+    let review = h.task_on(&goal, &cast.repo, "in review", test_pin()).await;
+    h.advance_to(&review, "review").await;
     let reviewer_session = h
-        .session(&goal, Some(&review), Seat::Reviewer, &cast.reviewer.id)
+        .session(&goal, Some(&review), Seat::Agent, &cast.review().id)
         .await;
 
     assert_eq!(
@@ -956,13 +1187,13 @@ async fn a_stale_prompt_flag_from_before_the_daemon_started_is_swept_up() {
 async fn a_starting_session_is_swept_only_once_its_grace_window_has_run_out() {
     let w = World::cannot_spawn().await;
     w.advance(&w.task, TaskStatus::InProgress).await;
-    // Two authors with no agent between them, and nothing but the age of
-    // their start to tell them apart.
+    // Two sessions of the column's agent with no process between them, and
+    // nothing but the age of their start to tell them apart.
     let coming_up = w
-        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.develop)
         .await;
     let never_came_up = w
-        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.develop)
         .await;
     w.starting_for(&never_came_up, START_GRACE_SECS + 60).await;
 
@@ -1061,11 +1292,12 @@ async fn a_task_that_could_never_be_started_fails_with_the_reason_on_it() {
     .await;
 
     // Failed once, however many passes ask about a task that has already
-    // ended.
+    // ended. Flushed rather than waited out, so every one of the sends
+    // above is known reconciled before the count below is read.
     for _ in 0..3 {
         sched.task(&w.task);
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    sched.flush().await;
     let ended: Vec<_> = w
         .store
         .list_task_transitions(&w.task.id)
@@ -1122,8 +1354,8 @@ async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
         })
         .await;
     let repo = h.git_repo("repo");
-    let w = World::build(h, 1).await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
+    let w = World::build(h).await;
+    w.advance_to(&w.task, "review").await;
     sh(&repo, &format!("git branch {}", w.task.branch));
 
     let original = getrlimit(Resource::Nofile);
@@ -1146,7 +1378,7 @@ async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
     sched.flush().await;
     // What the shortage itself bought: one attempt, or none where it bit
     // before the attempt was made.
-    let spent = reviewer_starts_of(&w, &w.task);
+    let spent = agent_starts_of(&w, &w.task).await;
     assert!(spent <= 1, "the shortage spent {spent} attempts");
     drop(held);
     setrlimit(Resource::Nofile, original).unwrap();
@@ -1165,43 +1397,40 @@ async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
         .await
         .unwrap()
         .into_iter()
-        .filter(|session| session.seat() == Some(Seat::Reviewer))
+        .filter(|session| session.task_agent_id.as_deref() == Some(w.review.as_str()))
         .collect();
     assert_eq!(
-        reviewer_starts_of(&w, &w.task),
+        agent_starts_of(&w, &w.task).await,
         spent,
         "an adjacent wake retried the reviewer: {reviewers:#?}"
     );
     assert_eq!(
         w.store.get_task(&w.task.id).await.unwrap().status(),
-        TaskStatus::UnderReview,
+        TaskStatus::InProgress,
         "adjacent wakes spent the retry budget"
     );
 }
 
 /// An agent that was heard from once and then went away is not an agent that
 /// runs. Its old word used to give the task's budget back on every pass, so a
-/// reviewer that could not be started again — a worktree git would not move
-/// — was tried every tick for ever, the count going back to zero between
-/// attempts, and the task never failed. Only a live agent gives the budget
-/// back.
+/// column's agent that could not be started again — a worktree git would not
+/// move — was tried every tick for ever, the count going back to zero
+/// between attempts, and the task never failed. Only a live agent gives the
+/// budget back.
 #[tokio::test]
-async fn a_reviewer_heard_from_once_that_cannot_be_started_again_fails_its_task() {
+async fn a_step_agent_heard_from_once_that_cannot_be_started_again_fails_its_task() {
     let w = World::active().await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
+    w.advance_to(&w.task, "review").await;
     let reviewer = w
-        .session(&w.goal, Some(&w.task), Seat::Reviewer, &w.reviewer)
+        .session(&w.goal, Some(&w.task), Seat::Agent, &w.review)
         .await;
-    w.store
-        .set_session_internal_id(&reviewer.id, "uuid-1234")
-        .await
-        .unwrap();
+    w.seed_conversation(&reviewer.id, "uuid-1234").await;
     w.launched_ago(&reviewer, 60).await;
     w.store.touch_session(&reviewer.id).await.unwrap();
     w.set_status(&reviewer, SessionStatus::Exited).await;
 
-    // The task branch has no commits, so every resume of the reviewer fails
-    // before its agent is launched.
+    // The task branch has no commits, so every resume of the agent fails
+    // before it is launched.
     let sched = w.scheduler();
     eventually(TIMEOUT, "the retry budget to run out", async || {
         sched.task(&w.task);
@@ -1276,11 +1505,12 @@ async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
         "and no orchestrator left running: {rows:?}"
     );
 
-    // And the passes after it try nothing at all: no new row.
+    // And the passes after it try nothing at all: no new row. Flushed
+    // rather than waited out, so every send above is known reconciled.
     for _ in 0..3 {
         sched.goal(&goal);
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    sched.flush().await;
     assert_eq!(
         orchestrators(&h, &goal).await.len(),
         rows.len(),
@@ -1384,11 +1614,12 @@ async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
 
     // And nothing has been started again: given up on, rather than between
     // two launches. Three more passes over the same goal is what "a tick
-    // later" needs proving, not five more seconds of wall time.
+    // later" needs proving, and a flush sent after them is what proves they
+    // ran, rather than a wait that only bets they were fast enough.
     for _ in 0..3 {
         sched.goal(&goal);
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    sched.flush().await;
     let after = orchestrators(&h, &goal).await;
     assert_eq!(
         after.len(),
@@ -1400,6 +1631,19 @@ async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
         1,
         "and the alarm the user answers stands: {after:?}"
     );
+
+    // A taskless orchestrator has no failed task to be named by: this is
+    // its only route onto `GET /v1/attention`, through the scheduler's own
+    // give-up decision (`Goal::orchestrator_given_up_at`) rather than the
+    // `disconnected` flag above, which a mere crash also raises and which
+    // the sweep could still resolve on its own.
+    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(
+        list.items[0].reason,
+        ariadne_api::attention::AttentionCause::Unknown
+    );
+    assert_eq!(list.items[0].affected[0].id, goal.id);
 }
 
 /// How many of these rows are asking for the user.
@@ -1416,10 +1660,19 @@ fn alarms(rows: &[AgentSession]) -> usize {
 /// which is a different thing that has already been ruled out.
 #[tokio::test]
 async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it() {
-    let h = harness().dying_agent().await;
+    let h = harness()
+        .dying_agent()
+        .timeouts(Timeouts {
+            full_reconcile: NO_TICK,
+            session_wake: NO_TICK,
+            ..Timeouts::default()
+        })
+        .await;
     // A real repository: an author is launched in a worktree of it, and the
     // launch has to work for the death that follows to be the thing under
-    // test.
+    // test. Neither the tick nor the end of a wake window comes round: every
+    // death after the first is noticed through the wake its agent's end
+    // sends once the runtime has let it go, or not at all.
     h.git_repo("repo");
     let cast = h.cast().await;
     let goal = h.activate(&cast.goal).await;
@@ -1439,6 +1692,19 @@ async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_i
     )
     .await;
 
+    eventually(TIMEOUT, "the ended sessions to be retired", async || {
+        h.store
+            .list_sessions(SessionFilter {
+                task_id: Some(cast.task.id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty()
+    })
+    .await;
+
     let ended: Vec<_> = h
         .store
         .list_task_transitions(&cast.task.id)
@@ -1453,6 +1719,33 @@ async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_i
         Some("its agent stopped as soon as it started"),
         "the task does not say what stopped it"
     );
+}
+
+/// An end event belongs to one launch, not to every later launch in the
+/// session's row. A replacement can start before the scheduler dequeues the
+/// old launch's end event.
+#[tokio::test]
+async fn an_ended_launch_does_not_retire_its_successor() {
+    let w = World::active().await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.briefed(&w.task).await;
+    let develop = w.develop_of(&w.task).await;
+    let session = w
+        .session(&w.goal, Some(&w.task), Seat::Agent, &develop)
+        .await;
+    let ended_launch = "ended-launch".to_string();
+    w.agent_runs(&session).await;
+    let successor = w.launch_id(&session).await.unwrap();
+    assert_ne!(successor, ended_launch, "the successor has its own launch");
+
+    let sched = w.scheduler();
+    sched.ended(&session, &ended_launch);
+    sched.flush().await;
+
+    let row = w.store.get_session(&session.id).await.unwrap();
+    assert_eq!(row.status(), SessionStatus::Running);
+    assert_eq!(row.launch_id.as_deref(), Some(successor.as_str()));
+    assert!(w.launcher.acp.is_running(&session.id));
 }
 
 /// A goal the user cancelled takes its tasks with it, and every one of them
@@ -1498,22 +1791,17 @@ async fn a_goal_whose_tasks_all_landed_wakes_its_orchestrator() {
     let orchestrator = w.orchestrator_session(&w.goal).await;
     w.agent_runs(&orchestrator).await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
-    for (status, actor) in [
-        (TaskStatus::Approved, Actor::Daemon),
-        (TaskStatus::Finished, Actor::Author),
-    ] {
-        w.store
-            .transition_task(
-                &w.task.id,
-                status,
-                actor,
-                None,
-                (status == TaskStatus::Finished).then_some("cafe1234"),
-            )
-            .await
-            .unwrap();
-    }
+    w.advance_to(&w.task, "merge").await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Finished,
+            Actor::Agent,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
 
     let sched = w.scheduler();
     for _ in 0..3 {
@@ -1541,7 +1829,7 @@ async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries() {
     let third = w.extra_task("third").await;
     let mut sessions = Vec::new();
     for task in [&w.task, &second, &third] {
-        let session = w.author_on(task, TaskStatus::InProgress).await;
+        let session = w.agent_on(task, TaskStatus::InProgress).await;
         w.idle_for(&session, NUDGE_SECS + 60).await;
         sessions.push(session);
     }
@@ -1566,16 +1854,21 @@ async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries() {
 #[tokio::test]
 async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.make_resumable(&w.task, &session).await;
     w.launched_ago(&session, FLAG_SECS + 60).await;
     let launched = w.launched_at(&session).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
-    eventually(TIMEOUT, "the wedged agent to be raised", async || {
-        w.attention(&session).await == Some(AttentionReason::Stalled)
-    })
+    eventually(
+        TIMEOUT,
+        "the wedged agent and its task to be raised",
+        async || {
+            w.attention(&session).await == Some(AttentionReason::Stalled)
+                && w.store.get_task(&w.task.id).await.unwrap().is_stalled()
+        },
+    )
     .await;
     assert!(
         w.store.get_task(&w.task.id).await.unwrap().is_stalled(),
@@ -1620,12 +1913,18 @@ async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
         Some("uuid-1234"),
         "the relaunch resumes the conversation it was having"
     );
-    let resume = launch.initial_prompt.unwrap_or_default();
-    assert!(
-        resume.contains(&w.task.branch) && resume.contains(RESUME),
-        "and carries the resume its seat is picked up with, rendered for this \
-         task: {resume}"
-    );
+    // The launch itself carries no prompt: the resume its seat is picked up
+    // with, rendered for this task, is handed to the agent once it is up.
+    eventually(
+        TIMEOUT,
+        "the relaunched agent to be told to continue",
+        async || {
+            w.prompts_to(&session)
+                .iter()
+                .any(|prompt| prompt.contains(RESUME))
+        },
+    )
+    .await;
 }
 
 /// A turn that takes all afternoon is not a stall. What the thresholds
@@ -1634,7 +1933,7 @@ async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
 #[tokio::test]
 async fn a_running_agent_that_keeps_reporting_is_left_alone() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.make_resumable(&w.task, &session).await;
     // Launched long before both thresholds, and still saying so.
     w.launched_ago(&session, RELAUNCH_SECS * 2).await;
@@ -1644,7 +1943,7 @@ async fn a_running_agent_that_keeps_reporting_is_left_alone() {
     // A second task whose author really has gone quiet: what it gets says
     // the pass the working one went through is over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.launched_ago(&control, FLAG_SECS + 60).await;
 
     let sched = w.scheduler();
@@ -1677,19 +1976,19 @@ async fn a_running_agent_that_keeps_reporting_is_left_alone() {
 #[tokio::test]
 async fn a_running_agent_waiting_on_a_person_is_never_relaunched() {
     let w = World::active().await;
-    let blocked = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let blocked = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.make_resumable(&w.task, &blocked).await;
     w.launched_ago(&blocked, RELAUNCH_SECS + 60).await;
     w.raise(&blocked, AttentionReason::WaitingPermission).await;
     // The other half of the same rule, on a task of its own: an agent that
     // asked the user a question is waiting on the answer, not stuck.
     let asked_task = w.extra_task("asked").await;
-    let asked = w.author_on(&asked_task, TaskStatus::InProgress).await;
+    let asked = w.agent_on(&asked_task, TaskStatus::InProgress).await;
     w.launched_ago(&asked, RELAUNCH_SECS + 60).await;
     w.raise(&asked, AttentionReason::WaitingInput).await;
     // And a third that is only wedged, whose relaunch says the passes are over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.launched_ago(&control, FLAG_SECS + 60).await;
 
     let launched = [w.launched_at(&blocked).await, w.launched_at(&asked).await];
@@ -1726,7 +2025,7 @@ async fn a_running_agent_waiting_on_a_person_is_never_relaunched() {
 #[tokio::test]
 async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.make_resumable(&w.task, &session).await;
 
     let sched = w.scheduler();
@@ -1795,17 +2094,15 @@ async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
     std::fs::create_dir_all(w.dir.path().join("repo")).unwrap();
     let orchestrator = w.orchestrator_session(&w.goal).await;
     w.agent_runs(&orchestrator).await;
-    w.store
-        .set_session_internal_id(&orchestrator.id, "uuid-orchestrator")
-        .await
-        .unwrap();
+    w.seed_conversation(&orchestrator.id, "uuid-orchestrator")
+        .await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;
 
     let sched = w.scheduler();
     sched.goal(&w.goal);
-    // Whatever the passes and the sweep beside them had to say would have
-    // been said by now.
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    // Whatever that pass had to say is known said once a flush sent after
+    // it is answered, rather than guessed from how long it usually takes.
+    sched.flush().await;
     assert_eq!(
         w.session_status(&orchestrator).await,
         SessionStatus::Idle,
@@ -1831,14 +2128,14 @@ async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
 #[tokio::test]
 async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() {
     let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
     w.make_resumable(&w.task, &session).await;
     w.launched_ago(&session, FLAG_SECS + 60).await;
     w.raise(&session, AttentionReason::WaitingUser).await;
     // A second task's agent, wedged in the same way with nothing raised on
     // it: its flag is what says the pass the first one went through is over.
     let control_task = w.extra_task("control").await;
-    let control = w.author_on(&control_task, TaskStatus::InProgress).await;
+    let control = w.agent_on(&control_task, TaskStatus::InProgress).await;
     w.launched_ago(&control, FLAG_SECS + 60).await;
 
     let sched = w.scheduler();
@@ -1881,43 +2178,27 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
     );
 }
 
-/// And the flag comes back up for an author that was never carrying it, on
-/// the one thing a restart cannot settle: a task published as a request.
+/// A task with a request open raises no attention, and a resumed author
+/// carries none either, while nothing reported the request ready.
 ///
-/// The chain this is about is the whole of an approved task's ending. The
-/// author opens the request, tells the user it is theirs to merge, and stops
-/// — it has nothing left to do until they do. Its agent going away is read as
-/// a disconnect, since landing the change is still the author's turn, and the
-/// resume that answers the disconnect wipes the row clean. Nothing in any of
-/// that merged anything, so the task must still say who it is waiting for
-/// afterwards.
+/// The `pr` column's agent keeps the request until a human merges it (030):
+/// the open request alone is no stretch where the user is owed anything. A
+/// task on that column whose agent went away is read as a disconnect the way
+/// any other is, and the resume that answers it puts the agent back on the
+/// task with nothing carried forward.
 #[tokio::test]
-async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_resumed() {
-    let w = World::active().await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
-    // Live in the database with no agent process under it: the agent that
-    // stopped.
-    let session = w
-        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
-        .await;
-    w.make_resumable(&w.task, &session).await;
-    w.store
-        .transition_task(&w.task.id, TaskStatus::Approved, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    w.store
-        .set_task_pull_request(&w.task.id, "https://example.test/pull/1")
-        .await
-        .unwrap();
+async fn an_open_pull_request_raises_no_attention() {
+    let w = World::on_pull_requests().await;
+    let (session, _) = on_the_pr_column_with_a_kept_request(&w).await;
 
     // One pass does all of it: the sweep retires the vanished agent and raises
-    // the disconnect, and the task's own reconciliation puts an author back
+    // the disconnect, and the task's own reconciliation puts the agent back
     // on it.
     let sched = w.scheduler();
     sched.task(&w.task);
     eventually(
         TIMEOUT,
-        "the author to be put back on the task",
+        "the agent to be put back on the task",
         async || {
             // Launched, heard from, and settled: the row it comes back in is
             // the one that went down, since the conversation was there to
@@ -1926,20 +2207,136 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
         },
     )
     .await;
+    // Flushed rather than waited out, so the second pass over an already
+    // settled task is known to have raised nothing, not merely likely to.
     sched.task(&w.task);
-    eventually(
-        TIMEOUT,
-        "the request to still be the user's to merge",
-        async || w.attention(&session).await == Some(AttentionReason::WaitingUser),
-    )
-    .await;
+    sched.flush().await;
+    assert_eq!(
+        w.attention(&session).await,
+        None,
+        "an open request raises nothing for the daemon to keep saying"
+    );
     assert!(
         !w.store.get_task(&w.task.id).await.unwrap().is_stalled(),
-        "and what the user is owed is not the task stalling"
+        "and the open request is not the task stalling either"
     );
 }
 
-/// A task that failed is a decision no author can make: retry it, rewrite it,
+/// A task on its `pr` column with the request in the ledger, kept by that
+/// column's agent, its repository's integration on: an agent whose process
+/// went away, and the row of its open request. Answers the agent's session
+/// and the row's id.
+async fn on_the_pr_column_with_a_kept_request(w: &World) -> (AgentSession, String) {
+    w.advance_to(&w.task, "pr").await;
+    w.briefed(&w.task).await;
+    let keeper = w.agent_of("pr").await;
+    let session = w
+        .session(&w.goal, Some(&w.task), Seat::Agent, &keeper)
+        .await;
+    w.make_resumable(&w.task, &session).await;
+    const URL: &str = "https://github.com/acme/widgets/pull/1";
+    w.store
+        .set_task_pull_request(&w.task.id, URL)
+        .await
+        .unwrap();
+    w.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: w.task.repo_id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = w
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: w.task.repo_id.clone(),
+            number: 1,
+            url: URL.into(),
+            role: "author".into(),
+            origin_task_id: Some(w.task.id.clone()),
+        })
+        .await
+        .unwrap();
+    // Quiet: nothing on it is news the agent was not told.
+    crate::common::forge::seed_live(&w.h, &pull, "me", &w.task.branch, "abc", false);
+    (session, pull.id)
+}
+
+/// A `pr` agent whose open request last read ready to merge raises no
+/// `waiting_user` of its own when its agent comes back (031): the bare
+/// `ready` flag says nothing of a current approval, an open comment, a
+/// failing check or an unconfirmed mergeability, so it is the
+/// `pull_request` attention producer's own call, read fresh off the
+/// forge every time, rather than this session's.
+#[tokio::test]
+async fn a_pr_agent_whose_open_request_reads_ready_raises_no_waiting_user_on_its_restart() {
+    let w = World::on_pull_requests().await;
+    let (session, pull) = on_the_pr_column_with_a_kept_request(&w).await;
+    w.store
+        .set_pull_request_ready(&pull, true, Some("abc"))
+        .await
+        .unwrap();
+
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    eventually(
+        TIMEOUT,
+        "the agent to be put back on the task",
+        async || w.relaunched(&session, &None).await,
+    )
+    .await;
+    assert_eq!(w.attention(&session).await, None);
+}
+
+/// An idle `pr` agent whose request is open waits on the forge (030 rule 10,
+/// 009 rule 41): however long it sits idle it is never nudged and never
+/// relaunched.
+#[tokio::test]
+async fn an_idle_pr_agent_keeping_its_open_request_is_never_nudged() {
+    let w = World::on_pull_requests().await;
+    let (session, _) = on_the_pr_column_with_a_kept_request(&w).await;
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    eventually(
+        TIMEOUT,
+        "the agent to be put back on the task",
+        async || w.relaunched(&session, &None).await,
+    )
+    .await;
+    eventually(TIMEOUT, "the agent's turn to end", async || {
+        w.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let told = w.prompts_to(&session).len();
+
+    // Silent long past the nudge since its launch: what an agent waiting on
+    // the forge looks like.
+    w.idle_for(&session, NUDGE_SECS + 60).await;
+    w.backdate(&["launched_at"], &session, NUDGE_SECS + 60)
+        .await;
+    let launched = w.launched_at(&session).await;
+    // Flushed after each send, so both passes over the idle agent are known
+    // to have nudged, relaunched and flagged nothing, not merely likely to.
+    sched.task(&w.task);
+    sched.flush().await;
+    sched.task(&w.task);
+    sched.flush().await;
+    assert_eq!(
+        w.prompts_to(&session).len(),
+        told,
+        "an idle agent on an open request is not nudged past {NUDGE_SECS} s"
+    );
+    assert_eq!(w.launched_at(&session).await, launched, "nor relaunched");
+    assert_eq!(w.attention(&session).await, None, "nor flagged stalled");
+}
+
+/// A task that failed is a decision no column's agent can make: retry it, rewrite it,
 /// staff it differently or give it up. So the daemon wakes the orchestrator,
 /// the agent the user is also talking to, and says which task it is.
 ///
@@ -1960,33 +2357,198 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
         .transition_task(
             &w.task.id,
             TaskStatus::Failed,
-            Actor::Author,
+            Actor::Agent,
             Some("the crate the task names was deleted upstream"),
             None,
         )
         .await
         .unwrap();
 
+    sched.goal(&w.goal);
     eventually(TIMEOUT, "the orchestrator to be woken", async || {
-        sched.goal(&w.goal);
         w.prompted(&orchestrator).contains("failed")
     })
     .await;
     let woken = w.prompted(&orchestrator);
     assert!(woken.contains(&w.task.title), "{woken}");
     assert!(woken.contains("`list_tasks`"), "{woken}");
+    assert_eq!(
+        woken.matches("`list_tasks`").count(),
+        1,
+        "exactly one delivery, the moment the orchestrator could hear it"
+    );
 
     // Every pass after it says the same thing, so nothing is said again.
-    let said = w.prompted(&orchestrator).matches("`list_tasks`").count();
+    // Flushed after each send, so every pass is known reconciled before the
+    // count below is read, rather than counted against a baseline an
+    // `eventually` loop could have already doubled before this point.
     for _ in 0..3 {
         sched.goal(&w.goal);
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        sched.flush().await;
     }
     assert_eq!(
         w.prompted(&orchestrator).matches("`list_tasks`").count(),
-        said,
+        1,
         "the orchestrator was woken again for the same situation"
     );
+}
+
+/// Editing a confirmed, still-failed task's description must not erase its
+/// recovery item: `Task::updated_at` moves on the edit
+/// (`Store::update_task`), but the confirmation pair this scheduler writes
+/// and `attention::recovery` reads is keyed on the task's failed
+/// *transition* id, which the edit does not touch.
+#[tokio::test]
+async fn editing_a_failed_tasks_description_does_not_lose_its_recovery_item() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some("the crate the task names was deleted upstream"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let sched = w.scheduler();
+    eventually(TIMEOUT, "the orchestrator to be woken", async || {
+        sched.goal(&w.goal);
+        w.prompted(&orchestrator).contains("failed")
+    })
+    .await;
+    let transition_id = w
+        .store
+        .latest_transition_to(&w.task.id, TaskStatus::Failed)
+        .await
+        .unwrap()
+        .expect("a failed task has a transition to failed on record");
+    w.store
+        .confirm_goal_orchestrator_answered(&w.goal.id, &[(w.task.id.clone(), transition_id)])
+        .await
+        .unwrap();
+
+    let before: ariadne_api::attention::AttentionListDto = w.get("/v1/attention").await;
+    assert_eq!(before.items.len(), 1, "{:?}", before.items);
+
+    w.store
+        .update_task(
+            &w.task.id,
+            ariadne_store::TaskUpdate {
+                agents: None,
+                title: None,
+                description: Some("a rewritten description".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+    let after: ariadne_api::attention::AttentionListDto = w.get("/v1/attention").await;
+    assert_eq!(
+        after.items.len(),
+        1,
+        "a metadata edit on the same failure must not remove its item: {:?}",
+        after.items
+    );
+    assert_eq!(after.items[0].id, before.items[0].id);
+    assert_eq!(after.items[0].reason, before.items[0].reason);
+    assert_eq!(after.items[0].affected, before.items[0].affected);
+    assert_eq!(
+        after.items[0].since, before.items[0].since,
+        "the edit must not reset the item's reported waiting time either"
+    );
+}
+
+/// A task retried and failed again before the scheduler ever reconciled the
+/// brief non-failed window between the two failures sees the same
+/// `goal_attention` situation text both times — title, id and `failed`
+/// status, nothing else — so the in-memory `goal_told` cache alone cannot
+/// tell the two failures apart. Only the persisted, transition-id-keyed
+/// confirmation can, and it must: the second failure is unconfirmed, so the
+/// orchestrator is told of it too.
+#[tokio::test]
+async fn a_second_failure_missed_between_reconciles_is_still_told() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    let reason = "the tests did not pass";
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some(reason),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let sched = w.scheduler();
+    eventually(TIMEOUT, "the orchestrator to be woken", async || {
+        sched.goal(&w.goal);
+        w.prompted(&orchestrator).contains("failed")
+    })
+    .await;
+    let told_once = w.prompted(&orchestrator).matches("failed").count();
+    let first_transition = w
+        .store
+        .latest_transition_to(&w.task.id, TaskStatus::Failed)
+        .await
+        .unwrap()
+        .expect("a failed task has a transition to failed on record");
+    w.store
+        .confirm_goal_orchestrator_answered(
+            &w.goal.id,
+            &[(w.task.id.clone(), first_transition.clone())],
+        )
+        .await
+        .unwrap();
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+
+    // Retried and failed again, on the exact same words, with no
+    // reconciliation pass sent in between: nothing has told the scheduler
+    // this task ever left `failed`, let alone come back to it.
+    w.store
+        .transition_task(&w.task.id, TaskStatus::Ready, Actor::User, None, None)
+        .await
+        .unwrap();
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some(reason),
+            None,
+        )
+        .await
+        .unwrap();
+    let second_transition = w
+        .store
+        .latest_transition_to(&w.task.id, TaskStatus::Failed)
+        .await
+        .unwrap()
+        .expect("a failed task has a transition to failed on record");
+    assert_ne!(
+        first_transition, second_transition,
+        "the retry must have stamped a new transition for this to prove anything"
+    );
+
+    eventually(
+        TIMEOUT,
+        "the orchestrator to be woken again for the new failure",
+        async || {
+            sched.goal(&w.goal);
+            w.prompted(&orchestrator).matches("failed").count() > told_once
+        },
+    )
+    .await;
 }
 
 /// A situation is not told once and forgotten if the telling failed. The
@@ -1996,11 +2558,9 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
 /// deregistered — and `hand_prompt` says so by failing. Marked told at that
 /// failed attempt regardless, the situation would never be said again.
 ///
-/// The passes are the ones this test sends and no others: the agent it puts
-/// back under the session is launched from outside the daemon, and a tick
-/// landing inside that launch finds a session whose row is live with no agent
-/// behind it — which is an orchestrator to resume, spending attempts on a
-/// seat the test is about to fill itself.
+/// Restore the channel on the same agent after the failed pass. Relaunching
+/// it from the fixture races the scheduler: the old launch's exit wakes a
+/// pass even without a tick, and that pass can try to resume the same seat.
 #[tokio::test]
 async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
     let h = harness()
@@ -2009,7 +2569,7 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
             ..Timeouts::default()
         })
         .await;
-    let w = World::build(h, 1).await;
+    let w = World::build(h).await;
     let orchestrator = w.orchestrator_session(&w.goal).await;
     w.agent_runs(&orchestrator).await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;
@@ -2018,7 +2578,7 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
         .transition_task(
             &w.task.id,
             TaskStatus::Failed,
-            Actor::Author,
+            Actor::Agent,
             Some("the crate the task names was deleted upstream"),
             None,
         )
@@ -2026,9 +2586,10 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
         .unwrap();
 
     // Live per the registry, but its prompt channel is already closed.
-    w.launcher
+    let reopen = w
+        .launcher
         .acp
-        .close_prompt_channel_for_test(&orchestrator.id);
+        .close_prompt_channel_until_reopened_for_test(&orchestrator.id);
     let sched = w.scheduler();
     sched.goal(&w.goal);
     // Waited out rather than slept past: the flush answers only once the
@@ -2040,19 +2601,24 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
         "the closed channel could not have delivered anything"
     );
 
-    // The agent comes back — a fresh, working registration under the same
-    // session — and the situation is still owed.
-    w.agent_runs(&orchestrator).await;
-    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    // The same agent hears again, and the situation is still owed.
+    reopen();
+    sched.goal(&w.goal);
     eventually(
         TIMEOUT,
         "the orchestrator to be told now that it can hear it",
-        async || {
-            sched.goal(&w.goal);
-            w.prompted(&orchestrator).contains("failed")
-        },
+        async || w.prompted(&orchestrator).contains("failed"),
     )
     .await;
+
+    // Told once, however many more passes ask about the same situation.
+    // Flushed after each send, so every pass is known reconciled before the
+    // count below is read, rather than counted across passes an `eventually`
+    // loop fired before it stopped asking.
+    for _ in 0..3 {
+        sched.goal(&w.goal);
+        sched.flush().await;
+    }
     assert_eq!(
         w.prompted(&orchestrator).matches("failed").count(),
         1,
@@ -2069,12 +2635,14 @@ async fn a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone() {
     let orchestrator = w.orchestrator_session(&w.goal).await;
     w.agent_runs(&orchestrator).await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;
-    w.advance(&w.task, TaskStatus::UnderReview).await;
+    w.advance_to(&w.task, "review").await;
 
     let sched = w.scheduler();
+    // Flushed after each send, so every pass is known reconciled before the
+    // next one is sent, rather than guessed from a wait between them.
     for _ in 0..3 {
         sched.goal(&w.goal);
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        sched.flush().await;
     }
     assert!(
         !w.prompted(&orchestrator).contains("`list_tasks`"),
@@ -2093,7 +2661,7 @@ async fn a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone() {
 #[tokio::test]
 async fn the_wake_a_burst_of_events_ends_on_is_still_acted_on() {
     let w = World::woken_only().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
 
     // Everything the scheduler logs from here is this test's to count.
     let _capture = capture(&w);
@@ -2103,7 +2671,7 @@ async fn the_wake_a_burst_of_events_ends_on_is_still_acted_on() {
     }
     sched.flush().await;
     assert_eq!(
-        reconciles_of(&w, &session),
+        reconciles_of(&w, &session).await,
         2,
         "a hundred wakes cost the pass the first one ran and one more"
     );
@@ -2114,7 +2682,7 @@ async fn the_wake_a_burst_of_events_ends_on_is_still_acted_on() {
     eventually(
         TIMEOUT,
         "the last wake of the burst to be reconciled",
-        async || reconciles_of(&w, &session) == 3,
+        async || reconciles_of(&w, &session).await == 3,
     )
     .await;
 }
@@ -2126,14 +2694,14 @@ async fn the_wake_a_burst_of_events_ends_on_is_still_acted_on() {
 #[tokio::test]
 async fn a_wake_folded_into_a_window_is_taken_by_a_flush() {
     let w = World::woken_only().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
 
     let _capture = capture(&w);
     let sched = w.scheduler();
     sched.session(&session);
     sched.flush().await;
     assert_eq!(
-        reconciles_of(&w, &session),
+        reconciles_of(&w, &session).await,
         1,
         "the first wake of a burst runs where it lands"
     );
@@ -2143,7 +2711,7 @@ async fn a_wake_folded_into_a_window_is_taken_by_a_flush() {
     sched.session(&session);
     sched.flush().await;
     assert_eq!(
-        reconciles_of(&w, &session),
+        reconciles_of(&w, &session).await,
         2,
         "the folded wake was reconciled before the flush answered"
     );
@@ -2175,7 +2743,7 @@ async fn a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles(
     let goal = h.activate(&cast.goal).await;
     h.advance(&cast.task, TaskStatus::InProgress).await;
     let author = h
-        .session(&goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .session(&goal, Some(&cast.task), Seat::Agent, &cast.develop().id)
         .await;
 
     // Everything the scheduler logs from here is this test's to count.
@@ -2203,9 +2771,1290 @@ async fn a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles(
     sched.flush().await;
 
     assert_eq!(
-        reconciles_of(&h, &author),
+        reconciles_of(&h, &author).await,
         2,
         "the burst costs the pass it arrived during and one more, whatever \
          the pass cost"
     );
+}
+
+/// A window has to end while the wakes keep coming: the load the folding is
+/// for is a stream of agent events that never pauses, and a loop that took
+/// its channel first, until the channel was empty, would never find it so —
+/// a session that kept reporting would be reconciled on its first wake and
+/// never again while the stream lasted. So a window ends between one batch
+/// of what the channel held and the next. The stream here runs on the test's
+/// own thread, alongside the scheduler: it hands the loop a thousand wakes
+/// at a time and yields, so the channel is never empty when the loop looks,
+/// and it stops the moment the test sees the window end — or after
+/// `STREAM_BATCHES`, which is the failure.
+#[tokio::test]
+async fn a_window_still_ends_under_a_stream_of_wakes_that_never_pauses() {
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: NO_TICK,
+            session_wake: BRIEF_WINDOW,
+            ..Timeouts::default()
+        })
+        .await;
+    let cast = h.cast().await;
+    let goal = h.activate(&cast.goal).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let author = h
+        .session(&goal, Some(&cast.task), Seat::Agent, &cast.develop().id)
+        .await;
+
+    let _capture = capture(&h);
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
+    eventually(TIMEOUT, "the goal's own pass to be over", async || {
+        h.sessions_of_goal(&goal.id).await.len() > 1
+    })
+    .await;
+    sched.flush().await;
+
+    let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stream = tokio::spawn({
+        let tx = sched.0.clone();
+        let ended = ended.clone();
+        let session_id = author.id.clone();
+        async move {
+            let mut batches = 0;
+            while !ended.load(std::sync::atomic::Ordering::SeqCst) && batches < STREAM_BATCHES {
+                for _ in 0..1_000 {
+                    tx.send(SchedEvent::SessionEvent(session_id.clone()))
+                        .unwrap();
+                }
+                batches += 1;
+                tokio::task::yield_now().await;
+            }
+            ended.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    });
+    // The first wake's own pass, and the one the window ends with.
+    eventually(TIMEOUT, "the window to end under the stream", async || {
+        reconciles_of(&h, &author).await >= 2
+    })
+    .await;
+    ended.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        stream.await.unwrap(),
+        "the window ended only once the stream had stopped, {STREAM_BATCHES} batches in"
+    );
+}
+
+/// A pull request that asks for my review and was asked for one directly on
+/// its own row, and a review session on it with the stub agent running, as
+/// the launcher leaves one (029). `number` tells two of them apart.
+async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
+    let repo = match h.store.list_repositories().await.unwrap().pop() {
+        Some(repo) => repo,
+        None => {
+            let repo = h.repository(&h.at("widgets")).await;
+            h.store
+                .set_forge_integration(ariadne_store::SetForgeIntegration {
+                    repository_id: repo.id.clone(),
+                    kind: ariadne_core::ForgeKind::Github,
+                    host: "github.com".into(),
+                    owner: "acme".into(),
+                    name: "widgets".into(),
+                    remote: "origin".into(),
+                    enabled: true,
+                    login: Some("me".into()),
+                })
+                .await
+                .unwrap();
+            repo
+        }
+    };
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number,
+            url: format!("https://github.com/acme/widgets/pull/{number}"),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_review_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(h, &pull, "someone", &format!("fix-{number}"), "abc", true);
+    let worktree = h.at(&format!("wt-pr-{number}"));
+    std::fs::create_dir_all(&worktree).unwrap();
+    let session = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Reviewer),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: Some(worktree.display().to_string()),
+            pull_request_id: Some(pull.id),
+        })
+        .await
+        .unwrap();
+    h.seed_conversation(&session.id, "uuid-1234").await;
+    h.agent_runs(&session).await;
+    session
+}
+
+/// A request Ariadne keeps, with its keeper session already running.
+async fn keeper_session(h: &Harness, number: i64) -> AgentSession {
+    let repo = h.repository(&h.at("keeper-widgets")).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number,
+            url: format!("https://github.com/acme/widgets/pull/{number}"),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_babysit_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(h, &pull, "me", &format!("fix-{number}"), "abc", false);
+    let worktree = h.at(&format!("wt-keeper-{number}"));
+    std::fs::create_dir_all(&worktree).unwrap();
+    let session = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Keeper),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: Some(worktree.display().to_string()),
+            pull_request_id: Some(pull.id),
+        })
+        .await
+        .unwrap();
+    h.seed_conversation(&session.id, "uuid-1234").await;
+    h.agent_runs(&session).await;
+    session
+}
+
+/// A reviewer session that wedges after every watchdog relaunch spends its
+/// budget before the scheduler writes its terminal recovery marker. Two
+/// actual restarts are allowed; the third wedge is the terminal decision,
+/// and its summary names the two restarts that were tried.
+#[tokio::test]
+async fn a_reviewer_that_wedges_after_every_relaunch_is_given_up_on() {
+    let h = harness()
+        .timeouts(Timeouts {
+            cancel_grace: RUNS_OUT / 10,
+            ..Timeouts::default()
+        })
+        .await;
+    let session = pull_request_session(&h, 1).await;
+    let pull_request_id = session.pull_request_id.clone().unwrap();
+    let wake = |sched: &UnboundedSender<SchedEvent>| {
+        sched
+            .send(SchedEvent::PullRequestChanged(pull_request_id.clone()))
+            .unwrap();
+    };
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    wake(&sched);
+
+    for relaunch in 1..=2 {
+        h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+        let launched = h.launched_at(&session).await;
+        wake(&sched);
+        eventually(TIMEOUT, &format!("relaunch {relaunch}"), async || {
+            h.relaunched(&session, &launched).await
+        })
+        .await;
+    }
+    assert!(
+        h.store
+            .get_pull_request(&pull_request_id)
+            .await
+            .unwrap()
+            .reviewer_given_up_at
+            .is_none(),
+        "not given up on while a relaunch is still being tried"
+    );
+
+    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    wake(&sched);
+    eventually(
+        TIMEOUT,
+        "the request's reviewer session to be given up on",
+        async || {
+            h.store
+                .get_pull_request(&pull_request_id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(
+        list.items[0].reason,
+        ariadne_api::attention::AttentionCause::Unknown
+    );
+    assert_eq!(
+        list.items[0].target,
+        ariadne_api::attention::AttentionTarget::PullRequest {
+            pull_request_id: pull_request_id.clone()
+        }
+    );
+    let pull_row = h.store.get_pull_request(&pull_request_id).await.unwrap();
+    assert!(
+        pull_row.reviewer_given_up_wedged,
+        "the budget ran out on a relaunch, not a spawn that never started"
+    );
+    assert!(
+        list.items[0]
+            .summary
+            .contains("stopped answering after 2 relaunches"),
+        "{}",
+        list.items[0].summary
+    );
+}
+
+/// A reviewer give-up mark stays put while the reviewer process remains
+/// alive but silent: it is not recovery merely because a later scheduler
+/// pass finds that same process again. The preceding watchdog-path test
+/// proves the terminal decision; this one proves its persistence.
+#[tokio::test]
+async fn a_silent_reviewer_keeps_its_give_up_attention_across_later_passes() {
+    let h = harness().await;
+    let session = pull_request_session(&h, 1).await;
+    let pull_request_id = session.pull_request_id.clone().unwrap();
+    h.store
+        .set_pull_request_reviewer_given_up(&pull_request_id, true)
+        .await
+        .unwrap();
+    let wake = |sched: &UnboundedSender<SchedEvent>| {
+        sched
+            .send(SchedEvent::PullRequestChanged(pull_request_id.clone()))
+            .unwrap();
+    };
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    wake(&sched);
+    ariadne_daemon::scheduler::flush_for_test(&sched).await;
+
+    let list: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1, "{:?}", list.items);
+    assert_eq!(
+        list.items[0].reason,
+        ariadne_api::attention::AttentionCause::Unknown
+    );
+    assert_eq!(
+        list.items[0].target,
+        ariadne_api::attention::AttentionTarget::PullRequest {
+            pull_request_id: pull_request_id.clone()
+        }
+    );
+    let pull_row = h.store.get_pull_request(&pull_request_id).await.unwrap();
+    assert!(pull_row.reviewer_given_up_wedged);
+    let given_up_at = pull_row.reviewer_given_up_at.expect("already given up on");
+
+    // Flushed, not merely slept past: this waits for the two wakes just sent
+    // to have actually been reconciled before the assertion below reads
+    // their effect.
+    wake(&sched);
+    ariadne_daemon::scheduler::flush_for_test(&sched).await;
+    wake(&sched);
+    ariadne_daemon::scheduler::flush_for_test(&sched).await;
+
+    assert_eq!(
+        h.store
+            .get_pull_request(&pull_request_id)
+            .await
+            .unwrap()
+            .reviewer_given_up_at,
+        Some(given_up_at.clone()),
+        "the give-up mark and its since must survive ordinary reconciliation \
+         of the same wedged session"
+    );
+    let still: ariadne_api::attention::AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(
+        still.items, list.items,
+        "the item must not flap across later passes"
+    );
+    assert_eq!(still.complete, list.complete);
+}
+
+/// A head branch git itself refuses as a ref name (a space, here) starts
+/// no reviewer session and no worktree: the refusal is recorded on the
+/// row the same way an exhausted spawn-retry budget already is (026 rule
+/// 26).
+#[tokio::test]
+async fn a_reviewer_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_review_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix evil", "abc", true);
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the request given up on for its unusable head branch",
+        async || {
+            h.store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    assert!(
+        h.store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty(),
+        "no session starts on an unusable head branch"
+    );
+}
+
+/// The same refusal holds for a keeper session asked for by hand (032).
+/// Its own recovery mark records the failure without affecting a reviewer.
+#[tokio::test]
+async fn a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref() {
+    let h = harness().await;
+    let repo = h.repository(&h.at("widgets")).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_babysit_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    crate::common::forge::seed_live(&h, &pull, "me", "fix evil", "abc", false);
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the request given up on for its unusable head branch",
+        async || {
+            h.store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .keeper_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    assert!(
+        h.store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty(),
+        "no keeper session starts on an unusable head branch"
+    );
+}
+
+/// Once the guard gives up on a keeper for an unusable head branch, a later
+/// push that makes the branch usable again lets the keeper recover. The
+/// successful launch clears only the keeper's own recovery mark.
+#[tokio::test]
+async fn a_keeper_recovers_once_its_head_branch_turns_valid_again() {
+    let h = harness().await;
+    let repo_path = h.git_repo("widgets");
+    let repo = h.repository(&repo_path).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_babysit_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    let next_sha = sh(&repo_path, "git rev-parse next");
+    crate::common::forge::seed_live(&h, &pull, "me", "fix evil", &next_sha, false);
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the request given up on for its unusable head branch",
+        async || {
+            h.store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .keeper_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    // The head branch turns usable: a real branch of the checkout, at a
+    // commit the checkout already holds, so the keeper's worktree needs
+    // no fetch to cut its own branch from it.
+    crate::common::forge::seed_live(&h, &pull, "me", "next", &next_sha, false);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the keeper to recover once its head branch is usable again",
+        async || {
+            h.store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .keeper_given_up_at
+                .is_none()
+        },
+    )
+    .await;
+
+    assert!(
+        !h.store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty(),
+        "a keeper session starts once the head branch is usable again"
+    );
+}
+
+/// A keeper that reports after automatic recovery gave up has recovered in
+/// place. Its later activity clears its own stale recovery item.
+#[tokio::test]
+async fn a_keeper_that_reports_after_giving_up_clears_its_recovery() {
+    let h = harness().await;
+    let keeper = keeper_session(&h, 1).await;
+    let pull_request_id = keeper.pull_request_id.clone().unwrap();
+    h.store
+        .set_pull_request_keeper_given_up(&pull_request_id, true)
+        .await
+        .unwrap();
+    let given_up = h
+        .store
+        .get_pull_request(&pull_request_id)
+        .await
+        .unwrap()
+        .keeper_given_up_at
+        .unwrap();
+
+    let before = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert!(
+        before.items.iter().any(
+            |item| item.id == format!("recovery:unknown:pull_request:keeper:{pull_request_id}")
+        ),
+        "the give-up mark raises the keeper recovery item"
+    );
+
+    eventually(
+        TIMEOUT,
+        "activity after the keeper give-up mark",
+        async || {
+            h.store.touch_session(&keeper.id).await.unwrap();
+            h.store
+                .get_session(&keeper.id)
+                .await
+                .unwrap()
+                .last_activity_at
+                .as_deref()
+                .is_some_and(|at| at > given_up.as_str())
+        },
+    )
+    .await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull_request_id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the keeper activity to clear its recovery mark",
+        async || {
+            h.store
+                .get_pull_request(&pull_request_id)
+                .await
+                .unwrap()
+                .keeper_given_up_at
+                .is_none()
+        },
+    )
+    .await;
+
+    let after = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert!(
+        !after.items.iter().any(
+            |item| item.id == format!("recovery:unknown:pull_request:keeper:{pull_request_id}")
+        ),
+        "the recovered keeper leaves no stale recovery item"
+    );
+}
+
+/// A reviewer and a keeper can run on one row. A keeper recovery does not
+/// answer the reviewer's stale recovery item: only a reviewer can do that.
+#[tokio::test]
+async fn a_keeper_recovery_keeps_a_reviewers_give_up_mark() {
+    let h = harness().await;
+    let repo_path = h.git_repo("widgets");
+    let repo = h.repository(&repo_path).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "author".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    let pin = ariadne_store::AgentPin {
+        model: test_pin().model,
+        effort: None,
+    };
+    h.store
+        .set_pull_request_review_asked(&pull.id, Some((&pin, &[])))
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_babysit_asked(&pull.id, Some((&pin, &[])))
+        .await
+        .unwrap();
+    let next_sha = sh(&repo_path, "git rev-parse next");
+    crate::common::forge::seed_live(&h, &pull, "me", "fix", &next_sha, false);
+
+    let reviewer_dir = h.at("reviewer");
+    std::fs::create_dir_all(&reviewer_dir).unwrap();
+    let reviewer = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Reviewer),
+            task_agent_id: None,
+            model: pin.model.clone(),
+            effort: None,
+            worktree_path: Some(reviewer_dir.display().to_string()),
+            pull_request_id: Some(pull.id.clone()),
+        })
+        .await
+        .unwrap();
+    h.agent_runs(&reviewer).await;
+    h.store
+        .set_pull_request_reviewer_given_up(&pull.id, false)
+        .await
+        .unwrap();
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the keeper session to start beside the reviewer",
+        async || {
+            h.store
+                .list_sessions(SessionFilter {
+                    pull_request_id: Some(pull.id.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .iter()
+                .any(|session| session.seat() == Some(Seat::Keeper))
+        },
+    )
+    .await;
+
+    assert!(
+        h.store
+            .get_pull_request(&pull.id)
+            .await
+            .unwrap()
+            .reviewer_given_up_at
+            .is_some(),
+        "a keeper recovery cannot hide the reviewer's recovery item"
+    );
+    let items = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
+    assert!(
+        items
+            .items
+            .iter()
+            .any(|item| { item.id == format!("recovery:unknown:pull_request:{}", pull.id) }),
+        "the reviewer recovery item remains after the keeper starts"
+    );
+}
+
+/// The same guard holds on a relaunch, not only a fresh spawn:
+/// `resume_pull_request_session` once bypassed `assert_valid_head_branch`
+/// for a request with a session already on its row, so a head branch that
+/// turned unusable after that session went quiet could still be relaunched
+/// on it. A row that already heard from its agent once and then went quiet
+/// takes the resume path rather than the fresh-spawn one.
+///
+/// The periodic reconcile is pushed out of the way: without the guard, one
+/// failed relaunch merely spends a turn of the ordinary spawn-retry budget
+/// (026), and enough periodic passes eventually reach the same give-up
+/// this test looks for regardless, hiding the very bypass it proves. One
+/// explicit pass is every chance the scheduler gets here, so the give-up
+/// this test waits for can only be the guard's own, on sight.
+#[tokio::test]
+async fn a_reviewer_session_refuses_to_restart_on_a_head_branch_that_turned_invalid() {
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: Duration::from_secs(3600),
+            ..Timeouts::default()
+        })
+        .await;
+    let repo = h.repository(&h.at("widgets")).await;
+    h.store
+        .set_forge_integration(ariadne_store::SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+        })
+        .await
+        .unwrap();
+    let (pull, _) = h
+        .store
+        .upsert_pull_request(ariadne_store::NewPullRequest {
+            repository_id: repo.id.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            role: "reviewer".into(),
+            origin_task_id: None,
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_pull_request_review_asked(
+            &pull.id,
+            Some((
+                &ariadne_store::AgentPin {
+                    model: test_pin().model,
+                    effort: None,
+                },
+                &[],
+            )),
+        )
+        .await
+        .unwrap();
+    // The row's session already heard from its agent once, on the pin the
+    // next ask carries, and then went quiet: the exact shape
+    // `resume_pull_request_session` reuses rather than spawning fresh.
+    let session = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: Some(Seat::Reviewer),
+            task_agent_id: None,
+            model: test_pin().model,
+            effort: None,
+            worktree_path: Some("/tmp/a-reviewer-session-that-went-quiet".into()),
+            pull_request_id: Some(pull.id.clone()),
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_internal_id(&session.id, "uuid-1234")
+        .await
+        .unwrap();
+    h.store.mark_session_launched(&session.id).await.unwrap();
+    // Backdated rather than slept past: `heard_from` needs `last_activity_at`
+    // strictly later than `launched_at`, and a real sleep is not the only way
+    // to put the launch stamp behind it.
+    h.backdate(&["launched_at"], &session, 1).await;
+    h.store.touch_session(&session.id).await.unwrap();
+    h.store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+
+    // The head branch arrives unusable only now, with that session already
+    // on the row.
+    crate::common::forge::seed_live(&h, &pull, "someone", "fix evil", "abc", true);
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::PullRequestChanged(pull.id.clone()))
+        .unwrap();
+
+    eventually(
+        TIMEOUT,
+        "the request given up on for its unusable head branch",
+        async || {
+            h.store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at
+                .is_some()
+        },
+    )
+    .await;
+
+    assert_eq!(
+        h.store
+            .list_sessions(SessionFilter {
+                pull_request_id: Some(pull.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "the stale session is never restarted on its now-unusable head branch, \
+         and no other session is spawned in its place"
+    );
+}
+
+/// An idle pull request session is waiting on the forge, as an idle
+/// planning orchestrator waits on the user (009 rule 41): however long it
+/// sits idle it is never nudged, never flagged and never relaunched. A
+/// second one stuck mid-turn just as long is relaunched, which is also what
+/// says the pass over the first ran.
+#[tokio::test]
+async fn an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_is_relaunched() {
+    let h = harness().await;
+    let idle = pull_request_session(&h, 1).await;
+    let wedged = pull_request_session(&h, 2).await;
+    h.idle_for(&idle, RELAUNCH_SECS + 60).await;
+    h.launched_ago(&wedged, RELAUNCH_SECS + 60).await;
+    let idle_launched = h.launched_at(&idle).await;
+    let wedged_launched = h.launched_at(&wedged).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    for session in [&idle, &wedged] {
+        sched
+            .send(SchedEvent::PullRequestChanged(
+                session.pull_request_id.clone().unwrap(),
+            ))
+            .unwrap();
+    }
+    eventually(TIMEOUT, "the wedged session to be relaunched", async || {
+        h.relaunched(&wedged, &wedged_launched).await
+    })
+    .await;
+    let back = h.launch_file(&wedged.id).expect("a launch file");
+    assert_eq!(back.resume_session_id.as_deref(), Some("uuid-1234"));
+    assert!(
+        back.initial_prompt
+            .unwrap_or_default()
+            .contains("# Review pull request: <<<untrusted>>>Fix widgets 2<<<end untrusted>>>"),
+        "a relaunched request session is briefed on its request again"
+    );
+
+    assert_eq!(
+        h.prompts_to(&idle).len(),
+        0,
+        "an idle request session is not nudged past {NUDGE_SECS} s"
+    );
+    assert_eq!(h.launched_at(&idle).await, idle_launched, "nor relaunched");
+    assert_eq!(h.attention(&idle).await, None, "nor flagged stalled");
+}
+
+/// `reconcile_goal` fetches the goal once, at the top, and carries that copy
+/// through `keep_orchestrator`, `deliver_goal_messages` and `list_tasks`
+/// before `tell_orchestrator` ever reads it: a pass that started before a
+/// failure's turn confirmed, and only reaches that read afterward, used to
+/// answer from the stale copy — "not confirmed yet" — and find the now-idle
+/// session below it, handing the same, already-confirmed failure off a
+/// second time.
+///
+/// Reading the confirmed list fresh, right before the hand-off, narrows the
+/// window; it does not close it. The daemon's own runtime is multi-threaded
+/// (`#[tokio::main]`, no `current_thread` flavor), so the ACP driver
+/// confirming this exact failure can run on another worker at the very
+/// moment this pass reaches that read, whatever stands between the read
+/// and the send — no ordering inside one task excludes a different one
+/// running on a different core.
+///
+/// What actually closes it is `AcpRuntime::goal_attention_lock`, held
+/// across this pass's whole read-and-send on one side and
+/// `acp::prompt_once`'s whole confirm-and-dequeue on the other: whichever
+/// of the two acquires it first runs to completion before the other even
+/// starts its own read, so the read never lands inside the write it would
+/// otherwise race. That is a property of holding the same lock on both
+/// sides, true for every interleaving of the two at once, not one more
+/// timing window to land a test inside: a correctly held mutex has no gap
+/// a scheduling accident can still find, so there is nothing here for a
+/// forced run to turn red against, and none was found forcing one — on
+/// this runtime, under load, against a version of this code with no lock
+/// at all, repeatedly, nor is one on record from the review that raised
+/// the question. The real check on the guarantee is the one above it:
+/// both sides take the same lock before touching the state the other
+/// reads or writes, which code reading confirms and a race cannot
+/// contradict.
+///
+/// What this test does force, on the daemon's own multi-threaded runtime so
+/// the scheduler and the ACP driver can actually land on different
+/// workers, is the wider, pre-ledger gap this fix narrows: the first turn
+/// is held open on a gate so its confirmation lands exactly when the gate
+/// is released, and the goal carries fifty other failed tasks so the
+/// second pass's own `latest_transition_to` loop is still reading when it
+/// does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pass_started_before_confirmation_does_not_retell_an_already_confirmed_failure() {
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: NO_TICK,
+            ..Timeouts::default()
+        })
+        .await;
+    let w = World::build(h).await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some("the crate the task names was deleted upstream"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    for i in 0..50 {
+        let extra = w.extra_task(&format!("padding {i}")).await;
+        w.advance(&extra, TaskStatus::InProgress).await;
+        w.store
+            .transition_task(&extra.id, TaskStatus::Failed, Actor::Agent, None, None)
+            .await
+            .unwrap();
+    }
+
+    // The orchestrator's next turn is held open until the gate file exists,
+    // so its confirmation (`acp::prompt_once`) lands at a moment this test
+    // chooses rather than whenever the stub happens to answer.
+    let gate = w.dir.path().join("stale-goal-gate");
+    let mut script = common::acp::script();
+    script["prompts"] = serde_json::json!([{
+        "wait_for": gate.display().to_string(),
+        "updates": [],
+        "stop_reason": "end_turn",
+    }]);
+    w.agent.reprogram(script);
+
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the failure",
+        async || w.prompted(&orchestrator).contains(&w.task.title),
+    )
+    .await;
+
+    // Released and asked again in the same breath: the second pass's own
+    // goal fetch races the first turn's confirmation, which the fifty
+    // other failed tasks give it a real chance to lose.
+    std::fs::write(&gate, "go").unwrap();
+    sched.goal(&w.goal);
+    sched.flush().await;
+
+    // An ordinary prompt, queued only now and carrying no delivery of its
+    // own, so nothing before it can be mistaken for it. The driver answers
+    // every prompt on one session in the order it was queued behind
+    // (021), so a wrongly queued duplicate of the attention prompt — which
+    // would have been queued by the flush above, ahead of this one — has
+    // already reached the stub and run its own turn to completion by the
+    // moment this marker does. Settling for that reason rather than for
+    // the session going idle: idle is also true in the narrow gap between
+    // the first turn's own stop and a duplicate's start, which this marker
+    // cannot be confused for, since nothing queues it until after this
+    // point.
+    const SETTLE_MARKER: &str = "the-pass-raced-the-confirmation-marker";
+    w.launcher
+        .acp
+        .send_prompt(&orchestrator.id, SETTLE_MARKER.into())
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "the settle marker, queued behind anything a wrongly duplicated pass sent first",
+        async || w.prompted(&orchestrator).contains(SETTLE_MARKER),
+    )
+    .await;
+
+    assert_eq!(
+        w.prompts_to(&orchestrator)
+            .iter()
+            .filter(|prompt| prompt.contains(&w.task.title))
+            .count(),
+        1,
+        "exactly one delivery of an already-confirmed failure"
+    );
+}
+
+/// The ledger key the fix above protects names a goal's failed tasks alone
+/// (`acp::Delivery::key`), so a stall warning and a later, distinct "every
+/// task is done" notice — both confirmed with no failed task on record,
+/// `failed_tasks` empty either way — could collide on it. Restoring the
+/// ledger's original removal, taken off the moment each delivery's own
+/// turn confirms it rather than kept for the rest of the launch, is what
+/// keeps that collision from suppressing the second notice: once a
+/// delivery is confirmed its key is gone, whatever the next one's is.
+#[tokio::test]
+async fn a_stalled_tasks_warning_does_not_suppress_the_done_notice_that_follows() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+    w.raise(&session, AttentionReason::Stalled).await;
+
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the stall warning",
+        async || w.prompted(&orchestrator).contains("has gone quiet"),
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "the stall warning's own turn to confirm",
+        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+    )
+    .await;
+
+    // The stall clears, and the task lands: a different situation, with
+    // the same empty `failed_tasks` the stall warning's own key carried.
+    w.store.clear_session_attention(&session.id).await.unwrap();
+    w.advance_to(&w.task, "merge").await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Finished,
+            Actor::Agent,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
+
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear every task is done, not suppressed by the stall's own key",
+        async || w.prompted(&orchestrator).contains("Every task is done."),
+    )
+    .await;
+}
+
+/// The same task stalling twice renders the identical "has gone quiet"
+/// line both times — nothing about a stall names which occurrence of it
+/// this is, unlike a failure's own transition id. Clearing the first
+/// stall's situation (`tell_orchestrator` dropping `goal_told` for this
+/// goal once `goal_attention` has nothing left to say) and the ledger key
+/// its own confirmed turn already took off is what lets the second stall
+/// be told again rather than finding a cache or a key still saying it
+/// already was.
+#[tokio::test]
+async fn a_tasks_stall_recurring_after_it_cleared_is_told_again() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    let session = w.agent_on(&w.task, TaskStatus::InProgress).await;
+
+    let sched = w.scheduler();
+    w.raise(&session, AttentionReason::Stalled).await;
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the first stall",
+        async || w.prompted(&orchestrator).contains("has gone quiet"),
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "the first stall's own turn to confirm",
+        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+    )
+    .await;
+    let told_once = w.prompted(&orchestrator).matches("has gone quiet").count();
+
+    // Cleared, and nothing else said while it stays clear: no situation to
+    // render, so nothing for `tell_orchestrator` to send.
+    w.store.clear_session_attention(&session.id).await.unwrap();
+    sched.goal(&w.goal);
+    sched.flush().await;
+    assert_eq!(
+        w.prompted(&orchestrator).matches("has gone quiet").count(),
+        told_once,
+        "a cleared stall says nothing more on its own"
+    );
+
+    // The same task, stalled again: the identical line, rendered fresh.
+    w.raise(&session, AttentionReason::Stalled).await;
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the recurring stall to be told again rather than found already confirmed",
+        async || w.prompted(&orchestrator).matches("has gone quiet").count() > told_once,
+    )
+    .await;
+}
+
+/// The ledger key comes off a `GoalAttention` delivery's turn whether or
+/// not `confirm_goal_orchestrator_answered`'s own write actually lands —
+/// its only job is the one in-flight attempt, not standing in for the
+/// store on whether a later pass should retry. A write that fails leaves
+/// the store itself reading unconfirmed, which is what a later pass acts
+/// on: forced here with a trigger that rejects the write once, so the
+/// failure is the database's own rather than a guess about what a real
+/// one looks like, on the same live launch throughout — no restart, no
+/// relaunch, just the next pass finding the write can land now.
+#[tokio::test]
+async fn a_failed_confirmation_write_is_retried_once_the_write_can_land() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Agent,
+            Some("the crate the task names was deleted upstream"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    w.reject_goal_confirm(&w.goal.id).await;
+
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to hear the failure, its confirming write rejected",
+        async || w.prompted(&orchestrator).contains(&w.task.title),
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "that turn to end despite the write failing",
+        async || w.session_status(&orchestrator).await == SessionStatus::Idle,
+    )
+    .await;
+    assert!(
+        w.store
+            .get_goal(&w.goal.id)
+            .await
+            .unwrap()
+            .orchestrator_answered_failed_task_ids
+            .is_none(),
+        "the rejected write must not have landed"
+    );
+
+    // The write can land now, and the next pass is the one that finds out:
+    // the ledger key this delivery's own failed turn already freed is what
+    // lets it try again, on the same launch, rather than finding its own
+    // prior attempt still blocking it.
+    w.stop_rejecting_goal_confirm(&w.goal.id).await;
+    sched.goal(&w.goal);
+    eventually(
+        TIMEOUT,
+        "the retried confirmation to land now that the write can succeed",
+        async || {
+            w.store
+                .get_goal(&w.goal.id)
+                .await
+                .unwrap()
+                .orchestrator_answered_failed_task_ids
+                .is_some()
+        },
+    )
+    .await;
 }

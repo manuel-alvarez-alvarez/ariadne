@@ -8,7 +8,7 @@
 use tracing::{info, warn};
 
 use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
-use ariadne_store::AgentSession;
+use ariadne_store::{AgentSession, Store};
 
 use super::{QUIET_FLAG_SECS, QUIET_NUDGE_SECS, QUIET_RELAUNCH_SECS, SPAWN_RETRY_BUDGET};
 
@@ -20,10 +20,10 @@ use super::{QUIET_FLAG_SECS, QUIET_NUDGE_SECS, QUIET_RELAUNCH_SECS, SPAWN_RETRY_
 /// it, and so has one that was just put back on its feet.
 #[derive(Debug, Default)]
 pub(super) struct Quiet {
-    /// What the two steps below were taken in: the status of the task for an
-    /// author or a reviewer, of the goal for an orchestrator — and, for a
-    /// task under review, the review it is under, since two reviews of one
-    /// task read as the same status and are not the same situation.
+    /// What the two steps below were taken in: the column entry for a task's
+    /// agent — two visits of one task to one column read as the same status
+    /// and are not the same situation — and the status of the goal for an
+    /// orchestrator.
     pub(super) situation: String,
     /// Whether the one nudge for that situation has been spent.
     pub(super) nudged: bool,
@@ -124,8 +124,13 @@ impl super::Scheduler {
             return Ok(());
         }
         // A running agent is inside a turn and is left alone — the relaunch
-        // threshold answers for a turn that never ends.
-        if session.status() == SessionStatus::Running {
+        // threshold answers for a turn that never ends. The row says running
+        // from the agent's `session_start` on, so the runtime driving it is
+        // asked too: an agent that came up and was never prompted is between
+        // turns, and left alone it would sit there until the relaunch.
+        if session.status() == SessionStatus::Running
+            && self.launcher.acp.in_turn(&session.id).await != Some(false)
+        {
             return Ok(());
         }
         info!(session = %session.id, seat = ?session.seat, quiet_secs, "nudging idle agent");
@@ -178,12 +183,10 @@ impl super::Scheduler {
     /// than restarted for ever. An orchestrator has no task to fail — its own
     /// flag is what is left, and it stands.
     ///
-    /// An author is started the way a task with no live author is started —
-    /// [`Self::start_author`], which renders what it is picked up with, the
-    /// landing briefing included where the task is approved. An orchestrator
-    /// and a reviewer have no such path: they are revived with the resume the
-    /// caller already rendered, through the same `revive_session` a message
-    /// addressed to a dead agent takes.
+    /// Every seat is revived with the resume the caller already rendered,
+    /// through the same `revive_session` a message addressed to a dead agent
+    /// takes: a column's agent comes back on its conversation, in the task's
+    /// one worktree.
     ///
     /// What the user is owed outlives the relaunch: whatever this session was
     /// carrying for them goes back on whatever came back up
@@ -205,6 +208,14 @@ impl super::Scheduler {
         if spent >= SPAWN_RETRY_BUDGET {
             warn!(session = %session.id, seat = ?session.seat, relaunches = spent - 1, "the agent went quiet again after every relaunch");
             let Some(task_id) = session.task_id.clone() else {
+                // A taskless session — an orchestrator's, a reviewer's —
+                // has no task to fail instead: this exhausted-relaunch
+                // decision is its own give-up, the same evidence the
+                // spawn-retry budget leaves behind elsewhere, so a client
+                // reads one recovery item either way rather than the bare
+                // `stalled` flag this watchdog has itself stopped acting
+                // on.
+                record_taskless_relaunch_give_up(&self.store, session).await;
                 return Ok(());
             };
             if let Err(e) = self.launcher.kill_session(&session.id).await {
@@ -227,16 +238,9 @@ impl super::Scheduler {
         info!(session = %session.id, seat = ?session.seat, relaunch = spent, "the agent has reported nothing for too long, relaunching it");
         let carried = session.attention_reason();
         self.launcher.kill_session(&session.id).await?;
-        if let Some(task_id) = session.task_id.clone()
-            && session.seat() == Some(Seat::Author)
-        {
-            let task = self.store.get_task(&task_id).await?;
-            self.start_author(&task).await?;
-        } else {
-            self.launcher
-                .revive_session(&session.id, Some(revival))
-                .await?;
-        }
+        self.launcher
+            .revive_session(&session.id, Some(revival))
+            .await?;
         let back = self.relaunched_session(session).await;
         self.keep_waiting_user(&back, carried).await
     }
@@ -255,5 +259,106 @@ impl super::Scheduler {
             .ok()
             .and_then(|mut live| live.pop())
             .unwrap_or_else(|| session.clone())
+    }
+}
+
+/// Record the terminal outcome of a taskless session's exhausted relaunch
+/// budget. Kept beside the watchdog decision so each seat's persisted mark
+/// has a direct, process-free regression as well as its scheduler path.
+async fn record_taskless_relaunch_give_up(store: &Store, session: &AgentSession) {
+    match (session.seat(), &session.goal_id, &session.pull_request_id) {
+        (Some(Seat::Orchestrator), Some(goal_id), _) => {
+            let _ = store.set_goal_orchestrator_given_up(goal_id, true).await;
+        }
+        (Some(Seat::Reviewer), _, Some(pull_request_id)) => {
+            let _ = store
+                .set_pull_request_reviewer_given_up(pull_request_id, true)
+                .await;
+        }
+        (Some(Seat::Keeper), _, Some(pull_request_id)) => {
+            let _ = store
+                .set_pull_request_keeper_given_up(pull_request_id, true)
+                .await;
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ariadne_store::{AgentSession, NewPullRequest, NewRepository, Store};
+
+    use super::record_taskless_relaunch_give_up;
+
+    fn reviewer(pull_request_id: &str) -> AgentSession {
+        AgentSession {
+            id: "session".into(),
+            goal_id: None,
+            task_id: None,
+            seat: Some("reviewer".into()),
+            task_agent_id: None,
+            model: "stub:test".into(),
+            effort: None,
+            internal_session_id: None,
+            worktree_path: None,
+            status: "running".into(),
+            attention_reason: None,
+            attention_since: None,
+            last_activity_at: None,
+            context_used: None,
+            context_size: None,
+            launched_at: None,
+            launch_id: None,
+            created_at: String::new(),
+            ended_at: None,
+            title: None,
+            switched_from: None,
+            pull_request_id: Some(pull_request_id.into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reviewers_exhausted_relaunch_budget_marks_its_request_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("test.db")).await.unwrap();
+        let repo = store
+            .create_repository(NewRepository {
+                default_workflow: None,
+                path: dir.path().display().to_string(),
+                base_branch: "main".into(),
+                description: None,
+                permission_mode: None,
+                supervise_posts: None,
+            })
+            .await
+            .unwrap();
+        let (pull, _) = store
+            .upsert_pull_request(NewPullRequest {
+                repository_id: repo.id,
+                number: 1,
+                url: "https://example.test/pull/1".into(),
+                role: "reviewer".into(),
+                origin_task_id: None,
+            })
+            .await
+            .unwrap();
+
+        let session = reviewer(&pull.id);
+        record_taskless_relaunch_give_up(&store, &session).await;
+        let marked = store.get_pull_request(&pull.id).await.unwrap();
+        assert!(marked.reviewer_given_up_at.is_some());
+        assert!(marked.reviewer_given_up_wedged);
+
+        let first = marked.reviewer_given_up_at;
+        record_taskless_relaunch_give_up(&store, &session).await;
+        assert_eq!(
+            store
+                .get_pull_request(&pull.id)
+                .await
+                .unwrap()
+                .reviewer_given_up_at,
+            first,
+            "a later pass keeps the first give-up time"
+        );
     }
 }

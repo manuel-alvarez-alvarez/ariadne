@@ -21,6 +21,9 @@ import { useLocation, useSearchParams } from "react-router-dom"
  * showing.
  */
 export const SKILL_PARAM = "skill"
+export const WORKFLOW_PARAM = "workflow"
+/** Which dashboard the Stats screen shows, under `?dashboard=`. */
+export const DASHBOARD_PARAM = "dashboard"
 
 /**
  * What a link asks the screen it opens to hand the keyboard to, under
@@ -36,10 +39,24 @@ export const SKILL_PARAM = "skill"
 const FOCUS_PARAM = "focus"
 
 export const paths = {
+  /** The Forge screen, which opens on its pull requests tab. */
+  forge: () => "/forge",
+  /** The requests that ask for the user's review, Forge's first tab (029). */
+  pullRequests: () => "/forge/pull-requests",
+  pullRequest: (id: string, current = new URLSearchParams()) => {
+    const next = new URLSearchParams(current)
+    for (const key of ["task", "goal", "session", "tab"]) next.delete(key)
+    next.set("pr", id)
+    return `/forge/pull-requests?${next.toString()}`
+  },
+  /** The open issues of the enabled repositories, Forge's second tab (028). */
+  issues: () => "/forge/issues",
   goals: () => "/goals",
   /** The goals board with this goal's panel open. */
   goal: (goalId: string) => `/goals?goal=${goalId}`,
   skills: () => "/skills",
+  workflows: () => "/workflows",
+  workflow: (name: string) => `/workflows?${WORKFLOW_PARAM}=${encodeURIComponent(name)}`,
   /**
    * The skills screen, opened on one skill: the screen is a list beside the
    * selected skill's editor rather than a page per skill, so the link
@@ -56,6 +73,7 @@ export const paths = {
   agents: () => "/agents",
   permissions: () => "/permissions",
   repositories: () => "/repositories",
+  stats: () => "/stats",
   /**
    * The goals board with this goal's panel open on one of its sessions.
    *
@@ -68,9 +86,25 @@ export const paths = {
 } as const
 
 /**
+ * Where a panel opens: the same screen unless a `pathname` says otherwise.
+ *
+ * `replace` is set only where it matters — the caller's `navigate`/`Link`
+ * otherwise pushes, which is right for opening a panel from a list. It is
+ * true exactly where a target drops a `goal` that was open: a task panel
+ * swaps into the goal's place in the same history entry rather than stacking
+ * a new one over it, which is what keeps closing the task from stepping back
+ * into the goal it replaced (`routes/panel-history.ts`).
+ */
+interface PanelTarget {
+  pathname?: string
+  search: string
+  replace?: boolean
+}
+
+/**
  * Link target that opens the task's panel over the current screen: same
  * pathname, `?task=` added, every other filter or panel param kept — so a
- * task opened from a goal's lane stacks on that goal's panel.
+ * task opened from a goal's lane replaces that goal's panel in the pane.
  *
  * Only for callers that can only ever be on a screen where `?task=` *is* a
  * panel — the board. Everything else goes through {@link taskPanelFrom}, which
@@ -78,20 +112,21 @@ export const paths = {
  *
  * The panel's own params go: `tab` and `session` belong to whichever panel
  * put them there, and would otherwise open the new one on a tab or a session
- * that is not its.
+ * that is not its. `goal` goes too — a task panel replaces the goal's rather
+ * than sitting over it, and the task's own `goal_id` is the way back (see
+ * `features/tasks/task-panel.tsx`'s breadcrumb). Every caller gets the
+ * `replace` this drop asks for by reading it off the returned target —
+ * {@link PanelTarget} — rather than working it out again itself.
  */
-export function taskPanelTo(current: URLSearchParams, taskId: string): { search: string } {
+export function taskPanelTo(current: URLSearchParams, taskId: string): PanelTarget {
   const next = withoutArrival(current)
+  const replace = next.has("goal") || next.has("pr")
+  next.delete("pr")
   next.set("task", taskId)
   next.delete("tab")
   next.delete("session")
-  return { search: `?${next.toString()}` }
-}
-
-/** Where a panel opens: the same screen unless a `pathname` says otherwise. */
-interface PanelTarget {
-  pathname?: string
-  search: string
+  next.delete("goal")
+  return replace ? { search: `?${next.toString()}`, replace } : { search: `?${next.toString()}` }
 }
 
 /**
@@ -144,6 +179,7 @@ export function sessionPanelFrom(
 ): { search: string } {
   const next = withoutArrival(current)
   next.set("session", sessionId)
+  next.delete("pr")
   // The panel's own tab belongs to whichever session was open before this one.
   next.delete("tab")
   if (pathname !== paths.sessions()) {

@@ -2,19 +2,41 @@
 
 use ariadne_core::GoalStatus;
 use ariadne_core::id::new_id;
+use chrono::DateTime;
 
 use crate::{AgentPin, Change, Goal, Repository, Result, Store, StoreError, not_found, now};
 
+/// The fact a goal writes once it moves to `completed` or `cancelled`.
+const GOAL_ENDED: &str = "goal_ended";
+
 #[derive(Debug, Clone)]
 pub struct NewGoal {
+    /// The workflow every task of the goal runs on. None = the default of
+    /// its first repository. Fixed once the goal is created: its columns are
+    /// snapshotted into `goal_steps`.
+    pub workflow: Option<String>,
     pub title: String,
     pub description: String,
+    pub issue_url: Option<String>,
     /// Ids of registered repositories the goal works in; each must exist.
     /// The goal reads them live, so editing one moves the goal with it.
     pub repository_ids: Vec<String>,
     /// What this goal's orchestrator runs on: its model,
     /// `<agent>:<model>`, and the effort where one was chosen.
     pub pin: AgentPin,
+}
+
+/// The workflow a new goal gets: its creator's choice or the default of the
+/// first repository in the order goals show.
+fn goal_workflow(requested: Option<String>, repositories: &[Repository]) -> Result<String> {
+    if let Some(name) = requested {
+        return Ok(name);
+    }
+    repositories
+        .iter()
+        .min_by_key(|repository| (&repository.path, &repository.base_branch))
+        .map(|repository| repository.default_workflow.clone())
+        .ok_or_else(|| StoreError::Invalid("a goal needs at least one repo".into()))
 }
 
 impl Store {
@@ -34,32 +56,59 @@ impl Store {
         // Validated before the goal row is written, so an unknown id leaves
         // nothing behind. The same repository named twice is one reference.
         let mut repository_ids: Vec<String> = Vec::with_capacity(new.repository_ids.len());
+        let mut repositories = Vec::with_capacity(new.repository_ids.len());
         for id in &new.repository_ids {
-            self.get_repository(id).await?;
+            let repository = self.get_repository(id).await?;
             if !repository_ids.contains(id) {
                 repository_ids.push(id.clone());
+                repositories.push(repository);
             }
         }
+        let workflow_name = goal_workflow(new.workflow, &repositories)?;
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
+        // Read on the writer's own connection, inside the same transaction
+        // the snapshot commits in: a read on the separate read pool could
+        // see a workflow a concurrent save or skill deletion is still in
+        // the middle of changing, and the columns are kept with the goal
+        // from here on — a later edit of the catalog reaches later goals
+        // alone.
+        let workflow: crate::Workflow = sqlx::query_as("SELECT * FROM workflows WHERE name = ?")
+            .bind(&workflow_name)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| not_found("workflow", &workflow_name))?;
+        let steps = ariadne_core::workflow::parse(workflow.document_text())
+            .map_err(|e| StoreError::Invalid(e.to_string()))?
+            .steps;
         let (model, effort) = AgentPin::columns(&new.pin);
         sqlx::query(
-            "INSERT INTO goals (id, title, description, status,
-                                orchestrated, model, effort, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO goals (id, title, description, issue_url, status,
+                                orchestrated, model, effort, workflow, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
         .bind(&new.description)
+        .bind(&new.issue_url)
         .bind(status.as_str())
         .bind(orchestrated)
         .bind(&model)
         .bind(&effort)
+        .bind(&workflow_name)
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)
         .await?;
+        for (ordinal, step) in steps.iter().enumerate() {
+            let ranks: Vec<&str> = step.ranks.iter().map(|r| r.as_str()).collect();
+            sqlx::query("INSERT INTO goal_steps (goal_id, ordinal, id, title, description, skills, ranks, gate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                .bind(&id).bind(ordinal as i64).bind(&step.id).bind(&step.title)
+                .bind(&step.description).bind(serde_json::to_string(&step.skills).expect("skills serialize"))
+                .bind(serde_json::to_string(&ranks).expect("ranks serialize")).bind(step.gate.map(|g| g.as_str()))
+                .execute(&mut *tx).await?;
+        }
         for repository_id in &repository_ids {
             sqlx::query("INSERT INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)")
                 .bind(&id)
@@ -71,6 +120,17 @@ impl Store {
         let goal = self.get_goal(&id).await?;
         self.publish(Change::GoalCreated(goal.clone()));
         Ok(goal)
+    }
+
+    /// The columns of a goal's workflow as they were when the goal was
+    /// created, in column order.
+    pub async fn goal_steps(&self, id: &str) -> Result<Vec<crate::GoalStep>> {
+        Ok(
+            sqlx::query_as("SELECT * FROM goal_steps WHERE goal_id = ? ORDER BY ordinal")
+                .bind(id)
+                .fetch_all(self.r())
+                .await?,
+        )
     }
 
     pub async fn get_goal(&self, id: &str) -> Result<Goal> {
@@ -101,8 +161,92 @@ impl Store {
     }
 
     pub async fn set_goal_status(&self, id: &str, status: GoalStatus) -> Result<Goal> {
-        let n = sqlx::query("UPDATE goals SET status = ?, updated_at = ? WHERE id = ?")
+        let mut tx = self.w().begin().await?;
+        let goal: Goal = Self::fetch_by_in_tx(&mut tx, "goal", "goals", id).await?;
+        let from = goal.status();
+        sqlx::query("UPDATE goals SET status = ?, updated_at = ? WHERE id = ?")
             .bind(status.as_str())
+            .bind(now())
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        if from != status && matches!(status, GoalStatus::Completed | GoalStatus::Cancelled) {
+            Self::record_goal_ended_in_tx(&mut tx, &goal, status).await?;
+        }
+        tx.commit().await?;
+        let goal = self.get_goal(id).await?;
+        self.publish(Change::GoalUpdated(goal.clone()));
+        Ok(goal)
+    }
+
+    /// Write the `goal_ended` fact (023): one row for a goal that moves to
+    /// `completed` or `cancelled`, inside the same transaction as the status
+    /// write. `data` holds its status, its lead time, its task counts and
+    /// its workflow; the model and the effort are its orchestrator pin.
+    async fn record_goal_ended_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        goal: &Goal,
+        status: GoalStatus,
+    ) -> Result<()> {
+        let repo_ids: Vec<String> =
+            sqlx::query_scalar("SELECT repository_id FROM goal_repositories WHERE goal_id = ?")
+                .bind(&goal.id)
+                .fetch_all(&mut **tx)
+                .await?;
+        let repo_id = match repo_ids.as_slice() {
+            [one] => Some(one.clone()),
+            _ => None,
+        };
+        let tasks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE goal_id = ?")
+            .bind(&goal.id)
+            .fetch_one(&mut **tx)
+            .await?;
+        let tasks_finished: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tasks WHERE goal_id = ? AND status = 'finished'",
+        )
+        .bind(&goal.id)
+        .fetch_one(&mut **tx)
+        .await?;
+        let ended_at = now();
+        let lead_time_secs = match (
+            DateTime::parse_from_rfc3339(&goal.created_at),
+            DateTime::parse_from_rfc3339(&ended_at),
+        ) {
+            (Ok(created), Ok(ended)) => (ended - created).num_seconds().max(0),
+            _ => 0,
+        };
+        let data = serde_json::json!({
+            "status": status.as_str(),
+            "lead_time_secs": lead_time_secs,
+            "tasks": tasks,
+            "tasks_finished": tasks_finished,
+            "workflow": goal.workflow,
+        });
+        sqlx::query(
+            "INSERT INTO stat_facts (id, kind, created_at, repo_id, goal_id, task_id, session_id,
+                                      launch_id, seat, model, effort, skills, data)
+             VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, '[]', ?)",
+        )
+        .bind(new_id())
+        .bind(GOAL_ENDED)
+        .bind(&ended_at)
+        .bind(&repo_id)
+        .bind(&goal.id)
+        .bind(&goal.model)
+        .bind(&goal.effort)
+        .bind(data.to_string())
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
+    /// Move a goal's orchestrator onto another model and effort: the pin its
+    /// next spawn and resume run on.
+    pub async fn set_goal_pin(&self, id: &str, pin: &AgentPin) -> Result<Goal> {
+        let (model, effort) = AgentPin::columns(pin);
+        let n = sqlx::query("UPDATE goals SET model = ?, effort = ?, updated_at = ? WHERE id = ?")
+            .bind(&model)
+            .bind(&effort)
             .bind(now())
             .bind(id)
             .execute(self.w())
@@ -114,6 +258,80 @@ impl Store {
         let goal = self.get_goal(id).await?;
         self.publish(Change::GoalUpdated(goal.clone()));
         Ok(goal)
+    }
+
+    /// Confirm the failed task ids this goal's orchestrator has actually
+    /// had a turn on: called only from the ACP driver, once the exact
+    /// `session/prompt` call carrying them has itself returned
+    /// (`acp::serve_with_input`), never from an ambient session status —
+    /// an unrelated turn landing on the same session first must not
+    /// confirm a failure it never carried. `at` is each task's own
+    /// `updated_at` as it stood at the moment the prompt was queued, so a
+    /// later retry of the same task — which stamps a new `updated_at` on
+    /// its next failure — finds no confirmation already waiting for it.
+    /// Overwrites the previous snapshot whole, which is always safe: the
+    /// situation a prompt carries is always every currently failed and
+    /// stalled task, so a superseding prompt's own confirmation is a
+    /// superset by construction.
+    pub async fn confirm_goal_orchestrator_answered(
+        &self,
+        id: &str,
+        failed_tasks: &[(String, String)],
+    ) -> Result<()> {
+        let json = serde_json::to_string(failed_tasks).expect("ids serialize");
+        sqlx::query("UPDATE goals SET orchestrator_answered_failed_task_ids = ? WHERE id = ?")
+            .bind(&json)
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        self.publish_goal_update(id).await?;
+        Ok(())
+    }
+
+    /// Mark that this goal's orchestrator has been given up on: either
+    /// `scheduler::goals::orchestrator_could_not_start`'s spawn-retry
+    /// budget running out (`wedged: false`, one that never got off the
+    /// ground), or `scheduler::quiet::relaunch_wedged`'s own
+    /// exhausted-relaunch decision (`wedged: true`, one that started and
+    /// then stopped answering) — neither merely a crash the liveness
+    /// sweep is about to retry. A goal already marked keeps its first
+    /// `since` *and* its first `wedged` — this fires again on every later
+    /// pass that still finds the orchestrator given up, and a mark moving
+    /// its own age or cause forward every time would hide how long, and
+    /// why, the user has actually been waiting on it.
+    pub async fn set_goal_orchestrator_given_up(&self, id: &str, wedged: bool) -> Result<()> {
+        let n = sqlx::query(
+            "UPDATE goals SET orchestrator_given_up_at = ?, orchestrator_given_up_wedged = ?
+             WHERE id = ? AND orchestrator_given_up_at IS NULL",
+        )
+        .bind(now())
+        .bind(wedged)
+        .bind(id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n > 0 {
+            self.publish_goal_update(id).await?;
+        }
+        Ok(())
+    }
+
+    /// Take the give-up mark down: recovery has taken ownership of this
+    /// goal's orchestrator again, a live one found or a resume/spawn
+    /// succeeded.
+    pub async fn clear_goal_orchestrator_given_up(&self, id: &str) -> Result<()> {
+        let n = sqlx::query(
+            "UPDATE goals SET orchestrator_given_up_at = NULL
+             WHERE id = ? AND orchestrator_given_up_at IS NOT NULL",
+        )
+        .bind(id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n > 0 {
+            self.publish_goal_update(id).await?;
+        }
+        Ok(())
     }
 
     /// Announce a goal as it now stands, for a write that changed something
@@ -145,7 +363,7 @@ impl Store {
     /// holds references, not copies. Ordered like
     /// [`Store::list_repositories`].
     pub async fn list_goal_repositories(&self, goal_id: &str) -> Result<Vec<Repository>> {
-        Ok(sqlx::query_as::<_, Repository>(
+        let mut repositories = sqlx::query_as::<_, Repository>(
             "SELECT r.* FROM goal_repositories gr
                JOIN repositories r ON r.id = gr.repository_id
               WHERE gr.goal_id = ?
@@ -153,6 +371,8 @@ impl Store {
         )
         .bind(goal_id)
         .fetch_all(self.r())
-        .await?)
+        .await?;
+        self.attach_forges(&mut repositories).await?;
+        Ok(repositories)
     }
 }

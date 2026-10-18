@@ -15,16 +15,20 @@
 import type {
   AgentConfigDto,
   AgentEventDto,
+  AiPermissionsStatusDto,
   components,
+  DashboardDto,
   EffortDto,
+  ForgeDto,
   GoalDto,
-  LayaStatusDto,
+  LearnedPermissionDto,
   ModelDto,
   RepositoryDto,
   SessionDto,
   SessionEntryDto,
   SkillDto,
   TaskDto,
+  WorkflowDto,
 } from "@/api"
 import type { OutsideSessionDto } from "@/features/sessions/queries"
 
@@ -39,6 +43,28 @@ const SESSION_ID = "01JSESS0000000000000000001"
 const AUTHOR_ID = "01JAGENT0000000000000AUTH"
 const REVIEWER_ID = "01JAGENT0000000000000REVW"
 const REPO_ID = "01JREPO0000000000000000001"
+const LEARNED_ID = "01JLEARNED000000000000001"
+
+export function aWorkflow(overrides: Partial<WorkflowDto> = {}): WorkflowDto {
+  return {
+    name: "develop-review-merge",
+    document: "workflow develop-review-merge\n  develop[Develop]\n    Build the task.",
+    builtin: true,
+    steps: [
+      {
+        id: "develop",
+        title: "Develop",
+        description: "Build the task.",
+        skills: ["coding"],
+        ranks: ["balanced"],
+        gate: "committed",
+      },
+    ],
+    created_at: STAMP,
+    updated_at: STAMP,
+    ...overrides,
+  }
+}
 
 /** A row nobody has reported tokens for, which is how every fixture starts. */
 const NO_TOKENS = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
@@ -48,15 +74,17 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     id: GOAL_ID,
     title: "Ship the board",
     description: "",
+    issue_url: null,
     model: "claude-agent-acp:claude-sonnet-5",
     orchestrated: true,
+    workflow: "build-test",
     repos: [],
+    steps: [],
     status: "active",
     usage: {
+      agents: [],
       total: NO_TOKENS,
       orchestrator: NO_TOKENS,
-      authors: NO_TOKENS,
-      reviewers: NO_TOKENS,
     },
     created_at: STAMP,
     updated_at: STAMP,
@@ -72,26 +100,24 @@ export function aTask(overrides: Partial<TaskDto> = {}): TaskDto {
     description: "",
     status: "in_progress",
     branch: "wire-the-sessions-screen-000001",
-    landing: "merge",
     repo_id: REPO_ID,
     stalled: false,
     agents: [
       {
         id: AUTHOR_ID,
-        seat: "author",
+        step: "build",
         skills: ["coding"],
         model: "claude-agent-acp:claude-sonnet-5",
       },
       {
         id: REVIEWER_ID,
-        seat: "reviewer",
+        step: "test",
         skills: ["code-review"],
         model: "claude-agent-acp:claude-sonnet-5",
       },
     ],
     depends_on: [],
-    picks: [],
-    usage: { total: NO_TOKENS, author: NO_TOKENS, reviewers: [] },
+    usage: { total: NO_TOKENS, agents: [] },
     created_at: STAMP,
     updated_at: STAMP,
     ...overrides,
@@ -104,7 +130,7 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     id,
     goal_id: GOAL_ID,
     task_id: TASK_ID,
-    seat: "author",
+    seat: "agent",
     task_agent_id: AUTHOR_ID,
     model: "claude-agent-acp:claude-sonnet-5",
     internal_session_id: null,
@@ -119,6 +145,7 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     created_at: STAMP,
     ended_at: null,
     title: null,
+    pull_request_id: null,
     ...overrides,
   }
 }
@@ -227,6 +254,18 @@ export function aSkill(overrides: Partial<SkillDto> = {}): SkillDto {
   }
 }
 
+export function aDashboard(overrides: Partial<DashboardDto> = {}): DashboardDto {
+  return {
+    name: "stats",
+    builtin: true,
+    document_is_default: true,
+    document: { kind: "Dashboard", metadata: { name: "stats" }, spec: {} },
+    created_at: STAMP,
+    updated_at: STAMP,
+    ...overrides,
+  }
+}
+
 export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryDto {
   return {
     id: REPO_ID,
@@ -234,8 +273,31 @@ export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryD
     base_branch: "main",
     description: "The orchestrator itself.",
     permission_mode: "auto",
+    supervise_posts: true,
+    default_workflow: "build-test",
+    forge: null,
     created_at: STAMP,
     updated_at: STAMP,
+    ...overrides,
+  }
+}
+
+export function aForge(overrides: Partial<ForgeDto> = {}): ForgeDto {
+  return {
+    webhook: {
+      state: "polling",
+      url: null,
+      error: null,
+      last_delivery_at: null,
+      fetch_error: null,
+    },
+    kind: "github",
+    host: "github.com",
+    owner: "acme",
+    name: "widgets",
+    remote: "origin",
+    enabled: false,
+    login: null,
     ...overrides,
   }
 }
@@ -272,13 +334,57 @@ export function aModel(overrides: Partial<ModelDto> = {}): ModelDto {
   }
 }
 
-/** The Laya settings row `GET /v1/permissions/laya` answers with, off by default. */
-export function aLayaStatus(overrides: Partial<LayaStatusDto> = {}): LayaStatusDto {
+/** The AI permission settings row `GET /v1/permissions/ai` answers with, off by default. */
+export function anAiPermissionsStatus(
+  overrides: Partial<AiPermissionsStatusDto> = {},
+): AiPermissionsStatusDto {
   return {
     enabled: false,
-    checkpoints: "english",
-    threshold: 0.8,
-    schedule: null,
+    allow_threshold: 0.2,
+    deny_threshold: 0.8,
+    thresholds_default: false,
+    flavour: "4b",
+    device: "mlx",
+    hardware: {
+      os: "macos",
+      arch: "aarch64",
+      memory_bytes: 64 * 1024 * 1024 * 1024,
+      gpu: { name: "Apple M4 Max", vram_bytes: 48 * 1024 * 1024 * 1024 },
+    },
+    flavours: [
+      {
+        flavour: "0.8b",
+        devices: [
+          { device: "mlx", can_run: true, reason: null, slow: false },
+          { device: "cuda", can_run: false, reason: "CUDA is unavailable", slow: false },
+          { device: "cpu", can_run: true, reason: null, slow: true },
+        ],
+      },
+      {
+        flavour: "4b",
+        devices: [
+          { device: "mlx", can_run: true, reason: null, slow: false },
+          { device: "cuda", can_run: false, reason: "CUDA is unavailable", slow: false },
+          { device: "cpu", can_run: false, reason: "needs 16 GB memory", slow: false },
+        ],
+      },
+      {
+        flavour: "9b",
+        devices: [
+          { device: "mlx", can_run: false, reason: "needs 32 GB memory", slow: false },
+          { device: "cuda", can_run: false, reason: "CUDA is unavailable", slow: false },
+          { device: "cpu", can_run: false, reason: "needs 32 GB memory", slow: false },
+        ],
+      },
+      {
+        flavour: "27b",
+        devices: [
+          { device: "mlx", can_run: false, reason: "needs 64 GB memory", slow: false },
+          { device: "cuda", can_run: false, reason: "CUDA is unavailable", slow: false },
+          { device: "cpu", can_run: false, reason: "needs 64 GB memory", slow: false },
+        ],
+      },
+    ],
     python: { path: "/usr/bin/python3", version: "3.12.1", ok: true },
     state: "disabled",
     installed_release: null,
@@ -287,6 +393,33 @@ export function aLayaStatus(overrides: Partial<LayaStatusDto> = {}): LayaStatusD
     endpoint: null,
     last_refresh_at: null,
     last_error: null,
+    ...overrides,
+  }
+}
+
+/** A row `GET /v1/permissions/learned` answers with, one user choice or denial. */
+export function aLearnedPermission(
+  overrides: Partial<LearnedPermissionDto> = {},
+): LearnedPermissionDto {
+  return {
+    id: LEARNED_ID,
+    repository_id: REPO_ID,
+    tool_name: "Bash",
+    key: '{"command":"ls"}',
+    level: "command",
+    family: "ls",
+    risk_tags: [],
+    scope: "repository",
+    tool_call: { title: "Bash", kind: "execute", rawInput: { command: "ls" } },
+    options: [
+      { optionId: "yes", name: "Allow", kind: "allow_once" },
+      { optionId: "no", name: "Reject", kind: "reject_once" },
+    ],
+    selected_option: "yes",
+    target: "learn",
+    output: null,
+    created_at: STAMP,
+    updated_at: STAMP,
     ...overrides,
   }
 }

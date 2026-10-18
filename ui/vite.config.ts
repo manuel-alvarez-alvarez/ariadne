@@ -21,10 +21,28 @@ export default defineConfig({
       // Rust sources are rebuilt by `tauri dev`, not by Vite.
       ignored: ["**/src-tauri/**"],
     },
+    // The Stats screen's iframe opens `/dashboard/`: in a packaged build that
+    // is the `ui/dashboard` package's own build, under this one's `dist/`
+    // (see its own `vite.config.ts`); in development it is this package's
+    // dev server instead, so the iframe stays same-origin either way.
+    proxy: {
+      "/dashboard": {
+        target: "http://localhost:1421",
+        changeOrigin: true,
+        ws: true,
+      },
+    },
   },
   // `tauri dev` sets TAURI_* env vars; expose them alongside VITE_*.
   envPrefix: ["VITE_", "TAURI_"],
   test: {
+    // `ui/dashboard` is its own package, with its own vitest config and its
+    // own `npm test`; left to its default discovery, this config would also
+    // pick up its test files and run them against this package's own
+    // dependency tree (React 19, `@tanstack/react-query` v5) instead of that
+    // package's own (React 18, v4) — silently, since nothing here excludes
+    // a sibling directory by default the way `node_modules` is.
+    include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.mjs"],
     // The daemon stub and the jsdom shims have to be in place before a test
     // module — and so `@/api` — is imported. Which environment a file runs in
     // is still the file's own `@vitest-environment` docblock: most of them are
@@ -35,5 +53,10 @@ export default defineConfig({
     // extra to disk.
     reporters: process.env.CI ? ["default", "junit"] : ["default"],
     outputFile: process.env.CI ? { junit: "./junit.xml" } : undefined,
+    // Capped rather than left at the host's own core count: a worker per
+    // core is what turns one slow neighbour process on a shared machine
+    // into dozens of starved workers each missing their own test's timeout,
+    // not just the one test actually doing the colliding work.
+    maxWorkers: 4,
   },
 })

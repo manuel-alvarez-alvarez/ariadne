@@ -11,10 +11,10 @@ attach` opens either one.
 ariadne session ls
 ```
 
-lists Ariadne's own sessions — an orchestrator's, an author's, a reviewer's —
-next to outside sessions: conversations an ACP agent holds that Ariadne never
-started. Rows come newest activity first. The columns are `id`, `title`,
-`status`, `goal`, `task`, `agent`, `age` and `tokens`; add `directory` with
+lists Ariadne's own sessions — an orchestrator's, a column agent's, a
+reviewer's, a keeper's — next to outside sessions: conversations an ACP agent holds that
+Ariadne never started. Rows come newest activity first. The columns are `id`, `title`,
+`status`, `goal`, `task`, `agent`, `model`, `age` and `tokens`; add `directory` with
 `--columns`. An outside session has no status, goal or task of its own yet,
 so those columns are empty for it.
 
@@ -43,7 +43,7 @@ ariadne session ls --kind outside --agent codex-acp --dir ~/projects/api \
 
 `--kind` limits the table to Ariadne's own sessions or to outside ones,
 `--agent` to one registry agent, `--status` to a session status, `--seat` to
-`orchestrator`, `author` or `reviewer`, and `--goal` or `--task` to one
+`orchestrator`, `agent`, `reviewer` or `keeper`, and `--goal` or `--task` to one
 goal's or task's sessions. `--attention` keeps only sessions waiting for a
 person. `--dir` matches a working directory and everything under it, and
 `--search` matches part of the title or first prompt, without case
@@ -89,10 +89,11 @@ leave whenever you want. The agent keeps working after you do.
 ## What a resumed session is
 
 A resumed outside session has no goal, no task and no seat: nobody plans it,
-authors it, or reviews it. It has no worktree either, and no landing — the
-agent keeps working in the directory the original conversation already used,
-against your checkout as it stands, and nothing it does is merged, opened as
-a pull request, or otherwise landed on your behalf. Resuming does not copy
+works it, or reviews it. It has no worktree either, and no workflow column —
+the agent keeps working in the directory the original conversation already
+used, against your checkout as it stands, and nothing it does is merged,
+opened as a pull request, or otherwise placed on your behalf. Resuming does
+not copy
 the conversation or change what the agent already knows; it is the same
 session, reached through Ariadne instead of whatever you used to reach it
 before.
@@ -105,6 +106,43 @@ changes.
 Once resumed, the session is no longer an outside one. List it again and it
 shows under its own row, not as an outside session a second time; `attach
 <id>` still reaches it, now as the session id rather than the internal id. It keeps the first prompt it was listed with as its title.
+
+## Switching to another agent
+
+Change the agent or model a session uses without stopping the conversation:
+
+```sh
+ariadne session switch <id> --model codex-acp:<model-id>
+ariadne session switch <id> --model claude-acp:<model-id> --effort high
+```
+
+Ariadne Desktop shows a Switch button on the session screen.
+
+A switch to another agent or a different model ends the conversation and
+starts a new session on the same seat. The new session reads the old
+one's prompts, the agent's messages, and the tool calls, folded up, under a
+240,000-character cap. When the complete folded history fits, it arrives
+unchanged. When it does not, Ariadne keeps whole entries with deterministic
+rules: a real user correction, then a real user prompt, an unfinished plan,
+a blocker or failure, an agent decision, a file change, and a useful completed
+test result. Later entries break a tie, and the selected entries return in
+their original order.
+
+Only the stored transcript role and the visible folded entry provide evidence.
+Text printed by a tool cannot become a user instruction, and daemon prompts
+do not receive user priority. A prompt that cannot fit as one whole entry is
+left out. If several user prompts compete, the later correction or prompt is
+kept. When no entry supplies usable evidence, Ariadne keeps the newest entries
+as before. Omission notes count against the cap and state when omitted entries
+come from more than one gap. These rules use no model inference or generated
+summary. They came from constructed pilot examples; they do not establish
+performance on real session histories.
+
+The seat's pin moves with the new session, so later spawns and resumes reach
+the new one.
+
+A switch to the same agent keeps the conversation: the agent takes the new
+model in place.
 
 ## When it refuses
 

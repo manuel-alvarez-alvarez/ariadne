@@ -3,9 +3,10 @@
 use anyhow::Result;
 use clap::Subcommand;
 
+use ariadne_api::pull_requests::PullRequestDto;
 use ariadne_api::sessions::{
     ConsoleInputRequest, NewSessionRequest, SessionDto, SessionEntryDto, SessionKind,
-    SessionPageDto, SessionPageQuery,
+    SessionPageDto, SessionPageQuery, SwitchSessionRequest,
 };
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_client::{Client, SseEvent};
@@ -15,7 +16,9 @@ use ariadne_core::{AttentionReason, Seat, SessionStatus};
 use super::attention::reason_label;
 use super::follow;
 use super::resolve::{self, Kind};
-use super::{Subject, confirm, one_of, parse_effort, parse_model, query_path};
+use super::{
+    Subject, confirm, one_of, parse_effort, parse_effort_or_default, parse_model, query_path,
+};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, at, col, dash, empty_state, moment, note, ok_id_line, print,
@@ -74,6 +77,10 @@ Examples:
   ariadne session ls --cursor <token>
 ";
 
+// `Ls` carries every filter `session ls` takes and so is far larger than a
+// one-id variant like `Kill`: that is the shape of a clap arg enum, not a
+// struct worth boxing fields out of.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub(crate) enum SessionCommand {
     /// List Ariadne and outside agent sessions
@@ -91,6 +98,9 @@ pub(crate) enum SessionCommand {
         /// Filter by goal id
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         goal: Option<String>,
+        /// Filter by pull request id
+        #[arg(long)]
+        pull_request: Option<String>,
         /// Filter by status: names the statuses to list instead of the
         /// live/finished split --all makes, and so replaces it — a status is
         /// listed whether or not it is a live one. Repeatable and
@@ -156,6 +166,18 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         attach: bool,
     },
+    /// Switch a session to another model or agent
+    Switch {
+        /// Session id
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
+        id: String,
+        /// Model to run: AGENT:MODEL
+        #[arg(long, value_name = "MODEL", value_parser = parse_switch_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        model: String,
+        /// Reasoning effort; `default` leaves the effort unpinned
+        #[arg(long, value_name = "EFFORT", value_parser = parse_effort_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts_or_default))]
+        effort: Option<String>,
+    },
     /// Show a session
     Inspect {
         /// Session id
@@ -209,6 +231,13 @@ pub(crate) enum SessionCommand {
     },
 }
 
+fn parse_switch_model(model: &str) -> std::result::Result<String, String> {
+    if model == "default" {
+        return Err("`default` is no model — a model is required".into());
+    }
+    parse_model(model)
+}
+
 pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result<()> {
     match cmd {
         SessionCommand::Ls {
@@ -216,6 +245,7 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
             agent,
             task,
             goal,
+            pull_request,
             statuses,
             seat,
             attention,
@@ -236,6 +266,7 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                     agent,
                     task,
                     goal,
+                    pull_request,
                     statuses,
                     seat,
                     attention,
@@ -290,6 +321,28 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                         s.status.as_str(),
                     )
                 )
+            })?;
+        }
+        SessionCommand::Switch { id, model, effort } => {
+            let id = resolve::id(client, Kind::Session, &id).await?;
+            let effort = effort.filter(|effort| effort != "default");
+            let s: SessionDto = client
+                .post_json(
+                    &format!("/v1/sessions/{id}/switch"),
+                    &SwitchSessionRequest { model, effort },
+                )
+                .await?;
+            print(format, &s, || {
+                let pin = match s.effort.as_deref() {
+                    Some(effort) => format!("{} @ {effort}", s.model),
+                    None => s.model.clone(),
+                };
+                let line = ok_id_line(view().color, view().quiet, "session", &s.id);
+                if view().quiet {
+                    println!("{line}");
+                } else {
+                    println!("{line} · {pin}");
+                }
             })?;
         }
         SessionCommand::Inspect { id } => {
@@ -388,6 +441,7 @@ struct ListOptions {
     agent: Option<String>,
     task: Option<String>,
     goal: Option<String>,
+    pull_request: Option<String>,
     statuses: Vec<SessionStatus>,
     seat: Option<Seat>,
     attention: bool,
@@ -442,6 +496,7 @@ fn sessions_path(options: &ListOptions, cursor: Option<&str>) -> Result<String> 
             agent: options.agent.clone(),
             goal: options.goal.clone(),
             task: options.task.clone(),
+            pull_request: options.pull_request.clone(),
             status: one_of(&options.statuses),
             seat: options.seat,
             attention: options.attention.then_some(true),
@@ -503,6 +558,7 @@ fn next_session_command(options: &ListOptions, cursor: &str) -> String {
     push_option(&mut args, "--agent", options.agent.as_deref());
     push_option(&mut args, "--goal", options.goal.as_deref());
     push_option(&mut args, "--task", options.task.as_deref());
+    push_option(&mut args, "--pull-request", options.pull_request.as_deref());
     if let Some(status) = one_of(&options.statuses) {
         push_option(&mut args, "--status", Some(status.as_str()));
     }
@@ -563,10 +619,26 @@ fn session_row(session: &SessionEntryDto, now: chrono::DateTime<chrono::Utc>) ->
 }
 
 async fn render_page(client: &Client, options: &ListOptions, format: Format) -> Result<()> {
-    let page = fetch_sessions(client, options).await?;
+    let mut page = fetch_sessions(client, options).await?;
     if format == Format::Json {
         return crate::output::print_json(&page);
     }
+    // Each request a row names, read off the forge: what Ariadne still
+    // works on. One it stopped working on keeps the title it has.
+    let mut ids: Vec<String> = page
+        .sessions
+        .iter()
+        .filter_map(|s| s.pull_request_id.clone())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    let mut pulls: Vec<PullRequestDto> = Vec::new();
+    for id in ids {
+        if let Ok(pull) = client.get_json(&format!("/v1/pull-requests/{id}")).await {
+            pulls.push(pull);
+        }
+    }
+    link_pull_requests(&mut page, &pulls);
     print_list(
         format,
         &page.sessions,
@@ -584,6 +656,21 @@ async fn render_page(client: &Client, options: &ListOptions, format: Format) -> 
         }
     }
     Ok(())
+}
+
+/// Title each pull request session by its request, with the request's URL
+/// beside it (026): what the session works on, and where to read it.
+fn link_pull_requests(page: &mut SessionPageDto, pulls: &[PullRequestDto]) {
+    for session in &mut page.sessions {
+        let Some(pull) = session
+            .pull_request_id
+            .as_deref()
+            .and_then(|id| pulls.iter().find(|p| p.id.as_deref() == Some(id)))
+        else {
+            continue;
+        };
+        session.title = Some(format!("{} ({})", pull.title, pull.url));
+    }
 }
 
 fn session_path(id: &str) -> String {
@@ -653,8 +740,10 @@ fn attention_label(reason: Option<AttentionReason>) -> String {
 fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
     let mut pairs = vec![
         ("id", Kv::id(s.id.clone())),
+        ("title", Kv::title(dash(s.title.as_deref()))),
         ("goal", Kv::id(dash(s.goal_id.as_deref()))),
         ("task", Kv::id(dash(s.task_id.as_deref()))),
+        ("pull request", Kv::id(dash(s.pull_request_id.as_deref()))),
         ("seat", s.seat.map_or("-", |seat| seat.as_str()).into()),
         ("agent id", Kv::id(dash(s.task_agent_id.as_deref()))),
         ("agent", agent_of(&s.model).into()),
@@ -678,6 +767,7 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
         ),
         ("worktree", dash(s.worktree_path.as_deref()).into()),
         ("internal id", dash(s.internal_session_id.as_deref()).into()),
+        ("continues", Kv::id(dash(s.switched_from.as_deref()))),
         ("tokens", usage_block(&s.usage, &[], INDENT).into()),
     ];
     if let Some((used, size)) = s.context_used.zip(s.context_size) {
@@ -697,6 +787,13 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
 /// Whose agent it is: a session has no title, and the seat and the piece
 /// of work it was spawned for are what stand in for one.
 fn what_for(s: &SessionDto) -> String {
+    if let Some(pull) = &s.pull_request_id {
+        return format!(
+            "{} of pull request {}",
+            s.seat.map_or("-", |seat| seat.as_str()),
+            short_id(pull)
+        );
+    }
     match &s.task_id {
         Some(task) => format!(
             "{} on task {}",
@@ -737,6 +834,7 @@ mod tests {
             agent: None,
             task: None,
             goal: None,
+            pull_request: None,
             statuses: Vec::new(),
             seat: None,
             attention: false,
@@ -774,6 +872,7 @@ mod tests {
             context_size: None,
             created_at: None,
             ended_at: None,
+            pull_request_id: None,
         }
     }
 
@@ -803,8 +902,9 @@ mod tests {
             agent: Some("codex-acp".into()),
             goal: Some("01GOAL".into()),
             task: Some("01TASK".into()),
+            pull_request: Some("01PR".into()),
             statuses: vec![SessionStatus::Idle],
-            seat: Some(Seat::Author),
+            seat: Some(Seat::Agent),
             attention: true,
             dir: Some("/work/api".into()),
             since: Some("2026-09-01T00:00:00Z".into()),
@@ -817,7 +917,21 @@ mod tests {
         };
         assert_eq!(
             sessions_path(&options, None).unwrap(),
-            "/v1/sessions?kind=outside&agent=codex-acp&goal=01GOAL&task=01TASK&status=idle&seat=author&attention=true&dir=%2Fwork%2Fapi&since=2026-09-01T00%3A00%3A00Z&until=2026-09-12T12%3A30%3A00%2B02%3A00&q=rate+limit&limit=25&cursor=next%2Fpage&refresh=true"
+            "/v1/sessions?kind=outside&agent=codex-acp&goal=01GOAL&task=01TASK&pull_request=01PR&status=idle&seat=agent&attention=true&dir=%2Fwork%2Fapi&since=2026-09-01T00%3A00%3A00Z&until=2026-09-12T12%3A30%3A00%2B02%3A00&q=rate+limit&limit=25&cursor=next%2Fpage&refresh=true"
+        );
+    }
+
+    /// `--pull-request` reaches the daemon under `SessionPageQuery`'s own
+    /// parameter name, on its own, with nothing else from `--all`.
+    #[test]
+    fn pull_request_reaches_its_own_query_parameter() {
+        let options = ListOptions {
+            pull_request: Some("01PR".into()),
+            ..options()
+        };
+        assert_eq!(
+            sessions_path(&options, None).unwrap(),
+            "/v1/sessions?pull_request=01PR"
         );
     }
 
@@ -992,6 +1106,57 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn switch_posts_the_pin_and_returns_the_new_session() {
+        use axum::Router;
+        use axum::extract::State;
+        use axum::routing::post;
+
+        type Bodies = std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
+        async fn switch(
+            State(bodies): State<Bodies>,
+            axum::Json(body): axum::Json<serde_json::Value>,
+        ) -> axum::Json<SessionDto> {
+            bodies.lock().unwrap().push(body);
+            axum::Json(SessionDto {
+                model: "other-agent:model-x".into(),
+                effort: Some("high".into()),
+                switched_from: Some("01h00000000000000000000001".into()),
+                ..session("01h00000000000000000000002", "goal", None)
+            })
+        }
+
+        let bodies = Bodies::default();
+        let app = Router::new()
+            .route(
+                "/v1/sessions/01h00000000000000000000001/switch",
+                post(switch),
+            )
+            .with_state(bodies.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+
+        run(
+            &client,
+            SessionCommand::Switch {
+                id: "01h00000000000000000000001".into(),
+                model: "other-agent:model-x".into(),
+                effort: Some("high".into()),
+            },
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        assert_eq!(
+            *bodies.lock().unwrap(),
+            [serde_json::json!({"model": "other-agent:model-x", "effort": "high"})]
+        );
+    }
+
     #[test]
     fn a_next_cursor_prints_the_session_command_for_the_next_page() {
         let options = ListOptions {
@@ -1013,6 +1178,41 @@ mod tests {
         assert_eq!(
             session_count(&page(&["one", "two"], Some("more"), 17)),
             "2 of 17 sessions"
+        );
+    }
+
+    /// A pull request session is titled by its request, with the request's
+    /// URL beside the title; every other session keeps the title it has.
+    #[test]
+    fn a_pull_request_session_shows_the_request_title_and_url() {
+        let mut pr_session = ariadne("01PRS", SessionStatus::Idle);
+        pr_session.pull_request_id = Some("01PR".into());
+        pr_session.title = Some("Fix widgets".into());
+        let mut listing = SessionPageDto {
+            sessions: vec![pr_session, outside("outside-id")],
+            next_cursor: None,
+            total: 2,
+            snapshot_at: "2026-09-12T12:00:00Z".into(),
+        };
+        let pull: PullRequestDto = serde_json::from_value(serde_json::json!({
+            "id": "01PR", "repository_id": "01R", "number": 42,
+            "url": "https://github.com/acme/widgets/pull/42", "title": "Fix widgets",
+            "author_login": "me", "state": "open", "draft": false,
+            "head_branch": "fix", "head_sha": "abc", "head_repo": null, "base_branch": "main",
+            "checks": "none", "review_decision": "none", "unanswered_comments": 1,
+            "origin_task_id": null, "opened_at": "", "role": "author", "ready": false,
+            "updated_at": "", "failed_checks": [],
+            "behind_base": false, "session_id": "01PRS"
+        }))
+        .unwrap();
+        link_pull_requests(&mut listing, &[pull]);
+        assert_eq!(
+            listing.sessions[0].title.as_deref(),
+            Some("Fix widgets (https://github.com/acme/widgets/pull/42)")
+        );
+        assert_eq!(
+            listing.sessions[1].title.as_deref(),
+            Some("Prompt for outside-id")
         );
     }
 
@@ -1124,6 +1324,42 @@ mod tests {
         };
         let block = kv_block(&inspect_pairs(&loose), &View::plain());
         for field in ["goal", "task", "seat"] {
+            let line = block.lines().find(|line| line.starts_with(field)).unwrap();
+            assert_eq!(line.split_whitespace().collect::<Vec<_>>(), [field, "-"]);
+        }
+    }
+
+    #[test]
+    fn a_switched_session_shows_its_title_and_what_it_continues() {
+        let s = SessionDto {
+            title: Some("Fix widgets".into()),
+            switched_from: Some("01h00000000000000000000001".into()),
+            ..session("01SESS", "01GOAL", Some("01TASK"))
+        };
+        let block = kv_block(&inspect_pairs(&s), &View::plain());
+        let title = block
+            .lines()
+            .find(|line| line.starts_with("title"))
+            .unwrap();
+        assert_eq!(
+            title.split_whitespace().collect::<Vec<_>>(),
+            ["title", "Fix", "widgets"]
+        );
+        let continues = block
+            .lines()
+            .find(|line| line.starts_with("continues"))
+            .unwrap();
+        assert_eq!(
+            continues.split_whitespace().collect::<Vec<_>>(),
+            ["continues", "01h00000000000000000000001"]
+        );
+    }
+
+    #[test]
+    fn a_session_with_neither_shows_a_dash_for_title_and_continues() {
+        let s = session("01SESS", "01GOAL", Some("01TASK"));
+        let block = kv_block(&inspect_pairs(&s), &View::plain());
+        for field in ["title", "continues"] {
             let line = block.lines().find(|line| line.starts_with(field)).unwrap();
             assert_eq!(line.split_whitespace().collect::<Vec<_>>(), [field, "-"]);
         }

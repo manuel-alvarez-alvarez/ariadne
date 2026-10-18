@@ -104,6 +104,11 @@ impl FromStr for Since {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemMeta {
+    /// The id of the event this block opened on — empty for a block the
+    /// console synthesizes locally rather than folding from a stored event
+    /// (a typed prompt shown before its round trip, a send that failed).
+    /// What a late `session.diagnosis` correlates against (024).
+    pub id: String,
     pub created_at: String,
     pub kinds: Vec<String>,
     /// The id of the whole the daemon stored at the end of the turn, once it
@@ -116,6 +121,7 @@ pub struct ItemMeta {
 impl ItemMeta {
     pub fn from_event(event: &AgentEventDto) -> Self {
         Self {
+            id: event.id.clone(),
             created_at: event.created_at.clone(),
             kinds: vec![event.kind.clone()],
             closed_by: None,
@@ -133,6 +139,9 @@ pub struct PlanEntry {
 pub struct PermissionOption {
     pub id: String,
     pub name: String,
+    /// The ACP kind of the option — `allow_once`, `allow_always`,
+    /// `reject_once`, `reject_always` — where the request named one.
+    pub kind: Option<String>,
 }
 
 /// A file a tool call touches, as the ACP call names it.
@@ -270,6 +279,9 @@ pub enum TranscriptItem {
         tool: Tool,
         options: Vec<PermissionOption>,
         answer: Option<String>,
+        /// Why the AI permission model left the question to a person, where
+        /// it had a part: `AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`.
+        ai_note: Option<String>,
     },
     SystemNote {
         meta: ItemMeta,
@@ -278,6 +290,11 @@ pub enum TranscriptItem {
     Error {
         meta: ItemMeta,
         text: String,
+        /// A late, optional advisory on this failure's likely category
+        /// (024), labeled as the model's own suggestion: `AI suggests:
+        /// quota exhaustion (72%)`. The original `text` is never rewritten
+        /// to carry it.
+        ai_note: Option<String>,
     },
     Raw {
         meta: ItemMeta,
@@ -355,11 +372,13 @@ impl From<&AgentEventDto> for TranscriptItem {
                     tool,
                     options: permission_options(&event.payload),
                     answer: None,
+                    ai_note: ariadne_api::permissions::ai_permission_note(&event.payload),
                 }
             }
             "session.error" => Self::Error {
                 meta,
                 text: error_text(event),
+                ai_note: None,
             },
             "session_start" => Self::SystemNote {
                 meta,
@@ -372,6 +391,16 @@ impl From<&AgentEventDto> for TranscriptItem {
             "compaction_update" => Self::SystemNote {
                 meta,
                 text: "context compacted".into(),
+            },
+            // The agent flagged that it waits for the user (031). The
+            // question is the agent's text that follows this line; the hint
+            // is the one the Needs attention list shows, so the two read as one.
+            "agent_request" => Self::SystemNote {
+                meta,
+                text: match string_at(&event.payload, "/hint") {
+                    Some(hint) => format!("waiting for you · {hint}"),
+                    None => "waiting for you".into(),
+                },
             },
             "session_end" => Self::SystemNote {
                 meta,
@@ -427,20 +456,54 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
         return;
     }
     if event.kind == "permission.replied"
-        && let Some(TranscriptItem::PermissionQuestion {
-            meta,
-            options,
-            answer,
-            ..
-        }) = items.iter_mut().rev().find(|item| {
+        && let Some(at) = items.iter().rposition(|item| {
             matches!(
                 item,
                 TranscriptItem::PermissionQuestion { answer: None, .. }
             )
         })
     {
-        *answer = Some(permission_answer(&event.payload, options));
-        meta.kinds.push(event.kind.clone());
+        // A permission on one of Ariadne's own tools that the daemon allowed
+        // by itself — its mode, the AI model or a learned rule, nobody at the
+        // console — asked the person nothing: the call's own block already
+        // says what the agent did, and a frame saying "permission · Allow"
+        // around it is noise in the conversation. One a person did answer
+        // stays, as the record of what they chose; and so does one the
+        // daemon denied or cancelled, since the call's block then reads as a
+        // failure with no cause, and the answer here is the cause.
+        if let TranscriptItem::PermissionQuestion { tool, options, .. } = &items[at]
+            && is_ariadne_tool(&tool.name)
+            && daemon_allowed(&event.payload, options)
+        {
+            items.remove(at);
+            return;
+        }
+        if let TranscriptItem::PermissionQuestion {
+            meta,
+            options,
+            answer,
+            ..
+        } = &mut items[at]
+        {
+            *answer = Some(permission_answer(&event.payload, options));
+            meta.kinds.push(event.kind.clone());
+        }
+        return;
+    }
+    // An advisory diagnosis (024) carries no block of its own: it reads
+    // onto the `Error` block of the failure it names by id, however much
+    // later it arrives, and onto nothing where that block has already
+    // scrolled out of this snapshot.
+    if event.kind == "session.diagnosis" {
+        if let Some(error_event_id) = string_at(&event.payload, "/error_event_id")
+            && let Some(TranscriptItem::Error { meta, ai_note, .. }) = items
+                .iter_mut()
+                .rev()
+                .find(|item| matches!(item, TranscriptItem::Error { meta, .. } if meta.id == error_event_id))
+        {
+            *ai_note = ariadne_api::events::diagnosis_note(&event.payload);
+            meta.kinds.push(event.kind.clone());
+        }
         return;
     }
 
@@ -474,6 +537,36 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
         };
     }
     items.push(item);
+}
+
+/// Whether a reply is the daemon's own allow: an option chosen without a
+/// person at the console, that is not a denial. A cancel (no option), a
+/// console answer, an AI `deny`, and a chosen option whose kind is a reject
+/// are each something a reader needs to see.
+fn daemon_allowed(payload: &Value, options: &[PermissionOption]) -> bool {
+    let Some(id) = string_at(payload, "/option_id") else {
+        return false;
+    };
+    if string_at(payload, "/decided_by").as_deref() == Some("console")
+        || string_at(payload, "/label").as_deref() == Some("deny")
+    {
+        return false;
+    }
+    match options
+        .iter()
+        .find(|option| option.id == id)
+        .and_then(|option| option.kind.as_deref())
+    {
+        Some(kind) => kind.starts_with("allow"),
+        None => true,
+    }
+}
+
+/// Whether a call is one of Ariadne's own MCP tools, by the name the agent's
+/// client gives it: `mcp__ariadne__wait_for_user` from Claude Code, and the
+/// server's name in some other spelling from another client.
+fn is_ariadne_tool(name: &str) -> bool {
+    name.to_ascii_lowercase().contains("ariadne")
 }
 
 pub fn tool_is_terminal(status: Option<&str>) -> bool {
@@ -566,7 +659,7 @@ fn unified(path: &str, old: &str, new: &str) -> String {
         .to_string()
 }
 
-fn permission_options(payload: &Value) -> Vec<PermissionOption> {
+pub fn permission_options(payload: &Value) -> Vec<PermissionOption> {
     payload
         .get("options")
         .and_then(Value::as_array)
@@ -575,7 +668,8 @@ fn permission_options(payload: &Value) -> Vec<PermissionOption> {
         .filter_map(|option| {
             let id = string_at(option, "/optionId")?;
             let name = string_at(option, "/name").unwrap_or_else(|| id.clone());
-            Some(PermissionOption { id, name })
+            let kind = string_at(option, "/kind");
+            Some(PermissionOption { id, name, kind })
         })
         .collect()
 }
@@ -587,15 +681,27 @@ pub fn permission_answer(payload: &Value, options: &[PermissionOption]) -> Strin
         return "cancelled".into();
     };
     if payload.get("decided_by").and_then(Value::as_str) == Some("ai")
-        && let Some(confidence) = payload.get("confidence").and_then(Value::as_f64)
+        && let Some(note) = ariadne_api::permissions::ai_permission_note(payload)
     {
-        return format!("allowed by AI ({confidence:.2})");
+        return note;
     }
-    options
+    let choice_id = string_at(payload, "/console_option_id").unwrap_or_else(|| id.clone());
+    let answer = options
         .iter()
-        .find(|option| option.id == id)
+        .find(|option| option.id == choice_id)
         .map(|option| option.name.clone())
-        .unwrap_or(id)
+        .unwrap_or(id);
+    if payload.get("decided_by").and_then(Value::as_str) == Some("learned") {
+        match string_at(payload, "/learned_level").as_deref() {
+            Some("command") => return format!("{answer}, learned · command"),
+            Some("family") => {
+                let family = string_at(payload, "/learned_key").unwrap_or_default();
+                return format!("{answer}, learned · family {family}");
+            }
+            _ => {}
+        }
+    }
+    answer
 }
 
 #[cfg(test)]
@@ -827,6 +933,127 @@ mod tests {
         assert_eq!(tool.output.as_deref(), Some("built"));
     }
 
+    /// The daemon's own line for a wait the agent flagged (031): the hint
+    /// as one note above the question the agent then writes, so the line the
+    /// Needs attention list shows and the question read together.
+    #[test]
+    fn an_agent_request_reads_as_a_waiting_note_with_its_hint() {
+        let events = [event(
+            "request",
+            "agent_request",
+            json!({"request_id": "01RQ", "hint": "Approve the plan?"}),
+        )];
+        let items = fold(&events);
+        assert!(
+            matches!(&items[0], TranscriptItem::SystemNote { text, .. }
+                if text == "waiting for you · Approve the plan?"),
+            "{items:?}"
+        );
+    }
+
+    /// A permission on one of Ariadne's own tools that the daemon allowed
+    /// by itself leaves no block: the call's block says what happened. One
+    /// a person answered at the console keeps its frame and their choice;
+    /// so does one the daemon denied — the AI model's `deny`, or a learned
+    /// rule's reject option — or cancelled, since that answer is the cause
+    /// the call's failure otherwise lacks; and a permission on any other
+    /// tool is untouched either way.
+    #[test]
+    fn an_automatic_permission_on_an_ariadne_tool_leaves_no_block() {
+        let asked = |id: &str, tool: &str| {
+            event(
+                id,
+                "permission_request",
+                json!({"tool_name": tool, "waiting": true,
+                       "options": [{"optionId": "allow-once", "name": "Allow", "kind": "allow_once"},
+                                   {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}],
+                       "acp": {"toolCallId": id, "title": tool, "kind": "other"}}),
+            )
+        };
+        let replied = |id: &str, decided_by: &str| {
+            event(
+                id,
+                "permission.replied",
+                json!({"option_id": "allow-once", "decided_by": decided_by}),
+            )
+        };
+
+        let auto = fold(&[
+            asked("ask-1", "mcp__ariadne__wait_for_user"),
+            replied("reply-1", "auto"),
+        ]);
+        assert!(auto.is_empty(), "{auto:?}");
+
+        let by_hand = fold(&[
+            asked("ask-2", "mcp__ariadne__wait_for_user"),
+            replied("reply-2", "console"),
+        ]);
+        assert!(
+            matches!(
+                &by_hand[0],
+                TranscriptItem::PermissionQuestion {
+                    answer: Some(_),
+                    ..
+                }
+            ),
+            "{by_hand:?}"
+        );
+
+        let other = fold(&[asked("ask-3", "Bash"), replied("reply-3", "auto")]);
+        assert!(
+            matches!(
+                &other[0],
+                TranscriptItem::PermissionQuestion {
+                    answer: Some(_),
+                    ..
+                }
+            ),
+            "{other:?}"
+        );
+
+        let kept_answer = |items: &[TranscriptItem]| match &items[0] {
+            TranscriptItem::PermissionQuestion {
+                answer: Some(answer),
+                ..
+            } => answer.clone(),
+            other => panic!("{other:?}"),
+        };
+        let ai_denied = fold(&[
+            asked("ask-4", "mcp__ariadne__fail_task"),
+            event(
+                "reply-4",
+                "permission.replied",
+                json!({"option_id": "reject-once", "decided_by": "ai", "label": "deny",
+                       "allow_threshold": 0.05, "deny_threshold": 0.65,
+                       "probabilities": {"0": 0.02, "1": 0.9}, "danger": 0.7}),
+            ),
+        ]);
+        assert!(
+            kept_answer(&ai_denied).starts_with("AI denied"),
+            "{ai_denied:?}"
+        );
+
+        let learned_reject = fold(&[
+            asked("ask-5", "mcp__ariadne__fail_task"),
+            event(
+                "reply-5",
+                "permission.replied",
+                json!({"option_id": "reject-once", "decided_by": "learned"}),
+            ),
+        ]);
+        assert_eq!(kept_answer(&learned_reject), "Reject");
+
+        let cancelled = fold(&[
+            asked("ask-6", "mcp__ariadne__wait_for_user"),
+            event(
+                "reply-6",
+                "permission.replied",
+                json!({"option_id": null, "decided_by": "auto"}),
+            ),
+        ]);
+        assert_eq!(kept_answer(&cancelled), "cancelled");
+    }
+
     #[test]
     fn a_stop_reads_in_words_and_an_ended_turn_is_no_block() {
         let stop = |reason: &str| event(reason, "stop", json!({"stop_reason": reason}));
@@ -878,5 +1105,97 @@ mod tests {
         let items = fold(&events);
 
         assert_eq!(items.len(), 2, "an ended call is not open for another post");
+    }
+
+    /// A late diagnosis (024) attaches to the error it names, as an
+    /// `ai_note` beside the original text — never replacing it, and never a
+    /// block of its own.
+    #[test]
+    fn a_late_diagnosis_attaches_to_the_error_it_names() {
+        let events = [
+            event(
+                "err-1",
+                "session.error",
+                json!({"error": {"data": {"message": "rate limited"}}}),
+            ),
+            event(
+                "diag-1",
+                "session.diagnosis",
+                json!({"error_event_id": "err-1", "category": "exhausted",
+                       "probabilities": {"exhausted": 0.9}}),
+            ),
+        ];
+
+        let items = fold(&events);
+
+        assert_eq!(items.len(), 1, "the diagnosis opens no block of its own");
+        let TranscriptItem::Error { text, ai_note, .. } = &items[0] else {
+            panic!("{items:?}");
+        };
+        assert_eq!(text, "rate limited");
+        assert_eq!(
+            ai_note.as_deref(),
+            Some("AI suggests: quota exhaustion (90%)")
+        );
+    }
+
+    /// Two errors, each later diagnosed: the right note lands on the right
+    /// one, by id, whichever order the diagnoses arrive in.
+    #[test]
+    fn duplicate_errors_each_keep_their_own_diagnosis() {
+        let events = [
+            event(
+                "err-1",
+                "session.error",
+                json!({"error": {"message": "first"}}),
+            ),
+            event(
+                "err-2",
+                "session.error",
+                json!({"error": {"message": "second"}}),
+            ),
+            event(
+                "diag-2",
+                "session.diagnosis",
+                json!({"error_event_id": "err-2", "category": "task_error"}),
+            ),
+            event(
+                "diag-1",
+                "session.diagnosis",
+                json!({"error_event_id": "err-1", "category": "temporary"}),
+            ),
+        ];
+
+        let items = fold(&events);
+
+        assert_eq!(items.len(), 2);
+        let notes: Vec<Option<&str>> = items
+            .iter()
+            .map(|item| match item {
+                TranscriptItem::Error { ai_note, .. } => ai_note.as_deref(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            notes,
+            [
+                Some("AI suggests: a temporary failure"),
+                Some("AI suggests: a task failure")
+            ]
+        );
+    }
+
+    /// A diagnosis that names no error already in this snapshot — the
+    /// block it is about has scrolled out, or it never arrived — attaches
+    /// to nothing, and opens no block of its own either.
+    #[test]
+    fn a_diagnosis_with_no_matching_error_in_the_snapshot_attaches_to_nothing() {
+        let events = [event(
+            "diag-1",
+            "session.diagnosis",
+            json!({"error_event_id": "unknown", "category": "exhausted"}),
+        )];
+
+        assert_eq!(fold(&events), []);
     }
 }

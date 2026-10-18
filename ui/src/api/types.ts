@@ -12,6 +12,7 @@ export type { components, operations, paths } from "./schema"
 type Schemas = components["schemas"]
 
 export type GoalDto = Schemas["GoalDto"]
+export type IssueDto = Schemas["IssueDto"]
 export type GoalUsage = Schemas["GoalUsageDto"]
 export type GoalStatus = Schemas["GoalStatus"]
 export type CreateGoalRequest = Schemas["CreateGoalRequest"]
@@ -19,14 +20,19 @@ export type CreateGoalRequest = Schemas["CreateGoalRequest"]
 export type RepositoryDto = Schemas["RepositoryDto"]
 export type CreateRepositoryRequest = Schemas["CreateRepositoryRequest"]
 export type UpdateRepositoryRequest = Schemas["UpdateRepositoryRequest"]
+export type ForgeDto = Schemas["ForgeDto"]
+export type ForgeTunnelDto = Schemas["ForgeTunnelDto"]
+export type SetTunnelRequest = Schemas["SetTunnelRequest"]
+export type ForgeDetectionDto = Schemas["ForgeDetectionDto"]
+export type DetectForgeRequest = Schemas["DetectForgeRequest"]
 export type PermissionMode = Schemas["PermissionMode"]
 
 export type TaskDto = Schemas["TaskDto"]
-export type TaskAgentDto = Schemas["TaskAgentDto"]
 export type AgentAssignment = Schemas["AgentAssignment"]
 export type TaskUsage = Schemas["TaskUsageDto"]
 export type TaskStatus = Schemas["TaskStatus"]
 export type TaskTransitionDto = Schemas["TaskTransitionDto"]
+export type MessageDto = Schemas["MessageDto"]
 export type CreateTaskRequest = Schemas["CreateTaskRequest"]
 export type UpdateTaskRequest = Schemas["UpdateTaskRequest"]
 
@@ -36,6 +42,11 @@ export type AttentionReason = Schemas["AttentionReason"]
 export type SessionEntryDto = Schemas["SessionEntryDto"]
 export type ResumeOutsideSessionRequest = Schemas["ResumeOutsideSessionRequest"]
 export type NewSessionRequest = Schemas["NewSessionRequest"]
+export type SwitchSessionRequest = Schemas["SwitchSessionRequest"]
+
+export type AttentionListDto = Schemas["AttentionListDto"]
+export type AttentionItemDto = Schemas["AttentionItemDto"]
+export type AttentionCause = Schemas["AttentionCause"]
 
 /**
  * What one agent spent — the same three counters wherever they are read: a
@@ -47,11 +58,12 @@ export type TokenUsage = Schemas["TokenUsageDto"]
 export type SkillDto = Schemas["SkillDto"]
 export type CreateSkillRequest = Schemas["CreateSkillRequest"]
 export type UpdateSkillRequest = Schemas["UpdateSkillRequest"]
+export type WorkflowDto = Schemas["WorkflowDto"]
+export type WorkflowStepDto = Schemas["WorkflowStepDto"]
+export type ParsedWorkflowDto = Schemas["ParsedWorkflowDto"]
+export type CreateWorkflowRequest = Schemas["CreateWorkflowRequest"]
+export type UpdateWorkflowRequest = Schemas["UpdateWorkflowRequest"]
 export type Seat = Schemas["Seat"]
-export type Landing = Schemas["Landing"]
-export type Actor = Schemas["Actor"]
-export type MessageDto = Schemas["MessageDto"]
-export type MessageKind = Schemas["MessageKind"]
 export type ModelDto = Schemas["ModelDto"]
 export type ModelRank = Schemas["ModelRank"]
 export type EffortDto = Schemas["EffortDto"]
@@ -66,17 +78,24 @@ export type AgentEventDto = Schemas["AgentEventDto"]
 export type ResyncDto = Schemas["ResyncDto"]
 export type HeartbeatDto = Schemas["HeartbeatDto"]
 
-export type LayaStatusDto = Schemas["LayaStatusDto"]
+export type AiPermissionsStatusDto = Schemas["AiPermissionsStatusDto"]
 export type PythonDto = Schemas["PythonDto"]
-export type UpdateLayaRequest = Schemas["UpdateLayaRequest"]
+export type UpdateAiPermissionsRequest = Schemas["UpdateAiPermissionsRequest"]
+export type TestAiPermissionRequest = Schemas["TestAiPermissionRequest"]
+export type TestAiPermissionResponse = Schemas["TestAiPermissionResponse"]
+
+export type LearnedPermissionDto = Schemas["LearnedPermissionDto"]
+export type UpdateLearnedPermissionRequest = Schemas["UpdateLearnedPermissionRequest"]
+
+export type DashboardDto = Schemas["DashboardDto"]
 
 /**
  * Every domain event carried by `GET /v1/events/stream`, as a tagged union.
  *
- * Minus the kinds starting `memo`: the generated schema still lists them and
- * the app no longer reads them. Drop the `Exclude` when the schema is
- * regenerated without them.
+ * This stays a tagged union so the event dispatcher is exhaustive.
  */
-export type DomainEvent = Exclude<Schemas["DomainEvent"], { event: `memo${string}` }>
+export type DomainEvent = Schemas["DomainEvent"]
 /** `"goal_updated" | "task_updated" | ...` */
 export type DomainEventKind = DomainEvent["event"]
+
+export type PullRequestDto = components["schemas"]["PullRequestDto"]

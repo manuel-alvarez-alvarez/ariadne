@@ -7,7 +7,7 @@ use ariadne_api::Page;
 use ariadne_api::events::{
     AgentEventDto, EventListQuery, EventOrder as ApiEventOrder, IngestEventRequest,
 };
-use ariadne_store::{EventFilter, EventOrder, NewAgentEvent, Store, StoreError};
+use ariadne_store::{AgentEvent, EventFilter, EventOrder, NewAgentEvent, Store, StoreError};
 
 use super::AppState;
 use super::classify::{
@@ -49,7 +49,16 @@ pub(crate) async fn list(
 /// daemon's ACP runtime (`crate::acp`) makes takes — the caller wakes the
 /// scheduler. Public so that a test can report as an agent would, down the
 /// same path.
-pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(), StoreError> {
+///
+/// Returns the event as stored, or `None` for the one case nothing is
+/// stored at all: the end of a launch this session has moved past (see
+/// below). A caller that needs to correlate something with this event —
+/// `crate::failure_diagnosis`, with the `session.error` it diagnoses — reads
+/// the id off it.
+pub async fn ingest_event(
+    store: &Store,
+    req: &IngestEventRequest,
+) -> Result<Option<AgentEvent>, StoreError> {
     // The session must exist; its task link is copied onto the event.
     let session = store.get_session(&req.session_id).await?;
 
@@ -81,10 +90,10 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
             session = %session.id, launch = ?req.launch,
             "dropping the end of a launch this session has moved past"
         );
-        return Ok(());
+        return Ok(None);
     }
 
-    store
+    let event = store
         .create_event(NewAgentEvent {
             session_id: Some(session.id.clone()),
             task_id: session.task_id.clone(),
@@ -110,7 +119,7 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
             session = %session.id, kind = %req.kind, launch = ?req.launch,
             "ignoring an event from a launch this session has moved past"
         );
-        return Ok(());
+        return Ok(Some(event));
     }
 
     // Capture the agent-internal session id as soon as an event carries it.
@@ -153,7 +162,7 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
     // itself: the status read above is a moment old by the time the raise
     // runs, so the store makes it part of the write — a prompt only ever
     // lands on a session that is still live at that instant.
-    if let Some(reason) = attention_for_event(&req.kind) {
+    if let Some(reason) = attention_for_event(&req.kind, &req.payload) {
         if crate::attention::work_is_active(store, &session).await {
             store.set_session_attention(&session.id, reason).await?;
         }
@@ -173,7 +182,14 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
     // reports its going, and a launch that went before it ever spoke is one
     // that died on arrival (009) — which stamping its activity here would
     // hide, and a goal would start that agent again every tick.
-    if !matches!(req.kind.as_str(), "session_end" | "session.error") {
+    //
+    // A `session.diagnosis` is no word from the agent either: it is the
+    // advisory classifier's own, read well after the session ended, and
+    // must never read as activity (024).
+    if !matches!(
+        req.kind.as_str(),
+        "session_end" | "session.error" | "session.diagnosis"
+    ) {
         store.touch_session(&session.id).await?;
     }
 
@@ -194,6 +210,9 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
         store
             .set_session_status_if_live(&session.id, status, req.launch.as_deref())
             .await?;
+        if !status.is_live() {
+            crate::stats::record_session_end(store, &session.id).await;
+        }
     }
-    Ok(())
+    Ok(Some(event))
 }

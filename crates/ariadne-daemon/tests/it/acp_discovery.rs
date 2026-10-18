@@ -2,8 +2,10 @@
 
 use crate::common;
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use ariadne_daemon::acp_discovery::ManagerHomes;
 use ariadne_daemon::timeouts::Timeouts;
 
 use ariadne_store::AgentPin;
@@ -11,7 +13,7 @@ use ariadne_store::AgentPin;
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use common::acp::{option, script, stub_acp_agent};
+use common::acp::{install_package, option, script, stub_acp_agent};
 use common::{Harness, HarnessBuilder, TIMEOUT, eventually, harness, post, post_json};
 
 fn home_with_agent(id: &str, bin: &str) -> std::path::PathBuf {
@@ -60,51 +62,31 @@ fn choice(value: &str, name: &str) -> Value {
     json!({"value": value, "name": name})
 }
 
+/// A registry index a test controls without a socket of its own: the
+/// `IndexFetch` a test substitutes for `HttpsFetch` (acp_discovery.rs), so
+/// what a test proves is the download logic — the storage, the fallback on
+/// a failure or a refused document, the kept index surviving a restart —
+/// never a second TLS stack built only to be trusted by the test.
+///
+/// `URL` is a fixed, unreachable `https` placeholder: `download_index`
+/// checks the configured URL's scheme before it ever asks `fetch` for
+/// bytes, so the configured value must still read as `https`, even though
+/// nothing here ever dials it.
+#[derive(Clone)]
 struct IndexServer {
-    url: String,
     response: std::sync::Arc<std::sync::Mutex<(StatusCode, String)>>,
     requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     stalled: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    task: tokio::task::JoinHandle<()>,
 }
 
 impl IndexServer {
-    async fn new(document: String) -> Self {
-        let response = std::sync::Arc::new(std::sync::Mutex::new((StatusCode::OK, document)));
-        let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let stalled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let app = axum::Router::new().route(
-            "/index.json",
-            axum::routing::get({
-                let response = response.clone();
-                let requests = requests.clone();
-                let stalled = stalled.clone();
-                move || {
-                    let response = response.lock().unwrap().clone();
-                    requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let stalled = stalled.load(std::sync::atomic::Ordering::SeqCst);
-                    async move {
-                        let body = if stalled {
-                            axum::body::Body::from_stream(futures_util::stream::once(
-                                std::future::pending::<Result<String, std::io::Error>>(),
-                            ))
-                        } else {
-                            axum::body::Body::from(response.1)
-                        };
-                        (response.0, body)
-                    }
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/index.json", listener.local_addr().unwrap());
-        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    const URL: &'static str = "https://stub-registry.test/index.json";
+
+    fn new(document: String) -> Self {
         Self {
-            url,
-            response,
-            requests,
-            stalled,
-            task,
+            response: std::sync::Arc::new(std::sync::Mutex::new((StatusCode::OK, document))),
+            requests: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            stalled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -113,7 +95,7 @@ impl IndexServer {
         let existing = std::fs::read_to_string(&file).unwrap();
         std::fs::write(
             file,
-            format!("acp_registry_url = {:?}\n{existing}", self.url),
+            format!("acp_registry_url = {:?}\n{existing}", Self::URL),
         )
         .unwrap();
     }
@@ -123,9 +105,28 @@ impl IndexServer {
     }
 }
 
-impl Drop for IndexServer {
-    fn drop(&mut self) {
-        self.task.abort();
+impl ariadne_daemon::acp_discovery::IndexFetch for IndexServer {
+    fn fetch<'a>(
+        &'a self,
+        _url: &'a str,
+        timeout: Duration,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<String>> {
+        Box::pin(async move {
+            self.requests
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.stalled.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::time::timeout(timeout, std::future::pending::<()>())
+                    .await
+                    .unwrap_err();
+                anyhow::bail!("stub registry request timed out");
+            }
+            let (status, body) = self.response.lock().unwrap().clone();
+            if status.is_success() {
+                Ok(body)
+            } else {
+                anyhow::bail!("stub registry answered {status}")
+            }
+        })
     }
 }
 
@@ -150,11 +151,12 @@ fn index_db(h: &Harness) -> sqlx::SqlitePool {
 async fn refresh_downloads_the_configured_index_and_registers_its_installed_agent() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
-    let server = IndexServer::new(downloaded_index()).await;
+    let server = IndexServer::new(downloaded_index());
     let home = empty_home(dir.path());
     server.configure(&home);
     let h = harness()
         .home(home)
+        .index_fetch(Arc::new(server.clone()))
         .agents_on_path(agent.path_with(&["downloaded-agent"]))
         .discover_agents()
         .await;
@@ -179,11 +181,12 @@ async fn a_newer_kept_index_survives_a_restart_without_a_download() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
     let path = agent.path_with(&["downloaded-agent", "goose"]);
-    let server = IndexServer::new(downloaded_index()).await;
+    let server = IndexServer::new(downloaded_index());
     let home = empty_home(dir.path());
     server.configure(&home);
     let h = harness()
         .home(home.clone())
+        .index_fetch(Arc::new(server.clone()))
         .agents_on_path(path.clone())
         .await;
     let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
@@ -206,11 +209,12 @@ async fn a_kept_index_no_newer_than_the_snapshot_does_not_replace_it() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
     let path = agent.path_with(&["downloaded-agent", "goose"]);
-    let server = IndexServer::new(downloaded_index()).await;
+    let server = IndexServer::new(downloaded_index());
     let home = empty_home(dir.path());
     server.configure(&home);
     let h = harness()
         .home(home.clone())
+        .index_fetch(Arc::new(server.clone()))
         .agents_on_path(path.clone())
         .await;
     let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
@@ -235,6 +239,41 @@ async fn a_kept_index_no_newer_than_the_snapshot_does_not_replace_it() {
     assert_eq!(server.requests(), 1);
 }
 
+#[tokio::test]
+async fn a_kept_index_fetched_without_https_provenance_is_not_trusted() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with(&["downloaded-agent", "goose"]);
+    let server = IndexServer::new(downloaded_index());
+    let home = empty_home(dir.path());
+    server.configure(&home);
+    let h = harness()
+        .home(home.clone())
+        .index_fetch(Arc::new(server.clone()))
+        .agents_on_path(path.clone())
+        .await;
+    let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
+    // A daemon upgraded from a version with no https check may still hold a
+    // row an earlier download left over `http`; the kept row is checked
+    // again on every read, not only when it is written.
+    sqlx::query("UPDATE acp_registry_index SET url = ?")
+        .bind("http://stub-registry.test/index.json")
+        .execute(&index_db(&h))
+        .await
+        .unwrap();
+    let store = ariadne_store::Store::open(h.dir.path().join("test.db"))
+        .await
+        .unwrap();
+    let registry = ariadne_daemon::acp_discovery::AgentRegistry::new(&[], home, store, &path);
+    let agents = registry.discover().await;
+    assert_eq!(
+        agents.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
+        ["goose"],
+        "a kept index with no https provenance must not be trusted"
+    );
+    assert_eq!(server.requests(), 1, "the restart must not download");
+}
+
 async fn failed_index_refresh(status: StatusCode, document: &str) {
     use tracing_subscriber::layer::SubscriberExt;
 
@@ -245,11 +284,15 @@ async fn failed_index_refresh(status: StatusCode, document: &str) {
         {"id": "added-agent", "distribution": {"npx": {"package": "added-agent@1"}}}
     ]})
     .to_string();
-    let server = IndexServer::new(index).await;
+    let server = IndexServer::new(index);
     let home = empty_home(dir.path());
     server.configure(&home);
     let path = agent.path_with(&["downloaded-agent"]);
-    let h = harness().home(home).agents_on_path(path).await;
+    let h = harness()
+        .home(home)
+        .index_fetch(Arc::new(server.clone()))
+        .agents_on_path(path)
+        .await;
     let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
     let before = h.store.acp_registry_index().await.unwrap().unwrap();
     *server.response.lock().unwrap() = (status, document.into());
@@ -257,8 +300,9 @@ async fn failed_index_refresh(status: StatusCode, document: &str) {
     let mut setup = script();
     setup["config_options"] = json!([option("model-id", "model", "changed-model")]);
     stub_acp_agent(dir.path(), setup);
-    let _guard =
-        tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::registry().with(h.telemetry.log_layer()),
+    );
     let agents: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
     assert_eq!(
         agents
@@ -277,6 +321,7 @@ async fn failed_index_refresh(status: StatusCode, document: &str) {
     );
     let after = h.store.acp_registry_index().await.unwrap().unwrap();
     assert_eq!(after, before);
+    h.telemetry.flush();
     let logs: ariadne_api::logs::LogSnapshotResponse = h.get("/v1/logs").await;
     assert!(
         logs.lines.iter().any(|line| line.level == "WARN"
@@ -301,10 +346,13 @@ async fn a_refused_document_keeps_the_index_and_still_rescans_and_reprobes() {
 #[tokio::test]
 async fn each_good_download_replaces_the_single_kept_index() {
     let dir = tempfile::tempdir().unwrap();
-    let server = IndexServer::new(downloaded_index()).await;
+    let server = IndexServer::new(downloaded_index());
     let home = empty_home(dir.path());
     server.configure(&home);
-    let h = harness().home(home).await;
+    let h = harness()
+        .home(home)
+        .index_fetch(Arc::new(server.clone()))
+        .await;
     let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
     let replacement = r#"{"agents":[]}"#;
     *server.response.lock().unwrap() = (StatusCode::OK, replacement.into());
@@ -316,7 +364,7 @@ async fn each_good_download_replaces_the_single_kept_index() {
             .await
             .unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].0, server.url);
+    assert_eq!(rows[0].0, IndexServer::URL);
     assert_eq!(rows[0].1, replacement);
     let fetched = chrono::DateTime::parse_from_rfc3339(&rows[0].2).unwrap();
     assert!(fetched.timestamp_millis() >= before.timestamp_millis());
@@ -327,11 +375,12 @@ async fn each_good_download_replaces_the_single_kept_index() {
 async fn a_stalled_index_body_times_out_and_keeps_the_last_good_copy() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
-    let server = IndexServer::new(downloaded_index()).await;
+    let server = IndexServer::new(downloaded_index());
     let home = empty_home(dir.path());
     server.configure(&home);
     let h = harness()
         .home(home)
+        .index_fetch(Arc::new(server.clone()))
         .agents_on_path(agent.path_with(&["downloaded-agent"]))
         .timeouts(Timeouts {
             registry_download: common::RUNS_OUT,
@@ -497,6 +546,353 @@ async fn an_npx_agent_is_found_under_the_name_of_its_package() {
     assert_eq!(
         h.launcher.registry.command_of("claude-acp"),
         Some(vec!["claude-agent-acp".to_string()])
+    );
+}
+
+/// A home for a fake Volta install: `tools/user/bins/<bin_name>.json`,
+/// naming `package` the way Volta's own record of what it linked would.
+fn volta_home(dir: &std::path::Path, bin_name: &str, package: &str) -> std::path::PathBuf {
+    let home = dir.join("volta-home");
+    let bins = home.join("tools/user/bins");
+    std::fs::create_dir_all(&bins).unwrap();
+    std::fs::write(
+        bins.join(format!("{bin_name}.json")),
+        json!({"package": package}).to_string(),
+    )
+    .unwrap();
+    home
+}
+
+/// A fake asdf or mise install: `<data_dir>/installs/<plugin>/<version>/bin/<name>`,
+/// a symlink reaching `program` by way of `package`'s own directories — the
+/// file the real tool's shim never is, but the one the manager itself keeps.
+fn plugin_install(
+    data_dir: &std::path::Path,
+    plugin: &str,
+    version: &str,
+    name: &str,
+    package: &str,
+    program: &std::path::Path,
+) {
+    install_package(data_dir, package, name, program);
+    let deep = data_dir
+        .join("packages")
+        .join(package)
+        .join("bin")
+        .join(name);
+    let bin_dir = data_dir
+        .join("installs")
+        .join(plugin)
+        .join(version)
+        .join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let link = bin_dir.join(name);
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&deep, &link).unwrap();
+}
+
+/// Three fake manager homes, none of which exist unless a test fills one in:
+/// what a volta/asdf/mise check reads when the test is not about it.
+fn no_manager_homes(dir: &std::path::Path) -> ManagerHomes {
+    ManagerHomes {
+        volta: dir.join("no-volta-home"),
+        asdf: dir.join("no-asdf-home"),
+        mise: dir.join("no-mise-home"),
+    }
+}
+
+/// A Volta shim never reaches the package by its symlink chain — Volta
+/// links every tool under one shim binary and tells them apart by name
+/// alone — so only Volta's own record of what it linked proves it: its
+/// `tools/user/bins/claude-agent-acp.json` naming the registry's package.
+#[tokio::test]
+async fn a_volta_shim_naming_the_right_package_is_registered() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with(&["claude-agent-acp"]);
+    let homes = ManagerHomes {
+        volta: volta_home(
+            dir.path(),
+            "claude-agent-acp",
+            "@agentclientprotocol/claude-agent-acp",
+        ),
+        ..no_manager_homes(dir.path())
+    };
+    let h = settled(
+        harness()
+            .home(empty_home(dir.path()))
+            .agents_on_path(path)
+            .manager_homes(homes),
+        "claude-acp",
+    )
+    .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let ids: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
+    assert_eq!(ids, ["claude-acp"], "{agents:#?}");
+    assert_eq!(agents[0]["status"], "ready", "{:#?}", agents[0]);
+    assert_eq!(agents[0]["command"], json!(["claude-agent-acp"]));
+    assert_eq!(
+        h.launcher.registry.command_of("claude-acp"),
+        Some(vec!["claude-agent-acp".to_string()])
+    );
+}
+
+/// A Volta file naming some other package proves nothing of this one: the
+/// entry falls to the ACP probe like any other unproven name. First, with
+/// no `agentInfo.name` of its own, the probe proves nothing either, and the
+/// entry is dropped outright — which a Volta check that wrongly accepted
+/// the wrong package never would, since a proven entry only drops for a
+/// refused protocol. Only once the probe itself answers the real package is
+/// the same entry kept.
+#[tokio::test]
+async fn a_volta_shim_naming_a_different_package_goes_to_the_probe() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with(&["claude-agent-acp"]);
+    let homes = ManagerHomes {
+        volta: volta_home(dir.path(), "claude-agent-acp", "@other-vendor/other-cli"),
+        ..no_manager_homes(dir.path())
+    };
+    let h = harness()
+        .home(empty_home(dir.path()))
+        .agents_on_path(path)
+        .manager_homes(homes)
+        .discover_agents()
+        .await;
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert!(
+        !agents.iter().any(|a| a["id"] == "claude-acp"),
+        "a Volta file for another package must not prove this one: {agents:#?}"
+    );
+
+    let mut matching = script();
+    matching["agent_info"] =
+        json!({"name": "@agentclientprotocol/claude-agent-acp", "version": "1.0"});
+    agent.reprogram(matching);
+    h.launcher.registry.refresh().await;
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let claude = agents
+        .iter()
+        .find(|a| a["id"] == "claude-acp")
+        .unwrap_or_else(|| panic!("the probe's own answer must register it: {agents:#?}"));
+    assert_eq!(claude["status"], "ready", "{claude}");
+}
+
+/// A pnpm global shim is a script, not a symlink, so the chain from it never
+/// reaches the package either: its own text names the package in a comment,
+/// the way a real shim's resolved path would, and that text is what proves
+/// it.
+#[tokio::test]
+async fn a_pnpm_shim_naming_the_right_package_is_registered() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_as_pnpm_shim("claude-agent-acp");
+    let h = settled(
+        harness().home(empty_home(dir.path())).agents_on_path(path),
+        "claude-acp",
+    )
+    .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let ids: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
+    assert_eq!(ids, ["claude-acp"], "{agents:#?}");
+    assert_eq!(agents[0]["status"], "ready", "{:#?}", agents[0]);
+    assert_eq!(agents[0]["command"], json!(["claude-agent-acp"]));
+}
+
+/// A path is a whole component, not a substring: a shim naming
+/// `claude-agent-acp-legacy` — a package of its own that merely shares the
+/// real one's name as a prefix — must not prove the real package. With no
+/// `agentInfo.name` of its own, the entry is dropped outright; a substring
+/// check would have wrongly proven it and kept it listed instead.
+#[tokio::test]
+async fn a_pnpm_shim_naming_a_similarly_prefixed_package_does_not_pass_check_2() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_as_pnpm_shim_for_a_similarly_prefixed_package("claude-agent-acp");
+    let h = harness()
+        .home(empty_home(dir.path()))
+        .agents_on_path(path)
+        .discover_agents()
+        .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert!(
+        !agents.iter().any(|a| a["id"] == "claude-acp"),
+        "a shim naming a similarly prefixed package must not prove the real one: {agents:#?}"
+    );
+}
+
+/// asdf and mise both shim by plugin and version rather than by symlink, so
+/// the chain from the shim on `PATH` never reaches the package either: only
+/// the install each manager keeps under its own data directory does, and
+/// that install is what the check reads.
+#[tokio::test]
+async fn an_asdf_shim_and_a_mise_shim_with_a_matching_install_are_registered() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = json!({
+        "agents": [
+            {"id": "asdf-agent", "distribution": {"npx": {"package": "@vendor/asdf-cli@1.0.0"}}},
+            {"id": "mise-agent", "distribution": {"npx": {"package": "@vendor/mise-cli@1.0.0"}}}
+        ]
+    });
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with(&["asdf-cli", "mise-cli"]);
+    let program = std::path::Path::new(&agent.bin);
+
+    let asdf_home = dir.path().join("asdf-home");
+    plugin_install(
+        &asdf_home,
+        "nodejs",
+        "20.1.0",
+        "asdf-cli",
+        "@vendor/asdf-cli",
+        program,
+    );
+    let mise_home = dir.path().join("mise-home");
+    plugin_install(
+        &mise_home,
+        "node",
+        "22.0.0",
+        "mise-cli",
+        "@vendor/mise-cli",
+        program,
+    );
+
+    let h = settled(
+        harness()
+            .home(empty_home(dir.path()))
+            .agents_on_path(path)
+            .acp_index(index.to_string())
+            .manager_homes(ManagerHomes {
+                asdf: asdf_home,
+                mise: mise_home,
+                ..no_manager_homes(dir.path())
+            }),
+        "asdf-agent",
+    )
+    .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let find = |id: &str| {
+        agents
+            .iter()
+            .find(|a| a["id"] == id)
+            .unwrap_or_else(|| panic!("no {id:?} in {agents:#?}"))
+    };
+    assert_eq!(find("asdf-agent")["status"], "ready", "{:#?}", agents);
+    assert_eq!(find("mise-agent")["status"], "ready", "{:#?}", agents);
+}
+
+/// Neither the symlink chain nor a manager's own file proves this shim, so
+/// discovery marks it unproven and lets the ACP probe decide — kept here
+/// because the probe's `agentInfo.name` answers exactly the registry
+/// package, unpinned.
+#[tokio::test]
+async fn an_unproven_shim_is_registered_when_the_probe_names_the_package() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["agent_info"] =
+        json!({"name": "@agentclientprotocol/claude-agent-acp", "version": "1.0"});
+    let agent = stub_acp_agent(dir.path(), setup);
+    let path = agent.path_with(&["claude-agent-acp"]);
+    let h = settled(
+        harness().home(empty_home(dir.path())).agents_on_path(path),
+        "claude-acp",
+    )
+    .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let ids: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
+    assert_eq!(ids, ["claude-acp"], "{agents:#?}");
+    assert_eq!(agents[0]["status"], "ready", "{:#?}", agents[0]);
+}
+
+/// An unproven entry's probe has to prove the identity itself, not merely
+/// negotiate the protocol: a wrong `agentInfo.name`, no `agentInfo` at all,
+/// or running out of time all drop the entry outright — unlike a proven
+/// entry, which a timeout leaves listed with what it measured.
+#[tokio::test]
+async fn an_unproven_shim_is_dropped_unless_the_probe_names_it_exactly() {
+    for agent_info in [
+        Some(json!({"name": "something-else", "version": "1.0"})),
+        None,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut setup = script();
+        if let Some(info) = agent_info {
+            setup["agent_info"] = info;
+        }
+        let agent = stub_acp_agent(dir.path(), setup);
+        let path = agent.path_with(&["claude-agent-acp"]);
+        let h = harness()
+            .home(empty_home(dir.path()))
+            .agents_on_path(path)
+            .discover_agents()
+            .await;
+
+        let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+        assert!(
+            !agents.iter().any(|a| a["id"] == "claude-acp"),
+            "{agents:#?}"
+        );
+    }
+
+    // A timeout drops an unproven entry outright, the one way its probe
+    // differs from a proven entry's: that one stays listed with the little
+    // it showed before time ran out.
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["silent_methods"] = json!(["initialize"]);
+    let agent = stub_acp_agent(dir.path(), setup);
+    let path = agent.path_with(&["claude-agent-acp"]);
+    let h = harness()
+        .home(empty_home(dir.path()))
+        .agents_on_path(path)
+        .discover_agents()
+        .timeouts(Timeouts {
+            probe: Duration::from_secs(1),
+            ..Timeouts::default()
+        })
+        .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert!(
+        !agents.iter().any(|a| a["id"] == "claude-acp"),
+        "{agents:#?}"
+    );
+}
+
+/// `code` is MiniMax Code's command, and also most editors': common enough
+/// that the daemon never starts a program of that name on the strength of a
+/// guess alone — it is dropped before the probe even gets to say no.
+#[tokio::test]
+async fn a_skip_listed_program_name_is_never_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with(&["code"]);
+    let index = json!({
+        "agents": [
+            {"id": "minimax-code", "distribution": {"npx": {"package": "@minimax-ai/code@0.2.7"}}}
+        ]
+    });
+    let h = harness()
+        .home(empty_home(dir.path()))
+        .agents_on_path(path)
+        .acp_index(index.to_string())
+        .discover_agents()
+        .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert!(
+        !agents.iter().any(|a| a["id"] == "minimax-code"),
+        "{agents:#?}"
+    );
+    assert_eq!(
+        agent.pid(),
+        None,
+        "a skip-listed program must never be started"
     );
 }
 
@@ -993,11 +1389,17 @@ async fn a_timed_out_probe_keeps_the_models_the_store_kept() {
     let mut setup = script();
     setup["agent_info"] = json!({"name": "stub", "version": "1.0"});
     let agent = stub_acp_agent(dir.path(), setup.clone());
+    // An index server of its own, so the refresh below never reaches the
+    // real network registry: this test is about the probe timeout alone.
+    let server = IndexServer::new(r#"{"agents":[]}"#.into());
+    let home = home_with_agent("busy", &agent.bin);
+    server.configure(&home);
     let h = settled(
         harness()
-            .home(home_with_agent("busy", &agent.bin))
+            .home(home)
+            .index_fetch(Arc::new(server.clone()))
             .timeouts(Timeouts {
-                probe: Duration::from_secs(2),
+                probe: common::RUNS_OUT,
                 ..Timeouts::default()
             }),
         "busy",
@@ -1013,12 +1415,11 @@ async fn a_timed_out_probe_keeps_the_models_the_store_kept() {
     // time to spare for it.
     setup["silent_methods"] = json!(["initialize"]);
     agent.reprogram(setup);
-    let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
-
-    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let agents: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
     let busy = agents.iter().find(|a| a["id"] == "busy").unwrap();
     assert_eq!(busy["status"], "rejected", "{busy:#?}");
     assert_eq!(busy["rejection_reason"], json!("discovery timed out"));
+
     let models: Vec<Value> = h.get("/v1/models").await;
     let model = models
         .iter()
@@ -1032,10 +1433,14 @@ async fn a_timed_out_probe_keeps_the_models_the_store_kept() {
 async fn discovery_refreshes_on_demand() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
-    let server = IndexServer::new(r#"{"agents":[]}"#.into()).await;
+    let server = IndexServer::new(r#"{"agents":[]}"#.into());
     let home = home_with_agent("refreshable", &agent.bin);
     server.configure(&home);
-    let h = settled(harness().home(home), "refreshable").await;
+    let h = settled(
+        harness().home(home).index_fetch(Arc::new(server.clone())),
+        "refreshable",
+    )
+    .await;
     let initial: Vec<Value> = h.get("/v1/models").await;
     assert!(
         initial
@@ -1089,6 +1494,298 @@ fn has(methods: &[String], method: &str) -> bool {
     methods.iter().any(|m| m == method)
 }
 
+/// OpenCode's CLI removes the session that the catalog read created, after
+/// the advertised ACP close, using the session id returned by the agent —
+/// for `opencode`, the shipped registry id.
+#[tokio::test]
+async fn an_opencode_probe_closes_and_deletes_its_catalog_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["session_id"] = json!("catalog-session-123");
+    setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("opencode", &agent).await;
+
+    agent.clear_messages();
+    let agents = h.launcher.registry.refresh().await;
+    assert_eq!(agents[0].status, ariadne_api::agents::AcpAgentStatus::Ready);
+    let messages = agent.messages();
+    assert_eq!(
+        messages
+            .iter()
+            .filter_map(|message| message["method"].as_str())
+            .collect::<Vec<_>>(),
+        [
+            "initialize",
+            "session/new",
+            "session/close",
+            "cli/session/delete"
+        ]
+    );
+    assert_eq!(messages[2]["params"]["sessionId"], "catalog-session-123");
+    assert_eq!(
+        messages[3]["args"],
+        json!(["session", "delete", "catalog-session-123"])
+    );
+}
+
+/// The legacy `opencode-acp` id, which a configured agent may still carry
+/// from before the rename, gets the same cleanup as the shipped `opencode`
+/// id.
+#[tokio::test]
+async fn a_legacy_opencode_acp_probe_also_deletes_its_catalog_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["session_id"] = json!("legacy-catalog-session");
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("opencode-acp", &agent).await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert_eq!(agents[0]["status"], "ready", "{agents:#?}");
+    let messages = agent.messages();
+    let deletes: Vec<&Value> = messages
+        .iter()
+        .filter(|message| message["method"] == "cli/session/delete")
+        .collect();
+    assert_eq!(deletes.len(), 1, "{messages:#?}");
+    assert_eq!(
+        deletes[0]["args"],
+        json!(["session", "delete", "legacy-catalog-session"])
+    );
+}
+
+/// A catalog rejected for want of a model option still deletes the session
+/// `session/new` returned: the cleanup runs after the probe ends, whether
+/// the probe accepted the agent or not.
+#[tokio::test]
+async fn a_rejected_opencode_catalog_still_deletes_its_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["session_id"] = json!("catalog-session-rejected");
+    setup["config_options"] = json!([]);
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("opencode", &agent).await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert_eq!(agents[0]["status"], "rejected", "{agents:#?}");
+    let messages = agent.messages();
+    let delete = messages
+        .iter()
+        .find(|message| message["method"] == "cli/session/delete")
+        .unwrap_or_else(|| panic!("no delete call among {messages:#?}"));
+    assert_eq!(
+        delete["args"],
+        json!(["session", "delete", "catalog-session-rejected"])
+    );
+}
+
+/// A failed CLI delete reports no probe error and leaves the catalog usable.
+#[tokio::test]
+async fn a_failed_opencode_delete_keeps_the_agent_ready_with_its_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
+    setup["delete_exit"] = json!(7);
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("opencode", &agent).await;
+
+    assert!(has(&agent.methods(), "cli/session/delete"));
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert_eq!(agents[0]["status"], "ready", "{agents:#?}");
+    let models: Vec<Value> = h.get("/v1/models").await;
+    assert!(
+        models
+            .iter()
+            .any(|model| model["id"] == "opencode:old-model"),
+        "{models:#?}"
+    );
+}
+
+/// A cached catalog, read at an earlier probe of the same agent version,
+/// opens no session on a later one — so there is nothing for that later
+/// probe to delete.
+#[tokio::test]
+async fn a_cached_opencode_catalog_probe_creates_no_session_and_runs_no_deletion() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["agent_info"] = json!({"name": "stub", "version": "1.0"});
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("opencode", &agent).await;
+    assert!(has(&agent.methods(), "session/new"));
+
+    agent.clear_messages();
+    start_discovery(&h, "opencode").await;
+
+    let methods = agent.methods();
+    assert!(has(&methods, "initialize"), "{methods:?}");
+    assert!(!has(&methods, "session/new"), "{methods:?}");
+    assert!(!has(&methods, "cli/session/delete"), "{methods:?}");
+}
+
+/// The OpenCode cleanup is selected by registry id, not by the program's
+/// ability to accept a `session delete` command.
+#[tokio::test]
+async fn a_non_opencode_probe_runs_no_session_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
+    let opencode_dir = dir.path().join("opencode");
+    std::fs::create_dir(&opencode_dir).unwrap();
+    let opencode = stub_acp_agent(&opencode_dir, setup.clone());
+    let opencode_h = harness_with_agent("opencode", &opencode).await;
+    let opencode_agents: Vec<Value> = opencode_h.get("/v1/acp-agents").await;
+    assert_eq!(
+        opencode_agents[0]["status"], "ready",
+        "{opencode_agents:#?}"
+    );
+    assert!(has(&opencode.methods(), "cli/session/delete"));
+
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("other-acp", &agent).await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    assert_eq!(agents[0]["status"], "ready", "{agents:#?}");
+    assert!(has(&agent.methods(), "session/close"));
+    assert!(!has(&agent.methods(), "cli/session/delete"));
+}
+
+/// Metadata listing — `initialize` then `session/list`, the way `GET
+/// /v1/sessions` reads an agent's stored conversations outside any catalog
+/// probe — opens no session and runs no OpenCode delete.
+#[tokio::test]
+async fn metadata_listing_opens_no_session_and_runs_no_delete_for_opencode() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(
+        dir.path(),
+        crate::session_list::listing_script(json!([]), None),
+    );
+    let h = harness()
+        .home(crate::session_list::home_with_agents(&[(
+            "opencode", &stub.bin,
+        )]))
+        .discover_agents()
+        .await;
+    common::acp::discovery_accepted(&h, &stub, "opencode").await;
+
+    let _: Value = h.get("/v1/sessions?refresh=true").await;
+
+    let methods = stub.methods();
+    assert_eq!(methods, ["initialize", "session/list"], "{methods:?}");
+}
+
+/// A real `opencode` binary, if this machine has one on `PATH`, proves the
+/// same claim the stub proves above: `initialize` and `session/list` alone
+/// open no session. A fresh, isolated data directory — of its own, so this
+/// never touches a real one — keeps zero rows in its `session` table
+/// afterward.
+#[tokio::test]
+async fn real_opencode_metadata_listing_creates_no_session() {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let Some(program) = ariadne_core::probe::which(&path, "opencode") else {
+        eprintln!("opencode is not on PATH; skipping the real-CLI check");
+        return;
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let data_home = dir.path().join("data");
+    let config_home = dir.path().join("config");
+    std::fs::create_dir_all(&data_home).unwrap();
+    std::fs::create_dir_all(&config_home).unwrap();
+
+    let mut command = tokio::process::Command::new(&program);
+    command
+        .arg("acp")
+        .current_dir(dir.path())
+        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command.spawn().expect("starting the real opencode binary");
+    let stdin = child.stdin.take().expect("opencode's stdin");
+    let stdout = child.stdout.take().expect("opencode's stdout");
+
+    let listed = tokio::time::timeout(
+        TIMEOUT,
+        agent_client_protocol::Client
+            .builder()
+            .name("ariadne-discovery-check")
+            .connect_with(
+                agent_client_protocol::ByteStreams::new(
+                    tokio_util::compat::TokioAsyncWriteCompatExt::compat_write(stdin),
+                    tokio_util::compat::TokioAsyncReadCompatExt::compat(stdout),
+                ),
+                async |cx| {
+                    cx.send_request(agent_client_protocol::schema::v1::InitializeRequest::new(
+                        agent_client_protocol::schema::ProtocolVersion::V1,
+                    ))
+                    .block_task()
+                    .await
+                    .expect("initialize");
+                    let listed = cx
+                        .send_request(agent_client_protocol::schema::v1::ListSessionsRequest::new())
+                        .block_task()
+                        .await
+                        .expect("session/list");
+                    Ok(listed)
+                },
+            ),
+    )
+    .await
+    .expect("the real opencode agent to answer")
+    .expect("the ACP connection to the real opencode agent");
+
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+
+    assert!(
+        listed.sessions.is_empty(),
+        "a fresh isolated OpenCode must list no session: {:?}",
+        listed.sessions
+    );
+
+    let db_path = data_home.join("opencode").join("opencode.db");
+    if db_path.is_file() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(&db_path)
+                    .read_only(true),
+            )
+            .await
+            .expect("opening the real opencode database");
+        // OpenCode names its session table by schema version — `session`
+        // up to v1, `session_v2` from v2.0 — so the table is found by name
+        // rather than assumed, and every version of it is counted.
+        let tables: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master \
+             WHERE type = 'table' AND (name = 'session' OR name GLOB 'session_v[0-9]*')",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("listing the real opencode session tables");
+        assert!(
+            !tables.is_empty(),
+            "the real OpenCode database has a session table to count"
+        );
+        for table in tables {
+            // The name comes from `sqlite_master` of a database this test
+            // alone made, and it is quoted as an identifier.
+            let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT COUNT(*) FROM `{table}`"
+            )))
+            .fetch_one(&pool)
+            .await
+            .expect("counting sessions");
+            assert_eq!(
+                count, 0,
+                "initialize and session/list must open no session in the real OpenCode `{table}` table"
+            );
+        }
+    }
+}
+
 /// A daemon start reads an agent's catalog once per agent version: the store
 /// keeps it, a start at the same version opens no session, a new version is
 /// read again, and so is every version on an explicit refresh. The session a
@@ -1100,10 +1797,14 @@ async fn a_catalog_is_read_once_per_agent_version() {
     setup["agent_info"] = json!({"name": "stub", "version": "1.0"});
     setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
     let agent = stub_acp_agent(dir.path(), setup.clone());
-    let server = IndexServer::new(r#"{"agents":[]}"#.into()).await;
+    let server = IndexServer::new(r#"{"agents":[]}"#.into());
     let home = home_with_agent("versioned", &agent.bin);
     server.configure(&home);
-    let h = settled(harness().home(home), "versioned").await;
+    let h = settled(
+        harness().home(home).index_fetch(Arc::new(server.clone())),
+        "versioned",
+    )
+    .await;
     let methods = agent.methods();
     assert!(has(&methods, "session/new"), "{methods:?}");
     assert!(has(&methods, "session/close"), "{methods:?}");

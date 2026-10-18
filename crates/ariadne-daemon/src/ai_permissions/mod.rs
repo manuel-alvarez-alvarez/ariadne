@@ -10,20 +10,26 @@
 //! [`AiPermissionsStatusDto`], and every change to it is published as `ai_permissions_updated`.
 
 pub(crate) mod decide;
+pub(crate) mod derive;
+pub mod flavours;
+pub mod hardware;
 pub mod install;
+pub(crate) mod operations;
 pub mod python;
-pub mod schedule;
 mod server;
 
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+
 use tokio::sync::{mpsc, watch};
 
 use ariadne_api::permissions::{
-    AiPermissionsCheckpoints, AiPermissionsPrompts, AiPermissionsState, AiPermissionsStatusDto,
+    AiPermissionsState, AiPermissionsStatusDto, Device, DeviceOptionDto, Flavour,
+    FlavourOptionsDto, GpuDto, HardwareDto,
 };
-use ariadne_store::{AiPermissionSettings, Store};
+use ariadne_store::{AiPermissionSettings, AiPermissionSettingsUpdate, Store};
+
+use hardware::HardwareOverride;
 
 use crate::bus::EventBus;
 use crate::config::Config;
@@ -35,10 +41,10 @@ use crate::timeouts::Timeouts;
 pub struct AiPermissionsLive {
     /// Where the model server answers.
     pub endpoint: String,
-    /// How sure the model has to be before its answer is taken, 0 to 1.
-    pub threshold: f64,
-    /// The prompt texts the decision sends, as the settings stand now.
-    pub prompts: AiPermissionsPrompts,
+    /// Danger at or below this value is allowed, 0 to 1.
+    pub allow_threshold: f64,
+    /// Danger at or above this value is denied, 0 to 1.
+    pub deny_threshold: f64,
 }
 
 /// The daemon's model: its settings, its install, and where its server is.
@@ -49,13 +55,15 @@ pub struct AiPermissions {
     /// `<home>/ai-permissions`: the virtual environment, and the Hugging Face cache
     /// under it. A disabled model keeps everything here.
     home: PathBuf,
-    /// The `python_bin` config key, or `None` for `python3` on PATH.
+    /// The `python_bin` config key, or `None` for supported Python on PATH.
     python_bin: Option<String>,
-    /// Where the release document is read from (`ai_permissions_release_url`).
-    release_url: String,
+    /// The `nvidia_smi_bin` config key, or `None` for `nvidia-smi` on PATH.
+    nvidia_smi_bin: Option<String>,
+    /// `ai_permissions_hardware`: replaces the whole hardware probe in tests.
+    hardware_override: Option<HardwareOverride>,
     /// The command that stands in for the whole install, in the suite.
     installer: Option<Vec<String>>,
-    /// The command that stands in for `laya-serve` in integration tests.
+    /// The command that stands in for the server's Python in integration tests.
     serve_command: Option<Vec<String>>,
     /// The `ai_permissions_endpoint` config key, which wins over [`AiPermissions::set_endpoint`].
     configured_endpoint: Option<String>,
@@ -64,11 +72,23 @@ pub struct AiPermissions {
     /// Whether a server has been launched and is still loading its weights:
     /// neither healthy nor given up on yet.
     starting: Arc<watch::Sender<bool>>,
+    /// How many callers found a server loading and started waiting for it.
+    /// This is a monotonic observation point for the loading hand-off.
+    loading_waits: Arc<watch::Sender<u64>>,
     /// Whether an install is running now. Claimed with a compare-and-swap, so
     /// exactly one install runs at a time however many callers ask at once.
-    installing: Arc<AtomicBool>,
+    /// Whether an install runs. Taken around every write of the install's
+    /// state, so a status that reads `ready` is read after the flag cleared,
+    /// and a refresh that follows it is never refused as busy
+    /// (`install::AiPermissions::install`).
+    installing: Arc<tokio::sync::Mutex<bool>>,
     timeouts: Timeouts,
     server_tx: mpsc::UnboundedSender<server::Command>,
+    /// The one advisory failure-diagnosis request now reaching this model,
+    /// if any (024, `crate::failure_diagnosis`). A permission decision
+    /// aborts it before it asks the same model itself, so a diagnosis never
+    /// delays a decision an agent's turn is blocked on.
+    diagnosis_request: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
 }
 
 impl AiPermissions {
@@ -76,40 +96,51 @@ impl AiPermissions {
     /// publishing on `events`.
     pub fn new(store: Store, events: EventBus, cfg: &Config, timeouts: Timeouts) -> Self {
         let (server_tx, server_rx) = mpsc::unbounded_channel();
+        let (loading_waits, _) = watch::channel(0);
         let ai_permissions = Self {
             store,
             events,
             home: cfg.root.join("ai-permissions"),
             python_bin: cfg.python_bin.clone(),
-            release_url: cfg.ai_permissions_release_url.clone(),
+            nvidia_smi_bin: cfg.nvidia_smi_bin.clone(),
+            hardware_override: cfg.ai_permissions_hardware.clone(),
             installer: cfg.ai_permissions_installer.clone(),
             serve_command: cfg.ai_permissions_serve_command.clone(),
             configured_endpoint: cfg.ai_permissions_endpoint.clone(),
             endpoint: Arc::default(),
             starting: Arc::new(watch::Sender::new(false)),
+            loading_waits: Arc::new(loading_waits),
             installing: Arc::default(),
             timeouts,
             server_tx,
+            diagnosis_request: Arc::default(),
         };
         server::start(ai_permissions.clone(), server_rx);
         ai_permissions
     }
 
     /// The settings and the state of the install behind them, with the
-    /// interpreter probed afresh: what a client reads is what a start would
-    /// find now, not what it found when the daemon came up.
+    /// interpreter and the hardware probed afresh: what a client reads is
+    /// what a start would find now, not what it found when the daemon came up.
     pub async fn status(&self) -> AiPermissionsStatusDto {
         let path = std::env::var_os("PATH");
         let python = python::probe_python(self.python_bin.as_deref(), path.as_deref()).await;
+        let hardware = self.hardware().await;
         let row = match self.store.ai_permission_settings().await {
             Ok(row) => row,
             Err(error) => {
                 tracing::warn!(error = %error, "reading the AI permission settings failed");
+                let (flavour, device) = effective_pair(&hardware, Flavour::Kev4B, None);
+                let (allow_threshold, deny_threshold) = default_thresholds(flavour);
                 return AiPermissionsStatusDto {
                     enabled: false,
-                    checkpoints: AiPermissionsCheckpoints::English,
-                    threshold: DEFAULT_THRESHOLD,
-                    schedule: None,
+                    allow_threshold,
+                    deny_threshold,
+                    thresholds_default: true,
+                    flavour,
+                    device,
+                    hardware: hardware_dto(&hardware),
+                    flavours: flavours_dto(&hardware),
                     python,
                     state: AiPermissionsState::Failed,
                     installed_release: None,
@@ -118,17 +149,22 @@ impl AiPermissions {
                     endpoint: self.endpoint(),
                     last_refresh_at: None,
                     last_error: Some(error.to_string()),
-                    prompts: decide::default_prompts(),
-                    default_prompts: decide::default_prompts(),
                 };
             }
         };
-        let prompts = prompts_of(&row);
+        let stored_flavour = Flavour::parse(&row.flavour).unwrap_or(Flavour::Kev4B);
+        let stored_device = row.device.as_deref().and_then(Device::parse);
+        let (flavour, device) = effective_pair(&hardware, stored_flavour, stored_device);
+        let (allow_threshold, deny_threshold) = thresholds(&row, flavour);
         AiPermissionsStatusDto {
             enabled: row.enabled,
-            checkpoints: checkpoints_of(&row.checkpoints),
-            threshold: row.threshold,
-            schedule: row.schedule,
+            allow_threshold,
+            deny_threshold,
+            thresholds_default: !row.thresholds_hand_set,
+            flavour,
+            device,
+            hardware: hardware_dto(&hardware),
+            flavours: flavours_dto(&hardware),
             python,
             state: state_of(&row.state),
             installed_release: row.installed_release,
@@ -137,8 +173,77 @@ impl AiPermissions {
             endpoint: self.endpoint(),
             last_refresh_at: row.last_refresh_at,
             last_error: row.last_error,
-            prompts,
-            default_prompts: decide::default_prompts(),
+        }
+    }
+
+    /// The machine this daemon runs on: `ai_permissions_hardware` where the
+    /// suite set it, else the real probe.
+    pub(crate) async fn hardware(&self) -> hardware::Hardware {
+        hardware::hardware(
+            self.hardware_override.as_ref(),
+            self.nvidia_smi_bin.as_deref(),
+            std::env::var_os("PATH").as_deref(),
+        )
+        .await
+    }
+
+    /// The flavour as stored, ignoring the display fallback `status` can
+    /// substitute for it when no device runs that flavour here. What a
+    /// device-only `PUT` keeps: `status`'s own `flavour` is not it, since a
+    /// fallback there is not a change anybody asked for.
+    pub(crate) async fn stored_flavour(&self) -> Flavour {
+        self.store
+            .ai_permission_settings()
+            .await
+            .ok()
+            .and_then(|row| Flavour::parse(&row.flavour))
+            .unwrap_or(Flavour::Kev4B)
+    }
+
+    /// The flavour and device an install puts on disk and the server runs:
+    /// the pair `status` reports.
+    pub(crate) async fn chosen(&self) -> (Flavour, Device) {
+        let hardware = self.hardware().await;
+        let row = self.store.ai_permission_settings().await.ok();
+        let flavour = row
+            .as_ref()
+            .and_then(|row| Flavour::parse(&row.flavour))
+            .unwrap_or(Flavour::Kev4B);
+        let device = row
+            .as_ref()
+            .and_then(|row| row.device.as_deref())
+            .and_then(Device::parse);
+        effective_pair(&hardware, flavour, device)
+    }
+
+    /// Fill a `NULL` stored device with the best device that runs the stored
+    /// flavour. An install from before flavours existed keeps `4b` and gets a
+    /// device without a fresh choice; a fresh row does the same at its first
+    /// start. Where no device runs the stored flavour on this machine, the
+    /// device stays `NULL`: nothing here writes a device its own table marks
+    /// unable to run it. Silent: it is a backfill, not a setting somebody
+    /// chose.
+    pub async fn ensure_device(&self) {
+        let Ok(row) = self.store.ai_permission_settings().await else {
+            return;
+        };
+        if row.device.is_some() {
+            return;
+        }
+        let hardware = self.hardware().await;
+        let flavour = Flavour::parse(&row.flavour).unwrap_or(Flavour::Kev4B);
+        let Some(device) = flavours::best_device(&hardware, flavour) else {
+            return;
+        };
+        if let Err(error) = self
+            .store
+            .update_ai_permission_settings(AiPermissionSettingsUpdate {
+                device: Some(device.as_str().to_string()),
+                ..Default::default()
+            })
+            .await
+        {
+            tracing::warn!(error = %error, "filling the AI permission device failed");
         }
     }
 
@@ -174,10 +279,12 @@ impl AiPermissions {
         let _ = self.server_tx.send(server::Command::Reconcile);
     }
 
+    /// The interpreter the server runs under: the venv's Python, or the
+    /// command the suite stands in for it. The server adds the entry point.
     pub(crate) fn serve_command(&self) -> Vec<String> {
         self.serve_command
             .clone()
-            .unwrap_or_else(|| vec![self.home.join("venv/bin/laya-serve").display().to_string()])
+            .unwrap_or_else(|| vec![self.home.join("venv/bin/python").display().to_string()])
     }
 
     /// Reap the server and its process group before daemon shutdown finishes.
@@ -193,10 +300,20 @@ impl AiPermissions {
     pub async fn live(&self) -> Option<AiPermissionsLive> {
         let endpoint = self.endpoint()?;
         let row = self.store.ai_permission_settings().await.ok()?;
-        row.enabled.then(|| AiPermissionsLive {
+        if !row.enabled {
+            return None;
+        }
+        // A stored device pairs with the stored flavour (`effective_pair`), so
+        // only a row without one probes the hardware for the flavour it runs.
+        let flavour = match row.device {
+            Some(_) => Flavour::parse(&row.flavour).unwrap_or(Flavour::Kev4B),
+            None => self.chosen().await.0,
+        };
+        let (allow_threshold, deny_threshold) = thresholds(&row, flavour);
+        Some(AiPermissionsLive {
             endpoint,
-            threshold: row.threshold,
-            prompts: prompts_of(&row),
+            allow_threshold,
+            deny_threshold,
         })
     }
 
@@ -210,9 +327,63 @@ impl AiPermissions {
             if let Some(live) = self.live().await {
                 return Some(live);
             }
-            if !was_starting || starting.changed().await.is_err() {
+            if !was_starting {
                 return None;
             }
+            self.loading_waits.send_modify(|waits| *waits += 1);
+            if starting.changed().await.is_err() {
+                return None;
+            }
+        }
+    }
+
+    /// A receiver that advances when a caller begins to wait for the loading
+    /// server. Integration tests use it to release a server only after the
+    /// request has reached this hand-off.
+    #[doc(hidden)]
+    pub fn loading_waits(&self) -> watch::Receiver<u64> {
+        self.loading_waits.subscribe()
+    }
+
+    /// The maximum time one model scoring request may take.
+    pub(crate) fn decision_timeout(&self) -> std::time::Duration {
+        self.timeouts.ai_permissions_decision
+    }
+
+    /// Hand over the advisory diagnosis request now reaching this model, so
+    /// a permission decision about to ask it too can abort it first
+    /// (`preempt_diagnosis`). Replaces whatever was registered before —
+    /// ending that one is not this call's business, since at most one
+    /// diagnosis ever runs at a time.
+    pub(crate) fn register_diagnosis_request(&self, handle: tokio::task::AbortHandle) {
+        *self
+            .diagnosis_request
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(handle);
+    }
+
+    /// Forget a diagnosis request that ended on its own, so a decision that
+    /// preempts later never aborts an unrelated task that happens to reuse
+    /// the slot.
+    pub(crate) fn clear_diagnosis_request(&self) {
+        *self
+            .diagnosis_request
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+
+    /// Abort a diagnosis request reaching this model right now, so a
+    /// permission decision needing the same model never waits behind it —
+    /// the one answer a running agent turn is blocked on. A no-op where
+    /// none is in flight, or where it already ended on its own.
+    pub(crate) fn preempt_diagnosis(&self) {
+        if let Some(handle) = self
+            .diagnosis_request
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        {
+            handle.abort();
         }
     }
 
@@ -224,28 +395,78 @@ impl AiPermissions {
     }
 }
 
-/// The threshold a daemon that cannot read its settings reports: the same one
-/// the schema defaults to, so a failure does not invent a number.
-const DEFAULT_THRESHOLD: f64 = 0.8;
+/// The flavour and device `status` reports: the stored device where there is
+/// one, alongside the stored flavour. Where there is none — a row `ensure_device`
+/// left `NULL` because nothing runs the stored flavour, or no row could be
+/// read at all — the best device of the stored flavour where one runs it,
+/// else the flavour and device a fresh row would settle on. Never the stored
+/// flavour paired with a device its own `options` mark unable to run it.
+fn effective_pair(
+    hardware: &hardware::Hardware,
+    stored_flavour: Flavour,
+    stored_device: Option<Device>,
+) -> (Flavour, Device) {
+    if let Some(device) = stored_device {
+        return (stored_flavour, device);
+    }
+    if let Some(device) = flavours::best_device(hardware, stored_flavour) {
+        return (stored_flavour, device);
+    }
+    let flavour = flavours::default_flavour(hardware);
+    let device = flavours::best_device(hardware, flavour).unwrap_or(Device::Cpu);
+    (flavour, device)
+}
 
-/// The prompt texts a row holds, with the built-in text where it holds none.
-fn prompts_of(row: &AiPermissionSettings) -> AiPermissionsPrompts {
-    let text = |stored: &Option<String>, default: &str| {
-        stored.clone().unwrap_or_else(|| default.to_string())
-    };
-    AiPermissionsPrompts {
-        question: text(&row.question, decide::QUESTION),
-        allow_criteria: text(&row.allow_criteria, decide::ALLOW_CRITERIA),
-        review_criteria: text(&row.review_criteria, decide::REVIEW_CRITERIA),
+fn hardware_dto(hardware: &hardware::Hardware) -> HardwareDto {
+    HardwareDto {
+        os: hardware.os.clone(),
+        arch: hardware.arch.clone(),
+        memory_bytes: hardware.memory_bytes,
+        gpu: hardware.gpu.as_ref().map(|gpu| GpuDto {
+            name: gpu.name.clone(),
+            vram_bytes: gpu.vram_bytes,
+        }),
     }
 }
 
-/// The checkpoints a stored spelling names. A row written by a future build
-/// that spells it some other way reads as the smaller download.
-fn checkpoints_of(stored: &str) -> AiPermissionsCheckpoints {
-    match stored {
-        "all" => AiPermissionsCheckpoints::All,
-        _ => AiPermissionsCheckpoints::English,
+fn flavours_dto(hardware: &hardware::Hardware) -> Vec<FlavourOptionsDto> {
+    flavours::options(hardware)
+        .into_iter()
+        .map(|flavour_options| FlavourOptionsDto {
+            flavour: flavour_options.flavour,
+            devices: flavour_options
+                .devices
+                .into_iter()
+                .map(|device| DeviceOptionDto {
+                    device: device.device,
+                    can_run: device.can_run,
+                    reason: device.reason,
+                    slow: device.slow,
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// The allow and deny thresholds of a flavour whose pair nobody set by hand
+/// (022, rule 24). The benchmark selects each pair on that flavour's run.
+pub(crate) fn default_thresholds(flavour: Flavour) -> (f64, f64) {
+    match flavour {
+        // The benchmark's kev-9b pair, -0.0499 / 0.9220, allows nothing: an
+        // allow threshold under zero admits no case. 9b takes the 4b pair.
+        Flavour::Kev9B => (0.0201, 0.6321),
+        Flavour::Kev4B => (0.0201, 0.6321),
+        // The benchmark did not measure 0.8b or 27b; they take the 4b pair.
+        Flavour::Kev08B | Flavour::Kev27B => (0.0201, 0.6321),
+    }
+}
+
+/// The pair in force: the one stored where the user set it by hand, else the
+/// default of `flavour`, the flavour the model runs.
+fn thresholds(row: &AiPermissionSettings, flavour: Flavour) -> (f64, f64) {
+    match row.thresholds_hand_set {
+        true => (row.allow_threshold, row.deny_threshold),
+        false => default_thresholds(flavour),
     }
 }
 

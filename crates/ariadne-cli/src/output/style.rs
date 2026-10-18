@@ -18,7 +18,7 @@
 
 use std::io::IsTerminal;
 
-use anstyle::{Ansi256Color, AnsiColor, Style};
+use anstyle::{AnsiColor, Style};
 
 /// When to colour output.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
@@ -123,10 +123,6 @@ pub(crate) const OK: Style = green();
 /// to be seen.
 pub(crate) const ERROR: Style = red().bold();
 
-/// `changes_requested`: past a warning, short of a failure. No ANSI-16 colour
-/// sits between yellow and red, so it is the 256-colour orange.
-const ORANGE: Style = Style::new().fg_color(Some(anstyle::Color::Ansi256(Ansi256Color(208))));
-
 /// A glyph and a colour for one status, in any of the three lifecycles —
 /// task, goal and session all pass through here so that "done" looks the same
 /// whatever is done.
@@ -142,10 +138,6 @@ pub(crate) fn status(word: &str) -> (Style, Option<char>) {
         "ready" | "in_progress" | "planning" | "active" | "starting" | "running" => {
             (blue(), Some(RUNNING))
         }
-        "under_review" => (yellow(), Some(RUNNING)),
-        "changes_requested" => (ORANGE, Some(RUNNING)),
-        // Approved is still being landed; merged is the end of it.
-        "approved" => (green(), Some(RUNNING)),
         "finished" | "completed" => (green(), Some(DONE)),
         // A session that exited did its work and stopped: done, not failed.
         "exited" => (grey(), Some(DONE)),
@@ -267,9 +259,6 @@ mod tests {
         assert_eq!(glyph("idle"), Some(PENDING));
         assert_eq!(glyph("ready"), Some(RUNNING));
         assert_eq!(glyph("in_progress"), Some(RUNNING));
-        assert_eq!(glyph("under_review"), Some(RUNNING));
-        assert_eq!(glyph("changes_requested"), Some(RUNNING));
-        assert_eq!(glyph("approved"), Some(RUNNING));
         assert_eq!(glyph("finished"), Some(DONE));
         assert_eq!(glyph("completed"), Some(DONE));
         assert_eq!(glyph("exited"), Some(DONE));
@@ -337,9 +326,6 @@ mod tests {
         assert_eq!(status("in_progress").0, blue());
         assert_eq!(status("ready").0, blue());
         assert_eq!(status("pending").0, grey());
-        assert_eq!(status("under_review").0, yellow());
-        assert_eq!(status("changes_requested").0, ORANGE);
-        assert_eq!(status("approved").0, green());
         assert_eq!(status("finished").0, green());
         assert_eq!(status("failed").0, red());
         assert_eq!(status("cancelled").0, red());

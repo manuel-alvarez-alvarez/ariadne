@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-09-24
+updated: 2026-10-17
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -21,55 +21,136 @@ In: the server's identity and instructions, the tools of each seat, seat
 filtering, session scoping, and how a refusal reads.
 
 Out: what an agent is told to do with each tool — that is the seat's playbook
-(003, 004, 005).
+(003, 030) or the column's skill (017).
 
 ## Behavior
 
 1. `ariadne mcp serve` is spawned by the agent, which the daemon's ACP
    runtime hands it as an MCP server on `session/new`, `session/load` and
    `session/resume` (021). It reads its identity from the environment —
-   session, seat, goal and, for a task session, the task — and proxies to the
-   daemon's REST API with a session header, so the daemon enforces the scoping
-   itself.
+   session, seat, goal and, for a task session, the task and its column — and
+   proxies to the daemon's REST API with a session header, so the daemon
+   enforces the scoping itself. A review session (029) or a keeper session
+   (032) carries `ARIADNE_PULL_REQUEST_ID` in place of a goal and a task,
+   and its instructions name the request.
 2. The server's instructions, which every session receives before its first
    prompt, say what this session is and carry the session rules that hold for
-   every seat alike (006). A client can defer the tools of a server: Claude
-   Code lists only their names until the agent loads one with its tool
-   search. So the rules tell every seat, in words that name no client, to
-   load the tools it needs in one tool search before the first call.
+   every seat alike (006). After the rules come the seat's own text, picked
+   by the seat, and the index of the skills the session loads, which the
+   launcher hands the server as `ARIADNE_SKILL_INDEX` (006). A client can
+   defer the tools of a server: Claude Code lists only their names until the
+   agent loads one with its tool search. So the rules tell every seat, in
+   words that name no client, to load the tools it needs in one tool search
+   first. The rules also say how every check runs, and that no text carries
+   a trailer; no skill and no tool description repeats either.
 3. Whether anyone answers a question is the one rule picked by seat: the
-   orchestrator's user answers in the console, one question at a time, and the
-   orchestrator then waits; an author or reviewer works alone, and asks only
-   where the task cannot go on without the answer. The rule names no channel —
-   the seat's own playbook already says how to ask.
+   orchestrator's user answers in the console; a column's agent works alone, and asks only where
+   the task cannot go on without the answer, and a pull request reviewer or
+   keeper where the request cannot. The rule names no channel — the seat's own
+   playbook already says how to ask. Every seat is told to call
+   `wait_for_user` with a one-line hint first, and then to write the
+   question in its reply, as reply text and not in its thinking: the
+   question is turn text, which the console draws as the conversation it
+   is, and the tool asks nothing of its own. The call comes first because
+   the text an agent writes after its last tool call is the text it writes
+   to the user; what it writes before one tends to stay in its thinking,
+   which one orchestrator's questions did. Its `hint` is one line for the
+   Needs attention list, and the daemon refuses one that is longer than a
+   line or than 100 characters (031 rule 11), so the question cannot move
+    into the call. A turn that ends without `wait_for_user` ends the wait;
+    repeating its hint keeps the same request, while console input answers
+    every pending request of that session (031 rule 12).
+    `withdraw_wait_for_user` takes the flag down again.
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
-   seat may not use is one it never sees:
-   - **orchestrator**: `get_task`, `create_task` (staffing the authors as a
-     list — one for most tasks, several where the reviewers pick a winner
-     (004) — and every agent it staffs names its model: 011), `update_task`
-     (which replaces the author list whole through `authors`, and refuses
-     `default` as a model — a model is required, and `default` stays legal
-     for the effort alone), `list_models` (which holds only the models it
-     can staff an agent on, each with its `agent_id`, its efforts and the
-     user-set `rank` the staffing ladder reads — `null` where the user set
-     none — and narrows to one `agent_id` on request: 011),
-     `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
-     `cancel_task`, `complete_goal` — the last four are what it supervises the
-     goal with once the plan is under way (003)
-   - **author**: `get_task`, `request_review`, `fail_task`, `finish_task`,
-     `record_pull_request`
-   - **reviewer**: `get_task`, `get_diff` (which takes an `author` on a task
-     staffed with several, naming whose branch to read), `submit_verdict`
-     (an `author` likewise, naming whose change the verdict judges — and
-     required there, since several reviews are open at once), `pick_winner`
-     (the pick of spec 004: once per reviewer, only once every author is
-     approved)
+   seat may not use is one it never sees. There are four seats
+   (`McpSeat`): `Orchestrator`, `Agent`, `PullRequestReviewer` and
+   `PullRequestKeeper`.
+   - **orchestrator**: `get_task`, `create_task` (staffing the task with
+     `agents`, one per column of the goal's workflow, each naming its
+     `step`, its `skills` — the column's own where empty — its `model`, and
+     an `effort` and a `brief` where it wants them; every agent names its
+     model: 011), `update_task` (which replaces the staffing whole through
+     `agents`, and refuses `default` as a model — a model is required, and
+     `default` stays legal for the effort alone), `list_models` (which holds
+     only the models it can staff an agent on, each with its `agent_id`, its
+     efforts and the user-set `rank` the staffing ladder reads — `null`
+     where the user set none — and narrows to one `agent_id` on request:
+     011), `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
+     `cancel_task`, `switch_session` (which moves a session, named by the
+     `session_id` `get_task` carries beside its agent, to the model or agent
+     it is given, refusing `default` as a model the way `update_task` does —
+     the new session is briefed with a handoff of the old conversation),
+     `complete_goal` — the last five are what it supervises the goal with
+     once the plan is under way (003) — and `send_message` and
+     `read_messages` (018).
+   - **agent**: `get_task`, `complete_step`, `fail_step`, `fail_task`,
+     `get_diff`, `open_pull_request` (a title and a body; the daemon runs
+     the forge's own CLI and answers the URL it opened, rather than the
+     agent: 030), the tools of the request its task opened — `get_pull_request`
+     (the request's DTO, its description, failed checks and `behind_base`,
+     read off the forge at the call, plus the worktree, the repository path
+     and the login), `list_comments` (read off the forge at the call;
+     `unanswered_only` narrows it to the threads that wait on the login),
+     `get_comment` (one `comment_id`, read off the forge at the call),
+     `reply_comment` (one `comment_id` and a `body`; the daemon posts it),
+     `edit_pending_comment`, `delete_pending_comment` and
+     `edit_pending_review_body` (one of its own posts still pending in the
+     user's forge drafts, found by the forge id it was posted under; rule 13)
+     and `report_pull_request` (`ready`) — `send_message` and
+     `read_messages`. Eighteen tools. It works one workflow column on its
+     task, and its instructions name the task and the column.
+     `complete_step` moves to the next column, or ends the task from the
+     last; `fail_step` moves to the previous column, or fails the task
+     from the first; both end its turn (030). `complete_step`'s
+     description is the one owner of the column report a column ends on:
+     the outcome in one line, the revision checked, each check with its
+     command and result, each assumption made and each open concern,
+     fifteen lines at most. `fail_step`'s description is the one owner of
+     the return report a column is sent back with: each must-fix finding,
+     with its file, its failure and the fix wanted. No skill restates a
+     field of either report; `coding` and `code-review` name the report by
+     its name alone (006). Nothing the forge holds is
+     stored, so each request read is the forge's now (026). Each request
+     tool finds the request through
+     `GET /v1/pull-requests?task=<id>&role=author`, and says to call
+     `open_pull_request` first where there is none. No agent tool resolves a
+     thread.
+   - **pull request reviewer** — a session with `ARIADNE_PULL_REQUEST_ID`
+     set and seat `reviewer` (029): `get_pull_request`, `get_diff` (on a
+     request it reads `/v1/pull-requests/{id}/diff`, and `since` narrows it
+     to the commits after that sha), `list_comments`, `get_comment`,
+     `reply_comment`, `edit_pending_comment`, `delete_pending_comment`,
+     `edit_pending_review_body` (rule 13), `submit_review` (one round: an
+     `event` of `request_changes` or `comment`, and the round's new inline
+     `comments` of `path`, `line`, `body` and a `priority` of
+     `P0`, `P1` or `P2`), `resolve_thread` (one `comment_id` of a thread it
+     opened, once a push fixed it) and `report_pull_request` (which takes
+     `reviewed_sha` beside `ready` and `state`). Thirteen tools, and no
+     task tool and no message tool: a review session has no goal, task or
+     staffed agent to write to, and the user reaches it through its
+     console. No tool approves or merges: the user does. A tool is added
+     to the seat by naming it in `McpSeat::PullRequestReviewer`'s list
+     beside its `#[tool]` in `tools.rs`; each one calls a route under
+     `/v1/pull-requests/{id}` that the daemon accepts from the request's
+     own sessions alone.
+   - **pull request keeper** — a session with `ARIADNE_PULL_REQUEST_ID`
+     set and seat `keeper` (032), on a request of the user's own asked for
+     by hand: `get_pull_request`, `get_diff`, `list_comments`,
+     `get_comment`, `reply_comment`, `edit_pending_comment`,
+     `delete_pending_comment`, `edit_pending_review_body` (rule 13) and
+     `report_pull_request` — the same nine request tools the agent seat
+     has — beside `wait_for_user` and `withdraw_wait_for_user`. Eleven
+     tools, and no task tool and no message tool, the same as the
+     reviewer's: it has no goal, task or staffed agent to write to, and
+     the user reaches it through its console. It resolves no thread and
+     submits no review: those stay the reviewer seat's alone.
 5. A call to a tool outside the seat's list is refused by name rather than
-   forwarded.
+   forwarded. Its wording, and a tool's own refusal or built result string,
+   hold to the two readable STE rules (006 rule 11).
 6. A tool with no task in scope takes the session's own task, and refuses with
    an instruction to pass one where there is neither.
-7. The daemon's 4xx refusal — a transition the task cannot make, a reviewer a
-   session is not assigned as — comes back as bad parameters carrying the
+7. The daemon's 4xx refusal — a transition the task cannot make, a column a
+   session is not the agent of — comes back as bad parameters carrying the
    daemon's sentence, not as a server failure.
 8. The tool listing carries cache hints (fresh for 0 ms, private to this
    session), because clients of protocol 2026-07-28 reject a listing without
@@ -77,22 +158,42 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 9. `list_skills` lists only skills that can staff a task agent, and gives the
    name and the one-line summary of each one and nothing else. The document
    is what the agent staffed on the skill reads; an orchestrator choosing
-   between skills reads the line. The orchestrator's own skill stays
-   available through the API and CLI, but is not a task staffing choice.
+   between skills reads the line. The orchestrator's own skill and the review
+   session's stay available through the API and CLI, but are not a task
+   staffing choice. It also leaves out a skill with no document, shipped,
+   written, or blank space only: a dropped skill's row stays for the old
+   staffing that still names it (017 rule 7) and reads as empty, and the
+   catalog never offers it as a fresh choice. A skill with a document,
+   shipped or written, still lists.
 10. `read_messages` reads an inbox, not a transcript: a default read takes
     delivery of what is addressed to this session's own agent, and `all`
     reads the whole thread instead (018). The channel is the session's task,
     or its goal where it has no task. The tool's description says both ways.
 11. `send_message` takes the address an agent writes rather than the one
-    address it could have written. `to` takes the id of a staffed agent,
-    `orchestrator`, or the seat word `author` or `reviewer` where one agent
-    sits in that seat; the body is taken as `body` or as `message`. A refusal
-    names every id with the seat it sits in, so the sender picks a reader
-    rather than guessing again.
+    address it could have written. `to` takes `orchestrator`, or the id of
+    a column of the task's workflow, which names the agent that staffs it;
+    the body is taken as `body` or as `message`. A refusal names every
+    column with its agent, so the sender picks a reader rather than guessing
+    again. A message is a question, an answer, or a blocker report — the
+    stop rule's own call (006) — and nothing else. After a question, end
+    your turn. Do not poll `read_messages`. Ariadne delivers the answer as
+    a new turn.
 12. A value the schema offers is a value the tool takes. The schema an agent
     reads is derived from the parameter types, and the value it sends back is
     deserialized from them, so a spelling set on one of the two alone offers
     a word and then refuses it.
+13. `edit_pending_comment`, `delete_pending_comment` and
+    `edit_pending_review_body` (rule 13) are on the agent, pull request
+    reviewer and pull request keeper seats alike: whichever session posted
+    the pending item, every session of the request may change or remove
+    it, since all three post under the one integration login (026 rule
+    24). `edit_pending_comment` takes `forge_id` and `body`;
+    `delete_pending_comment` takes `forge_id` alone;
+    `edit_pending_review_body` takes `body` alone. Each
+    answers 409 once its target is no longer pending — the user already
+    submitted the review it was in. Use
+    these tools only on a user's ask in the console for a change; no skill
+    calls them on its own.
 
 ## Acceptance criteria
 
@@ -112,38 +213,98 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`), and
   every allowed tool is one the router actually serves
   (`::every_allowed_tool_is_one_the_router_serves`).
+- `create_task` and `update_task` take `agents` alone, one per column, and a
+  created task is pinned to what the orchestrator named
+  (`tools.rs::a_workflow_task_staffs_one_agent_for_each_column`,
+  `::a_created_task_is_pinned_to_what_the_orchestrator_named`,
+  `::an_edit_takes_default_for_the_effort_and_refuses_it_as_a_model`).
+- The agent seat lists its eighteen step tools and nothing of a review
+  (`mcp.rs::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`).
+- Step calls post their bodies to the complete and fail routes
+  (`tools.rs::step_tools_post_their_bodies_to_the_step_routes`).
+- `complete_step`'s description names the column report's five fields in
+  order and its line cap; `fail_step`'s description names the return
+  report's finding fields
+  (`tools.rs::complete_step_and_fail_step_define_their_reports`).
+- `switch_session` is offered to the orchestrator alone
+  (`tools.rs::switch_session_is_offered_to_the_orchestrator_alone`), posts
+  the pin to the session's switch endpoint
+  (`::switch_session_posts_the_pin_to_the_switch_endpoint`), and refuses
+  `default` as a model (`::switch_session_refuses_default_as_a_model`).
 - Every session is told how Ariadne is reached
   (`mcp.rs::every_session_is_told_how_ariadne_is_reached`), only the
-  orchestrator is told to ask, and an author or reviewer is told to work
-  alone and ask only where the task cannot go on without the answer
+  orchestrator is told to ask, and a column's agent is told to work alone
+  and ask only where the task cannot go on without the answer, and every
+  seat is told to call `wait_for_user` first and then write the whole
+  question in its reply
   (`::only_the_orchestrator_is_told_to_ask`), and no session is told of a
   conversation (`::no_session_is_told_of_a_conversation`).
+- Every session is told to load a deferred tool before it calls it
+  (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
+- Each seat's instructions hold its seat text and its skill index, after
+  the session rules
+  (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`),
+  and the launcher hands the server the index
+  (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
+- Asking the user, the end of a turn, the check block and the trailer rule
+  are each written in their owner alone
+  (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`).
 - The shared rules stay small (`mcp.rs::the_shared_rules_stay_small`).
 - Every text the server hands an agent — instructions and tool descriptions —
   is Simplified Technical English
   (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
+- The agent's request tools find the request its task opened, then call its
+  routes
+  (`tools.rs::the_agents_request_tools_call_the_routes_of_the_request_its_task_opened`),
+  and say to open one where there is none
+  (`tools.rs::an_agent_with_no_request_is_told_to_open_one`).
+- The pull request reviewer seat lists its thirteen tools and no task or
+  message tool
+  (`mcp.rs::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`);
+  its diff, review and report call the routes of the session's request
+  (`tools.rs::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`).
+- A review session's MCP server is told the request and no goal or task
+  (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
+- The pull request keeper seat lists its nine request tools beside
+  `wait_for_user` and no task or message tool (032)
+  (`mcp.rs::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`).
+- `edit_pending_comment`, `delete_pending_comment` and
+  `edit_pending_review_body` are on the agent, pull request reviewer and
+  pull request keeper seats alike, each calling its own route of the
+  session's request with the body the agent gave it (rule 13)
+  (`tools.rs::the_pending_edit_tools_call_the_routes_of_the_sessions_request`).
 - A refused call reaches the agent in the daemon's words
-  (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`).
+  (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`), and the
+  refusal naming a tool outside the seat's list is itself Simplified
+  Technical English (`mcp.rs::the_seat_refusal_is_simplified_technical_english`).
 - The skill catalog excludes orchestrator-only skills, and gives a name and a
   summary per skill and nothing else
-  (`tools.rs::the_skill_catalog_excludes_orchestrator_only_skills`).
+  (`tools.rs::the_skill_catalog_excludes_orchestrator_only_skills`). It also
+  excludes a skill with no document, shipped or written, or one of blank
+  space only, while a skill with a real one still lists
+  (`tools.rs::the_skill_catalog_excludes_a_skill_with_no_document`).
+- Every refusal a tool builds, and every result string it writes in place
+  of the daemon's own JSON, is Simplified Technical English
+  (`tools.rs::every_refusal_and_result_string_is_simplified_technical_english`).
 - A default `read_messages` takes delivery, and `all` reads the whole thread
   (`tools.rs::a_default_read_takes_delivery_and_all_reads_the_whole_thread`);
   a session with no task reads the channel of its goal
   (`::the_orchestrator_reads_the_channel_of_its_goal`).
-- A seat word addresses the one agent that sits in it, a seat with several is
-  refused with their ids, and an address that names nobody is refused with
-  every id and its seat
-  (`tools.rs::a_seat_word_addresses_the_one_agent_that_sits_in_it`).
+- A column id addresses the agent that staffs it, and an address that names
+  nobody is refused with every column and its agent
+  (`tools.rs::a_column_id_addresses_the_agent_that_staffs_it`,
+  `::a_message_to_nobody_is_refused_with_the_addresses_that_would_work`).
 - A message body written as `message` is taken
   (`tools.rs::a_message_body_is_taken_as_message_too`).
-- Diff parsing ignores added source lines that resemble headers and keeps
-  quoted non-ASCII paths
-  (`index.rs::changed_lines_reads_plus_source_lines_and_non_ascii_paths`).
-- Path answers name hubs with more than 200 neighbors whose walk stopped
-  (`tools.rs::path_answers_one_line_per_hop_and_says_when_none`).
+- `send_message`'s description tells the sender to end its turn after a
+  question, not to poll `read_messages`, and that Ariadne delivers the
+  answer as a new turn
+  (`tools.rs::send_message_tells_agents_to_end_the_turn_after_a_question`).
 
 ## Sources
 
 `crates/ariadne-cli/src/commands/mcp.rs`,
 `crates/ariadne-cli/src/commands/mcp/tools.rs`.
+
+Initialization uses rmcp's `ServerConfig` for the instructions and tool
+capabilities returned by `get_info`.

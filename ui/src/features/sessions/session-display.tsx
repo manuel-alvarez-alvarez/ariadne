@@ -79,8 +79,13 @@ export function SessionStatusBadge({
 
 /**
  * Why a session is waiting on a person: the `attention_reason` the daemon
- * raised for it, and nothing else. Named rather than used bare because the
- * attention strip has task reasons of its own under the same word.
+ * raised for it. Named rather than used bare because the attention strip
+ * has task reasons of its own under the same word.
+ *
+ * A pull request session's own `waiting_user` is never read here (029):
+ * the `pull_request` attention producer reads the forge's own evidence
+ * against the request's claim instead of this flag, which the daemon no
+ * longer raises for either a review posted or a ready report.
  */
 export type SessionAttention = AttentionReason
 
@@ -144,6 +149,22 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
     badge: "bg-status-warn-soft text-status-warn-fg",
     border: "border-status-warn/40",
   },
+  exhausted: {
+    label: "Exhausted",
+    hint: "The model cannot accept more work.",
+    badge: "bg-status-danger-soft text-status-danger-fg",
+    border: "border-status-danger/40",
+  },
+}
+
+/**
+ * The reason a session's badge shows: the daemon's own, verbatim — the CLI's
+ * `ariadne attention` words it the same way.
+ */
+export function shownAttention(
+  session: Pick<SessionDto, "attention_reason" | "pull_request_id" | "seat">,
+): SessionAttention | null {
+  return session.attention_reason ?? null
 }
 
 /**
@@ -154,15 +175,18 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
  * longer something the attention strip, the board's badges or the sessions
  * screen's own filter raise a row for — see {@link SessionAttentionBadge},
  * which still draws it where a session's own panel shows the raw reason the
- * daemon reported. A dead session raises no reason of its own on purpose: the
- * daemon flags the agent it still owes work to as `disconnected` and leaves
- * the rest alone, so a reviewer that exited after voting is finished, not
- * stuck, and reading `status` here would put it back on the list the daemon
- * kept it off.
+ * daemon reported. A pull request session's own `waiting_user` is no
+ * exception any more (029): the daemon no longer raises it for either a
+ * review posted or a ready report, leaving that to the `pull_request`
+ * attention producer's own items instead. A dead session raises no reason
+ * of its own on purpose: the daemon flags the agent it still owes work to as
+ * `disconnected` and leaves the rest alone, so a reviewer that exited after
+ * voting is finished, not stuck, and reading `status` here would put it back
+ * on the list the daemon kept it off.
  */
 export function sessionAttention(session: SessionDto): SessionAttention | null {
-  const reason = session.attention_reason
-  return reason && reason !== "waiting_user" ? reason : null
+  const reason = shownAttention(session)
+  return reason === "waiting_user" ? null : reason
 }
 
 /**

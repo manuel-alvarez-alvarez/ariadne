@@ -196,10 +196,9 @@ async fn examine(client: &Client) -> Report {
     let config = home.as_deref().map(endpoint::parse_config);
 
     // Probes are processes: run them at once rather than several seconds apart.
-    let (git, gh, glab, ariadned) = tokio::join!(
+    let (git, gh, ariadned) = tokio::join!(
         checks::tool("git", "--version", false),
         checks::tool("gh", "--version", true),
-        checks::tool("glab", "--version", true),
         checks::ariadned(),
     );
 
@@ -231,7 +230,7 @@ async fn examine(client: &Client) -> Report {
                 "daemon",
                 checks::daemon(client, &health, version, home.as_deref()).await,
             ),
-            Section::new("tools", checks::tools(&[git], &[gh, glab])),
+            Section::new("tools", checks::tools(&[git], &[gh])),
             Section::new(
                 "agents",
                 daemon

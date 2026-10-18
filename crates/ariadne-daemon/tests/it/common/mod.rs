@@ -12,8 +12,9 @@
 //!
 
 pub(crate) mod acp;
+pub(crate) mod forge;
 
-use std::future::IntoFuture;
+use std::future::{Future, IntoFuture};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -35,23 +36,25 @@ use ariadne_api::stream::DomainEvent;
 use ariadne_core::acp::LaunchConfig;
 use ariadne_core::models::agent_of;
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, MessageKind, PermissionMode, Seat, SessionStatus,
-    TaskStatus,
+    Actor, AttentionReason, ForgeKind, GoalStatus, PermissionMode, Seat, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::acp::AcpLaunch;
+use ariadne_daemon::acp_discovery::{IndexFetch, ManagerHomes};
+use ariadne_daemon::ai_permissions::hardware::HardwareOverride;
 use ariadne_daemon::branch::BranchWatchers;
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::launcher::Launcher;
-use ariadne_daemon::log::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
+use ariadne_daemon::telemetry::{self, Telemetry};
 use ariadne_daemon::timeouts::Timeouts;
 use ariadne_daemon::transcript::TranscriptHomes;
 use ariadne_store::{
-    AgentPin, AgentSession, Goal, NewAgentEvent, NewGoal, NewMessage, NewRepository, NewSession,
-    NewTask, NewTaskAgent, Repository, RepositoryUpdate, SessionFilter, Store, Task, TaskAgent,
+    AgentPin, AgentSession, Goal, NewAgentEvent, NewGoal, NewRepository, NewSession, NewTask,
+    NewTaskAgent, Repository, RepositoryUpdate, SessionFilter, SetForgeIntegration, Store, Task,
+    TaskAgent, TaskFilter,
 };
 
 /// How long a test waits for something the daemon does off the request path —
@@ -68,7 +71,7 @@ pub(crate) const TIMEOUT: Duration = Duration::from_secs(30);
 /// catches a wrong event that comes later still. Everything it listens for is
 /// the daemon reacting inside its own process, and the branch watch, the
 /// slowest of those, debounces for 50 ms.
-pub(crate) const QUIET: Duration = Duration::from_millis(500);
+pub(crate) const QUIET: Duration = Duration::from_millis(100);
 
 /// A daemon timeout for a test that is about that timeout running out. The
 /// test waits it out, so it is short, and nothing the test needs done in time
@@ -84,7 +87,8 @@ pub(crate) struct Harness {
     pub router: Router,
     pub state: AppState,
     pub bus: EventBus,
-    pub logs: LogBuffer,
+    pub telemetry_store: ariadne_store::telemetry::TelemetryStore,
+    pub telemetry: Telemetry,
     /// Present when the harness was built with [`HarnessBuilder::scheduler`].
     pub sched: Option<UnboundedSender<SchedEvent>>,
     /// The stub agent the harness registers as [`STUB`] — whatever the home,
@@ -100,23 +104,51 @@ pub(crate) struct Harness {
     /// for every clock a test moves, and thirty tests doing that at once run a
     /// machine out of them.
     db: sqlx::SqlitePool,
+    /// The same instance the harness's own launcher drives its ACP runtime
+    /// with (024), for a test about its shutdown.
+    pub failure_diagnosis: ariadne_daemon::failure_diagnosis::FailureDiagnosis,
 }
+
+/// One row of the stats ledger, as [`Harness::facts`] reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Fact {
+    pub session_id: Option<String>,
+    pub launch_id: Option<String>,
+    pub seat: Option<String>,
+    pub model: Option<String>,
+    pub skills: Vec<String>,
+    pub data: serde_json::Value,
+}
+
+/// A ledger row as SQLite holds it, in the order [`Harness::facts`] selects it.
+type FactRow = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+);
 
 pub(crate) struct HarnessBuilder {
     home: Option<PathBuf>,
     scheduler: bool,
     spawns: bool,
     dies: bool,
-    logs: Option<LogBuffer>,
     discover_agents: bool,
+    second_agent: Option<String>,
     timeouts: Timeouts,
     path: std::ffi::OsString,
     index: String,
+    manager_homes: Option<ManagerHomes>,
     ai_permissions_installer: Option<Vec<String>>,
     ai_permissions_serve_command: Option<Vec<String>>,
     ai_permissions_endpoint: Option<String>,
+    ai_permissions_hardware: Option<HardwareOverride>,
     python_bin: Option<String>,
-    ai_permissions_release_url: Option<String>,
+    nvidia_smi_bin: Option<String>,
+    gh_bin: Option<String>,
+    index_fetch: Option<Arc<dyn IndexFetch>>,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -142,20 +174,43 @@ pub(crate) fn harness() -> HarnessBuilder {
         scheduler: false,
         spawns: true,
         dies: false,
-        logs: None,
         discover_agents: false,
-        timeouts: Timeouts::default(),
+        second_agent: None,
+        // A test that does not name the debounce itself must not pay its
+        // production wait on every wake. The stub accepts a cancellation at
+        // once, so tests that do not inspect the grace itself need not pay
+        // the production five seconds to take an ending session down.
+        // `forge_rate_limit.rs` sets its observable window itself.
+        timeouts: Timeouts {
+            cancel_grace: RUNS_OUT,
+            forge_wake_debounce: Duration::from_millis(1),
+            ..Timeouts::default()
+        },
         path: std::ffi::OsString::new(),
         index: ariadne_daemon::acp_discovery::SHIPPED_INDEX.to_string(),
+        manager_homes: None,
         ai_permissions_installer: None,
         ai_permissions_serve_command: None,
         ai_permissions_endpoint: None,
+        ai_permissions_hardware: None,
         python_bin: None,
-        ai_permissions_release_url: None,
+        nvidia_smi_bin: None,
+        gh_bin: None,
+        index_fetch: None,
     }
 }
 
 impl HarnessBuilder {
+    /// Register the same stub command under a second agent id.
+    pub(crate) fn second_agent(self) -> Self {
+        self.second_agent_as("other")
+    }
+
+    /// Register the same stub command under the agent id `id` too.
+    pub(crate) fn second_agent_as(mut self, id: &str) -> Self {
+        self.second_agent = Some(id.to_string());
+        self
+    }
     /// Build the daemon around an already prepared home directory — a
     /// `config.toml` in it is read as `ariadned` would read it, its registry
     /// included.
@@ -185,12 +240,6 @@ impl HarnessBuilder {
         self
     }
 
-    /// Serve `/v1/logs` from a buffer the test already holds.
-    pub(crate) fn logs(mut self, logs: LogBuffer) -> Self {
-        self.logs = Some(logs);
-        self
-    }
-
     /// Run ACP registry discovery while the harness starts, on a home of the
     /// test's own ([`Self::home`]). The harness's own home is always
     /// discovered — the daemon discovers its registry at every start, and a
@@ -209,6 +258,14 @@ impl HarnessBuilder {
         self
     }
 
+    /// Fetch a registry index over `fetch` rather than real HTTPS: a
+    /// stand-in that proves the download logic (the fallback on a failure,
+    /// the keeping of an accepted document) without a socket of its own.
+    pub(crate) fn index_fetch(mut self, fetch: Arc<dyn IndexFetch>) -> Self {
+        self.index_fetch = Some(fetch);
+        self
+    }
+
     /// Search `path` for the agents of the registry index, as a daemon
     /// searches its own: what the machine running the daemon holds.
     /// [`acp::StubAcpAgent::path_with`] makes one out of the stub.
@@ -224,6 +281,15 @@ impl HarnessBuilder {
         self
     }
 
+    /// Fake homes for the package managers `acp_index` consults when a name
+    /// only a package gives passes neither the symlink chain nor the ACP
+    /// probe: none of the three exist by default, so the machine running the
+    /// tests never answers for a shim a test did not set up itself.
+    pub(crate) fn manager_homes(mut self, homes: ManagerHomes) -> Self {
+        self.manager_homes = Some(homes);
+        self
+    }
+
     /// Run `cmd` in place of the whole model install — the venv, the wheel
     /// and the checkpoints (022). Its exit status decides `ready` or
     /// `failed`, and its stderr is `last_error`.
@@ -232,7 +298,8 @@ impl HarnessBuilder {
         self
     }
 
-    /// Run `cmd` as the model server instead of the installed `laya-serve`.
+    /// Run `cmd` as the model server's Python instead of the venv's: the
+    /// daemon adds the entry point and the arguments after it.
     pub(crate) fn ai_permissions_serve_command(mut self, cmd: Vec<String>) -> Self {
         self.ai_permissions_serve_command = Some(cmd);
         self
@@ -245,6 +312,14 @@ impl HarnessBuilder {
         self
     }
 
+    /// Answer the hardware probe with `hardware` instead of reading the real
+    /// machine running the tests: the whole memory rule (022, flavours and
+    /// devices) reads GB, not bytes.
+    pub(crate) fn ai_permissions_hardware(mut self, hardware: HardwareOverride) -> Self {
+        self.ai_permissions_hardware = Some(hardware);
+        self
+    }
+
     /// Install into `path` rather than whatever `python3` the machine
     /// running the tests has: a script that prints a version is a Python as
     /// far as the check is concerned.
@@ -253,9 +328,17 @@ impl HarnessBuilder {
         self
     }
 
-    /// Read the AI permission model release document from `url`, rather than from GitHub.
-    pub(crate) fn ai_permissions_release_url(mut self, url: impl Into<String>) -> Self {
-        self.ai_permissions_release_url = Some(url.into());
+    /// Probe the GPU with `path` rather than whatever `nvidia-smi` the
+    /// machine running the tests has.
+    pub(crate) fn nvidia_smi_bin(mut self, path: impl Into<String>) -> Self {
+        self.nvidia_smi_bin = Some(path.into());
+        self
+    }
+
+    /// Run `stub` as `gh` rather than whatever the machine running the
+    /// tests has (025).
+    pub(crate) fn forge_cli(mut self, stub: &forge::StubForgeCli) -> Self {
+        self.gh_bin = Some(stub.gh.clone());
         self
     }
 
@@ -263,6 +346,7 @@ impl HarnessBuilder {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
+        std::fs::copy(template_db().await, &db_path).unwrap();
         let store = Store::open(&db_path).await.unwrap();
         let agent_dir = dir.path().join("agent");
         std::fs::create_dir_all(&agent_dir).unwrap();
@@ -278,35 +362,56 @@ impl HarnessBuilder {
                     (true, true) => shared_script("#!/bin/sh\nexit 0\n").display().to_string(),
                     (true, false) => agent.bin.clone(),
                 };
+                let second = match &self.second_agent {
+                    Some(id) => format!("[[acp_agents]]\nid = \"{id}\"\ncommand = [{command:?}]\n"),
+                    None => String::new(),
+                };
                 std::fs::write(
                     home.join("config.toml"),
-                    format!("[[acp_agents]]\nid = \"{STUB}\"\ncommand = [{command:?}]\n"),
+                    format!("[[acp_agents]]\nid = \"{STUB}\"\ncommand = [{command:?}]\n{second}"),
                 )
                 .unwrap();
                 home
             }
         };
         let mut config = Config::load(Some(home)).unwrap();
+        ariadne_daemon::agents::sync_skills(&store, &config.skills_dir)
+            .await
+            .unwrap();
         // The model seams are the daemon's own settings rather than keys of
         // `config.toml`, so the harness writes them onto the config the way
         // the daemon would have read them.
         config.ai_permissions_installer = self.ai_permissions_installer;
         config.ai_permissions_serve_command = self.ai_permissions_serve_command;
         config.ai_permissions_endpoint = self.ai_permissions_endpoint;
+        config.ai_permissions_hardware = self.ai_permissions_hardware;
         if let Some(python_bin) = self.python_bin {
             config.python_bin = Some(python_bin);
         }
-        if let Some(url) = self.ai_permissions_release_url {
-            config.ai_permissions_release_url = url;
+        if let Some(nvidia_smi_bin) = self.nvidia_smi_bin {
+            config.nvidia_smi_bin = Some(nvidia_smi_bin);
         }
+        if let Some(gh_bin) = self.gh_bin {
+            config.gh_bin = Some(gh_bin);
+        }
+        let manager_homes = self.manager_homes.unwrap_or_else(|| ManagerHomes {
+            volta: dir.path().join("no-volta-home"),
+            asdf: dir.path().join("no-asdf-home"),
+            mise: dir.path().join("no-mise-home"),
+        });
         let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::test_registry(
             &config.acp_agents,
             config.root.clone(),
             store.clone(),
             &self.path,
             &self.index,
+            manager_homes,
         )
         .with_timeouts(self.timeouts);
+        let agent_registry = match self.index_fetch {
+            Some(fetch) => agent_registry.with_index_fetch(fetch),
+            None => agent_registry,
+        };
         // Installed before anything writes, exactly as the daemon does at
         // startup.
         let bus = ariadne_daemon::bus::start(store.clone());
@@ -321,9 +426,13 @@ impl HarnessBuilder {
             &config,
             self.timeouts,
         );
-        ariadne_daemon::ai_permissions::schedule::start(
+        ai_permissions.ensure_device().await;
+        let exhausted_patterns = config.exhausted_patterns.clone();
+        let failure_diagnosis = ariadne_daemon::failure_diagnosis::FailureDiagnosis::new(
+            config.ai_failure_diagnosis,
             ai_permissions.clone(),
-            self.timeouts.ai_permissions_schedule_poll,
+            store.clone(),
+            self.timeouts.failure_diagnosis_decision,
         );
         let launcher = Arc::new(Launcher {
             cfg: Arc::new(config),
@@ -334,27 +443,56 @@ impl HarnessBuilder {
                 self.timeouts,
                 transcript_homes(dir.path()),
             )
-            .with_ai_permissions(ai_permissions.clone()),
+            .with_exhausted_patterns(exhausted_patterns)
+            .with_ai_permissions(ai_permissions.clone())
+            .with_failure_diagnosis(failure_diagnosis.clone()),
             registry: agent_registry.clone(),
             branches: BranchWatchers::new(bus.clone()),
+            live: ariadne_daemon::forge::live::LivePulls::default(),
         });
         let sched = self
             .scheduler
             .then(|| scheduler::start(store.clone(), launcher.clone(), false, self.timeouts));
-        let logs = self.logs.unwrap_or_default();
+        let telemetry_store =
+            ariadne_store::telemetry::TelemetryStore::open(dir.path().join("telemetry.db"))
+                .await
+                .unwrap();
+        let (telemetry, log_stream) = telemetry::init(telemetry_store.clone(), "test");
+        let forge_poll = ariadne_daemon::forge::poll::start(
+            store.clone(),
+            launcher.cfg.clone(),
+            &bus,
+            launcher.live.clone(),
+            self.timeouts,
+        );
+        // Started by a test that binds a listener: a harness opens no tunnel.
+        let tunnel = ariadne_daemon::forge::tunnel::Tunnel::new(
+            store.clone(),
+            launcher.cfg.clone(),
+            bus.clone(),
+            &forge_poll,
+            self.timeouts,
+        );
+        if let Some(sched) = &sched {
+            forge_poll.connect_scheduler(sched.clone());
+        }
         let state = AppState {
+            tunnel,
+            forge_poll,
             store: store.clone(),
             started_at: Instant::now(),
             started_at_utc: chrono::Utc::now(),
             launcher: launcher.clone(),
             sched_tx: sched.clone(),
             events: bus.clone(),
-            logs: logs.clone(),
+            telemetry_store: telemetry_store.clone(),
+            log_stream: log_stream.clone(),
             agent_registry,
             outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::with_transcripts(
                 &transcript_homes(dir.path()),
             ),
             ai_permissions,
+            reply_locks: Default::default(),
         };
         // Lazy: most tests never write behind the store's back, and a
         // connection opened for every harness in every binary is a hundred
@@ -369,12 +507,14 @@ impl HarnessBuilder {
             store,
             launcher,
             bus,
-            logs,
+            telemetry_store,
+            telemetry,
             sched,
             agent,
             dir,
             timeouts: self.timeouts,
             db,
+            failure_diagnosis,
         };
         // A probe under full-suite load can run out its timeout: probe again
         // until the stub is accepted, so no test reads a timed-out snapshot.
@@ -395,10 +535,265 @@ impl HarnessBuilder {
     }
 }
 
+/// A store at the current migrations, with the built-in skills and workflows
+/// already seeded: a path to copy rather than a fresh database for every
+/// harness to migrate and seed itself.
+///
+/// Built once and cached under the machine's temp directory, keyed by the
+/// test binary's own path, size and modified time — not the path alone,
+/// which a rebuild can leave unchanged (cargo names a test binary after its
+/// unit's metadata, not its content, so an edit that does not change that
+/// metadata reuses the old path with new bytes). A cache a rebuild cannot
+/// invalidate would read stale migrations.
+///
+/// One process builds it; every other one polls the same exclusive `flock`,
+/// non-blocking and on its own async side, until it gets the lock itself or
+/// finds `path` already there — a blocking `flock` would park a real OS
+/// thread for as long as the holder keeps it, uncancellable and still owed
+/// by the runtime at shutdown. A builder that dies mid-build drops the lock
+/// when its file descriptor closes, which the kernel guarantees happens
+/// however the process ends — so a crash hands the lock on to the next
+/// waiter rather than wedging it forever behind a claim nothing will ever
+/// finish. The poll is itself bounded by [`TIMEOUT`], so a build that is
+/// merely slow still surfaces as a named failure rather than an
+/// unexplained hang.
+async fn template_db() -> PathBuf {
+    use std::hash::{Hash, Hasher};
+
+    let exe = std::env::current_exe().unwrap();
+    let exe_meta = std::fs::metadata(&exe).unwrap();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    exe.hash(&mut hasher);
+    exe_meta.len().hash(&mut hasher);
+    exe_meta.modified().unwrap().hash(&mut hasher);
+    let dir = std::env::temp_dir().join("ariadne-test-store-template");
+    std::fs::create_dir_all(&dir).unwrap();
+    let key = format!("{:016x}", hasher.finish());
+    let path = dir.join(format!("{key}.db"));
+    if path.exists() {
+        return path;
+    }
+    let lock_path = dir.join(format!("{key}.lock"));
+    // Non-blocking and polled from the async side, not a blocking `flock`
+    // handed to a blocking-pool thread: that thread would stay parked in
+    // the syscall for as long as the holder keeps the lock, which a
+    // `tokio::time::timeout` around the `JoinHandle` only stops *waiting*
+    // on — it cannot cancel a thread already blocked in the kernel, so the
+    // runtime would still hang at shutdown behind it. A failed attempt here
+    // returns at once, so this helper's deadline is the only thing that
+    // ever waits. `TemplateReady` distinguishes "stop waiting, nothing to
+    // build" from "keep polling for the lock" without a second flag.
+    let lock_file = match wait_for_template_lock(path.clone(), lock_path).await {
+        TemplateLock::Acquired(lock_file) => lock_file,
+        TemplateLock::TemplateReady => return path,
+    };
+    if !path.exists() {
+        // Built aside and renamed, even under the lock: a reader that
+        // raced the lock itself and lost only ever sees `path` once it is
+        // the finished database, never a build the holder died in the
+        // middle of — `rename` is the one step that cannot leave a half
+        // state for `path.exists()` above to find on the next call.
+        let partial = dir.join(format!("{key}.{}.db", std::process::id()));
+        {
+            let store = Store::open(&partial).await.unwrap();
+            store.checkpoint().await.unwrap();
+        }
+        // Publish the git fixture first. A harness only sees the database
+        // after this rename, so a process whose build raced this one cannot
+        // start copying a repository before the template is complete.
+        let git_template = prepare_git_repo_template(&dir, &key);
+        prepare_git_remote_template(&dir, &key, &git_template);
+        std::fs::rename(&partial, &path).unwrap();
+        // The checkpoint above empties these rather than removing them;
+        // `rename` only takes the main file, so the sidecars under the
+        // partial's own name are cleaned up by hand.
+        let _ = std::fs::remove_file(partial.with_extension("db-wal"));
+        let _ = std::fs::remove_file(partial.with_extension("db-shm"));
+    }
+    drop(lock_file);
+    path
+}
+
+/// The one real repository every [`Harness::git_repo`] starts from.
+///
+/// A test still gets a private copy — a branch, remote or worktree in one
+/// cannot reach another — but the initial main/next history is made once per
+/// test binary rather than by every harness. Its availability is coupled to
+/// `template_db`'s publication above, which holds the same key and lock.
+fn git_repo_template() -> PathBuf {
+    use std::hash::{Hash, Hasher};
+
+    let exe = std::env::current_exe().unwrap();
+    let exe_meta = std::fs::metadata(&exe).unwrap();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    exe.hash(&mut hasher);
+    exe_meta.len().hash(&mut hasher);
+    exe_meta.modified().unwrap().hash(&mut hasher);
+    let dir = std::env::temp_dir().join("ariadne-test-store-template");
+    let key = format!("{:016x}", hasher.finish());
+    prepare_git_repo_template(&dir, &key)
+}
+
+/// The bare origin copied for a forge fixture. It has the same initial
+/// history as [`git_repo_template`], but every test still mutates its own
+/// private copy through `push` and `ls-remote`.
+fn git_remote_template() -> PathBuf {
+    use std::hash::{Hash, Hasher};
+
+    let exe = std::env::current_exe().unwrap();
+    let exe_meta = std::fs::metadata(&exe).unwrap();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    exe.hash(&mut hasher);
+    exe_meta.len().hash(&mut hasher);
+    exe_meta.modified().unwrap().hash(&mut hasher);
+    let dir = std::env::temp_dir().join("ariadne-test-store-template");
+    let key = format!("{:016x}", hasher.finish());
+    let repo = prepare_git_repo_template(&dir, &key);
+    prepare_git_remote_template(&dir, &key, &repo)
+}
+
+/// Build the git template aside, then make it visible all at once.
+fn prepare_git_repo_template(dir: &Path, key: &str) -> PathBuf {
+    let path = dir.join(format!("{key}.git"));
+    if path.exists() {
+        return path;
+    }
+    std::fs::create_dir_all(dir).unwrap();
+    let partial = dir.join(format!("{key}.{}.git", std::process::id()));
+    let _ = std::fs::remove_dir_all(&partial);
+    std::fs::create_dir_all(&partial).unwrap();
+    sh(
+        &partial,
+        "git init -q -b main && echo v1 > file.txt && git add . && \
+         git -c user.email=t@t -c user.name=t commit -qm init && \
+         git checkout -q -b next && echo v2 > file.txt && git add . && \
+         git -c user.email=t@t -c user.name=t commit -qm ahead && \
+         git checkout -q main",
+    );
+    match std::fs::rename(&partial, &path) {
+        Ok(()) => path,
+        // A process that did not build the database can still get here after
+        // an interrupted old cache build. Its complete template wins; ours
+        // is discarded without exposing a partial directory to any reader.
+        Err(_) if path.exists() => {
+            let _ = std::fs::remove_dir_all(&partial);
+            path
+        }
+        Err(e) => panic!("publishing the git test template: {e}"),
+    }
+}
+
+/// Build the bare origin template aside, then make it visible all at once.
+fn prepare_git_remote_template(dir: &Path, key: &str, repo: &Path) -> PathBuf {
+    let path = dir.join(format!("{key}.remote.git"));
+    if path.exists() {
+        return path;
+    }
+    std::fs::create_dir_all(dir).unwrap();
+    let partial = dir.join(format!("{key}.{}.remote.git", std::process::id()));
+    let _ = std::fs::remove_dir_all(&partial);
+    sh(
+        dir,
+        &format!(
+            "git clone -q --bare '{}' '{}'",
+            repo.display(),
+            partial.display()
+        ),
+    );
+    match std::fs::rename(&partial, &path) {
+        Ok(()) => path,
+        Err(_) if path.exists() => {
+            let _ = std::fs::remove_dir_all(&partial);
+            path
+        }
+        Err(e) => panic!("publishing the git remote test template: {e}"),
+    }
+}
+
+/// Copy the template's whole repository, including its `.git` directory.
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let destination = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &destination);
+        } else {
+            std::fs::copy(entry.path(), destination).unwrap();
+        }
+    }
+}
+
+/// Try the process-wide template lock once, without parking a runtime thread.
+///
+/// The outer poll owns the wait. A completed template has priority over a
+/// lock another process still holds, since the caller only needs its path.
+fn template_lock_attempt(lock_path: &Path, path: &Path) -> Option<TemplateLock> {
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_path)
+        .unwrap();
+    match rustix::fs::flock(
+        &lock_file,
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    ) {
+        Ok(()) => Some(TemplateLock::Acquired(lock_file)),
+        Err(rustix::io::Errno::WOULDBLOCK) => path.exists().then_some(TemplateLock::TemplateReady),
+        Err(e) => panic!("locking the template database build: {e}"),
+    }
+}
+
+/// Poll for the process-wide template lock without parking a runtime thread.
+async fn wait_for_template_lock(path: PathBuf, lock_path: PathBuf) -> TemplateLock {
+    eventually_some(
+        TIMEOUT,
+        "another process's template database build",
+        move || std::future::ready(template_lock_attempt(&lock_path, &path)),
+    )
+    .await
+}
+
+/// The two outcomes that end the template-lock poll.
+enum TemplateLock {
+    /// This process owns the lock and must build the database if it is absent.
+    Acquired(std::fs::File),
+    /// Another process published the complete database before this one locked.
+    TemplateReady,
+}
+
+#[cfg(test)]
+mod template_lock_tests {
+    use super::{TemplateLock, template_lock_attempt};
+
+    #[test]
+    fn a_published_template_ends_a_contended_lock_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = dir.path().join("template.lock");
+        let template_path = dir.path().join("template.db");
+        let holder = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        rustix::fs::flock(&holder, rustix::fs::FlockOperation::LockExclusive).unwrap();
+
+        assert!(template_lock_attempt(&lock_path, &template_path).is_none());
+        std::fs::write(&template_path, "complete").unwrap();
+        assert!(matches!(
+            template_lock_attempt(&lock_path, &template_path),
+            Some(TemplateLock::TemplateReady)
+        ));
+    }
+}
+
 /// Where a harness's agents keep their transcripts: under its own
 /// directory, so no test reads the transcripts of the machine it runs on.
 fn transcript_homes(dir: &Path) -> TranscriptHomes {
     TranscriptHomes {
+        listing_cache: dir.join("outside-session-listing-cache.json"),
         codex: dir.join("codex"),
         claude: dir.join("claude"),
         opencode: dir.join("opencode"),
@@ -555,9 +950,16 @@ impl Harness {
     /// session fresh or calls `set_status(.., Idle)` before reusing one;
     /// this only turns that into something enforced rather than assumed.
     pub(crate) async fn agent_runs_as(&self, session: &AgentSession, agent_id: &str) {
-        let repository_id = match &session.task_id {
-            Some(task) => self.store.get_task(task).await.unwrap().repo_id,
-            None => {
+        let repository_id = match (&session.task_id, &session.pull_request_id) {
+            (Some(task), _) => self.store.get_task(task).await.unwrap().repo_id,
+            (None, Some(pull)) => {
+                self.store
+                    .get_pull_request(pull)
+                    .await
+                    .unwrap()
+                    .repository_id
+            }
+            (None, None) => {
                 self.store
                     .list_goal_repositories(session.goal_id.as_deref().unwrap())
                     .await
@@ -612,6 +1014,7 @@ impl Harness {
                     mcp_servers: Vec::new(),
                 },
                 repository_id,
+                repository_path: String::new(),
                 permission_mode: PermissionMode::Auto,
             })
             .await
@@ -694,8 +1097,8 @@ impl Harness {
 
 // -- seeding ----------------------------------------------------------------
 
-/// The agents of one goal with one task, and the repository behind it: every
-/// agent that can be spawned for it.
+/// One goal with one task, the repository behind it, and the agents staffed
+/// on the task: one per column of the goal's workflow, in column order.
 ///
 /// The orchestrator is not among them: a goal has exactly one, it is the one
 /// agent type Ariadne defines, and nothing staffs it.
@@ -703,8 +1106,59 @@ pub(crate) struct Cast {
     pub goal: Goal,
     pub task: Task,
     pub repo: Repository,
-    pub author: TaskAgent,
-    pub reviewer: TaskAgent,
+    /// The agents of the task, one per column, in column order.
+    pub agents: Vec<TaskAgent>,
+}
+
+impl Cast {
+    /// The agent of the first column, which writes the change.
+    pub(crate) fn develop(&self) -> &TaskAgent {
+        &self.agents[0]
+    }
+
+    /// The agent of the second column, which reviews it.
+    pub(crate) fn review(&self) -> &TaskAgent {
+        &self.agents[1]
+    }
+
+    /// The agent of the column `step`.
+    pub(crate) fn agent(&self, step: &str) -> &TaskAgent {
+        self.agents
+            .iter()
+            .find(|a| a.step == step)
+            .unwrap_or_else(|| panic!("the task has no agent on column {step}"))
+    }
+}
+
+/// A bare remote for `repo` named `origin`, and a forge row the daemon can
+/// call `gh` through — independent of the real git remote, since the CLI is
+/// stubbed and only the push and `ls-remote` the daemon runs need to be real.
+/// The integration is on: the `pr` column keeps the request it opens, and the
+/// integration is what reads it for the agent (030).
+pub(crate) async fn with_forge(h: &Harness, repo: &Repository) {
+    with_forge_enabled(h, repo, true).await
+}
+
+pub(crate) async fn with_forge_enabled(h: &Harness, repo: &Repository, enabled: bool) {
+    let remote = h.at("remote.git");
+    copy_tree(&git_remote_template(), &remote);
+    sh(
+        Path::new(&repo.path),
+        &format!("git remote add origin '{}'", remote.display()),
+    );
+    h.store
+        .set_forge_integration(SetForgeIntegration {
+            repository_id: repo.id.clone(),
+            kind: ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled,
+            login: enabled.then(|| "me".into()),
+        })
+        .await
+        .unwrap();
 }
 
 impl Harness {
@@ -712,29 +1166,23 @@ impl Harness {
     /// `next` branch one commit ahead of it, checked out on `main`.
     pub(crate) fn git_repo(&self, name: &str) -> PathBuf {
         let repo = self.at(name);
-        std::fs::create_dir_all(&repo).unwrap();
-        sh(
-            &repo,
-            "git init -q -b main && echo v1 > file.txt && git add . && \
-             git -c user.email=t@t -c user.name=t commit -qm init && \
-             git checkout -q -b next && echo v2 > file.txt && git add . && \
-             git -c user.email=t@t -c user.name=t commit -qm ahead && \
-             git checkout -q main",
-        );
+        copy_tree(&git_repo_template(), &repo);
         repo
     }
 
-    /// A registered repository at `path`: a directory that exists, since an
-    /// orchestrator is started in it, but only the tests that spawn an author
-    /// ever have git look at it.
+    /// A registered repository at `path`, on the default workflow: a
+    /// directory that exists, since an orchestrator is started in it, but only
+    /// the tests that start a column's agent ever have git look at it.
     pub(crate) async fn repository(&self, path: &Path) -> Repository {
         std::fs::create_dir_all(path).unwrap();
         self.store
             .create_repository(NewRepository {
+                default_workflow: None,
                 path: path.display().to_string(),
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
+                supervise_posts: None,
             })
             .await
             .unwrap()
@@ -754,74 +1202,47 @@ impl Harness {
             .unwrap();
     }
 
-    /// One reviewer's verdict on the round a task stands in, as the reviewer
-    /// itself would send it: a message to the author, of the kind that closes
-    /// a round.
-    pub(crate) async fn verdict(
-        &self,
-        task: &Task,
-        reviewer_agent_id: &str,
-        kind: MessageKind,
-        body: &str,
-    ) -> ariadne_store::Message {
-        self.write_verdict(task, reviewer_agent_id, None, kind, body)
-            .await
-    }
-
-    /// The same, sent from a live reviewer session, so the verdict names the
-    /// session it came from.
-    pub(crate) async fn verdict_from(
-        &self,
-        task: &Task,
-        session: &AgentSession,
-        kind: MessageKind,
-        body: &str,
-    ) -> ariadne_store::Message {
-        let agent_id = session.task_agent_id.clone().unwrap_or_default();
-        self.write_verdict(task, &agent_id, Some(&session.id), kind, body)
-            .await
-    }
-
-    /// A verdict on the review that is open now, whichever that is: what a
-    /// verdict belongs to is the request it answers, and the store reads that
-    /// off the channel rather than off anything the caller holds.
-    async fn write_verdict(
-        &self,
-        task: &Task,
-        reviewer_agent_id: &str,
-        session_id: Option<&str>,
-        kind: MessageKind,
-        body: &str,
-    ) -> ariadne_store::Message {
-        let task = self.store.get_task(&task.id).await.unwrap();
-        let author = self.store.task_author(&task.id).await.unwrap();
+    /// Set whether a repository's agents hold what they post to the forge
+    /// for a person's approval.
+    pub(crate) async fn set_supervise_posts(&self, repo: &Repository, supervise: bool) {
         self.store
-            .send_message(NewMessage {
-                goal_id: task.goal_id.clone(),
-                task_id: Some(task.id.clone()),
-                kind,
-                from_actor: Actor::Reviewer,
-                from_agent_id: Some(reviewer_agent_id.to_string()),
-                from_session: session_id.map(str::to_string),
-                to_actor: Actor::Author,
-                to_agent_id: Some(author.id),
-                body: body.to_string(),
-            })
+            .update_repository(
+                &repo.id,
+                RepositoryUpdate {
+                    supervise_posts: Some(supervise),
+                    ..Default::default()
+                },
+            )
             .await
-            .unwrap()
+            .unwrap();
     }
 
     /// A goal still in planning, on a repository of its own, pinned to the
-    /// stub as [`Self::cast_reviewed_by`] pins its own.
+    /// stub as [`Self::cast`] pins its own, on the repository's default
+    /// workflow.
     pub(crate) async fn goal(&self) -> (Goal, Repository) {
         let repo = self.repository(&self.at("repo")).await;
         let goal = self.goal_on(&repo, test_pin()).await;
         (goal, repo)
     }
 
+    /// A goal on `repo`'s default workflow.
     pub(crate) async fn goal_on(&self, repo: &Repository, pin: AgentPin) -> Goal {
+        self.goal_running(repo, pin, None).await
+    }
+
+    /// A goal on the named workflow: None is what a goal gets when its
+    /// creator says nothing, which is its first repository's default.
+    pub(crate) async fn goal_running(
+        &self,
+        repo: &Repository,
+        pin: AgentPin,
+        workflow: Option<&str>,
+    ) -> Goal {
         self.store
             .create_goal(NewGoal {
+                workflow: workflow.map(str::to_string),
+                issue_url: None,
                 title: "Ship the UI".into(),
                 description: "desc".into(),
                 repository_ids: vec![repo.id.clone()],
@@ -831,20 +1252,23 @@ impl Harness {
             .unwrap()
     }
 
-    /// A task on a goal, staffed with one author and the reviewers given, all
-    /// on the same pin.
+    /// A task on a goal, staffed with one agent per column of the goal's
+    /// workflow, each on the column's own skills and on `pin`.
     pub(crate) async fn task_on(
         &self,
         goal: &Goal,
         repo: &Repository,
         title: &str,
-        reviewers: usize,
         pin: AgentPin,
     ) -> Task {
-        let agent =
-            |seat: Seat, skills: &[&str]| NewTaskAgent::new(seat, skills.to_vec(), pin.clone());
-        let mut agents = vec![agent(Seat::Author, &["coding"])];
-        agents.extend((0..reviewers).map(|_| agent(Seat::Reviewer, &["code-review"])));
+        let agents = self
+            .store
+            .goal_steps(&goal.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|step| NewTaskAgent::new(step.id, Vec::<String>::new(), pin.clone()))
+            .collect();
         self.store
             .create_task(NewTask {
                 goal_id: goal.id.clone(),
@@ -853,7 +1277,6 @@ impl Harness {
                 description: "do things".into(),
                 agents,
                 depends_on: vec![],
-                landing: None,
             })
             .await
             .unwrap()
@@ -869,39 +1292,29 @@ impl Harness {
     /// A goal in planning with one task on it, and the agents staffed on that
     /// task: the shape most tests start from.
     pub(crate) async fn cast(&self) -> Cast {
-        self.cast_reviewed_by(1).await
-    }
-
-    /// The same, with `reviewers` reviewers on the task. A task is approved
-    /// when every one of them has approved, so two of them is where a round
-    /// one verdict does not close — a reviewer sitting with its work done.
-    pub(crate) async fn cast_reviewed_by(&self, reviewers: usize) -> Cast {
-        self.cast_pinned(&test_pin().model, reviewers).await
+        self.cast_pinned(&test_pin().model).await
     }
 
     /// The same on another model: what a goal and a task's agents run on is
     /// what they were pinned to when they were created.
-    pub(crate) async fn cast_pinned(&self, model: &str, reviewers: usize) -> Cast {
+    pub(crate) async fn cast_pinned(&self, model: &str) -> Cast {
         let pin = AgentPin {
             model: model.to_string(),
             effort: None,
         };
+        self.cast_of(pin, None).await
+    }
+
+    async fn cast_of(&self, pin: AgentPin, workflow: Option<&str>) -> Cast {
         let repo = self.repository(&self.at("repo")).await;
-        let goal = self.goal_on(&repo, pin.clone()).await;
-        let task = self.task_on(&goal, &repo, "task", reviewers, pin).await;
-        let author = self.store.task_author(&task.id).await.unwrap();
-        let reviewer = self
-            .store
-            .list_task_reviewers(&task.id)
-            .await
-            .unwrap()
-            .remove(0);
+        let goal = self.goal_running(&repo, pin.clone(), workflow).await;
+        let task = self.task_on(&goal, &repo, "task", pin).await;
+        let agents = self.store.list_task_agents(&task.id).await.unwrap();
         Cast {
             goal,
             task,
             repo,
-            author,
-            reviewer,
+            agents,
         }
     }
 
@@ -923,8 +1336,13 @@ impl Harness {
     /// are out too — so a stream opened afterwards sees nothing but what the
     /// test itself does.
     pub(crate) async fn active_cast(&self) -> Cast {
+        self.active_cast_running(None).await
+    }
+
+    /// The same, on a goal running the named workflow.
+    pub(crate) async fn active_cast_running(&self, workflow: Option<&str>) -> Cast {
         let mut rx = self.bus.subscribe();
-        let mut cast = self.cast().await;
+        let mut cast = self.cast_of(test_pin(), workflow).await;
         cast.goal = self.activate(&cast.goal).await;
         next_event(
             &mut rx,
@@ -934,11 +1352,30 @@ impl Harness {
         cast
     }
 
+    /// Wakes a harness built with [`HarnessBuilder::scheduler`] about every
+    /// task of the goal, the way `finalize`'s HTTP handler does: a goal's
+    /// own reconciliation keeps its orchestrator, but starts none of its
+    /// tasks, so the wake that matters here is per task, not per goal.
     pub(crate) async fn activate(&self, goal: &Goal) -> Goal {
-        self.store
+        let goal = self
+            .store
             .set_goal_status(&goal.id, GoalStatus::Active)
             .await
-            .unwrap()
+            .unwrap();
+        if self.sched.is_some() {
+            let tasks = self
+                .store
+                .list_tasks(TaskFilter {
+                    goal_id: Some(goal.id.clone()),
+                    status: None,
+                })
+                .await
+                .unwrap();
+            for task in tasks {
+                self.notify(&task.id);
+            }
+        }
+        goal
     }
 
     /// A session of `seat`, as the launcher would have created it — a row,
@@ -951,6 +1388,18 @@ impl Harness {
         agent_id: &str,
     ) -> AgentSession {
         self.new_session(goal, task, seat, Some(agent_id)).await
+    }
+
+    /// The session of a column's agent on `task`: a row, with no agent
+    /// process under it until [`Self::agent_runs`] starts one.
+    pub(crate) async fn agent_session(&self, cast: &Cast, step: &str) -> AgentSession {
+        self.session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Agent,
+            &cast.agent(step).id,
+        )
+        .await
     }
 
     /// An orchestrator session on a goal of its own, on a repository named
@@ -990,6 +1439,7 @@ impl Harness {
                 model: test_pin().model,
                 effort: None,
                 worktree_path: Some(worktree.display().to_string()),
+                pull_request_id: None,
             })
             .await
             .unwrap()
@@ -999,26 +1449,80 @@ impl Harness {
         self.at(&format!("wt-{}", &id[id.len() - 4..]))
     }
 
-    /// Take a session's row out from under the daemon, the way deleting the
-    /// goal it belonged to would. Straight SQL: nothing an agent can call does
-    /// this, which is the point — it is the state the daemon has to cope with,
-    /// not one it is asked to produce.
-    pub(crate) async fn forget_session(&self, session: &AgentSession) {
-        sqlx::query("DELETE FROM agent_sessions WHERE id = ?")
-            .bind(&session.id)
+    /// Take the agent of one column off a task, the way a database written
+    /// before workflows leaves a column of a migrated task with none (0023).
+    /// Straight SQL: the store refuses an edit that leaves a column out once
+    /// the goal runs, which is the point — it is the state the daemon has to
+    /// cope with, not one it is asked to produce.
+    pub(crate) async fn unstaff_column(&self, task: &Task, step: &str) {
+        sqlx::query("DELETE FROM task_agents WHERE task_id = ? AND step = ?")
+            .bind(&task.id)
+            .bind(step)
             .execute(&self.db)
             .await
             .unwrap();
     }
 
-    /// A task whose author session has already run once: a worktree on disk,
-    /// an agent conversation to resume, and no agent left running.
-    /// What the launcher relaunches when the reviewers bounce a task back.
-    pub(crate) async fn resumable_author(&self) -> (Cast, AgentSession) {
+    /// Stage a skill this release no longer ships, staffed on `agent_id`.
+    /// Straight SQL: `set_agent_skills` refuses a name nothing answers to, so
+    /// the only way to reach the state an old database carries — a staffing
+    /// on a skill the catalog has since dropped — is to write the rows a
+    /// database of that era would already hold. Synced afterward, the way a
+    /// real daemon syncs the home copy on every start.
+    pub(crate) async fn stage_dropped_skill(&self, agent_id: &str, name: &str, ordinal: i64) {
+        sqlx::query(
+            "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+             VALUES (?, NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(name)
+        .execute(&self.db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal) VALUES (?, ?, ?)",
+        )
+        .bind(agent_id)
+        .bind(name)
+        .bind(ordinal)
+        .execute(&self.db)
+        .await
+        .unwrap();
+        ariadne_daemon::agents::sync_skills(&self.store, &self.launcher.cfg.skills_dir)
+            .await
+            .unwrap();
+    }
+
+    /// Every fact of `kind` in the stats ledger, oldest first, as
+    /// `(session_id, launch_id, seat, model, skills, data)`. Straight SQL: the
+    /// daemon reads the ledger only as aggregates, and a test of the fact
+    /// itself needs the row.
+    pub(crate) async fn facts(&self, kind: &str) -> Vec<Fact> {
+        let rows: Vec<FactRow> = sqlx::query_as(
+            "SELECT session_id, launch_id, seat, model, skills, data
+                   FROM stat_facts WHERE kind = ? ORDER BY id",
+        )
+        .bind(kind)
+        .fetch_all(&self.db)
+        .await
+        .unwrap();
+        rows.into_iter()
+            .map(|(session_id, launch_id, seat, model, skills, data)| Fact {
+                session_id,
+                launch_id,
+                seat,
+                model,
+                skills: serde_json::from_str(&skills).unwrap(),
+                data: serde_json::from_str(&data).unwrap(),
+            })
+            .collect()
+    }
+
+    /// A task whose first column's agent has already run once: a worktree on
+    /// disk, an agent conversation to resume, and no agent left running.
+    /// What the launcher relaunches when the task comes back to the column.
+    pub(crate) async fn resumable_agent(&self) -> (Cast, AgentSession) {
         let cast = self.cast().await;
-        let session = self
-            .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-            .await;
+        let session = self.agent_session(&cast, "develop").await;
         self.make_resumable(&cast.task, &session).await;
         self.set_status(&session, SessionStatus::Exited).await;
         (cast, session)
@@ -1033,35 +1537,41 @@ impl Harness {
             .set_task_worktree(&task.id, Some(&worktree))
             .await
             .unwrap();
+        self.seed_conversation(&session.id, "uuid-1234").await;
+    }
+
+    /// A conversation the session's agent can reopen: the id it named it by,
+    /// and a prompt that went out on it. An id with no prompt is a launch
+    /// that died before its first turn, which a resume passes over.
+    pub(crate) async fn seed_conversation(&self, session_id: &str, internal: &str) {
         self.store
-            .set_session_internal_id(&session.id, "uuid-1234")
+            .set_session_internal_id(session_id, internal)
             .await
             .unwrap();
+        let session = self.store.get_session(session_id).await.unwrap();
+        self.reports(&session, "user_prompt_submit").await;
     }
 
     /// Walk a fresh task up to the status a test wants to watch it in, from
     /// wherever it stands: a scheduler woken by a live agent may already
     /// have taken it part of the way, and may take a step of the walk
-    /// between this read of the status and this write of it.
+    /// between this read of the status and this write of it. `in_progress`
+    /// puts the task in its first column.
     pub(crate) async fn advance(&self, task: &Task, to: TaskStatus) {
-        let steps = [
-            (TaskStatus::Ready, Actor::Daemon),
-            (TaskStatus::InProgress, Actor::Daemon),
-            (TaskStatus::UnderReview, Actor::Author),
-        ];
+        let steps = [TaskStatus::Ready, TaskStatus::InProgress];
         // How far up the walk a status stands. A status off the walk,
         // `pending` included, stands below every step of it.
         let reached = |status: TaskStatus| {
             steps
                 .iter()
-                .position(|(step, _)| *step == status)
+                .position(|step| *step == status)
                 .map_or(0, |at| at + 1)
         };
-        for (at, (status, actor)) in steps.into_iter().enumerate() {
+        for (at, status) in steps.into_iter().enumerate() {
             if reached(self.status(&task.id).await) <= at {
                 let stepped = self
                     .store
-                    .transition_task(&task.id, status, actor, None, None)
+                    .transition_task(&task.id, status, Actor::Daemon, None, None)
                     .await;
                 if let Err(refused) = stepped {
                     // The scheduler took the step first, which is the step
@@ -1077,6 +1587,194 @@ impl Harness {
                 return;
             }
         }
+    }
+
+    /// Put a task in the named column: in progress, and moved forward one
+    /// column at a time by the daemon until it stands there. What a test
+    /// that watches a later column starts from.
+    ///
+    /// Flushes a harness with a scheduler first: a wake already queued for
+    /// this task — the one activation sends now — reconciles its starting
+    /// column against the transition this writes directly, and whichever
+    /// finishes last wins the next entry's briefing. Draining the queue
+    /// before writing keeps the two from landing in the same window.
+    pub(crate) async fn advance_to(&self, task: &Task, step: &str) {
+        if self.sched.is_some() {
+            self.flush_scheduler().await;
+        }
+        self.advance(task, TaskStatus::InProgress).await;
+        let steps = self.store.goal_steps(&task.goal_id).await.unwrap();
+        let wanted = steps
+            .iter()
+            .position(|s| s.id == step)
+            .unwrap_or_else(|| panic!("the goal has no column {step}"));
+        loop {
+            let current = self.store.get_task(&task.id).await.unwrap().step;
+            let at = steps
+                .iter()
+                .position(|s| Some(&s.id) == current.as_ref())
+                .expect("a task in progress is in a column");
+            if at >= wanted {
+                return;
+            }
+            self.store
+                .move_step(
+                    &task.id,
+                    &steps[at + 1].id,
+                    Actor::Daemon,
+                    "the test moved the task on",
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+    }
+
+    /// The step call the current column's agent makes to hand the task on,
+    /// as that agent's own session: the task as the daemon answers it.
+    pub(crate) async fn complete_step(
+        &self,
+        task: &Task,
+        session: &AgentSession,
+        reason: &str,
+    ) -> serde_json::Value {
+        self.json(
+            as_session(
+                &format!("/v1/tasks/{}/step/complete", task.id),
+                &session.id,
+                serde_json::json!({"reason": reason}),
+            ),
+            StatusCode::OK,
+        )
+        .await
+    }
+
+    /// The step call the current column's agent makes to hand the task back.
+    pub(crate) async fn fail_step(
+        &self,
+        task: &Task,
+        session: &AgentSession,
+        reason: &str,
+    ) -> serde_json::Value {
+        self.json(
+            as_session(
+                &format!("/v1/tasks/{}/step/fail", task.id),
+                &session.id,
+                serde_json::json!({"reason": reason}),
+            ),
+            StatusCode::OK,
+        )
+        .await
+    }
+
+    /// Start the agent of column `step` on `task` and hand it the column's
+    /// first briefing, the way the scheduler does once the agent is up: the
+    /// launch itself carries no prompt. What a test without a scheduler
+    /// starts a column's agent with. Where the agent ran before, this resumes
+    /// its conversation.
+    pub(crate) async fn start_agent(&self, task: &Task, step: &str) -> AgentSession {
+        // The task is put in the column first, the way the scheduler finds
+        // it: an agent's work is only its own while its column is current.
+        self.advance_to(task, step).await;
+        let task = self.store.get_task(&task.id).await.unwrap();
+        let agent = self
+            .store
+            .list_task_agents(&task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.step == step)
+            .unwrap_or_else(|| panic!("the task has no agent on column {step}"));
+        let session = self.launcher.start_step_agent(&task, &agent).await.unwrap();
+        let steps = self.store.goal_steps(&task.goal_id).await.unwrap();
+        let column = steps
+            .iter()
+            .find(|s| s.id == step)
+            .unwrap_or_else(|| panic!("the goal has no column {step}"));
+        let briefing = self
+            .launcher
+            .step_first_briefing(&task, column, "")
+            .await
+            .unwrap();
+        self.launcher
+            .acp
+            .send_prompt(&session.id, briefing)
+            .unwrap();
+        session
+    }
+
+    /// Start the agent of column `step` again on its earlier conversation and
+    /// hand it `instruction` as a new turn, the way the scheduler resumes a
+    /// column's agent that went away. Answers the launcher's own refusal
+    /// where the conversation cannot be reopened.
+    pub(crate) async fn resume_agent(
+        &self,
+        task: &Task,
+        step: &str,
+        instruction: &str,
+    ) -> anyhow::Result<AgentSession> {
+        let task = self.store.get_task(&task.id).await.unwrap();
+        let agent = self
+            .store
+            .list_task_agents(&task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.step == step)
+            .unwrap_or_else(|| panic!("the task has no agent on column {step}"));
+        let session = self.launcher.start_step_agent(&task, &agent).await?;
+        self.launcher
+            .acp
+            .send_prompt(&session.id, instruction.to_string())?;
+        Ok(session)
+    }
+
+    /// Mark the task's current column entry as briefed, the way the runtime
+    /// does once the entry prompt went out: a scheduler pass then sends the
+    /// column's agent no briefing, and the next prompt it gets is the one a
+    /// test is about.
+    pub(crate) async fn briefed(&self, task: &Task) {
+        let latest = self
+            .store
+            .list_task_transitions(&task.id)
+            .await
+            .unwrap()
+            .pop()
+            .expect("the task has moved");
+        assert!(
+            self.store.claim_step_briefing(&latest.id).await.unwrap(),
+            "the current column entry was already briefed"
+        );
+    }
+
+    /// The session of the agent of column `step`, once the scheduler has
+    /// started it and handed it its briefing: a harness with a scheduler
+    /// starts the current column's agent on its own.
+    pub(crate) async fn step_session(&self, task: &Task, step: &str) -> AgentSession {
+        let agent = self
+            .store
+            .list_task_agents(&task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.step == step)
+            .unwrap_or_else(|| panic!("the task has no agent on column {step}"));
+        eventually(
+            TIMEOUT,
+            "the column agent to receive its briefing",
+            || async {
+                self.sessions_of(&task.id).await.iter().any(|s| {
+                    s.task_agent_id.as_ref() == Some(&agent.id) && !self.prompts_to(s).is_empty()
+                })
+            },
+        )
+        .await;
+        self.sessions_of(&task.id)
+            .await
+            .into_iter()
+            .rev()
+            .find(|s| s.task_agent_id.as_ref() == Some(&agent.id))
+            .unwrap()
     }
 
     /// One event recorded for an agent, straight into the store.
@@ -1177,22 +1875,6 @@ impl Harness {
     /// write. Only for a harness built with [`HarnessBuilder::scheduler`].
     pub(crate) fn notify(&self, task_id: &str) {
         self.wake(SchedEvent::TaskChanged(task_id.to_string()));
-    }
-
-    /// Reconcile a task directly, then wait for its expected state.
-    ///
-    /// One notification is one complete reconciliation. Sending another on
-    /// every poll can build a queue behind a slow agent launch, leaving the
-    /// later state change waiting behind stale passes over the same task.
-    pub(crate) async fn reconcile_task_until(
-        &self,
-        task_id: &str,
-        patience: Duration,
-        what: &str,
-        check: impl AsyncFnMut() -> bool,
-    ) {
-        self.notify(task_id);
-        eventually(patience, what, check).await;
     }
 
     /// The same about a goal: what a status change sends.
@@ -1325,6 +2007,36 @@ impl Harness {
             .launched_at
     }
 
+    /// Write the entry of the move from column `from` to `to` without moving
+    /// the task row: what a pass sees when a column completes between its
+    /// read of the task and its read of the transitions. The newest entry is
+    /// `to`'s, and the task still stands on `from`.
+    pub(crate) async fn entry_ahead_of_its_task(&self, task: &Task, from: &str, to: &str) {
+        sqlx::query(
+            "INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, reason, created_at, from_step, to_step) \
+             VALUES (?, ?, 'in_progress', 'in_progress', 'agent', 'The column is done.', ?, ?, ?)",
+        )
+        .bind(ariadne_core::id::new_id())
+        .bind(&task.id)
+        .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .bind(from)
+        .bind(to)
+        .execute(&self.db)
+        .await
+        .unwrap();
+    }
+
+    /// Move the task row onto `step`: the rest of the move
+    /// [`Self::entry_ahead_of_its_task`] wrote the entry of.
+    pub(crate) async fn task_row_on(&self, task: &Task, step: &str) {
+        sqlx::query("UPDATE tasks SET step = ? WHERE id = ?")
+            .bind(step)
+            .bind(&task.id)
+            .execute(&self.db)
+            .await
+            .unwrap();
+    }
+
     /// Write an attention flag straight into the database, the way a daemon
     /// that did not know better left one behind. It has to go around the
     /// store, which now refuses to raise a prompt on a session that has
@@ -1343,7 +2055,7 @@ impl Harness {
 
     /// Move the columns the watchdog's clock is read from back, since the
     /// store only ever stamps them "now" and every threshold is minutes away.
-    async fn backdate(&self, columns: &[&str], session: &AgentSession, secs: i64) {
+    pub(crate) async fn backdate(&self, columns: &[&str], session: &AgentSession, secs: i64) {
         let when = (chrono::Utc::now() - chrono::Duration::seconds(secs))
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let set = columns
@@ -1360,6 +2072,37 @@ impl Harness {
             query = query.bind(when.clone());
         }
         query.bind(&session.id).execute(&self.db).await.unwrap();
+    }
+
+    /// Make the next write of this goal's confirmed-failures column fail,
+    /// the way a transient database error would, until
+    /// [`Self::stop_rejecting_goal_confirm`] undoes it. A trigger rather
+    /// than a closed connection: the rest of the store, this write's own
+    /// caller included, has to go on working around it.
+    pub(crate) async fn reject_goal_confirm(&self, goal_id: &str) {
+        // Safe: `goal_id` is this module's own `new_id()`, lowercase ULID
+        // characters only, used here as both a literal and part of an
+        // identifier because `CREATE TRIGGER` takes no bind parameters.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TRIGGER reject_goal_confirm_{goal_id}
+             BEFORE UPDATE OF orchestrator_answered_failed_task_ids ON goals
+             WHEN NEW.id = '{goal_id}'
+             BEGIN SELECT RAISE(ABORT, 'rejected for test'); END;"
+        )))
+        .execute(&self.db)
+        .await
+        .unwrap();
+    }
+
+    /// Undo [`Self::reject_goal_confirm`]: the next write of this goal's
+    /// confirmed-failures column succeeds again.
+    pub(crate) async fn stop_rejecting_goal_confirm(&self, goal_id: &str) {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP TRIGGER reject_goal_confirm_{goal_id}"
+        )))
+        .execute(&self.db)
+        .await
+        .unwrap();
     }
 
     // -- HTTP ---------------------------------------------------------------
@@ -1405,6 +2148,23 @@ impl Harness {
         assert_eq!(response.status(), StatusCode::OK);
         response.into_body()
     }
+}
+
+/// A private copy of the harness's ready-made repository for a test that
+/// drives a daemon outside [`Harness`]. The database template's publication
+/// also publishes this repository template, so no concurrent test copies a
+/// partial history.
+pub(crate) async fn git_repo_copy(dir: &Path, name: &str) -> PathBuf {
+    template_db().await;
+    let repo = dir.join(name);
+    copy_tree(&git_repo_template(), &repo);
+    repo
+}
+
+/// A private copy of the migrated store for a test that runs `ariadned`
+/// outside [`Harness`].
+pub(crate) async fn store_copy(path: &Path) {
+    std::fs::copy(template_db().await, path).unwrap();
 }
 
 // -- requests ---------------------------------------------------------------
@@ -1493,7 +2253,27 @@ pub(crate) async fn eventually(
             return;
         }
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// [`eventually`], for a check that also hands back the value it found:
+/// the one read that satisfies the wait is the one a caller gets, so
+/// nothing later can see a different, newer state than the check itself
+/// just read.
+pub(crate) async fn eventually_some<T, F, Fut>(patience: Duration, what: &str, mut check: F) -> T
+where
+    T: Send,
+    F: FnMut() -> Fut + Send,
+    Fut: Future<Output = Option<T>> + Send,
+{
+    let deadline = Instant::now() + patience;
+    loop {
+        if let Some(value) = check().await {
+            return value;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -1512,6 +2292,13 @@ pub(crate) async fn next_event(
     })
     .await
     .expect("expected a matching event within the timeout")
+}
+
+/// Take every event already published, without waiting for one: what a
+/// test does once it knows the work that publishes is over — a forge fetch
+/// past its last call, say — so the next wait reads only what comes after.
+pub(crate) fn drain_events(rx: &mut Receiver<BusEvent>) {
+    while rx.try_recv().is_ok() {}
 }
 
 /// What came out of an SSE body next. The three are worth telling apart: a

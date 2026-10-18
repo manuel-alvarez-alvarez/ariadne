@@ -48,6 +48,21 @@ it("keeps an effort visible beside a middle-cut model and opens the whole pin on
   expect(popup.closest("[data-slot='tooltip-content']")).not.toBeNull()
 })
 
+it("holds a fact's pin to one line, cut in the middle, with the whole pin in its tooltip", async () => {
+  const { container } = mount({ model: MODEL, effort: "high", mode: "line" })
+  const trigger = container.querySelector<HTMLElement>("[data-slot='tooltip-trigger']")
+  if (!trigger) throw new Error("no model pin tooltip trigger")
+
+  // One line, never wrapped, and cut in the middle like a table row's pin.
+  expect(trigger.classList).toContain("whitespace-nowrap")
+  expect(trigger.querySelector("[title]")).not.toBeNull()
+  expect(trigger.textContent).toBe(PIN)
+
+  trigger.focus()
+  const popup = await screen.findByText(PIN)
+  expect(popup.closest("[data-slot='tooltip-content']")).not.toBeNull()
+})
+
 it("leaves out an empty effort and its at sign", () => {
   const { container } = mount({ model: MODEL, effort: "", mode: "row" })
   const trigger = container.querySelector<HTMLElement>("[data-slot='tooltip-trigger']")

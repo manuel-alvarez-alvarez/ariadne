@@ -26,6 +26,7 @@ import { parsePayload, ReconnectingEventStream } from "./reconnecting-stream"
  * until it is listed (and handled in `dispatch.ts`).
  */
 const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
+  pull_requests_changed: true,
   goal_created: true,
   goal_updated: true,
   goal_deleted: true,
@@ -39,10 +40,21 @@ const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
   skill_created: true,
   skill_updated: true,
   skill_deleted: true,
+  workflow_created: true,
+  workflow_updated: true,
+  workflow_deleted: true,
   repository_created: true,
   repository_updated: true,
   repository_deleted: true,
-  laya_updated: true,
+  ai_permissions_updated: true,
+  learned_permission_created: true,
+  learned_permission_updated: true,
+  learned_permission_deleted: true,
+  forge_settings_updated: true,
+  issues_changed: true,
+  dashboard_created: true,
+  dashboard_updated: true,
+  dashboard_deleted: true,
 }
 
 const DOMAIN_EVENT_KINDS = Object.keys(DOMAIN_EVENT_KINDS_PRESENT) as DomainEventKind[]
@@ -83,6 +95,8 @@ interface DomainEventStreamHandlers {
    * well have loaded during the gap and events since then are gone for good.
    */
   onOpen: (info: { reconnected: boolean }) => void
+  /** A failed or forced connection starts a telemetry-counted reconnect. */
+  onReconnect?: (reason: string) => void
   /** Status changes worth showing in the UI. */
   onStatus: (status: StreamStatus, error?: string | null) => void
 }
@@ -98,6 +112,7 @@ export class DomainEventStream extends ReconnectingEventStream<StreamStatus> {
       maxBackoffMs: MAX_BACKOFF_MS,
       onStatus: handlers.onStatus,
       onOpen: handlers.onOpen,
+      onReconnect: handlers.onReconnect,
       dropped: "event stream disconnected",
       idle: { timeoutMs: IDLE_BUDGET_MS, reason: "no heartbeat from the daemon" },
     })

@@ -152,19 +152,24 @@ pub(super) async fn home(
                 "no daemon has listened on this home yet",
             )
         },
-        // A database from before the schema was squashed is why a daemon that
-        // used to start does not, and nothing else in the report would say so:
-        // the daemon refuses to open it, so it is not running to be asked and
-        // this shell reads the file itself.
+        // A database from before the schema was squashed, or one that still
+        // carries the single-rank schema workflow capability bands
+        // replaced, is why a daemon that used to start does not, and
+        // nothing else in the report would say so: the daemon refuses to
+        // open it, so it is not running to be asked and this shell reads
+        // the file itself.
         match ariadne_store::pre_squash_database(&db).await {
             Some(why) => Check::fail("database", why).hint(format!("rm {}", db.display())),
-            None => there(
-                "database",
-                &db,
-                db.is_file(),
-                "does not exist yet",
-                FIRST_START,
-            ),
+            None => match ariadne_store::pre_ranks_database(&db).await {
+                Some(why) => Check::fail("database", why).hint(format!("rm {}", db.display())),
+                None => there(
+                    "database",
+                    &db,
+                    db.is_file(),
+                    "does not exist yet",
+                    FIRST_START,
+                ),
+            },
         },
         {
             let pid_file = endpoint::pid_file(home);
@@ -361,23 +366,19 @@ fn major_minor(version: &str) -> Option<(u32, u32)> {
     Some((digits(major)?, digits(minor)?))
 }
 
-/// One forge CLI, wherever it is reported from: installed and signed in is the
+/// The forge CLI, wherever it is reported from: installed and signed in is the
 /// only state a published task can be watched in, and the other two are
 /// warnings rather than failures — a task landed locally needs neither.
 pub(super) fn forge_check(forge: &BinaryDto, lookup: &str) -> Check {
     let (name, detail) = (forge.name.clone(), describe(forge, lookup));
-    let (forge_word, host) = match name.as_str() {
-        "glab" => ("merge request", "GitLab"),
-        _ => ("pull request", "GitHub"),
-    };
     match (forge.path.is_some(), forge.authenticated) {
         (true, Some(false)) => Check::warn(name.clone(), detail).hint(format!(
-            "run `{name} auth login` — Ariadne watches a published {forge_word} through it, \
+            "run `{name} auth login` — Ariadne watches a published pull request through it, \
              and every poll of one fails while it is signed out"
         )),
         (true, _) => Check::ok(name, detail),
         (false, _) => Check::warn(name.clone(), detail).hint(format!(
-            "install {name} to publish tasks to {host} — not needed for tasks landed locally"
+            "install {name} to publish tasks to GitHub — not needed for tasks landed locally"
         )),
     }
 }
@@ -388,7 +389,7 @@ mod tests {
 
     use super::super::tests::{binary, by_name};
 
-    /// The forge CLIs are the two questions nothing else asks: installed, and
+    /// The forge CLI is the two questions nothing else asks: installed, and
     /// signed in. Neither is a failure — a task landed locally needs neither —
     /// and both are worth a warning with the command that fixes them. git is
     /// the opposite: without it nothing spawns at all.
@@ -396,7 +397,7 @@ mod tests {
     fn a_forge_cli_is_reported_on_being_installed_and_being_signed_in() {
         let checks = tools(
             &[binary("git", false, None)],
-            &[binary("gh", true, Some(false)), binary("glab", false, None)],
+            &[binary("gh", true, Some(false))],
         );
         assert_eq!(by_name(&checks, "git").status, Status::Fail);
 
@@ -410,12 +411,13 @@ mod tests {
                 .is_some_and(|h| h.contains("gh auth login")),
             "{gh:?}"
         );
-        // Not installed at all: also a warning, and about GitLab.
-        let glab = by_name(&checks, "glab");
-        assert_eq!(glab.status, Status::Warn);
+        // Not installed at all: also a warning, and about GitHub.
+        let checks = tools(&[], &[binary("gh", false, None)]);
+        let gh = by_name(&checks, "gh");
+        assert_eq!(gh.status, Status::Warn);
         assert!(
-            glab.hint.as_deref().is_some_and(|h| h.contains("GitLab")),
-            "{glab:?}"
+            gh.hint.as_deref().is_some_and(|h| h.contains("GitHub")),
+            "{gh:?}"
         );
         // And signed in is nothing to report.
         let checks = tools(&[], &[binary("gh", true, Some(true))]);
@@ -475,6 +477,44 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        pool.close().await;
+
+        let checks = home(Some(dir.path()), Some(endpoint::parse_config(dir.path()))).await;
+        let check = by_name(&checks, "database");
+        assert_eq!(check.status, Status::Fail, "{check:?}");
+        assert!(
+            check.detail.contains(&db.display().to_string()),
+            "{check:?}"
+        );
+        assert!(
+            check.hint.as_deref().is_some_and(|h| h.contains("rm ")),
+            "and says what to do about it: {check:?}"
+        );
+    }
+
+    /// A database that still carries the single `rank` column fails the
+    /// check by the name of the file to delete, the same as a pre-squash
+    /// one: there is no way to turn one snapshotted rank into a capability
+    /// band without guessing, so `ariadne_store::Store::open` refuses it
+    /// before migration `0002` ever runs.
+    #[tokio::test]
+    async fn a_pre_ranks_database_fails_the_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ariadne.db");
+        drop(ariadne_store::Store::open(&db).await.unwrap());
+
+        let checks = home(Some(dir.path()), Some(endpoint::parse_config(dir.path()))).await;
+        assert_eq!(by_name(&checks, "database").status, Status::Ok);
+
+        // The column workflow capability bands replaced is what every
+        // database of that era still has.
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", db.display()))
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE goal_steps ADD COLUMN rank TEXT")
+            .execute(&pool)
+            .await
+            .unwrap();
         pool.close().await;
 
         let checks = home(Some(dir.path()), Some(endpoint::parse_config(dir.path()))).await;

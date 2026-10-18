@@ -1,27 +1,34 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-26
+updated: 2026-10-18
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
+  - crates/ariadne-daemon/tests/it/docs.rs
   - crates/ariadne-daemon/tests/it/events.rs
   - crates/ariadne-daemon/tests/it/session_list.rs
+  - crates/ariadne-daemon/tests/it/switch.rs
   - crates/ariadne-daemon/tests/it/unknown_fields.rs
-  - crates/ariadne-daemon/tests/it/logs.rs
+  - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/doctor.rs
   - crates/ariadne-daemon/tests/it/ai_permissions.rs
   - crates/ariadne-daemon/tests/it/agents.rs
   - crates/ariadne-daemon/tests/it/models.rs
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
+  - crates/ariadne-daemon/src/acp_discovery.rs
+  - crates/ariadne-daemon/src/acp_index.rs
+  - crates/ariadne-daemon/tests/it/task_failure.rs
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-daemon/src/config.rs
+  - crates/ariadne-daemon/src/socket.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/events.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
   - crates/ariadne-daemon/tests/it/transcript_usage.rs
   - crates/ariadne-daemon/src/transcript.rs
+  - crates/ariadne-daemon/tests/it/stats.rs
 ---
 
 # HTTP API, event stream and usage
@@ -41,23 +48,44 @@ and the ACP runtime that reports the agent events (021).
 
 ## Behavior
 
-1. The daemon listens on a unix socket (`~/.ariadne/ariadne.sock`) and,
-   optionally, on a TCP address for the desktop app.
+1. The daemon listens on a unix socket (`~/.ariadne/ariadne.sock`) with mode
+   `0600` from creation and, optionally, on a loopback TCP address for the
+   desktop app. A non-loopback `tcp_listen` is refused at startup and by
+   `ariadned --check-config`, directing the user to an SSH tunnel. TCP
+   requests must carry a loopback Host (`localhost`, `127.0.0.1`, or `[::1]`,
+   each optionally with a port), and may carry no Origin or only an allowed
+   Origin. The allowed origins are the packaged app, the development server,
+   and serialized `scheme://host[:port]` values in `tcp_allowed_origins`. The
+   unix socket has none of these HTTP checks.
 2. DTOs and the error shape live in one crate (`ariadne-api`) and are the
    single source of truth for the OpenAPI document every client generates
-   from. Every endpoint appears in that document.
+   from. Every API endpoint appears in that document.
+   `/docs` redirects to `/docs/`, which serves the embedded Swagger UI and
+   its assets; its initializer loads `/api-docs/openapi.json` from the daemon.
+   The separate forge webhook ingress follows [027](027-webhooks-and-tunnel.md).
 3. A refusal is an envelope with a machine-readable code and one sentence a
    person can act on — the state machine's own explanation where a transition
-   was refused (001). Every request DTO denies unknown fields, so a body that
+   was refused (001). Request DTOs that opt into unknown-field denial refuse a body that
    carries a field its DTO does not declare is refused in that same envelope,
    and the refusal names the field. A response DTO denies nothing.
+   `CreateGoalRequest` takes the goal's `workflow` and `GoalDto` carries it
+   with the columns it snapshotted (030). The task requests take `agents`,
+   one per column, and `TaskDto.step` is the column the task is in; neither
+   carries a landing. A `merge_commit` a request carries — on
+   `POST /v1/tasks/{id}/transitions` and on `POST /v1/tasks/{id}/step/complete`
+   alike — is accepted only as a hex sha of 7 to 64 characters and refused
+   otherwise with 422 `invalid_request`, since a later call hands it to git as
+   the commit a `merged` or `request-merged` gate verifies (030).
 4. Every write emits a **fat event**: the changed entity, whole, so a client
    can apply it without a re-fetch. A task transition carries the transition
    that caused it, whether it came through HTTP or from the scheduler.
 5. The stream is SSE. It opens with a heartbeat, honours per-client filters,
    and signals a resync and closes when a client lags rather than silently
    dropping events.
-6. CORS allows the preflight and cross-origin calls the desktop app makes.
+6. TCP CORS allows only the app's allowed origins, its HTTP methods, and its
+   request headers. A refused Host or Origin answers `403` in the normal
+   `forbidden` envelope and includes no CORS allow headers, for every route,
+   event stream, and terminal WebSocket.
 7. Session events reach the stream too: launches, ingested agent events,
    attention raised and cleared, and a task branch's head moving (002). An
    agent event on the domain stream is the exception to the fat event (rule
@@ -66,8 +94,10 @@ and the ACP runtime that reports the agent events (021).
    the kind, the `summary` (rule 13) and the time — and carries no payload.
    The whole event, payload included, is what `GET /v1/events` answers and
    what the session's console stream carries (021).
-8. A session is read and driven over HTTP through its row, its kill and
-   resume, and its console (`/v1/sessions/{id}/console`, `/console/input`,
+8. A session is read and driven over HTTP through its row, its kill,
+   resume and switch (`POST /v1/sessions/{id}/switch`, body
+   `SwitchSessionRequest`, answer the new `SessionDto` with `switched_from`,
+   008), and its console (`/v1/sessions/{id}/console`, `/console/input`,
    `/console/stream`, `/console/cancel`, 008, 021). The one WebSocket,
    `/console/terminal` (008), serves that same console drawn as terminal
    bytes for an emulator, and reads the emulator's keys and size; its
@@ -83,7 +113,8 @@ and the ACP runtime that reports the agent events (021).
    vocabulary. `session_start`, `user_prompt_submit`, `pre_tool_use`,
    `post_tool_use` and `permission.replied` mark the session running; `stop`
    marks it idle; `session_end` marks it exited. `permission_request` raises
-   `waiting_permission`, and `session.error` raises `agent_error`; neither
+   `waiting_permission`; an exhausted `session.error` raises `exhausted`, and
+   another `session.error` raises `agent_error`; neither
    reads as liveness. An event that matches nothing — `agent_thought`,
    `agent_message`, `plan` — is recorded and moves nothing. The live-only
    console events (021) — `agent_message_chunk`, `agent_thought_chunk`,
@@ -102,8 +133,8 @@ and the ACP runtime that reports the agent events (021).
 10. An idle report clears the stall and the error and nothing else, so a
     permission request survives it. A permission reply hands control back to
     the agent and takes the wait down.
-11. Attention is raised only on an agent somebody is still waiting on: a
-    reviewer that already cast its verdict, and an orchestrator of a finished
+11. Attention is raised only on an agent somebody is still waiting on: the
+    agent of a column the task has left, and an orchestrator of a finished
     goal, raise none. Their events are recorded, and the status still follows
     them.
 12. An event is believed only where it comes from the launch the session is
@@ -127,6 +158,11 @@ and the ACP runtime that reports the agent events (021).
     (021), the message or thought a turn produced, whole or as one chunk on
     the console stream, a `session.error`'s message — those are shown
     verbatim.
+    A `permission.replied` reads as who answered and, where the AI
+    permission model had a part, why it did not decide (022, rule 31):
+    `AI allowed · allow 99%, deny 0% · danger 1% (allow up to 5%, deny from 65%)`,
+    `allow-once in the console — AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`,
+    `allow-once, learned · command`, or `allow-once, learned · family git rebase`.
     A path under the payload's `cwd` is printed relative to it, and the cwd
     itself is never printed. The summary is
     flattened to one line and cut at 200 characters with a trailing `…`,
@@ -139,11 +175,15 @@ and the ACP runtime that reports the agent events (021).
     uses.
 15. Token usage is kept per session and per source, and a source replaces
     its own totals rather than adding to them. Usage rolls up to the task and
-    the goal; every session of one reviewer groups together; a session that
+    the goal; every session of one column agent groups together; a session that
     has reported nothing reads as zeros; and usage goes when its session
     does. A session also carries its latest context-window `used` and `size`
     pair from an ACP `usage_update`; both stay null when no update arrived,
-    and a reported `cost` is neither stored nor exposed.
+    and a reported `cost` is neither stored nor exposed. A goal's DTO, alone
+    or in `GET /v1/goals`, is built from one batched read of every goal it
+    answers (`Store::goal_parts`): its repositories, columns, seat usage and
+    each task's agents, skills and usage, in a fixed number of queries
+    whatever the number of goals, tasks and agents.
 16. The ACP runtime takes a launch's usage from the transcript its agent
     writes, found by the session's ACP session id
     (`internal_session_id`), and names the running launch as the source:
@@ -183,12 +223,11 @@ and the ACP runtime that reports the agent events (021).
     /v1/agents/{id}` replaces one agent's list whole, an empty one included,
     and refuses an agent the registry does not hold by name. A launch passes
     the flags after the agent's registry command.
-18. The daemon's own log is served both as a snapshot (with a tail limit) and
-    as a stream that opens with a snapshot and follows with deltas, from a
-    ring buffer that evicts its oldest lines.
+18. See [033](033-telemetry.md) for the daemon's own log: the telemetry
+    store it is read from, and its snapshot and stream routes.
 19. `doctor` reports the environment the daemon actually runs in: its own
     paths, every registry agent with what discovery made of it, the tools a
-    session and a published task need (`git`, `gh`, `glab`), the Python
+    session and a published task need (`git`, `gh`), the Python
     interpreter the AI permission model installs into (022), and a worktree root it cannot
     write.
 20. `GET /v1/acp-agents` serves the cached ACP registry. `POST
@@ -198,7 +237,34 @@ and the ACP runtime that reports the agent events (021).
     index. Refresh still searches `PATH`, probes agents, and answers the
     agent list. Both
     responses include status, measured capabilities, degradation flags, and
-    a rejection reason when discovery failed.
+    a rejection reason when discovery failed. `acp_registry_url` is fetched
+    only over `https`, with no exception: a plain `http` URL is refused and
+    logs a warning, the same as a download failure, before anything is
+    fetched. A redirect is followed by hand rather than by the HTTP client,
+    and each hop's `Location` is checked the same way the first URL was: a
+    hop to `http` is refused there too, rather than silently taken. An index
+    entry is refused by id, logged, and left out of what `PATH` search and
+    probing consider when any word of its command names a shell interpreter
+    (`sh`, `bash`, `zsh`, `dash`, `fish`, `cmd`, `powershell`, `pwsh`),
+    compared without case — a case-insensitive volume answers `SH` the same
+    file `sh` names — or is a flag shaped like `-c` (bundled short options
+    included, as `-lc` bundles `-l` with it). A word is read out of every
+    element of the command, not only out of its own element, split and
+    quote-removed the way a shell reads a line: `s''h -'c'` is the two words
+    `sh` and `-c` to a shell, not the literal text a plain whitespace split
+    would see. `env -S STRING` (and `env --split-string=STRING`) folds what
+    would otherwise be two elements — `sh` and `-c` — into the one argument
+    `-S` takes, but reads its own escapes doing it — `\_` a literal,
+    non-splitting space among them — which are `env`'s own grammar, not a
+    shell's. Rather than parse that grammar, the flag is refused outright,
+    wherever `env` carries it and whatever it holds — spelled long, bare,
+    short-option attached or bundled with another flag (`-Ssh -c '...'`,
+    `-Ssh\_-c\_'...'`, `-vSsh\_-c\_'...'`), or long and abbreviated to any
+    unambiguous prefix (`--s=...`, `--sp=...`): GNU `env` accepts any of
+    these for `--split-string`, since no other long option of its starts
+    with `s`. So the escape grammar, and the exact spelling, are never the
+    thing deciding whether the flag was even seen. The rest of the index
+    still installs.
 21. `GET /v1/events` answers one page of the recorded events. `order=asc` is
     the default and answers the oldest of them, oldest first, which is what a
     client sweeping forward reads. `order=desc` answers the newest, newest
@@ -220,18 +286,108 @@ and the ACP runtime that reports the agent events (021).
     reporter sent. The row is written and read back by one statement, which
     is all the lock that orders the ids covers: every live console chunk of
     every session waits behind that lock.
-25. Three endpoints serve the AI permission model, the model the `ai`
+25. Four endpoints serve the AI permission model, the model the `ai`
     permission mode answers with (022): `GET /v1/permissions/ai` answers its
     settings, its prompts and the state of its install as an
     `AiPermissionsStatusDto`, `PUT /v1/permissions/ai` changes them, and
-    `POST /v1/permissions/ai/refresh` runs the install again and answers 202.
+    `POST /v1/permissions/ai/refresh` runs the install again and answers 202, and
+    `POST /v1/permissions/ai/test` tests one request.
     Every change of that status is the domain event `ai_permissions_updated`,
-    carrying the whole DTO. It is the one event the pump does not fatten from a store row: the status is a row, an interpreter the
+    carrying the whole DTO. It is one of several events the pump does not fatten from a store row: the status is a row, an interpreter the
     daemon has just probed and where its server answers, so only the daemon
     can build it, and an install publishes one as readily as a write does.
     The event belongs to no goal or task, so a filtered stream carries none.
+26. Learned permissions (021, rule 9) are exposed under
+    `/v1/permissions/learned` for list, get and delete, and
+    `PUT /v1/permissions/learned/{id}` for the one write a person makes on a
+    row directly: widening it to every repository, or narrowing it back to
+    its own. There is no create route: only a permission decision writes a
+    new row. Lists can filter
+    by repository and return newest first. `LearnedPermissionDto` is `id`,
+    `repository_id`, `tool_name`, `key` (the normalized input), `level`
+    (`once`, `command` or `family`), `family`, `risk_tags` (an array of
+    strings), `scope` (`repository` or `all`), `tool_call` (JSON, the raw
+    input whole), `options` (JSON),
+    `selected_option`, `target` (`auto`, `ask`, `learn` or `ai`), `output`
+    (JSON or null), `created_at` and `updated_at`. `PUT`'s body is
+    `UpdateLearnedPermissionRequest`, one field, `scope`: it answers 200 with
+    the updated `LearnedPermissionDto`, 404 `learned_permission_not_found` for
+    an id no row holds, and 422 `invalid_request` for a scope that is neither
+    `repository` nor `all`. A new row publishes
+    `learned_permission_created`, a write on an existing key or a `PUT`
+    `learned_permission_updated`, and a delete `learned_permission_deleted`,
+    each with the complete DTO.
+    `permission.replied` carries nullable `learned_id`, `learned_level` and
+    `learned_key`. A `permission_request` answered without the console carries
+    the same row fields. They are null when no row answered. The reply schema
+    names all three fields
+    (`learned_permissions.rs::learned_permission_routes_read_and_delete_and_publish_fat_events`),
+    and an ACP family answer publishes their values
+    (`acp_console.rs::family_choice_answers_later_rebase_calls_but_not_other_families`).
+27. `config.toml` accepts `auto_switch` and `exhausted_patterns`.
+    `auto_switch` defaults to `true`. The shipped list is `hit your usage limit`, `session limit`,
+    `weekly limit`, `usage limit reached`, `usage limit`, `rate limit`, `quota`, and `try again at`.
+    A configured list replaces it whole.
+28. Session attention also has `exhausted`, for active work whose current
+    model accepts no more work.
+29. The stats are served under `/v1/stats/<family>`, one route per family —
+    `work`, `time`, `spend`, `models` and `attention` — each taking
+    the `since` and `repo` filters and answering its own
+    `<Family>StatsDto` (023). A bad `since` is `400 invalid_request`. A stat
+    reads the stats ledger only, and counts no cost: the tokens are the ones
+    rule 15 keeps.
+
+## Pull request events (026)
+
+| Event | Payload |
+| --- | --- |
+| `pull_requests_changed` | `{repository_id}`: the repository whose requests moved, on the forge since its fetch last read them, or in what Ariadne keeps of them. |
+
+Requests are held in daemon memory from the last fetch and not stored, so the event carries no request: a client reads them again. It has no goal or task routing scope.
+See [026](026-pull-requests.md) for identity, routes, and event tests.
+
+## Forge settings events (027)
+
+| Event | Payload |
+| --- | --- |
+| `forge_settings_updated` | The complete `ForgeTunnelDto`: the tunnel switch, its state, URL, bound listener address, `since` and `error`. |
+
+The daemon publishes it on each switch write and each tunnel state change. It has no goal or task routing scope.
+See [027](027-webhooks-and-tunnel.md) for the tunnel rules and the event test.
+
+## Issue events (028)
+
+| Event | Payload |
+| --- | --- |
+| `issues_changed` | `{repository_id}`: the repository whose open issues moved on its forge since its fetch last read them. |
+
+Issues are not stored, so the event carries no issue: a client reads them again. It has no goal or task routing scope.
+See [028](028-issues-and-goals.md) for the rule and the event tests.
 
 ## Acceptance criteria
+
+- Each `GET /v1/stats/<family>` answers its DTO and is in the OpenAPI
+  document under the `stats` tag
+  (`stats_<family>.rs::the_<family>_stat_answers_and_is_in_the_api_document`),
+  and a bad `since` is refused (`stats.rs::a_bad_since_is_refused`).
+- `POST /v1/sessions/{id}/switch` is in the OpenAPI document with
+  `SwitchSessionRequest`, and answers a `SessionDto` that carries
+  `switched_from`
+  (`switch.rs::the_switch_endpoint_is_in_the_openapi_document`).
+- A `merge_commit` that starts with `-` or holds a non-hex character is
+  refused with 422 on the step-complete route
+  (`workflow_steps.rs::a_task_walks_develop_review_merge_with_one_agent_per_column`)
+  and on the transitions route
+  (`task_failure.rs::a_malformed_merge_commit_is_refused_on_the_transitions_route`).
+
+- Learned permission routes list, get, delete and widen or narrow by `PUT`,
+  refuse `POST` with 405, publish complete events for a create, an update by
+  key or by `PUT`, and a delete, and the OpenAPI document names `key`,
+  `level`, `family`, `risk_tags`, `scope` and `UpdateLearnedPermissionRequest`,
+  with `level` and `scope` as enums. `PUT` answers 404
+  `learned_permission_not_found` for an unknown id and 422 `invalid_request`
+  for a scope that is neither `repository` nor `all`
+  (`learned_permissions.rs::learned_permission_routes_read_and_delete_and_publish_fat_events`).
 
 - An HTTP mutation emits a fat event
   (`events.rs::http_mutation_emits_a_fat_event`), a transition carries its
@@ -244,19 +400,28 @@ and the ACP runtime that reports the agent events (021).
   (`events.rs::sse_stream_opens_with_a_heartbeat`,
   `::sse_stream_frames_events_and_honours_its_filters`,
   `::sse_stream_signals_resync_and_closes_when_a_client_lags`).
-- CORS allows preflight and cross-origin calls
-  (`events.rs::cors_allows_preflight_and_cross_origin_calls`).
+- Loopback TCP configuration, Host and Origin checks, CORS, streams, terminal
+  upgrades, and unchanged unix-socket headers are covered by
+  (`config.rs::tcp_listener_requires_a_loopback_address_at_start_and_check`,
+  `config.rs::tcp_allowed_origins_require_serialized_origins`,
+  `socket.rs::socket_is_owner_only_when_created`, and
+  `events.rs::cors_allows_preflight_and_cross_origin_calls`).
 - A body with a field its DTO does not declare is refused, and the refusal
   names the field
   (`unknown_fields.rs::an_unknown_field_is_refused_and_named`).
+- A goal is created with the `workflow` its request names, or its first
+  repository's default, and `GoalDto` carries its columns
+  (`workflow_steps.rs::a_goal_takes_the_repository_default_and_snapshots_its_workflow`);
+  the OpenAPI document describes the step routes and every workflow field,
+  and nothing of a landing
+  (`workflow_steps.rs::openapi_describes_the_step_routes_and_workflow_fields`).
 - The three AI permission paths, their schemas and the
   `ai_permissions_updated` kind are in the OpenAPI document, the doctor's
   report carries the interpreter
   (`ai_permissions.rs::the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document`,
   `::the_doctor_reports_the_interpreter_the_model_needs`), and a change of
   the status reaches the stream
-  (`::turning_the_model_on_starts_the_install_and_reports_it_ready`,
-  `::a_prompt_change_publishes_ai_permissions_updated`).
+  (`::turning_the_model_on_starts_the_install_and_reports_it_ready`).
 - The session listing's query and its page DTO are in the OpenAPI document,
   and the outside listing it replaced is not
   (`session_list.rs::the_query_and_the_page_are_in_the_openapi_document`).
@@ -273,7 +438,7 @@ and the ACP runtime that reports the agent events (021).
   (`events.rs::ingested_events_raise_and_clear_session_attention`,
   `::an_idle_report_clears_the_stall_and_the_error_and_nothing_else`,
   `::a_permission_request_flags_the_session_as_blocked`), and not on an agent
-  nobody waits on (`::a_reviewer_that_already_voted_raises_no_attention`,
+  nobody waits on (`::the_agent_of_a_column_the_task_has_left_raises_no_attention`,
   `::an_orchestrator_of_a_finished_goal_raises_no_attention`).
 - An event from a launch the session has moved past is recorded and changes
   nothing, all but its `session_end`, which is not recorded
@@ -297,7 +462,9 @@ and the ACP runtime that reports the agent events (021).
   `::the_agents_own_words_are_shown_where_the_payload_carries_them`,
   `::a_payload_with_nothing_readable_but_its_cwd_summarizes_to_an_ellipsis`,
   `::a_path_under_the_cwd_prints_relative_and_the_cwd_never_appears`,
-  `::a_long_summary_is_cut_at_200_characters`), and it reaches both
+  `::a_long_summary_is_cut_at_200_characters`), an answered permission says
+  who answered and why the model did not
+  (`::an_answered_permission_says_who_answered_and_why_the_model_did_not`), and it reaches both
   `GET /v1/events` and the SSE stream
   (`events.rs::an_events_summary_reaches_the_snapshot_and_the_stream_alike`).
 - A domain stream frame for an agent event carries no payload
@@ -316,8 +483,10 @@ and the ACP runtime that reports the agent events (021).
   `events.rs::a_malformed_report_is_dropped_and_its_event_still_lands`).
 - Usage rolls up to the task and the goal
   (`events.rs::reported_usage_rolls_up_to_the_task_and_the_goal`,
-  `store.rs::a_tasks_usage_groups_every_round_of_a_reviewer_together`,
-  `::a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator`), a source
+  `store.rs::a_tasks_usage_groups_every_session_of_an_agent_together`,
+  `::a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator`), many
+  goals read in one batch read what each reads alone
+  (`store.rs::the_parts_of_many_goals_are_what_each_goal_reads_alone`), a source
   replaces its own totals
   (`store.rs::a_source_replaces_its_own_totals_and_sources_add_up`), a
   session that reported nothing reads as zeros
@@ -362,33 +531,51 @@ and the ACP runtime that reports the agent events (021).
   agent is refused by name (`::an_unknown_agent_is_refused_by_name`), and a
   launch takes its flags from the config
   (`::a_launch_takes_its_flags_from_the_agent_config`).
-- The log snapshot, tail, eviction and stream behave
-  (`logs.rs::the_snapshot_returns_captured_lines_in_order`,
-  `::tail_limits_the_snapshot_to_the_last_n_lines`,
-  `::the_ring_buffer_evicts_its_oldest_lines`,
-  `::the_stream_opens_with_a_snapshot_then_follows_with_deltas`), and hostile
-  content survives SSE framing (`::hostile_log_content_survives_sse_framing`).
 - `doctor` reports every registry agent, the tools, its own paths, and an
   unwritable worktree root
   (`doctor.rs::every_registry_agent_is_reported_with_what_discovery_made_of_it`,
   `::the_tools_a_session_and_a_published_task_need_are_reported`,
   `::the_paths_are_this_daemons_own_and_are_left_as_they_were`,
   `::a_worktree_root_the_daemon_cannot_write_is_reported_as_such`).
+- The documentation page, its CSS and JavaScript assets, and the schema it
+  loads are served by the daemon
+  (`docs.rs::swagger_serves_its_page_assets_and_the_daemons_schema`).
 - Every endpoint is in the OpenAPI document
-  (`logs.rs::both_endpoints_are_in_the_openapi_document`,
-  `acp_console.rs::the_cancel_endpoint_is_in_the_openapi_document`,
+  (`acp_console.rs::the_cancel_endpoint_is_in_the_openapi_document`,
   `acp_terminal.rs::the_terminal_endpoint_is_in_the_openapi_document`,
   `doctor.rs::endpoint_is_in_the_openapi_document`,
   `models.rs::endpoint_is_in_the_openapi_document_with_nothing_to_filter_by`).
 - A `config.toml` that names an unknown key stops the daemon
   (`config.rs::an_unknown_key_stops_the_daemon`).
+- Automatic switching defaults on, and a configured exhausted-pattern list
+  replaces the shipped list (`config.rs::a_config_file_that_says_nothing_keeps_every_default`,
+  `config.rs::exhausted_settings_are_read_and_the_pattern_list_replaces_the_default`).
 - ACP registry endpoints expose the cached result and refresh it on demand
   (`acp_discovery.rs::the_api_lists_an_installed_index_agent_and_one_user_agent`,
   `::discovery_refreshes_on_demand`). Refresh downloads the configured index
   (`::refresh_downloads_the_configured_index_and_registers_its_installed_agent`)
   and still returns the agent list after failed downloads or refused documents
   (`::a_failed_download_keeps_the_index_and_still_rescans_and_reprobes`,
-  `::a_refused_document_keeps_the_index_and_still_rescans_and_reprobes`).
+  `::a_refused_document_keeps_the_index_and_still_rescans_and_reprobes`). A
+  plain `http` registry URL is refused, loopback included, and a redirect to
+  `http` is refused the same way
+  (`acp_discovery.rs::tests::a_plain_http_registry_url_is_refused`,
+  `::http_to_a_loopback_host_is_still_refused`,
+  `::https_fetch_refuses_a_redirect_to_a_plain_http_location`). An index
+  entry naming a shell interpreter — directly, behind a launcher such as
+  `env`, or in any case — or carrying a bundled `-c`-shaped flag such as
+  `-lc`, is refused by id and the rest of the index still installs
+  (`acp_index.rs::tests::an_index_entry_naming_a_shell_is_refused_and_the_rest_of_the_index_still_installs`,
+  `::a_shell_behind_env_and_a_bundled_dash_c_is_refused`,
+  `::an_uppercase_shell_name_is_refused_the_same_as_lowercase`). `env -S`
+  and `--split-string` are refused outright, a string this check cannot
+  promise to parse correctly included, and the same whether `-S` stands on
+  its own or is attached to or bundled with another short option
+  (`::env_dash_cap_s_splitting_a_shell_command_is_refused`,
+  `::env_dash_cap_s_with_shell_quoting_is_refused`,
+  `::env_dash_cap_s_is_refused_outright_whatever_it_holds`,
+  `::env_dash_cap_s_attached_or_bundled_is_refused`,
+  `::env_dash_cap_s_abbreviated_long_form_is_refused`).
 - A descending page is the events recorded last, newest first
   (`events.rs::the_newest_page_is_the_events_recorded_last`,
   `store.rs::a_descending_page_answers_the_newest_events_newest_first`), and a

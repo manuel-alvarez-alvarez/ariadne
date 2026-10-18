@@ -1,0 +1,350 @@
+//! Pull request ledger wire types (026).
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
+
+/// A pull request as the forge holds it now, read live (026), with what
+/// Ariadne keeps of it where Ariadne works on it: the request a task opened,
+/// one that asks for the user's review, or one of the user's they asked
+/// Ariadne to review.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PullRequestDto {
+    /// Ariadne's id of the request while it works on it; null on a request
+    /// nobody works on, which the forge alone holds.
+    pub id: Option<String>,
+    pub repository_id: String,
+    pub number: i64,
+    pub url: String,
+    pub title: String,
+    /// The request's description.
+    #[serde(default)]
+    pub body: String,
+    pub author_login: String,
+    /// `open`, `merged` or `closed`.
+    pub state: String,
+    pub draft: bool,
+    pub head_branch: String,
+    pub head_sha: String,
+    pub head_repo: Option<String>,
+    pub base_branch: String,
+    /// The rolled-up checks: `pending`, `success`, `failure` or `none`.
+    pub checks: String,
+    pub review_decision: String,
+    /// The forge's own mergeability for the head now: `clean`, `blocked`,
+    /// `dirty` or `unknown` where the forge has not finished computing it.
+    #[serde(default)]
+    pub mergeable: String,
+    pub opened_at: String,
+    /// When the forge last saw the request move.
+    pub updated_at: String,
+    /// `author` for a request of the user's, `reviewer` for any other.
+    pub role: String,
+    /// Whether the request asks for the user's review (029).
+    #[serde(default)]
+    pub review_requested: bool,
+    /// The threads that wait on the user's login. Read where Ariadne works
+    /// on the request, or where the request is read on its own; 0 on a row
+    /// of a list nobody works on.
+    #[serde(default)]
+    pub unanswered_comments: i64,
+    /// The checks that failed on the head, read as `unanswered_comments` is.
+    #[serde(default)]
+    pub failed_checks: Vec<FailedCheckDto>,
+    /// Whether the base branch has commits the head does not.
+    #[serde(default)]
+    pub behind_base: bool,
+    /// The task that opened the request: its author keeps it (005).
+    #[serde(default)]
+    pub origin_task_id: Option<String>,
+    /// Whether the request's session reported it ready to merge.
+    #[serde(default)]
+    pub ready: bool,
+    /// Whether the user asked Ariadne to review this request of their own
+    /// (029).
+    #[serde(default)]
+    pub review_asked: bool,
+    /// The pin the user picked for that review.
+    #[serde(default)]
+    pub review_model: Option<String>,
+    #[serde(default)]
+    pub review_effort: Option<String>,
+    /// The skills that review loads beside `pr-reviewer`.
+    #[serde(default)]
+    pub review_skills: Vec<String>,
+    /// Whether the user asked Ariadne to keep this request of their own by
+    /// hand (032).
+    #[serde(default)]
+    pub babysit_asked: bool,
+    /// The pin the user picked for that keeper session.
+    #[serde(default)]
+    pub babysit_model: Option<String>,
+    #[serde(default)]
+    pub babysit_effort: Option<String>,
+    /// The skills that keeper session loads beside `pr-babysit`.
+    #[serde(default)]
+    pub babysit_skills: Vec<String>,
+    /// The newest session on this request, if any: its review or keeper
+    /// session (029, 032), or the author of the task that opened it (005).
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// Whether this repository holds agent posts for human review.
+    #[serde(default)]
+    pub supervise_posts: bool,
+}
+
+/// One check that failed on a request's head.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FailedCheckDto {
+    pub name: String,
+    /// Where the forge shows the check's run; empty where it names none.
+    pub url: String,
+    /// The forge's own word for how it ended: `failure`, `cancelled` and
+    /// the like.
+    pub conclusion: String,
+}
+
+/// One comment on a request, as the forge holds it now, read live (026),
+/// with the marks Ariadne keeps of it.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PullRequestCommentDto {
+    /// The forge's id of the comment, `rc-<n>`, `ic-<n>`, `rv-<n>` or
+    /// `note-<n>`: what `reply` and `resolve` take.
+    pub id: String,
+    pub pull_request_id: String,
+    /// The forge's thread or discussion; the conversation of the request
+    /// is one thread.
+    pub thread_id: String,
+    /// `review_comment`, `issue_comment` or `review`.
+    pub kind: String,
+    pub author_login: String,
+    pub author_is_bot: bool,
+    pub body: String,
+    pub path: Option<String>,
+    pub line: Option<i64>,
+    pub in_reply_to: Option<String>,
+    pub created_at: String,
+    /// A later comment in the thread is by the integration login.
+    pub answered: bool,
+    /// The forge reports the thread resolved.
+    pub resolved: bool,
+    /// When the request's session was told of it.
+    pub told_at: Option<String>,
+    /// An Ariadne review session posted it (029).
+    #[serde(default)]
+    pub from_review: bool,
+}
+
+/// What the reply route answers instead of a posted comment, where the
+/// repository holds agent posts for the user's approval (002, 026 rule 24):
+/// the reply waits, unposted, as a pending review in the user's own forge
+/// drafts, until the user publishes it there.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PendingReplyDto {
+    /// Always true: a posted reply never takes this shape.
+    pub pending: bool,
+    /// The forge id of the pending item: the pending review's own id for a
+    /// reply to a top-level conversation comment, the new draft comment's
+    /// for a reply inside a review thread.
+    pub id: String,
+}
+
+/// What `POST .../reply` answers: the posted comment, or, where the
+/// repository holds posts back, [`PendingReplyDto`] in its place.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(untagged)]
+pub enum ReplyAnswerDto {
+    Posted(Box<PullRequestCommentDto>),
+    Pending(PendingReplyDto),
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
+pub struct PullRequestCommentQuery {
+    /// Only the threads that wait on an answer from the integration login.
+    pub unanswered_only: Option<bool>,
+}
+
+/// Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/reply`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReplyCommentRequest {
+    pub body: String,
+}
+
+/// Body of `POST /v1/pull-requests/{id}/comments/edit` (026 rule 25): change the
+/// body of one of the viewer's own pending forge posts — a pending review
+/// comment — while it still waits in the user's forge drafts.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditPendingCommentRequest {
+    /// The forge id of the pending comment, as `reply_comment` or
+    /// `submit_review` answered it.
+    pub forge_id: String,
+    pub body: String,
+}
+
+/// Body of `POST /v1/pull-requests/{id}/comments/delete` (026 rule 25).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeletePendingCommentRequest {
+    pub forge_id: String,
+}
+
+/// Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditPendingReviewBodyRequest {
+    pub body: String,
+}
+
+/// What editing, deleting or replacing a pending forge post answers (026 rule 25):
+/// which forge item changed, in words that name the forge.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PendingEditDto {
+    /// The forge id of the item that changed.
+    pub id: String,
+    /// What changed: "the pending GitHub review comment" or "the GitHub
+    /// pending review body".
+    pub changed: String,
+}
+
+/// Body of `POST /v1/pull-requests/{id}/report`: what the request's session
+/// says of it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReportPullRequestRequest {
+    /// Every required approval and check reads green.
+    pub ready: Option<bool>,
+    /// The head the session actually confirmed `ready` against — read off
+    /// its own last `get_pull_request` call, never looked up again here.
+    /// Required wherever `ready` is `true`: a push landing between that
+    /// read and this call must still be judged against the head the
+    /// session confirmed, not whatever the daemon's own cache has moved
+    /// on to since, or a push the session never actually saw could pass
+    /// as though it had (031).
+    #[serde(default)]
+    pub head_sha: Option<String>,
+    /// The head a reviewer session posted its review on (029).
+    #[serde(default)]
+    pub reviewed_sha: Option<String>,
+}
+
+/// Query of `GET /v1/pull-requests/{id}/diff` (029).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
+pub struct PullRequestDiffQuery {
+    /// Read the diff from this sha to the head, not from the base.
+    pub since: Option<String>,
+}
+
+/// What `POST .../reviews` answers where the repository holds posts back
+/// (026 rule 24 / 029 rule 13a): the review's findings wait, unposted, in
+/// the viewer's own pending review, in place of the posted comments the
+/// route otherwise answers with.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PendingReviewDto {
+    /// Always true: a posted review never takes this shape.
+    pub pending: bool,
+}
+
+/// What `POST .../reviews` answers: the posted comments, or, where the
+/// repository holds posts back, [`PendingReviewDto`] in their place.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(untagged)]
+pub enum SubmitReviewAnswerDto {
+    Posted(Vec<PullRequestCommentDto>),
+    Pending(PendingReviewDto),
+}
+
+/// Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted
+/// in the name of the integration login.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SubmitReviewRequest {
+    /// `request_changes` or `comment`. Every other event is refused.
+    pub event: String,
+    /// Optional text from older clients. New reviews do not publish it.
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub comments: Vec<ReviewCommentRequest>,
+}
+
+/// One inline comment of a review (029).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewCommentRequest {
+    pub path: String,
+    /// The line in the new version of the file.
+    pub line: i64,
+    /// A short title of the defect; the comment opens on `[P0] Title`.
+    #[serde(default)]
+    pub title: String,
+    /// What goes wrong, and how to fix it.
+    pub body: String,
+    /// `P0`, `P1` or `P2`.
+    pub priority: String,
+}
+
+/// Body of `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review`:
+/// whether Ariadne reviews a request (029), regardless of its author.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AskReviewRequest {
+    pub asked: bool,
+    /// The model the review runs on, `agent:model`: required to ask, and
+    /// checked against the catalog as any pin is.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The effort that model runs at; none for the agent's own.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// The skills the review loads beside `pr-reviewer`, which every review
+    /// session loads; skills a task agent is staffed on.
+    #[serde(default)]
+    pub skills: Vec<String>,
+}
+
+/// Body of
+/// `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit`:
+/// whether Ariadne keeps a request by hand (032), the
+/// same shape as [`AskReviewRequest`].
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AskBabysitRequest {
+    pub asked: bool,
+    /// The model the keeper session runs on, `agent:model`: required to
+    /// ask, and checked against the catalog as any pin is.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The effort that model runs at; none for the agent's own.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// The skills the keeper session loads beside `pr-babysit`; skills a
+    /// task agent is staffed on.
+    #[serde(default)]
+    pub skills: Vec<String>,
+}
+
+/// Query of `GET /v1/pull-requests`: the open requests of the enabled
+/// repositories, read live off the forge, or with `task` the request a
+/// task opened.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
+pub struct PullRequestListQuery {
+    pub repo: Option<String>,
+    /// `reviewer` for the requests of others, `author` for the user's own.
+    pub role: Option<String>,
+    /// The task that opened the request.
+    pub task: Option<String>,
+    /// True for the requests that ask for the user's review (029), false
+    /// for the ones that do not.
+    pub requested: Option<bool>,
+}
+
+/// An open request a search found that is not the user's own.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PullRequestMatchDto {
+    pub number: i64,
+    pub url: String,
+    pub title: String,
+    pub author_login: String,
+    /// Whether Ariadne works on it.
+    pub tracked: bool,
+}

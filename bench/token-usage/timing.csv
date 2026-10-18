@@ -1,0 +1,10 @@
+category,count,seconds,note
+task_status:approved,204,101406,summed from task_ended facts; state is not an outcome
+task_status:changes_requested,204,0,summed from task_ended facts; state is not an outcome
+task_status:failed,204,121691,summed from task_ended facts; state is not an outcome
+task_status:in_progress,204,1411917,summed from task_ended facts; state is not an outcome
+task_status:pending,204,987660,summed from task_ended facts; state is not an outcome
+task_status:ready,204,17,summed from task_ended facts; state is not an outcome
+task_status:under_review,204,34722,summed from task_ended facts; state is not an outcome
+ended_session_lifetime,612,3910876,"inclusive wall time, not active execution"
+console_permission_wait,0,0.0,only console-decided permission facts

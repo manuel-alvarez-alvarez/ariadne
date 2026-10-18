@@ -5,6 +5,7 @@ use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::sessions::{
     NewSessionRequest, ResumeOutsideSessionRequest, SessionDto, SessionPageDto, SessionPageQuery,
+    SwitchSessionRequest,
 };
 use ariadne_core::models::agent_of;
 use ariadne_store::SessionFilter;
@@ -140,7 +141,7 @@ pub(super) async fn list(
             .snapshot(&state.agent_registry, q.refresh.unwrap_or(false))
             .await
     } else {
-        state.outside_sessions.cached().await
+        state.outside_sessions.cached()
     };
     let page = crate::acp_sessions::page(
         &snapshot,
@@ -213,46 +214,71 @@ pub(super) async fn kill(
     Ok(Json(session_dto_of(&state.store, session).await?))
 }
 
+/// Switch a session to another model or agent. A same-agent switch keeps the
+/// session and conversation; another agent starts a new session on the seat.
+///
+/// The pin is checked as `POST /v1/sessions` checks it, a model turned off
+/// included. A session of a cancelled goal is refused.
+#[utoipa::path(post, path = "/v1/sessions/{id}/switch", tag = "sessions",
+    operation_id = "switch_session",
+    params(("id" = String, Path, description = "session id")),
+    request_body = SwitchSessionRequest,
+    responses((status = 200, body = SessionDto), (status = 400), (status = 404), (status = 409)))]
+pub(super) async fn switch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SwitchSessionRequest>,
+) -> ApiResult<Json<SessionDto>> {
+    let session = state.store.get_session(&id).await?;
+    let pin = super::pins::chosen(
+        &state.store,
+        &state.agent_registry,
+        Some(&req.model),
+        req.effort.as_deref(),
+    )
+    .await?;
+    if let Some(goal_id) = session.goal_id.as_deref()
+        && state.store.get_goal(goal_id).await?.status() == ariadne_core::GoalStatus::Cancelled
+    {
+        return Err(ApiError::conflict(
+            "cannot switch a session of a cancelled goal",
+        ));
+    }
+    let switched = state
+        .launcher
+        .switch_session(&id, &pin.model, pin.effort.as_deref(), "requested")
+        .await
+        .map_err(|error| ApiError::conflict(format!("{error:#}")))?;
+    Ok(Json(session_dto_of(&state.store, switched).await?))
+}
+
 /// Body of the internal debug-spawn endpoint.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DebugSpawnRequest {
     pub seat: ariadne_core::Seat,
     pub goal_id: Option<String>,
-    pub task_id: Option<String>,
-    /// Id of the reviewing task agent when seat = reviewer.
-    pub agent_id: Option<String>,
 }
 
-/// Manually spawn an agent session (debug/testing path until the scheduler
-/// drives spawns automatically). Not part of the public OpenAPI surface.
+/// Manually spawn an orchestrator session (debug/testing path). Not part of
+/// the public OpenAPI surface: the scheduler starts every column's agent,
+/// and the pull request scheduler every review session.
 pub(super) async fn debug_spawn(
     State(state): State<AppState>,
     Json(req): Json<DebugSpawnRequest>,
 ) -> ApiResult<Json<SessionDto>> {
     use ariadne_core::Seat;
-    let launcher = &state.launcher;
     let session = match req.seat {
         Seat::Orchestrator => {
             let goal = req
                 .goal_id
                 .ok_or_else(|| ApiError::bad_request("goal_id required"))?;
-            launcher.spawn_orchestrator(&goal).await
+            state.launcher.spawn_orchestrator(&goal).await
         }
-        Seat::Author => {
-            let task = req
-                .task_id
-                .ok_or_else(|| ApiError::bad_request("task_id required"))?;
-            launcher.spawn_author(&task).await
-        }
-        Seat::Reviewer => {
-            let task = req
-                .task_id
-                .ok_or_else(|| ApiError::bad_request("task_id required"))?;
-            let agent_id = req
-                .agent_id
-                .ok_or_else(|| ApiError::bad_request("agent_id required"))?;
-            launcher.spawn_reviewer(&task, &agent_id).await
+        Seat::Agent | Seat::Reviewer | Seat::Keeper => {
+            return Err(ApiError::conflict(
+                "the scheduler starts the current column agent and every review or keeper session",
+            ));
         }
     }
     .map_err(|e| ApiError::conflict(e.to_string()))?;

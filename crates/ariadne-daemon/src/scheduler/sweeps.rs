@@ -15,6 +15,25 @@ use crate::attention;
 use super::START_GRACE_SECS;
 
 impl super::Scheduler {
+    /// Mark a session exited after its own runtime reported that it ended.
+    ///
+    /// The end is certain, unlike a liveness sweep that discovers a missing
+    /// process. Do not raise disconnected attention for a session that told
+    /// the runtime it ended.
+    pub(super) async fn retire_ended(&self, session_id: &str, launch_id: &str) {
+        let Ok(session) = self.store.get_session(session_id).await else {
+            return;
+        };
+        if session.launch_id.as_deref() != Some(launch_id) {
+            return;
+        }
+        let _ = self
+            .store
+            .set_session_status(session_id, SessionStatus::Exited)
+            .await;
+        crate::stats::record_session_end(&self.store, session_id).await;
+    }
+
     /// Mark sessions whose agent process died as exited.
     ///
     /// The runtime that owns each child process answers
@@ -60,6 +79,7 @@ impl super::Scheduler {
             .store
             .set_session_status(&session.id, SessionStatus::Exited)
             .await;
+        crate::stats::record_session_end(&self.store, &session.id).await;
         if attention::work_is_active(&self.store, session).await {
             warn!(session = %session.id, seat = ?session.seat, "agent disconnected with work still active");
             let _ = self
@@ -72,9 +92,9 @@ impl super::Scheduler {
     /// Take down attention nobody can act on any more.
     ///
     /// A flag raised by an agent event is only ever taken down by another
-    /// one, and a session waiting on an answer emits nothing: an author
-    /// blocked on a permission request whose task then goes under review
-    /// would keep asking for the user for ever. Whatever put a flag up, it comes
+    /// one, and a session waiting on an answer emits nothing: an agent
+    /// blocked on a permission request whose task then moves to its next
+    /// column would keep asking for the user for ever. Whatever put a flag up, it comes
     /// down once the work it was about stopped being this session's — the
     /// same question the sweep above asks before raising one.
     ///

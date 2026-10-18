@@ -26,32 +26,62 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { ArrowLeftIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 
+import type { SessionDto, TaskDto, WorkflowStepDto } from "@/api"
 import { ErrorState } from "@/components/error-state"
+import { PanelHeader } from "@/components/panel-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { PaneBody } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { sessionQueryOptions } from "@/features/sessions/queries"
-import { SessionDetailView } from "@/features/sessions/session-detail-view"
+import { SessionDetailView, SessionPanelHeader } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
 import { shortId } from "@/lib/format"
 import { usePanelSessionTo } from "@/routes/paths"
 
 export function TaskSessions({
-  taskId,
+  task,
+  steps,
   onSelect,
 }: {
-  taskId: string
+  task: TaskDto
+  /** The goal's workflow columns, which name a session's step by title. */
+  steps: WorkflowStepDto[]
   /** Selects a session, which opens it over the whole panel. */
   onSelect: (sessionId: string) => void
 }) {
   // The selected row marks itself: `SessionsList` reads the same `?session=`
   // this panel drives, so nothing has to be threaded through the panel.
-  return <SessionsList filters={{ task: taskId }} onSelect={(session) => onSelect(session.id)} />
+  return (
+    <SessionsList
+      filters={{ task: task.id }}
+      sessionStep={(session) => sessionStepTitle(task, steps, session)}
+      onSelect={(session) => onSelect(session.id)}
+    />
+  )
+}
+
+/**
+ * The title of the workflow step a session's agent works, found through the
+ * task's own `agents` rather than a daemon call: a session names the agent
+ * it runs by id (`task_agent_id`), an agent names its column by id (`step`),
+ * and the goal's workflow names that column's title.
+ *
+ * A session with no staffed agent — an orchestrator, or a loose session —
+ * has no `task_agent_id`, and so no step. A step id the workflow no longer
+ * carries (an edited workflow, or a stale agent) falls back to the id itself
+ * rather than showing nothing for a session that plainly has a step.
+ */
+function sessionStepTitle(
+  task: TaskDto,
+  steps: WorkflowStepDto[],
+  session: SessionDto,
+): string | undefined {
+  const agent = task.agents.find((candidate) => candidate.id === session.task_agent_id)
+  if (!agent) return undefined
+  return steps.find((step) => step.id === agent.step)?.title ?? agent.step
 }
 
 /**
@@ -79,56 +109,51 @@ export function TaskSessionView({
   // is nobody's task). It is not one of this task's, and the panel would
   // present it as if it were — with kill and resume on it.
   const foreign = session.data !== undefined && session.data.task_id !== taskId
+  const breadcrumb = {
+    label: taskTitle ?? `task ${shortId(taskId)}`,
+    // The way back to the task: replaces rather than pushes, same as every
+    // other navigation inside a panel.
+    onClick: () => onSelect(null),
+  }
 
   return (
     <>
-      <SheetHeader>
-        {/* `max-w-full` and the truncating label are what keep a long task
-            title out from under the sheet's close button: a button is
-            `whitespace-nowrap` and `w-fit`, so without them it grows straight
-            through the header's own right padding (the goal panel's way back
-            is the same one). */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2 w-fit max-w-full"
-          onClick={() => onSelect(null)}
-        >
-          <ArrowLeftIcon />
-          <span className="truncate">Back to {taskTitle ?? `task ${shortId(taskId)}`}</span>
-        </Button>
-        {/* The panel is a dialog and needs a name of its own; the view below
-            carries the visible heading. */}
-        <SheetTitle className="sr-only">Session {shortId(sessionId)}</SheetTitle>
-      </SheetHeader>
-
-      {session.isPending ? (
-        <div className="space-y-3">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-32 w-full" />
-          <Skeleton className="h-72 w-full" />
-        </div>
-      ) : session.error ? (
-        <ErrorState
-          title={`Could not load session ${shortId(sessionId)}`}
-          error={session.error}
-          onRetry={() => void session.refetch()}
-        />
-      ) : foreign ? (
-        <Alert variant="destructive">
-          <AlertTitle>Not a session of this task</AlertTitle>
-          <AlertDescription>
-            Session {shortId(sessionId)} belongs to another task, so it is not shown here.
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <SessionDetailView
+      {session.data && !foreign ? (
+        <SessionPanelHeader
           session={session.data}
-          context="task"
+          breadcrumb={breadcrumb}
           // A resume hands back the session to attach to; the panel follows it.
           onResumed={(revived) => onSelect(revived.id)}
+          onSwitched={(successor) => onSelect(successor.id)}
         />
+      ) : (
+        <PanelHeader breadcrumb={breadcrumb} title={`Session ${shortId(sessionId)}`} />
       )}
+
+      <PaneBody>
+        {session.isPending ? (
+          <div className="space-y-3">
+            <Skeleton className="h-8 w-64" />
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-72 w-full" />
+          </div>
+        ) : session.error ? (
+          <ErrorState
+            title={`Could not load session ${shortId(sessionId)}`}
+            error={session.error}
+            onRetry={() => void session.refetch()}
+          />
+        ) : foreign ? (
+          <Alert variant="destructive">
+            <AlertTitle>Not a session of this task</AlertTitle>
+            <AlertDescription>
+              Session {shortId(sessionId)} belongs to another task, so it is not shown here.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <SessionDetailView session={session.data} context="task" />
+        )}
+      </PaneBody>
     </>
   )
 }

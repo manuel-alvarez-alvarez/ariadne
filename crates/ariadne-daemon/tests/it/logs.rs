@@ -1,8 +1,12 @@
-//! Integration tests for `GET /v1/logs` and `GET /v1/logs/stream`.
+//! Integration tests for `GET /v1/logs` and `GET /v1/logs/stream`, now read
+//! off the telemetry store (033) rather than an in-memory ring.
 //!
 //! Events are emitted through a thread-default subscriber carrying the
-//! capture layer — exactly how the daemon wires it, minus the global install
-//! a test process cannot afford — and observed through the HTTP API.
+//! daemon's real OpenTelemetry bridge — exactly how the daemon wires it,
+//! minus the global install a test process cannot afford — and observed
+//! through the HTTP API. The bridge batches, so every assertion flushes
+//! the pipeline first: deterministic, unlike a sleep, and cheaper than
+//! polling the schedule delay out with `eventually`.
 
 use crate::common;
 
@@ -10,14 +14,13 @@ use axum::http::{StatusCode, header};
 use tracing_subscriber::layer::SubscriberExt;
 
 use ariadne_api::logs::{LogLineDto, LogSnapshotResponse};
-use ariadne_daemon::log::LogBuffer;
 
 use common::{Harness, get, harness, next_sse_message, parse_sse};
 
-/// The capture layer as the daemon installs it, scoped to this thread: while
-/// the guard lives, `tracing` macros feed the buffer behind the API.
+/// The daemon's real bridge layer, scoped to this thread: while the guard
+/// lives, `tracing` macros feed the telemetry pipeline behind the API.
 fn capture(h: &Harness) -> tracing::subscriber::DefaultGuard {
-    tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()))
+    tracing::subscriber::set_default(tracing_subscriber::registry().with(h.telemetry.log_layer()))
 }
 
 fn messages(lines: &[LogLineDto]) -> Vec<&str> {
@@ -32,6 +35,7 @@ async fn the_snapshot_returns_captured_lines_in_order() {
         tracing::info!("the daemon started");
         tracing::warn!(socket = "/tmp/x.sock", "removing stale socket file");
     }
+    h.telemetry.flush();
     // Nothing captured outside the guard leaks in.
     tracing::info!("not captured");
 
@@ -50,6 +54,7 @@ async fn the_snapshot_returns_captured_lines_in_order() {
         module_path!(),
         "the target is the emitting module"
     );
+    assert_eq!(line.service, "ariadned");
     assert!(
         chrono::DateTime::parse_from_rfc3339(&line.ts).is_ok(),
         "ts is RFC 3339: {:?}",
@@ -67,6 +72,7 @@ async fn tail_limits_the_snapshot_to_the_last_n_lines() {
             tracing::info!("line {i}");
         }
     }
+    h.telemetry.flush();
 
     let tailed: LogSnapshotResponse = h.get("/v1/logs?tail=2").await;
     assert_eq!(messages(&tailed.lines), vec!["line 3", "line 4"]);
@@ -75,28 +81,99 @@ async fn tail_limits_the_snapshot_to_the_last_n_lines() {
     assert_eq!(
         all.lines.len(),
         5,
-        "a tail longer than the buffer is a no-op"
+        "a tail longer than what was written is a no-op"
     );
 }
 
-/// The buffer is a bounded ring: past capacity the oldest lines are dropped,
-/// so memory cannot grow with daemon lifetime.
+/// The default snapshot without an explicit `tail` is bounded (200 lines):
+/// the store keeps every record, but `GET /v1/logs` is a recent-activity
+/// read, not a full-history dump.
 #[tokio::test]
-async fn the_ring_buffer_evicts_its_oldest_lines() {
-    let h = harness().logs(LogBuffer::with_capacity(3)).await;
+async fn the_default_snapshot_is_bounded_even_without_an_explicit_tail() {
+    let h = harness().await;
     {
         let _guard = capture(&h);
-        for i in 0..5 {
+        for i in 0..250 {
             tracing::info!("line {i}");
         }
     }
+    h.telemetry.flush();
 
     let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
+    assert_eq!(snapshot.lines.len(), 200);
+    assert_eq!(snapshot.lines[0].message, "line 50");
+    assert_eq!(snapshot.lines[199].message, "line 249");
+}
+
+#[tokio::test]
+async fn service_narrows_the_snapshot_to_one_service() {
+    let h = harness().await;
+    {
+        let _guard = capture(&h);
+        tracing::info!("from the daemon");
+    }
+    h.telemetry.flush();
+    // `service` always carries the resource's own `service.name`: every
+    // record this daemon writes is "ariadned", so the filter either keeps
+    // everything or keeps nothing.
+    let matching: LogSnapshotResponse = h.get("/v1/logs?service=ariadned").await;
+    assert_eq!(messages(&matching.lines), vec!["from the daemon"]);
+
+    let other: LogSnapshotResponse = h.get("/v1/logs?service=ariadne-cli").await;
+    assert!(other.lines.is_empty());
+}
+
+#[tokio::test]
+async fn level_narrows_the_snapshot_to_that_level_and_above() {
+    let h = harness().await;
+    {
+        let _guard = capture(&h);
+        tracing::info!("routine");
+        tracing::warn!("worth a look");
+        tracing::error!("on fire");
+    }
+    h.telemetry.flush();
+
+    let at_or_above_warn: LogSnapshotResponse = h.get("/v1/logs?level=warn").await;
+    assert_eq!(
+        messages(&at_or_above_warn.lines),
+        vec!["worth a look", "on fire"]
+    );
+
+    let at_or_above_error: LogSnapshotResponse = h.get("/v1/logs?level=error").await;
+    assert_eq!(messages(&at_or_above_error.lines), vec!["on fire"]);
+}
+
+#[tokio::test]
+async fn level_narrows_the_stream_snapshot_and_its_deltas() {
+    let h = harness().await;
+    let _guard = capture(&h);
+    tracing::warn!("before the filtered stream opened");
+    h.telemetry.flush();
+
+    let mut body = h.stream(get("/v1/logs/stream?level=warn")).await;
+    let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    let snapshot: LogSnapshotResponse = serde_json::from_value(payload).unwrap();
     assert_eq!(
         messages(&snapshot.lines),
-        vec!["line 2", "line 3", "line 4"],
-        "only the newest `capacity` lines survive"
+        vec!["before the filtered stream opened"]
     );
+
+    tracing::info!("skip this delta");
+    tracing::warn!("keep this delta");
+    h.telemetry.flush();
+    let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "delta");
+    let line: LogLineDto = serde_json::from_value(payload).unwrap();
+    assert_eq!(line.message, "keep this delta");
+}
+
+#[tokio::test]
+async fn an_unknown_level_is_a_bad_request() {
+    let h = harness().await;
+    let response = h.response(get("/v1/logs?level=deafening")).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -104,6 +181,7 @@ async fn the_stream_opens_with_a_snapshot_then_follows_with_deltas() {
     let h = harness().await;
     let _guard = capture(&h);
     tracing::info!("before the stream opened");
+    h.telemetry.flush();
 
     let response = h.response(get("/v1/logs/stream")).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -122,13 +200,16 @@ async fn the_stream_opens_with_a_snapshot_then_follows_with_deltas() {
     assert_eq!(messages(&snapshot.lines), vec!["before the stream opened"]);
 
     tracing::info!(answer = 42, "a line while the stream is open");
+    h.telemetry.flush();
     let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
     assert_eq!(name, "delta");
     let line: LogLineDto = serde_json::from_value(payload).unwrap();
     assert_eq!(line.message, "a line while the stream is open answer=42");
     assert_eq!(line.level, "INFO");
+    assert_eq!(line.service, "ariadned");
 
     tracing::error!("another one");
+    h.telemetry.flush();
     let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
     assert_eq!(name, "delta");
     let line: LogLineDto = serde_json::from_value(payload).unwrap();
@@ -144,6 +225,7 @@ async fn hostile_log_content_survives_sse_framing() {
     let _guard = capture(&h);
     let hostile = "line one\nevent: fake\n\ndata: \"quoted\" \u{1b}[2J";
     tracing::info!("{hostile}");
+    h.telemetry.flush();
 
     let mut body = h.stream(get("/v1/logs/stream")).await;
 
@@ -165,4 +247,51 @@ async fn both_endpoints_are_in_the_openapi_document() {
     assert!(doc["paths"]["/v1/logs/stream"]["get"].is_object());
     assert!(doc["components"]["schemas"]["LogLineDto"].is_object());
     assert!(doc["components"]["schemas"]["LogSnapshotResponse"].is_object());
+}
+
+/// Rule 5: the pipeline counts what it exports on `ariadne.telemetry.records`,
+/// a counter with `signal` and `service` — proof the metrics half of the
+/// pipeline, not only the logs half, is wired end to end.
+#[tokio::test]
+async fn the_pipeline_counts_exported_log_records_on_its_own_metric() {
+    let h = harness().await;
+    {
+        let _guard = capture(&h);
+        tracing::info!("counted by the pipeline");
+    }
+    h.telemetry.flush();
+
+    let series = h
+        .telemetry_store
+        .list_series(&[ariadne_store::telemetry::LabelMatcher::new(
+            ariadne_store::telemetry::NAME_LABEL,
+            ariadne_store::telemetry::MatchOp::Eq,
+            "ariadne.telemetry.records",
+        )])
+        .await
+        .unwrap();
+    let log_series = series
+        .iter()
+        .find(|s| s.labels["signal"] == "log")
+        .expect("a log-signal series exists");
+    assert_eq!(log_series.labels["service"], "ariadned");
+
+    let samples = h
+        .telemetry_store
+        .read_samples(
+            &log_series.id,
+            ariadne_store::telemetry::TimeRange {
+                since: "1970-01-01T00:00:00.000Z".to_string(),
+                until: "2999-01-01T00:00:00.000Z".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    // Cumulative temporality: each sample is the running total as of that
+    // export, so the latest one (not a sum across samples) is the count.
+    let latest = samples.last().expect("at least one export by now").value;
+    assert!(
+        latest >= 1.0,
+        "at least the one record just exported: {samples:?}"
+    );
 }

@@ -38,6 +38,7 @@ import {
   type SessionDto,
   type SessionEntryDto,
   type SessionStatus,
+  type SwitchSessionRequest,
   type TokenUsage,
   unwrap,
 } from "@/api"
@@ -48,6 +49,8 @@ import { isLiveStatus, sessionAttention } from "./session-display"
 export interface SessionListFilters {
   goal?: string
   task?: string
+  /** The review sessions of one pull request (029). */
+  pull_request?: string
   status?: SessionStatus
   /**
    * Applied here rather than by the daemon: `GET /v1/sessions` takes no seat.
@@ -140,6 +143,7 @@ function ariadneSession(entry: SessionEntryDto): SessionDto {
     context_size: entry.context_size,
     created_at: entry.created_at ?? "",
     ended_at: entry.ended_at,
+    pull_request_id: entry.pull_request_id,
     // A listing row's title is its work's where it has work; only a loose
     // session's is its own.
     title: entry.goal_id || entry.task_id ? null : entry.title,
@@ -329,6 +333,16 @@ export function useResumeSession() {
   return useMutation({
     mutationFn: (id: string) =>
       unwrap(api().POST("/v1/sessions/{id}/resume", { params: { path: { id } } })),
+    onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
+  })
+}
+
+/** Start the successor of a session on another pin. */
+export function useSwitchSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...body }: SwitchSessionRequest & { id: string }) =>
+      unwrap(api().POST("/v1/sessions/{id}/switch", { params: { path: { id } }, body })),
     onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
   })
 }

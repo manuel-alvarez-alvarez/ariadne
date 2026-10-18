@@ -1,13 +1,19 @@
 # Ariadne Desktop
 
 Desktop client for `ariadned`. A [Tauri 2](https://v2.tauri.app) window around a
-Vite + React + TypeScript app.
+Vite + React + TypeScript app. The goals board draws a stepped task in its
+workflow's column, and the Workflows screen edits the catalog — shipped and
+your own, each with a document editor and a live kanban preview. The Stats
+screen embeds a Perses dashboard, over the daemon's own Prometheus and Loki
+APIs — [`dashboard/`](dashboard) is its own package, on React 18, built
+separately and served same-origin under `/dashboard/`.
 
 The UI is a **pure REST/SSE client of the daemon's TCP listener** — exactly what
 the CLI is, over HTTP instead of a unix socket. It never links against the
 daemon crates and there are no Tauri commands: everything it shows comes from
-`http://<tcp_listen>/v1/...` and the live event stream. That is what makes the
-same code work in a browser tab and in the packaged app.
+`http://<tcp_listen>/v1/...` and the live event stream. The listener stays on
+loopback. The packaged app and Vite development tab are allowed by default;
+add another browser tab's origin to `tcp_allowed_origins`.
 
 Changing code here? See [`AGENTS.md`](AGENTS.md) for the layout and engineering
 conventions.
@@ -19,6 +25,7 @@ The daemon must be listening on TCP, which is off by default. Add it to
 
 ```toml
 tcp_listen = "127.0.0.1:7676"
+# tcp_allowed_origins = ["https://console.example"]
 ```
 
 Then, from `ui/`:
@@ -31,53 +38,52 @@ npm run tauri build    # packaged app + installers under src-tauri/target/releas
 ```
 
 The daemon URL defaults to `http://127.0.0.1:7676` and is editable in the
-settings dialog (the gear in the header, or `⌘,`). It is persisted to
+settings dialog (the gear in the header, or `⌘,`). The **Send app diagnostics
+to the daemon** switch is on by default and controls OTLP logs and metrics.
+Both settings are persisted to
 `localStorage` under `ariadne.settings`; the theme lives under `ariadne.theme`.
 Changing the URL clears the query cache and reconnects the event stream.
 
-The sticky footer at the bottom of the window carries the connection state, and
-it has exactly one source: the event stream. Green while it is open and the
-daemon is beating, amber while the first connection is being made, red once it
-is gone — which is the same thing as the screens no longer being live. Hover it
-for the URL, the daemon version and its uptime, both of which come from the
-`heartbeat` the stream carries; clicking it opens the daemon-logs drawer.
-Nothing polls: an idle window makes no requests at all.
+The sidebar's last child carries the connection state, and it has exactly one
+source: the event stream. Green while it is open and the daemon is beating,
+amber while the first connection is being made, red once it is gone — which is
+the same thing as the screens no longer being live. Hover it for the URL, the
+daemon version and its uptime, both of which come from the `heartbeat` the
+stream carries; clicking it opens the daemon-logs drawer. Nothing polls: an
+idle window makes no requests at all.
+
+## Security
+
+The packaged webview has a content security policy. It loads scripts, styles,
+fonts and images from the app, and it permits HTTP, HTTPS, WebSocket and secure
+WebSocket connections because the daemon URL is configurable. It permits Tauri
+IPC through `ipc:` and `http://ipc.localhost`, so bundled plugins work. It
+permits a frame from the app itself, which is what lets the Stats screen's
+dashboard open in its iframe. It rejects evaluated script, plugins, document
+base changes and embedded ancestors.
+
+Links to `http:`, `https:` and `mailto:` destinations open in the system
+browser. When a link's visible text does not equal its target, Ariadne first
+shows the complete target URL for confirmation. OSC 8 links in a session
+console use the same confirmation. Other link schemes do not open.
 
 ### Scripts
 
 | Script | What it does |
 |---|---|
-| `npm run dev` | Vite dev server on port 1420 (fixed — `tauri dev` points at it) |
-| `npm run build` | typecheck + production bundle into `dist/` |
+| `npm run dev` | Vite dev server on port 1420 (fixed — `tauri dev` points at it); proxies `/dashboard/` to `dashboard/`'s own dev server on port 1421 |
+| `npm run build` | typecheck + production bundle into `dist/`, then `dashboard/`'s own build into `dist/dashboard/` |
 | `npm run typecheck` | `tsc -b`, no emit |
 | `npm run test` | Vitest, once (`test:watch` to keep it running) |
 | `npm run lint` | Biome lint + format check |
 | `npm run lint:fix` | Biome, applying safe fixes |
 | `npm run format` | Biome formatter only |
 | `npm run check:unused` | fails on unused declared dependencies, production exports, or non-test source files |
-| `npm run gen:api` | regenerate the API types (below) |
+| `npm run gen:api` | regenerate the API types (see below) |
 | `npm run tauri <cmd>` | the Tauri CLI (`dev`, `build`, `info`, …) |
 
-## Regenerating the API types
-
-`src/api/schema.d.ts` is generated from the daemon's OpenAPI document by
-[openapi-typescript](https://openapi-ts.dev). **Both it and the `openapi.json`
-snapshot it was generated from are committed**, so nothing here needs a running
-daemon to build. Regenerate whenever the daemon's API changes:
-
-```sh
-npm run gen:api                            # live daemon on 127.0.0.1:7676
-npm run gen:api -- http://host:7676        # live daemon elsewhere
-npm run gen:api -- ../some-spec-dump.json  # a spec dump on disk
-```
-
-and commit both files. `openapi.json` is the daemon's verbatim document; one
-normalization happens on the script's own copy before generating: utoipa derives `operationId`
-from the handler function name, so ids collide across tags (`goals::list` and
-`tasks::list` are both `list`), and `scripts/gen-api.mjs` qualifies them with
-their tag — `goals_list`, `tasks_list` — which is what the generated
-`operations` map is keyed by. The `paths` types, which is what the client uses,
-are unaffected.
+Regenerating the API types after a daemon change is covered in
+[`AGENTS.md`](AGENTS.md#regenerating-the-api-types).
 
 ## Keyboard
 
@@ -87,9 +93,10 @@ are unaffected.
 | `⌘,` / `Ctrl+,` | settings |
 | `N` | new goal, from any screen |
 | `[` | fold the sidebar down to an icon rail, and back |
-| `G` then `G`/`S`/`P`/`A`/`R` | goals, sessions, profiles, agents, repositories |
+| `G` then `G`/`S`/`K`/`A`/`R` | goals, sessions, skills, agents, repositories |
 | `?` | the cheat sheet: this table, in the app |
 | `Escape` | closes the palette, then the topmost panel |
+| `⌘Esc` / `Ctrl+Esc` | leaves a focused console for the pane or the modal around it |
 
 The two ⌘ chords answer to **either** modifier, on every platform: the app runs
 in a Tauri WebView and in a browser tab, and a chord that silently does nothing

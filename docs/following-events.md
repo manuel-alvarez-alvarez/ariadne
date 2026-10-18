@@ -10,15 +10,18 @@ ariadne events -f --goal <goal-id>     # one goal's; also --task, --session, --k
 ariadne events -f --format json        # one JSON object per line, for a pipe
 
 ariadne session logs <session-id> -f   # an agent's event transcript, until it ends
-ariadne task logs <task-id> -f         # the same, found by task (--seat reviewer)
+ariadne task logs <task-id> -f         # the same, found by task
 ariadne session logs <id> --tail 20    # only the last twenty transcript blocks
 ariadne task logs <id> --since 10m --kind agent_message
 ariadne daemon logs -f                 # the daemon's own log, over the API
+ariadne daemon logs --service ariadne-cli --level warn
+                                        # only that service, at or above that level
 
 ariadne attention --watch              # redrawn whenever something needs you
 ariadne task ls --watch --goal <id>    # redrawn whenever a task moves
 ariadne goal ls --watch                # redrawn whenever a goal moves
-ariadne session ls --watch --seat reviewer  # redrawn whenever a session moves
+ariadne session ls --watch --seat agent  # redrawn whenever a session moves
+ariadne pr ls --watch                   # redrawn when tracked requests move
 ```
 
 `ariadne events` opens on the most recent recorded events — the last 200 of
@@ -32,7 +35,26 @@ events. Repeat `--kind` to select several event kinds; it also filters new
 events during `-f`. JSON mode keeps each event object unchanged.
 
 `-f` prints as it goes; `--watch` redraws the whole table, `watch(1)`-style,
-when an event says it has changed. `ariadne daemon logs` reads the daemon's own
-ring buffer, so it works under launchd and systemd — where nothing writes
-`~/.ariadne/ariadned.log` — and honours `--endpoint`; the file is the fallback
-for a daemon that is not answering.
+when an event says it has changed. `ariadne daemon logs` reads the telemetry
+database (see [Telemetry](telemetry.md)), so it survives a daemon restart,
+works under launchd and systemd — where nothing writes
+`~/.ariadne/ariadned.log` — and honours `--endpoint`; the file is the
+fallback for a daemon that is not answering. `--service` narrows to one
+`service.name` (`ariadned`, `ariadne-desktop`, `ariadne-cli`) and `--level`
+to that level and above (`trace`, `debug`, `info`, `warn`, `error`).
+
+With `ai_failure_diagnosis` on (see [Configuration](configuration.md)), a
+failed session may later carry a `session.diagnosis` event too: an advisory
+reading of the error — quota exhaustion, a temporary failure, an
+authentication or configuration problem, a task failure, or insufficient
+evidence. It appears in `ariadne events`, in `ariadne session logs` and
+`ariadne task logs` as a line under the `ERROR` block it is about, however
+much later it arrives. It never changes what the error itself says, and
+never decides whether a session retries or switches models.
+
+A repository with the forge integration on (see [The forge
+integration](forge.md)) also carries `pull_requests_changed`, subject the
+repository's id, whenever its requests move; and `forge_settings_updated`,
+subject "forge tunnel", whenever the webhook tunnel's switch or state
+changes. Neither belongs to a goal or a task, so `--goal` and `--task` leave
+them out; `--kind` still selects them.

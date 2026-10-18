@@ -1,0 +1,15 @@
+{
+  "attn": "sdpa",
+  "backend": "auto",
+  "cold_start_ms": 20194.645708892494,
+  "device": "mps",
+  "dtype": "torch.bfloat16",
+  "first_call_latency_ms": 4284.11537501961,
+  "malformed_answers": 0,
+  "n_cases": 89,
+  "peak_rss_mb": 7717.046875,
+  "run": "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
+  "timeouts": 0,
+  "warm_p50_latency_ms": 426.0503747500479,
+  "warm_p95_latency_ms": 1440.4960414394736
+}

@@ -15,32 +15,38 @@ Read the file for the area before changing anything under it. Only some agent
 CLIs load a nested `AGENTS.md` by themselves, so a file that is not named here
 is a file an agent may never see.
 
+- [`.github/AGENTS.md`](.github/AGENTS.md) — the CI, release-please and
+  release-assets workflows, and the rule that every CI check matches a
+  command named in `crates/AGENTS.md` or `ui/AGENTS.md`.
+- [`assets/AGENTS.md`](assets/AGENTS.md) — the branding and the two demo GIFs,
+  and how each is regenerated.
+- [`bench/AGENTS.md`](bench/AGENTS.md) — local experiments that select
+  production defaults, each self-contained and outside CI.
 - [`crates/AGENTS.md`](crates/AGENTS.md) — the Rust workspace: what each crate
   holds, and the cargo commands that test and lint it.
+- [`docs/AGENTS.md`](docs/AGENTS.md) — the user-facing manual: installing,
+  configuring and running Ariadne, and how a goal becomes a landed change.
+  [`README.md`](README.md) is the front page over it: the pitch, the demos, a
+  quick start, the top-level tree and the links.
+- [`scripts/AGENTS.md`](scripts/AGENTS.md) — the installer and uninstaller,
+  their shared step output, and the tests that drive them.
+- [`specs/AGENTS.md`](specs/AGENTS.md) — what each subsystem does, as it
+  stands, with every acceptance criterion tied to the test that proves it.
+  Read the spec of the area you are changing, and change it in the same
+  commit as the code.
 - [`ui/AGENTS.md`](ui/AGENTS.md) — Ariadne Desktop under `ui/`: its layout, how
   it calls the daemon, query keys, the event stream, routes, keyboard chords,
   the shadcn setup, and the npm commands that check it.
-- [`.github/RELEASING.md`](.github/RELEASING.md) — the release loop: how
-  release-please turns commits into versions, tags and release notes.
-- [`docs/`](docs/README.md) — the user-facing manual: installing, configuring
-  and running Ariadne, and how a goal becomes a landed change. Every page a
-  user reads lives here, and [`README.md`](README.md) is the front page over
-  it: the pitch, the demos, a quick start, the top-level tree and the links.
-- [`specs/`](specs/README.md) — what each subsystem does, as it stands, with
-  every acceptance criterion tied to the test that proves it. Read the spec of
-  the area you are changing, and change it in the same commit as the code.
 
 Before changing anything, read the surrounding code and match its style,
 naming and tooling.
 
 ## Processes you leave behind
 
-Every agent and every check shares one machine. A process you start in the
-background outlives your shell: a session can end, time out or be killed at
-any line, so a `kill` at the end of the script may never run. Whatever it
-started then keeps going, and every later task pays for it. Leftover busy
-loops once held the load at 200 on 16 cores for three days, and every
-`cargo` and `vitest` run crawled.
+Every agent and every check shares one machine, and a process you start in the
+background outlives your shell — a session can end, time out or be killed at
+any line, so a `kill` at the end of the script may never run — so a leftover
+busy loop costs every later task on the machine, not only your own.
 
 - To prove a flaky test holds under load, make each busy loop end with the
   shell that started it: `(while kill -0 $$ 2>/dev/null; do :; done) &`,
@@ -51,6 +57,26 @@ loops once held the load at 200 on 16 cores for three days, and every
   done`), not on `pgrep -f '<pattern>'`. The pattern is in the waiting
   shell's own command line, so `pgrep -f` finds the waiter itself and the
   wait never ends.
+
+## Checks
+
+The git hooks run the checks. Before your first commit, run `git config
+core.hooksPath`. If it does not print `.githooks`, run
+`scripts/install-githooks.sh`. The setting is the repository's, so one
+install reaches every worktree.
+
+Run a hook by hand with `.githooks/pre-push --all`. Never pass `--no-verify`
+or `-n` to `git commit` or `git push`. A hook that refuses a commit or a push
+names the fix; make it, and commit again.
+
+The hook leaves out the two slow test suites; CI alone runs them. Run either
+by hand before a push when the change warrants it: `cargo nextest run
+--workspace --profile ci` for the Rust workspace, `npm test` under `ui/` for
+the desktop app.
+
+What each hook runs for an area is in that area's own file:
+[`crates/AGENTS.md`](crates/AGENTS.md) for Rust, and
+[`ui/AGENTS.md`](ui/AGENTS.md) for the UI and the Tauri shell.
 
 ## Commit messages
 
@@ -64,18 +90,25 @@ lowercase type and an imperative subject ("add", not "added"/"adds").
 
 Allowed types, and what each one does to a release:
 
-| Type | Effect while pre-1.0 |
-| --- | --- |
-| `feat` | minor bump (0.1.0 → 0.2.0) |
-| `fix`, `perf`, `revert` | patch bump (0.1.0 → 0.1.1) |
-| `docs`, `refactor`, `test`, `chore`, `style`, `build`, `ci` | hidden: they ride along in a release triggered by something else and never trigger one on their own |
+| Type | Effect while pre-1.0 | Release notes |
+| --- | --- | --- |
+| `feat` | minor bump (0.1.0 → 0.2.0) | ✨ Features |
+| `fix` | patch bump (0.1.0 → 0.1.1) | 🐛 Bug fixes |
+| `perf` | patch bump (0.1.0 → 0.1.1) | ⚡ Performance |
+| `revert` | patch bump (0.1.0 → 0.1.1) | ⏪ Reverts |
+| `docs`, `refactor`, `test`, `chore`, `style`, `build`, `ci` | ride along in a release triggered by another type and never trigger one | Do not appear in release notes |
+
+The `changelog-sections` setting in `release-please-config.json` sets these
+release-note sections. Release-please puts automatic breaking changes first.
 
 Mark a breaking change with `!` before the colon (`feat!: …`) or a
 `BREAKING CHANGE:` footer; while pre-1.0 that is still a minor bump.
 
 The scope is optional but encouraged, and it is one of the repository's area
-names: `ui`, `daemon`, `cli`, `store`, `api`, `core`, `mcp`, `prompts`,
-`doctor`, `codex`, `opencode`, `install`, `scripts`.
+names: `api`, `bench`, `cli`, `client`, `codex`, `console`, `core`, `daemon`,
+`docs`, `doctor`, `forge`, `install`, `mcp`, `opencode`, `prompts`, `scripts`,
+`specs`, `stats`, `store`, `ui`, `workflows`. A spec's `areas:` field under
+`specs/` uses the same names.
 
 Release notes and version bumps are generated from commit messages by
 release-please, so write subjects a user can read in a changelog: say what

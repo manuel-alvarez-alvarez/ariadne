@@ -233,10 +233,16 @@ const LOG_TAIL: usize = 200;
 ///
 /// The file is the fallback, for the one case the API cannot serve: a daemon
 /// that is not answering, which is exactly when its last lines are wanted.
-pub(crate) async fn logs(client: &Client, home: Option<PathBuf>, follow: bool) -> Result<()> {
+pub(crate) async fn logs(
+    client: &Client,
+    home: Option<PathBuf>,
+    follow: bool,
+    service: Option<String>,
+    level: Option<String>,
+) -> Result<()> {
     let served = match follow {
-        true => follow_log(client).await,
-        false => print_log(client).await,
+        true => follow_log(client, service.as_deref(), level.as_deref()).await,
+        false => print_log(client, service.as_deref(), level.as_deref()).await,
     };
     match served {
         Err(e) if follow::unreachable(&e) => {
@@ -250,16 +256,19 @@ pub(crate) async fn logs(client: &Client, home: Option<PathBuf>, follow: bool) -
     }
 }
 
-/// The daemon's buffer as it stands.
+/// The daemon's recent log, as the telemetry store holds it.
 ///
 /// Through the pager, like every other log snapshot: two hundred lines is
 /// several screens, and there is an end to page to. A follow has none and
 /// writes straight out.
-async fn print_log(client: &Client) -> Result<()> {
+async fn print_log(client: &Client, service: Option<&str>, level: Option<&str>) -> Result<()> {
     let path = query_path(
         "/v1/logs",
         &LogsQuery {
             tail: Some(LOG_TAIL),
+            service: service.map(str::to_string),
+            level: level.map(str::to_string),
+            since: None,
         },
     )?;
     let snapshot: LogSnapshotResponse = client.get_json(&path).await?;
@@ -270,15 +279,24 @@ async fn print_log(client: &Client) -> Result<()> {
 
 /// The same, and then every line the daemon writes from here on.
 ///
-/// The buffer arrives as the stream's own opening `snapshot`, so there is no
+/// The snapshot arrives as the stream's own opening event, so there is no
 /// window between what was printed and what is followed. Every connection
 /// opens with one, reconnects included, and what a reconnect's carries is
 /// mostly lines this tail has already shown — so it is printed from where
 /// [`Shown`] says the two stop overlapping.
-async fn follow_log(client: &Client) -> Result<()> {
+async fn follow_log(client: &Client, service: Option<&str>, level: Option<&str>) -> Result<()> {
     let mut shown = Shown::default();
     let color = view().color;
-    follow::frames_reconnecting(client, "/v1/logs/stream", move |frame| {
+    let path = query_path(
+        "/v1/logs/stream",
+        &LogsQuery {
+            tail: None,
+            service: service.map(str::to_string),
+            level: level.map(str::to_string),
+            since: None,
+        },
+    )?;
+    follow::frames_reconnecting(client, &path, move |frame| {
         match frame.event.as_str() {
             "snapshot" => {
                 let snapshot: LogSnapshotResponse = serde_json::from_str(&frame.data)?;
@@ -486,15 +504,7 @@ async fn ready(client: &Client, done: &Done) -> Result<()> {
 /// SIGTERM to whatever the pidfile of `root` names, and the pid it named.
 fn signal_pidfile(root: &Path) -> Result<String> {
     let pid_file = endpoint::pid_file(root);
-    let pid = std::fs::read_to_string(&pid_file)
-        .with_context(|| {
-            format!(
-                "no pidfile at {} — is the daemon running?",
-                pid_file.display()
-            )
-        })?
-        .trim()
-        .to_string();
+    let pid = pidfile_pid(&pid_file)?;
 
     let status = Command::new("kill")
         .arg(&pid)
@@ -507,6 +517,41 @@ fn signal_pidfile(root: &Path) -> Result<String> {
         );
     }
     Ok(pid)
+}
+
+/// A process id from a pidfile is only ever an unsigned decimal number above
+/// one. In particular, `kill -1` is a process-group signal, never a daemon
+/// pid, so reject it before constructing a `kill` command.
+fn pidfile_pid(pid_file: &Path) -> Result<String> {
+    let contents = std::fs::read_to_string(pid_file).with_context(|| {
+        format!(
+            "no pidfile at {} — is the daemon running?",
+            pid_file.display()
+        )
+    })?;
+    let raw = contents
+        .strip_suffix("\r\n")
+        .or_else(|| contents.strip_suffix('\n'))
+        .unwrap_or(&contents);
+    if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        bail!(
+            "invalid pidfile at {} — expected digits for a pid above 1",
+            pid_file.display()
+        );
+    }
+    let pid = raw.parse::<u64>().with_context(|| {
+        format!(
+            "invalid pidfile at {} — expected digits for a pid above 1",
+            pid_file.display()
+        )
+    })?;
+    if pid <= 1 {
+        bail!(
+            "invalid pidfile at {} — expected a pid above 1",
+            pid_file.display()
+        );
+    }
+    Ok(pid.to_string())
 }
 
 /// Run a service manager's command, letting it speak for itself: whatever
@@ -634,6 +679,7 @@ mod tests {
             level: "INFO".into(),
             target: "ariadned".into(),
             message: message.into(),
+            service: "ariadned".into(),
         }
     }
 
@@ -748,6 +794,25 @@ mod tests {
             gone_line(Path::new("/tmp/a.sock"), Duration::from_millis(420)),
             "socket /tmp/a.sock gone after 0.4s"
         );
+    }
+
+    /// A pidfile is data from a daemon that may have died or been replaced.
+    /// Invalid text must be rejected before `signal_pidfile` can construct a
+    /// `kill` command from it.
+    #[test]
+    fn a_pidfile_only_accepts_digits_above_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("ariadned.pid");
+        for invalid in ["-1", "word", "", "0", "1", " 2", "2 ", "2\n\n"] {
+            std::fs::write(&pid_file, invalid).unwrap();
+            let error = pidfile_pid(&pid_file).unwrap_err();
+            assert!(
+                error.to_string().contains("pid above 1"),
+                "{invalid:?}: {error:#}"
+            );
+        }
+        std::fs::write(&pid_file, "0002\n").unwrap();
+        assert_eq!(pidfile_pid(&pid_file).unwrap(), "2");
     }
 
     /// The wait asks again until its question turns true, and gives up when

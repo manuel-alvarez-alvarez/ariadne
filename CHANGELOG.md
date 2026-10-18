@@ -1,5 +1,279 @@
 # Changelog
 
+## [0.11.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.10.0...v0.11.0) (2026-10-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **daemon:** --review-model and --review-effort flags are removed from ariadne repo add/update.
+* **api:** simplify the models stats to tasks, tokens, time, messages and review figures
+* remove tools stats
+* rebuild the stats as six families that each answer one question
+* **api:** choose how work lands on the goal, not on each task
+* **daemon:** the init migration changed, so delete the Ariadne database before you start the new daemon.
+* **daemon:** the init migration changed, so delete the Ariadne database before you start the new daemon.
+* **daemon:** the init migration changed, so delete the Ariadne database before you start the new daemon.
+
+### Features
+
+* add git hooks for checks ([#74](https://github.com/manuel-alvarez-alvarez/ariadne/issues/74)) ([a271b0c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a271b0c75e5b2c45744294d181bd66dcbf2915b3))
+* add native GitHub support ([#45](https://github.com/manuel-alvarez-alvarez/ariadne/issues/45)) ([0a671d9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0a671d9145a1c570547d671496c1a45af1ae0818))
+* **api:** choose how work lands on the goal, not on each task ([39c7382](https://github.com/manuel-alvarez-alvarez/ariadne/commit/39c73827cb1ce991354c4e72504a1e65fd58a1e1))
+* **api:** count interventions in the attention stats ([2393ca9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2393ca9a32544a1d7ca6b5f1f476f8598b2f1f28))
+* **api:** simplify the models stats to tasks, tokens, time, messages and review figures ([e22c54e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e22c54e862f3ad91e0720fc88839b8f060a912ed))
+* **bench:** find a kev-9b contract with a usable pair ([993373a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/993373aa585fad3b0ea7a968d9da4a719cc8c885))
+* **bench:** measure Kev against the quiet watchdog for stalled progress ([26fe468](https://github.com/manuel-alvarez-alvarez/ariadne/commit/26fe46830a0677de8f0c4d24bd16f7d8a8ff1a46))
+* **bench:** measure Kev failure diagnosis ([c5ce404](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c5ce404e708b486794b51061db39956ea2003ab3))
+* **bench:** measure Kev handoff selection ([8998caf](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8998cafbdd5529c2edcdea6471b0c7556b32b3e0))
+* **bench:** measure kev_v28 on the kev-9b run ([294bcb3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/294bcb30844eb3d08a30c94879d882c97d887d06))
+* **cli:** ask or stop an Ariadne review of a pull request ([1bd44b2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1bd44b24ae27c958a7ce1facbfae9bd96ab2ab47))
+* **cli:** list learned permission sources and AI scores ([2f8e8f2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2f8e8f22475a958a933dd56a6db380fdd9b44e3e))
+* **cli:** show a session's title and what it continues ([dfb34fb](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dfb34fb9a659c0b4cd765897d857b059e8669632))
+* **cli:** show goal landing and branches ([4778ea7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4778ea771a1e7cd8cb05257ea7f517e45f3cd4d8))
+* **cli:** show task progress in goal output ([95a805f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/95a805f37167370ebb31a50833a133177062aa5d))
+* **cli:** switch a session to another model or agent ([83843ed](https://github.com/manuel-alvarez-alvarez/ariadne/commit/83843ed530c98ea17fe15a7baeaf75a9989b3c24))
+* compare model outcomes and usage by seat ([d1cba20](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d1cba20e6957a8d87d4f09219a1d7bfdf3a79be9))
+* **daemon:** add an optional advisory diagnosis for failed sessions ([3c67ca5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3c67ca5255f683188f53c8ad15702bda7354f65f))
+* **daemon:** add outcome stats ([9a99dac](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9a99dacb9ad7e01044c65e8b3db237715f613c8c))
+* **daemon:** add review stats ([fb876d7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/fb876d7067b7ee941b5a1831626dc0f85cc03f08))
+* **daemon:** add switch stats ([57a542d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/57a542d78b3534497d2f1cdeed222c09a7a6c5f4))
+* **daemon:** add the needs-attention endpoint and recovery producer ([#67](https://github.com/manuel-alvarez-alvarez/ariadne/issues/67)) ([ddcc596](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ddcc5967a5b17095260973f7195759fd6e3e682e))
+* **daemon:** add tool stats ([a64586b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a64586b3f79a62ab3c5863d621d279bea692bdfc))
+* **daemon:** answer learned permissions by a normalized key ([354c0aa](https://github.com/manuel-alvarez-alvarez/ariadne/commit/354c0aaaa5184fa5a8883dfec9f24048718ad566))
+* **daemon:** build the tools stats family ([5e7f9a2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5e7f9a2404dc61f61968c6d2da33a4ae1d07c1af))
+* **daemon:** copy skills into the home folder ([#70](https://github.com/manuel-alvarez-alvarez/ariadne/issues/70)) ([ec1bf28](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ec1bf28d57e62a4ce0c4d875e7e1b18974dba145))
+* **daemon:** default the threshold pair per Kev flavour ([5afa40c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5afa40cd3cda05df600f1fe09894c5d1704c1970))
+* **daemon:** keep the conversation on a same-agent switch ([efb3e62](https://github.com/manuel-alvarez-alvarez/ariadne/commit/efb3e62a205b3f2209ff4fb2746373696bfc698c))
+* **daemon:** land feature tasks on goal branches ([1d1ff1e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1d1ff1e58c3b1ff63ab42f19df3a8e2b573a6f28))
+* **daemon:** link agent questions to consoles ([#68](https://github.com/manuel-alvarez-alvarez/ariadne/issues/68)) ([c023750](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c023750ec887ba1f59e6b442b3164318927cbdfe))
+* **daemon:** link each session's skills folder to the home copy ([#72](https://github.com/manuel-alvarez-alvarez/ariadne/issues/72)) ([09abded](https://github.com/manuel-alvarez-alvarez/ariadne/commit/09abdeda824d43b853336a68d01413a65fb80026))
+* **daemon:** offer four learned permission choices ([04dd0fe](https://github.com/manuel-alvarez-alvarez/ariadne/commit/04dd0fed22d7e3608bd285bf398298a21b2bf876))
+* **daemon:** open the final pull request of a feature branch goal ([1df23c4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1df23c472e81a060b49f53613e56c7fa7445b0ab))
+* **daemon:** record stat facts and show model stats ([e520ed4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e520ed4e815353985f7def9605f9308c79fa897f))
+* **daemon:** render a handoff text from a session's events ([eb38027](https://github.com/manuel-alvarez-alvarez/ariadne/commit/eb38027f3f0d86976359d2662e03a6fd860ed038))
+* **daemon:** retain ranked session history ([e6f22f5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e6f22f58588190a05c1fb93903923221a1b90aaa))
+* **daemon:** select permission thresholds for real request shapes ([16ad38e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/16ad38e18e006583e57b72855044a16602e29bea))
+* **daemon:** start every pull request review manually ([d5b9564](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d5b9564056088fddf991b3b122bc38529bdfef6b))
+* **daemon:** strip trailers and refuse top-level keeping replies ([ec1edb6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ec1edb609e0d8f0df7dca51d2e65af6289bbcb46))
+* **daemon:** surface pull requests only a human can act on ([#69](https://github.com/manuel-alvarez-alvarez/ariadne/issues/69)) ([79ae840](https://github.com/manuel-alvarez-alvarez/ariadne/commit/79ae8405f45190f3deb600cd30185c7f569054b9))
+* **daemon:** switch a session by itself when its model is exhausted ([7b19d49](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7b19d49a5f0f9349de388566f7f428892e679f44))
+* **daemon:** switch a session to another model or agent ([aa3ad78](https://github.com/manuel-alvarez-alvarez/ariadne/commit/aa3ad7886ca94fdbd705542fe509ffb5b54bb9ce))
+* **daemon:** tell a review session its news at once ([dd40723](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dd40723266ab178c7eaf9743da0429612cdde167))
+* **daemon:** test an AI permission request in the shape a real one has ([8cfa95c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8cfa95c4ee07ad648a42b32e3ade5a084723613c))
+* **daemon:** widen a learned permission row to every repository ([0ca594a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0ca594abb970a955a973606225035e7112708edb))
+* **install:** sign local macOS builds with a self-signed certificate ([1fe3be7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1fe3be7eda8c88b58e72a8546685130069acca0f))
+* **mcp:** let the orchestrator switch a session ([a66b948](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a66b948f00e0c8f9a48470e9c05e8a7a1a2c4f7f))
+* **prompts:** ban trailers and human talk in PR skills ([88da911](https://github.com/manuel-alvarez-alvarez/ariadne/commit/88da911f96792b90273419a61e2e72dcef967633))
+* **prompts:** defer suite checks to push hooks ([d31f230](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d31f2309dc1977375ba2d9dca72775eaad2d44be))
+* **prompts:** defer whole-suite checks to git hooks ([06ec9f7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/06ec9f76a8c57535a1bfab09323e0a6aca9fa3b7))
+* **prompts:** teach the orchestrator that the goal sets the landing ([01c9439](https://github.com/manuel-alvarez-alvarez/ariadne/commit/01c9439e617274c197285692c463ba70b9bcf17e))
+* **prompts:** write the review summary as a header, prose and a verdict ([#56](https://github.com/manuel-alvarez-alvarez/ariadne/issues/56)) ([738d75f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/738d75f0b8fa6f1d554dbc9f367ecbd98bacef0e))
+* rebuild the stats as six families that each answer one question ([996a461](https://github.com/manuel-alvarez-alvarez/ariadne/commit/996a461c1e9087f7a8fb2521b1b3b197c3d23fda))
+* remove tools stats ([557d9f5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/557d9f5ae776eadcd7a01f8513cbf9656c81de2d))
+* run every goal on a custom workflow ([#48](https://github.com/manuel-alvarez-alvarez/ariadne/issues/48)) ([310b3ce](https://github.com/manuel-alvarez-alvarez/ariadne/commit/310b3ce1214af1e055054875fb36e4d45a32c7d8))
+* **stats:** add attention family ([1e2dcf1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1e2dcf1cb61f4d9ac744afe9994698aac3d6c4ae))
+* **stats:** add time metrics ([ed4296f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ed4296f0f4ae0451211df778f78076dccda7d007))
+* **stats:** show human interventions and time per model ([5e9bafc](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5e9bafcf32a66ffda106ac60058379865d143840))
+* **store:** add a pull-request skill that owns a request to its merge ([e386d32](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e386d3253c79f06239c1b3f638d0d16d32ef2e5b))
+* **store:** add repository landing defaults ([f55318e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f55318e2b1385a63f3f114596a02e61da52e2da6))
+* **store:** build the spend family, what tokens the work cost ([30908a5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/30908a5d3b5d09e4fc4a36b260600463c7006b8b))
+* **store:** build the work stats family ([19e6ca9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/19e6ca9ae66e8cbe2cb3aa2cc0d16c2529ab7313))
+* **store:** fill a pull request body from a template or sections ([3434438](https://github.com/manuel-alvarez-alvarez/ariadne/commit/343443820f373ed7e0084e10c28ebe86d12093f9))
+* **ui:** add a fullscreen toggle to the docked pane ([a0f7163](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a0f71630fee16400c7963b400e93db535f4bf4f8))
+* **ui:** add autocomplete and hover help to the workflow editor ([#57](https://github.com/manuel-alvarez-alvarez/ariadne/issues/57)) ([88720ce](https://github.com/manuel-alvarez-alvarez/ariadne/commit/88720ce2f7f7b61ef8378325823f100f4bdbdd6f))
+* **ui:** add workflow CodeMirror editor ([#51](https://github.com/manuel-alvarez-alvarez/ariadne/issues/51)) ([8b05058](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8b0505829bc4bcd90848b6b45e9f15af31d5b075))
+* **ui:** choose and show the landing in Ariadne Desktop ([9267f1e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9267f1e1e54369714aac63577f915df09ac814f5))
+* **ui:** draw workflow preview pipeline ([#55](https://github.com/manuel-alvarez-alvarez/ariadne/issues/55)) ([123e80a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/123e80a7a48d2e1a2a87b9b2cdbc97f1bb62fdf5))
+* **ui:** explain each figure on the Stats screen ([b6e7293](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b6e72934d496747350e89ebef77fb9327cde1738))
+* **ui:** float the detail pane over the screen with a scrim ([28f10e8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/28f10e8b4f09d90e64b2fa9efa9781ff84a432eb))
+* **ui:** float the side panel over the screen, share its header, and fill the console ([b5c2c2c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b5c2c2c460cb7aa6d5c2a8ea324969f8ec6c9cfe))
+* **ui:** give the new workflow dialog the code editor and live preview ([53a3af1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/53a3af1c9dbcedd24ff053af75ee9a809c0d3a4b))
+* **ui:** make the Stats screen a dashboard ([f1aa0ce](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f1aa0ce6bd00572a83d4561deac512623eb8658c))
+* **ui:** move Repositories before Workflows in the sidebar ([a14e602](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a14e6026b52aa2cd9ebf15c5aeeeac570c603e00))
+* **ui:** move the daemon URL Save button beside its field ([f823151](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f8231514c490bc9d12b40dcd3c49f736bfdb15de))
+* **ui:** open external links in the system browser ([98d18b3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/98d18b399ba872d24a76e42f4600b7280e339544))
+* **ui:** redesign the desktop app's shell, board and screens ([#41](https://github.com/manuel-alvarez-alvarez/ariadne/issues/41)) ([86e8975](https://github.com/manuel-alvarez-alvarez/ariadne/commit/86e89759ebb0c257642c99d0c8f73c4ab4bce43b))
+* **ui:** render markdown in task history reasons ([4e56fd0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4e56fd05a61e5796193a1955a92ff5c7919199f5))
+* **ui:** replace lists with filter comboboxes ([#53](https://github.com/manuel-alvarez-alvarez/ariadne/issues/53)) ([8a2735a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8a2735afc4474439157bdb99e99fdfc026c5c1f7))
+* **ui:** share one header across the goal, task and session panels ([ce2d025](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ce2d025a08d6e519e48bd67bd2e57d0b959992a4))
+* **ui:** show a session's workflow step in the task panel ([#52](https://github.com/manuel-alvarez-alvarez/ariadne/issues/52)) ([49f8970](https://github.com/manuel-alvarez-alvarez/ariadne/commit/49f89707e3a534b306fcdc8227e7516e3be33cab))
+* **ui:** show each repository's workflow ([#50](https://github.com/manuel-alvarez-alvarez/ariadne/issues/50)) ([a95d91a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a95d91a1a11a804cf14a16a96c7e0d58660035d1))
+* **ui:** show learned permission scope details ([549c9b5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/549c9b58742b8afd3df7804581faa2f6c2447433))
+* **ui:** show one side panel at a time ([a3de8d9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a3de8d94b83116ca52194cdb450c98a598d6adc7))
+* **ui:** show task messages in the panel ([2128921](https://github.com/manuel-alvarez-alvarez/ariadne/commit/212892158b69ca5f4c81da6cf135e790efd8e803))
+* **ui:** switch a session to another model or agent ([3d13ef6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3d13ef6fa1919aaff242eb0a17c20c8c506f11e3))
+* **ui:** use workflow icon in sidebar and command palette ([#49](https://github.com/manuel-alvarez-alvarez/ariadne/issues/49)) ([0ad2e99](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0ad2e99990a1f2c3cb6124e2358457dcd09d9a06))
+* **workflows:** sign macOS release assets ([253a93a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/253a93af0c5e0f96d3cfeb3280637d3e6a44f80e))
+
+
+### Bug Fixes
+
+* **bench:** repair the handoff selection experiment and rerun it ([c73a01a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c73a01aa931a16431f6b6f98a1a0c804bc1456e2))
+* **cli:** derive tool event detail ([fec0979](https://github.com/manuel-alvarez-alvarez/ariadne/commit/fec0979f6be13ba976236d2b163dad9bce2da0c2))
+* **cli:** print the five stats families one way ([fbfb2a4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/fbfb2a4e79e82aa43c97de106e5e7b8ce78dd085))
+* **cli:** read the sessions page in ariadne attention ([dcea59e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dcea59e6586deafa347a624fcb1e16bb7ec0d0f1))
+* **console:** draw thoughts and questions to the user whole ([c1b7158](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c1b7158a90e30536c5123a118fd794af67767cad))
+* **daemon:** delete OpenCode discovery sessions ([9e5342c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9e5342cf4bd63f1b674fb6f90223c90234d64b33))
+* **daemon:** hide empty OpenCode sessions ([996b094](https://github.com/manuel-alvarez-alvarez/ariadne/commit/996b094cc7c9030f82b4463fc168e33cf0674352))
+* **daemon:** let a retried task wait for its unfinished dependencies ([4d61959](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4d6195960b76a3cb0ce5e92d98d99fb0b8b82094))
+* **daemon:** name the task and the agent in a relayed message ([18d59d9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/18d59d953310f5c105dea3d0cca616d07d7839ee))
+* **daemon:** nudge an agent that came up and was never prompted ([f3bd388](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f3bd388dc68f5f73abdff2f44893e8246da15aad))
+* **daemon:** quiet the review summary for the babysitter ([b32d8d7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b32d8d7e7cbc20e83c9bf5a55018dd118f743872))
+* **daemon:** resume a session whose model pin does not land ([b2c18f4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b2c18f4f4ff779e3defb99d0d774d68a6a1d2f24))
+* **daemon:** resume the session that holds the work, not a dead launch ([03b8211](https://github.com/manuel-alvarez-alvarez/ariadne/commit/03b821116f6018759ab3ea422756598a4058d39a))
+* **daemon:** show ACP error details in session transcripts ([0a148c6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0a148c65f2cba2f8ff9143dc70b15b809c1ac993))
+* **daemon:** skip a briefing a step call already moved past ([#63](https://github.com/manuel-alvarez-alvarez/ariadne/issues/63)) ([e104f96](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e104f9616ce943ebfb3c290cae48b78833df872e))
+* **daemon:** start no agent for a column a completion moved past ([7e4ad5c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7e4ad5c708078ef628368ce45f3f84998ec6e996))
+* **daemon:** treat Claude's session limit as an exhausted model ([87db008](https://github.com/manuel-alvarez-alvarez/ariadne/commit/87db0081b78d05b27979edd9e4affd89e9e7668a))
+* **daemon:** wake the scheduler when an agent that died is let go ([#66](https://github.com/manuel-alvarez-alvarez/ariadne/issues/66)) ([c3dd4aa](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c3dd4aab1836f9d86dca3f412609f2b286fce686))
+* **install:** run the macOS daemon service as interactive work ([c9e35af](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c9e35afa5cdc94735020c281f224a8b7ced94957))
+* **mcp:** ask agents to write a question to the user in their reply ([bad9b3e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bad9b3e2306c282504198ac24214209006c477ab))
+* **prompts:** never merge a pull request; wait for a human ([7adaadb](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7adaadb16f72895d41faf1c3dbe0aa1245e915b9))
+* **prompts:** refresh the merge base before rebase ([04b8cdc](https://github.com/manuel-alvarez-alvarez/ariadne/commit/04b8cdcef4c4800afb902b30b3db0ed203d3e2dd))
+* **prompts:** run the no-remote merge without a fetch ([5be0454](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5be0454e2503e4a4782515368ff71dd0ed55b4b1))
+* remove extra argument from repository function call ([599fb65](https://github.com/manuel-alvarez-alvarez/ariadne/commit/599fb658934613520ec0e3f9d48cdee3051029d7))
+* **stats:** refresh time API clients ([2a5c81e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2a5c81e707b38b09f061f3fc9c9840b1435874c5))
+* **stats:** remove the frame's unused-code allowances ([4e3d7b9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4e3d7b95d7d01f23bd0fe6e4c285ccddf3fd4563))
+* **store:** count requested changes in the reviewer stats ([75386a4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/75386a4314e133c0367c77e4aaf11f6b5c795053))
+* **store:** flag slow tests with 10s timeout in nextest default profile ([4094bcb](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4094bcbea79e22ed41076d7420bc74383f208db5))
+* **store:** ignore a cancelled task when finding the final task ([c1ccc60](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c1ccc608363aad29f2db1894d85944c68d4d2aa7))
+* **store:** limit PR babysitter replies ([#54](https://github.com/manuel-alvarez-alvarez/ariadne/issues/54)) ([dc36a23](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dc36a23f7757740e766c02c9b96d3e2af4ba5bed))
+* **ui:** draw Work and Spend charts with enough bars for the span ([cd700aa](https://github.com/manuel-alvarez-alvarez/ariadne/commit/cd700aa9ab6f2dd0646c6961afd85a633150b846))
+* **ui:** file an in-progress task of a stepless goal into a visible column ([e6d0778](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e6d0778303ab16a0a3b7d996b18a467b6fe817d9))
+* **ui:** fix the Stats scrollbar and show Models first ([07c1cde](https://github.com/manuel-alvarez-alvarez/ariadne/commit/07c1cde1c9b152df9c6eb626b26859be45472fd5))
+* **ui:** keep focus inside the docked pane ([06e046a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/06e046aec39384aef4e1da349ed9665d08d6032b))
+* **ui:** keep typed spaces in the Sessions filters ([2590505](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2590505783aae6719527c8921f96f75f1a474fa4))
+* **ui:** keep unsaved skill edits ([d437828](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d4378289d56434312cbc266d03c142627778b7ad))
+* **ui:** let a focused console keep Escape and leave it with ⌘Escape ([ca451f9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ca451f915bd538e6a9894e62eb0a6ae666da28df))
+* **ui:** let session console fill short panes ([f998cfe](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f998cfe3719836b966c3a1855d948787fa80755d))
+* **ui:** let Sessions rows open from keyboard and enlarge scope chip ([d096418](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d0964186028da65fe1862d3ade5f5c0773bb1f25))
+* **ui:** let the first click on an inactive window press controls ([0b907a4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0b907a4f2c18239f30b6b0f742fe9b08068bb64f))
+* **ui:** show toasts at the bottom left, clear of the pane and header ([a88fcfc](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a88fcfc7ce10e434dd0fe0a547cd700ca6e2d956))
+* **workflows:** reword shipped workflow columns ([#73](https://github.com/manuel-alvarez-alvarez/ariadne/issues/73)) ([e2fcd12](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e2fcd126be4a803882a6bd0c590fe26f551d94f4))
+
+
+### Performance Improvements
+
+* **daemon:** fetch open and review-requested pull requests concurrently ([1ccb660](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1ccb6600f57a1f58b77e1f2f7af105f6635db332))
+* **daemon:** load the goal list in a fixed number of queries ([089b580](https://github.com/manuel-alvarez-alvarez/ariadne/commit/089b5808e883feba2707aefd0e58d73e0d4f289d))
+* **daemon:** read a pull request's details concurrently ([49e30a1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/49e30a1d32ec51181510a9d31670586775e8ef9d))
+
+## [0.10.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.9.0...v0.10.0) (2026-10-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **daemon:** Remove the rule field from AI permission test responses, events, and learned outputs.
+* **daemon:** existing learned approvals are deleted, the learned permission DTO has a new shape, and POST /v1/permissions/learned, PUT /v1/permissions/learned/{id}, and `ariadne permissions learned add|edit` are removed.
+* **daemon:** the AI permission settings drop `schedule`; refresh is manual only. `ariadne permissions ai set` drops `--schedule` and `--no-schedule` for `--flavour` and `--device`.
+* **daemon:** let the AI permission model decide every request alone
+* **daemon:** Remove AI permission fields checkpoints, question, allow_criteria, review_criteria, prompts, and default_prompts, and flags --checkpoints, --question, --allow, --review, and --default-prompts.
+* **cli:** group AI permission commands
+* **ui:** rename the Permissions screen from Laya to the AI permission model
+* **daemon:** the /v1/permissions/laya routes, the laya_updated event, the laya_* error codes and the laya_release_url config key are gone. The squashed schema renames laya_settings, so an existing database needs a migration.
+* **daemon:** `task create --permission-mode`, the `permission_mode` field of task creation (HTTP and the orchestrator's create_task tool) and the `permission_mode` key of config.toml are removed; a config.toml that still sets it stops the daemon. The database schema changes, so an existing ariadne.db must be migrated.
+* **daemon:** `agent_sessions` gains a `title` column in the squashed schema, so a database written by an earlier build does not open as it is.
+* **daemon:** page sessions and outside conversations together
+
+### Features
+
+* **api:** manage learned permission approvals ([9ef3a9a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9ef3a9a272dc8d6f7a037d38e8313b52b06d0798))
+* **api:** show the AI permission note as decision, percent, limits and tags ([2716712](https://github.com/manuel-alvarez-alvarez/ariadne/commit/271671225c01b83fd59e568e5faf1c5cdd55f40d))
+* **cli:** add the permissions group for Laya ([cc45011](https://github.com/manuel-alvarez-alvarez/ariadne/commit/cc450111548ad69e3369b1229ddfc752c0c4b743))
+* **cli:** colour fenced code by its language in the console ([26c74f7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/26c74f7fe45b20d74a77bf5d8f676e45a58645d1))
+* **cli:** group AI permission commands ([3e47146](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3e47146e1abfffd213ebf7955f566e588c171f62))
+* **cli:** list all sessions together ([741e04e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/741e04e23e3344d105b595de5e434eeadd3c5451))
+* **cli:** mark the words a diff changed, and brighten a tool's output ([0e2bce2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0e2bce23683e73df6a870879823b3df6ffb0874d))
+* **cli:** pin the console input box to the bottom of the terminal ([c0d5f6e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c0d5f6ece59f911efb172ea0d035a0ebe78de707))
+* **cli:** show session models and outside usage ([35a3b1f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/35a3b1f95333afc02ede35ebc08b16bb50834023))
+* **cli:** suggest the agent's slash commands in the console ([c047e7f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c047e7f2893c5e6cb7aa7f9096f31dd505bd4c2c))
+* **console:** unfold the pane's output with Ctrl-O ([368401f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/368401fd5568a2a1d69c3261f4384bb353b90519))
+* **daemon:** add a Kev backend to the AI permission benchmark harness ([c4d0755](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c4d0755dc1eccfc9c323b39b9901daa7c5a9b86d))
+* **daemon:** add Laya permission settings and install ([9ff4ba8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9ff4ba8e1f772a9618c0f62cc545afc9b233d634))
+* **daemon:** add the AI permission benchmark harness and its baseline ([3ff094b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3ff094bd24006c8137c5008fd932fadb649970e3))
+* **daemon:** build the AI permission prompts and checkpoint in ([6b841e2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6b841e22eb3d63c1e1dff82c567a49a44a75c346))
+* **daemon:** choose the Kev flavour and device that fit the machine ([d8322d9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d8322d946f32151b744b532047295ac2b58ab5d9))
+* **daemon:** decide AI permissions with the 2026-09-30 winner ([16eb613](https://github.com/manuel-alvarez-alvarez/ariadne/commit/16eb613441050f6efbc3a89b7d7e993956c976ac))
+* **daemon:** decide AI permissions with the benchmarked configuration and guardrails ([571e786](https://github.com/manuel-alvarez-alvarez/ariadne/commit/571e7869d301cc6058819f2f23902a7543aa9563))
+* **daemon:** decide AI permissions with two thresholds ([7880c02](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7880c022352c9b60ba711026b2c04c7cd8fd8151))
+* **daemon:** decide AI permissions with winner policy ([460d7d9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/460d7d92c09c9d6351218b711240065051a1383a))
+* **daemon:** derive the reviewed permission risk facts ([d244907](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d2449071e04e367ff29bc2fe310b40e13c0e043c))
+* **daemon:** drop the AI permission rules and show both probabilities ([3c539b5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3c539b52bcae8f141eaf45e66de19ff44f1d0e0e))
+* **daemon:** install and serve the chosen Kev flavour on its device ([630daa5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/630daa59e47261e7083190af250c62012869b61c))
+* **daemon:** install the pinned AI permission model ([c656dde](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c656dde3594981ee803ab50491f0d89f9567fd18))
+* **daemon:** let Laya decide permission requests in ai mode ([b933650](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b9336506468e4fc2f88b078544c2fee2d0e60571))
+* **daemon:** let the AI permission model decide every request alone ([47b8acd](https://github.com/manuel-alvarez-alvarez/ariadne/commit/47b8acdfe799681087c0d5498107777fd65c6f86))
+* **daemon:** list the conversations on disk with their model and tokens ([7ef3d01](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7ef3d01d35e2fb288e97ed0c4026bb2410a25318))
+* **daemon:** move AI permission files into the daemon, add a decide example ([d77a175](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d77a175c4d35ebb52fd1d736d71a1686683742e0))
+* **daemon:** page sessions and outside conversations together ([457bedf](https://github.com/manuel-alvarez-alvarez/ariadne/commit/457bedf950f39023fd4c9668de1f885ee03435fa))
+* **daemon:** persist outside listing caches ([73b17e2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/73b17e2bed1368f91327ff88e81fce48b52fb8ed))
+* **daemon:** pick Kev-4B over Laya on the AI permission benchmark ([fe05f74](https://github.com/manuel-alvarez-alvarez/ariadne/commit/fe05f744dece3de6b31b5c262ca96c0546edef4c))
+* **daemon:** read OpenCode's own database for its stored sessions ([c2b2316](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c2b2316a45da9b40b79dc298f1927a91a544fc5a))
+* **daemon:** read stored Codex rollouts ([a19afd6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a19afd6c0244b817f67458d41a17e2c48ab94ba8))
+* **daemon:** record every permission choice and denial for training ([90f6a58](https://github.com/manuel-alvarez-alvarez/ariadne/commit/90f6a584aac28c5a6da68036f0ee7bab974cf03f))
+* **daemon:** rename Laya to the AI permission model and add prompt settings ([87f1839](https://github.com/manuel-alvarez-alvarez/ariadne/commit/87f18395239ab27b34c2e8941179a6cfb6e763e6))
+* **daemon:** resume outside conversations as loose sessions ([7f235a4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7f235a408a36de2fe4b462e15a901794c8f4fec2))
+* **daemon:** run the Laya server and refresh it daily ([a923ae9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a923ae9edc2f9adb967bb47d1e51da1af8d2040f))
+* **daemon:** select the AI permission configuration by benchmark ([3b17a77](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3b17a7724105c3125c50da9fa601e60e46af0814))
+* **daemon:** send agent slash commands ([738b6cd](https://github.com/manuel-alvarez-alvarez/ariadne/commit/738b6cdf3e33f9544c8f4231f40bcdb92ee0f6d5))
+* **daemon:** serve and decide AI permissions with Kev ([61944d5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/61944d5a248cc3d4734bdd9254bffbf406d94246))
+* **daemon:** set the permission mode per repository ([36a39d1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/36a39d1221ada318c846e6e9ff1684ad104ee69f))
+* **daemon:** show why the AI permission model did not decide each request ([4563f54](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4563f5437950a992c8f8c41d29b5d186eeef68e7))
+* **daemon:** title loose sessions by their first prompt ([4da841a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4da841a97ab2fe591971690ef72db88d8bb055d2))
+* **daemon:** use the winning Kev permission score ([9eaa896](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9eaa8963337c4730f43c006cd71d842dda4dea18))
+* **permissions:** add AI request test command ([dc1e4f7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dc1e4f72fb88344b56812bdd40eaf76cd4dba641))
+* pick a three-level Kev score question for AI permissions ([4f6d1e4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4f6d1e47363c56dc96880736ac8987ecad63c71f))
+* start a new session from the sessions screen or the CLI ([c525ecd](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c525ecd8f7e8dedb9930f42af57ef8624c9df653))
+* **ui:** add a Test a request panel to the AI permission card ([0ea6a3c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0ea6a3caa917a6c4857892cfdd71f3fa2d4af477))
+* **ui:** add a window picker and show an outside row's model and tokens ([3cbfe67](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3cbfe679f75d43f89d387f7276ff7bd2fad48f73))
+* **ui:** add the Permissions screen for Laya ([d18e0eb](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d18e0eba802e78625a4be380ba08cb1e53a69833))
+* **ui:** compact the AI card header, model row and status line ([f238090](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f2380908134e30e28c883de7417ae1b435a66bce))
+* **ui:** compact the AI threshold range control ([9982f7a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9982f7a34f6bacb2a12b96c59e187e6b5757c7aa))
+* **ui:** drop the checkpoints and prompt controls from the Permissions screen ([05ff729](https://github.com/manuel-alvarez-alvarez/ariadne/commit/05ff7294220f69de2cdfd4d0877464220e1313ef))
+* **ui:** make the Learned permissions tab readable and usable ([9d5dc1b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9d5dc1bd776307692d942aa71657d1bcb3f74165))
+* **ui:** merge the sessions and outside-sessions screens ([bf7bb70](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bf7bb70919c49cb43d7a6d485ea12d70624aee2b))
+* **ui:** move AI request test into dialog ([5dcbf97](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5dcbf97c1436b9a379a47922a342d3e31cc0577b))
+* **ui:** pick the Kev flavour and device in Permissions ([c88e7a2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c88e7a25482fc8673136a4270edc8a0e660ef830))
+* **ui:** put an agent's skills and its model on two lines ([e52b93a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e52b93aab21e517711748c13ef6f677d4bd6160d))
+* **ui:** put the AI card in order ([b7a7467](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b7a74678b5b76fd3f381cb1d27ae9d04aecea2a7))
+* **ui:** rename the Permissions screen from Laya to the AI permission model ([bbaf1e8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bbaf1e8209dff4179a8f33a0c78c19793cc2e2a4))
+* **ui:** rework the sessions filter bar and show each session's work in one column ([0daf524](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0daf524b23e4aed466047fa4726caf0d43856fd5))
+* **ui:** show a model pin without cutting it off ([27f3b8f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/27f3b8f42ceee507fddb8a88d7b67039911d9a09))
+* **ui:** show AI permission decision facts ([599b5f1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/599b5f1fd55447d41de57c6ecd6c153b90caea11))
+* **ui:** show allow and deny thresholds on the Permissions screen ([ddfb6f9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ddfb6f918c436eb50af816374fedb68d2a48187e))
+* **ui:** show both AI probabilities and drop the rule in the desktop app ([f4849f7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f4849f7d478d819bdc2bce922679f54450e748e8))
+* **ui:** show every recorded permission choice in Learned ([84e7b03](https://github.com/manuel-alvarez-alvarez/ariadne/commit/84e7b03fdffdee4c9dac7c1334ff6a4582eaba97))
+* **ui:** show slider zone labels and clamp typed threshold values ([d65fc9b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d65fc9b165731952bae5ecb716ebef39f529ff95))
+* **ui:** show the AI thresholds as one range slider ([001f7f5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/001f7f5837fb2aca125b7eae9faae716bd6aa767))
+* **ui:** split the Permissions screen into Learned and AI tabs ([5774027](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5774027893b482877566c3832aa2c8b47eff3de0))
+* **ui:** widen the AI card's model pickers and show its status facts in place ([dac4f30](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dac4f30b2679f6407556635e88e56c7136d24b18))
+
+
+### Bug Fixes
+
+* **cli:** fill the screen above the input box with the transcript ([8bd71f7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8bd71f706a5bba4b41d86a59e453d8218d6567ec))
+* **daemon:** let a message reach an agent in the middle of a turn ([75f9071](https://github.com/manuel-alvarez-alvarez/ariadne/commit/75f907168cc0af3e47849a972446fbabef2c19a8))
+* **daemon:** say why a conversation whose directory is gone cannot resume ([ab4658b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ab4658b089c237c122c4d7e7ad20edf2f580a826))
+* **daemon:** start the Laya server and read its decisions as laya-serve answers them ([56d6c28](https://github.com/manuel-alvarez-alvarez/ariadne/commit/56d6c2830b28d6076b53397700ea06adae57581e))
+* **daemon:** stop the Laya server with the daemon and wait for it to finish loading ([c207b24](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c207b24a8cadddbbd20b81cfb37e937b02ebfaa3))
+* **prompts:** end turns after agent questions ([7b4cf29](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7b4cf29ad0f7becd3254f5ac66ba091ac6eb8810))
+* show only the rest of multi-line permission commands ([fcfb3d5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/fcfb3d50cad841ae4884eef67624bfb5f2033573))
+* **ui:** keep AI test dialog controls visible ([d934460](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d934460a7472bc4b1d3965e084134dccf789c86f))
+* **ui:** keep the model readable in a session row ([e216bd7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e216bd7894014146cf5d548d61d419b61fa9f2db))
+* **ui:** list a resumed outside session once ([9b58e92](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9b58e92845aa1645e5d0499d548d7cc1c44a1b90))
+* **ui:** make the threshold slider scale and inputs readable ([418f55e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/418f55e9cf3dc8f8e35780421b6d9aa3ceffe27e))
+* **ui:** open a resumed session's console again on its own ([a6eb224](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a6eb2241161e765ce101495487bf2af0e6323a93))
+* **ui:** read the paged sessions list ([585d3ef](https://github.com/manuel-alvarez-alvarez/ariadne/commit/585d3ef34d16ecefc57ae3961a5a35816154bf0e))
+* **ui:** show the model rank choices in full ([45f0c2c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/45f0c2c1ada9265989ce19d396f6ae2d7ed1f660))
+* **ui:** stop WebKit smart-quote substitution ([cb4af58](https://github.com/manuel-alvarez-alvarez/ariadne/commit/cb4af58296a834474c990ea84326217709702dc8))
+
+
+### Performance Improvements
+
+* **cli:** cache live transcript blocks ([ff3c04a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ff3c04a585074eb5df648c5b59556122e8ca24a7))
+* **daemon:** ask no agent for a sessions page with no outside rows ([297d768](https://github.com/manuel-alvarez-alvarez/ariadne/commit/297d76887b4bf758a796bfd4bf178158a8887595))
+* **daemon:** take the outside session snapshot at start and in parallel ([726a456](https://github.com/manuel-alvarez-alvarez/ariadne/commit/726a456e204b7121f6b79929b9d6c569f4b8c9a1))
+
 ## [0.9.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.8.0...v0.9.0) (2026-09-24)
 
 
@@ -429,7 +703,7 @@
 * **daemon:** `running_quiet_flag_secs` and `running_quiet_resume_secs` are no longer `config.toml` keys, and the file is read strictly — a `config.toml` naming either of them stops the daemon until they are dropped. The thresholds they set are now the daemon's own, at fifteen and forty-five minutes.
 * **store:** prompts are overrides, and every default lives in code
 * **mcp:** a smaller tool set, and a task read in one call
-* `merge_strategy` is a new repository field, `integrating` is no longer a task status and tasks no longer carry an integrator profile. Anything reading `/v1/tasks` for `integrator_profile_id`, `pr_number` or the `integrating` status, or setting `gh_bin`, `glab_bin` or `pr_poll_secs` in `config.toml`, needs updating.
+* `merge_strategy` is a new repository field, `integrating` is no longer a task status and tasks no longer carry an integrator profile. Anything reading `/v1/tasks` for `integrator_profile_id`, `pr_number` or the `integrating` status, or setting `gh_bin` or `pr_poll_secs` in `config.toml`, needs updating.
 
 ### Features
 
@@ -459,7 +733,7 @@
 * **daemon:** wake the agent a message addresses ([2a57942](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2a5794226c00bfb714f10c2a8b1160ade8554637))
 * **daemon:** watch the agent that wedges inside its turn ([5850b22](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5850b229a00962b1611df59e185c26915301a522))
 * **daemon:** watchdog running sessions that stop reporting ([24a1db0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/24a1db062b7de3d9888183c3dfd5f33dd299f9ee))
-* **doctor:** report gh and glab, and whether they are signed in ([8af45a3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8af45a30566b9e98828fea94f566c0831a491f26))
+* **doctor:** report gh, and whether it is signed in ([8af45a3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8af45a30566b9e98828fea94f566c0831a491f26))
 * fit an agent's tmux pane to the browser panel showing it ([0abf5ae](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0abf5aef13a8c7abd8b986f90eae14dc14e34a7a))
 * **mcp:** a smaller tool set, and a task read in one call ([b21bd69](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b21bd69ec1fe84ef5f26f5d902910bd91abd4d46))
 * **mcp:** get_task names the profiles a message is addressed to ([1d435e1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1d435e152acdec4620a0d48a3885f45faeeb886c))
@@ -469,7 +743,6 @@
 * **prompts:** stop briefing the integrator to relay comments ([4d53f84](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4d53f8458853d212e93616bb88de91e9fea71dd6))
 * **store,api,daemon,cli,ui:** assign the integrator at planning time ([8a80fd6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8a80fd6daf9732b62c3be4594ccb2fe93940e10a))
 * **store,daemon:** publish approved tasks as GitHub pull requests ([8174c25](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8174c2560a958cf2a81451994515c8d89fc53442))
-* **store,daemon:** publish approved tasks as GitLab merge requests ([90ac6e6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/90ac6e673886c92674abcf5c10d456fbd009bd11))
 * **store:** default texts for every prompt an agent receives ([914e8c6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/914e8c62c8dbf37882dd88ec2b6c4dee3013f462))
 * **store:** name a task branch after its title ([b6c6b9d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b6c6b9d2c82382e3893aa96a86ea8c4029f29e4f))
 * **store:** name task branches after their titles ([65fa4e4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/65fa4e4a50e9ce619b5cb6fb0b5e7645b7296d5d))

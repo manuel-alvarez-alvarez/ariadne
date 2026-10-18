@@ -11,14 +11,16 @@
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::dashboards::DashboardDto;
 use crate::events::AgentEventSummaryDto;
 use crate::goals::GoalDto;
 use crate::messages::MessageDto;
-use crate::permissions::AiPermissionsStatusDto;
+use crate::permissions::{AiPermissionsStatusDto, LearnedPermissionDto};
 use crate::repositories::RepositoryDto;
 use crate::sessions::SessionDto;
 use crate::skills::SkillDto;
 use crate::tasks::{TaskDto, TaskTransitionDto};
+use crate::workflows::WorkflowDto;
 
 /// Payload of `task_updated`: the task as it now stands, plus the audit row
 /// when the update was a status transition.
@@ -32,7 +34,7 @@ pub struct TaskUpdatedDto {
 
 /// Payload of `task_branch_updated`: where a task's branch points now.
 ///
-/// A commit in the author's worktree changes nothing in the store, so no
+/// A commit in the task's worktree changes nothing in the store, so no
 /// other event says the task's diff is no longer the one a client fetched.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskBranchDto {
@@ -104,11 +106,40 @@ pub enum DomainEvent {
     SkillCreated(SkillDto),
     SkillUpdated(SkillDto),
     SkillDeleted(DeletedDto),
+    WorkflowCreated(WorkflowDto),
+    WorkflowUpdated(WorkflowDto),
+    WorkflowDeleted(DeletedDto),
+    DashboardCreated(DashboardDto),
+    DashboardUpdated(DashboardDto),
+    DashboardDeleted(DashboardDto),
     RepositoryCreated(RepositoryDto),
     RepositoryUpdated(RepositoryDto),
     RepositoryDeleted(DeletedDto),
     /// The AI permission settings or the state of its install moved (022).
     AiPermissionsUpdated(AiPermissionsStatusDto),
+    LearnedPermissionCreated(LearnedPermissionDto),
+    LearnedPermissionUpdated(LearnedPermissionDto),
+    LearnedPermissionDeleted(LearnedPermissionDto),
+    /// The forge settings or the tunnel state moved (027).
+    ForgeSettingsUpdated(crate::repositories::ForgeTunnelDto),
+    /// The open issues of one repository moved on its forge (028): read them
+    /// again from `GET /v1/repositories/{id}/issues`.
+    IssuesChanged(IssuesChangedDto),
+    /// The requests of one repository moved: on its forge, or in what
+    /// Ariadne keeps of them (026). Read them again; they are the forge's.
+    PullRequestsChanged(PullRequestsChangedDto),
+}
+
+/// Payload of `issues_changed`: the repository whose open issues moved.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct IssuesChangedDto {
+    pub repository_id: String,
+}
+
+/// Payload of `pull_requests_changed`: the repository whose requests moved.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PullRequestsChangedDto {
+    pub repository_id: String,
 }
 
 impl DomainEvent {
@@ -128,10 +159,22 @@ impl DomainEvent {
             Self::SkillCreated(_) => "skill_created",
             Self::SkillUpdated(_) => "skill_updated",
             Self::SkillDeleted(_) => "skill_deleted",
+            Self::WorkflowCreated(_) => "workflow_created",
+            Self::WorkflowUpdated(_) => "workflow_updated",
+            Self::WorkflowDeleted(_) => "workflow_deleted",
+            Self::DashboardCreated(_) => "dashboard_created",
+            Self::DashboardUpdated(_) => "dashboard_updated",
+            Self::DashboardDeleted(_) => "dashboard_deleted",
             Self::RepositoryCreated(_) => "repository_created",
             Self::RepositoryUpdated(_) => "repository_updated",
             Self::RepositoryDeleted(_) => "repository_deleted",
             Self::AiPermissionsUpdated(_) => "ai_permissions_updated",
+            Self::LearnedPermissionCreated(_) => "learned_permission_created",
+            Self::LearnedPermissionUpdated(_) => "learned_permission_updated",
+            Self::LearnedPermissionDeleted(_) => "learned_permission_deleted",
+            Self::ForgeSettingsUpdated(_) => "forge_settings_updated",
+            Self::IssuesChanged(_) => "issues_changed",
+            Self::PullRequestsChanged(_) => "pull_requests_changed",
         }
     }
 
@@ -142,6 +185,7 @@ impl DomainEvent {
             serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
         }
         match self {
+            Self::PullRequestsChanged(p) => json(p),
             Self::GoalCreated(g) | Self::GoalUpdated(g) => json(g),
             Self::GoalDeleted(d) => json(d),
             Self::TaskCreated(t) => json(t),
@@ -152,9 +196,18 @@ impl DomainEvent {
             Self::AgentEvent(e) => json(e),
             Self::SkillCreated(s) | Self::SkillUpdated(s) => json(s),
             Self::SkillDeleted(d) => json(d),
+            Self::WorkflowCreated(w) | Self::WorkflowUpdated(w) => json(w),
+            Self::WorkflowDeleted(d) => json(d),
+            Self::DashboardCreated(d) | Self::DashboardUpdated(d) => json(d),
+            Self::DashboardDeleted(d) => json(d),
             Self::RepositoryCreated(r) | Self::RepositoryUpdated(r) => json(r),
             Self::RepositoryDeleted(d) => json(d),
             Self::AiPermissionsUpdated(l) => json(l),
+            Self::LearnedPermissionCreated(l)
+            | Self::LearnedPermissionUpdated(l)
+            | Self::LearnedPermissionDeleted(l) => json(l),
+            Self::ForgeSettingsUpdated(t) => json(t),
+            Self::IssuesChanged(i) => json(i),
         }
     }
 }

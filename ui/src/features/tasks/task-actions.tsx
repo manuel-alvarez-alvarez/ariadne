@@ -39,7 +39,7 @@ import { EditTaskDialog } from "./task-form-dialog"
  * places it is ever said. The dialog that used to say it is gone: retry keeps
  * everything, so there is nothing to confirm.
  */
-const RETRY_HINT = "Back to ready, same branch and worktree, fresh author"
+const RETRY_HINT = "Back to ready, same branch and worktree, at the first column"
 
 export function TaskActions({ task }: { task: TaskDto }) {
   const cancel = useCancelTask(task.id)
@@ -49,6 +49,7 @@ export function TaskActions({ task }: { task: TaskDto }) {
   const showEdit = canEdit(task.status)
   const showCancel = canCancel(task.status)
   const showRetry = canRetry(task.status)
+  const retryHint = RETRY_HINT
   // Cancelling is optimistic, so by the time the request is in flight the task
   // is already `cancelled` and neither button applies any more. Returning null
   // here would take the open dialog — its spinner, and the refusal it may be
@@ -86,7 +87,7 @@ export function TaskActions({ task }: { task: TaskDto }) {
                 pending={retry.isPending}
                 onClick={() => {
                   retry.mutate(undefined, {
-                    onSuccess: () => toast.success("Task retried", { description: RETRY_HINT }),
+                    onSuccess: () => toast.success("Task retried", { description: retryHint }),
                     onError: (error) =>
                       toast.error("Could not retry", { description: describeError(error) }),
                   })
@@ -97,7 +98,7 @@ export function TaskActions({ task }: { task: TaskDto }) {
             <RotateCcwIcon />
             Retry task
           </TooltipTrigger>
-          <TooltipContent>{RETRY_HINT}</TooltipContent>
+          <TooltipContent>{retryHint}</TooltipContent>
         </Tooltip>
       )}
       {showCancel && (

@@ -9,6 +9,8 @@ use utoipa::ToSchema;
 pub enum SkillSeat {
     Orchestrator,
     Task,
+    /// Loaded by the daemon for a pull request session; staffs no task agent.
+    PullRequest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

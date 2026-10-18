@@ -13,8 +13,9 @@
  * Screens therefore need no event handling of their own: read with the keys in
  * `src/api/query-keys.ts` and the cache stays live.
  *
- * `laya_updated` is the one event with no list beside its detail: there is one
- * settings row, so the whole cache it moves is `setQueryData`.
+ * `ai_permissions_updated` and `forge_settings_updated` have no list beside
+ * their detail: each is one settings row, so the whole cache each moves is
+ * `setQueryData`.
  *
  * Anything that arrives while the stream is down is lost — the daemon has no
  * replay. `invalidateEverything` is the recovery path and runs on every
@@ -28,6 +29,15 @@ import { type DomainEvent, qk } from "@/api"
 /** Apply one domain event to the query cache. */
 export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent): void {
   switch (event.event) {
+    case "pull_requests_changed": {
+      // The event carries no request, so every list and detail reads the
+      // daemon's newest held fetch or row read again.
+      void queryClient.invalidateQueries({ queryKey: qk.pullRequests.all() })
+      // A reviewer session's own give-up, set or cleared, is a recovery
+      // item's own evidence (`PullRequestRow::reviewer_given_up_at`).
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
+      break
+    }
     case "goal_created": {
       queryClient.setQueryData(qk.goals.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
@@ -36,6 +46,11 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
     case "goal_updated": {
       queryClient.setQueryData(qk.goals.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
+      // The orchestrator's own confirmed-turn and give-up evidence rides on
+      // this same event (`Goal::orchestrator_answered_failed_task_ids`,
+      // `Goal::orchestrator_given_up_at`) — both a failed task's own item
+      // and the taskless orchestrator's own item can turn on it.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "goal_deleted": {
@@ -46,6 +61,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
       void queryClient.invalidateQueries({ queryKey: qk.tasks.all() })
       void queryClient.invalidateQueries({ queryKey: qk.sessions.all() })
+      // A deleted goal can take a recovery item's affected task with it.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "task_created": {
@@ -64,6 +81,8 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
         // status moved is no longer what it would return now.
         void queryClient.invalidateQueries({ queryKey: qk.tasks.diff(task.id) })
       }
+      // A failed task is a machine-resource recovery item's own evidence.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "task_branch_updated": {
@@ -86,11 +105,15 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       // another window: the outside rows are cut without the ones a session
       // holds, so theirs are asked for again.
       void queryClient.invalidateQueries({ queryKey: qk.outsideSessions.lists() })
+      invalidateWatchedPullRequest(queryClient, event.data.pull_request_id)
       break
     }
     case "session_updated": {
       queryClient.setQueryData(qk.sessions.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
+      // An `exhausted` flag's own recovery state is a quota item's evidence.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
+      invalidateWatchedPullRequest(queryClient, event.data.pull_request_id)
       break
     }
     case "agent_event": {
@@ -112,6 +135,17 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.skills.lists() })
       break
     }
+    case "workflow_created":
+    case "workflow_updated": {
+      queryClient.setQueryData(qk.workflows.detail(event.data.name), event.data)
+      void queryClient.invalidateQueries({ queryKey: qk.workflows.lists() })
+      break
+    }
+    case "workflow_deleted": {
+      queryClient.removeQueries({ queryKey: qk.workflows.detail(event.data.id) })
+      void queryClient.invalidateQueries({ queryKey: qk.workflows.lists() })
+      break
+    }
     case "repository_created": {
       queryClient.setQueryData(qk.repositories.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })
@@ -125,16 +159,60 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       // goal that works in it until the goals are read again. This is the one
       // case that reaches outside its own entity, and the reason it has to.
       void queryClient.invalidateQueries({ queryKey: qk.goals.all() })
+      // A forge fetch error is a configuration recovery item's own evidence.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
     case "repository_deleted": {
       queryClient.removeQueries({ queryKey: qk.repositories.detail(event.data.id) })
       void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })
+      // A deleted repository can take a configuration recovery item with it.
+      void queryClient.invalidateQueries({ queryKey: qk.attention.lists() })
       break
     }
-    case "laya_updated": {
+    case "ai_permissions_updated": {
       // One row, no list: the whole cache the Permissions screen reads.
-      queryClient.setQueryData(qk.permissions.laya(), event.data)
+      queryClient.setQueryData(qk.permissions.ai(), event.data)
+      break
+    }
+    case "learned_permission_created":
+    case "learned_permission_updated": {
+      queryClient.setQueryData(qk.learnedPermissions.detail(event.data.id), event.data)
+      void queryClient.invalidateQueries({ queryKey: qk.learnedPermissions.lists() })
+      break
+    }
+    case "learned_permission_deleted": {
+      queryClient.removeQueries({ queryKey: qk.learnedPermissions.detail(event.data.id) })
+      void queryClient.invalidateQueries({ queryKey: qk.learnedPermissions.lists() })
+      break
+    }
+    case "forge_settings_updated": {
+      // One row, no list: the tunnel the settings dialog and the repositories screen read.
+      queryClient.setQueryData(qk.forge.tunnel(), event.data)
+      break
+    }
+    case "issues_changed": {
+      // Issues are read off the forge, not stored: the event carries no
+      // issue, only the repository whose open issues moved, so its lists are
+      // read again — both assignment filters.
+      void queryClient.invalidateQueries({
+        queryKey: qk.issues.ofRepository(event.data.repository_id),
+      })
+      break
+    }
+    case "dashboard_created":
+    case "dashboard_updated": {
+      queryClient.setQueryData(qk.dashboards.detail(event.data.name), event.data)
+      void queryClient.invalidateQueries({ queryKey: qk.dashboards.lists() })
+      break
+    }
+    case "dashboard_deleted": {
+      // Fat like the other two dashboard events — the daemon sends the
+      // whole `DashboardDto` here too, not the generic `DeletedDto` every
+      // other `*_deleted` event carries, since dashboards have no id of
+      // their own for one to name; only `name` is read, to drop the row.
+      queryClient.removeQueries({ queryKey: qk.dashboards.detail(event.data.name) })
+      void queryClient.invalidateQueries({ queryKey: qk.dashboards.lists() })
       break
     }
     default: {
@@ -144,6 +222,20 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       console.warn("[events] unhandled domain event", unknown)
     }
   }
+}
+
+/**
+ * A pull request session that starts or moves: the request names its newest
+ * session (`PullRequestDto.session_id`), so its detail and every list holding
+ * it are read again. Nothing for any other session.
+ */
+function invalidateWatchedPullRequest(
+  queryClient: QueryClient,
+  pullRequestId: string | null | undefined,
+): void {
+  if (!pullRequestId) return
+  void queryClient.invalidateQueries({ queryKey: qk.pullRequests.detail(pullRequestId) })
+  void queryClient.invalidateQueries({ queryKey: qk.pullRequests.lists() })
 }
 
 /**

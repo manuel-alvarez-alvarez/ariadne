@@ -3,9 +3,13 @@
 use anyhow::Result;
 use clap::Subcommand;
 
-use ariadne_api::repositories::{CreateRepositoryRequest, RepositoryDto, UpdateRepositoryRequest};
+use ariadne_api::repositories::{
+    CreateRepositoryRequest, ForgeDto, ForgeTunnelDto, ForgeUpdate, RepositoryDto,
+    UpdateRepositoryRequest,
+};
 use ariadne_client::Client;
 use ariadne_core::PermissionMode;
+use clap::{Args, ValueEnum};
 use serde_json::json;
 
 use super::resolve::{self, Kind};
@@ -24,8 +28,36 @@ const LS: &[Column] = &[
     col("age", UNCAPPED).rank(4),
     col("branch", 24).rank(3),
     col("permissions", UNCAPPED).rank(2),
-    col("description", 40).rank(1),
+    col("workflow", UNCAPPED).rank(1),
+    col("forge", 40).rank(2),
+    col("description", 40).rank(0),
 ];
+
+/// The forge integration's switch, as `--forge` spells it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum Switch {
+    On,
+    Off,
+}
+
+/// The forge integration of a repository (025): the switch.
+#[derive(Args, Debug, Default)]
+pub(crate) struct ForgeArgs {
+    /// Work with the forge the repository's remote is on: on needs `gh`
+    /// signed in to its host
+    #[arg(long, value_enum)]
+    forge: Option<Switch>,
+}
+
+impl ForgeArgs {
+    /// The request's `forge`, or None where no flag of it was given.
+    fn update(self) -> Option<ForgeUpdate> {
+        let update = ForgeUpdate {
+            enabled: self.forge.map(|switch| switch == Switch::On),
+        };
+        update.enabled.is_some().then_some(update)
+    }
+}
 
 #[derive(Subcommand)]
 pub(crate) enum RepoCommand {
@@ -41,9 +73,20 @@ pub(crate) enum RepoCommand {
         description: Option<String>,
         /// How its agents' ACP permission requests are answered: auto
         /// approves, ask waits for a console answer, learn remembers
-        /// approvals, ai lets the model decide (default: auto)
+        /// approvals, ai lets the AI permission model decide (default: auto)
         #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
         permission_mode: Option<PermissionMode>,
+        /// Put agent replies, reviews and resolves in your pending GitHub
+        /// review, and open pull requests as drafts (default: on)
+        #[arg(long = "supervise-posts", value_enum)]
+        supervise_posts: Option<Switch>,
+        /// Run new goals through this workflow by default, where their own
+        /// `goal create` line leaves `--workflow` out (default:
+        /// develop-review-merge)
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::workflow_names))]
+        workflow: Option<String>,
+        #[command(flatten)]
+        forge: ForgeArgs,
     },
     /// List repositories
     Ls,
@@ -70,6 +113,15 @@ pub(crate) enum RepoCommand {
         /// New permission mode: auto, ask, learn, or ai (the AI permission model decides)
         #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
         permission_mode: Option<PermissionMode>,
+        /// Put agent replies, reviews and resolves in your pending GitHub
+        /// review, and open pull requests as drafts
+        #[arg(long = "supervise-posts", value_enum)]
+        supervise_posts: Option<Switch>,
+        /// New default workflow for the goals created in it from now on
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::workflow_names))]
+        workflow: Option<String>,
+        #[command(flatten)]
+        forge: ForgeArgs,
     },
     /// Delete a repository
     Rm {
@@ -89,15 +141,21 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
             branch,
             description,
             permission_mode,
+            supervise_posts,
+            workflow,
+            forge,
         } => {
             let repo: RepositoryDto = client
                 .post_json(
                     "/v1/repositories",
                     &CreateRepositoryRequest {
+                        default_workflow: workflow,
                         path,
                         base_branch: branch,
                         description,
                         permission_mode,
+                        supervise_posts: supervise_posts.map(|switch| switch == Switch::On),
+                        forge: forge.update(),
                     },
                 )
                 .await?;
@@ -115,36 +173,19 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                 format,
                 &repos,
                 LS,
-                |r| {
-                    vec![
-                        r.id.clone(),
-                        r.path.clone(),
-                        age(&r.created_at, now),
-                        r.base_branch.clone(),
-                        r.permission_mode.as_str().into(),
-                        r.description.clone().unwrap_or_else(|| "-".into()),
-                    ]
-                },
+                |r| ls_row(r, now),
                 empty_state("No repositories yet.", Some("ariadne repo add <path>")),
             )?;
         }
         RepoCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Repo, &id).await?;
             let r: RepositoryDto = client.get_json(&repo_path(&id)).await?;
-            print(format, &r, || {
-                print_kv(&[
-                    ("id", Kv::id(r.id.clone())),
-                    ("path", r.path.clone().into()),
-                    ("branch", r.base_branch.clone().into()),
-                    ("permissions", r.permission_mode.as_str().into()),
-                    (
-                        "description",
-                        r.description.clone().unwrap_or_else(|| "-".into()).into(),
-                    ),
-                    ("created", Kv::meta(moment(&r.created_at))),
-                    ("updated", Kv::meta(moment(&r.updated_at))),
-                ]);
-            })?;
+            // An older daemon has no tunnel: the line then reads as a dash.
+            let tunnel: Option<ForgeTunnelDto> = match r.forge {
+                Some(_) => client.get_json("/v1/forge/tunnel").await.ok(),
+                None => None,
+            };
+            print(format, &r, || print_kv(&inspect_rows(&r, tunnel.as_ref())))?;
         }
         RepoCommand::Update {
             id,
@@ -152,16 +193,22 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
             branch,
             description,
             permission_mode,
+            supervise_posts,
+            workflow,
+            forge,
         } => {
             let id = resolve::id(client, Kind::Repo, &id).await?;
             let r: RepositoryDto = client
                 .put_json(
                     &repo_path(&id),
                     &UpdateRepositoryRequest {
+                        default_workflow: workflow,
                         path,
                         base_branch: branch,
                         description,
                         permission_mode,
+                        supervise_posts: supervise_posts.map(|switch| switch == Switch::On),
+                        forge: forge.update(),
                     },
                 )
                 .await?;
@@ -190,6 +237,124 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
     Ok(())
 }
 
+/// One row of `repo ls`.
+fn ls_row(r: &RepositoryDto, now: chrono::DateTime<chrono::Utc>) -> Vec<String> {
+    vec![
+        r.id.clone(),
+        r.path.clone(),
+        age(&r.created_at, now),
+        r.base_branch.clone(),
+        r.permission_mode.as_str().into(),
+        r.default_workflow.clone(),
+        r.forge.as_ref().map_or_else(|| "-".into(), forge_label),
+        r.description.clone().unwrap_or_else(|| "-".into()),
+    ]
+}
+
+/// The forge in a few words: `github acme/widgets on`.
+fn forge_label(forge: &ForgeDto) -> String {
+    format!(
+        "{} {}/{} {}",
+        forge.kind.as_str(),
+        forge.owner,
+        forge.name,
+        switch_label(forge.enabled)
+    )
+}
+
+/// A boolean switch, in the words a flag spells it: `on` or `off`.
+fn switch_label(on: bool) -> &'static str {
+    match on {
+        true => "on",
+        false => "off",
+    }
+}
+
+/// What `repo inspect` prints, the forge block included.
+fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'static str, Kv)> {
+    let mut rows = vec![
+        ("id", Kv::id(r.id.clone())),
+        ("path", r.path.clone().into()),
+        ("branch", r.base_branch.clone().into()),
+        ("permissions", r.permission_mode.as_str().into()),
+        ("default workflow", r.default_workflow.clone().into()),
+        (
+            "description",
+            r.description.clone().unwrap_or_else(|| "-".into()).into(),
+        ),
+    ];
+    match &r.forge {
+        None => rows.push(("forge", "-".into())),
+        Some(forge) => {
+            rows.push(("forge", forge_label(forge).into()));
+            // `supervise posts` names what Ariadne holds back from the
+            // forge, so it says nothing where there is no forge integration
+            // live to hold it from.
+            if forge.enabled {
+                rows.push(("supervise posts", switch_label(r.supervise_posts).into()));
+            }
+            rows.extend([
+                ("webhook state", forge.webhook.state.clone().into()),
+                (
+                    "webhook URL",
+                    forge
+                        .webhook
+                        .url
+                        .clone()
+                        .unwrap_or_else(|| "-".into())
+                        .into(),
+                ),
+                (
+                    "webhook error",
+                    forge
+                        .webhook
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "-".into())
+                        .into(),
+                ),
+                (
+                    "webhook last delivery",
+                    forge
+                        .webhook
+                        .last_delivery_at
+                        .clone()
+                        .unwrap_or_else(|| "-".into())
+                        .into(),
+                ),
+                (
+                    "fetch error",
+                    forge
+                        .webhook
+                        .fetch_error
+                        .clone()
+                        .unwrap_or_else(|| "-".into())
+                        .into(),
+                ),
+                (
+                    "tunnel",
+                    tunnel
+                        .map_or_else(|| "-".into(), super::forge::label)
+                        .into(),
+                ),
+                (
+                    "forge remote",
+                    format!("{} ({})", forge.remote, forge.host).into(),
+                ),
+                (
+                    "forge login",
+                    forge.login.clone().unwrap_or_else(|| "-".into()).into(),
+                ),
+            ]);
+        }
+    }
+    rows.extend([
+        ("created", Kv::meta(moment(&r.created_at))),
+        ("updated", Kv::meta(moment(&r.updated_at))),
+    ]);
+    rows
+}
+
 fn repo_path(id: &str) -> String {
     format!("/v1/repositories/{id}")
 }
@@ -208,6 +373,8 @@ fn rm_question(r: &RepositoryDto, subject: &Subject) -> String {
 mod tests {
     use super::*;
 
+    use crate::commands::fixtures;
+
     #[test]
     fn the_repository_subject_column_is_title() {
         let table = crate::output::render_table(
@@ -219,5 +386,317 @@ mod tests {
         let header = table.lines().next().expect("header");
         assert!(header.contains("TITLE"), "{table}");
         assert!(!header.contains("PATH"), "{table}");
+    }
+
+    fn forge(enabled: bool, login: Option<&str>) -> ForgeDto {
+        ForgeDto {
+            webhook: ariadne_api::repositories::WebhookDto {
+                state: "live".into(),
+                url: Some("https://hooks.example/webhooks/github/repo".into()),
+                error: None,
+                last_delivery_at: Some("2026-10-07T10:00:00Z".into()),
+                fetch_error: Some("gh: HTTP 502".into()),
+            },
+            kind: ariadne_core::ForgeKind::Github,
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled,
+            login: login.map(Into::into),
+        }
+    }
+
+    /// `--forge` reaches the request; `--review-model` and `--review-effort`
+    /// are no flags of `add` or `update` any more, since every review now
+    /// starts manually, through `PUT .../ariadne-review` (029).
+    #[test]
+    fn repo_add_and_update_take_the_forge_flag_and_reject_the_review_pin_flags() {
+        #[derive(clap::Parser)]
+        struct Repo {
+            #[command(subcommand)]
+            command: RepoCommand,
+        }
+        let forge_of = |argv: &[&str]| {
+            let parsed = <Repo as clap::Parser>::try_parse_from(argv).expect("parses");
+            match parsed.command {
+                RepoCommand::Add { forge, .. } | RepoCommand::Update { forge, .. } => {
+                    forge.update()
+                }
+                _ => unreachable!("add or update"),
+            }
+        };
+        let update = forge_of(&["repo", "update", "01R", "--forge", "on"])
+            .expect("the forge flag was given");
+        assert_eq!(update.enabled, Some(true));
+        let off = forge_of(&["repo", "add", "/r", "--forge", "off"]).expect("given");
+        assert_eq!(off.enabled, Some(false));
+        assert!(forge_of(&["repo", "add", "/r"]).is_none());
+        assert!(
+            <Repo as clap::Parser>::try_parse_from([
+                "repo",
+                "update",
+                "01R",
+                "--babysit-model",
+                "x"
+            ])
+            .is_err(),
+            "a request of the user's own runs on its task's `pr` column, not on a pin"
+        );
+
+        for argv in [
+            ["repo", "update", "01R", "--review-model", "stub:test-model"],
+            ["repo", "update", "01R", "--review-effort", "high"],
+            ["repo", "add", "/r", "--review-model", "stub:test-model"],
+        ] {
+            assert!(
+                <Repo as clap::Parser>::try_parse_from(argv).is_err(),
+                "{argv:?} should be an unknown flag"
+            );
+        }
+    }
+
+    /// `--supervise-posts` reaches `add` and `update` as a switch, and the
+    /// repository's own value shows in `repo inspect`.
+    #[test]
+    fn repo_add_and_update_take_the_supervise_posts_flag() {
+        #[derive(clap::Parser)]
+        struct Repo {
+            #[command(subcommand)]
+            command: RepoCommand,
+        }
+        let Repo {
+            command: RepoCommand::Add {
+                supervise_posts, ..
+            },
+        } = <Repo as clap::Parser>::try_parse_from([
+            "repo",
+            "add",
+            "/r",
+            "--supervise-posts",
+            "off",
+        ])
+        .expect("parses")
+        else {
+            panic!("repo add")
+        };
+        assert_eq!(supervise_posts, Some(Switch::Off));
+
+        let Repo {
+            command: RepoCommand::Update {
+                supervise_posts, ..
+            },
+        } = <Repo as clap::Parser>::try_parse_from([
+            "repo",
+            "update",
+            "01R",
+            "--supervise-posts",
+            "on",
+        ])
+        .expect("parses")
+        else {
+            panic!("repo update")
+        };
+        assert_eq!(supervise_posts, Some(Switch::On));
+
+        let supervised = RepositoryDto {
+            forge: Some(forge(true, Some("octocat"))),
+            ..fixtures::repository("01A", "/r", "main")
+        };
+        assert!(
+            crate::output::kv_block(
+                &inspect_rows(&supervised, None),
+                &crate::output::View::plain()
+            )
+            .contains("supervise posts")
+        );
+        let unsupervised = RepositoryDto {
+            supervise_posts: false,
+            forge: Some(forge(true, Some("octocat"))),
+            ..fixtures::repository("01A", "/r", "main")
+        };
+        let block = crate::output::kv_block(
+            &inspect_rows(&unsupervised, None),
+            &crate::output::View::plain(),
+        );
+        assert!(
+            block
+                .lines()
+                .any(|l| l.starts_with("supervise posts") && l.trim_end().ends_with("off")),
+            "{block}"
+        );
+
+        // The row names what the forge integration holds back, so it says
+        // nothing where there is no such integration live.
+        let no_forge = fixtures::repository("01A", "/r", "main");
+        assert!(
+            !crate::output::kv_block(
+                &inspect_rows(&no_forge, None),
+                &crate::output::View::plain()
+            )
+            .contains("supervise posts"),
+            "no forge row to hold posts from"
+        );
+        let detected_not_enabled = RepositoryDto {
+            forge: Some(forge(false, None)),
+            ..fixtures::repository("01A", "/r", "main")
+        };
+        assert!(
+            !crate::output::kv_block(
+                &inspect_rows(&detected_not_enabled, None),
+                &crate::output::View::plain()
+            )
+            .contains("supervise posts"),
+            "a detected but disabled forge holds nothing back either"
+        );
+    }
+
+    /// `--workflow` reaches `add` and `update` the way every other flag of
+    /// theirs does, and every repository shows the one it hands new goals.
+    #[test]
+    fn repo_add_and_update_take_the_workflow_flag() {
+        #[derive(clap::Parser)]
+        struct Repo {
+            #[command(subcommand)]
+            command: RepoCommand,
+        }
+        let Repo {
+            command: RepoCommand::Add { workflow, .. },
+        } = <Repo as clap::Parser>::try_parse_from([
+            "repo",
+            "add",
+            "/r",
+            "--workflow",
+            "develop-review-merge",
+        ])
+        .expect("parses")
+        else {
+            panic!("repo add")
+        };
+        assert_eq!(workflow.as_deref(), Some("develop-review-merge"));
+
+        let Repo {
+            command: RepoCommand::Update { workflow, .. },
+        } = <Repo as clap::Parser>::try_parse_from([
+            "repo",
+            "update",
+            "01R",
+            "--workflow",
+            "develop-review-pr",
+        ])
+        .expect("parses")
+        else {
+            panic!("repo update")
+        };
+        assert_eq!(workflow.as_deref(), Some("develop-review-pr"));
+        assert!(
+            <Repo as clap::Parser>::try_parse_from([
+                "repo",
+                "update",
+                "01R",
+                "--default-landing",
+                "merge"
+            ])
+            .is_err(),
+            "how a task ends is its workflow's gates, not a repository flag"
+        );
+
+        assert_eq!(
+            ls_row(
+                &fixtures::repository("01A", "/r", "main"),
+                chrono::Utc::now()
+            )[LS.iter().position(|c| c.header == "workflow").unwrap()],
+            fixtures::WORKFLOW
+        );
+        let with_workflow = RepositoryDto {
+            default_workflow: "develop-review-pr".into(),
+            ..fixtures::repository("01A", "/r", "main")
+        };
+        assert!(
+            crate::output::kv_block(
+                &inspect_rows(&with_workflow, None),
+                &crate::output::View::plain()
+            )
+            .contains("develop-review-pr")
+        );
+    }
+
+    #[test]
+    fn repo_ls_shows_the_forge_column() {
+        let now = chrono::Utc::now();
+        let rows = [
+            ls_row(
+                &RepositoryDto {
+                    forge: Some(forge(true, Some("octocat"))),
+                    ..fixtures::repository("01A", "/repos/widgets", "main")
+                },
+                now,
+            ),
+            ls_row(&fixtures::repository("01B", "/repos/local", "main"), now),
+        ];
+        let table =
+            crate::output::render_table(LS, &rows, &crate::output::View::plain()).expect("table");
+        let mut lines = table.lines();
+        assert!(lines.next().unwrap().contains("FORGE"), "{table}");
+        assert!(
+            lines.next().unwrap().contains("github acme/widgets on"),
+            "{table}"
+        );
+        assert!(!table.contains("github acme/widgets off"), "{table}");
+    }
+
+    #[test]
+    fn repo_inspect_prints_the_forge_block_with_the_login() {
+        let r = RepositoryDto {
+            forge: Some(forge(true, Some("octocat"))),
+            ..fixtures::repository("01A", "/repos/widgets", "main")
+        };
+        let tunnel = ForgeTunnelDto {
+            enabled: true,
+            state: ariadne_api::repositories::TunnelState::Down,
+            url: None,
+            listen: Some("127.0.0.1:49152".into()),
+            since: "2026-10-08T10:00:00.000Z".into(),
+            error: Some("connection refused".into()),
+        };
+        let block = crate::output::kv_block(
+            &inspect_rows(&r, Some(&tunnel)),
+            &crate::output::View::plain(),
+        );
+        assert!(
+            block
+                .lines()
+                .any(|l| l.starts_with("tunnel") && l.trim_end().ends_with("down")),
+            "the tunnel line follows the webhook block: {block}"
+        );
+        assert!(block.contains("github acme/widgets on"), "{block}");
+        assert!(block.contains("origin (github.com)"), "{block}");
+        assert!(block.contains("octocat"), "{block}");
+        assert!(
+            block.contains("webhook state") && block.contains("live"),
+            "{block}"
+        );
+        assert!(
+            block.contains("https://hooks.example/webhooks/github/repo"),
+            "{block}"
+        );
+        assert!(block.contains("webhook error"), "{block}");
+        assert!(
+            block
+                .lines()
+                .any(|l| l.starts_with("fetch error") && l.contains("gh: HTTP 502")),
+            "{block}"
+        );
+        assert!(block.contains("2026-10-07T10:00:00Z"), "{block}");
+        assert!(!block.contains("babysit"), "{block}");
+
+        let none = fixtures::repository("01B", "/repos/local", "main");
+        let block =
+            crate::output::kv_block(&inspect_rows(&none, None), &crate::output::View::plain());
+        assert!(
+            block
+                .lines()
+                .any(|l| l.starts_with("forge") && l.trim_end().ends_with('-'))
+        );
     }
 }

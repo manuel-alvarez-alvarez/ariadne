@@ -1,14 +1,28 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-09-21
-areas: [prompts, store, core, mcp]
+updated: 2026-10-17
+areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
   - crates/ariadne-store/src/defaults.rs
+  - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
+  - crates/ariadne-daemon/src/agents/handoff.rs
+  - crates/ariadne-daemon/src/forge/news.rs
+  - crates/ariadne-daemon/src/scheduler/goals.rs
+  - crates/ariadne-daemon/src/scheduler/tasks.rs
+  - crates/ariadne-daemon/src/launcher.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
+  - crates/ariadne-daemon/tests/it/agent_messages.rs
+  - crates/ariadne-daemon/tests/it/scheduler_attention.rs
+  - crates/ariadne-daemon/tests/it/resume.rs
+  - crates/ariadne-daemon/tests/it/acp_runtime.rs
+  - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
+  - crates/ariadne-daemon/tests/it/seat_brief.rs
+  - crates/ariadne-cli/src/commands/mcp.rs
+  - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-core/src/lib.rs
 ---
 
@@ -19,99 +33,259 @@ the English all of it is written in.
 
 ## Scope
 
-In: the layers of text (system prompt, skill index, lifecycle briefing,
-landing briefing), what each layer states, rendering and placeholder
-validation, the STE rules, and the size caps.
+In: the layers of text (MCP instructions, system prompt, skill index,
+lifecycle briefing), what each layer states, which turn carries the system
+prompt on which agent, rendering and placeholder validation, the STE rules, the
+size caps, and the handoff text a session switch hands the new agent in place
+of the conversation it cannot resume.
 
 Out: the wording of any one procedure — those belong to the spec of the thing
-they describe (003, 004, 005) — and what a skill is (017).
+they describe (003, 030) — what a skill is (017), and the switch itself
+(021).
 
 ## Behavior
 
-1. Text reaches an agent in four layers, and each rule is stated in exactly
+1. Text reaches an agent in three layers, and each rule is stated in exactly
    one of them:
-   - the **MCP session rules**, which every session receives before its first
-     prompt, whatever its seat: that Ariadne is reached only through its
-     tools, that a client which defers tools loads the ones it needs in one
-     tool search before the first call, whether a session works alone or
-     waits on the user, when it may ask anyway, how few turns to take, and
-     the English to write in (013);
-   - the **system prompt**, which states what a seat owes from its first read
-     to the call that ends its turn, and then indexes the skills this agent
-     was staffed with (017) — for the orchestrator, the one skill its seat
-     fixes by name;
-   - the **lifecycle briefing**, which carries the values of one goal, task or
-     task and whatever is only true of this moment;
-   - the **landing briefing**, which carries the procedure that ends a task,
-     one per ending (005).
-2. The system prompt is the code's, one text per seat. Nothing an agent runs
-   under carries a lifecycle text of its own: what makes one agent differ from
-   another in the same seat is the skills it holds. No seat text carries a
-   playbook step — the orchestrator's ten phases are the `orchestration`
-   skill (017), and its seat text keeps only what no skill edit may take
-   away: the plan is made with the user, no code is written, a blocked point
-   goes to the user.
-   The reviewer text refreshes its detached worktree, then starts the whole
-   suite, build and linters before the read, once per verdict. It keeps the
-   worktree read-only, puts the judged SHA in every verdict and judges tests
-   by reading them. Its resume starts the checks again and reads only commits
-   after the last verdict's SHA. With no known SHA or unrelated HEAD, it uses
-   `get_diff`.
-3. The division of the checks is one of those rules, and the author's seat
-   text is the one place it is stated: the author runs the tests and the lint
-   of the crates and packages it changed once, before the commit. After the
-   commit, it leaves `git status` empty and the repository's generate step
-   unchanged. No run of the whole suite is its
-   own — a reviewer runs it once before each verdict it gives (004), and the
-   landing runs it once after the rebase and before the fast-forward (005). A
-   skill scopes the step it owns to what the change touched and names neither
-   run, so thirteen documents cannot disagree about who runs what. The landing
-   briefing carries its own run, as a step of the procedure it belongs to.
-   The same text states how the branch is committed: one commit for the task,
-   one more commit for each review answer, and no amend (004). A skill carries
-   only the commit of the step it owns: `coding` commits the task it built,
-   and `refactoring` the moves it made. It repeats neither the review answer
-   nor the amend. No skill divides a task into slices or small commits.
+   - the **MCP server instructions**, which every session receives before
+     its first prompt, whatever its seat (013). They hold the session rules
+     first: that Ariadne is reached only through its tools, that a client
+     which defers tools loads the ones it needs in one tool search first,
+     when a seat asks the user and how, how few turns to take, how every
+     check runs, the English to write in, and that no text carries a
+     trailer. After the rules come the seat text, picked by the seat, and
+     the index of the skills the session loads (rule 4);
+   - the **system prompt**, which is that seat text and that skill index
+     again: what a seat owes from its first read to the call that ends its
+     work, then the skills this agent was staffed with (017) — for the
+     orchestrator, the one skill its seat fixes by name. It reaches the
+     agent through the MCP instructions and in a turn (rule 2);
+   - the **lifecycle briefing**, which carries the values of one goal, task
+     or column and whatever is only true of this moment: the column's
+     instructions and the summary of the column before it (030), who sent a
+     relayed message, the task it names and where to answer it (018).
+2. A turn carries its own text alone, except the first turn of a launch and
+   the first turn after a model switch: those carry the system prompt ahead
+   of their own text. A session switch and a relaunch are new launches, so
+   their first turn carries it too. A slash command the agent offers never
+   carries it (021). Every agent takes this path, because none is proven to
+   keep the MCP instructions in its real system prompt through a compaction:
+   - `claude-acp`: claude-agent-acp 0.81.3-preview.1, on claude-agent-sdk
+     0.3.280, passes the MCP servers to the SDK. The SDK hands their
+     instructions to the model as an `mcp_instructions_delta` attachment, a
+     meta message with the user role, not as part of the system prompt;
+   - `codex-acp` and `opencode`: no section of their system prompt that
+     holds the MCP instructions could be shown;
+   - an agent nobody named is one nobody proved.
+   An agent that is proven later can skip the turn copy; until then the MCP
+   instructions are a second copy, not the only one.
+3. The system prompt is the code's, one text per seat. Nothing an agent runs
+   under carries a lifecycle text of its own: what makes one agent differ
+   from another in the same seat is the skills it holds. No seat text carries
+   a playbook step — the orchestrator's phases are the `orchestration` skill
+   (017), and its seat text keeps only what no skill edit may take away: no
+   code is written, the plan is made with the user, and no open point is
+   decided alone. The `agent` seat text is the one text every column's agent
+   runs under: work in the task's worktree and on the current column, read
+   its skills, and what `complete_step`, `fail_step` and `fail_task` are for,
+   with the ban on `--no-verify` and `-n`. What a column does — build,
+   review, merge, keep a request — is its skill's to say. The `reviewer` seat
+   text is the pull request review session's (029), and the `keeper` seat
+   text is the session's that keeps a request of the user's own asked for
+   by hand (032).
 4. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
-   the instruction to read a document before doing the work it covers. The
-   document itself stays on disk, so a broad set of skills costs an agent a
-   few lines rather than a few pages. How each CLI is pointed at those files
-   is 007.
-5. The lifecycle briefings are Ariadne's own constants, read from the code on
+   the instruction to read a document before doing the work it covers. That
+   path resolves through the run directory's `skills` folder, linked onto the
+   daemon's shared home copy (017), so a broad set of skills costs an agent a
+   few lines rather than a few pages. An agent reads the shared document when
+   it opens this path, so a later sync can change what a running agent reads.
+   The launcher hands the index to the MCP server as `ARIADNE_SKILL_INDEX`.
+   How each CLI is pointed at those files is 007.
+5. A rule every seat shares has one owner, and no other text repeats it:
+   - asking the user: the session rules, picked by seat, with a short form
+     in the `wait_for_user` description;
+   - working in the task's worktree and on the current column: the `agent`
+     seat text alone; no column's skill repeats it;
+   - planning the goal with the user, writing no code, and deciding no
+     open point alone: the `orchestrator` seat text alone; the
+     `orchestration` skill states its phases, never these three;
+   - ending the turn after a call: the `complete_step`, `fail_step` and
+     `send_message` descriptions;
+   - how a check runs — in the foreground, split by crate, logged outside
+     the worktree, its failures alone printed, never polled: the session
+     rules. A skill says only which checks it runs: the checks of what it
+     changed. The repository's hooks run its whole suite at a push, and the
+     merge skill pushes before it fast-forwards (030);
+   - no trailer in any text: the session rules;
+   - never polling a request: the session rules of the `agent` and
+     `reviewer` seats alone, which say that Ariadne wakes the session with
+     the request's news (026, 030) instead. No skill names a timer or a
+     poll;
+   - the column report a column ends on, and the return report a column is
+     sent back with: the `complete_step` and `fail_step` descriptions
+     alone (013 rule 4). No skill restates a field of either; `coding`,
+     `merge` and `pr-babysit` each name their own report only as "the
+     column report";
+   - stopping a fix loop: the agent seat text alone, which stops an agent
+     after three failed attempts at one fix.
+6. `coding` uses test-first development for a code behavior change: it runs
+   the new seam test failing before implementation. Prose changes and
+   behavior-preserving refactors use verification that fits their risk.
+   `coding` calls `complete_step` with the column report that tool's
+   description defines (013), covering every criterion. `code-review` names
+   the column report and the return report by name, and restates no field
+   of either. It reads the column report as unverified claims before it
+   pins the scope to the diff, then reuses a result only when its revision
+   is the reviewed revision and its command covers a required check.
+   Missing, outdated or insufficient evidence runs the required check, once
+   for the verdict; the skill never reruns a check only to confirm the
+   report. Evidence never replaces code inspection, acceptance review or
+   repository-rule enforcement. What a blocking or must-fix finding must
+   name, and the cap on the rest, is 017 rule 11's to state, for all five
+   review skills alike. Each other produce skill that ends its own column —
+   `debugging`, `refactoring`, `migration`, `conflict-resolution`,
+   `documentation`, `research`, `spec-writing` — calls `complete_step` with
+   the column report the same way, naming it and restating none of its
+   fields. `debugging`'s own hypothesis loop ends on the stop rule by name,
+   not a count of its own.
+7. A skill carries only the commit of the step it owns: `coding` commits the
+   task it built, and a return from review adds a new commit on top and
+   amends nothing, since the merge column squashes. `refactoring` commits
+   the moves it made, and `pr-babysit` never amends a pushed request. No
+   skill divides a task into slices or small commits.
+8. The lifecycle briefings are Ariadne's own constants, read from the code on
    every launch and every resume. No route reads or writes one, and no row
    holds one. Because nothing is copied into the database, rewording a default
-   reaches every session started after it.
-6. A briefing is rendered by substituting `{name}` tokens. Rendering is
+   reaches every session started after it. The notice an orchestrator gets
+   when the scheduler moved an exhausted agent to another model (021) is one
+   of those constants too.
+9. A briefing is rendered by substituting `{name}` tokens. Rendering is
    lenient by construction: an unknown token, an unclosed brace and an empty
    template all render to something, and none of them fails a spawn.
-7. Each kind declares the placeholders its builder fills in, and a default
+10. Each kind declares the placeholders its builder fills in, and a default
    naming one outside its list fails the suite. Nothing hand-written reaches
    an agent any more — every text is the code's — so the check runs over the
-   defaults rather than at a save.
-8. Every agent-facing text is ASD-STE100 Simplified Technical English: one
-   instruction to a sentence, the imperative for an instruction, the active
-   voice, at most 25 words a sentence, one meaning per word, a list for a
-   sequence of steps.
-9. Two of those rules are read off the text by test: sentence length, and a
-   list of banned words (`utilise`, `prior to`, `in order to`, `ensure`,
-   `should`, `may`).
-10. STE binds what the agents write too — turn text and visible reasoning,
-    task titles and descriptions, review summaries, verdicts, failure reasons,
-    commit subjects and bodies, and pull request text — and that rule lives in
-    the session rules, where no edit of a skill can remove it.
-11. Every default text is capped in size, per text and in total, and the caps
+   defaults rather than at a save. The kinds are the orchestrator's briefing,
+   resume and attention, `IncomingMessage`, `StepBriefing`, `StepReturn` and
+   `AgentResume` (`ariadne_core::PromptKind`). `AgentResume`, the quiet nudge
+   of a column's agent (009), says four things only: this is not a new
+   request, to check whether the work is done, to make the call that ends
+   the column or go on, and to write no reply about the nudge itself.
+11. Default texts, shipped skills, workflow documents, session rules and tool
+    descriptions use ASD-STE100 Simplified Technical English: one instruction
+    to a sentence, the imperative for an instruction, the active voice, at
+    most 20 words a sentence (`ste::MAX_WORDS`), one meaning per word, a list
+    for a sequence of steps. Tests read sentence length line by line — a
+    skill with each wrapped sentence joined first — and a
+    list of banned words (`utilise`, `prior to`, `in order to`, `ensure`,
+    `should`, `may`).
+
+    The same two readable rules — the word count and the banned list — hold
+    for a line the daemon builds rather than ships as a default, wherever
+    that line reaches an agent: the forge's news, a goal's attention line,
+    the handoff's intro and its omission notes, a dependency line in a
+    step's first briefing, the issue goal's `Closes` line, and a tool's
+    refusal or the result string it writes in place of the daemon's own
+    JSON. Each is proven with the `ste` module beside the code that builds
+    it, rendered with sample values where the line takes any.
+12. STE binds what the agents write too — turn text and visible reasoning,
+    task titles and descriptions, step and task reasons, commits, and pull
+    request text — and that rule lives in the session rules, where no edit
+    of a skill can remove it.
+13. Every default text is capped in size, per text and in total, and the caps
     come down to what a rewrite fits in. Moving a cap is a decision argued in
     the test's own documentation, never a way round a failing assertion. The
     shipped skill documents are capped on their own scale, since a skill is
     read once and on purpose rather than carried by every turn.
+14. The handoff is a text built from a session's stored events for a
+    session switched to another coding agent (021): no ACP agent can resume
+    another's conversation, so the new agent gets this instead, as its
+    history. `handoff_text` (`crates/ariadne-daemon/src/agents/handoff.rs`)
+    folds the events the same way the console does (008), and opens the text
+    with one line that names it as the history of the session the agent
+    continues and tells it to go on from where that history ends.
+15. One entry follows per kept event, oldest first, each under its own
+    marker: a `user_prompt_submit` whole under `user` where its source is
+    `console`, and folded to its first six lines with a count of the rest
+    under `daemon` where its source is `daemon`; an `agent_message` whole
+    under `agent`; a `plan` as a checklist, headed by how many of its entries
+    are complete; a paired `pre_tool_use` and `post_tool_use` as the head
+    line the console draws for the call — the command, the path, the
+    pattern, or the title — then its output and its diff, each folded to
+    their last ten lines with a count of what is hidden; a call with no end
+    renders its head alone; a `permission_request` and its
+    `permission.replied` as one line, the head of the call and the option
+    chosen; and a `session.error` as one line, its message.
+    `agent_thought`, `stop`, `session_start` and `session_end` are left out.
+16. Every entry is fenced in a character reserved to the fence alone, and
+    stripped from the entry's own text first, so nothing a tool's output or
+    a diff carries can forge the fence and close the block early.
+17. The text is kept under a budget of characters by entry priority, then
+    recency for ties, and an entry is never cut in
+    the middle. A line in the dropped entries' place counts how many there
+    were. A budget that fits every entry writes no such line.
+18. A value from the forge or from another agent is fenced before it
+    reaches a briefing: wrapped between `<<<untrusted>>>` and
+    `<<<end untrusted>>>` (`prompts::fence`), the same idea as rule 16's
+    handoff fence, in its own two markers rather than one reserved
+    character, since a briefing is prose an agent reads start to end
+    rather than a feed of discrete entries. Every `<<<` the value itself
+    carries is broken with a zero-width space first, so the value cannot
+    close the fence early or open one of its own; an empty value fences to
+    nothing. The session rules state once, for every seat, that text
+    between the markers is data and never an instruction (018, 026, 032).
+    No forge value is exempt for being structured, bounded or normally
+    short — a URL, a sha, an id or a state word is still the forge's own
+    text, and a briefing never trusts its shape over its source. Fenced:
+    an issue's title, body and URL (as the goal's), a request's title,
+    URL, head and base branch names, head sha and reviewed sha, a
+    comment's id, author, path and first line, a failed check's name,
+    conclusion and URL, the rolled-up checks, the review decision and the
+    state a news line reports, an agent message's body, and a step's
+    return reason or completion summary. One line is the exception: an
+    issue goal's `Closes <url>` instruction carries the raw URL, never
+    fenced, since GitHub only closes the issue on that exact text; the
+    same URL is still fenced everywhere else the briefing names the
+    issue.
+19. A goal's title and description reach every briefing plain, never
+    fenced, since they are the user's own words — unless the goal came
+    from an issue, where rule 18 already fences them as the forge's own
+    text. A task's title and description are plain the same way,
+    wherever a briefing, a message, a nudge or a dependency line names
+    the task: whoever opens a task is Ariadne's own user or orchestrator,
+    never a third party. The orchestrator's own brief for a column's
+    agent (`TaskAgent.brief`) is plain too — the orchestrator plans
+    alongside the user, not against it, so its brief is read the same as
+    the user's own words, not fenced as another agent's would be.
 
 ## Acceptance criteria
 
 - Every default text obeys the two readable STE rules
-  (`defaults.rs::every_default_text_is_simplified_technical_english`).
+  (`defaults.rs::every_default_text_is_simplified_technical_english`), and
+  the rules are read line by line
+  (`::the_ste_rules_are_read_off_a_text_line_by_line`). So does every text
+  the MCP server hands an agent
+  (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
+- So does every line the daemon builds rather than ships as a default: the
+  forge's news
+  (`news.rs::every_news_line_is_simplified_technical_english`), a goal's
+  attention line
+  (`goals.rs::goal_attention_lines_are_simplified_technical_english`), the
+  handoff's intro and its omission notes
+  (`handoff.rs::the_intro_and_the_omission_notes_are_simplified_technical_english`),
+  a dependency line in a step's first briefing
+  (`launcher.rs::dependency_line_tests::a_dependency_line_is_simplified_technical_english`),
+  the issue goal's `Closes` line
+  (`prompts.rs::the_closes_line_is_simplified_technical_english`), and a
+  tool's refusal or the result string it writes in place of the daemon's
+  own JSON
+  (`tools.rs::every_refusal_and_result_string_is_simplified_technical_english`,
+  `mcp.rs::the_seat_refusal_is_simplified_technical_english`).
 - Every default text is within its cap and the totals
   (`defaults.rs::size_caps_hold`).
+- The seat texts and the briefings the agreed text gives ship word for word
+  (`defaults.rs::the_agreed_texts_ship_word_for_word`).
 - A rule is stated in exactly one briefing
   (`defaults.rs::each_rule_is_stated_in_exactly_one_briefing`,
   `::a_seat_rule_is_stated_in_its_own_prompt_alone`), and no default repeats
@@ -120,57 +294,157 @@ they describe (003, 004, 005) — and what a skill is (017).
   MCP session rules state whether a seat works alone or waits on the user,
   and when it may ask anyway
   (`mcp.rs::only_the_orchestrator_is_told_to_ask`).
-- The author's seat text states the division of the checks
-  (`defaults.rs::the_author_scopes_its_checks_and_names_who_runs_the_whole_suite`),
-  the `merge` landing carries the one run of the whole suite
-  (`::the_direct_landing_runs_the_whole_suite_after_the_rebase_and_before_the_fast_forward`),
-  with a later pass that reruns it only after a conflict or a base change to
-  a task file, a squash onto the merge base and a guard before the
-  fast-forward (005,
-  `::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`),
-  and no shipped skill sends an author to the whole suite
-  (`::a_skill_scopes_its_own_checks_to_what_the_task_changed`).
-- The seat text and the two skills that name a commit make the task one commit
-  and each review answer one more. No skill repeats the review answer or the
-  amend (`defaults.rs::a_task_is_one_commit_and_a_review_answer_is_one_more`).
+- Each rule of rule 5 is written in its owner alone
+  (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`), no skill
+  repeats how a check runs
+  (`defaults.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`),
+  and no skill names a timer or a poll
+  (`defaults.rs::no_skill_names_a_timer_or_a_poll`).
+- Each seat's MCP instructions hold its seat text and its skill index after
+  the session rules
+  (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`).
+- The first turn and the first turn after a model switch carry the system
+  prompt, and no other turn does: a nudge reaches the agent word for word
+  (`seat_brief.rs::an_agent_gets_the_seat_brief_on_the_first_turn_and_after_a_switch`,
+  `prompts.rs::a_return_and_a_nudge_assemble_word_for_word`). A
+  `claude-acp` agent takes the same path
+  (`seat_brief.rs::a_claude_agent_gets_the_seat_brief_first_and_each_later_turn_word_for_word`).
+- Every shipped skill holds to the STE limit with each wrapped sentence read
+  whole, and a closing quote ends with its sentence
+  (`defaults.rs::the_ste_rules_are_read_off_a_text_line_by_line`).
+- `coding` calls `complete_step` with the column report that tool's
+  description defines, covering every criterion, and names no field of it
+  itself. `code-review` names the column report and the return report by
+  name, reads the former as unverified claims, then reuses only matching
+  evidence and runs missing, outdated or insufficient required checks.
+  Evidence does not replace its code inspection, acceptance review or
+  repository-rule enforcement
+  (`defaults.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`,
+  `::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
+  `tools.rs::complete_step_and_fail_step_define_their_reports`).
+  No shipped skill names a whole suite.
+  Every other produce skill that ends its own column names the column
+  report the same way, restating none of its fields
+  (`defaults.rs::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
+  The merge skill pushes before it fast-forwards, with a squash onto the
+  merge base and a guard before the push
+  (`::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
+  `::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`).
+- The `agent` seat text names what the three task calls are for, bans
+  `--no-verify` and `-n`, states the stop rule once, and names no end of a
+  turn (`defaults.rs::the_agent_seat_text_moves_the_task_with_the_two_step_calls`).
+  No skill repeats any of it
+  (`defaults.rs::each_rule_is_stated_in_exactly_one_briefing`).
+- The quiet nudge says this is not a new request, to check whether the work
+  is done, to make the call that ends the column or go on, and to write no
+  reply about the nudge; the stop rule has the agent seat text as its one
+  owner
+  (`defaults.rs::the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner`).
+- `coding` adds a new commit on a return and amends nothing, and no skill
+  divides a task
+  (`defaults.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
 - Every default names only placeholders its kind can fill in
   (`defaults.rs::every_default_names_only_placeholders_its_kind_can_fill_in`),
   and every allowed placeholder is one a builder actually passes
   (`prompts.rs::every_allowed_placeholder_is_one_a_briefing_fills_in`).
 - Broken template syntax still renders
   (`prompts.rs::broken_syntax_passes_through`,
-  `::an_unknown_placeholder_travels_verbatim`).
+  `::an_unknown_placeholder_travels_verbatim`,
+  `::an_empty_template_renders_to_nothing`).
+- Every default briefing is its template with the values put in
+  (`prompts.rs::every_default_briefing_is_its_template_with_the_values_put_in`).
 - A seat's prompt carries what the seat owes and nothing of a skill
   (`skill_documents.rs::a_seat_prompt_carries_only_what_the_seat_owes`).
-- The reviewer prompt and code-review skill start the full checks before the
-  read, once per verdict
-  (`defaults.rs::reviewer_checks_start_before_the_read_once_per_verdict`).
-- Every reviewer verdict carries the judged SHA
-  (`defaults.rs::every_reviewer_verdict_carries_the_sha_it_judged`), and its
-  resume reads only commits after that SHA
-  (`::a_reviewer_resume_reads_only_commits_since_its_last_verdict_sha`).
-- The reviewer prompt and skill require a read-only judgment of each test
-  (`defaults.rs::a_reviewer_judges_a_test_by_reading_it_without_changing_code`).
-- The reviewer resume refreshes the branch before checks
-  (`defaults.rs::reviewer_texts_refresh_the_named_branch_before_checks`)
-  and falls back to the whole diff when HEAD does not follow its last SHA
-  (`::a_reviewer_uses_the_whole_diff_when_head_does_not_follow_the_last_sha`).
 - The orchestrator system prompt holds no playbook step; the phases and their
   order are the `orchestration` skill's
-  (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`,
-  `::the_orchestrator_staffs_a_plan_on_a_mix_of_agents`), and an
-  orchestrator session indexes that skill
+  (`defaults.rs::the_orchestrator_seat_text_holds_no_playbook_step`,
+  `::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
+  and an orchestrator session indexes that skill
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`).
 - The index adds one line per skill, and the path it names holds the document
-  (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`).
+  (`prompts.rs::a_started_column_agent_is_briefed_from_the_builtin_template`).
 - Every shipped skill document is within its cap (`defaults.rs::skill_size_caps_hold`).
 - Every session is told to load a deferred tool before it calls it
   (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
+- A console-sourced prompt renders whole and a daemon-sourced one folds to
+  six lines with a count of the rest
+  (`handoff.rs::a_console_prompt_renders_whole_and_a_daemon_prompt_folds_to_six_lines_with_a_count`),
+  and an agent message renders whole
+  (`::an_agent_message_renders_whole`).
+- A thought is left out of the handoff
+  (`handoff.rs::a_thought_is_left_out`), and so are `stop`, `session_start`
+  and `session_end`
+  (`::stop_session_start_and_session_end_are_left_out`).
+- A tool call and its end render as one entry with the head and the folded
+  output (`handoff.rs::a_tool_call_and_its_end_render_as_one_entry_with_the_head_and_the_folded_output`),
+  its diff folds the same way
+  (`::a_diff_is_folded_the_same_way_as_output`), and a call with no end
+  renders its head alone (`::a_call_with_no_end_renders_its_head_alone`).
+- A plan renders as a checklist (`handoff.rs::a_plan_renders_as_a_checklist`).
+- A permission request renders as one line with the option chosen
+  (`handoff.rs::a_permission_request_renders_as_one_line_with_the_option_chosen`),
+  and a session error renders as one line with its message
+  (`::a_session_error_renders_as_one_line_with_its_message`).
+- An entry's own text cannot forge the fence and close its block early
+  (`handoff.rs::an_entrys_own_text_cannot_forge_a_fence_and_close_the_block_early`).
+- A budget that fits every entry writes no count line
+  (`handoff.rs::a_budget_that_fits_every_entry_writes_no_count_line`), the
+  newest entries survive a small budget behind one line that counts what
+  was left out
+  (`::the_newest_entries_survive_a_small_budget_and_one_line_counts_what_was_left_out`),
+  and no entry is cut in the middle at any budget from zero to the whole
+  text (`::no_entry_is_cut_in_the_middle_at_any_budget`).
+- A fenced value sits between its two markers, an empty value fences to
+  nothing, and a value holding the closing marker cannot close the fence
+  early (`prompts.rs::a_fenced_value_sits_between_its_markers`,
+  `::an_empty_value_fences_to_nothing`,
+  `::a_value_holding_the_closing_marker_cannot_close_the_fence`). Every
+  forge value a reviewer or a keeper briefing or a news prompt carries is
+  fenced, and the exhaustive-substitution tests prove it word for word
+  (`prompts.rs::every_default_briefing_is_its_template_with_the_values_put_in`,
+  `::the_pull_request_texts_fill_every_placeholder_they_name`,
+  `::the_keeper_briefing_fills_every_placeholder_it_names`).
+- A goal the user typed reaches the orchestrator's briefing with no fence
+  around its title or its description, and a goal from an issue keeps
+  them fenced the same as its URL
+  (`prompts.rs::a_goal_the_user_typed_is_not_fenced`,
+  `::a_goal_from_an_issue_is_fenced`,
+  `::a_goal_from_an_issue_names_the_line_that_closes_it`; end to end,
+  `prompts.rs::an_issue_goal_keeps_its_url_and_briefs_the_orchestrator_to_close_it`).
+  The same holds everywhere else a goal's title reaches a briefing: the
+  resume nudge, the attention text and a column's first briefing fence
+  an issue goal's title and leave a user-typed one plain, the same as
+  the orchestrator's own first briefing does
+  (`prompts.rs::an_issue_goals_title_stays_fenced_everywhere_it_is_named`,
+  `::a_user_typed_goals_title_stays_plain_everywhere_it_is_named`).
+  A task's title and description reach a briefing, a nudge, a relayed
+  message or a dependency line plain, never fenced, proved through the
+  daemon's own rendering, not a hand-built string
+  (`agent_messages.rs::a_message_is_handed_to_the_agent_it_was_sent_to`,
+  `::two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator`,
+  `prompts.rs::a_started_column_agent_is_briefed_from_the_builtin_template`,
+  `::a_return_and_a_nudge_assemble_word_for_word`,
+  `scheduler_attention.rs::an_agent_up_and_never_prompted_is_nudged`,
+  `resume.rs::the_scheduler_relaunches_the_current_columns_agent_in_its_session`,
+  `acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`,
+  `workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
+  The orchestrator's own brief for a column's agent reaches it plain too,
+  the same as the user's own words:
+  `prompts.rs::an_agents_brief_reaches_it_in_plain_text`.
+  The fence
+  rule is in the shared session rules alone, within their size cap
+  (`mcp.rs::the_shared_rules_stay_small`,
+  `::each_shared_rule_is_written_in_its_owner_alone`).
 
 ## Sources
 
 `crates/ariadne-store/src/defaults.rs` (every default text and the STE rules),
 `crates/ariadne-daemon/src/agents/prompts.rs` (assembly),
+`crates/ariadne-daemon/src/agents/handoff.rs` (the handoff text of a session
+switch),
 `crates/ariadne-core/src/lib.rs` (`PromptKind`, placeholder validation),
-`crates/ariadne-cli/src/commands/mcp.rs` (session rules),
-`crates/ariadne-daemon/src/agents/mod.rs` (`write_skills`).
+`crates/ariadne-cli/src/commands/mcp.rs` (session rules, and the seat text
+and skill index in the instructions),
+`crates/ariadne-daemon/src/acp.rs` (`seat_brief_in_turns`, which turn
+carries the system prompt),
+`crates/ariadne-daemon/src/agents/mod.rs` (`link_skills`).

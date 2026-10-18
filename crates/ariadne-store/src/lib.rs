@@ -7,38 +7,59 @@
 
 mod acp_catalogs;
 mod acp_registry;
+mod agent_requests;
 mod agents;
 mod ai_permissions;
 mod change;
+mod dashboards;
 pub mod defaults;
 mod entities;
 mod events;
+mod forge;
+mod goal_parts;
 mod goals;
 mod messages;
 mod models;
 mod permissions;
-mod picks;
+mod pull_request_comments;
+mod pull_requests;
 mod query;
 mod repositories;
 mod sessions;
 mod skills;
+mod stats;
 mod task_agents;
 mod tasks;
+pub mod telemetry;
 mod usage;
+mod webhooks;
+mod workflows;
 
+pub use agent_requests::AgentRequest;
 pub use ai_permissions::AiPermissionSettingsUpdate;
 pub use change::Change;
+pub use dashboards::NewDashboard;
 pub use entities::*;
 pub use events::{EventFilter, EventOrder, NewAgentEvent};
+pub use forge::{ForgeWrite, SetForgeIntegration};
+pub use goal_parts::{GoalParts, TaskParts};
 pub use goals::NewGoal;
 pub use messages::{MessageFilter, NewMessage};
-pub use picks::picked_winner;
+pub use permissions::NewLearnedPermission;
+pub use pull_request_comments::NewPullRequestComment;
+pub use pull_requests::{NewPullRequest, PullRequestFilter, PullRequestTold};
 pub use repositories::{NewRepository, RepositoryUpdate};
 pub use sessions::{NewSession, SessionFilter};
-pub use skills::NewSkill;
+pub use skills::{NewSkill, skill_name_rejection};
+pub use stats::{
+    AttentionStats, Bucket, LeadTime, ModelSpend, ModelStat, ModelStats, NewStatFact,
+    PerFinishedTask, PersonWait, SpendBucket, SpendStats, SpendTotals, StatsFilter, StatusTime,
+    TimeStats, WorkStats,
+};
 pub use task_agents::NewTaskAgent;
-pub use tasks::{NewTask, TaskFilter, TaskUpdate, author_branch};
+pub use tasks::{NewTask, TaskFilter, TaskUpdate, unstaffed_columns};
 pub use usage::{AgentUsage, SeatUsage};
+pub use workflows::NewWorkflow;
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -51,14 +72,15 @@ use tokio::sync::mpsc;
 
 use ariadne_core::TransitionError;
 
-/// The migrations this release ships: one, the squashed schema
-/// (`migrations/0001_init.sql`). Pre-1.0 a schema change is folded back into
-/// it rather than added beside it — a database written by an earlier build is
-/// recreated, not migrated — so the chain stays a single file.
+/// The migrations this release ships.
 static MIGRATIONS: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
+    #[error("dashboard {0} is one Ariadne ships; reset it instead")]
+    DashboardBuiltin(String),
+    #[error("workflow {0} is still in use")]
+    WorkflowInUse(String),
     #[error("{entity} not found: {id}")]
     NotFound { entity: &'static str, id: String },
     #[error("conflict: {0}")]
@@ -86,8 +108,8 @@ pub(crate) fn not_found(entity: &'static str, id: &str) -> StoreError {
     }
 }
 
-/// Whether the database at `path` predates the squash of the 29 migrations
-/// into one, which is the only thing that stops this release opening a
+/// Whether the database at `path` predates the squash of the migrations into
+/// one, which is the only thing that stops this release opening a
 /// database it otherwise understands. `Some` is the sentence to show; a file
 /// that is not one of ours and a path with nothing on it are both `None` — a
 /// report never calls anything old on a guess.
@@ -150,6 +172,59 @@ fn pre_squash_message(path: &Path) -> String {
     )
 }
 
+/// Whether the database at `path` still carries `goal_steps.rank`, the
+/// single optional rank workflow capability bands replaced with the
+/// nonempty `ranks` list. There is no way to turn one snapshotted rank into
+/// a capability band without guessing, so this is checked before migration
+/// `0002` ever runs, the same as [`pre_squash_database`] is checked before
+/// any migration runs. `Some` is the sentence to show; a file that is not
+/// one of ours and a path with nothing on it are both `None`.
+///
+/// For `ariadne doctor`, which is asked why the daemon will not start and is
+/// the only thing still running to answer it.
+pub async fn pre_ranks_database(path: impl AsRef<Path>) -> Option<String> {
+    let path = path.as_ref();
+    if !path.is_file() {
+        return None;
+    }
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(false)
+                .read_only(true),
+        )
+        .await
+        .ok()?;
+    let old = has_rank_column(&pool).await.ok()?;
+    pool.close().await;
+    old.then(|| pre_ranks_message(path))
+}
+
+/// Whether `goal_steps` exists and still has its pre-capability-band `rank`
+/// column. A database with no `goal_steps` table at all is a fresh one.
+async fn has_rank_column(pool: &Pool<Sqlite>) -> Result<bool> {
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('goal_steps')")
+            .fetch_all(pool)
+            .await?;
+    Ok(columns.iter().any(|c| c == "rank"))
+}
+
+/// What a user holding one is told: the fix is the same one file to delete,
+/// named in full since it is wherever `db_path` puts it.
+fn pre_ranks_message(path: &Path) -> String {
+    let path = path.display();
+    format!(
+        "{path} predates workflow rank capability bands: its goal columns were \
+         snapshotted with a single optional rank, and there is no way to turn \
+         that into a nonempty capability band without guessing. Delete {path} \
+         (and its -wal and -shm files, if any) and start again — Ariadne is \
+         pre-1.0, so a database is recreated rather than migrated."
+    )
+}
+
 #[derive(Clone)]
 pub struct Store {
     /// Single-connection pool: every write serializes here.
@@ -202,10 +277,31 @@ impl Store {
         if applied_elsewhere(&write).await? {
             return Err(StoreError::Invalid(pre_squash_message(path.as_ref())));
         }
-        MIGRATIONS
-            .run(&write)
-            .await
-            .map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;
+        // Before migration 0002 rebuilds goal_steps out from under a
+        // database that still has real rows on the old column.
+        if has_rank_column(&write).await? {
+            return Err(StoreError::Invalid(pre_ranks_message(path.as_ref())));
+        }
+        // Rebuilds preserve child rows only with foreign keys off outside
+        // the migration transaction. Restore enforcement before any writer runs.
+        let mut connection = write.acquire().await?;
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *connection)
+            .await?;
+        let migrated = MIGRATIONS.run_direct(None, &mut *connection, false).await;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *connection)
+            .await?;
+        migrated.map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;
+        let violations = sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&mut *connection)
+            .await?;
+        if !violations.is_empty() {
+            return Err(StoreError::Invalid(
+                "migration left invalid references".into(),
+            ));
+        }
+        drop(connection);
 
         // Opened after the migrations, not before: a connection that read the
         // schema first keeps the old column set, so every `SELECT *` on a
@@ -224,6 +320,8 @@ impl Store {
             event_order: Arc::default(),
         };
         store.seed_builtin_skills().await?;
+        store.seed_builtin_workflows().await?;
+        store.seed_builtin_dashboards().await?;
         Ok(store)
     }
 

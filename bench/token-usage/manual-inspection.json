@@ -1,0 +1,274 @@
+{
+  "selection": "three highest mapped-session input totals and one median mapped reviewer session",
+  "coverage": {
+    "major_sessions": 3,
+    "ordinary_sessions": 1,
+    "wakeup_candidates": "unique temporal candidates only; no causal delivery claim"
+  },
+  "cases": [
+    {
+      "session_id": "01m4kf30z3vs1n1y73d7t3bwnd",
+      "class": "major",
+      "input_tokens": 805121096,
+      "event_id": "01m4kf335zwhtaz67rmz7mrr5q",
+      "next_request_id": "msg_011CftzDoayYNC9SUTbNLp1M",
+      "tool_call_ids": [
+        "toolu_013vnHtY48aMcdSjnsREu5v7",
+        "toolu_01LfNKrG5xXPnTrgNw85w8gR",
+        "toolu_01Cury7LZjNWZnyRFg6s6cq9"
+      ],
+      "outcome": "finished",
+      "error_followups": [
+        {
+          "tool_result_id": "toolu_01XVy1dYjTLjLPhVYiXkxfVL",
+          "result_at": "2026-10-10T17:53:10.775Z",
+          "next_request_id": "msg_011CftyzutcopuCabWHySNGa",
+          "next_request_at": "2026-10-10T17:53:13.183Z",
+          "observed_interval_ms": 2408,
+          "intervening_bash_calls": 0,
+          "supported_response": "ScheduleWakeup rejected a missing prompt; subsequent assistant content chose to await automatic agent notification."
+        },
+        {
+          "tool_result_id": "toolu_019D1rxDUq5iLnq9GJ4zfr8E",
+          "result_at": "2026-10-10T18:05:12.708Z",
+          "next_request_id": "msg_011Cftzv87ocb8JeTvu3gSjj",
+          "next_request_at": "2026-10-10T18:05:14.445Z",
+          "observed_interval_ms": 1737,
+          "intervening_bash_calls": 0
+        }
+      ],
+      "inspection_scope": "inspected_sequence"
+    },
+    {
+      "session_id": "01m4m371vw9hgpth2pc7tz0gkt",
+      "class": "major",
+      "input_tokens": 540410359,
+      "event_id": "01m4m373bjdnr411fnzqz2wef1",
+      "next_request_id": "msg_011CfuSskGP7FnQhT8GG7j4a",
+      "signal": "one correction-marker delivery among 13",
+      "outcome": "finished",
+      "inspection_scope": "inventory_only_temporal_candidate"
+    },
+    {
+      "session_id": "01m4myv6ppjky1ef1zcwz2b2h9",
+      "class": "major",
+      "input_tokens": 331864110,
+      "event_id": "01m4myv8djxtpwms9n7vfrbfq9",
+      "next_request_id": "msg_011Cfv5ZUMUqDYigcXzSHRKJ",
+      "outcome": "finished",
+      "inspection_scope": "inventory_only_temporal_candidate"
+    },
+    {
+      "session_id": "01m4c5vrty2dyazsaf02kapm9v",
+      "class": "ordinary_reviewer",
+      "input_tokens": 3357778,
+      "event_id": "01m4c5vvpqpemtwjz8tmk5kf1e",
+      "next_request_id": "msg_011Cfod73AsznSNKkLaXsmax",
+      "outcome": "finished",
+      "inspection_scope": "inventory_only_temporal_candidate"
+    }
+  ],
+  "limits": "Event-to-request links are temporal candidates. Tool IDs are native transcript references. Outcomes are task metadata and do not prove that a prompt or tool caused completion.",
+  "tool_findings": {
+    "selection": "largest mapped retained result and highest-count mapped operation groups",
+    "large_mapped_results": [
+      {
+        "session_id": "01m4h3qazwr6vbqembbv9q9a8s",
+        "request_id": "msg_011CfsFUrE8VHaovugKe2EyZ",
+        "tool_call_id": "toolu_01SBEtb4842r9fDhvkAZEDvv",
+        "tool_name": "Read",
+        "result_chars": 85089
+      },
+      {
+        "session_id": "01m4gk044v01n034btj0ya422a",
+        "request_id": "msg_011CfrsJuR35ZQwhp9ejU4RB",
+        "tool_call_id": "toolu_01C1CpsZTvXGf7QrhKP94EC4",
+        "tool_name": "Read",
+        "result_chars": 78622
+      }
+    ],
+    "repeated_mapped_operations": [
+      {
+        "session_id": "01m4kf30z3vs1n1y73d7t3bwnd",
+        "tool_name": "Bash",
+        "calls": 1030,
+        "result_chars": 1383796,
+        "max_result_chars": 24912
+      },
+      {
+        "session_id": "01m4m371vw9hgpth2pc7tz0gkt",
+        "tool_name": "Bash",
+        "calls": 617,
+        "result_chars": 735385,
+        "max_result_chars": 23529
+      }
+    ],
+    "repeated_command_evidence": {
+      "session_id": "01m4kf30z3vs1n1y73d7t3bwnd",
+      "bash_calls": 1030,
+      "distinct_command_inputs": 918,
+      "exact_repeated_command_groups": 69,
+      "calls_in_repeated_groups": 181,
+      "inspection": "A sampled exact-repeat group has separate native tool calls and results before later model requests. The retained records establish repeated command text, but omit a stable revision or semantic-operation identifier; it can be a retry, re-read, or distinct correction.",
+      "sampled_group": {
+        "command_sha256_prefix": "bf556d72887258b5",
+        "native_call_ids": [
+          "toolu_01Quithsq6HQnZdndxAnNKy4",
+          "toolu_01ScR7kiknZgzWyxQyeNyNZF"
+        ],
+        "later_request_id": "msg_011CfuDEdYGirJVYgKMUNr5X",
+        "result_summary": "Both native calls retained results; no stable file revision or semantic-operation link joins the two calls.",
+        "classification": "reread_after_new_delivery_with_unchanged_result",
+        "operation": "read coding SKILL.md",
+        "result_chars_each": 4613,
+        "result_sha256": "0dd0eb2b9aea30d38132fb352f27a39821f3d0dd9ab418301b0d5950f5f595fb",
+        "transcript_lines": {
+          "first_call_result": [
+            21,
+            22
+          ],
+          "second_call_result": [
+            3991,
+            3992
+          ],
+          "new_delivery": 3988,
+          "prior_completion": 3985
+        },
+        "delivery_context": "new task delivery instructed the agent to read skills first",
+        "later_action": "msg_011CfuDEdYGirJVYgKMUNr5X inspected ACP prompt-handling code",
+        "counter_evidence": "The new delivery explicitly required skill reading; avoidable work and savings are unproven."
+      }
+    },
+    "failure_evidence": "The selected major transcript has 17 native tool_result records with is_error. Two are traced in cases.error_followups. They are followed by later requests but do not establish the content of a retry, revision, or causal correction."
+  },
+  "handoff_inspection": {
+    "selection": "largest retained successor prompt and one finished ordinary successor",
+    "renderer_sources": {
+      "handoff_rs": "e6f22f58588190a05c1fb93903923221a1b90aaa",
+      "prompt_spec": "92742e152b1f60511f555094ce2f0d12b47ba60e",
+      "finding": "Source history has handoff_text, render_entry, and apply_budget. No event names deployed revision, selected entries, or omitted candidates."
+    },
+    "cases": [
+      {
+        "event_id": "01m4s320dhh01x3dbr72xmp15g",
+        "predecessor_session_id": "01m4rtkd735xfnzf1w3qfdw466",
+        "successor_session_id": "01m4s31xs6b8phfn0mg6rjbz9k",
+        "delivered_prompt_chars": 247208,
+        "history_marker": true,
+        "delivered_context": "rendered session-history section retained",
+        "subsequent_work": "successor persisted a prompt and later lifecycle outcome was cancelled",
+        "task_outcome": "cancelled"
+      },
+      {
+        "event_id": "01m4a4h4b42pc3f8gwr6njdmxe",
+        "predecessor_session_id": "01m4a4gfm536ccn7spghtb195x",
+        "successor_session_id": "01m4a4h3m1mrztdr1mw0hcrva5",
+        "delivered_prompt_chars": 50949,
+        "history_marker": true,
+        "delivered_context": "rendered session-history section retained",
+        "subsequent_work": "successor persisted a prompt and later lifecycle outcome was finished",
+        "task_outcome": "finished",
+        "subsequent_events": [
+          {
+            "event_id": "01m4a4hdxq8scf0g9w8dkcgc7p",
+            "finding": "checked open PR, green checks, and no pending comments"
+          },
+          {
+            "event_id": "01m4a4hdxrbw5wy4hm3x54dk5h",
+            "tool_call_id": "toolu_018BzNpxkt99A7JEZLeQ4AGJ",
+            "finding": "record_pull_request"
+          },
+          {
+            "event_id": "01m4a4hgz2d2gfxfb4tw5csfyn",
+            "finding": "reported readiness and waited for human merge"
+          }
+        ],
+        "delivered_context_comparison": {
+          "present": "rendered history at character offset about 12460 states PR #44 ready, six checks passed, no review comments, readiness recorded, and open human-merge wait",
+          "successor_checked_again": "successor fresh-checked those facts, recorded PR readiness, and waited for human merge",
+          "absent_or_uncertain": "no selected-entry list, deployed renderer revision, or field proving that the delivered text supplied those PR facts",
+          "interpretation": "delivered prior status followed by a fresh external-state check; neither redundant work nor savings is established"
+        }
+      }
+    ]
+  },
+  "residual_inspection": {
+    "selection": "three largest absolute input residuals",
+    "cases": [
+      {
+        "session_id": "01m4jpa2zmtdk23zc1cvnkb522",
+        "input_residual": -76795410,
+        "counter_sources": 11,
+        "session_starts": 12,
+        "source_input_range": [
+          663422,
+          28485153
+        ],
+        "finding": "The frozen counter is a sum of 11 source segments. Twelve starts show resumed launches. The retained request sum exceeds that frozen sum; excluded requests cannot explain this sign. Remainder unresolved."
+      },
+      {
+        "session_id": "01m4jttxdfdep6tm0m8jza3gzz",
+        "input_residual": 60448393,
+        "counter_sources": 6,
+        "session_starts": 6,
+        "cumulative_snapshot_matches": 6,
+        "cumulative_snapshot_lines": [
+          667,
+          739,
+          828,
+          938,
+          974,
+          1072
+        ],
+        "cumulative_snapshot_count": 144,
+        "decreasing_input_boundaries": 0,
+        "finding": "Each frozen source usage triple exactly matches a Codex cumulative token_count snapshot. These are overlapping cumulative counters, so their sum is not request usage. The 60,448,393 input residual remains after recording this overlap.",
+        "decomposition": {
+          "input": [
+            60822618,
+            -374225,
+            60448393
+          ],
+          "cached_input": [
+            59702144,
+            -372096
+          ],
+          "output": [
+            194901,
+            -3437
+          ]
+        }
+      },
+      {
+        "session_id": "01m4jv0jha48pcvwmqxk28hd8e",
+        "input_residual": 59115939,
+        "counter_sources": 5,
+        "session_starts": 5,
+        "cumulative_snapshot_matches": 5,
+        "cumulative_snapshot_lines": [
+          721,
+          765,
+          818,
+          891,
+          1277
+        ],
+        "finding": "Each frozen source usage triple exactly matches a Codex cumulative token_count snapshot. The snapshots overlap request totals and cannot be added to them. The 59,115,939 input residual remains unresolved.",
+        "decomposition": {
+          "input": [
+            59488061,
+            -372122,
+            59115939
+          ],
+          "cached_input": [
+            58801408,
+            -370688
+          ],
+          "output": [
+            79917,
+            -2664
+          ]
+        }
+      }
+    ]
+  }
+}

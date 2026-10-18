@@ -8,13 +8,17 @@ pub(crate) mod values;
 
 use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
+use crate::commands::dashboard::DashboardCommand;
 use crate::commands::goal::GoalCommand;
+use crate::commands::issue::IssueCommand;
 use crate::commands::models::ModelsCommand;
 use crate::commands::permissions::PermissionsCommand;
 use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
 use crate::commands::skill::SkillCommand;
+use crate::commands::stats::StatsCommand;
 use crate::commands::task::TaskCommand;
+use crate::commands::workflow::WorkflowCommand;
 use crate::output::{ColorChoice, Format};
 
 /// Where the two flags every command takes are listed. They belong to no
@@ -33,6 +37,7 @@ Examples:
   ariadne task ls --goal <goal-id>         # the tasks it was broken into
   ariadne attach <id>                      # a session, task or goal id
 ";
+const DASHBOARD_EXAMPLES: &str = "Examples:\n  ariadne dashboard ls\n  ariadne dashboard get stats\n  ariadne dashboard set mine dashboard.json";
 
 /// What each group's help ends with: what that group is most often asked to
 /// do, in the spelling it takes today.
@@ -63,6 +68,16 @@ Examples:
   ariadne skill create api-design --file api-design.md
 ";
 
+const WORKFLOW_EXAMPLES: &str = "\
+Examples:
+  ariadne workflow ls                           # every workflow, shipped and yours
+  ariadne workflow show develop-review-merge
+  ariadne workflow check --file draft.md        # read it back, or the line it breaks on
+  ariadne workflow create my-workflow --file draft.md
+  ariadne workflow update my-workflow --file draft.md
+  ariadne workflow reset develop-review-merge   # back to the one Ariadne ships
+";
+
 const REPO_EXAMPLES: &str = "\
 Examples:
   ariadne repo add ~/projects/api --description \"the public API\"
@@ -73,13 +88,13 @@ Examples:
 
 const PERMISSIONS_EXAMPLES: &str = "\
 Examples:
-  ariadne permissions enable --wait         # turn the AI permission model on and wait for the install
-  ariadne permissions show                  # settings, install state, python
-  ariadne permissions set --checkpoints all
-  ariadne permissions set --threshold 0.6
-  ariadne permissions set --schedule 03:30  # or: --no-schedule
-  ariadne permissions refresh
-  ariadne permissions disable
+  ariadne permissions ai enable --wait         # turn the AI permission model on and wait for the install
+  ariadne permissions ai show                  # settings, install state, python
+  ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
+  ariadne permissions ai set --flavour 9b --device cuda
+  ariadne permissions ai test --tool 'Read /etc/hosts' --kind read --input '{\"file_path\":\"/etc/hosts\"}' --location /etc/hosts --workspace .
+  ariadne permissions ai refresh
+  ariadne permissions ai disable
 ";
 
 const GOAL_EXAMPLES: &str = "\
@@ -93,9 +108,10 @@ Examples:
 const TASK_EXAMPLES: &str = "\
 Examples:
   ariadne task ls --goal <goal-id>
-  ariadne task ls --status in-progress,under-review
+  ariadne task ls --status in-progress,failed
   ariadne task inspect <task-id>           # and: diff, messages, history
-  ariadne task attach <task-id>            # the author's console
+  ariadne task attach <task-id>            # the current column's console
+  ariadne task attach <task-id> --step review
 ";
 
 const SESSION_EXAMPLES: &str = "\
@@ -113,8 +129,8 @@ Examples:
 const ATTACH_EXAMPLES: &str = "\
 Examples:
   ariadne attach <goal-id>                 # the goal's orchestrator
-  ariadne attach <task-id>                 # the task's author
-  ariadne attach <task-id> --seat reviewer # its reviewer instead
+  ariadne attach <task-id>                 # the agent of the task's current column
+  ariadne task attach <task-id> --step review   # one column's agent instead
   ariadne attach <session-id>              # that one session
   ariadne attach <outside-id> --agent codex-acp
 ";
@@ -139,11 +155,11 @@ Exit codes:
     about = "Coding-agent orchestrator CLI",
     long_about = "Coding-agent orchestrator CLI.\n\n\
         Every command here asks the ariadned daemon for something. It plans a \
-        goal with an orchestrator agent, hands each task to an author that owns it \
-        from its first commit to the end, and gates it behind reviewer \
-        agents. Each of them is an ACP agent the daemon drives, with a \
-        console `ariadne attach` drops you into, and `ariadne attention` is \
-        what says which of them is waiting for you.",
+        goal with an orchestrator agent and steps each task through the \
+        columns of its workflow, one agent per column, in one worktree from \
+        the first commit to the end. Each of them is an ACP agent the daemon \
+        drives, with a console `ariadne attach` drops you into, and `ariadne \
+        attention` is what says which of them is waiting for you.",
     after_help = format!("{EXAMPLES}\n{EXIT_CODES}")
 )]
 pub(crate) struct Cli {
@@ -313,6 +329,22 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: ModelsCommand,
     },
+    /// Show what the work did, one question per family
+    ///
+    /// Read off the facts the daemon records as work happens. `stats` alone
+    /// runs `stats work`.
+    Stats {
+        #[command(subcommand)]
+        command: Option<StatsCommand>,
+        /// Only what happened since then: a span back from now (30m, 24h,
+        /// 7d, 2w) or an RFC 3339 moment
+        #[arg(long, global = true, value_name = "DURATION|DATE")]
+        since: Option<String>,
+        /// Only what happened in one repository
+        #[arg(long, global = true,
+              add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
+        repo: Option<String>,
+    },
     /// Manage agent skills
     ///
     /// A skill is one document telling a generic agent how to do one kind of
@@ -325,25 +357,65 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: SkillCommand,
     },
+    /// Manage workflows
+    ///
+    /// A workflow is a linear kanban of columns that every task of a goal is
+    /// stepped through, one agent per column, each column's gate saying what
+    /// it hands on. Ariadne ships a catalog of them and you add your own; a
+    /// shipped workflow is reset rather than deleted, one of yours is
+    /// deleted rather than reset, and `check` reads a draft back without
+    /// saving it anywhere.
+    #[command(after_help = WORKFLOW_EXAMPLES)]
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommand,
+    },
+    /// Manage editable Perses dashboards
+    #[command(about = "Manage editable Perses dashboards", long_about = "Manage editable Perses dashboards that the daemon stores and serves.", after_help = DASHBOARD_EXAMPLES)]
+    Dashboard {
+        #[command(subcommand)]
+        command: DashboardCommand,
+    },
+    /// Track pull requests
+    ///
+    /// Follow the open requests of your repositories: yours, the ones that ask
+    /// for your review, and the ones added by hand.
+    #[command(
+        after_help = "Examples:\n  ariadne pr ls --watch\n  ariadne pr ls --mine\n  ariadne pr ls --review-requests\n  ariadne pr add https://github.com/owner/repo/pull/42\n  ariadne pr refresh"
+    )]
+    Pr {
+        #[command(subcommand)]
+        command: crate::commands::pr::PrCommand,
+    },
     /// Manage repositories
     ///
     /// The checkouts goals may work in. A repository is registered once —
     /// with the base branch its tasks branch off — and named by every goal
     /// after that; the same checkout can be registered once per base branch.
-    /// How a task ends in it is the task's own (`task create --landing`).
+    /// Its default workflow applies when a goal leaves `--workflow` out.
     #[command(after_help = REPO_EXAMPLES)]
     Repo {
         #[command(subcommand)]
         command: RepoCommand,
     },
+    /// Show and switch the webhook tunnel of the forge integrations (027)
+    Forge {
+        #[command(subcommand)]
+        command: crate::commands::forge::ForgeCommand,
+    },
+    /// List open issues from an enabled repository forge
+    Issue {
+        #[command(subcommand)]
+        command: IssueCommand,
+    },
     /// Manage the AI permission model behind the `ai` permission mode (022)
     ///
     /// The model answers an ACP agent's permission requests on its own, for every
     /// repository set to `ai`. It is a Python package Ariadne installs for
-    /// you, so `permissions enable` starts a background install rather than
-    /// answering at once — `permissions show` says where it has got to, and
+    /// you, so `permissions ai enable` starts a background install rather than
+    /// answering at once — `permissions ai show` says where it has got to, and
     /// `ariadne doctor` reports the Python interpreter it needs.
-    #[command(after_help = PERMISSIONS_EXAMPLES)]
+    #[command(arg_required_else_help = true, after_help = PERMISSIONS_EXAMPLES)]
     Permissions {
         #[command(subcommand)]
         command: PermissionsCommand,
@@ -360,9 +432,10 @@ pub(crate) enum Command {
     },
     /// Manage tasks
     ///
-    /// A task is one unit of a goal, owned by an author agent in a worktree
-    /// of its own from its first commit to the end, with reviewer agents
-    /// gating it. Its diff, its messages and its history are all here.
+    /// A task is one unit of a goal, worked through the columns of the
+    /// goal's workflow by one agent per column, all of them in one worktree
+    /// of its own from its first commit to the end. Its diff, its messages
+    /// and its history are all here.
     #[command(after_help = TASK_EXAMPLES)]
     Task {
         #[command(subcommand)]
@@ -371,7 +444,7 @@ pub(crate) enum Command {
     /// Manage agent sessions
     ///
     /// A session is one agent process the daemon drives: the agent an
-    /// orchestrator, an author or a reviewer is actually working in. They are
+    /// orchestrator or a column's agent is actually working in. They are
     /// listed docker-style — live ones by default, finished ones behind --all
     /// — and one that has ended can be revived with the same conversation.
     #[command(after_help = SESSION_EXAMPLES)]
@@ -382,7 +455,7 @@ pub(crate) enum Command {
     /// Show what the daemon has been doing, one line per event
     ///
     /// The agent events already recorded, and with -f the live stream on top
-    /// of them: goals, tasks, sessions and reviews as they change.
+    /// of them: goals, tasks, sessions and pull requests as they change.
     /// Each line is `time · kind · subject · detail`; `--format json` writes
     /// one object per line, so a pipe can read it as it goes.
     Events {
@@ -421,8 +494,9 @@ pub(crate) enum Command {
         /// Session, outside session, task or goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::attach_ids))]
         id: String,
-        /// Which agent of that id to attach to (default: author for tasks,
-        /// orchestrator for goals; not valid with a session id)
+        /// Which seat of that id to attach to (default: agent for a task,
+        /// which is the agent of its current column; orchestrator for a
+        /// goal; not valid with a session id)
         #[arg(long, value_parser = values::Spelling::<ariadne_core::Seat>::new())]
         seat: Option<ariadne_core::Seat>,
         /// Registry agent for an outside session id
@@ -470,6 +544,13 @@ pub(crate) enum DaemonCommand {
         /// Keep printing lines as the daemon writes them
         #[arg(short, long)]
         follow: bool,
+        /// Only lines from this service (`ariadned`, `ariadne-desktop`,
+        /// `ariadne-cli`)
+        #[arg(long)]
+        service: Option<String>,
+        /// Only lines at or above this level (trace, debug, info, warn, error)
+        #[arg(long)]
+        level: Option<String>,
     },
 }
 
@@ -498,6 +579,8 @@ const NO_FORMAT: &[&[&str]] = &[
 /// global so `ariadne -o wide task ls` works; that is also what would
 /// otherwise advertise `--columns` on `task cancel`.
 const LISTINGS: &[&str] = &[
+    "pr ls",
+    "pr search",
     "agent ls",
     "agent refresh",
     "attention",
@@ -506,9 +589,15 @@ const LISTINGS: &[&str] = &[
     "skill ls",
     "repo ls",
     "session ls",
+    "stats attention",
+    "stats models",
+    "stats spend",
+    "stats time",
+    "stats work",
     "task history",
     "task ls",
     "task messages",
+    "workflow ls",
 ];
 
 /// Commands where `-q` prints only each affected row's subject.
@@ -525,6 +614,7 @@ const QUIET_OUTPUT: &[&str] = &[
     "models disable",
     "models enable",
     "models ls",
+    "pr review",
     "repo add",
     "repo ls",
     "repo rm",
@@ -546,11 +636,22 @@ const QUIET_OUTPUT: &[&str] = &[
     "task messages",
     "task retry",
     "task update",
+    "workflow create",
+    "workflow ls",
+    "workflow reset",
+    "workflow rm",
+    "workflow update",
 ];
 
 /// Subcommands that print something long enough to page. `task messages`
 /// only does so with `--full`, but that is still what `--no-pager` is for.
-const PAGED: &[&str] = &["session logs", "task diff", "task logs", "task messages"];
+const PAGED: &[&str] = &[
+    "session logs",
+    "task diff",
+    "task logs",
+    "task messages",
+    "workflow show",
+];
 
 /// Subcommands whose table is a picture of live state and so take `--watch`:
 /// each declares the flag itself rather than through a global, since (unlike
@@ -558,7 +659,7 @@ const PAGED: &[&str] = &["session logs", "task diff", "task logs", "task message
 /// with on every other command. Test-only: nothing at runtime hides the flag
 /// on the caller's behalf, so nothing at runtime needs the list.
 #[cfg(test)]
-const WATCHED: &[&str] = &["attention", "goal ls", "session ls", "task ls"];
+const WATCHED: &[&str] = &["attention", "goal ls", "session ls", "task ls", "pr ls"];
 
 /// The clap command, with each global flag hidden wherever it does nothing.
 ///

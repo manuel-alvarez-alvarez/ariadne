@@ -9,69 +9,60 @@
  * session is a drill-down: it takes the panel over, task header and tabs
  * included, with a link back to the task.
  *
- * Opened from a goal's panel (`stackedOnGoal`), it is the second sheet of a
- * stack: narrower than the goal's, so that one keeps showing at its left, and
- * carrying the breadcrumb back to it.
+ * The breadcrumb to its goal is the task's own `goal_id`, not where the panel
+ * was opened from — every task has one, whatever opened this panel — and
+ * clicking it replaces this panel with the goal's in the same pane.
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { ChevronRightIcon } from "lucide-react"
 import { useRef } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
+import { PanelHeader } from "@/components/panel-header"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
 import { TabCount } from "@/components/tab-count"
-import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { When, WhenDetail } from "@/components/when"
+import { When } from "@/components/when"
 import { goalQueryOptions } from "@/features/goals/queries"
 // Not the barrel: `@/features/sessions` re-exports the sessions table, which
 // imports this feature back (see `sessions-list.tsx`).
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { taskCopyEntries } from "@/lib/clipboard"
-import { cn, shortId } from "@/lib/format"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
 import { taskMessagesQueryOptions, taskQueryOptions } from "./queries"
 import { StalledBadge } from "./stalled"
-import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
+import { TASK_STATUS_META } from "./status"
 import { TaskActions } from "./task-actions"
 import { TaskDiff } from "./task-diff"
 import { TaskFacts } from "./task-facts"
 import { TaskHistory } from "./task-history"
 import { TaskMessages } from "./task-messages"
 import { TaskSessions, TaskSessionView } from "./task-sessions"
+import { WorkflowSteps } from "./workflow-steps"
 
 // Description leads the strip and is where the panel opens: it is what the
 // task *is*, and the first thing to read on a task just landed on.
-const TABS = ["description", "messages", "history", "diff", "sessions"] as const
+const TABS = ["description", "history", "messages", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
-export function TaskPanel({
-  taskId,
-  onClose,
-  stackedOnGoal,
-}: {
-  taskId: string
-  onClose: () => void
-  /** The goal whose panel this one opened over, when there is one under it. */
-  stackedOnGoal?: string
-}) {
+export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => void }) {
   const [search, setSearch] = useSearchParams()
   const task = useQuery(taskQueryOptions(taskId))
   const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
   const session = search.get("session") ?? undefined
   const selectSession = usePanelSessionNavigation()
   // Going back from a session hands focus to the row that opened it, which the
-  // dialog cannot do for us — nothing closed. See `useFocusReturn`.
+  // frame cannot do for us — nothing closed. See `useFocusReturn`.
   const panel = useRef<HTMLDivElement>(null)
   useFocusReturn(session ?? null, panel)
   // The two counted tabs, on the very keys their own tabs read, so the numbers
@@ -81,6 +72,13 @@ export function TaskPanel({
   // would be two cache entries and two requests.
   const sessions = useQuery(sessionsQueryOptions({ task: taskId }))
   const messages = useQuery(taskMessagesQueryOptions(taskId))
+  // The goal's workflow columns, which a stepped task is drawn and named by:
+  // the same detail entry the header's breadcrumb reads.
+  const goal = useQuery({
+    ...goalQueryOptions(task.data?.goal_id ?? ""),
+    enabled: task.data !== undefined,
+  })
+  const steps = goal.data?.steps ?? []
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -89,71 +87,57 @@ export function TaskPanel({
   }
 
   return (
-    <PanelSheet onClose={onClose}>
-      <SheetContent
-        ref={panel}
-        // Stacked, it leaves the goal's sheet showing at its left and takes
-        // the one darkening of the stack with it — the sheet underneath gives
-        // its own up (see `GoalSheet`), so the screen is dimmed once and the
-        // goal reads as being behind this.
-        className={cn(
-          "sm:max-w-3xl",
-          stackedOnGoal && "w-[calc(100%-2.5rem)] shadow-2xl sm:max-w-2xl",
-        )}
-        overlay={stackedOnGoal ? { forceRender: true } : undefined}
-      >
-        {stackedOnGoal ? (
-          <PanelBreadcrumb
-            goalId={stackedOnGoal}
-            taskTitle={task.data?.title}
-            taskId={taskId}
-            onOpenGoal={onClose}
-          />
-        ) : null}
-
-        {/* A selected session replaces the task view entirely — the panel is
+    <PanelSheet onClose={onClose} panelRef={panel}>
+      {/* A selected session replaces the task view entirely — the panel is
             that session's now, and the way back is the link it carries. It is
             checked before the task query so a link into a session opens on it
             instead of waiting for the task it hangs off. */}
-        {session ? (
-          <TaskSessionView
-            taskId={taskId}
-            taskTitle={task.data?.title}
-            sessionId={session}
-            onSelect={selectSession}
-          />
-        ) : task.isPending ? (
-          <>
-            <SheetTitle className="sr-only">Loading task</SheetTitle>
+      {session ? (
+        <TaskSessionView
+          taskId={taskId}
+          taskTitle={task.data?.title}
+          sessionId={session}
+          onSelect={selectSession}
+        />
+      ) : task.isPending ? (
+        <>
+          <PaneHeader>
+            <PaneTitle className="sr-only">Loading task</PaneTitle>
+          </PaneHeader>
+          <PaneBody>
             <Skeleton className="h-7 w-2/3" />
             <Skeleton className="h-28 w-full" />
             <Skeleton className="h-64 w-full" />
-          </>
-        ) : task.error ? (
-          <>
-            <SheetTitle className="sr-only">Task {taskId}</SheetTitle>
+          </PaneBody>
+        </>
+      ) : task.error ? (
+        <>
+          <PaneHeader>
+            <PaneTitle className="sr-only">Task {taskId}</PaneTitle>
+          </PaneHeader>
+          <PaneBody>
             <ErrorState
               title={`Could not load task ${taskId}`}
               error={task.error}
               onRetry={() => void task.refetch()}
             />
-          </>
-        ) : (
-          <>
-            <TaskHeader task={task.data} showGoalLink={stackedOnGoal === undefined} />
-            <TaskFacts task={task.data} />
+          </PaneBody>
+        </>
+      ) : (
+        <>
+          <TaskHeader task={task.data} />
+          <PaneBody>
+            <TaskFacts task={task.data} steps={steps} />
+            {steps.length > 0 ? <WorkflowSteps task={task.data} steps={steps} /> : null}
 
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
                 <TabsTrigger value="description">Description</TabsTrigger>
-                {/* The verdicts, not the rounds they are grouped into: a
-                    round is how the tab is laid out, and a task around for the
-                    third time has said more than three things about itself. */}
+                <TabsTrigger value="history">History</TabsTrigger>
                 <TabsTrigger value="messages">
                   Messages
                   <TabCount count={messages.data?.length} noun="message" />
                 </TabsTrigger>
-                <TabsTrigger value="history">History</TabsTrigger>
                 <TabsTrigger value="diff">Diff</TabsTrigger>
                 <TabsTrigger value="sessions">
                   Sessions
@@ -167,113 +151,64 @@ export function TaskPanel({
                   <EmptyState emphasis="quiet" title="This task has no description" />
                 )}
               </TabsContent>
-              <TabsContent value="messages" className="pt-3">
-                <TaskMessages taskId={taskId} />
-              </TabsContent>
               <TabsContent value="history" className="pt-3">
-                <TaskHistory taskId={taskId} />
+                <TaskHistory taskId={taskId} steps={steps} />
+              </TabsContent>
+              <TabsContent value="messages" className="pt-3">
+                <TaskMessages task={task.data} />
               </TabsContent>
               <TabsContent value="diff" className="pt-3">
                 <TaskDiff taskId={taskId} />
               </TabsContent>
               <TabsContent value="sessions" className="pt-3">
-                <TaskSessions taskId={task.data.id} onSelect={selectSession} />
+                <TaskSessions task={task.data} steps={steps} onSelect={selectSession} />
               </TabsContent>
             </Tabs>
-          </>
-        )}
-      </SheetContent>
+          </PaneBody>
+        </>
+      )}
     </PanelSheet>
   )
 }
 
 /**
- * Where this panel sits: the goal it belongs to, then the task itself. The
- * goal segment drops this panel back onto the one underneath it, which is what
- * closing it does — the goal's sheet is already open behind this one.
+ * The task's header: the breadcrumb back to its goal, the title and its
+ * actions, and the dense line of its status, id and when it last moved.
+ *
+ * The breadcrumb is the task's own `goal_id`, not where the panel was opened
+ * from — every task has one, whatever opened this panel — and clicking it
+ * replaces this panel with the goal's in the same pane.
  */
-function PanelBreadcrumb({
-  goalId,
-  taskId,
-  taskTitle,
-  onOpenGoal,
-}: {
-  goalId: string
-  taskId: string
-  /** The task's own name, once it is loaded. */
-  taskTitle?: string
-  onOpenGoal: () => void
-}) {
-  const goal = useQuery(goalQueryOptions(goalId))
+function TaskHeader({ task }: { task: TaskDto }) {
+  const goal = useQuery(goalQueryOptions(task.goal_id))
+  const navigate = useNavigate()
+  const status = TASK_STATUS_META[task.status]
   return (
-    <nav
-      aria-label="Breadcrumb"
-      // Clears the sheet's own close button, which floats over this row.
-      className="flex min-w-0 items-center gap-1.5 pr-8 text-xs text-muted-foreground"
-    >
-      <button
-        type="button"
-        onClick={onOpenGoal}
-        // The ring every other control in the app wears: this one is the first
-        // thing focused when a deep link opens the panel, and it was showing
-        // the browser's own outline there.
-        className="min-w-0 truncate rounded-xs underline-offset-3 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
-      >
-        {goal.data?.title ?? "Goal"}
-      </button>
-      <ChevronRightIcon className="size-3 shrink-0" aria-hidden />
-      <span className="min-w-0 truncate font-medium text-foreground" aria-current="page">
-        {taskTitle ?? `task ${shortId(taskId)}`}
-      </span>
-    </nav>
-  )
-}
-
-function TaskHeader({ task, showGoalLink }: { task: TaskDto; showGoalLink: boolean }) {
-  const status = TASK_STATUS_META[primaryStatus(task.status)]
-  const sub = subStatus(task.status)
-  return (
-    <SheetHeader>
-      {/* Only when the goal is not already open behind this panel: stacked,
-          the breadcrumb above is the way back to it. */}
-      {showGoalLink ? (
-        <Link
-          to={paths.goal(task.goal_id)}
-          className="w-fit text-xs text-muted-foreground underline-offset-3 hover:underline"
-        >
-          ← Open the goal
-        </Link>
-      ) : null}
-      {/* The actions stay on the title row whatever the task's status, which
-          is what the title shrinking rather than wrapping the row buys: a
-          `Cancel task` on its own line under the title read as a second row of
-          header, and which line it landed on came down to how long the title
-          was and how many buttons the status offers. */}
-      <div className="flex items-start gap-3">
-        <SheetTitle className="min-w-0 flex-1">{task.title}</SheetTitle>
-        <div className="shrink-0">
-          <TaskActions task={task} />
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <StatusBadge label={status.label} tone={status.badge} hint={status.hint} />
-        {sub && <StatusBadge label={sub.label} tone={sub.badge} hint={sub.hint} />}
-        {task.stalled && <StalledBadge />}
-        <CopyableIdMenu
-          value={task.id}
-          label="task id"
-          entries={taskCopyEntries(task.id)}
-          className="text-muted-foreground"
-        />
-        <span className="ml-auto text-muted-foreground">
-          updated{" "}
-          <When
-            at={task.updated_at}
-            label="updated"
-            detail={<WhenDetail label="created" at={task.created_at} />}
-          />
-        </span>
-      </div>
-    </SheetHeader>
+    <PanelHeader
+      breadcrumb={{
+        label: goal.data?.title ?? "Goal",
+        // Replaces rather than pushes: the goal panel takes this one's place
+        // in the pane, not a step stacked over it.
+        onClick: () => navigate(paths.goal(task.goal_id), { replace: true }),
+      }}
+      title={task.title}
+      actions={<TaskActions task={task} />}
+      status={
+        <>
+          <StatusBadge label={status.label} tone={status.badge} hint={status.hint} />
+          {task.stalled && <StalledBadge />}
+        </>
+      }
+      id={<CopyableIdMenu value={task.id} label="task id" entries={taskCopyEntries(task.id)} />}
+      stamps={
+        <>
+          <span>created</span>
+          <When at={task.created_at} label="created" />
+          <span aria-hidden="true">·</span>
+          <span>updated</span>
+          <When at={task.updated_at} label="updated" />
+        </>
+      }
+    />
   )
 }

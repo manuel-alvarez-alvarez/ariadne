@@ -1,17 +1,20 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-09-26
-areas: [store, daemon]
+updated: 2026-10-16
+areas: [store, api, daemon, cli, ui]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
   - crates/ariadne-daemon/src/branch.rs
+  - crates/ariadne-daemon/src/gitwt.rs
   - crates/ariadne-daemon/tests/it/repositories.rs
   - crates/ariadne-daemon/tests/it/ai_permissions.rs
   - crates/ariadne-daemon/tests/it/goal_repositories.rs
   - crates/ariadne-daemon/tests/it/managers.rs
   - crates/ariadne-daemon/tests/it/task_branches.rs
   - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-cli/src/commands/repo.rs
+  - ui/src/features/repositories/repository-form-dialog.test.tsx
 ---
 
 # Repositories, branches and worktrees
@@ -21,53 +24,64 @@ task is given, and the worktree each agent stands in.
 
 ## Scope
 
-In: registering a repository, its base branch, description and permission
-mode, the merge strategy field, task branch naming, the worktree per seat, worktree cleanup,
-and the watch on a task branch's head.
+In: registering a repository, its base branch, description, permission mode
+and default workflow, task branch naming, the one worktree a task's columns
+share, worktree cleanup, and the watch on a task branch's head.
 
-Out: how a task ends in it (005), and what an
-agent is briefed with in its worktree (006).
+Out: how a task ends in it (030), what an
+agent is briefed with in its worktree (006), and the forge its remote is on
+and the integration with it (025).
 
 ## Behavior
 
 1. A repository is registered once and referenced by every goal that works in
-   it. It carries a path, a base branch, an optional description and a
-   permission mode, and nothing else. How work *ends* in it is not a
-   repository field: that is the task's own ending (005).
+   it. It carries a path, a base branch, an optional description, a permission
+   mode and a default workflow. The default is `develop-review-merge`; a goal
+   that leaves its workflow out takes the default of its first repository
+   (030). Changing it changes no existing goal.
 2. The base branch defaults to the branch the checkout is on at registration.
 3. A path and branch pair is unique: the same one cannot be registered twice.
    A path or branch the daemon cannot use is refused at creation. A checkout
    with no commits is usable: its base branch is the unborn one HEAD names.
+   A base branch is checked against `git check-ref-format --branch` before it
+   is looked up: revision syntax such as `main~1` or `HEAD` is refused rather
+   than resolved as if it named a branch.
 4. A repository a goal references cannot be deleted.
 5. Editing the base branch changes what *new* tasks branch from, and nothing
    about tasks already under way.
 6. A task branch is named after the task's title — its slug plus a short tail
-   of its id, as in `fix-the-landing-briefing-real-fetch-r9jr7c`. Branch names
-   carry no `ariadne/` prefix. On a task staffed with several authors (004)
-   the first author holds that branch, and every later one works beside it
-   under the same name with an `-a<n>` tail — `…-r9jr7c-a2` for the second.
-   The branches the pick passes over are removed with their worktrees when
-   it settles.
-7. An author gets a writable worktree of its own, on its own branch, cut
-   from the base branch of the task's repository. When that base has no
-   commits the task branch is cut orphan, the author's first commit is the
+   of its id, as in `fix-the-merging-briefing-real-fetch-r9jr7c`. Branch names
+   carry no `ariadne/` prefix. Every column of the task works on that one
+   branch (030).
+7. A task gets one writable worktree, cut from the repository base on its own
+   task branch, and every column's agent works in it in turn (030): the
+   develop column commits there, the review column reads and runs the suite
+   there, and the merge column lands from there. When the repository base
+   has no commits the task branch is cut orphan, the first commit is the
    repository's first, and the task's diff is read against the empty tree
    because there is no merge base to read it against. It is read against the
    empty tree once it has landed too: that commit is the one the repository
    starts from, so it has no first parent either. Cutting orphan needs
-   git 2.42, which is the floor `ariadne doctor` warns below (014).
-8. A reviewer gets a **detached, read-only** worktree pinned to the branch
-   under review, and it is refreshed between reviews so each review reads the
-   commits it was asked about. The refresh discards whatever the reviewer
-   left in the tree, tracked edits and untracked files alike, and keeps
-   ignored files; a leftover edit never stops the tree from moving. A branch
-   with no commits on it has nothing to pin at, and spawning a reviewer there
-   says so. A failed git start is not an empty branch: the start error remains
-   visible, and the scheduler retries it.
+   git 2.42, which is the floor `ariadne doctor` warns below (014). A
+   worktree's own path reaches every `git worktree` call as data, whatever
+   shape it takes: a `worktree_root` that gives it a leading `-` is still
+   created and still removed, rather than read as an unrecognized option.
+8. A review session on a pull request (029) gets a **detached, read-only**
+   worktree pinned at the request's head, and it is refreshed to the new tip
+   on every push. The refresh discards whatever the session left in the
+   tree, tracked edits and untracked files alike, and keeps ignored files; a
+   leftover edit never stops the tree from moving. A failed git start is not
+   an empty branch: the start error remains visible, and the scheduler
+   retries it.
 9. An orchestrator works in the repository's primary checkout, not a worktree
    of its own: it is the first repository of its goal.
-10. Worktrees are removed when the work that owned them ends; whether finished
-    and cancelled work keeps its worktree for inspection is configuration.
+10. A task's worktree is removed when it lands, and a task's worktree is
+    removed when the goal it belongs to is cancelled or completed — whatever
+    that task's own status is by then — all when `delete_merged_worktrees`
+    is set. While its goal stays active, a task that fails or is cancelled
+    on its own keeps its worktree, for a retry that may still come or for
+    inspection. Neither ending of a goal ever deletes a branch:
+    `delete_merged_branches` only ever reaches one that landed.
 11. The daemon watches each task branch's head and announces a move on the
     event stream, so clients see a commit without polling. The watch is
     established for the worktrees found at startup and goes when the worktree
@@ -85,6 +99,17 @@ agent is briefed with in its worktree (006).
     permission model is off, on registration and on an edit alike, with 409
     `ai_disabled` (022): the mode asks the model, and a model that is off
     answers nothing.
+13. `supervise_posts` says whether this repository's agents hold what they
+    post to the forge for a person's approval before the forge ever sees it:
+    every pull request a task opens is forced to a draft, and every reply,
+    review and resolve lands in the person's own pending GitHub review
+    instead of posting directly ([026](026-pull-requests.md)
+    rules 23 and 24). It defaults to `true`, is set when the repository is
+    registered and changed by editing it, from the CLI and the desktop app
+    alike, and an edit that does not name it keeps it. The CLI and the
+    desktop app show it only once the repository's forge integration is on
+    (025 rule 16): with nothing to post to, there is nothing for it to hold
+    back.
 
 ## Acceptance criteria
 
@@ -92,7 +117,8 @@ agent is briefed with in its worktree (006).
   (`repositories.rs::crud_round_trip_emits_a_fat_event_per_write`).
 - The base branch defaults to the checked-out branch
   (`repositories.rs::base_branch_defaults_to_the_current_branch`), a path or
-  branch that cannot be used is refused
+  branch that cannot be used is refused, revision syntax such as `main~1` or
+  `HEAD` included
   (`::create_refuses_a_path_or_branch_it_cannot_use`), a checkout with no
   commits registers on its unborn branch
   (`::a_repository_with_no_commits_can_be_registered`), and the same pair
@@ -105,6 +131,28 @@ agent is briefed with in its worktree (006).
   is on
   (`ai_permissions.rs::a_repository_takes_the_ai_mode_only_once_the_model_is_on`,
   `store.rs::a_repository_takes_the_ai_permission_mode`).
+- A repository supervises its posts until told otherwise, a registration
+  that names no flag starts supervised, an edit that names only the flag
+  moves only the flag, and the column's own schema default starts every
+  fresh repository supervised
+  (`repositories.rs::a_repository_carries_its_supervise_posts_flag`,
+  `store.rs::repository_crud_and_unique_path_branch`,
+  `store.rs::a_fresh_database_already_has_every_column_the_old_chain_added`).
+- The flag is set from the CLI, on `repo add` and `repo update` alike, and
+  from the desktop app's repository form
+  (`repo.rs::tests::repo_add_and_update_take_the_supervise_posts_flag`,
+  `ui/src/features/repositories/repository-form-dialog.test.tsx::saves the supervise posts switch`).
+- `repo inspect` shows the "supervise posts" row only once the forge is
+  enabled, not for a repository with no forge row or one that is detected but
+  disabled (`repo.rs::tests::repo_add_and_update_take_the_supervise_posts_flag`),
+  and the desktop form shows the switch only below an "on" forge switch, in
+  both the create and the edit dialog, keeping its value while it is hidden
+  (`ui/src/features/repositories/repository-form-dialog.test.tsx::hides
+  supervise posts under an off forge switch, keeping its value`).
+- A repository defaults new goals to `develop-review-merge`, takes another default at
+  registration or on an edit, and changes no existing goal
+  (`repositories.rs::a_repository_defaults_new_goals_without_changing_existing_ones`,
+  `store.rs::repository_crud_and_unique_path_branch`).
 - A task branches from the repository its goal references
   (`goal_repositories.rs::a_task_branches_from_the_repository_its_goal_references`),
   and editing the base branch moves only what new tasks branch from
@@ -114,22 +162,30 @@ agent is briefed with in its worktree (006).
   `store.rs::a_repository_a_goal_holds_cannot_be_deleted`).
 - A branch is named after the task's title
   (`store.rs::task_branch_is_named_after_the_title`).
-- Worktrees are created, verified and removed, and a reviewer's is refreshed
-  between reviews, over whatever the reviewer left in it
+- Worktrees are created, verified and removed, and a detached one is
+  refreshed to the new tip over whatever was left in it
   (`managers.rs::git_worktree_lifecycle_and_merge_verification`,
-  `::reviewer_worktree_refresh_between_rounds`); a base branch with no commits
-  gives an orphan worktree that has nothing to review until it commits, and
-  then diffs, lands, and diffs again as a landed task
+  `::a_detached_worktree_is_refreshed_to_the_new_tip`); a base branch with no
+  commits gives an orphan worktree that has nothing to review until it
+  commits, and then diffs, lands, and diffs again as a landed task
   (`::a_worktree_is_cut_from_a_base_branch_with_no_commits`).
-- A git process that cannot start while the reviewer branch is checked keeps
-  its start error and is not reported as an empty review
-  (`managers.rs::a_git_start_failure_is_not_reported_as_an_empty_review`).
+- A worktree path shaped like a flag is still created, checked out detached
+  and removed
+  (`gitwt.rs::tests::a_worktree_path_that_looks_like_a_flag_is_still_created`,
+  `::a_detached_worktree_path_that_looks_like_a_flag_is_still_created`).
 - A commit on a task branch reaches the stream
   (`task_branches.rs::a_commit_on_the_task_branch_reaches_the_stream`), the
   startup sweep follows the worktrees it finds
   (`::the_startup_sweep_follows_the_worktrees_it_finds`), a failed task stops
   being followed (`::a_failed_task_stops_being_followed`), and the watch goes
   with the worktree (`::the_watch_goes_with_the_worktree`).
+- A goal cancelled while its tasks are running, failed and cancelled loses
+  every one of their worktrees and keeps every one of their branches
+  (`task_branches.rs::a_cancelled_goal_removes_every_tasks_worktree_but_keeps_its_branches`),
+  a goal completed with a cancelled task loses that task's worktree too
+  (`::completing_a_goal_removes_a_cancelled_tasks_worktree`), and
+  `delete_merged_worktrees = false` keeps every worktree of a cancelled goal
+  (`::delete_merged_worktrees_false_keeps_a_cancelled_goals_worktrees`).
 - Twelve followed branches in a repository with 100 loose refs use a bounded
   number of descriptors
   (`branch.rs::twelve_followed_branches_share_one_repository_watch`), and

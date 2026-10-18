@@ -36,6 +36,7 @@ import { useEffect, useRef, useState } from "react"
 import type { SessionStatus } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { useOpenExternalLinks } from "@/hooks/use-open-external-links"
 import { cn } from "@/lib/format"
 import { useBaseUrl } from "@/stores/settings"
 
@@ -109,10 +110,12 @@ function TerminalPane({
 }) {
   const baseUrl = useBaseUrl()
   const { resolvedTheme } = useTheme()
+  const { confirmation, openExternalLink } = useOpenExternalLinks({ listen: false })
   const dark = resolvedTheme === "dark"
   const host = useRef<HTMLElement>(null)
   const terminal = useRef<Terminal | null>(null)
   const socket = useRef<TerminalSocket | null>(null)
+  const collapseButton = useRef<HTMLButtonElement>(null)
   const [socketStatus, setSocketStatus] = useState<TerminalSocketStatus>("connecting")
   const [error, setError] = useState<string | null>(null)
   /** The status the daemon last reported on the socket; the cache's until then. */
@@ -140,6 +143,10 @@ function TerminalPane({
         fontSize: TERMINAL_FONT_SIZE,
         theme: terminalTheme(dark),
         cursorBlink: true,
+        linkHandler: {
+          allowNonHttpProtocols: true,
+          activate: (_event, href) => openExternalLink(href),
+        },
         scrollback: SCROLLBACK_LINES,
       })
       const fit = new FitAddon()
@@ -169,12 +176,29 @@ function TerminalPane({
       })
       term.attachCustomKeyEventHandler((event) => {
         if (event.type !== "keydown") return false
+        if (event.metaKey && event.key === "Escape") {
+          // ⌘Escape leaves the console without closing anything itself: the
+          // panel's Close button, or the modal's Collapse button, takes the
+          // keyboard, and a plain Escape next closes what is now focused.
+          event.preventDefault()
+          event.stopPropagation()
+          if (onCollapse) {
+            collapseButton.current?.focus()
+          } else {
+            host.current
+              ?.closest<HTMLElement>('[data-slot="docked-pane"]')
+              ?.querySelector<HTMLElement>('[data-slot="pane-close"]')
+              ?.focus()
+          }
+          return false
+        }
         const message = terminalKeyMessage(event)
         if (message === null) return false
         event.preventDefault()
-        // A focused terminal owns Escape only in the modal. A panel keeps its
-        // usual Escape dismissal behavior.
-        if (onCollapse && event.key === "Escape") event.stopPropagation()
+        // A focused console owns Escape in the panel and in the modal alike;
+        // the pane or the dialog around it decides its own Escape only once
+        // the keyboard has left the console.
+        if (event.key === "Escape") event.stopPropagation()
         link.send(message)
         return false
       })
@@ -238,47 +262,56 @@ function TerminalPane({
   const live = isLiveStatus(reported ?? status)
 
   return (
-    <div
-      className={cn(
-        "flex min-h-0 flex-col overflow-hidden rounded-lg border bg-background font-mono text-xs text-foreground shadow-xs",
-        className,
-      )}
-    >
-      <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5 text-muted-foreground">
-        <span role="status" className="min-w-0">
-          <TerminalStatusLine status={socketStatus} error={error} live={live} />
-        </span>
-        {/* An ended session's console draws its transcript and closes again
-            at once, so only a live one's is worth opening again; an ended
-            one comes back by resuming the session. */}
-        {socketStatus === "closed" && live ? (
-          <Button size="xs" variant="outline" onClick={reopen} className="font-mono">
-            Reopen
-          </Button>
-        ) : null}
-        {onExpand ? (
-          <Button size="icon-xs" variant="ghost" onClick={onExpand} aria-label="Expand the console">
-            <Maximize2Icon />
-          </Button>
-        ) : null}
-        {onCollapse ? (
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={onCollapse}
-            aria-label="Collapse the console back into the panel"
-          >
-            <Minimize2Icon />
-          </Button>
-        ) : null}
+    <>
+      <div
+        className={cn(
+          "flex min-h-0 flex-col overflow-hidden rounded-lg border bg-background font-mono text-xs text-foreground shadow-xs",
+          className,
+        )}
+      >
+        <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5 text-muted-foreground">
+          <span role="status" className="min-w-0">
+            <TerminalStatusLine status={socketStatus} error={error} live={live} />
+          </span>
+          {/* An ended session's console draws its transcript and closes again
+              at once, so only a live one's is worth opening again; an ended
+              one comes back by resuming the session. */}
+          {socketStatus === "closed" && live ? (
+            <Button size="xs" variant="outline" onClick={reopen} className="font-mono">
+              Reopen
+            </Button>
+          ) : null}
+          {onExpand ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              onClick={onExpand}
+              aria-label="Expand the console"
+            >
+              <Maximize2Icon />
+            </Button>
+          ) : null}
+          {onCollapse ? (
+            <Button
+              ref={collapseButton}
+              size="icon-xs"
+              variant="ghost"
+              onClick={onCollapse}
+              aria-label="Collapse the console back into the panel"
+            >
+              <Minimize2Icon />
+            </Button>
+          ) : null}
+        </div>
+        {/* The padding sits on a box of its own: the fit addon sizes the grid
+            from the host's computed width and height, which under border-box
+            sizing count the host's padding as room for cells. */}
+        <div className="min-h-0 flex-1 p-2">
+          <section ref={host} className="h-full" aria-label="Console terminal" />
+        </div>
       </div>
-      {/* The padding sits on a box of its own: the fit addon sizes the grid
-          from the host's computed width and height, which under border-box
-          sizing count the host's padding as room for cells. */}
-      <div className="min-h-0 flex-1 p-2">
-        <section ref={host} className="h-full" aria-label="Console terminal" />
-      </div>
-    </div>
+      {confirmation}
+    </>
   )
 }
 

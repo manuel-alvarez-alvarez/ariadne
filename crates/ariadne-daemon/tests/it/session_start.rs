@@ -8,7 +8,7 @@ use serde_json::json;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::sessions::SessionDto;
-use ariadne_core::{Seat, SessionStatus};
+use ariadne_core::SessionStatus;
 use ariadne_store::{SessionFilter, TaskFilter};
 
 use common::acp::{StubAcpAgent, script, stub_acp_agent};
@@ -241,9 +241,7 @@ async fn a_new_session_needs_an_existing_absolute_directory_and_a_registry_model
 async fn an_agent_session_cannot_start_a_session() {
     let h = harness().await;
     let cast = h.cast().await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
     let dir = tempfile::tempdir().unwrap();
 
     let (status, _) = h

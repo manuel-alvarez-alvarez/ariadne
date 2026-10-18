@@ -1,6 +1,6 @@
 ---
 name: conflict-resolution
-description: Resolve a merge or rebase conflict by the intent of each side. Use when a rebase stops, a merge conflicts, or markers block a landing.
+description: When a rebase stops, a merge conflicts, or a landing is blocked, resolves it by intent.
 ---
 
 # Conflict resolution
@@ -12,11 +12,11 @@ A conflict is two intents that meet in one file. Resolve it by intent.
 1. Read the conflict state. Run `git status` and open every conflicting file.
    Done when you can name each file and the operation in progress.
 2. Find the intent of each side. Read both commit messages, both diffs and the
-   ticket each one names.
+   task each one names.
    Done when you can state each intent in one sentence.
 3. Resolve each hunk. Keep both intents where they fit together.
    Done when no conflict marker is left.
-4. Where two intents clash, keep the one the landing goal wants. Write the
+4. Where two intents clash, keep the one the goal of the task wants. Write the
    trade-off in the commit body.
    Done when the commit body names each intent you dropped.
 5. Run the tests and the lint of the files you resolved.
@@ -24,6 +24,7 @@ A conflict is two intents that meet in one file. Resolve it by intent.
 6. Finish the operation. Stage the files, then continue the rebase or commit
    the merge.
    Done when git reports no operation in progress.
+7. Call `complete_step` with the column report.
 
 ## Rules
 

@@ -5,11 +5,15 @@ use super::*;
 
 use clap::FromArgMatches;
 
-use ariadne_core::{GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{GoalStatus, PermissionMode, Seat, SessionStatus, TaskStatus};
 
+use crate::commands::dashboard::DashboardCommand;
 use crate::commands::models::ModelsCommand;
-use crate::commands::permissions::PermissionsCommand;
+use crate::commands::permissions::{
+    AiPermissionsCommand, LearnedPermissionsCommand, PermissionsCommand,
+};
 use crate::commands::skill::SkillCommand;
+use crate::commands::workflow::WorkflowCommand;
 use crate::output::ColorChoice;
 
 /// clap's own consistency check over the whole tree, shadowed `--format`
@@ -23,13 +27,16 @@ fn the_command_tree_is_well_formed() {
 /// `ariadne --help`, so every one of them has to read the same way.
 const GROUPS: &[&str] = &[
     "agent",
+    "dashboard",
     "daemon",
     "goal",
     "permissions",
+    "pr",
     "repo",
     "session",
     "skill",
     "task",
+    "workflow",
 ];
 
 /// The root and every group say what they are for, list the two global flags
@@ -74,6 +81,32 @@ fn no_help_screen_leaks_the_endpoint_of_the_shell_it_runs_in() {
     }
 }
 
+/// The old pipeline's words are gone from every help screen: a task is
+/// staffed one agent per workflow column, and how it ends is the workflow's
+/// own gate, so no screen offers an author, a reviewer or a landing. The
+/// `reviewer` seat is the pull request review session's and stays where a
+/// seat is named.
+#[test]
+fn no_help_screen_names_an_author_a_reviewer_or_a_landing() {
+    fn screens(cmd: &clap::Command, path: &mut Vec<String>, out: &mut Vec<(String, String)>) {
+        out.push((path.join(" "), cmd.clone().render_long_help().to_string()));
+        for sub in cmd.get_subcommands() {
+            path.push(sub.get_name().to_string());
+            screens(sub, path, out);
+            path.pop();
+        }
+    }
+    let mut out = Vec::new();
+    screens(&built(), &mut Vec::new(), &mut out);
+    assert!(out.len() > 50, "the walk reached {} screens", out.len());
+    for (name, help) in out {
+        let lower = help.to_lowercase();
+        for gone in ["author", "landing", "--reviewer", "no-reviewer"] {
+            assert!(!lower.contains(gone), "{name} names {gone}: {help}");
+        }
+    }
+}
+
 /// A description nobody gave is empty, which is what the daemon is sent; the
 /// help has no business printing `[default: ""]` at a reader.
 #[test]
@@ -83,6 +116,48 @@ fn an_empty_description_is_not_advertised_as_a_default() {
         assert!(help.contains("-d, --description"), "{help}");
         assert!(!help.contains("[default: \"\"]"), "{help}");
     }
+}
+
+#[test]
+fn an_issue_can_supply_the_goal_title_and_repository() {
+    let Command::Goal {
+        command:
+            GoalCommand::Create {
+                title,
+                description,
+                from_issue,
+                repos,
+                ..
+            },
+    } = parse(&[
+        "ariadne",
+        "goal",
+        "create",
+        "--from-issue",
+        "https://github.com/acme/widgets/issues/12",
+        "--model",
+        "stub:test-model",
+    ])
+    .command
+    else {
+        panic!("goal create")
+    };
+    assert_eq!(title, None);
+    assert_eq!(description, None);
+    assert!(repos.is_empty());
+    assert_eq!(
+        from_issue.as_deref(),
+        Some("https://github.com/acme/widgets/issues/12")
+    );
+
+    let Command::Issue {
+        command: IssueCommand::Ls { repo, all },
+    } = parse(&["ariadne", "issue", "ls", "--repo", "/work/widgets", "--all"]).command
+    else {
+        panic!("issue ls")
+    };
+    assert_eq!(repo, "/work/widgets");
+    assert!(all);
 }
 
 /// Every command a user can actually run, and whether `--format` shapes
@@ -101,6 +176,11 @@ const LEAVES: &[(&str, bool)] = &[
     ("daemon start", true),
     ("daemon status", true),
     ("daemon stop", true),
+    ("dashboard get", true),
+    ("dashboard ls", true),
+    ("dashboard reset", true),
+    ("dashboard rm", true),
+    ("dashboard set", true),
     ("doctor", true),
     ("events", true),
     ("goal attach", false),
@@ -110,17 +190,30 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal inspect", true),
     ("goal ls", true),
     ("goal rm", true),
+    ("forge tunnel", true),
+    ("issue ls", true),
     ("mcp serve", false),
     ("models disable", true),
     ("models enable", true),
     ("models ls", true),
     ("models rank", true),
     ("models show", true),
-    ("permissions disable", true),
-    ("permissions enable", true),
-    ("permissions refresh", true),
-    ("permissions set", true),
-    ("permissions show", true),
+    ("permissions ai disable", true),
+    ("permissions ai enable", true),
+    ("permissions ai refresh", true),
+    ("permissions ai set", true),
+    ("permissions ai show", true),
+    ("permissions learned list", true),
+    ("permissions learned rm", true),
+    ("permissions learned scope", true),
+    ("permissions learned show", true),
+    ("permissions ai test", true),
+    ("pr ls", true),
+    ("pr inspect", true),
+    ("pr search", true),
+    ("pr refresh", true),
+    ("pr review", true),
+    ("pr babysit", true),
     ("repo add", true),
     ("repo inspect", true),
     ("repo ls", true),
@@ -133,6 +226,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("session new", true),
     ("session resume", true),
     ("session send", true),
+    ("session switch", true),
     ("skill create", true),
     ("skill get", true),
     ("skill inspect", true),
@@ -140,6 +234,11 @@ const LEAVES: &[(&str, bool)] = &[
     ("skill reset", true),
     ("skill rm", true),
     ("skill set", true),
+    ("stats attention", true),
+    ("stats models", true),
+    ("stats spend", true),
+    ("stats time", true),
+    ("stats work", true),
     ("task attach", false),
     ("task cancel", true),
     ("task create", true),
@@ -152,6 +251,13 @@ const LEAVES: &[(&str, bool)] = &[
     ("task messages", true),
     ("task update", true),
     ("version", true),
+    ("workflow check", true),
+    ("workflow create", true),
+    ("workflow ls", true),
+    ("workflow reset", true),
+    ("workflow rm", true),
+    ("workflow show", true),
+    ("workflow update", true),
 ];
 
 /// The list above is the whole tree, so a command added later is not
@@ -513,29 +619,46 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
     assert!(msg.contains("invalid value 'done'"), "{msg}");
     assert!(msg.contains("completed"), "the refusal lists the real ones");
 
-    let Command::Session {
-        command: SessionCommand::Ls { seat, .. },
-    } = parse(&["ariadne", "session", "ls", "--seat", "reviewer"]).command
-    else {
-        panic!("session ls");
-    };
-    assert_eq!(seat, Some(Seat::Reviewer));
-    assert!(
-        try_parse(&["ariadne", "session", "ls", "--seat", "critic"]).is_err(),
-        "an unknown seat is a usage error"
-    );
+    // The three seats: the orchestrator, the agent of a task's column, and
+    // the reviewer of a pull request the user was asked to review.
+    for (word, seat) in [
+        ("orchestrator", Seat::Orchestrator),
+        ("agent", Seat::Agent),
+        ("reviewer", Seat::Reviewer),
+    ] {
+        let Command::Session {
+            command: SessionCommand::Ls { seat: parsed, .. },
+        } = parse(&["ariadne", "session", "ls", "--seat", word]).command
+        else {
+            panic!("session ls");
+        };
+        assert_eq!(parsed, Some(seat), "{word}");
+    }
+    for gone in ["critic", "author"] {
+        assert!(
+            try_parse(&["ariadne", "session", "ls", "--seat", gone]).is_err(),
+            "{gone} is no seat, so it is a usage error"
+        );
+    }
 
     let Command::Task {
         command: TaskCommand::Ls { statuses, .. },
-    } = parse(&["ariadne", "task", "ls", "--status", "approved"]).command
+    } = parse(&["ariadne", "task", "ls", "--status", "finished"]).command
     else {
         panic!("task ls");
     };
-    assert_eq!(statuses, [TaskStatus::Approved]);
-    assert!(
-        try_parse(&["ariadne", "task", "ls", "--status", "integrating"]).is_err(),
-        "and the status a task was landed from by a fourth seat is gone"
-    );
+    assert_eq!(statuses, [TaskStatus::Finished]);
+    for gone in [
+        "integrating",
+        "under-review",
+        "changes-requested",
+        "approved",
+    ] {
+        assert!(
+            try_parse(&["ariadne", "task", "ls", "--status", gone]).is_err(),
+            "{gone}: a task is in one of six statuses, and the review ones are gone"
+        );
+    }
 }
 
 /// A status is typed either way round: the kebab-case spelling the help
@@ -546,29 +669,7 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
 fn a_status_is_spelled_in_kebab_or_in_snake() {
     assert_eq!(task_statuses(&["in-progress"]), [TaskStatus::InProgress]);
     assert_eq!(task_statuses(&["in_progress"]), [TaskStatus::InProgress]);
-    let Command::Task {
-        command: TaskCommand::Create { landing, .. },
-    } = parse(&[
-        "ariadne",
-        "task",
-        "create",
-        "01GOAL",
-        "--title",
-        "t",
-        "--author",
-        "coding=claude-agent-acp:claude-sonnet-5",
-        "--landing",
-        "pull-request",
-    ])
-    .command
-    else {
-        panic!("task create");
-    };
-    assert_eq!(
-        landing,
-        Some(Landing::PullRequest),
-        "and so is every other enum a flag takes"
-    );
+    // And so is every other enum a flag takes.
     let Command::Repo {
         command: RepoCommand::Add {
             permission_mode, ..
@@ -587,8 +688,8 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
             "01GOAL",
             "--title",
             "t",
-            "--author",
-            "coding=claude-agent-acp:claude-sonnet-5",
+            "--agent",
+            "develop=claude-agent-acp:claude-sonnet-5",
             "--permission-mode",
             "learn",
         ])
@@ -600,9 +701,9 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
 /// every `ls` takes them the same way.
 #[test]
 fn several_statuses_ride_on_one_flag() {
-    let both = [TaskStatus::InProgress, TaskStatus::UnderReview];
-    assert_eq!(task_statuses(&["in-progress,under_review"]), both);
-    assert_eq!(task_statuses(&["in-progress", "under-review"]), both);
+    let both = [TaskStatus::InProgress, TaskStatus::Finished];
+    assert_eq!(task_statuses(&["in_progress,finished"]), both);
+    assert_eq!(task_statuses(&["in-progress", "finished"]), both);
 
     let Command::Session {
         command: SessionCommand::Ls { statuses, .. },
@@ -641,9 +742,9 @@ fn task_statuses(values: &[&str]) -> Vec<TaskStatus> {
 }
 
 /// What each agent runs on is chosen on the way in, as one string: `--model`
-/// for the orchestrator and the author, `--reviewer SKILLS=MODEL` per
-/// reviewer slot, and every spelling lands in the field the request is built
-/// from. A model is required, so every spelling carries one.
+/// for the orchestrator, `--agent STEP[:SKILLS]=MODEL` per workflow column,
+/// and every spelling lands in the field the request is built from. A model
+/// is required, so every spelling carries one.
 #[test]
 fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     let orchestrator = |args: &[&str]| {
@@ -666,9 +767,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     );
 
     let Command::Task {
-        command: TaskCommand::Create {
-            authors, reviewers, ..
-        },
+        command: TaskCommand::Create { agents, .. },
     } = parse(&[
         "ariadne",
         "task",
@@ -676,57 +775,59 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         "01GOAL",
         "--title",
         "Do it",
-        "--author",
-        "coding,documentation=claude-agent-acp:claude-opus-5",
-        "--reviewer",
-        "code-review=codex-acp:o3",
-        "--reviewer",
-        "security-review=opencode-acp:ollama/llama3:8b",
+        "--agent",
+        "develop:coding,documentation=claude-agent-acp:claude-opus-5",
+        "--agent",
+        "review:code-review=codex-acp:o3",
+        "--agent",
+        "merge=opencode-acp:ollama/llama3:8b",
     ])
     .command
     else {
         panic!("task create")
     };
-    assert_eq!(authors.len(), 1);
-    assert_eq!(authors[0].skills, ["coding", "documentation"]);
-    assert_eq!(authors[0].model, "claude-agent-acp:claude-opus-5");
     assert_eq!(
-        reviewers
+        agents
             .iter()
-            .map(|r| (r.skills.join(","), r.model.as_str()))
+            .map(|a| (a.step.as_str(), a.skills.join(","), a.model.as_str()))
             .collect::<Vec<_>>(),
         [
-            ("code-review".to_string(), "codex-acp:o3"),
             (
-                "security-review".to_string(),
-                "opencode-acp:ollama/llama3:8b"
+                "develop",
+                "coding,documentation".to_string(),
+                "claude-agent-acp:claude-opus-5"
             ),
+            ("review", "code-review".to_string(), "codex-acp:o3"),
+            ("merge", String::new(), "opencode-acp:ollama/llama3:8b"),
         ],
-        "in the order they were typed, which is review order"
+        "one agent per column, in the order they were typed"
     );
 
     let edited = |args: &[&str]| {
         let mut argv = vec!["ariadne", "task", "update", "01TASK"];
         argv.extend_from_slice(args);
         let Command::Task {
-            command: TaskCommand::Update { model, .. },
+            command: TaskCommand::Update { agents, .. },
         } = parse(&argv).command
         else {
             panic!("task update")
         };
-        model
+        agents
     };
     assert_eq!(
-        edited(&["--model", "codex-acp:gpt-5.3-codex"]).as_deref(),
-        Some("codex-acp:gpt-5.3-codex")
+        edited(&["--agent", "develop=codex-acp:gpt-5.3-codex"])
+            .iter()
+            .map(|a| a.model.as_str())
+            .collect::<Vec<_>>(),
+        ["codex-acp:gpt-5.3-codex"]
     );
-    assert_eq!(edited(&["--title", "Do it better"]), None);
+    assert!(edited(&["--title", "Do it better"]).is_empty());
 }
 
 /// A model is required wherever an agent is chosen: `goal create` refuses a
-/// line with no `--model`, `task create` a line with no `--author`, an agent
-/// slot the `=MODEL` half, and `task update --model` the word `default` —
-/// there is no longer anything to hand a pin back to.
+/// line with no `--model`, `task create` a line with no `--agent`, and an
+/// agent slot the `=MODEL` half — there is no agent default to hand a pin
+/// back to, so `default` names no agent either.
 #[test]
 fn a_line_with_no_model_is_a_usage_error() {
     assert!(
@@ -739,7 +840,7 @@ fn a_line_with_no_model_is_a_usage_error() {
 
     assert!(
         try_parse(&["ariadne", "task", "create", "01GOAL", "--title", "Do it"]).is_err(),
-        "task create parses with no --author"
+        "task create parses with no --agent"
     );
 
     let err = try_parse(&[
@@ -749,14 +850,14 @@ fn a_line_with_no_model_is_a_usage_error() {
         "01GOAL",
         "--title",
         "Do it",
-        "--author",
-        "coding,testing",
+        "--agent",
+        "develop:coding,testing",
     ])
     .map(|_| ())
-    .expect_err("an author with no model")
+    .expect_err("an agent with no model")
     .to_string();
     assert!(err.contains("a model is required"), "{err}");
-    assert!(err.contains("SKILLS=MODEL"), "{err}");
+    assert!(err.contains("STEP=MODEL"), "{err}");
 
     // A bare agent parses nowhere: it names no model.
     let err = try_parse(&[
@@ -764,8 +865,8 @@ fn a_line_with_no_model_is_a_usage_error() {
         "task",
         "update",
         "01TASK",
-        "--model",
-        "codex-acp",
+        "--agent",
+        "develop=codex-acp",
     ])
     .map(|_| ())
     .expect_err("a bare agent")
@@ -773,10 +874,17 @@ fn a_line_with_no_model_is_a_usage_error() {
     assert!(err.contains("`codex-acp` names no agent"), "{err}");
     assert!(err.contains("a model is required"), "{err}");
 
-    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--model", "default"])
-        .map(|_| ())
-        .expect_err("default is no model")
-        .to_string();
+    let err = try_parse(&[
+        "ariadne",
+        "task",
+        "update",
+        "01TASK",
+        "--agent",
+        "develop=default",
+    ])
+    .map(|_| ())
+    .expect_err("default is no model")
+    .to_string();
     assert!(err.contains("names no agent"), "{err}");
 
     // Whitespace after the colon is an empty model too: it would create a
@@ -786,8 +894,8 @@ fn a_line_with_no_model_is_a_usage_error() {
         "task",
         "update",
         "01TASK",
-        "--model",
-        "codex-acp: ",
+        "--agent",
+        "develop=codex-acp: ",
     ])
     .map(|_| ())
     .expect_err("whitespace is no model")
@@ -796,9 +904,172 @@ fn a_line_with_no_model_is_a_usage_error() {
     assert!(err.contains("a model is required"), "{err}");
 }
 
+/// `--agent STEP[:SKILLS]=MODEL[@EFFORT]` staffs one workflow column at a
+/// time, and is the one way a task is staffed: every half parses, a missing
+/// model is refused where it was typed, and the pin flags of the old
+/// one-agent task — `--model`, `--effort` — are gone rather than ignored.
+#[test]
+fn an_agent_slot_names_its_column_skills_model_and_effort() {
+    let Command::Task {
+        command: TaskCommand::Create { agents, .. },
+    } = parse(&[
+        "ariadne",
+        "task",
+        "create",
+        "01GOAL",
+        "--title",
+        "Do it",
+        "--agent",
+        "develop:coding=codex-acp:gpt-5.6-sol@xhigh",
+        "--agent",
+        "review=claude-agent-acp:claude-opus-5",
+    ])
+    .command
+    else {
+        panic!("task create")
+    };
+    assert_eq!(agents.len(), 2);
+    assert_eq!(agents[0].step, "develop");
+    assert_eq!(agents[0].skills, ["coding"]);
+    assert_eq!(agents[0].model, "codex-acp:gpt-5.6-sol");
+    assert_eq!(agents[0].effort.as_deref(), Some("xhigh"));
+    assert_eq!(agents[1].step, "review");
+    assert!(agents[1].skills.is_empty(), "empty means the column's own");
+
+    let err = try_parse(&[
+        "ariadne", "task", "create", "01GOAL", "--title", "Do it", "--agent", "develop",
+    ])
+    .map(|_| ())
+    .expect_err("an agent slot with no model")
+    .to_string();
+    assert!(err.contains("a model is required"), "{err}");
+    assert!(err.contains("STEP=MODEL"), "{err}");
+
+    // `task create` with no `--agent` staffs nobody, which is a usage error.
+    assert!(try_parse(&["ariadne", "task", "create", "01GOAL", "--title", "Do it"]).is_err());
+
+    let Command::Task {
+        command: TaskCommand::Update { agents, .. },
+    } = parse(&[
+        "ariadne",
+        "task",
+        "update",
+        "01TASK",
+        "--agent",
+        "develop=codex-acp:gpt-5.6-sol",
+    ])
+    .command
+    else {
+        panic!("task update")
+    };
+    assert_eq!(agents.len(), 1);
+
+    // The staffing flags of the old pipeline are gone, not ignored: a line
+    // that still carries one is refused.
+    for gone in [
+        &["--model", "codex-acp:o3"][..],
+        &["--effort", "high"][..],
+        &["--reviewer", "code-review=codex-acp:o3"][..],
+        &["--no-reviewer"][..],
+    ] {
+        let mut argv = vec!["ariadne", "task", "update", "01TASK"];
+        argv.extend_from_slice(gone);
+        assert!(try_parse(&argv).is_err(), "{gone:?} still parses");
+    }
+    for gone in [
+        &["--author", "coding=codex-acp:o3"][..],
+        &["--reviewer", "code-review=codex-acp:o3"][..],
+        &["--no-reviewer"][..],
+    ] {
+        let mut argv = vec![
+            "ariadne",
+            "task",
+            "create",
+            "01GOAL",
+            "--title",
+            "Do it",
+            "--agent",
+            "develop=codex-acp:o3",
+        ];
+        argv.extend_from_slice(gone);
+        assert!(try_parse(&argv).is_err(), "{gone:?} still parses");
+    }
+}
+
+/// `goal create --workflow` names the workflow every task of the goal runs
+/// on, and the `--landing` of the old pipeline is gone — a workflow's own
+/// gates say how every task of the goal ends.
+#[test]
+fn goal_create_workflow_sends_the_name_and_landing_is_gone() {
+    let Command::Goal {
+        command: GoalCommand::Create { workflow, .. },
+    } = parse(&[
+        "ariadne",
+        "goal",
+        "create",
+        "--title",
+        "Ship it",
+        "--repo",
+        "01REPO",
+        "--model",
+        "codex-acp:gpt-5.3-codex",
+        "--workflow",
+        "develop-review-merge",
+    ])
+    .command
+    else {
+        panic!("goal create")
+    };
+    assert_eq!(workflow.as_deref(), Some("develop-review-merge"));
+
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "goal",
+            "create",
+            "--title",
+            "Ship it",
+            "--repo",
+            "01REPO",
+            "--model",
+            "codex-acp:gpt-5.3-codex",
+            "--landing",
+            "merge",
+        ])
+        .is_err(),
+        "a workflow's own gates say how a task ends, so --landing is gone"
+    );
+}
+
+#[test]
+fn session_switch_requires_a_model_and_accepts_effort_default() {
+    let err = try_parse(&[
+        "ariadne",
+        "session",
+        "switch",
+        "01SESSION",
+        "--model",
+        "default",
+    ])
+    .err()
+    .expect("default is no model")
+    .to_string();
+    assert!(err.contains("a model is required"), "{err}");
+    try_parse(&[
+        "ariadne",
+        "session",
+        "switch",
+        "01SESSION",
+        "--model",
+        "codex-acp:gpt-5",
+        "--effort",
+        "default",
+    ])
+    .expect("switch pin parses");
+}
+
 /// The other half of a pin, on every line a model is chosen on: `--effort`
-/// beside `--model`, `@EFFORT` on a reviewer slot, and the word an update
-/// writes to run the model at whatever its CLI reasons it at.
+/// beside `--model`, and `@EFFORT` on an agent slot.
 #[test]
 fn an_effort_can_be_chosen_beside_every_model() {
     let Command::Goal {
@@ -824,9 +1095,7 @@ fn an_effort_can_be_chosen_beside_every_model() {
     assert_eq!(effort.as_deref(), Some("xhigh"));
 
     let Command::Task {
-        command: TaskCommand::Create {
-            authors, reviewers, ..
-        },
+        command: TaskCommand::Create { agents, .. },
     } = parse(&[
         "ariadne",
         "task",
@@ -834,73 +1103,54 @@ fn an_effort_can_be_chosen_beside_every_model() {
         "01GOAL",
         "--title",
         "Do it",
-        "--author",
-        "coding=claude-agent-acp:claude-opus-5@xhigh",
-        "--reviewer",
-        "code-review=codex-acp:gpt-5.6-sol@xhigh",
-        "--reviewer",
-        "security-review=claude-agent-acp:claude-sonnet-5@high",
-        "--reviewer",
-        "performance-review=codex-acp:gpt-5.6-luna",
+        "--agent",
+        "develop:coding=claude-agent-acp:claude-opus-5@xhigh",
+        "--agent",
+        "review:code-review=codex-acp:gpt-5.6-sol@xhigh",
+        "--agent",
+        "merge=codex-acp:gpt-5.6-luna",
     ])
     .command
     else {
         panic!("task create")
     };
-    assert_eq!(authors[0].effort.as_deref(), Some("xhigh"));
     assert_eq!(
-        reviewers
+        agents
             .iter()
-            .map(|r| (r.skills.join(","), r.model.as_str(), r.effort.as_deref()))
+            .map(|a| (a.step.as_str(), a.model.as_str(), a.effort.as_deref()))
             .collect::<Vec<_>>(),
         [
-            (
-                "code-review".to_string(),
-                "codex-acp:gpt-5.6-sol",
-                Some("xhigh")
-            ),
-            (
-                "security-review".to_string(),
-                "claude-agent-acp:claude-sonnet-5",
-                Some("high")
-            ),
-            (
-                "performance-review".to_string(),
-                "codex-acp:gpt-5.6-luna",
-                None
-            ),
+            ("develop", "claude-agent-acp:claude-opus-5", Some("xhigh")),
+            ("review", "codex-acp:gpt-5.6-sol", Some("xhigh")),
+            ("merge", "codex-acp:gpt-5.6-luna", None),
         ],
         "an agent names its model, and the effort beside it where one was \
          chosen"
     );
 
-    let edited = |args: &[&str]| {
-        let mut argv = vec!["ariadne", "task", "update", "01TASK"];
-        argv.extend_from_slice(args);
-        let Command::Task {
-            command: TaskCommand::Update { effort, .. },
-        } = parse(&argv).command
-        else {
-            panic!("task update")
-        };
-        effort
-    };
-    assert_eq!(edited(&["--effort", "ultra"]).as_deref(), Some("ultra"));
-    assert_eq!(edited(&["--effort", "default"]).as_deref(), Some("default"));
-    assert_eq!(edited(&["--model", "codex-acp:gpt-5.3-codex"]), None);
+    // An effort rides on the slot it belongs to; there is no `--effort` for
+    // a task, since a task has as many models as its workflow has columns.
+    assert!(try_parse(&["ariadne", "task", "update", "01TASK", "--effort", "ultra"]).is_err());
 }
 
 /// An effort is the model's to accept, and the daemon holds the catalogue —
-/// so the only thing the line itself refuses is a flag with no effort in it.
+/// so the only thing the line itself refuses is a slot with no effort after
+/// its `@`.
 #[test]
 fn an_effort_that_says_nothing_is_a_usage_error() {
-    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--effort", " "])
-        .map(|_| ())
-        .expect_err("no effort at all")
-        .to_string();
+    let err = try_parse(&[
+        "ariadne",
+        "task",
+        "update",
+        "01TASK",
+        "--agent",
+        "develop=codex-acp:o3@ ",
+    ])
+    .map(|_| ())
+    .expect_err("no effort at all")
+    .to_string();
     assert!(err.contains("no effort was named"), "{err}");
     assert!(err.contains("ariadne models ls"), "{err}");
-    assert!(err.contains("default"), "{err}");
 
     // Which efforts a model takes is the daemon's answer, not this one's: an
     // effort no model of that agent runs at is still sent, and refused there.
@@ -910,10 +1160,8 @@ fn an_effort_that_says_nothing_is_a_usage_error() {
             "task",
             "update",
             "01TASK",
-            "--model",
-            "claude-agent-acp:claude-opus-5",
-            "--effort",
-            "ultra",
+            "--agent",
+            "develop=claude-agent-acp:claude-opus-5@ultra",
         ])
         .is_ok()
     );
@@ -943,18 +1191,16 @@ fn a_model_naming_no_agent_is_a_usage_error() {
             "01GOAL",
             "--title",
             "Do it",
-            "--author",
-            "coding=gpt-5.3-codex",
+            "--agent",
+            "develop:coding=gpt-5.3-codex",
         ],
         &[
             "ariadne",
             "task",
-            "create",
-            "01GOAL",
-            "--title",
-            "Do it",
-            "--reviewer",
-            "code-review=gpt-5.3-codex",
+            "update",
+            "01TASK",
+            "--agent",
+            "review=gpt-5.3-codex",
         ],
     ];
     for argv in lines {
@@ -983,51 +1229,52 @@ fn a_model_naming_no_agent_is_a_usage_error() {
 #[test]
 fn an_agent_id_is_the_daemons_to_check() {
     assert!(
-        try_parse(&["ariadne", "task", "update", "01TASK", "--model", "llama:x"]).is_ok(),
+        try_parse(&[
+            "ariadne",
+            "task",
+            "update",
+            "01TASK",
+            "--agent",
+            "develop=llama:x"
+        ])
+        .is_ok(),
         "the line has no registry to check an agent against"
     );
 }
 
-/// A `--reviewer` that says half of what it means is a typo, and it is
+/// An `--agent` slot that says half of what it means is a typo, and it is
 /// refused where it was typed rather than sent to the daemon to be refused
 /// there — with the form it accepts.
 #[test]
-fn a_reviewer_that_names_no_real_agent_is_a_usage_error() {
+fn an_agent_slot_that_names_no_real_agent_is_a_usage_error() {
     let refused = |spec: &str| {
         try_parse(&[
-            "ariadne",
-            "task",
-            "create",
-            "01GOAL",
-            "--title",
-            "Do it",
-            "--reviewer",
-            spec,
+            "ariadne", "task", "create", "01GOAL", "--title", "Do it", "--agent", spec,
         ])
         .map(|_| ())
-        .expect_err("a reviewer that says half of what it means")
+        .expect_err("an agent slot that says half of what it means")
         .to_string()
     };
-    let err = refused("code-review=llama");
+    let err = refused("review:code-review=llama");
     assert!(err.contains("names no agent"), "{err}");
-    assert!(refused("code-review=").contains("no model after the ="));
-    assert!(refused("code-review=codex-acp:").contains("no model after the `:`"));
-    // Skills with no `=MODEL` at all are half a slot too, `@EFFORT` or not.
-    let err = refused("code-review");
+    assert!(refused("review:code-review=").contains("no model after the ="));
+    assert!(refused("review=codex-acp:").contains("no model after the `:`"));
+    // A column with no `=MODEL` at all is half a slot too, `@EFFORT` or not.
+    let err = refused("review:code-review");
     assert!(err.contains("a model is required"), "{err}");
-    let err = refused("Reviewer@high");
+    let err = refused("review@high");
     assert!(err.contains("a model is required"), "{err}");
+    // A model with no column is the other half missing.
+    assert!(refused("=codex-acp:o3").contains("no column"));
     // And the half after the `@`, which the forms in the refusal spell out.
-    let err = refused("code-review=codex-acp:o3@");
+    let err = refused("review=codex-acp:o3@");
     assert!(err.contains("no effort was named"), "{err}");
-    assert!(refused("code-review=@high").contains("SKILLS=MODEL@EFFORT"));
+    assert!(refused("review=@high").contains("STEP:SKILLS=MODEL@EFFORT"));
 }
 
-/// A repository is a checkout and a base branch, and that is all it takes:
-/// how a change reaches that base branch is the task's own `landing`, agreed
-/// with the user task by task, so nothing about landing is registered here.
+/// A repository supplies the workflow for a new goal that leaves it out.
 #[test]
-fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing() {
+fn a_repository_sets_the_default_workflow_for_new_goals() {
     let Command::Repo {
         command:
             RepoCommand::Add {
@@ -1035,6 +1282,8 @@ fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing()
                 branch,
                 description,
                 permission_mode,
+                workflow,
+                ..
             },
     } = parse(&[
         "ariadne",
@@ -1045,6 +1294,8 @@ fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing()
         "next",
         "--description",
         "the API",
+        "--workflow",
+        "develop-review-pr",
     ])
     .command
     else {
@@ -1054,9 +1305,11 @@ fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing()
     assert_eq!(branch.as_deref(), Some("next"));
     assert_eq!(description.as_deref(), Some("the API"));
     assert_eq!(permission_mode, None, "the daemon's `auto` stands in");
+    assert_eq!(workflow.as_deref(), Some("develop-review-pr"));
 
     // The flags that used to say how landing works are gone, not ignored.
     for gone in [
+        &["--default-landing", "pull-request"][..],
         &["--merge-strategy", "pull-request"][..],
         &["--landing-prompt", "Land it."][..],
         &["--landing-prompt-file", "brief.md"][..],
@@ -1066,6 +1319,7 @@ fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing()
         assert!(try_parse(&argv).is_err(), "{gone:?} still parses");
     }
     for gone in [
+        &["--default-landing", "merge"][..],
         &["--merge-strategy", "direct"][..],
         &["--reset-landing-prompt"][..],
     ] {
@@ -1220,6 +1474,108 @@ fn a_skill_line_takes_the_skill_by_name() {
         panic!("skill rm");
     };
     assert!(yes);
+}
+
+/// A workflow is one document, so its lines are the same shape a skill's
+/// are, plus `check`: `show` prints it, `create` and `update` write it from a
+/// file or from stdin, `reset` puts a shipped one back, `rm` deletes one of
+/// your own, and `check` parses a draft without saving it. Every verb takes
+/// the workflow by name except `check`, which takes none — it parses what it
+/// is handed rather than anything already saved.
+#[test]
+fn every_workflow_verb_parses_and_is_classified() {
+    let named = |command: WorkflowCommand| match command {
+        WorkflowCommand::Show { name }
+        | WorkflowCommand::Create { name, .. }
+        | WorkflowCommand::Update { name, .. }
+        | WorkflowCommand::Reset { name, .. }
+        | WorkflowCommand::Rm { name, .. } => Some(name),
+        WorkflowCommand::Ls | WorkflowCommand::Check { .. } => None,
+    };
+    for verb in ["show", "reset", "rm"] {
+        let Command::Workflow { command } =
+            parse(&["ariadne", "workflow", verb, "develop-review-merge"]).command
+        else {
+            panic!("workflow {verb}");
+        };
+        assert_eq!(named(command), Some("develop-review-merge".to_string()));
+    }
+
+    let Command::Workflow {
+        command: WorkflowCommand::Create { name, file },
+    } = parse(&[
+        "ariadne",
+        "workflow",
+        "create",
+        "mine",
+        "--file",
+        "/tmp/mine.md",
+    ])
+    .command
+    else {
+        panic!("workflow create");
+    };
+    assert_eq!(name, "mine");
+    assert_eq!(file, Some(PathBuf::from("/tmp/mine.md")));
+
+    let Command::Workflow {
+        command: WorkflowCommand::Update { file, .. },
+    } = parse(&["ariadne", "workflow", "update", "mine"]).command
+    else {
+        panic!("workflow update from stdin");
+    };
+    assert_eq!(file, None, "no file named is stdin");
+
+    let Command::Workflow {
+        command: WorkflowCommand::Check { file },
+    } = parse(&["ariadne", "workflow", "check", "--file", "/tmp/draft.md"]).command
+    else {
+        panic!("workflow check");
+    };
+    assert_eq!(file, Some(PathBuf::from("/tmp/draft.md")));
+
+    let Command::Workflow {
+        command: WorkflowCommand::Reset { yes, .. },
+    } = parse(&["ariadne", "workflow", "reset", "mine", "-y"]).command
+    else {
+        panic!("workflow reset");
+    };
+    assert!(yes);
+
+    let Command::Workflow {
+        command: WorkflowCommand::Rm { yes, .. },
+    } = parse(&["ariadne", "workflow", "rm", "mine", "--yes"]).command
+    else {
+        panic!("workflow rm");
+    };
+    assert!(yes);
+
+    assert!(matches!(
+        parse(&["ariadne", "workflow", "ls"]).command,
+        Command::Workflow {
+            command: WorkflowCommand::Ls
+        }
+    ));
+}
+
+#[test]
+fn every_dashboard_verb_parses() {
+    let Command::Dashboard {
+        command: DashboardCommand::Set { name, file },
+    } = parse(&["ariadne", "dashboard", "set", "mine", "dash.json"]).command
+    else {
+        panic!("dashboard set");
+    };
+    assert_eq!(name, "mine");
+    assert_eq!(file, PathBuf::from("dash.json"));
+    for verb in ["ls", "get", "reset", "rm"] {
+        let args = if verb == "ls" {
+            vec!["ariadne", "dashboard", verb]
+        } else {
+            vec!["ariadne", "dashboard", verb, "stats"]
+        };
+        assert!(matches!(parse(&args).command, Command::Dashboard { .. }));
+    }
 }
 
 /// The daemon group is about one home, so `--home` is the group's: it reaches
@@ -1404,116 +1760,326 @@ fn models_rank_refuses_an_unknown_word_and_naming_neither_rank_nor_clear() {
     assert!(err.to_string().contains("required"), "{err}");
 }
 
-/// Every `permissions` verb parses, `set` included with each flag it takes.
+/// Every AI permissions verb parses, `set` included with each flag it takes.
 #[test]
 fn every_permissions_verb_parses() {
     let Command::Permissions {
-        command: PermissionsCommand::Show,
-    } = parse(&["ariadne", "permissions", "show"]).command
+        command: PermissionsCommand::Ai(AiPermissionsCommand::Show),
+    } = parse(&["ariadne", "permissions", "ai", "show"]).command
     else {
-        panic!("permissions show");
+        panic!("permissions ai show");
     };
 
     let Command::Permissions {
-        command: PermissionsCommand::Enable { wait },
-    } = parse(&["ariadne", "permissions", "enable", "--wait"]).command
+        command: PermissionsCommand::Ai(AiPermissionsCommand::Enable { wait }),
+    } = parse(&["ariadne", "permissions", "ai", "enable", "--wait"]).command
     else {
-        panic!("permissions enable");
+        panic!("permissions ai enable");
     };
     assert!(wait);
 
     let Command::Permissions {
-        command: PermissionsCommand::Disable,
-    } = parse(&["ariadne", "permissions", "disable"]).command
+        command: PermissionsCommand::Ai(AiPermissionsCommand::Disable),
+    } = parse(&["ariadne", "permissions", "ai", "disable"]).command
     else {
-        panic!("permissions disable");
+        panic!("permissions ai disable");
     };
 
     let Command::Permissions {
-        command: PermissionsCommand::Refresh { wait },
-    } = parse(&["ariadne", "permissions", "refresh"]).command
+        command: PermissionsCommand::Ai(AiPermissionsCommand::Refresh { wait }),
+    } = parse(&["ariadne", "permissions", "ai", "refresh"]).command
     else {
-        panic!("permissions refresh");
+        panic!("permissions ai refresh");
     };
     assert!(!wait);
 
     let Command::Permissions {
         command:
-            PermissionsCommand::Set {
-                checkpoints,
-                threshold,
-                schedule,
-                no_schedule,
-            },
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
+                allow_threshold,
+                deny_threshold,
+                default_thresholds,
+                flavour,
+                device,
+            }),
     } = parse(&[
         "ariadne",
         "permissions",
+        "ai",
         "set",
-        "--checkpoints",
-        "all",
-        "--threshold",
-        "0.6",
-        "--schedule",
-        "03:30",
+        "--allow-threshold",
+        "0.2",
+        "--deny-threshold",
+        "0.8",
+        "--flavour",
+        "9b",
+        "--device",
+        "cuda",
     ])
     .command
     else {
         panic!("permissions set");
     };
-    assert!(matches!(
-        checkpoints,
-        Some(crate::commands::permissions::Checkpoints::All)
-    ));
-    assert_eq!(threshold, Some(0.6));
-    assert_eq!(schedule.as_deref(), Some("03:30"));
-    assert!(!no_schedule);
+    assert_eq!(allow_threshold, Some(0.2));
+    assert_eq!(deny_threshold, Some(0.8));
+    assert_eq!(flavour, Some(ariadne_api::permissions::Flavour::Kev9B));
+    assert_eq!(device, Some(ariadne_api::permissions::Device::Cuda));
+    assert!(!default_thresholds);
 
     let Command::Permissions {
-        command: PermissionsCommand::Set { no_schedule, .. },
-    } = parse(&["ariadne", "permissions", "set", "--no-schedule"]).command
+        command:
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
+                default_thresholds, ..
+            }),
+    } = parse(&[
+        "ariadne",
+        "permissions",
+        "ai",
+        "set",
+        "--default-thresholds",
+    ])
+    .command
     else {
-        panic!("permissions set --no-schedule");
+        panic!("permissions ai set --default-thresholds");
     };
-    assert!(no_schedule);
+    assert!(default_thresholds);
+
+    let Command::Permissions {
+        command: PermissionsCommand::Ai(AiPermissionsCommand::Set { flavour, .. }),
+    } = parse(&["ariadne", "permissions", "ai", "set", "--flavour", "0.8b"]).command
+    else {
+        panic!("permissions ai set --flavour");
+    };
+    assert_eq!(flavour, Some(ariadne_api::permissions::Flavour::Kev08B));
+
+    let Command::Permissions {
+        command:
+            PermissionsCommand::Ai(AiPermissionsCommand::Test {
+                tool,
+                kind,
+                input,
+                options,
+                locations,
+                workspace,
+            }),
+    } = parse(&[
+        "ariadne",
+        "permissions",
+        "ai",
+        "test",
+        "--tool",
+        "Read /Users/user/notes/a.md",
+        "--kind",
+        "read",
+        "--input",
+        "{\"file_path\":\"/Users/user/notes/a.md\"}",
+        "--option",
+        "Yes",
+        "--option",
+        "No",
+        "--location",
+        "/Users/user/notes/a.md",
+        "--location",
+        "/Users/user/notes/b.md",
+        "--workspace",
+        "/Users/user/.ariadne/worktrees/goal/task",
+    ])
+    .command
+    else {
+        panic!("permissions ai test");
+    };
+    assert_eq!(tool, "Read /Users/user/notes/a.md");
+    assert_eq!(kind.as_deref(), Some("read"));
+    assert_eq!(
+        input,
+        serde_json::json!({"file_path":"/Users/user/notes/a.md"})
+    );
+    assert_eq!(options, ["Yes", "No"]);
+    assert_eq!(
+        locations,
+        ["/Users/user/notes/a.md", "/Users/user/notes/b.md"]
+    );
+    assert_eq!(
+        workspace.as_deref(),
+        Some("/Users/user/.ariadne/worktrees/goal/task")
+    );
 }
 
 /// `set` with nothing to change is refused: there is nothing to send.
 #[test]
 fn permissions_set_with_no_flag_is_a_usage_error() {
-    assert!(try_parse(&["ariadne", "permissions", "set"]).is_err());
+    assert!(try_parse(&["ariadne", "permissions", "ai", "set"]).is_err());
 }
 
-/// `--schedule` and `--no-schedule` say opposite things about the same
-/// setting, so both together is refused rather than one silently winning.
 #[test]
-fn permissions_set_schedule_and_no_schedule_are_a_usage_error() {
-    assert!(
-        try_parse(&[
+fn every_learned_permissions_verb_parses_and_add_and_edit_are_gone() {
+    assert!(matches!(
+        parse(&[
             "ariadne",
             "permissions",
-            "set",
-            "--schedule",
-            "03:30",
-            "--no-schedule",
+            "learned",
+            "list",
+            "--repo",
+            "/tmp/repo"
         ])
-        .is_err()
-    );
+        .command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::List { repo: Some(_) })
+        }
+    ));
+    assert!(matches!(
+        parse(&["ariadne", "permissions", "learned", "show", "row"]).command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Show { .. })
+        }
+    ));
+    assert!(matches!(
+        parse(&["ariadne", "permissions", "learned", "rm", "row"]).command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Rm { .. })
+        }
+    ));
+    for gone in [
+        &[
+            "ariadne",
+            "permissions",
+            "learned",
+            "add",
+            "--repo",
+            "repo",
+            "--tool",
+            "Bash",
+        ][..],
+        &[
+            "ariadne",
+            "permissions",
+            "learned",
+            "edit",
+            "row",
+            "--tool",
+            "Shell",
+        ][..],
+    ] {
+        assert!(try_parse(gone).is_err(), "{gone:?}");
+    }
 }
 
-/// A threshold outside 0 to 1 and a schedule that is not `HH:MM` are refused
-/// before anything is sent, in the same words the daemon would refuse them
-/// in — a round trip is not needed to know 0 to 1 from a typo.
+/// `scope` parses either word a row can be widened or narrowed to, and
+/// refuses any other value locally, before anything is sent.
 #[test]
-fn permissions_set_refuses_a_bad_threshold_or_schedule_locally() {
-    let Err(err) = try_parse(&["ariadne", "permissions", "set", "--threshold", "1.5"]) else {
-        panic!("1.5 is out of range");
+fn permissions_learned_scope_parses_and_refuses_a_bad_value_locally() {
+    assert!(matches!(
+        parse(&["ariadne", "permissions", "learned", "scope", "row", "all"]).command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Scope {
+                scope: ariadne_api::permissions::LearnedPermissionScope::All,
+                ..
+            })
+        }
+    ));
+    assert!(matches!(
+        parse(&[
+            "ariadne",
+            "permissions",
+            "learned",
+            "scope",
+            "row",
+            "repository"
+        ])
+        .command,
+        Command::Permissions {
+            command: PermissionsCommand::Learned(LearnedPermissionsCommand::Scope {
+                scope: ariadne_api::permissions::LearnedPermissionScope::Repository,
+                ..
+            })
+        }
+    ));
+    let Err(err) = try_parse(&[
+        "ariadne",
+        "permissions",
+        "learned",
+        "scope",
+        "row",
+        "global",
+    ]) else {
+        panic!("global is not a scope");
     };
-    assert!(err.to_string().contains("between 0 and 1"), "{err}");
+    assert!(err.to_string().contains("repository or all"), "{err}");
+}
 
-    let Err(err) = try_parse(&["ariadne", "permissions", "set", "--schedule", "25:00"]) else {
-        panic!("25:00 is not a clock time");
+#[test]
+fn permissions_group_prints_help_and_refuses_the_old_flat_commands() {
+    let Err(err) = try_parse(&["ariadne", "permissions"]) else {
+        panic!("permissions must print help rather than parse")
     };
-    assert!(err.to_string().contains("HH:MM"), "{err}");
+    assert!(
+        err.to_string().contains("Manage the AI permission model"),
+        "{err}"
+    );
+    assert!(try_parse(&["ariadne", "permissions", "show"]).is_err());
+}
+
+/// Thresholds outside 0 to 1 and a flavour or device that is not one of the
+/// four or three are refused before anything is sent, in the same words the
+/// daemon would refuse them in — a round trip is not needed to know 0 to 1
+/// from a typo.
+#[test]
+fn permissions_set_refuses_a_bad_threshold_flavour_or_device_locally() {
+    let Err(help) = try_parse(&["ariadne", "permissions", "ai", "set", "--help"]) else {
+        panic!("help ends parsing");
+    };
+    let help = help.to_string();
+    assert!(help.contains("default: the flavour's pair"), "{help}");
+    assert!(help.contains("--default-thresholds"), "{help}");
+
+    for flag in ["--allow-threshold", "--deny-threshold"] {
+        let Err(err) = try_parse(&[
+            "ariadne",
+            "permissions",
+            "ai",
+            "set",
+            "--default-thresholds",
+            flag,
+            "0.2",
+        ]) else {
+            panic!("--default-thresholds goes alone with {flag}");
+        };
+        assert!(err.to_string().contains("cannot be used with"), "{err}");
+    }
+
+    for flag in ["--allow-threshold", "--deny-threshold"] {
+        let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", flag, "1.5"]) else {
+            panic!("1.5 is out of range");
+        };
+        assert!(err.to_string().contains("between 0 and 1"), "{err}");
+    }
+
+    let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", "--flavour", "40b"]) else {
+        panic!("40b is not a flavour");
+    };
+    assert!(err.to_string().contains("0.8b, 4b, 9b or 27b"), "{err}");
+
+    let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", "--device", "tpu"]) else {
+        panic!("tpu is not a device");
+    };
+    assert!(err.to_string().contains("mlx, cuda or cpu"), "{err}");
+}
+
+#[test]
+fn permissions_test_refuses_bad_json_locally() {
+    let Err(err) = try_parse(&[
+        "ariadne",
+        "permissions",
+        "ai",
+        "test",
+        "--tool",
+        "Bash",
+        "--input",
+        "not json",
+    ]) else {
+        panic!("invalid JSON parsed");
+    };
+    assert!(err.to_string().contains("valid JSON"), "{err}");
 }
 
 /// `ai` is a real value of the same enum `learn` and `ask` are, so it parses
@@ -1607,4 +2173,39 @@ fn advertises(cmd: &clap::Command, path: &[&str], id: &str) -> bool {
     }
     sub.get_arguments()
         .any(|a| a.get_id() == id && !a.is_hide_set())
+}
+
+/// `ariadne stats` alone names no family, which runs `work`, and the filters
+/// parse on either side of the family.
+#[test]
+fn stats_alone_runs_work_and_takes_the_filters_either_side() {
+    let Command::Stats {
+        command,
+        since,
+        repo,
+    } = parse(&["ariadne", "stats", "--since", "7d"]).command
+    else {
+        panic!("stats");
+    };
+    assert!(command.is_none());
+    assert_eq!(since.as_deref(), Some("7d"));
+    assert_eq!(repo, None);
+
+    let Command::Stats {
+        command,
+        since,
+        repo,
+    } = parse(&[
+        "ariadne", "stats", "--repo", "01JREPO", "models", "--since", "24h",
+    ])
+    .command
+    else {
+        panic!("stats models");
+    };
+    assert!(matches!(
+        command,
+        Some(crate::commands::stats::StatsCommand::Models(_))
+    ));
+    assert_eq!(since.as_deref(), Some("24h"));
+    assert_eq!(repo.as_deref(), Some("01JREPO"));
 }

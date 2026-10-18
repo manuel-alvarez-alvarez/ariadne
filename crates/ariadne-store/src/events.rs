@@ -164,6 +164,18 @@ impl Store {
         .await?)
     }
 
+    /// How many events of `kind` a session has produced, payloads unread.
+    pub async fn count_session_events(&self, session_id: &str, kind: &str) -> Result<u64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM agent_events WHERE session_id = ? AND kind = ?",
+        )
+        .bind(session_id)
+        .bind(kind)
+        .fetch_one(self.r())
+        .await?;
+        Ok(n.max(0) as u64)
+    }
+
     /// A page of recorded events, narrowed by whichever filters were set.
     ///
     /// The query is assembled here rather than by `Filtered`, which builds one

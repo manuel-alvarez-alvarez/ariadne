@@ -26,8 +26,8 @@ use ariadne_api::stream::{DeletedDto, DomainEvent, TaskUpdatedDto};
 use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
 
 use crate::http::convert::{
-    event_dto, goal_dto_of, message_dto, repository_dto, session_dto_of, skill_dto, task_dto_of,
-    transition_dto,
+    dashboard_dto, event_dto, goal_dto_of, message_dto, repository_dto, session_dto_of, skill_dto,
+    task_dto_of, transition_dto, workflow_dto,
 };
 
 /// Events buffered per subscriber before it is considered too slow.
@@ -139,6 +139,35 @@ impl EventBus {
     /// from the install as readily as from a write.
     pub fn ai_permissions_updated(&self, status: ariadne_api::permissions::AiPermissionsStatusDto) {
         self.publish(unscoped(DomainEvent::AiPermissionsUpdated(status)));
+    }
+
+    /// Publish the forge settings and the tunnel state (027). Like the AI
+    /// permission status, only the daemon can build it: the tunnel state is
+    /// no store row.
+    pub fn forge_settings_updated(&self, tunnel: ariadne_api::repositories::ForgeTunnelDto) {
+        self.publish(unscoped(DomainEvent::ForgeSettingsUpdated(tunnel)));
+    }
+
+    /// Publish that the open issues of a repository moved on its forge
+    /// (028). Issues are no store row: the fetch that read them is the only
+    /// one that knows.
+    pub fn issues_changed(&self, repository_id: &str) {
+        self.publish(unscoped(DomainEvent::IssuesChanged(
+            ariadne_api::stream::IssuesChangedDto {
+                repository_id: repository_id.to_string(),
+            },
+        )));
+    }
+
+    /// Publish that the requests of a repository moved on its forge (026):
+    /// they are read live, so the fetch that read them is the only one that
+    /// knows.
+    pub fn pull_requests_changed(&self, repository_id: &str) {
+        self.publish(unscoped(DomainEvent::PullRequestsChanged(
+            ariadne_api::stream::PullRequestsChangedDto {
+                repository_id: repository_id.to_string(),
+            },
+        )));
     }
 
     /// Answers once the pump has published every change it had been handed
@@ -336,6 +365,27 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         Change::SkillCreated(skill) => unscoped(DomainEvent::SkillCreated(skill_dto(skill))),
         Change::SkillUpdated(skill) => unscoped(DomainEvent::SkillUpdated(skill_dto(skill))),
         Change::SkillDeleted(name) => unscoped(DomainEvent::SkillDeleted(DeletedDto { id: name })),
+        Change::WorkflowCreated(workflow) => {
+            unscoped(DomainEvent::WorkflowCreated(workflow_dto(workflow)))
+        }
+        Change::WorkflowUpdated(workflow) => {
+            unscoped(DomainEvent::WorkflowUpdated(workflow_dto(workflow)))
+        }
+        Change::WorkflowDeleted(name) => {
+            unscoped(DomainEvent::WorkflowDeleted(DeletedDto { id: name }))
+        }
+        Change::DashboardCreated(dashboard) => {
+            unscoped(DomainEvent::DashboardCreated(dashboard_dto(dashboard)))
+        }
+        Change::DashboardUpdated(dashboard) => {
+            unscoped(DomainEvent::DashboardUpdated(dashboard_dto(dashboard)))
+        }
+        Change::DashboardDeleted(dashboard) => {
+            unscoped(DomainEvent::DashboardDeleted(dashboard_dto(dashboard)))
+        }
+        Change::PullRequestsChanged(repository_id) => unscoped(DomainEvent::PullRequestsChanged(
+            ariadne_api::stream::PullRequestsChangedDto { repository_id },
+        )),
         Change::RepositoryCreated(repo) => {
             unscoped(DomainEvent::RepositoryCreated(repository_dto(repo)))
         }
@@ -345,6 +395,15 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         Change::RepositoryDeleted(id) => {
             unscoped(DomainEvent::RepositoryDeleted(DeletedDto { id }))
         }
+        Change::LearnedPermissionCreated(row) => unscoped(DomainEvent::LearnedPermissionCreated(
+            crate::http::convert::learned_permission_dto(row),
+        )),
+        Change::LearnedPermissionUpdated(row) => unscoped(DomainEvent::LearnedPermissionUpdated(
+            crate::http::convert::learned_permission_dto(row),
+        )),
+        Change::LearnedPermissionDeleted(row) => unscoped(DomainEvent::LearnedPermissionDeleted(
+            crate::http::convert::learned_permission_dto(row),
+        )),
     };
     Ok(event)
 }
@@ -412,15 +471,19 @@ mod tests {
         let store = Store::open(dir.path().join("test.db")).await.unwrap();
         let repository = store
             .create_repository(NewRepository {
+                default_workflow: None,
                 path: "/tmp/probe".into(),
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
+                supervise_posts: None,
             })
             .await
             .unwrap();
         let goal = store
             .create_goal(NewGoal {
+                workflow: None,
+                issue_url: None,
                 title: "probe".into(),
                 description: String::new(),
                 repository_ids: vec![repository.id.clone()],
@@ -440,6 +503,7 @@ mod tests {
                 model: "stub:test-model".into(),
                 effort: None,
                 worktree_path: None,
+                pull_request_id: None,
             })
             .await
             .unwrap();

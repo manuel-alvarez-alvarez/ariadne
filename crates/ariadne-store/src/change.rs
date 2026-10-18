@@ -5,11 +5,18 @@
 //! scheduler and the launcher all write through these methods, so no state
 //! change can reach the database unannounced.
 
-use crate::{AgentEvent, AgentSession, Goal, Message, Repository, Skill, Task, TaskTransition};
+use crate::{
+    AgentEvent, AgentSession, Dashboard, Goal, LearnedPermission, Message, Repository, Skill, Task,
+    TaskTransition, Workflow,
+};
 
 /// A committed write, carrying the row as it now stands.
 #[derive(Debug, Clone)]
 pub enum Change {
+    /// What Ariadne keeps of a repository's requests moved: a request it
+    /// started or stopped working on, or a flag of one it works on. Carries
+    /// the repository id; the requests themselves are the forge's.
+    PullRequestsChanged(String),
     GoalCreated(Goal),
     GoalUpdated(Goal),
     GoalDeleted(String),
@@ -26,7 +33,16 @@ pub enum Change {
     SkillCreated(Skill),
     SkillUpdated(Skill),
     SkillDeleted(String),
+    WorkflowCreated(Workflow),
+    WorkflowUpdated(Workflow),
+    WorkflowDeleted(String),
+    DashboardCreated(Dashboard),
+    DashboardUpdated(Dashboard),
+    DashboardDeleted(Dashboard),
     RepositoryCreated(Repository),
     RepositoryUpdated(Repository),
     RepositoryDeleted(String),
+    LearnedPermissionCreated(LearnedPermission),
+    LearnedPermissionUpdated(LearnedPermission),
+    LearnedPermissionDeleted(LearnedPermission),
 }

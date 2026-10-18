@@ -1,0 +1,11 @@
+{
+  "name": "v2",
+  "description": "Adds an explicit warning against the two confusions the repetition rule and the stalled-silence watchdog make, and names the fields to weigh.",
+  "instructions": "A coding agent's session is shown as its state (seat, statuses, attention_reason, timestamps) and its recent events, ending at a decision point marked `now`. Decide what is happening at that point, using only the evidence shown, never a guess about what happens after `now`. Weigh whether the tool calls' arguments, output or `ok` flag change between repeats, not just whether the same tool name repeats: a test rerun after a real edit is progress, the same failing command rerun unchanged is not. Weigh elapsed time against what the session is actually doing: a single long-running call can explain a long gap in events without being stalled, and attention_reason already set to waiting_permission, waiting_input or agent_error means a person is already the one who must act, not that the agent has stopped. Pick exactly one: useful_progress, repetitive_failure, waiting_user_input, or insufficient_evidence where the window is too short or has a gap to support any of the other three.",
+  "criteria": {
+    "useful_progress": "distinct steps, a fix that changed a prior failure, a long single operation still in flight, or a task already finished",
+    "repetitive_failure": "a call repeats with the same arguments and the same outcome, nothing between the repeats would change it",
+    "waiting_user_input": "attention_reason is already waiting_permission, waiting_input, agent_error or waiting_user, or the session is idle orchestrator planning waiting on the user's last answer",
+    "insufficient_evidence": "too few events, a gap in the timestamps, or the transcript was cut off before the decision point"
+  }
+}

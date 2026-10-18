@@ -7,13 +7,13 @@ editing anything here; commit-message and history rules live in the root
 ## The crates
 
 ```
-ariadne-core     domain types, task state machine, the shared binary/path probe
-ariadne-api      REST DTOs / error shape (single source of truth for OpenAPI)
-ariadne-store    SQLite persistence (sqlx, one embedded init migration)
-ariadne-client   REST client (unix socket / TCP), used by CLI + MCP
-ariadne-console  the session console: transcript model, markdown, the inline pane and its loop
-ariadne-daemon   ariadned: axum API, scheduler, ACP runtime, agent registry, git managers
-ariadne-cli      ariadne: CLI, MCP server (`mcp serve`), `ariadne attach` over ariadne-console
+ariadne-core     id, models, state_machine, workflow, ACP and the binary/path probe
+ariadne-api      REST DTOs and errors for agents, goals, tasks, sessions, skills and workflows
+ariadne-store    SQLite repositories, migrations, and defaults that seed shipped skills and workflows
+ariadne-client   REST and SSE client plus home, socket and TCP endpoint resolution for CLI and daemon
+ariadne-console  terminal console: ANSI, markdown, transcript, theme and inline TUI; daemon hosts its terminal WebSocket
+ariadne-daemon   ariadned: HTTP API, scheduler, ACP, agents, git, forge, webhooks, tunnel, AI permissions, stats and failure diagnosis
+ariadne-cli      ariadne commands, output, completion, MCP server, attach console and store-backed doctor
 ```
 
 The desktop app under `ui/` is not part of this workspace; it has its own
@@ -21,17 +21,43 @@ The desktop app under `ui/` is not part of this workspace; it has its own
 
 ## Checks
 
-The test runner is [cargo-nextest](https://nexte.st), which is what CI runs:
-`cargo install cargo-nextest --locked`, or `cargo binstall cargo-nextest`.
+The test runner is [cargo-nextest](https://nexte.st), which CI runs with the
+`ci` profile in [`../.config/nextest.toml`](../.config/nextest.toml). It
+runs every test, the daemon integration tests included, on one thread per
+core, and writes JUnit output.
+Install it with `cargo install cargo-nextest --locked` or
+`cargo binstall cargo-nextest`. [`../.cargo/config.toml`](../.cargo/config.toml)
+sets the Git environment for every Cargo process.
+
+`cargo audit` ([cargo-audit](https://github.com/rustsec/rustsec)) scans
+`Cargo.lock` against the RustSec advisory database; install it with `cargo
+install cargo-audit --locked`. It denies no warning category by default, so
+it fails only on an actual vulnerability, never on an unmaintained or yanked
+crate alone. [`../.cargo/audit.toml`](../.cargo/audit.toml) documents the
+unmaintained `bincode` exception and three `zip` extraction exceptions:
+`zip` is only a build dependency for the pinned, vendored Swagger UI archive,
+never a runtime archive reader. Reassess those exceptions when the upstream
+build script, bundled archive or enabled features change, and remove them
+when Swagger UI supports a patched `zip`. Yanked crates have no such entry,
+since `cargo audit`'s yanked check allows no per-package ignore and does not
+deny by default either.
 
 On a task branch, run the checks of the crates you changed, and only those:
 
 ```sh
 cargo nextest run -p <crate>              # the crate
-cargo nextest run -p <crate> -E 'test(/^<module>::/)' # one test file of it
-cargo clippy -p <crate> --all-targets
+cargo nextest run -p ariadne-daemon -E 'test(/^<module>::/)' # one `it` module
+cargo nextest run -p <crate> -E 'binary(<name>)' # one crate test binary
+cargo clippy -p <crate> --all-targets -- -D warnings
 cargo fmt
 scripts/check-unused-rust                 # a library pub item no other file names
+```
+
+To print only the summary and the failures of a run, add the failures-only
+flags and keep the tail:
+
+```sh
+cargo nextest run --status-level fail --final-status-level fail 2>&1 | tail -n 40
 ```
 
 `unreachable_pub` is a workspace lint, so a `pub` item that its crate does not
@@ -41,11 +67,32 @@ other crate uses: to rustc, that is the library's interface.
 item, or make it private. An item that a derive, serde, utoipa or a public
 signature reaches goes in the script's `IGNORED`, with its reason.
 
+`scripts/check-migrations.sh` guards `ariadne-store`'s migration files. A
+migration already on `main` is immutable once shipped, with one named
+exception pinned by its exact old and new git blob (016, rule 9): its
+checksum is what `_sqlx_migrations` recorded in every database that has
+already run it, and `ariadne-store` refuses to open a database whose
+recorded checksum disagrees. The script compares
+`crates/ariadne-store/migrations/` on the
+latest commit of `main` directly against HEAD — never their merge-base,
+which would let a branch that forked before a migration landed see that
+migration as absent and accept its own, different copy of it as a fresh
+addition. A path already on `main` must still be present on HEAD at the
+identical git mode and blob, which catches a content edit and a type change
+(a symlink swapped in for the file has a different mode) alike. A new path
+must be a regular file named `NNNN_description.sql`, with a version number
+greater than every migration `main` already ships (and than every other new
+one in the same change) — which also catches two branches racing to ship
+the same version number under different names. Run it by hand as
+`scripts/check-migrations.sh`; `scripts/tests/check-migrations.sh` proves
+each half, including a migration that landed through a squash after the
+branch forked, and the one named exception's pin accepting exactly its own
+old-to-new blob pair and nothing else.
+
 The daemon's integration tests are one test binary, `it`: every file under
 `crates/ariadne-daemon/tests/it/` is a module that `tests/it/main.rs`
-declares, and a new file runs only once it is declared there. Keep it one
-binary. A binary per file compiles `common` again and links the whole daemon
-again, and a change to the daemon then rebuilds all of them.
+declares, and a new file runs only once it is declared there. Keep one binary
+to avoid rebuilding `common` and relinking the daemon for every file.
 
 A daemon test does not wait on a clock. Wait for the thing itself:
 
@@ -57,21 +104,74 @@ A daemon test does not wait on a clock. Wait for the thing itself:
   `harness().timeouts(Timeouts { …: RUNS_OUT, ..Timeouts::default() })`.
   Put every such timeout in `ariadne_daemon::timeouts::Timeouts`, never in a
   constant.
-- For a stub that must hold still, make it wait for a file that the test
-  writes (`wait_for`, `updates_when`), not for a number of seconds.
-- Do not create a new executable for each test. On macOS each new executable
-  is checked before it first starts, one at a time, so the tests wait for each
-  other. Share one file and link it, as the stub launcher does.
+- For a stub that must hold still, use the `wait_for` and `updates_when` keys
+  in its JSON turn script in `tests/it/common/acp.rs`.
+- For a forge fetch that must be over before the stub forge CLI answers
+  differently, wait for `stub.fetches()` in `tests/it/common/forge.rs` to
+  count it. A fetch still under way answers the rest of its calls from the
+  new script, and a `QUIET` listen only bets that it was over.
+- Do not create a new executable for each test: macOS checks each executable
+  before it starts, so share one file and link it, as the stub launcher does.
 
-Before a commit on `main`, run the whole workspace:
+nextest marks a test `SLOW` if it runs past the `slow-timeout` of 10 seconds.
+A test in that marker waits on a clock or a scheduler tick. Find the wait and
+rework the test to poll the thing itself, with `eventually(TIMEOUT, …)` or
+listen to events, so the test returns as soon as its assertion passes. See
+the rules above.
+
+## What a reviewer flags
+
+A reviewer fails a Rust change for any of these:
+
+- A `sleep` outside a `QUIET` listen. Ask for `eventually(TIMEOUT, …)` or a
+  `QUIET` listen instead.
+- A `Duration` constant in a test, not a `Timeouts` field. Ask for the
+  timeout in `ariadne_daemon::timeouts::Timeouts`.
+- A test nextest marks `SLOW` in the reviewer's run. Ask the author to poll
+  the thing itself, per the `SLOW` rule above.
+- A test that passed only on a second run. Ask the author to prove it under
+  the bounded busy loop in the root [`AGENTS.md`](../AGENTS.md), until it
+  holds.
+- A wall clock read into an assertion, in any crate. Ask the author to wait
+  for the thing itself, never the clock.
+- A stub or child process that outlives its test. Ask the author to end it
+  when the test ends, even on failure, per
+  [Processes you leave behind](../AGENTS.md#processes-you-leave-behind).
+- A test that depends on another test, or on thread order. Ask for a test
+  that holds with the daemon integration tests on every core at once, as
+  the `ci` profile runs them, and that still holds on a four-core runner.
+
+The pre-commit hook (`.githooks/pre-commit`) runs, for what is staged:
+`cargo fmt --all -- --check`, then `cargo clippy -p <crate> --all-targets --
+-D warnings` for each changed `crates/<crate>/` (a change of the root
+`Cargo.toml` or `Cargo.lock` runs clippy on the whole workspace instead), and
+`cargo machete .` when a `Cargo.toml` is staged.
+
+The pre-push hook (`.githooks/pre-push`) runs the whole workspace, for a push
+that touches `crates/`, except the test suite:
 
 ```sh
-cargo nextest run
-cargo clippy --all-targets
+cargo machete .
+cargo audit
+cargo build --locked --workspace --bins
+cargo test --doc --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 scripts/check-unused-rust
-cargo machete .
+scripts/check-migrations.sh
 ```
+
+`cargo nextest run --workspace --profile ci` takes minutes, so the hook
+leaves it to CI. Run it by hand before a push when the change warrants it.
+
+`cargo build --workspace --bins` links every shipped binary.
+`ariadne-daemon` sets `test = false` on its `[[bin]]`, so nextest never
+builds or links `ariadned`, and `cargo clippy` type-checks it without
+linking. This is the only step that catches a link-only error in that
+binary before release.
+
+See the root [`AGENTS.md`](../AGENTS.md#checks) for installing the hooks and
+running one by hand.
 
 `cargo machete` is [cargo-machete](https://github.com/bnjbvr/cargo-machete)
 (`cargo binstall cargo-machete@0.9.2`, the version CI pins). It fails on a
@@ -86,16 +186,37 @@ requires anyway, and a stub ACP agent that `tests/it/common/acp.rs` writes in
 that stub, so the suite needs no coding-agent CLI installed. A machine missing
 `git` or `python3` gets failures rather than a quiet pass.
 
-The dev profile carries line tables rather than full debug info, and none
-for dependencies (`[profile.dev]` in the root `Cargo.toml`). A panic still
-names its file and line and a backtrace still reads; what goes is stepping
-through a dependency in a debugger. It is there because linking is what the
-edit-test loop waits on and it is single-threaded per binary: rebuilding the
-daemon's tests after one edit went from 7.3s to 2.4s. Switching it back
-rebuilds the world once, so do that in a branch of its own.
+A harness's store starts from a template rather than a fresh migration: the
+first harness to build one migrates and seeds a database into the machine's
+temp directory, keyed by the test binary's own path, size and modified time
+— not the path alone, which cargo can leave unchanged across a rebuild whose
+content differs — and copies it for every harness after. Nextest runs every
+test in a process of its own, so an exclusive `flock` on a lock file beside
+the template, not an in-process cache, keeps every other process racing to
+build the same template waiting on the one that gets there first — polled
+non-blocking from the async side rather than taken as a real blocking call,
+which would park an uncancellable OS thread for as long as the holder keeps
+it. A holder that dies mid-build drops the lock with its own process, so
+the next waiter rebuilds rather than waiting forever on a claim nothing
+will ever finish.
 
-`cargo test` still works and does not need nextest installed, but it runs the test
-binaries one at a time where nextest pools tests across all of them, so a full
-run takes around three times as long. It is also the only way to run doctests,
-which nextest does not support; there are none today, and CI keeps it that way
-with `cargo test --doc --workspace`.
+The harness also copies a ready-made private git repository with `main` and
+`next`, and a private bare origin with that same history, from the same
+publication. It therefore avoids running `git init` and making those commits
+for every working tree and forge fixture. Tests outside `Harness` use
+`git_repo_copy` or `store_copy` first, which waits for that same publication;
+every repository and database copy is still private to its test.
+
+The default integration harness shortens the forge wake debounce and ACP
+cancel grace through `Timeouts`: ordinary stub agents answer cancellation
+at once, and tests that need either production interval name it themselves.
+`eventually` and `eventually_some` poll every 10 ms, so a condition that is
+already true does not add a 50 ms interval to every test seam. `QUIET` is
+100 ms: twice the branch watch debounce and only for an absence no event can
+prove.
+
+`[profile.dev]` in the root `Cargo.toml` keeps line tables for workspace code
+and no debug information for dependencies; change it only in a separate branch.
+
+Use `cargo test` only for doctests, because nextest runs normal test binaries
+faster; CI runs `cargo test --doc --workspace`.

@@ -13,6 +13,7 @@ import {
   api,
   type CreateTaskRequest,
   cacheRow,
+  type MessageDto,
   qk,
   type TaskDto,
   type TaskStatus,
@@ -46,19 +47,22 @@ export function taskQueryOptions(taskId: string) {
   })
 }
 
-export function taskMessagesQueryOptions(taskId: string) {
-  return queryOptions({
-    queryKey: qk.tasks.messages(taskId),
-    queryFn: () =>
-      unwrap(api().GET("/v1/tasks/{id}/messages", { params: { path: { id: taskId } } })),
-  })
-}
-
 export function taskTransitionsQueryOptions(taskId: string) {
   return queryOptions({
     queryKey: qk.tasks.transitions(taskId),
     queryFn: () =>
       unwrap(api().GET("/v1/tasks/{id}/transitions", { params: { path: { id: taskId } } })),
+  })
+}
+
+/** The task channel, in the order the daemon wrote it. */
+export function taskMessagesQueryOptions(taskId: string) {
+  return queryOptions({
+    queryKey: qk.tasks.messages(taskId),
+    queryFn: () =>
+      unwrap(api().GET("/v1/tasks/{id}/messages", { params: { path: { id: taskId } } })) as Promise<
+        MessageDto[]
+      >,
   })
 }
 

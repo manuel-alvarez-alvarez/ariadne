@@ -12,10 +12,11 @@ use std::time::Duration;
 use crate::common;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::usage::TokenUsageDto;
-use ariadne_core::SessionStatus;
+use ariadne_core::{SessionStatus, TaskStatus};
 use ariadne_daemon::timeouts::Timeouts;
+use ariadne_store::AgentSession;
 use common::acp::{discovery_settled, registry_home, script, stub_acp_agent};
-use common::{Cast, Harness, TIMEOUT, eventually, harness};
+use common::{Cast, Harness, TIMEOUT, eventually, harness, heard_from};
 use serde_json::{Value, json};
 
 fn tokens(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> TokenUsageDto {
@@ -32,9 +33,32 @@ fn small_usage() -> Value {
     json!({"totalTokens": 14686, "inputTokens": 3545, "cachedReadTokens": 11136, "outputTokens": 5})
 }
 
+/// A task in its first column on a repo on disk: what a column's agent is
+/// started on.
 async fn cast(h: &Harness) -> Cast {
     h.git_repo("repo");
-    h.cast_pinned("stub:test-model", 1).await
+    let cast = h.cast_pinned("stub:test-model").await;
+    let goal = h.activate(&cast.goal).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let task = h.store.get_task(&cast.task.id).await.unwrap();
+    Cast { goal, task, ..cast }
+}
+
+/// Start the develop column's agent and hand it one prompt, the way the
+/// scheduler briefs a column's agent once it is up: the turn whose figures
+/// every test here reads.
+async fn started(h: &Harness, cast: &Cast) -> AgentSession {
+    let task = h.store.get_task(&cast.task.id).await.unwrap();
+    let session = h
+        .launcher
+        .start_step_agent(&task, cast.develop())
+        .await
+        .unwrap();
+    h.launcher
+        .acp
+        .send_prompt(&session.id, "Begin the task.".into())
+        .unwrap();
+    session
 }
 
 async fn usage(h: &Harness, session_id: &str) -> TokenUsageDto {
@@ -115,7 +139,7 @@ async fn a_codex_session_stores_its_rollouts_total_not_its_prompt_response() {
     );
     let cast = cast(&h).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = started(&h, &cast).await;
     eventually(TIMEOUT, "the turn to end", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
@@ -140,7 +164,7 @@ async fn a_claude_session_counts_each_request_once_with_its_subagents() {
     let stub = stub_acp_agent(agent_dir.path(), held_script(&release));
     let h = harness().home(registry_home(&stub)).await;
     let cast = cast(&h).await;
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = started(&h, &cast).await;
     held_open(&release).await;
 
     // Claude Code's project directory: the worktree's real path with every
@@ -199,7 +223,7 @@ async fn a_running_turns_figure_moves_before_its_stop() {
         .await;
     append(&rollout(&h), &[token_count(100, 50, 10)]);
     let cast = cast(&h).await;
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = started(&h, &cast).await;
     held_open(&release).await;
     eventually(TIMEOUT, "the first total to be stored", || async {
         usage(&h, &session.id).await == tokens(100, 50, 10)
@@ -227,20 +251,21 @@ async fn two_launches_of_one_codex_session_add_up() {
     discovery_settled(&h, &stub).await;
     append(&rollout(&h), &[token_count(1000, 800, 100)]);
     let cast = cast(&h).await;
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = started(&h, &cast).await;
     eventually(TIMEOUT, "the first launch's turn to end", || async {
-        h.session_status(&session).await == SessionStatus::Idle
+        let row = h.store.get_session(&session.id).await.unwrap();
+        row.status() == SessionStatus::Idle && heard_from(&row)
     })
     .await;
     assert_eq!(usage(&h, &session.id).await, tokens(1000, 800, 100));
 
+    // The column is entered again: the same session, resumed in a second
+    // agent process, with the next prompt of its conversation.
+    h.launcher.kill_session(&session.id).await.unwrap();
     let release = agent_dir.path().join("release");
     stub.reprogram(held_script(&release));
-    let resumed = h
-        .launcher
-        .resume_author(&cast.task.id, "here is your review")
-        .await
-        .unwrap();
+    let resumed = started(&h, &cast).await;
+    assert_eq!(resumed.id, session.id, "the relaunch reused the session");
     held_open(&release).await;
     // A resume starts the rollout's running total again.
     append(&rollout(&h), &[token_count(200, 150, 20)]);
@@ -263,7 +288,7 @@ async fn a_session_without_a_transcript_keeps_its_prompt_responses_figure() {
     let h = harness().home(registry_home(&stub)).await;
     let cast = cast(&h).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = started(&h, &cast).await;
     eventually(TIMEOUT, "the turn to end", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })

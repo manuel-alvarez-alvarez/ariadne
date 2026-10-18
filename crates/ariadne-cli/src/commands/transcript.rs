@@ -85,13 +85,34 @@ pub(crate) mod render {
                 question,
                 options,
                 answer,
+                ai_note,
                 ..
-            } => permission_block(meta, question, options, answer.as_deref(), color),
+            } => permission_block(
+                meta,
+                question,
+                options,
+                ai_note.as_deref(),
+                answer.as_deref(),
+                color,
+            ),
             TranscriptItem::SystemNote { meta, text } => {
                 text_block(meta, "SYSTEM", DIM, text, DIM, width, color)
             }
-            TranscriptItem::Error { meta, text } => {
-                text_block(meta, "ERROR", ERROR, text, ERROR, width, color)
+            TranscriptItem::Error {
+                meta,
+                text,
+                ai_note,
+            } => {
+                let mut out = text_block(meta, "ERROR", ERROR, text, ERROR, width, color);
+                if let Some(note) = ai_note {
+                    // Drop one of `text_block`'s two trailing newlines, so the
+                    // note sits right under the error rather than after a
+                    // blank line, and the block still ends in exactly one.
+                    out.pop();
+                    out.push_str(&style::paint(color, DIM, &format!("  {note}")));
+                    out.push_str("\n\n");
+                }
+                out
             }
             TranscriptItem::Raw {
                 meta,
@@ -233,6 +254,7 @@ pub(crate) mod render {
         meta: &ItemMeta,
         question: &str,
         options: &[PermissionOption],
+        ai_note: Option<&str>,
         answer: Option<&str>,
         color: bool,
     ) -> String {
@@ -241,6 +263,9 @@ pub(crate) mod render {
             header(meta, "PERMISSION", PERMISSION, color),
             question
         );
+        if let Some(note) = ai_note {
+            out.push_str(&format!("  {note}\n"));
+        }
         for (index, option) in options.iter().enumerate() {
             out.push_str(&format!("  {}. {}\n", index + 1, option.name));
         }
@@ -487,6 +512,7 @@ pub(crate) mod render {
                 meta,
                 question,
                 options,
+                ai_note,
                 ..
             } = TranscriptItem::from(event)
             else {
@@ -498,6 +524,9 @@ pub(crate) mod render {
                 header(&meta, "PERMISSION", PERMISSION, self.color),
                 question
             ));
+            if let Some(note) = ai_note {
+                out.push_str(&format!("  {note}\n"));
+            }
             for (index, option) in options.iter().enumerate() {
                 out.push_str(&format!("  {}. {}\n", index + 1, option.name));
             }
@@ -608,6 +637,100 @@ mod tests {
         assert!(output.contains("all tests passed"), "{output}");
         assert!(output.contains("answer: Allow"), "{output}");
         assert!(!output.contains('…'), "nothing is truncated: {output}");
+    }
+
+    #[test]
+    fn a_question_says_why_the_ai_permission_model_left_it_to_the_console() {
+        let events = [
+            event(
+                "ask",
+                "permission_request",
+                json!({
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "cat ~/.aws/credentials"},
+                    "options": [{"optionId": "yes", "name": "Allow"}],
+                    "label": "ask",
+                    "danger": 0.41,
+                    "allow_threshold": 0.2,
+                    "deny_threshold": 0.8,
+                    "probabilities": {"0": 0.62, "1": 0.33, "2": 0.05}
+                }),
+            ),
+            event("answer", "permission.replied", json!({"option_id": "yes"})),
+        ];
+
+        let output = render::transcript(&fold(&events), Some(80), false);
+
+        let question = output
+            .lines()
+            .position(|line| line.contains("PERMISSION"))
+            .expect("the question is printed");
+        assert_eq!(
+            output.lines().nth(question + 1),
+            Some(
+                "  AI said ask · allow 62%, deny 5% · danger 41% (allow up to 20%, deny from 80%)"
+            ),
+            "{output}"
+        );
+        assert!(output.contains("answer: Allow\n"), "{output}");
+
+        let capped = [event(
+            "ask",
+            "permission_request",
+            json!({
+                "tool_name": "Bash", "tool_input": {"command": "cat ~/.aws/credentials"},
+                "options": [{"optionId": "yes", "name": "Allow"}],
+                "label": "ask", "danger": 0.081, "cap": "reviewer_directive",
+                "risk_tags": ["reviewer_directive"],
+                "allow_threshold": 0.0531, "deny_threshold": 0.6522,
+                "probabilities": {"0": 0.82, "1": 0.16, "2": 0.02}
+            }),
+        )];
+        let output = render::transcript(&fold(&capped), Some(80), false);
+        assert!(
+            output.contains("allow 82%, deny 2% · danger 8% (allow up to 5%, deny from 65%) · tags: reviewer_directive · capped by reviewer_directive"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn a_transcript_answer_shows_both_ai_probabilities() {
+        for (label, probabilities, danger, expected) in [
+            (
+                "allow",
+                json!({"0": 0.91, "1": 0.08, "2": 0.01}),
+                0.04,
+                "AI allowed · allow 91%, deny 1% · danger 4% (allow up to 5%, deny from 65%)",
+            ),
+            (
+                "deny",
+                json!({"0": 0.01, "1": 0.11, "2": 0.88}),
+                0.93,
+                "AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)",
+            ),
+        ] {
+            let events = [
+                event(
+                    "ask",
+                    "permission_request",
+                    json!({
+                        "tool_name": "Bash", "tool_input": {"command": "ls -la"},
+                        "options": [{"optionId": "yes", "name": "Allow"}]
+                    }),
+                ),
+                event(
+                    "answer",
+                    "permission.replied",
+                    json!({
+                        "option_id": "yes", "decided_by": "ai", "label": label,
+                        "danger": danger, "allow_threshold": 0.0531, "deny_threshold": 0.6522,
+                        "probabilities": probabilities
+                    }),
+                ),
+            ];
+            let output = render::transcript(&fold(&events), Some(160), false);
+            assert!(output.contains(expected), "{output}");
+        }
     }
 
     #[test]
@@ -729,5 +852,40 @@ mod tests {
 
         assert_eq!(output.matches("AGENT").count(), 1, "{output}");
         assert!(output.contains("answer: Allow"), "{output}");
+    }
+
+    #[test]
+    fn session_logs_name_the_family_row_that_answered() {
+        let events = [
+            event(
+                "ask",
+                "permission_request",
+                json!({
+                    "tool_name": "Bash", "options": [{"optionId": "allow-once", "name": "Allow once"}]
+                }),
+            ),
+            event(
+                "answer",
+                "permission.replied",
+                json!({
+                    "option_id": "allow-once", "decided_by": "learned",
+                    "learned_level": "family", "learned_key": "git rebase"
+                }),
+            ),
+        ];
+        let output = render::transcript(&fold(&events), Some(80), false);
+        assert!(
+            output.contains("Allow once, learned · family git rebase"),
+            "{output}"
+        );
+        let mut renderer = render::StreamRenderer::new(None, false);
+        let streamed: String = events
+            .iter()
+            .map(|event| renderer.event(event, &Filters::default()))
+            .collect();
+        assert!(
+            streamed.contains("answer: Allow once, learned · family git rebase"),
+            "{streamed}"
+        );
     }
 }

@@ -4,7 +4,8 @@ use ariadne_core::id::new_id;
 use ariadne_core::{AttentionReason, Seat, SessionStatus};
 
 use crate::query::Filtered;
-use crate::{AgentSession, Change, Result, Store, not_found, now};
+use crate::stats::record_attention_clear;
+use crate::{AgentPin, AgentSession, Change, Result, Store, StoreError, not_found, now};
 
 /// [`SessionStatus::is_live`] in SQL, in the one place SQL has to know it.
 const LIVE_STATUSES: &str = " AND status IN ('starting', 'running', 'idle')";
@@ -34,12 +35,16 @@ pub struct NewSession {
     /// Effort to run that model at; None = whatever the agent runs it at.
     pub effort: Option<String>,
     pub worktree_path: Option<String>,
+    /// The pull request a pull request session watches (026); None for every
+    /// other session.
+    pub pull_request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct SessionFilter {
     pub goal_id: Option<String>,
     pub task_id: Option<String>,
+    pub pull_request_id: Option<String>,
     pub status: Option<SessionStatus>,
     /// Only sessions in a live status (starting/running/idle).
     pub live_only: bool,
@@ -48,13 +53,63 @@ pub struct SessionFilter {
 }
 
 impl Store {
+    /// Move an existing conversation onto a new pin.
+    pub async fn set_session_pin(&self, id: &str, pin: &AgentPin) -> Result<AgentSession> {
+        self.write_session(
+            id,
+            sqlx::query("UPDATE agent_sessions SET model = ?, effort = ? WHERE id = ?")
+                .bind(&pin.model)
+                .bind(&pin.effort)
+                .bind(id),
+        )
+        .await?;
+        self.publish_session_update(id).await?;
+        self.get_session(id).await
+    }
+
     /// Create a session row before spawning; its id becomes ARIADNE_SESSION_ID.
     pub async fn create_session(&self, new: NewSession) -> Result<AgentSession> {
+        self.insert_session(new, None).await
+    }
+
+    /// Create the session a switch starts in place of `switched_from`: a new
+    /// row on the same seat, which names the row it replaced.
+    pub async fn create_switched_session(
+        &self,
+        new: NewSession,
+        switched_from: &str,
+    ) -> Result<AgentSession> {
+        self.insert_session(new, Some(switched_from))
+            .await
+            .map_err(|e| match e {
+                StoreError::Db(sqlx::Error::Database(ref db)) if db.is_unique_violation() => {
+                    StoreError::Conflict(format!("session {switched_from} is already switched"))
+                }
+                other => other,
+            })
+    }
+
+    /// The session a switch started in place of `id`, if one did.
+    pub async fn switched_successor(&self, id: &str) -> Result<Option<AgentSession>> {
+        Ok(
+            sqlx::query_as("SELECT * FROM agent_sessions WHERE switched_from = ?")
+                .bind(id)
+                .fetch_optional(self.r())
+                .await?,
+        )
+    }
+
+    async fn insert_session(
+        &self,
+        new: NewSession,
+        switched_from: Option<&str>,
+    ) -> Result<AgentSession> {
         let id = new_id();
         sqlx::query(
             "INSERT INTO agent_sessions (id, goal_id, task_id, seat, task_agent_id, model,
-                                         effort, worktree_path, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
+                                         effort, worktree_path, status, created_at,
+                                         switched_from, pull_request_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.goal_id)
@@ -65,6 +120,8 @@ impl Store {
         .bind(&new.effort)
         .bind(&new.worktree_path)
         .bind(now())
+        .bind(switched_from)
+        .bind(&new.pull_request_id)
         .execute(self.w())
         .await?;
         let session = self.get_session(&id).await?;
@@ -80,6 +137,7 @@ impl Store {
         Filtered::new("agent_sessions")
             .maybe(" AND goal_id = ?", filter.goal_id)
             .maybe(" AND task_id = ?", filter.task_id)
+            .maybe(" AND pull_request_id = ?", filter.pull_request_id)
             .maybe(" AND status = ?", filter.status.map(|s| s.as_str()))
             .flag(LIVE_STATUSES, filter.live_only)
             .flag(" AND attention_reason IS NOT NULL", filter.attention_only)
@@ -136,7 +194,8 @@ impl Store {
                 AttentionReason::WaitingPermission.as_str(),
                 AttentionReason::WaitingInput.as_str(),
             ];
-            self.clear_attention(id, PROMPTS_ONLY, &prompts).await?;
+            let cleared = self.clear_attention(id, PROMPTS_ONLY, &prompts).await?;
+            self.announce_clear(id, cleared).await?;
         }
         self.publish_session_update(id).await
     }
@@ -151,31 +210,65 @@ impl Store {
     /// behind that way asks the user to go and reply to nobody. The reasons a
     /// session ends *carrying* — an error, a disconnect, a stall — are meant
     /// to outlive it and are left alone.
-    pub async fn set_session_status(&self, id: &str, status: SessionStatus) -> Result<()> {
+    ///
+    /// Answers the row as this write left it, read in the same transaction:
+    /// a write that lands right after it — a resume that starts the session
+    /// again — cannot change what the caller is told it ended (023).
+    pub async fn set_session_status(
+        &self,
+        id: &str,
+        status: SessionStatus,
+    ) -> Result<AgentSession> {
         let ended_at = match status {
             SessionStatus::Exited | SessionStatus::Failed => Some(now()),
             _ => None,
         };
-        self.write_session(
-            id,
-            sqlx::query(
-                "UPDATE agent_sessions SET status = ?, ended_at = COALESCE(?, ended_at) WHERE id = ?",
-            )
-            .bind(status.as_str())
-            .bind(ended_at)
-            .bind(id),
+        let mut tx = self.w().begin().await?;
+        let before: AgentSession =
+            Self::fetch_by_in_tx(&mut tx, "session", "agent_sessions", id).await?;
+        let n = sqlx::query(
+            "UPDATE agent_sessions SET status = ?, ended_at = COALESCE(?, ended_at) WHERE id = ?",
         )
-        .await?;
+        .bind(status.as_str())
+        .bind(ended_at)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if n == 0 {
+            return Err(not_found("session", id));
+        }
         if !status.is_live() {
             // Its own statement before the announcement, so what watchers are
             // handed is the session with the flag already gone.
-            let prompts = [
-                AttentionReason::WaitingPermission.as_str(),
-                AttentionReason::WaitingInput.as_str(),
-            ];
-            self.clear_attention(id, PROMPTS_ONLY, &prompts).await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE agent_sessions
+                    SET attention_reason = NULL, attention_since = NULL
+                  WHERE id = ? AND attention_reason IS NOT NULL{PROMPTS_ONLY}"
+            )))
+            .bind(id)
+            .bind(AttentionReason::WaitingPermission.as_str())
+            .bind(AttentionReason::WaitingInput.as_str())
+            .execute(&mut *tx)
+            .await?;
         }
-        self.publish_session_update(id).await
+        let session: AgentSession =
+            Self::fetch_by_in_tx(&mut tx, "session", "agent_sessions", id).await?;
+        tx.commit().await?;
+        self.publish(Change::SessionUpdated(session.clone()));
+        if !status.is_live()
+            && matches!(
+                before.attention_reason.as_deref(),
+                Some("waiting_permission" | "waiting_input")
+            )
+            && let (Some(reason), Some(since)) = (
+                before.attention_reason.clone(),
+                before.attention_since.clone(),
+            )
+        {
+            record_attention_clear(self, before, reason, since).await?;
+        }
+        Ok(session)
     }
 
     /// Flag a session as needing the user's attention.
@@ -244,7 +337,7 @@ impl Store {
                 &[AttentionReason::WaitingUser.as_str()],
             )
             .await?;
-        self.announce_attention(id, cleared).await
+        self.announce_clear(id, cleared).await
     }
 
     /// The clear a session reporting itself idle makes: the two reasons its
@@ -269,19 +362,29 @@ impl Store {
         let cleared = self
             .clear_attention(id, SILENCE_AND_ERROR, &reasons)
             .await?;
-        self.announce_attention(id, cleared).await
+        self.announce_clear(id, cleared).await
     }
 
     /// Drop any attention flag from a session (the agent moved on).
     pub async fn clear_session_attention(&self, id: &str) -> Result<()> {
         let cleared = self.clear_attention(id, "", &[]).await?;
-        self.announce_attention(id, cleared).await
+        self.announce_clear(id, cleared).await
     }
 
     /// Take the attention flag down, narrowed by `and`: the caller's clause
-    /// says which reasons its clear is allowed to take with it. Answers how
-    /// many rows it changed, which is none for a session with nothing up.
-    async fn clear_attention(&self, id: &str, and: &str, reasons: &[&str]) -> Result<u64> {
+    /// says which reasons its clear is allowed to take with it. Answers the
+    /// row it took the flag from, or none for a session with nothing up.
+    async fn clear_attention(
+        &self,
+        id: &str,
+        and: &str,
+        reasons: &[&str],
+    ) -> Result<Option<AgentSession>> {
+        let mut tx = self.w().begin().await?;
+        let before = sqlx::query_as("SELECT * FROM agent_sessions WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
         let mut q = sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE agent_sessions
                 SET attention_reason = NULL, attention_since = NULL
@@ -291,7 +394,26 @@ impl Store {
         for reason in reasons {
             q = q.bind(*reason);
         }
-        Ok(q.execute(self.w()).await?.rows_affected())
+        let changed = q.execute(&mut *tx).await?.rows_affected();
+        tx.commit().await?;
+        Ok((changed == 1).then_some(before).flatten())
+    }
+
+    /// Record and announce a clear that changed a row. A no-op still asks the
+    /// old announcer to distinguish an unknown session from an unflagged one.
+    async fn announce_clear(&self, id: &str, cleared: Option<AgentSession>) -> Result<()> {
+        let Some(cleared) = cleared else {
+            return self.announce_attention(id, 0).await;
+        };
+        let (Some(reason), Some(since)) = (
+            cleared.attention_reason.clone(),
+            cleared.attention_since.clone(),
+        ) else {
+            return Ok(());
+        };
+        self.sync_task_stall(id).await?;
+        self.publish_session_update(id).await?;
+        record_attention_clear(self, cleared, reason, since).await
     }
 
     /// Put a finished session back into its pre-spawn state so it can be
@@ -318,21 +440,29 @@ impl Store {
         id: &str,
         worktree_path: Option<&str>,
     ) -> Result<AgentSession> {
-        self.write_session(
-            id,
-            sqlx::query(
-                "UPDATE agent_sessions
+        let mut tx = self.w().begin().await?;
+        let before: AgentSession =
+            Self::fetch_by_in_tx(&mut tx, "session", "agent_sessions", id).await?;
+        sqlx::query(
+            "UPDATE agent_sessions
                 SET status = 'starting', ended_at = NULL, last_activity_at = ?,
                     attention_reason = NULL, attention_since = NULL,
                     worktree_path = COALESCE(?, worktree_path), launch_id = ?
               WHERE id = ?",
-            )
-            .bind(now())
-            .bind(worktree_path)
-            .bind(new_id())
-            .bind(id),
         )
+        .bind(now())
+        .bind(worktree_path)
+        .bind(new_id())
+        .bind(id)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
+        if let (Some(reason), Some(since)) = (
+            before.attention_reason.clone(),
+            before.attention_since.clone(),
+        ) {
+            record_attention_clear(self, before, reason, since).await?;
+        }
         self.sync_task_stall(id).await?;
         let session = self.get_session(id).await?;
         self.publish(Change::SessionUpdated(session.clone()));

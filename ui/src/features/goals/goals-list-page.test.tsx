@@ -48,8 +48,8 @@ function renderBoard(entry: string) {
   return renderScreen(<GoalsListPage />, { route: entry }).location
 }
 
-/** The trigger, which doubles as the summary of what is selected. */
-function trigger() {
+/** The icon button opens the menu for a selection no segment names. */
+function statusMenu() {
   return screen.getByRole("button", { name: "Filter by status" })
 }
 
@@ -59,18 +59,38 @@ beforeEach(() => {
   useSettingsStore.setState({ goalStatusFilter: "" })
 })
 
-it("asks the daemon for every selected status, in one request", async () => {
+it("leaves every segment unpressed for a custom selection", async () => {
   renderBoard("/goals?status=completed,active")
 
   await waitFor(() => expect(goalRequests()).toContain("active,completed"))
-  expect(trigger().textContent).toContain("2 statuses")
+  expect(screen.getByRole("button", { name: "Active" }).getAttribute("aria-pressed")).toBe("false")
+  expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("false")
+  expect(screen.getByRole("button", { name: "Finished" }).getAttribute("aria-pressed")).toBe(
+    "false",
+  )
+  expect(statusMenu().getAttribute("aria-pressed")).toBe("true")
 })
 
-it("names the one status it is narrowed to", async () => {
-  renderBoard("/goals?status=planning")
+it("sets each named segment in the URL and remembered filter", async () => {
+  const user = userEvent.setup()
+  const seen = renderBoard("/goals")
+  await waitFor(() => expect(goalRequests()).toContain(null))
 
-  await waitFor(() => expect(goalRequests()).toContain("planning"))
-  expect(trigger().textContent).toContain("Planning")
+  await user.click(screen.getByRole("button", { name: "All" }))
+  await waitFor(() => expect(seen.url).toBe("/goals"))
+  expect(statusMenu().getAttribute("aria-pressed")).toBe("false")
+
+  await user.click(screen.getByRole("button", { name: "Finished" }))
+  await waitFor(() => expect(seen.url).toBe("/goals?status=completed%2Ccancelled"))
+  await waitFor(() => expect(goalRequests()).toContain("completed,cancelled"))
+
+  await user.click(screen.getByRole("button", { name: "Active" }))
+  await waitFor(() => expect(seen.url).toBe("/goals?status=planning%2Cactive"))
+  await waitFor(() =>
+    expect(JSON.parse(localStorage.getItem("ariadne.settings") ?? "{}")).toMatchObject({
+      state: { goalStatusFilter: "planning,active" },
+    }),
+  )
 })
 
 it("ignores a status the daemon does not define", async () => {
@@ -79,7 +99,7 @@ it("ignores a status the daemon does not define", async () => {
   await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
   expect(goalRequests()).not.toContain("nonsense")
   expect(goalRequests().every((status) => status === null)).toBe(true)
-  expect(trigger().textContent).toContain("All statuses")
+  expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true")
 })
 
 it("puts a checked status in the URL and in the next request", async () => {
@@ -87,7 +107,7 @@ it("puts a checked status in the URL and in the next request", async () => {
   const seen = renderBoard("/goals")
   await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
 
-  await user.click(trigger())
+  await user.click(statusMenu())
   await user.click(await screen.findByRole("menuitemcheckbox", { name: "Active" }))
 
   await waitFor(() => expect(seen.url).toBe("/goals?status=active"))
@@ -104,11 +124,11 @@ it("clears back to all statuses, dropping the param", async () => {
   const seen = renderBoard("/goals?status=active,completed")
   await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
 
-  await user.click(trigger())
+  await user.click(statusMenu())
   await user.click(await screen.findByRole("menuitemcheckbox", { name: "All statuses" }))
 
   await waitFor(() => expect(seen.url).toBe("/goals"))
-  expect(trigger().textContent).toContain("All statuses")
+  expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true")
 })
 
 it("opens and toggles from the keyboard", async () => {
@@ -116,7 +136,7 @@ it("opens and toggles from the keyboard", async () => {
   const seen = renderBoard("/goals")
   await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
 
-  trigger().focus()
+  statusMenu().focus()
   await user.keyboard("{Enter}")
   // Opening highlights the first item; the statuses are one arrow below it.
   const all = await screen.findByRole("menuitemcheckbox", { name: "All statuses" })
@@ -149,7 +169,7 @@ it("comes back to the filter the board was left with", async () => {
   renderBoard("/goals")
   await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
 
-  await user.click(trigger())
+  await user.click(statusMenu())
   await user.click(await screen.findByRole("menuitemcheckbox", { name: "Active" }))
   await waitFor(() => expect(goalRequests()).toContain("active"))
 
@@ -159,7 +179,7 @@ it("comes back to the filter the board was left with", async () => {
   // The board is narrowed again, not just the URL. (The unfiltered request
   // alongside it is the attention strip's, which reads no filter.)
   await waitFor(() => expect(goalRequests()).toContain("active"))
-  expect(trigger().textContent).toContain("Active")
+  expect(statusMenu().getAttribute("aria-pressed")).toBe("true")
 })
 
 it("leaves a cleared filter cleared", async () => {
@@ -167,7 +187,7 @@ it("leaves a cleared filter cleared", async () => {
   renderBoard("/goals?status=active")
   await waitFor(() => expect(goalRequests()).toContain("active"))
 
-  await user.click(trigger())
+  await user.click(statusMenu())
   await user.click(await screen.findByRole("menuitemcheckbox", { name: "All statuses" }))
   await waitFor(() => expect(goalRequests()).toContain(null))
 
@@ -176,7 +196,7 @@ it("leaves a cleared filter cleared", async () => {
   await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
   expect(seen.url).toBe("/goals")
   expect(goalRequests()).not.toContain("active")
-  expect(trigger().textContent).toContain("All statuses")
+  expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true")
 })
 
 it("shows what an explicit ?status= asks for, not what is remembered", async () => {
@@ -185,7 +205,7 @@ it("shows what an explicit ?status= asks for, not what is remembered", async () 
 
   await waitFor(() => expect(goalRequests()).toContain("planning"))
   expect(seen.url).toBe("/goals?status=planning")
-  expect(trigger().textContent).toContain("Planning")
+  expect(statusMenu().getAttribute("aria-pressed")).toBe("true")
 
   // ...and that is the filter the next visit opens on: the board remembers
   // what it is showing, however it was asked to show it.
@@ -206,7 +226,7 @@ it("keeps the filter where a restart can find it", async () => {
   renderBoard("/goals")
   await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
 
-  await user.click(trigger())
+  await user.click(statusMenu())
   await user.click(await screen.findByRole("menuitemcheckbox", { name: "Active" }))
 
   await waitFor(() =>

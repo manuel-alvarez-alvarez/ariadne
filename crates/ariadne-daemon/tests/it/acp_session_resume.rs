@@ -8,7 +8,7 @@ use serde_json::json;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::sessions::{SessionDto, SessionKind, SessionPageDto};
-use ariadne_core::{PermissionMode, Seat, SessionStatus};
+use ariadne_core::{PermissionMode, SessionStatus};
 use ariadne_store::{SessionFilter, TaskFilter};
 
 use common::acp::{script, stub_acp_agent};
@@ -367,9 +367,7 @@ async fn a_session_missing_from_the_snapshot_is_refused_after_one_fresh_snapshot
 async fn an_agent_session_cannot_resume_an_outside_session() {
     let h = harness().await;
     let cast = h.cast().await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let session = h.agent_session(&cast, "develop").await;
     let (status, _) = h
         .send(as_session(
             "/v1/outside-sessions/resume",
@@ -393,7 +391,13 @@ async fn a_loose_console_serves_history_takes_input_and_cancels() {
     let dir = tempfile::tempdir().unwrap();
     let mut setup = outside_script_at(dir.path().to_str().unwrap(), "continue");
     setup["load_updates"] = json!([
-        {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "outside history"}}
+        {"sessionUpdate": "available_commands_update", "availableCommands": [
+            {"name": "compact", "description": "Compact the conversation."}
+        ]},
+        {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "outside history"}},
+        {"sessionUpdate": "available_commands_update", "availableCommands": [
+            {"name": "review", "description": "Review the conversation."}
+        ]}
     ]);
     setup["prompts"] = json!([{
         "updates": [{"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "new answer"}}],
@@ -414,6 +418,16 @@ async fn a_loose_console_serves_history_takes_input_and_cancels() {
             .iter()
             .any(|event| event["payload"]["text"] == "outside history"),
         "{history:?}"
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| event["kind"] == "available_commands_update")
+            .map(|event| event["payload"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!({"session_id": "outside-1", "available_commands": [{
+            "name": "review", "description": "Review the conversation."
+        }]})],
     );
     let mut stream = h.stream(common::get(&format!("{console}/stream"))).await;
     let snapshot = common::expect_sse(&mut stream, "snapshot").await;
@@ -447,7 +461,15 @@ async fn a_loose_console_serves_history_takes_input_and_cancels() {
     let delta = common::expect_sse(&mut stream, "event").await;
     assert_eq!(delta["kind"], "user_prompt_submit");
     assert_eq!(delta["payload"]["text"], "continue here");
-    let changed = common::expect_sse(&mut domain, "agent_event").await;
+    // The turn also moves the session between statuses, each a
+    // `session_updated` domain frame interleaved with the `agent_event`
+    // ones; skip those to reach the next agent event.
+    let changed = loop {
+        let (name, payload) = common::parse_sse(&common::next_sse_message(&mut domain).await);
+        if name == "agent_event" {
+            break payload;
+        }
+    };
     assert_eq!(changed["session_id"], session.id);
     assert!(changed["task_id"].is_null());
     assert!(stub.prompts_for(&session.id)[0].ends_with("continue here"));
@@ -478,6 +500,16 @@ async fn a_loose_console_serves_history_takes_input_and_cancels() {
             .filter(|event| event["payload"]["text"] == "outside history")
             .count(),
         1
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| event["kind"] == "available_commands_update")
+            .map(|event| event["payload"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!({"session_id": "outside-1", "available_commands": [{
+            "name": "review", "description": "Review the conversation."
+        }]})],
     );
 }
 

@@ -39,6 +39,8 @@ interface StreamOptions<S extends string> {
    * that succeeded straight away, where nothing can have been missed.
    */
   onOpen?: (info: { reconnected: boolean }) => void
+  /** Called when the stream starts a new connection after an interruption. */
+  onReconnect?: (reason: string) => void
   /** What a dropped connection is called in the status it reports. */
   dropped: string
   /**
@@ -140,6 +142,7 @@ export abstract class ReconnectingEventStream<S extends string> {
     this.#backoff = INITIAL_BACKOFF_MS
     // Whatever the old connection was doing, we are not sure we saw all of it.
     this.#interrupted = true
+    this.#options.onReconnect?.(reason)
     this.#connect(reason)
   }
 
@@ -205,6 +208,7 @@ export abstract class ReconnectingEventStream<S extends string> {
     // An attempt failed, so the next open is a reconnect even if no attempt has
     // ever succeeded: events during the gap are gone, there is no replay.
     this.#interrupted = true
+    this.#options.onReconnect?.(error)
     this.#options.onStatus(this.#options.states.reconnecting, error)
     // Jitter so a daemon restart does not get a thundering herd of windows.
     const delay = this.#backoff * (0.5 + Math.random() / 2)

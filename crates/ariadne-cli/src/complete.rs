@@ -340,6 +340,32 @@ pub(crate) fn skill_names() -> Vec<CompletionCandidate> {
         .collect()
 }
 
+/// Workflow names, with its columns joined as the help.
+pub(crate) fn workflow_names() -> Vec<CompletionCandidate> {
+    fetch("/v1/workflows")
+        .iter()
+        .map(|w| {
+            let titles = w
+                .get("steps")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .map(|step| s(step, "title"))
+                .collect::<Vec<_>>()
+                .join(" → ");
+            candidate(s(w, "name"), titles)
+        })
+        .collect()
+}
+
+/// Dashboard names, with the built-in state as help.
+pub(crate) fn dashboard_names() -> Vec<CompletionCandidate> {
+    fetch("/v1/dashboards")
+        .iter()
+        .map(|d| candidate(s(d, "name"), s(d, "builtin").to_string()))
+        .collect()
+}
+
 /// Registered repository ids (repo subcommands, `goal create --repo`).
 pub(crate) fn repo_ids() -> Vec<CompletionCandidate> {
     fetch("/v1/repositories").iter().map(repository).collect()

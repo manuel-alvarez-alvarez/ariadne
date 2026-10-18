@@ -16,21 +16,27 @@ import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { EventStreamProvider } from "@/events/provider"
+import { useOpenExternalLinks } from "@/hooks/use-open-external-links"
 import { router } from "@/routes/router"
+import { TelemetryProvider } from "@/telemetry/provider"
 
 export default function App() {
   const [queryClient] = useState(createQueryClient)
+  const { confirmation } = useOpenExternalLinks()
 
   return (
     <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <EventStreamProvider>
-            <RouterProvider router={router} />
-            <Toaster />
-          </EventStreamProvider>
-        </TooltipProvider>
-      </QueryClientProvider>
+      <TelemetryProvider>
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <EventStreamProvider>
+              <RouterProvider router={router} />
+              <Toaster />
+              {confirmation}
+            </EventStreamProvider>
+          </TooltipProvider>
+        </QueryClientProvider>
+      </TelemetryProvider>
     </ThemeProvider>
   )
 }

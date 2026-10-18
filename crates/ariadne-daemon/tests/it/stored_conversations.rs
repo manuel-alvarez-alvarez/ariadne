@@ -16,8 +16,11 @@ use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::{Value, json};
+use tower::ServiceExt;
 
 use ariadne_api::sessions::{SessionEntryDto, SessionKind, SessionPageDto};
+use ariadne_daemon::acp_sessions::OutsideSessions;
+use ariadne_daemon::http;
 
 use common::acp::{StubAcpAgent, discovery_accepted, stub_acp_agent};
 use common::{Harness, harness};
@@ -53,6 +56,27 @@ fn stub_listing(dir: &Path, sessions: Value) -> StubAcpAgent {
 /// One listing request, `query` being what follows the `?`.
 async fn listing(h: &Harness, query: &str) -> SessionPageDto {
     h.get(&format!("/v1/sessions?{query}")).await
+}
+
+/// Build the disk readers again, as a restarted daemon does, and list through
+/// the same HTTP boundary as every other assertion in this file.
+async fn listing_after_restart(h: &Harness, query: &str) -> SessionPageDto {
+    let mut state = h.state.clone();
+    state.outside_sessions = OutsideSessions::with_transcripts(&h.transcript_homes());
+    let response = http::router(state)
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/v1/sessions?{query}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
 }
 
 fn ids(page: &SessionPageDto) -> Vec<&str> {
@@ -615,6 +639,147 @@ async fn a_second_listing_reads_no_unchanged_transcript_again() {
             .output_tokens,
         100
     );
+}
+
+/// Readers built after a restart use the saved Claude and Codex listing
+/// fields when both files still have their saved stamps.
+#[tokio::test]
+async fn a_new_reader_reads_no_unchanged_transcript_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_listing(dir.path(), json!([]));
+    let h = harness()
+        .home(home_with_agents(&[(CLAUDE, &stub.bin), (CODEX, &stub.bin)]))
+        .discover_agents()
+        .await;
+    discovery_accepted(&h, &stub, CLAUDE).await;
+    discovery_accepted(&h, &stub, CODEX).await;
+    let at = Utc::now() - TimeDelta::hours(1);
+    let claude = transcript(
+        &h,
+        "/work/claude",
+        "claude-cached",
+        &[
+            json!({"type": "ai-title", "aiTitle": "Saved title"}).to_string(),
+            user("/work/claude", "First prompt"),
+        ],
+        at,
+    );
+    let codex = rollout(
+        &h,
+        "codex-cached",
+        &[
+            session_meta("codex-cached", "/work/codex-a", "cli"),
+            turn_context("gpt-5-codex", "medium"),
+        ],
+        at,
+    );
+
+    let first = listing(&h, "").await;
+    rewrite(
+        &claude,
+        &[
+            json!({"type": "ai-title", "aiTitle": "Other title"}).to_string(),
+            user("/work/claude", "First prompt"),
+        ],
+    );
+    rewrite(
+        &codex,
+        &[
+            session_meta("codex-cached", "/work/codex-b", "cli"),
+            turn_context("gpt-5-codex", "medium"),
+        ],
+    );
+
+    let restarted = listing_after_restart(&h, "").await;
+
+    assert_eq!(
+        serde_json::to_value(&restarted.sessions).unwrap(),
+        serde_json::to_value(&first.sessions).unwrap()
+    );
+}
+
+/// A saved entry whose transcript has a new stamp is replaced from the file.
+#[tokio::test]
+async fn a_new_reader_reads_a_transcript_that_changed_after_the_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_listing(dir.path(), json!([]));
+    let h = harness_with(&stub).await;
+    let path = transcript(
+        &h,
+        "/work/changed",
+        "changed",
+        &[
+            json!({"type": "ai-title", "aiTitle": "Before save"}).to_string(),
+            user("/work/changed", "First prompt"),
+        ],
+        Utc::now() - TimeDelta::hours(2),
+    );
+    listing(&h, "").await;
+    rewrite(
+        &path,
+        &[
+            json!({"type": "ai-title", "aiTitle": "After save!"}).to_string(),
+            user("/work/changed", "First prompt"),
+        ],
+    );
+    written_at(&path, Utc::now() - TimeDelta::hours(1));
+
+    let restarted = listing_after_restart(&h, "").await;
+
+    assert_eq!(
+        row(&restarted, "changed").title.as_deref(),
+        Some("After save!")
+    );
+}
+
+/// A deleted transcript leaves both the restarted listing and the saved file.
+#[tokio::test]
+async fn a_new_reader_removes_a_deleted_transcripts_saved_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_listing(dir.path(), json!([]));
+    let h = harness_with(&stub).await;
+    let path = transcript(
+        &h,
+        "/work/deleted",
+        "deleted",
+        &[user("/work/deleted", "Delete this")],
+        Utc::now() - TimeDelta::hours(1),
+    );
+    listing(&h, "").await;
+    std::fs::remove_file(path).unwrap();
+
+    let restarted = listing_after_restart(&h, "").await;
+
+    assert!(ids(&restarted).is_empty());
+    let saved = std::fs::read_to_string(h.transcript_homes().listing_cache).unwrap();
+    assert!(!saved.contains("deleted.jsonl"));
+}
+
+/// Invalid saved files cause a full scan and are replaced by the current
+/// version, for malformed JSON and for an unsupported version alike.
+#[tokio::test]
+async fn corrupt_and_unknown_listing_caches_fall_back_to_a_full_scan() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_listing(dir.path(), json!([]));
+    let h = harness_with(&stub).await;
+    transcript(
+        &h,
+        "/work/recovered",
+        "recovered",
+        &[user("/work/recovered", "Recover this")],
+        Utc::now() - TimeDelta::hours(1),
+    );
+    let cache = h.transcript_homes().listing_cache;
+
+    for invalid in ["not json", r#"{"version": 999, "claude": [], "codex": []}"#] {
+        std::fs::write(&cache, invalid).unwrap();
+
+        let restarted = listing_after_restart(&h, "").await;
+
+        assert_eq!(ids(&restarted), ["recovered"]);
+        let saved: Value = serde_json::from_slice(&std::fs::read(&cache).unwrap()).unwrap();
+        assert_eq!(saved["version"], 1);
+    }
 }
 
 /// A page reads the transcripts of its own rows and no others: over 51

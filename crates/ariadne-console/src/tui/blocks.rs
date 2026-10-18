@@ -3,7 +3,6 @@
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::markdown;
@@ -11,12 +10,28 @@ use crate::theme::{
     self, ADDED, AGENT, DAEMON, DIM, FAIL, FILE, HUNK, PLAN, PROMPT, REMOVED, TOOL, USER,
 };
 use crate::transcript::{PlanEntry, Tool, TranscriptItem};
+use crate::wrap::{self, clip, wrap, wrap_whole};
 
 use super::picker::permission;
 
-/// A thought and a tool's output are context, not the answer: they are folded
-/// to this many lines with a count of what was left out. The output keeps its
-/// last lines, which is where a command says how it went.
+#[cfg(test)]
+std::thread_local! {
+    static RENDERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn reset_renders() {
+    RENDERS.set(0);
+}
+
+#[cfg(test)]
+pub(super) fn renders() -> usize {
+    RENDERS.get()
+}
+
+/// A tool's output is context, not the answer: it is folded to this many
+/// lines with a count of what was left out. It keeps its last lines, which is
+/// where a command says how it went.
 const FOLD: usize = 4;
 /// A diff is read from the top, so it keeps its first lines: this many, with
 /// a count of what was left out.
@@ -33,14 +48,16 @@ const BODY_INDENT: &str = "    ";
 /// `picked` is the highlighted option of a permission question being answered
 /// right now — `None` everywhere else, including once it is in the scrollback.
 /// `whole` is the console's fold state: folded draws a tool's output, a
-/// diff, a thought and a daemon prompt to their usual limit, and whole draws
-/// every line of them (Ctrl-O).
+/// diff and a daemon prompt to their usual limit, and whole draws every line
+/// of them (Ctrl-O). A thought is always whole.
 pub(super) fn block(
     item: &TranscriptItem,
     width: usize,
     picked: Option<usize>,
     whole: bool,
 ) -> Vec<Line<'static>> {
+    #[cfg(test)]
+    RENDERS.set(RENDERS.get() + 1);
     let width = width.max(8);
     match item {
         TranscriptItem::UserPrompt { text, source, .. } if source.as_deref() == Some("daemon") => {
@@ -58,14 +75,17 @@ pub(super) fn block(
             // line of text rides on it rather than under it.
             join_first(lines)
         }
-        TranscriptItem::Thought { text, .. } => prefixed(
-            text,
-            theme::THOUGHT_MARKER,
-            DIM,
-            DIM,
-            width,
-            (!whole).then_some(FOLD),
-        ),
+        // A thought is never folded: it is how the agent got to what it
+        // does, and it is markdown like the agent's text.
+        TranscriptItem::Thought { text, .. } => {
+            let mut lines = vec![Line::from(Span::styled(theme::THOUGHT_MARKER, DIM))];
+            for line in markdown::render(text, width.saturating_sub(2)) {
+                let mut spans = vec![Span::raw("  ")];
+                spans.extend(line.spans.into_iter().map(|span| span.patch_style(DIM)));
+                lines.push(Line::from(spans));
+            }
+            join_first(lines)
+        }
         TranscriptItem::Plan { entries, .. } => plan(entries, width),
         TranscriptItem::ToolCall { meta, tool } => call(tool, &meta.created_at, width, whole),
         TranscriptItem::PermissionQuestion {
@@ -73,11 +93,13 @@ pub(super) fn block(
             tool,
             options,
             answer,
+            ai_note,
             ..
         } => permission(
             question,
             tool,
             options,
+            ai_note.as_deref(),
             answer.as_deref(),
             picked,
             width,
@@ -424,27 +446,6 @@ fn field(input: &serde_json::Value, keys: &[&str]) -> Option<String> {
         .find_map(|key| input.get(key)?.as_str().map(str::to_string))
 }
 
-/// Cut a line to `room` columns, saying so. The cut falls between grapheme
-/// clusters, each as wide as it draws, so an emoji of several characters is
-/// kept or dropped whole.
-fn clip(text: &str, room: usize) -> String {
-    if text.width() <= room {
-        return text.to_string();
-    }
-    let mut cut = String::new();
-    let mut used = 0;
-    for grapheme in text.graphemes(true) {
-        let width = grapheme.width();
-        if used + width > room.saturating_sub(1) {
-            break;
-        }
-        used += width;
-        cut.push_str(grapheme);
-    }
-    cut.push('…');
-    cut
-}
-
 /// How long a call took, in the unit that fits it.
 fn elapsed(started_at: &str, ended_at: &str) -> Option<String> {
     let started = chrono::DateTime::parse_from_rfc3339(started_at).ok()?;
@@ -684,37 +685,23 @@ fn diff_row(text: String, style: Style) -> Line<'static> {
 }
 
 /// `parts` behind the diff's four-column indent, cut to `room` columns kept
-/// across all of them together — as `clip` cuts one string — so a styled run
-/// never overruns the room a plain line would have.
+/// across all of them together — as [`clip`] cuts one string — so a styled
+/// run never overruns the room a plain line would have.
 fn clipped_spans(parts: Vec<(String, Style)>, room: usize) -> Line<'static> {
     let mut spans = vec![Span::raw("    ")];
-    let total: usize = parts.iter().map(|(text, _)| text.width()).sum();
-    if total <= room {
-        spans.extend(
-            parts
-                .into_iter()
-                .map(|(text, style)| Span::styled(text, style)),
-        );
-        return Line::from(spans);
+    let (text, ellipsis_style) = wrap::clip_spans(&parts, room);
+    let mut offset = 0;
+    for (part, style) in &parts {
+        let end = offset + part.len();
+        if let Some(slice) = text.get(offset.min(text.len())..end.min(text.len()))
+            && !slice.is_empty()
+        {
+            spans.push(Span::styled(slice.to_string(), *style));
+        }
+        offset = end;
     }
-    let mut used = 0;
-    'parts: for (text, style) in parts {
-        let mut cut = String::new();
-        for grapheme in text.graphemes(true) {
-            let width = grapheme.width();
-            if used + width > room.saturating_sub(1) {
-                if !cut.is_empty() {
-                    spans.push(Span::styled(cut, style));
-                }
-                spans.push(Span::styled("…", style));
-                break 'parts;
-            }
-            used += width;
-            cut.push_str(grapheme);
-        }
-        if !cut.is_empty() {
-            spans.push(Span::styled(cut, style));
-        }
+    if let Some(style) = ellipsis_style {
+        spans.push(Span::styled("…", style));
     }
     Line::from(spans)
 }
@@ -732,102 +719,6 @@ fn file_name(header: &str) -> Option<String> {
             .unwrap_or(path)
             .to_string(),
     )
-}
-
-/// Hard-wrap text to `width` columns, keeping the line breaks it already has.
-/// A word wider than a row is cut between grapheme clusters across rows, so
-/// no character of it is lost past the edge. The space after a word takes no
-/// room at the end of a row, where it is not drawn.
-pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut out = Vec::new();
-    for source in text.split('\n') {
-        let source = detab(source);
-        let mut line = String::new();
-        let mut used = 0usize;
-        for word in source.split_inclusive(char::is_whitespace) {
-            let body = word.trim_end();
-            if body.width() <= width && used > 0 && used + body.width() > width {
-                out.push(std::mem::take(&mut line).trim_end().to_string());
-                used = 0;
-            }
-            if body.width() > width {
-                for grapheme in body.graphemes(true) {
-                    let columns = grapheme.width();
-                    if used > 0 && used + columns > width {
-                        out.push(std::mem::take(&mut line).trim_end().to_string());
-                        used = 0;
-                    }
-                    used += columns;
-                    line.push_str(grapheme);
-                }
-                let space = &word[body.len()..];
-                if used + space.width() <= width {
-                    used += space.width();
-                    line.push_str(space);
-                }
-                continue;
-            }
-            used += word.width();
-            line.push_str(word);
-        }
-        out.push(line.trim_end().to_string());
-    }
-    out
-}
-
-/// Wrap text to `width` columns and keep every character of it, spaces
-/// included: a word goes to the next row with the space after it where the
-/// two do not fit, and a word wider than a row starts where the row is and
-/// is cut between grapheme clusters. The rows of one line, joined, are that
-/// line.
-fn wrap_whole(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut out = Vec::new();
-    for source in text.split('\n') {
-        let source = detab(source);
-        let mut line = String::new();
-        let mut used = 0usize;
-        for word in source.split_inclusive(char::is_whitespace) {
-            if word.width() <= width && used > 0 && used + word.width() > width {
-                out.push(std::mem::take(&mut line));
-                used = 0;
-            }
-            for grapheme in word.graphemes(true) {
-                let columns = grapheme.width();
-                if used > 0 && used + columns > width {
-                    out.push(std::mem::take(&mut line));
-                    used = 0;
-                }
-                used += columns;
-                line.push_str(grapheme);
-            }
-        }
-        out.push(line);
-    }
-    out
-}
-
-/// A line with its tabs as the columns they take, to the next stop of eight.
-/// A cell holds one character, so a tab drawn as itself is nothing at all,
-/// and the text on either side of it runs together.
-fn detab(line: &str) -> String {
-    if !line.contains('\t') {
-        return line.to_string();
-    }
-    let mut out = String::new();
-    let mut column = 0;
-    for grapheme in line.graphemes(true) {
-        if grapheme == "\t" {
-            let stop = 8 - column % 8;
-            out.extend(std::iter::repeat_n(' ', stop));
-            column += stop;
-        } else {
-            out.push_str(grapheme);
-            column += grapheme.width();
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -1227,6 +1118,7 @@ mod tests {
     fn ctrl_o_draws_a_call_s_output_and_diff_whole_and_a_second_ctrl_o_folds_them_again() {
         let mut console = Console::new(header());
         let mut terminal = Terminal::new(TestBackend::new(80, 100)).unwrap();
+        let now = tokio::time::Instant::now();
         let output: String = (1..=30).map(|n| format!("line {n}\n")).collect();
         let added: String = (1..=40).map(|n| format!("+line {n}\n")).collect();
         let patch = format!("--- /dev/null\n+++ b/src/new.rs\n@@ -0,0 +1,40 @@\n{added}");
@@ -1239,7 +1131,9 @@ mod tests {
                            "content": [{"type": "diff", "patch": {"text": patch}}]}}),
         ));
 
-        terminal.draw(|frame| console.render(frame)).unwrap();
+        terminal
+            .draw(|frame| console.render_at(frame, now))
+            .unwrap();
         let folded = screen(&terminal);
         assert!(folded.contains("… 26 more lines"), "{folded}");
         assert!(!folded.contains("    line 1\n"), "{folded}");
@@ -1250,7 +1144,9 @@ mod tests {
         assert!(!folded.contains("+line 40"), "{folded}");
 
         console.key(ctrl('o'));
-        terminal.draw(|frame| console.render(frame)).unwrap();
+        terminal
+            .draw(|frame| console.render_at(frame, now))
+            .unwrap();
         let whole = screen(&terminal);
         assert!(!whole.contains("more lines"), "{whole}");
         assert!(
@@ -1263,7 +1159,9 @@ mod tests {
         );
 
         console.key(ctrl('o'));
-        terminal.draw(|frame| console.render(frame)).unwrap();
+        terminal
+            .draw(|frame| console.render_at(frame, now))
+            .unwrap();
         assert_eq!(screen(&terminal), folded, "a second Ctrl-O folds it again");
     }
 
@@ -1443,12 +1341,13 @@ mod tests {
         assert!(!shown.contains("line 7"), "{shown}");
     }
 
-    /// Ctrl-O draws a daemon prompt and a thought whole, and a second Ctrl-O
-    /// folds them again (rule 24, 27).
+    /// Ctrl-O draws a daemon prompt whole, and a second Ctrl-O folds it
+    /// again (rule 24, 27). A thought is whole either way.
     #[test]
-    fn ctrl_o_draws_a_daemon_prompt_and_a_thought_whole_and_a_second_ctrl_o_folds_them_again() {
+    fn ctrl_o_draws_a_daemon_prompt_whole_and_a_thought_is_whole_either_way() {
         let mut console = Console::new(header());
-        let mut terminal = Terminal::new(TestBackend::new(80, 70)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(80, 90)).unwrap();
+        let now = tokio::time::Instant::now();
         let briefing: Vec<String> = (1..=20).map(|n| format!("line {n}")).collect();
         console.apply(&event(
             "user_prompt_submit",
@@ -1459,22 +1358,25 @@ mod tests {
         console.apply(&event(
             "agent_thought",
             "thinking",
-            json!({"text": thought.join("\n")}),
+            json!({"text": thought.join("\n\n")}),
         ));
 
-        terminal.draw(|frame| console.render(frame)).unwrap();
+        terminal
+            .draw(|frame| console.render_at(frame, now))
+            .unwrap();
         let folded = screen(&terminal);
         assert!(folded.contains("» daemon\n  line 1\n"), "{folded}");
         assert!(folded.contains("… 14 more lines"), "{folded}");
-        assert!(!folded.contains("line 20"), "{folded}");
+        assert!(!folded.contains("  line 20"), "{folded}");
         assert!(
-            folded.contains("thought line 1") && folded.contains("… 16 more lines"),
-            "the thought keeps its first 4 lines: {folded}"
+            folded.contains("thought line 1") && folded.contains("thought line 20"),
+            "a thought is never folded: {folded}"
         );
-        assert!(!folded.contains("thought line 5"), "{folded}");
 
         console.key(ctrl('o'));
-        terminal.draw(|frame| console.render(frame)).unwrap();
+        terminal
+            .draw(|frame| console.render_at(frame, now))
+            .unwrap();
         let whole = screen(&terminal);
         assert!(!whole.contains("more lines"), "{whole}");
         assert!(whole.contains("  line 20"), "{whole}");
@@ -1484,8 +1386,38 @@ mod tests {
         );
 
         console.key(ctrl('o'));
-        terminal.draw(|frame| console.render(frame)).unwrap();
+        terminal
+            .draw(|frame| console.render_at(frame, now))
+            .unwrap();
         assert_eq!(screen(&terminal), folded, "a second Ctrl-O folds it again");
+    }
+
+    /// A thought is markdown, drawn dim and whole like the agent's text.
+    #[test]
+    fn a_thought_draws_its_markdown_whole() {
+        let mut text = String::from("I weigh **two** options:\n\n- keep `FOLD`\n- drop it\n");
+        for n in 1..=8 {
+            text.push_str(&format!("\nstep {n} of the reasoning\n"));
+        }
+        let mut console = Console::new(header());
+        let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
+        console.apply(&event("agent_thought", "thought", json!({"text": text})));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(shown.contains("· I weigh two options:"), "{shown}");
+        assert!(
+            !shown.contains("**"),
+            "the markdown is drawn, not shown: {shown}"
+        );
+        assert!(shown.contains("step 8 of the reasoning"), "{shown}");
+        assert!(!shown.contains("more lines"), "{shown}");
+        assert!(
+            style_at(terminal.backend().buffer(), "two")
+                .add_modifier
+                .contains(Modifier::BOLD | Modifier::DIM),
+            "bold stays bold, and dim"
+        );
     }
 
     #[test]

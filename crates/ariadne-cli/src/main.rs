@@ -5,16 +5,20 @@ mod commands;
 mod complete;
 mod error;
 mod output;
+mod telemetry;
 
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Result;
-use clap::FromArgMatches;
+use clap::{ArgMatches, FromArgMatches};
 
 use ariadne_client::Client;
 
 use crate::cli::{Cli, Command, DaemonCommand, Layout, McpCommand, command};
 use crate::output::View;
+use crate::telemetry::Telemetry;
 
 /// Failures are reported by [`error::report`] rather than by anyhow's default
 /// `Error: ...` + `Caused by:` block: one line, and the exit code that says
@@ -35,7 +39,9 @@ fn main() -> ExitCode {
     // starts.
     clap_complete::CompleteEnv::with_factory(command).complete();
 
-    let cli = match Cli::from_arg_matches(&command().get_matches()) {
+    let matches = command().get_matches();
+    let command = command_path(&matches);
+    let cli = match Cli::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(e) => e.exit(),
     };
@@ -52,7 +58,7 @@ fn main() -> ExitCode {
         pager: !cli.no_pager,
     });
 
-    match block_on(cli) {
+    match block_on(cli, command) {
         Ok(code) => code,
         Err(e) => {
             error::report(&e, format);
@@ -61,18 +67,46 @@ fn main() -> ExitCode {
     }
 }
 
-fn block_on(cli: Cli) -> Result<ExitCode> {
-    tokio::runtime::Builder::new_multi_thread()
+fn block_on(cli: Cli, command: String) -> Result<ExitCode> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()?
-        .block_on(run(cli))
+        .build()?;
+    runtime.block_on(async move {
+        let client = Arc::new(Client::resolve(cli.endpoint.as_deref(), None));
+        let telemetry = match &cli.command {
+            Command::Daemon {
+                command: DaemonCommand::Start,
+                ..
+            } => None,
+            _ => Telemetry::enabled(Arc::clone(&client)),
+        };
+        let started = Instant::now();
+        let outcome = run(cli, client).await;
+        if let Some(telemetry) = telemetry {
+            let result = match &outcome {
+                Ok(code) if code == &ExitCode::SUCCESS => "ok",
+                Ok(_) => "error",
+                Err(error) => {
+                    let exit = error::exit(error);
+                    tracing::error!(exit_code = exit as u8, outcome = ?exit, "command failed");
+                    if exit == error::Exit::Usage {
+                        "usage"
+                    } else {
+                        "error"
+                    }
+                }
+            };
+            telemetry.command(&command, result, started.elapsed());
+            telemetry.flush().await;
+        }
+        outcome
+    })
 }
 
-async fn run(cli: Cli) -> Result<ExitCode> {
+async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
     // Commands talk to an already-running daemon, so an explicit endpoint wins
     // here. `daemon start` is the exception and resolves its own target from
     // the home it spawns the daemon in.
-    let client = Client::resolve(cli.endpoint.as_deref(), None);
     let format = cli.format;
 
     // `doctor` is the one command whose verdict is an exit code rather than a
@@ -104,9 +138,13 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             // Read like `status` rather than driven like the rest: the log
             // comes from the daemon itself, so `--endpoint` reaches the one it
             // names, and the home is only what the file fallback is found in.
-            DaemonCommand::Logs { follow } => {
+            DaemonCommand::Logs {
+                follow,
+                service,
+                level,
+            } => {
                 let client = Client::resolve(cli.endpoint.as_deref(), home.clone());
-                commands::daemon::logs(&client, home, follow).await
+                commands::daemon::logs(&client, home, follow, service, level).await
             }
         },
         Command::Attach { id, seat, agent } => {
@@ -114,7 +152,12 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         }
         Command::Agent { command } => commands::agent::run(&client, command, format).await,
         Command::Skill { command } => commands::skill::run(&client, command, format).await,
+        Command::Workflow { command } => commands::workflow::run(&client, command, format).await,
+        Command::Dashboard { command } => commands::dashboard::run(&client, command, format).await,
+        Command::Pr { command } => commands::pr::run(&client, command, format).await,
         Command::Repo { command } => commands::repo::run(&client, command, format).await,
+        Command::Forge { command } => commands::forge::run(&client, command, format).await,
+        Command::Issue { command } => commands::issue::run(&client, command, format).await,
         Command::Permissions { command } => {
             commands::permissions::run(&client, command, format).await
         }
@@ -122,6 +165,14 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Task { command } => commands::task::run(&client, command, format).await,
         Command::Session { command } => commands::session::run(&client, command, format).await,
         Command::Models { command } => commands::models::run(&client, command, format).await,
+        Command::Stats {
+            command,
+            since,
+            repo,
+        } => {
+            let filters = commands::stats::Filters { since, repo };
+            commands::stats::run(&client, command, filters, format).await
+        }
         Command::Attention { watch } => commands::attention::run(&client, watch, format).await,
         Command::Events {
             follow,
@@ -145,4 +196,14 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Doctor => unreachable!(),
     };
     outcome.map(|()| ExitCode::SUCCESS)
+}
+
+fn command_path(matches: &ArgMatches) -> String {
+    let mut path = Vec::new();
+    let mut current = matches;
+    while let Some((name, nested)) = current.subcommand() {
+        path.push(name);
+        current = nested;
+    }
+    path.join(" ")
 }

@@ -5,7 +5,6 @@
 //! CLI is the canonical implementation.
 
 use std::path::{Path, PathBuf};
-use std::{error, fmt};
 
 use anyhow::{Context, Result, bail};
 use tokio::process::Command;
@@ -14,23 +13,40 @@ use tokio::process::Command;
 /// no commit at all.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-#[derive(Debug)]
-pub(crate) struct BranchHasNoCommits(String);
-
-impl fmt::Display for BranchHasNoCommits {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl error::Error for BranchHasNoCommits {}
-
 #[derive(Debug, Clone, Default)]
 pub struct GitManager;
 
 impl GitManager {
+    /// Whether `branch` holds a commit `base` does not, and the worktree is
+    /// clean.
+    ///
+    /// A `base` nobody has committed to yet is unborn, and no range can be
+    /// cut from it (`rev-list base..branch` fails): the count is of `branch`
+    /// alone then, since every commit on it is one `base` does not have.
+    pub async fn committed_clean(
+        &self,
+        repo: &Path,
+        worktree: &Path,
+        base: &str,
+        branch: &str,
+    ) -> Result<bool> {
+        let range = match self.has_commit(repo, base).await? {
+            true => format!("{base}..{branch}"),
+            false => branch.to_string(),
+        };
+        let ahead = self
+            .git(repo, &["rev-list", "--count", "--end-of-options", &range])
+            .await?;
+        let status = self.git(worktree, &["status", "--porcelain"]).await?;
+        Ok(ahead.trim().parse::<u64>()? > 0 && status.trim().is_empty())
+    }
+
     async fn git(&self, repo: &Path, args: &[&str]) -> Result<String> {
-        let output = Command::new("git")
+        let mut command = Command::new("git");
+        if args.first() == Some(&"push") {
+            command.env("GIT_TERMINAL_PROMPT", "0");
+        }
+        let output = command
             .arg("-C")
             .arg(repo)
             .args(args)
@@ -48,11 +64,11 @@ impl GitManager {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    /// Create an author worktree on `branch` (created at `base` when new).
+    /// Create a task worktree on `branch` (created at `base` when new).
     ///
     /// A repository nobody has committed to yet has an unborn base branch,
     /// which no commit can be cut from: the task branch starts unborn as well,
-    /// and the author's first commit is the repository's first commit.
+    /// and the first column's first commit is the repository's first commit.
     pub async fn add_worktree(
         &self,
         repo: &Path,
@@ -63,19 +79,23 @@ impl GitManager {
         let wt = worktree.display().to_string();
         if self.branch_exists(repo, branch).await? {
             // Respawn after a crash: reuse the existing task branch.
-            self.git(repo, &["worktree", "add", &wt, branch]).await?;
+            self.git(repo, &["worktree", "add", "--", &wt, branch])
+                .await?;
         } else if self.branch_exists(repo, base).await? {
-            self.git(repo, &["worktree", "add", "-b", branch, &wt, base])
+            self.git(repo, &["worktree", "add", "-b", branch, "--", &wt, base])
                 .await?;
         } else {
-            self.git(repo, &["worktree", "add", "--orphan", "-b", branch, &wt])
-                .await?;
+            self.git(
+                repo,
+                &["worktree", "add", "--orphan", "-b", branch, "--", &wt],
+            )
+            .await?;
         }
         Ok(())
     }
 
-    /// Create a reviewer worktree, detached at `reference` (two worktrees
-    /// cannot share a branch).
+    /// Create a detached worktree at `reference`, for a session that reviews
+    /// a request (029): two worktrees cannot share a branch.
     pub async fn add_detached_worktree(
         &self,
         repo: &Path,
@@ -83,29 +103,63 @@ impl GitManager {
         reference: &str,
     ) -> Result<()> {
         let wt = worktree.display().to_string();
-        self.git(repo, &["worktree", "add", "--detach", &wt, reference])
+        self.git(repo, &["worktree", "add", "--detach", "--", &wt, reference])
             .await?;
         Ok(())
     }
 
-    /// Move a (reviewer) worktree to a new detached position, e.g. the task
-    /// branch tip at the next review round.
-    ///
-    /// Whatever the reviewer left in the tree is thrown away first. The tree
-    /// is read-only by contract, but a reviewer that proves a test fails by
-    /// breaking the code leaves edits behind, and a plain checkout refuses to
-    /// overwrite them: the tree then never moves again, and the reviewer is
-    /// never started for the next review. Ignored files — build caches — stay.
-    pub async fn checkout_detached(&self, worktree: &Path, reference: &str) -> Result<()> {
-        self.git(worktree, &["checkout", "--force", "--detach", reference])
+    /// Create a worktree on a fresh local `branch` cut at `at`, for a
+    /// session that keeps a request of the user's own by hand (032): unlike
+    /// [`Self::add_detached_worktree`] this worktree commits and pushes, so
+    /// it needs a branch of its own rather than a detached head. `-B`
+    /// rather than `-b`: an earlier cleanup that removed the worktree but
+    /// failed to delete the branch (its own error is swallowed, and the
+    /// next ask retries) must not leave this call refusing to recreate
+    /// either, since nothing but a keeper ever commits there — a fresh
+    /// worktree always starts the branch over at the head given here.
+    pub async fn add_worktree_at(
+        &self,
+        repo: &Path,
+        worktree: &Path,
+        branch: &str,
+        at: &str,
+    ) -> Result<()> {
+        let wt = worktree.display().to_string();
+        self.git(repo, &["worktree", "add", "-B", branch, "--", &wt, at])
             .await?;
+        Ok(())
+    }
+
+    /// Move a detached worktree to a new detached position, e.g. the head of
+    /// a request on its next push (029).
+    ///
+    /// Whatever the session left in the tree is thrown away first. The tree
+    /// is read-only by contract, but a session that proves a test fails by
+    /// breaking the code leaves edits behind, and a plain checkout refuses to
+    /// overwrite them: the tree then never moves again, and the session is
+    /// never started for the next round. Ignored files — build caches — stay.
+    pub async fn checkout_detached(&self, worktree: &Path, reference: &str) -> Result<()> {
+        // `--` means a pathspec to `checkout`, not an end of options, so a
+        // bare `reference` beginning with `-` needs `--end-of-options`
+        // instead: the option `diff` and the others above it use.
+        self.git(
+            worktree,
+            &[
+                "checkout",
+                "--force",
+                "--detach",
+                "--end-of-options",
+                reference,
+            ],
+        )
+        .await?;
         self.git(worktree, &["clean", "-fd"]).await?;
         Ok(())
     }
 
     pub async fn remove_worktree(&self, repo: &Path, worktree: &Path) -> Result<()> {
         let wt = worktree.display().to_string();
-        self.git(repo, &["worktree", "remove", "--force", &wt])
+        self.git(repo, &["worktree", "remove", "--force", "--", &wt])
             .await?;
         Ok(())
     }
@@ -115,11 +169,34 @@ impl GitManager {
         Ok(())
     }
 
+    /// The URL a configured remote is pushed to, which a separate
+    /// `pushurl` may set away from the one it is fetched from: a fork's
+    /// own remote is built from this one, whether it is fetched or
+    /// pushed — the keeper needs authenticated transport for either, and
+    /// this is the URL the user's credentials are actually set up for
+    /// (032).
+    pub(crate) async fn remote_push_url(&self, repo: &Path, remote: &str) -> Result<String> {
+        self.git(repo, &["remote", "get-url", "--push", remote])
+            .await
+    }
+
+    /// Whether `branch` is a valid branch name (`git check-ref-format
+    /// --branch`), rather than revision syntax such as `main~1` or `HEAD`
+    /// that `rev-parse --verify refs/heads/<branch>` would otherwise accept
+    /// as if it named a branch.
+    pub(crate) async fn is_valid_branch_name(&self, repo: &Path, branch: &str) -> Result<bool> {
+        Ok(self
+            .git(repo, &["check-ref-format", "--branch", branch])
+            .await
+            .is_ok())
+    }
+
     pub async fn branch_exists(&self, repo: &Path, branch: &str) -> Result<bool> {
         let args = [
             "rev-parse",
             "--verify",
             "--quiet",
+            "--end-of-options",
             &format!("refs/heads/{branch}"),
         ];
         let output = Command::new("git")
@@ -151,6 +228,7 @@ impl GitManager {
                 "rev-parse",
                 "--verify",
                 "--quiet",
+                "--end-of-options",
                 &format!("refs/heads/{branch}"),
             ],
         )
@@ -197,30 +275,214 @@ impl GitManager {
             })
     }
 
-    /// Ensure a branch points at a real commit, saying which one does not when
-    /// it is a branch nothing has been committed to yet.
-    pub async fn ensure_branch_has_commits(&self, repo: &Path, branch: &str) -> Result<()> {
-        if self.branch_exists(repo, branch).await? {
-            return Ok(());
-        }
-        Err(anyhow::Error::new(BranchHasNoCommits(format!(
-            "branch {branch} of {} has no commits yet",
-            repo.display()
-        ))))
+    /// Whether `reference` names a commit the repository holds: the head of
+    /// a request under review, before it is fetched (029). A reference git
+    /// cannot read as one is `false`.
+    pub(crate) async fn has_commit(&self, repo: &Path, reference: &str) -> Result<bool> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
+            .arg(format!("{reference}^{{commit}}"))
+            .output()
+            .await
+            .context("git could not start")?;
+        Ok(output.status.success())
     }
 
-    pub async fn delete_branch(&self, repo: &Path, branch: &str) -> Result<()> {
-        self.git(repo, &["branch", "-D", branch]).await?;
+    /// Fetch `branch` from `from` — a remote name or a clone URL — into
+    /// `FETCH_HEAD` alone: the head of a request the user reviews, which may
+    /// share its name with a branch of the checkout (029).
+    ///
+    /// `branch` is a forge's own report of a pull request's head or base
+    /// name, checked with `check-ref-format --branch` before it is built
+    /// into the refspec below: unchecked, a name holding a colon such as
+    /// `good:refs/heads/injected` is not one ref but two, `src:dst`, and
+    /// git reads `refs/heads/good:refs/heads/injected` as fetching
+    /// `good` into a new local branch `injected` — a ref this call's own
+    /// contract, `FETCH_HEAD` alone, never otherwise writes.
+    pub(crate) async fn fetch_head_of(&self, repo: &Path, from: &str, branch: &str) -> Result<()> {
+        if !self.is_valid_branch_name(repo, branch).await? {
+            bail!("not a valid branch name: {branch}");
+        }
+        self.git(
+            repo,
+            &[
+                "fetch",
+                "--end-of-options",
+                from,
+                &format!("refs/heads/{branch}"),
+            ],
+        )
+        .await?;
         Ok(())
     }
 
+    /// The tip `branch` has on `from` — a remote name or a clone URL — as a
+    /// full sha, fetched into `FETCH_HEAD` alone: the base a request merged
+    /// into, which the checkout's own branch may not have caught up with
+    /// (005).
+    pub(crate) async fn fetched_tip(
+        &self,
+        repo: &Path,
+        from: &str,
+        branch: &str,
+    ) -> Result<String> {
+        self.fetch_head_of(repo, from, branch).await?;
+        self.git(repo, &["rev-parse", "--verify", "FETCH_HEAD^{commit}"])
+            .await
+    }
+
+    /// Move the local `branch` forward to `to`, a commit already in the
+    /// repository, and only forward (005): a branch that already holds `to`
+    /// is left as it is, one with commits `to` lacks is refused, and a
+    /// missing one is created at `to`. Where a
+    /// worktree has the branch checked out, `git merge --ff-only` runs in
+    /// it, which refuses to overwrite a local change; elsewhere the ref is
+    /// moved with `update-ref`, guarded by its old value.
+    pub(crate) async fn fast_forward(&self, repo: &Path, branch: &str, to: &str) -> Result<()> {
+        if !self.branch_exists(repo, branch).await? {
+            // No local branch yet: it starts where the remote's is.
+            self.git(
+                repo,
+                &[
+                    "update-ref",
+                    "--end-of-options",
+                    &format!("refs/heads/{branch}"),
+                    to,
+                ],
+            )
+            .await?;
+            return Ok(());
+        }
+        let tip = self.branch_tip(repo, branch).await?;
+        if self.is_ancestor(repo, to, &tip).await? {
+            return Ok(());
+        }
+        if !self.is_ancestor(repo, &tip, to).await? {
+            bail!("{branch} has commits that {to} lacks: it cannot be fast-forwarded");
+        }
+        let listed = self.git(repo, &["worktree", "list", "--porcelain"]).await?;
+        let wanted = format!("branch refs/heads/{branch}");
+        let mut path = None;
+        let mut checked_out = None;
+        for line in listed.lines() {
+            if let Some(at) = line.strip_prefix("worktree ") {
+                path = Some(at.to_string());
+            } else if line == wanted {
+                checked_out = path.clone();
+            }
+        }
+        match checked_out {
+            Some(worktree) => {
+                self.git(
+                    Path::new(&worktree),
+                    &["merge", "--ff-only", "--quiet", "--end-of-options", to],
+                )
+                .await?;
+            }
+            None => {
+                self.git(
+                    repo,
+                    &[
+                        "update-ref",
+                        "--end-of-options",
+                        &format!("refs/heads/{branch}"),
+                        to,
+                        &tip,
+                    ],
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The diff of `HEAD` in `worktree` from the commit `since`:
+    /// `git diff <since>..HEAD` (029).
+    pub(crate) async fn diff_since(&self, worktree: &Path, since: &str) -> Result<String> {
+        self.git(
+            worktree,
+            &["diff", "--end-of-options", &format!("{since}..HEAD")],
+        )
+        .await
+    }
+
+    pub async fn delete_branch(&self, repo: &Path, branch: &str) -> Result<()> {
+        self.git(repo, &["branch", "-D", "--end-of-options", branch])
+            .await?;
+        Ok(())
+    }
+
+    /// Whether `branch`'s local tip is also what `remote` has for it, read
+    /// with `git ls-remote` rather than a fetch: the push check before the
+    /// daemon opens a request, and the merge verification before it accepts
+    /// `complete_step` for one.
+    pub async fn remote_has_branch_tip(
+        &self,
+        repo: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<bool> {
+        let local = self
+            .git(repo, &["rev-parse", "--verify", "--end-of-options", branch])
+            .await?;
+        let refs = self
+            .git(
+                repo,
+                &["ls-remote", "--heads", "--end-of-options", remote, branch],
+            )
+            .await?;
+        Ok(refs
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .is_some_and(|sha| sha == local))
+    }
+
+    /// The tip `remote` has for `branch`, read with `git ls-remote` rather
+    /// than a fetch, None where the remote carries no such branch: one
+    /// deleted after the request it served merged (032).
+    pub(crate) async fn remote_branch_tip(
+        &self,
+        repo: &Path,
+        remote: &str,
+        branch: &str,
+    ) -> Result<Option<String>> {
+        let refs = self
+            .git(
+                repo,
+                &["ls-remote", "--heads", "--end-of-options", remote, branch],
+            )
+            .await?;
+        Ok(refs
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .map(str::to_string))
+    }
+
+    /// Whether `worktree` holds no uncommitted change: a keeper's own
+    /// worktree, read before teardown decides its work is safe to discard
+    /// (032).
+    pub(crate) async fn is_clean(&self, worktree: &Path) -> Result<bool> {
+        let status = self.git(worktree, &["status", "--porcelain"]).await?;
+        Ok(status.trim().is_empty())
+    }
+
     /// True when `ancestor` is reachable from `descendant` — the merge
-    /// verification used before accepting `finish_task`.
+    /// verification used before accepting a merge column's `complete_step`.
     pub async fn is_ancestor(&self, repo: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
         let output = Command::new("git")
             .arg("-C")
             .arg(repo)
-            .args(["merge-base", "--is-ancestor", ancestor, descendant])
+            .args([
+                "merge-base",
+                "--is-ancestor",
+                "--end-of-options",
+                ancestor,
+                descendant,
+            ])
             .output()
             .await
             .context("running git merge-base")?;
@@ -235,11 +497,20 @@ impl GitManager {
     /// from it. Then the whole branch is the change, and the empty tree is
     /// what it is read against.
     pub async fn diff(&self, repo: &Path, base: &str, branch: &str) -> Result<String> {
-        if self.git(repo, &["merge-base", base, branch]).await.is_err() {
-            return self.git(repo, &["diff", EMPTY_TREE, branch]).await;
-        }
-        self.git(repo, &["diff", &format!("{base}...{branch}")])
+        if self
+            .git(repo, &["merge-base", "--end-of-options", base, branch])
             .await
+            .is_err()
+        {
+            return self
+                .git(repo, &["diff", "--end-of-options", EMPTY_TREE, branch])
+                .await;
+        }
+        self.git(
+            repo,
+            &["diff", "--end-of-options", &format!("{base}...{branch}")],
+        )
+        .await
     }
 
     /// What `commit` brought into the branch it landed on: the diff against
@@ -260,12 +531,146 @@ impl GitManager {
         // answer is no: a root commit is not an error to report, it is the
         // other branch of this method.
         let before = match self
-            .git(repo, &["rev-parse", "--verify", "--quiet", &parent])
+            .git(
+                repo,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    "--end-of-options",
+                    &parent,
+                ],
+            )
             .await
         {
             Ok(_) => parent,
             Err(_) => EMPTY_TREE.to_string(),
         };
-        self.git(repo, &["diff", &before, commit]).await
+        self.git(repo, &["diff", "--end-of-options", &before, commit])
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn init_repo(dir: &Path) {
+        for args in [
+            vec!["init", "-q"],
+            vec![
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "--allow-empty",
+                "-q",
+                "-m",
+                "init",
+            ],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(dir)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+    }
+
+    /// A `worktree_root` of `--force` turns a task's worktree path into
+    /// `--force/pr-example`: without an options terminator before the path,
+    /// `git worktree add` would read it as an unrecognized flag rather than
+    /// the directory to create. The path is data at every call that takes
+    /// one, not only here.
+    ///
+    /// The path must be relative, and it must be the git argument itself
+    /// that starts with `-`: `repo.path().join("--force")` is absolute, so
+    /// it never starts with `-` and would pass even the unguarded call this
+    /// test is written to catch. Resolved against `repo` by git's own
+    /// `-C`, a relative `--force/pr-example` is what `worktree_root`
+    /// actually hands `add_worktree` once joined onto a task's own
+    /// branch-named tail.
+    #[tokio::test]
+    async fn a_worktree_path_that_looks_like_a_flag_is_still_created() {
+        let repo = tempfile::tempdir().unwrap();
+        init_repo(repo.path());
+        let git = GitManager;
+        let base = git.current_branch(repo.path()).await.unwrap();
+        let relative = Path::new("--force/pr-example");
+        let created = repo.path().join(relative);
+
+        git.add_worktree(repo.path(), relative, "feature", &base)
+            .await
+            .unwrap();
+        assert!(created.join(".git").exists(), "{}", created.display());
+
+        git.remove_worktree(repo.path(), relative).await.unwrap();
+        assert!(!created.exists());
+    }
+
+    /// The same path shape reaches a detached worktree the same way (029).
+    /// `checkout_detached` and the closing `remove_worktree` take the real
+    /// path once the worktree exists — `-C`'s own argument is already safe
+    /// regardless of a leading `-`, since a required-argument flag consumes
+    /// whatever follows it as data — so only `add_detached_worktree`'s own
+    /// path is what this test is written to catch, the same way as above.
+    #[tokio::test]
+    async fn a_detached_worktree_path_that_looks_like_a_flag_is_still_created() {
+        let repo = tempfile::tempdir().unwrap();
+        init_repo(repo.path());
+        let git = GitManager;
+        let base = git.current_branch(repo.path()).await.unwrap();
+        let relative = Path::new("--detach/review");
+        let created = repo.path().join(relative);
+
+        git.add_detached_worktree(repo.path(), relative, &base)
+            .await
+            .unwrap();
+        assert!(created.join(".git").exists(), "{}", created.display());
+
+        git.checkout_detached(&created, &base).await.unwrap();
+        git.remove_worktree(repo.path(), relative).await.unwrap();
+        assert!(!created.exists());
+    }
+
+    /// A forge's own report of a pull request's head branch is not a trusted
+    /// value: `good:refs/heads/injected` is not one branch name but a
+    /// `src:dst` refspec, and unvalidated, `fetch_head_of`'s own
+    /// `refs/heads/{branch}` would hand git exactly that — fetching `good`
+    /// from the remote into a brand new local branch `injected`, despite
+    /// this call's contract of writing `FETCH_HEAD` alone. Checked with
+    /// `check-ref-format --branch` first, the colon refuses the whole name
+    /// before it ever reaches the fetch, and no local ref is created.
+    #[tokio::test]
+    async fn fetch_head_of_refuses_a_branch_name_that_is_really_a_refspec() {
+        let from = tempfile::tempdir().unwrap();
+        init_repo(from.path());
+        assert!(
+            std::process::Command::new("git")
+                .args(["branch", "good"])
+                .current_dir(from.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let repo = tempfile::tempdir().unwrap();
+        init_repo(repo.path());
+        let git = GitManager;
+        let from_path = from.path().display().to_string();
+
+        let result = git
+            .fetch_head_of(repo.path(), &from_path, "good:refs/heads/injected")
+            .await;
+        assert!(result.is_err(), "{result:?}");
+
+        assert!(
+            !git.branch_exists(repo.path(), "injected").await.unwrap(),
+            "a branch name holding a colon must never create a local ref"
+        );
     }
 }

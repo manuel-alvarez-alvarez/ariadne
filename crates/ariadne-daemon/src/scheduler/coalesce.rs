@@ -3,7 +3,7 @@
 //! An agent reports every event it has — one tool call is a start and an end —
 //! and each of those woke a full reconciliation of the task it belongs to. A
 //! production database holds 24,679 tool ends, and eight agents reporting at
-//! once read the store out of connections, so a reviewer could not be started.
+//! once read the store out of connections, so a column's agent could not be started.
 //!
 //! What this holds is a window per session. The first wake of a burst is
 //! reconciled at once, so nothing the user waits on waits on a window; every

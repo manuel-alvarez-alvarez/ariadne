@@ -18,13 +18,13 @@ import { useLocation, useSearchParams } from "react-router-dom"
 
 import { ErrorState } from "@/components/error-state"
 import { PanelSheet } from "@/components/panel-sheet"
-import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { shortId } from "@/lib/format"
 import { sessionPanelFrom } from "@/routes/paths"
 
 import { sessionQueryOptions } from "./queries"
-import { SessionDetailView } from "./session-detail-view"
+import { SessionDetailView, SessionPanelHeader } from "./session-detail-view"
 
 export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const [search, setSearch] = useSearchParams()
@@ -35,14 +35,29 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
 
   return (
     <PanelSheet onClose={onClose}>
-      {/* As wide as the other panels: the console is the point of this one. */}
-      <SheetContent className="sm:max-w-3xl" aria-describedby={undefined}>
-        <SheetHeader>
-          {/* The panel is a dialog and needs a name of its own; the view below
-              carries the visible heading. */}
-          <SheetTitle className="sr-only">Session {shortId(sessionId)}</SheetTitle>
-        </SheetHeader>
+      {session.data ? (
+        <SessionPanelHeader
+          session={session.data}
+          // A resume hands back the session to attach to; the panel follows
+          // it. It replaces rather than pushes: the revived session is still
+          // this one panel, and Back should close it, not walk the sessions
+          // it has been pointed at.
+          onResumed={(revived) =>
+            setSearch(sessionPanelFrom(pathname, search, revived.id).search, { replace: true })
+          }
+          onSwitched={(successor) =>
+            setSearch(sessionPanelFrom(pathname, search, successor.id).search, { replace: true })
+          }
+        />
+      ) : (
+        <PaneHeader>
+          <PaneTitle className="sr-only">
+            {session.isError ? `Session ${shortId(sessionId)}` : "Loading session"}
+          </PaneTitle>
+        </PaneHeader>
+      )}
 
+      <PaneBody>
         {session.isPending ? (
           <div className="space-y-3">
             <Skeleton className="h-8 w-64" />
@@ -56,18 +71,9 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
             onRetry={() => void session.refetch()}
           />
         ) : (
-          <SessionDetailView
-            session={session.data}
-            // A resume hands back the session to attach to; the panel follows
-            // it. It replaces rather than pushes: the revived session is still
-            // this one panel, and Back should close it, not walk the sessions
-            // it has been pointed at.
-            onResumed={(revived) =>
-              setSearch(sessionPanelFrom(pathname, search, revived.id).search, { replace: true })
-            }
-          />
+          <SessionDetailView session={session.data} />
         )}
-      </SheetContent>
+      </PaneBody>
     </PanelSheet>
   )
 }

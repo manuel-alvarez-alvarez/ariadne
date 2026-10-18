@@ -10,16 +10,22 @@
 
 use crate::common;
 
+use std::path::PathBuf;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use serde_json::json;
+use tokio::sync::mpsc::UnboundedSender;
 
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::messages::MessageDto;
 use ariadne_core::{Actor, MessageKind, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
+use ariadne_store::{AgentSession, EventFilter};
 
-use common::{Cast, TIMEOUT, as_session, eventually, get, harness, sh, test_pin};
+use common::acp;
+use common::{Cast, Harness, TIMEOUT, as_session, eventually, get, harness, post_json, test_pin};
 
 fn messages_uri(cast: &Cast) -> String {
     format!("/v1/tasks/{}/messages", cast.task.id)
@@ -38,16 +44,15 @@ fn read_as(uri: &str, session_id: &str) -> Request<Body> {
 /// One message body, as an agent sends it.
 fn message(to_actor: &str, to_agent_id: Option<&str>, body: &str) -> serde_json::Value {
     serde_json::json!({
-        "kind": "message",
         "to_actor": to_actor,
         "to_agent_id": to_agent_id,
         "body": body,
     })
 }
 
-/// A reviewer writes to the author mid-review, and the author writes back
-/// what it needs. Neither of them left the task to do it, and the review is
-/// where it was.
+/// The review column's agent writes to the develop column's agent, and that
+/// agent writes back what it needs. Neither of them left the task to do it,
+/// and the task is in the column it was.
 ///
 /// Both are the same thing: one message naming the agent it is for. Nothing
 /// threads and nothing is a reply — each one reaches its agent as a turn, so
@@ -56,18 +61,9 @@ fn message(to_actor: &str, to_agent_id: Option<&str>, body: &str) -> serde_json:
 async fn agents_write_to_each_other_without_leaving_the_task() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let reviewer = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
-        )
-        .await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
+    let reviewer = h.agent_session(&cast, "review").await;
+    let author = h.agent_session(&cast, "develop").await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
 
     let sent: MessageDto = h
         .json(
@@ -75,8 +71,8 @@ async fn agents_write_to_each_other_without_leaving_the_task() {
                 &messages_uri(&cast),
                 &reviewer.id,
                 message(
-                    "author",
-                    Some(&cast.author.id),
+                    "agent",
+                    Some(&cast.develop().id),
                     "The retry loop has no bound and the caller has one.",
                 ),
             ),
@@ -84,12 +80,15 @@ async fn agents_write_to_each_other_without_leaving_the_task() {
         )
         .await;
     assert_eq!(sent.kind, MessageKind::Message);
-    assert_eq!(sent.from_actor, Actor::Reviewer);
+    assert_eq!(sent.from_actor, Actor::Agent);
     assert_eq!(
         sent.from_agent_id.as_deref(),
-        Some(cast.reviewer.id.as_str())
+        Some(cast.review().id.as_str())
     );
-    assert_eq!(sent.to_agent_id.as_deref(), Some(cast.author.id.as_str()));
+    assert_eq!(
+        sent.to_agent_id.as_deref(),
+        Some(cast.develop().id.as_str())
+    );
     assert_eq!(sent.delivered_at, None, "nothing has typed it yet");
 
     let answered: MessageDto = h
@@ -98,8 +97,8 @@ async fn agents_write_to_each_other_without_leaving_the_task() {
                 &messages_uri(&cast),
                 &author.id,
                 message(
-                    "reviewer",
-                    Some(&cast.reviewer.id),
+                    "agent",
+                    Some(&cast.review().id),
                     "The caller retries too, so the inner one stays.",
                 ),
             ),
@@ -107,14 +106,18 @@ async fn agents_write_to_each_other_without_leaving_the_task() {
         )
         .await;
     assert_eq!(answered.kind, MessageKind::Message);
-    assert_eq!(answered.to_actor, Actor::Reviewer, "back to whoever wrote");
+    assert_eq!(answered.to_actor, Actor::Agent, "back to whoever wrote");
     assert_eq!(
         answered.to_agent_id.as_deref(),
-        Some(cast.reviewer.id.as_str())
+        Some(cast.review().id.as_str())
     );
 
-    // And the review is untouched: a question is not a vote.
-    assert_eq!(h.store.open_verdicts(&cast.task.id).await.unwrap().len(), 0);
+    // And the task is where it was: a question moves no column.
+    let task = h.store.get_task(&cast.task.id).await.unwrap();
+    assert_eq!(
+        (task.status(), task.step.as_deref()),
+        (TaskStatus::InProgress, Some("develop"))
+    );
 }
 
 /// The transport: the daemon hands the message to the recipient's agent as a
@@ -123,20 +126,11 @@ async fn agents_write_to_each_other_without_leaving_the_task() {
 async fn a_message_is_handed_to_the_agent_it_was_sent_to() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let author = h.agent_session(&cast, "develop").await;
     h.agent_runs(&author).await;
     h.set_status(&author, SessionStatus::Idle).await;
-    let reviewer = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
-        )
-        .await;
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
+    let reviewer = h.agent_session(&cast, "review").await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
 
     let sent: MessageDto = h
         .json(
@@ -144,8 +138,8 @@ async fn a_message_is_handed_to_the_agent_it_was_sent_to() {
                 &messages_uri(&cast),
                 &reviewer.id,
                 message(
-                    "author",
-                    Some(&cast.author.id),
+                    "agent",
+                    Some(&cast.develop().id),
                     "The retry loop has no bound and the caller has one.",
                 ),
             ),
@@ -168,8 +162,19 @@ async fn a_message_is_handed_to_the_agent_it_was_sent_to() {
         !pasted.contains(&sent.id),
         "the agent is told an id there is nothing to answer on: {pasted}"
     );
-    // Named by the skills it works with: an agent has no name of its own.
-    assert!(pasted.contains("reviewer (code-review)"), "{pasted}");
+    // Named by its column, the task it is of and that task's title: a task
+    // staffs one agent per column, so the column names one sender, and it
+    // is the address the answer goes to.
+    assert!(
+        pasted.contains(&format!(
+            "Message from the review agent of task {} \"{}\":\n\n\
+             <<<untrusted>>>The retry loop has no bound and the caller has one.<<<end untrusted>>>\n\n\
+             Answer only a question, with `send_message` to `review` and task `{}`. \
+             Then go on with your work.",
+            cast.task.id, cast.task.title, cast.task.id
+        )),
+        "{pasted}"
+    );
 
     eventually(TIMEOUT, "the message to be stamped delivered", async || {
         h.store.get_message(&sent.id).await.unwrap().is_delivered()
@@ -183,21 +188,14 @@ async fn a_message_is_handed_to_the_agent_it_was_sent_to() {
 async fn a_message_to_an_agent_the_task_does_not_staff_is_refused() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let reviewer = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
-        )
-        .await;
+    let reviewer = h.agent_session(&cast, "review").await;
 
     let envelope: ErrorBody = h
         .json(
             as_session(
                 &messages_uri(&cast),
                 &reviewer.id,
-                message("author", Some("01NOBODY"), "anyone there?"),
+                message("agent", Some("01NOBODY"), "anyone there?"),
             ),
             StatusCode::BAD_REQUEST,
         )
@@ -212,70 +210,6 @@ async fn a_message_to_an_agent_the_task_does_not_staff_is_refused() {
     assert!(listed.is_empty(), "{listed:?}");
 }
 
-/// A verdict is a message, and only a reviewer of this task can give one:
-/// the kind is what closes a round, so who may send it is checked.
-#[tokio::test]
-async fn only_a_reviewer_of_the_task_can_send_a_verdict() {
-    let h = harness().await;
-    let cast = h.active_cast().await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
-
-    let (status, _) = h
-        .send(as_session(
-            &messages_uri(&cast),
-            &author.id,
-            serde_json::json!({
-                "kind": "approve",
-                "to_actor": "author",
-                "to_agent_id": cast.author.id,
-                "body": "I approve of myself.",
-            }),
-        ))
-        .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-}
-
-/// And a verdict on a task nobody asked to have reviewed is refused too: a
-/// round has to be open for one to close it.
-#[tokio::test]
-async fn a_verdict_outside_a_review_is_refused() {
-    let h = harness().await;
-    let cast = h.active_cast().await;
-    let reviewer = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
-        )
-        .await;
-    h.advance(&cast.task, TaskStatus::InProgress).await;
-
-    let envelope: ErrorBody = h
-        .json(
-            as_session(
-                &messages_uri(&cast),
-                &reviewer.id,
-                serde_json::json!({
-                    "kind": "approve",
-                    "to_actor": "author",
-                    "to_agent_id": cast.author.id,
-                    "body": "looks right",
-                }),
-            ),
-            StatusCode::CONFLICT,
-        )
-        .await;
-    assert!(
-        envelope.error.message.contains("only taken under_review"),
-        "{}",
-        envelope.error.message
-    );
-}
-
 /// An agent can write to the orchestrator, which is what keeps it open to the
 /// coding agents for the whole goal: it is addressed by what it is, since a
 /// goal has one and it is staffed on no task.
@@ -286,9 +220,7 @@ async fn an_agent_writes_to_the_orchestrator_and_it_reaches_its_agent() {
     let orchestrator = h.orchestrator_session(&cast.goal).await;
     h.agent_runs(&orchestrator).await;
     h.set_status(&orchestrator, SessionStatus::Idle).await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let author = h.agent_session(&cast, "develop").await;
 
     let sent: MessageDto = h
         .json(
@@ -323,976 +255,96 @@ async fn an_agent_writes_to_the_orchestrator_and_it_reaches_its_agent() {
     .await;
 }
 
-/// Asking for a review is the author writing to its reviewers, so the channel
-/// carries it: one message each, with the summary the author asked with.
+/// A goal with two tasks staffed on the same skills would leave the
+/// orchestrator unable to tell their agents' relays apart by column alone,
+/// so each one also names its own task and that task's title.
 #[tokio::test]
-async fn a_review_request_reaches_every_reviewer_as_a_message() {
+async fn two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let second = h
-        .store
-        .update_task(
-            &cast.task.id,
-            ariadne_store::TaskUpdate {
-                reviewers: Some(vec![
-                    ariadne_store::NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
-                    ariadne_store::NewTaskAgent::new(Seat::Reviewer, ["spec-review"], test_pin()),
-                ]),
-                ..Default::default()
-            },
-        )
-        .await
-        .map(|_| ())
-        .and(h.store.list_task_reviewers(&cast.task.id).await)
-        .unwrap();
-    assert_eq!(second.len(), 2);
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+    let second_task = h
+        .task_on(&cast.goal, &cast.repo, "Second task", test_pin())
         .await;
-    h.advance(&cast.task, TaskStatus::InProgress).await;
-
-    h.json::<serde_json::Value>(
-        as_session(
-            &format!("/v1/tasks/{}/transitions", cast.task.id),
-            &author.id,
-            serde_json::json!({"to": "under_review", "reason": "Renamed the flag and tested it."}),
-        ),
-        StatusCode::OK,
-    )
-    .await;
-
-    let listed: Vec<MessageDto> = h.json(get(&messages_uri(&cast)), StatusCode::OK).await;
-    let requests: Vec<&MessageDto> = listed
-        .iter()
-        .filter(|m| m.kind == MessageKind::ReviewRequest)
-        .collect();
-    assert_eq!(requests.len(), 2, "one per reviewer: {listed:?}");
-    for reviewer in &second {
-        assert!(
-            requests
-                .iter()
-                .any(|m| m.to_agent_id.as_deref() == Some(reviewer.id.as_str())),
-            "no request for {}: {requests:?}",
-            reviewer.id
-        );
-    }
-    assert!(
-        requests
-            .iter()
-            .all(|m| m.body == "Renamed the flag and tested it."),
-        "the summary the author asked with is what they were sent: {requests:?}"
-    );
-}
-
-/// A review request reaches its reviewer in the review briefing. That
-/// briefing carries the author's summary and stamps the channel row, so no
-/// bare message follows the reviewer's first turn.
-#[tokio::test]
-async fn a_review_request_reaches_a_reviewer_once_as_its_briefing() {
-    let h = harness().scheduler().await;
-    h.git_repo("repo");
-    let cast = h.active_cast().await;
-    h.notify(&cast.task.id);
-    eventually(TIMEOUT, "the author to start", async || {
-        h.status(&cast.task.id).await == TaskStatus::InProgress
-            && h.running_session(&cast.task.id, Seat::Author)
-                .await
-                .is_some()
-    })
-    .await;
-    let author = h
-        .running_session(&cast.task.id, Seat::Author)
-        .await
-        .expect("a live author session");
-    let summary = "Renamed the flag and tested it.";
-
-    h.json::<serde_json::Value>(
-        as_session(
-            &format!("/v1/tasks/{}/transitions", cast.task.id),
-            &author.id,
-            serde_json::json!({"to": "under_review", "reason": summary}),
-        ),
-        StatusCode::OK,
-    )
-    .await;
-
-    eventually(TIMEOUT, "the reviewer to start", async || {
-        h.running_session(&cast.task.id, Seat::Reviewer)
-            .await
-            .is_some()
-    })
-    .await;
-    let reviewer = h
-        .running_session(&cast.task.id, Seat::Reviewer)
-        .await
-        .expect("a live reviewer session");
-    let request = h
+    let second_author = h
         .store
-        .list_messages(ariadne_store::MessageFilter {
-            task_id: Some(cast.task.id.clone()),
-            to_agent_id: Some(cast.reviewer.id.clone()),
-            ..Default::default()
-        })
+        .list_task_agents(&second_task.id)
         .await
         .unwrap()
-        .into_iter()
-        .find(|message| message.kind() == Some(MessageKind::ReviewRequest))
-        .expect("the review request");
-    eventually(TIMEOUT, "the briefing to stamp the request", async || {
-        h.store
-            .get_message(&request.id)
-            .await
-            .unwrap()
-            .is_delivered()
-    })
-    .await;
-    eventually(TIMEOUT, "the reviewer's first turn to end", async || {
-        h.session_status(&reviewer).await == SessionStatus::Idle
-    })
-    .await;
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        .remove(0);
 
-    let prompts = h.prompts_to(&reviewer);
-    assert_eq!(prompts.len(), 1, "a bare message followed: {prompts:#?}");
-    assert_eq!(
-        prompts[0].matches(summary).count(),
-        1,
-        "the briefing did not carry the summary once: {}",
-        prompts[0]
-    );
-    assert!(
-        !prompts[0].contains("Message from your author"),
-        "the review request arrived as a bare message: {}",
-        prompts[0]
-    );
-}
-
-/// A reviewer that sent a task back stays live for the next review, so the
-/// second request reaches it as soon as the author asks rather than waiting
-/// for the quiet clock to notice it again.
-#[tokio::test]
-async fn a_live_reviewer_is_briefed_at_once_for_a_second_review() {
-    let h = harness().scheduler().await;
-    h.git_repo("repo");
-    let cast = h.active_cast().await;
-    h.notify(&cast.task.id);
-    eventually(TIMEOUT, "the author to start", async || {
-        h.status(&cast.task.id).await == TaskStatus::InProgress
-            && h.running_session(&cast.task.id, Seat::Author)
-                .await
-                .is_some()
-    })
-    .await;
-    let author = h
-        .running_session(&cast.task.id, Seat::Author)
-        .await
-        .expect("a live author session");
-
-    h.json::<serde_json::Value>(
-        as_session(
-            &format!("/v1/tasks/{}/transitions", cast.task.id),
-            &author.id,
-            serde_json::json!({"to": "under_review", "reason": "the first review"}),
-        ),
-        StatusCode::OK,
-    )
-    .await;
-    eventually(TIMEOUT, "the reviewer to start", async || {
-        h.running_session(&cast.task.id, Seat::Reviewer)
-            .await
-            .is_some()
-    })
-    .await;
-    let reviewer = h
-        .running_session(&cast.task.id, Seat::Reviewer)
-        .await
-        .expect("a live reviewer session");
-    eventually(
-        TIMEOUT,
-        "the reviewer to finish its first turn",
-        async || h.session_status(&reviewer).await == SessionStatus::Idle,
-    )
-    .await;
+    let orchestrator = h.orchestrator_session(&cast.goal).await;
+    h.agent_runs(&orchestrator).await;
+    h.set_status(&orchestrator, SessionStatus::Idle).await;
+    let author = h.agent_session(&cast, "develop").await;
+    let second_author_session = h
+        .session(
+            &cast.goal,
+            Some(&second_task),
+            Seat::Agent,
+            &second_author.id,
+        )
+        .await;
 
     h.json::<MessageDto>(
         as_session(
             &messages_uri(&cast),
-            &reviewer.id,
-            serde_json::json!({
-                "kind": "request_changes",
-                "to_actor": "author",
-                "to_agent_id": cast.author.id,
-                "body": "take another look at the bounds",
-            }),
+            &author.id,
+            message("orchestrator", None, "The first task needs a decision."),
         ),
         StatusCode::CREATED,
     )
     .await;
-    eventually(
-        TIMEOUT,
-        "the author to resume after the changes",
-        async || h.status(&cast.task.id).await == TaskStatus::InProgress,
-    )
-    .await;
-
-    let summary = "the revised review";
-    h.json::<serde_json::Value>(
+    h.json::<MessageDto>(
         as_session(
-            &format!("/v1/tasks/{}/transitions", cast.task.id),
-            &author.id,
-            serde_json::json!({"to": "under_review", "reason": summary}),
+            &format!("/v1/tasks/{}/messages", second_task.id),
+            &second_author_session.id,
+            message("orchestrator", None, "The second task needs a decision."),
         ),
-        StatusCode::OK,
+        StatusCode::CREATED,
     )
     .await;
-    let request = h
-        .store
-        .list_messages(ariadne_store::MessageFilter {
-            task_id: Some(cast.task.id.clone()),
-            to_agent_id: Some(cast.reviewer.id.clone()),
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|message| {
-            message.kind() == Some(MessageKind::ReviewRequest) && message.body == summary
-        })
-        .expect("the second review request");
 
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
     eventually(
         TIMEOUT,
-        "the live reviewer to receive the new briefing",
-        async || h.prompted(&reviewer).contains(summary),
-    )
-    .await;
-    assert!(
-        h.store
-            .get_message(&request.id)
-            .await
-            .unwrap()
-            .is_delivered(),
-        "the second briefing stamps its request delivered"
-    );
-}
-
-/// A review the author has just asked for is not closed by the answers to the
-/// review before it.
-///
-/// A review opens in two writes: `transition_task` commits the status, and the
-/// announcement writes one request row per reviewer. A scheduler pass between
-/// the two reads the task under review while the newest request row is still
-/// the review before this one's, so the verdicts that row bounds are that
-/// review's answers. Read as this review's, the `request_changes` that closed
-/// the round the author has just finished sends the task straight back to its
-/// author, and the review it asked for is never held at all: no reviewer is
-/// ever briefed for it.
-///
-/// The window is seeded rather than raced for. The store writes the status,
-/// and the store announces nothing, so the pass below is exactly the pass that
-/// lands in it.
-#[tokio::test]
-async fn a_review_is_not_closed_by_the_answers_to_the_review_before_it() {
-    let h = harness().scheduler().await;
-    h.git_repo("repo");
-    let cast = h.active_cast().await;
-    let answer = |kind: MessageKind, from: Actor, body: &str| ariadne_store::NewMessage {
-        goal_id: cast.goal.id.clone(),
-        task_id: Some(cast.task.id.clone()),
-        kind,
-        from_actor: from,
-        from_agent_id: Some(match from {
-            Actor::Author => cast.author.id.clone(),
-            _ => cast.reviewer.id.clone(),
-        }),
-        from_session: None,
-        to_actor: match from {
-            Actor::Author => Actor::Reviewer,
-            _ => Actor::Author,
+        "the first task's relay to reach the orchestrator",
+        async || {
+            h.prompted(&orchestrator)
+                .contains("The first task needs a decision.")
         },
-        to_agent_id: Some(match from {
-            Actor::Author => cast.reviewer.id.clone(),
-            _ => cast.author.id.clone(),
-        }),
-        body: body.to_string(),
-    };
-
-    // One review, asked for, announced, and answered with changes: what the
-    // task carries when its author asks for the next one.
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
-    h.store
-        .send_message(answer(
-            MessageKind::ReviewRequest,
-            Actor::Author,
-            "the first review",
-        ))
-        .await
-        .unwrap();
-    h.store
-        .send_message(answer(
-            MessageKind::RequestChanges,
-            Actor::Reviewer,
-            "take another look at the bounds",
-        ))
-        .await
-        .unwrap();
-    for status in [TaskStatus::ChangesRequested, TaskStatus::InProgress] {
-        h.store
-            .transition_task(&cast.task.id, status, Actor::Daemon, None, None)
-            .await
-            .unwrap();
-    }
-
-    // The author asks again, and nothing has announced it yet: the window.
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::UnderReview,
-            Actor::Author,
-            Some("the revised review"),
-            None,
-        )
-        .await
-        .unwrap();
-    // Waited out rather than slept past: the flush answers only once the
-    // notify above's own reconciliation is done, which is the pass in the
-    // window having actually run.
-    h.notify(&cast.task.id);
-    h.flush_scheduler().await;
-
-    assert_eq!(
-        h.status(&cast.task.id).await,
-        TaskStatus::UnderReview,
-        "the review the author just asked for is the review the task is under"
-    );
-}
-
-/// A review request is not delivered and forgotten if the hand-off to the
-/// live reviewer failed. Its runtime entry can close its prompt channel in
-/// the moment between the liveness check and the hand-off — the same state
-/// its own connection ending leaves behind for a few awaits before it is
-/// deregistered — and `hand_prompt` says so by failing. Marked delivered at
-/// that failed attempt regardless, the request would never reach it.
-#[tokio::test]
-async fn a_review_request_survives_a_failed_hand_off_to_a_live_reviewer() {
-    let h = harness().scheduler().await;
-    h.git_repo("repo");
-    let cast = h.active_cast().await;
-    h.notify(&cast.task.id);
-    eventually(TIMEOUT, "the author to start", async || {
-        h.status(&cast.task.id).await == TaskStatus::InProgress
-            && h.running_session(&cast.task.id, Seat::Author)
-                .await
-                .is_some()
-    })
-    .await;
-    let author = h
-        .running_session(&cast.task.id, Seat::Author)
-        .await
-        .expect("a live author session");
-
-    h.json::<serde_json::Value>(
-        as_session(
-            &format!("/v1/tasks/{}/transitions", cast.task.id),
-            &author.id,
-            serde_json::json!({"to": "under_review", "reason": "the first review"}),
-        ),
-        StatusCode::OK,
     )
     .await;
-    eventually(TIMEOUT, "the reviewer to start", async || {
-        h.running_session(&cast.task.id, Seat::Reviewer)
-            .await
-            .is_some()
-    })
-    .await;
-    let reviewer = h
-        .running_session(&cast.task.id, Seat::Reviewer)
-        .await
-        .expect("a live reviewer session");
+
+    sched
+        .send(SchedEvent::TaskChanged(second_task.id.clone()))
+        .unwrap();
     eventually(
         TIMEOUT,
-        "the reviewer to finish its first turn",
-        async || h.session_status(&reviewer).await == SessionStatus::Idle,
+        "the second task's relay to reach the orchestrator",
+        async || {
+            h.prompted(&orchestrator)
+                .contains("The second task needs a decision.")
+        },
     )
     .await;
 
-    h.json::<MessageDto>(
-        as_session(
-            &messages_uri(&cast),
-            &reviewer.id,
-            serde_json::json!({
-                "kind": "request_changes",
-                "to_actor": "author",
-                "to_agent_id": cast.author.id,
-                "body": "take another look at the bounds",
-            }),
-        ),
-        StatusCode::CREATED,
-    )
-    .await;
-    eventually(
-        TIMEOUT,
-        "the author to resume after the changes",
-        async || h.status(&cast.task.id).await == TaskStatus::InProgress,
-    )
-    .await;
-
-    // Live per the registry, but its prompt channel is already closed —
-    // closed before the second round opens, so this is the hand-off that
-    // fails.
-    h.launcher.acp.close_prompt_channel_for_test(&reviewer.id);
-
-    let summary = "the revised review";
-    h.json::<serde_json::Value>(
-        as_session(
-            &format!("/v1/tasks/{}/transitions", cast.task.id),
-            &author.id,
-            serde_json::json!({"to": "under_review", "reason": summary}),
-        ),
-        StatusCode::OK,
-    )
-    .await;
-    // Waited out rather than slept past: the flush answers only once the
-    // transition above's own reconciliation is done, which is the failed
-    // hand-off actually having been attempted.
-    h.flush_scheduler().await;
+    let pasted = h.prompted(&orchestrator);
     assert!(
-        !h.prompted(&reviewer).contains(summary),
-        "the closed channel could not have delivered anything"
-    );
-    let request = h
-        .store
-        .list_messages(ariadne_store::MessageFilter {
-            task_id: Some(cast.task.id.clone()),
-            to_agent_id: Some(cast.reviewer.id.clone()),
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|message| {
-            message.kind() == Some(MessageKind::ReviewRequest) && message.body == summary
-        })
-        .expect("the second review request");
-    assert!(
-        !h.store
-            .get_message(&request.id)
-            .await
-            .unwrap()
-            .is_delivered(),
-        "a failed hand-off does not stamp the request delivered"
-    );
-
-    // The agent comes back — killed and resumed through the daemon's own
-    // relaunch, a fresh registration under the same session — and the
-    // request is still owed.
-    h.launcher.kill_session(&reviewer.id).await.unwrap();
-    h.notify(&cast.task.id);
-    eventually(
-        TIMEOUT,
-        "the live reviewer to be briefed now that it can hear it",
-        async || h.prompted(&reviewer).contains(summary),
-    )
-    .await;
-    assert_eq!(
-        h.prompted(&reviewer).matches(summary).count(),
-        1,
-        "exactly one delivery, once the closed channel could carry it"
+        pasted.contains(&format!(
+            r#"Message from the develop agent of task {} "{}":"#,
+            cast.task.id, cast.task.title
+        )),
+        "{pasted}"
     );
     assert!(
-        h.store
-            .get_message(&request.id)
-            .await
-            .unwrap()
-            .is_delivered(),
-        "the retried briefing stamps its request delivered"
-    );
-}
-
-/// A review request is not skipped and forgotten if the resume that would
-/// spawn its first reviewer fails. `resume_reviewer`'s worktree setup
-/// refuses a branch that does not exist — the same refusal a task whose
-/// author never pushed anything would hit. Marking the delivery regardless
-/// would not even show on a plain retry of the same resume: with no live
-/// session, that path ignores the marker and tries the resume fresh every
-/// pass. What it does poison is the session's own live path, later, once it
-/// comes up on its own — so that is where this proves the fix landed: a
-/// session already seeded starting, resumed by its own agent rather than by
-/// another call the scheduler drives, comes up live and is briefed only if
-/// the failed attempt left the marker clear.
-#[tokio::test]
-async fn a_review_request_survives_a_failed_resume_of_its_first_reviewer() {
-    let h = harness().scheduler().await;
-    let repo_path = h.git_repo("repo");
-    let mut cast = h.cast_pinned(&test_pin().model, 1).await;
-    cast.goal = h.activate(&cast.goal).await;
-    // No branch for the task yet: the reviewer's worktree setup has nothing
-    // to check out. No author ever spawns to create one either — that is
-    // the point, an announcement with nothing behind it yet. The summary is
-    // this test's own, so the briefing it travels in is unmistakable later.
-    const SUMMARY: &str = "look over the seeded change";
-    h.store
-        .transition_task(&cast.task.id, TaskStatus::Ready, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::InProgress,
-            Actor::Daemon,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::UnderReview,
-            Actor::Author,
-            Some(SUMMARY),
-            None,
-        )
-        .await
-        .unwrap();
-    h.store
-        .send_message(ariadne_store::NewMessage {
-            goal_id: cast.goal.id.clone(),
-            task_id: Some(cast.task.id.clone()),
-            kind: MessageKind::ReviewRequest,
-            from_actor: Actor::Author,
-            from_agent_id: Some(cast.author.id.clone()),
-            from_session: None,
-            to_actor: Actor::Reviewer,
-            to_agent_id: Some(cast.reviewer.id.clone()),
-            body: SUMMARY.to_string(),
-        })
-        .await
-        .unwrap();
-
-    // A reviewer session already starting, as if an earlier round had once
-    // reported from it: the resume below finds this row resumable — the
-    // same one that later comes up on its own — rather than falling back to
-    // a fresh spawn.
-    let seeded = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
-        )
-        .await;
-    h.store
-        .set_session_internal_id(&seeded.id, "seeded-reviewer-session")
-        .await
-        .unwrap();
-
-    h.notify(&cast.task.id);
-    // Waited out rather than slept past: the flush answers only once the
-    // notify above's own reconciliation is done, which is the failed resume
-    // actually having been attempted.
-    h.flush_scheduler().await;
-    assert_eq!(
-        h.session_status(&seeded).await,
-        SessionStatus::Starting,
-        "the worktree refusal lands before restart_session ever touches the row"
-    );
-    let request = h
-        .store
-        .list_messages(ariadne_store::MessageFilter {
-            task_id: Some(cast.task.id.clone()),
-            to_agent_id: Some(cast.reviewer.id.clone()),
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|message| message.kind() == Some(MessageKind::ReviewRequest))
-        .expect("the review request");
-    assert!(
-        !h.store
-            .get_message(&request.id)
-            .await
-            .unwrap()
-            .is_delivered(),
-        "a failed resume does not stamp the request delivered"
-    );
-
-    // The branch exists now — what a pushed change looks like. The same
-    // seeded session comes up on its own, the way an agent already
-    // mid-launch would — not through another resume the scheduler drives —
-    // so whether it is briefed depends only on what the failed attempt
-    // above left on `review_briefed`.
-    sh(&repo_path, &format!("git branch {}", cast.task.branch));
-    h.agent_runs(&seeded).await;
-    h.notify(&cast.task.id);
-    eventually(
-        TIMEOUT,
-        "the live reviewer to receive the briefing now that it can hear it",
-        async || h.prompted(&seeded).contains(SUMMARY),
-    )
-    .await;
-    assert_eq!(
-        h.prompted(&seeded).matches(SUMMARY).count(),
-        1,
-        "exactly one delivery, once the failed attempt left the marker clear"
-    );
-    assert!(
-        h.store
-            .get_message(&request.id)
-            .await
-            .unwrap()
-            .is_delivered(),
-        "the live briefing stamps its request delivered"
-    );
-}
-
-/// A reviewer started before the review's request rows were written is not
-/// briefed a second time when they land.
-///
-/// A review opens in two writes: the status, then one request row per
-/// reviewer. A scheduler pass between the two reads the review open and no
-/// request, and the briefing it sends carries the summary all the same — it
-/// is the transition's own reason. So the request that lands next is the one
-/// that briefing carried, and it owes the reviewer nothing more. The two
-/// writes are made apart here, because one pass in that window is what the
-/// daemon hits by chance.
-#[tokio::test]
-async fn a_reviewer_briefed_before_the_request_row_is_not_briefed_again() {
-    let h = harness().scheduler().await;
-    h.git_repo("repo");
-    let cast = h.active_cast().await;
-    h.notify(&cast.task.id);
-    eventually(TIMEOUT, "the author to start", async || {
-        h.status(&cast.task.id).await == TaskStatus::InProgress
-            && h.running_session(&cast.task.id, Seat::Author)
-                .await
-                .is_some()
-    })
-    .await;
-    let summary = "Renamed the flag and tested it.";
-
-    // The first write on its own: the review is open and its channel rows are
-    // not in yet.
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::UnderReview,
-            Actor::Author,
-            Some(summary),
-            None,
-        )
-        .await
-        .unwrap();
-    h.notify(&cast.task.id);
-    eventually(TIMEOUT, "the reviewer to start", async || {
-        h.running_session(&cast.task.id, Seat::Reviewer)
-            .await
-            .is_some()
-    })
-    .await;
-    let reviewer = h
-        .running_session(&cast.task.id, Seat::Reviewer)
-        .await
-        .expect("a live reviewer session");
-    eventually(TIMEOUT, "the reviewer's first turn to end", async || {
-        h.session_status(&reviewer).await == SessionStatus::Idle
-    })
-    .await;
-
-    // And the second write, which is the announcement the briefing went out
-    // ahead of.
-    let request = h
-        .store
-        .send_message(ariadne_store::NewMessage {
-            goal_id: cast.goal.id.clone(),
-            task_id: Some(cast.task.id.clone()),
-            kind: MessageKind::ReviewRequest,
-            from_actor: Actor::Author,
-            from_agent_id: Some(cast.author.id.clone()),
-            from_session: None,
-            to_actor: Actor::Reviewer,
-            to_agent_id: Some(cast.reviewer.id.clone()),
-            body: summary.to_string(),
-        })
-        .await
-        .unwrap();
-    h.notify(&cast.task.id);
-    eventually(TIMEOUT, "the request to be stamped delivered", async || {
-        h.store
-            .get_message(&request.id)
-            .await
-            .unwrap()
-            .is_delivered()
-    })
-    .await;
-    // Several passes over the request, so a briefing owed to it has every
-    // chance to go out.
-    for _ in 0..3 {
-        h.notify(&cast.task.id);
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
-
-    let prompts = h.prompts_to(&reviewer);
-    assert_eq!(
-        prompts.len(),
-        1,
-        "the reviewer was briefed twice for one request: {prompts:#?}"
-    );
-    assert_eq!(
-        prompts[0].matches(summary).count(),
-        1,
-        "the briefing did not carry the summary once: {}",
-        prompts[0]
-    );
-}
-
-/// Two reviewers whose request rows land one after the other are each briefed
-/// once.
-///
-/// The announcement writes one row per reviewer, so a pass can read one
-/// reviewer's request written and the other's not. What each reviewer was
-/// briefed for is its own row, which is written once and never moves — not
-/// the newest row on the task, which walks forward as the announcement goes
-/// out and would leave both reviewers briefed twice.
-#[tokio::test]
-async fn each_reviewer_is_briefed_once_when_its_request_row_lands_late() {
-    let h = harness().scheduler().await;
-    h.git_repo("repo");
-    let mut cast = h.cast_reviewed_by(2).await;
-    cast.goal = h.activate(&cast.goal).await;
-    let reviewers = h.store.list_task_reviewers(&cast.task.id).await.unwrap();
-    h.notify(&cast.task.id);
-    eventually(TIMEOUT, "the author to start", async || {
-        h.status(&cast.task.id).await == TaskStatus::InProgress
-            && h.running_session(&cast.task.id, Seat::Author)
-                .await
-                .is_some()
-    })
-    .await;
-    let summary = "Renamed the flag and tested it.";
-
-    // The status on its own, as the announcement is about to run.
-    h.store
-        .transition_task(
-            &cast.task.id,
-            TaskStatus::UnderReview,
-            Actor::Author,
-            Some(summary),
-            None,
-        )
-        .await
-        .unwrap();
-    h.notify(&cast.task.id);
-    eventually(TIMEOUT, "both reviewers to start", async || {
-        reviewer_sessions(&h, &cast, &reviewers).await.len() == 2
-    })
-    .await;
-    let sessions = reviewer_sessions(&h, &cast, &reviewers).await;
-    for session in &sessions {
-        eventually(TIMEOUT, "the reviewer's first turn to end", async || {
-            h.session_status(session).await == SessionStatus::Idle
-        })
-        .await;
-    }
-
-    // And the announcement, one reviewer at a time with a pass in between.
-    for reviewer in &reviewers {
-        let request = h
-            .store
-            .send_message(ariadne_store::NewMessage {
-                goal_id: cast.goal.id.clone(),
-                task_id: Some(cast.task.id.clone()),
-                kind: MessageKind::ReviewRequest,
-                from_actor: Actor::Author,
-                from_agent_id: Some(cast.author.id.clone()),
-                from_session: None,
-                to_actor: Actor::Reviewer,
-                to_agent_id: Some(reviewer.id.clone()),
-                body: summary.to_string(),
-            })
-            .await
-            .unwrap();
-        h.notify(&cast.task.id);
-        eventually(TIMEOUT, "the request to be stamped delivered", async || {
-            h.store
-                .get_message(&request.id)
-                .await
-                .unwrap()
-                .is_delivered()
-        })
-        .await;
-    }
-    // Several passes over both requests, so a briefing owed to either has
-    // every chance to go out.
-    for _ in 0..3 {
-        h.notify(&cast.task.id);
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
-
-    for session in &sessions {
-        let prompts = h.prompts_to(session);
-        assert_eq!(
-            prompts.len(),
-            1,
-            "reviewer {} was briefed twice for one request: {prompts:#?}",
-            session.task_agent_id.as_deref().unwrap_or_default()
-        );
-    }
-}
-
-/// The live session of each of a task's reviewers, in the order they are
-/// staffed, and only once every one of them has one.
-async fn reviewer_sessions(
-    h: &common::Harness,
-    cast: &Cast,
-    reviewers: &[ariadne_store::TaskAgent],
-) -> Vec<ariadne_store::AgentSession> {
-    let sessions = h.sessions_of(&cast.task.id).await;
-    reviewers
-        .iter()
-        .filter_map(|reviewer| {
-            sessions.iter().find(|s| {
-                s.seat() == Some(Seat::Reviewer)
-                    && s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
-                    && s.launched_at.is_some()
-            })
-        })
-        .cloned()
-        .collect()
-}
-
-/// Every agent of a task stays up until the task is over. A reviewer that has
-/// voted is not done with it — the author may have something to ask, and an
-/// agent that was killed can be asked nothing — so the round it closed leaves
-/// it idle at its prompt rather than ending it.
-#[tokio::test]
-async fn a_reviewer_that_voted_is_left_where_it_is() {
-    let h = harness().scheduler().await;
-    let cast = h.active_cast().await;
-    // The author is there and resumable: an approved task briefs it to land
-    // the change, and a task that cannot find one fails and takes every
-    // session of it down, reviewer included.
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
-    h.make_resumable(&cast.task, &author).await;
-    h.agent_runs(&author).await;
-    h.set_status(&author, SessionStatus::Idle).await;
-
-    let reviewer = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
-        )
-        .await;
-    h.agent_runs(&reviewer).await;
-    h.set_status(&reviewer, SessionStatus::Idle).await;
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
-    h.verdict_from(&cast.task, &reviewer, MessageKind::Approve, "Looks fine.")
-        .await;
-
-    h.notify(&cast.task.id);
-    eventually(
-        TIMEOUT,
-        "the reviewer's verdict to close the round",
-        async || h.status(&cast.task.id).await == TaskStatus::Approved,
-    )
-    .await;
-
-    // Several passes past the verdict, and the reviewer is still where it was.
-    for _ in 0..3 {
-        h.notify(&cast.task.id);
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
-    assert!(
-        h.agent_is_running(&reviewer),
-        "the reviewer was killed once its round closed"
-    );
-    assert_eq!(
-        h.session_status(&reviewer).await,
-        SessionStatus::Idle,
-        "and it sits idle, ready for anything the author asks it"
-    );
-}
-
-/// A reviewer votes once on each review it is asked for.
-///
-/// This used to be a unique index over the round a verdict carried. A review
-/// is bounded by its own request now — a row rather than a column — so the
-/// rule is read where a verdict is written, and it has to hold in both
-/// directions: a second verdict on the open review is refused, and the same
-/// reviewer votes again as soon as the author asks again.
-#[tokio::test]
-async fn only_one_verdict_per_reviewer_per_review_is_taken() {
-    let h = harness().await;
-    let cast = h.active_cast().await;
-    let reviewer = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
-        )
-        .await;
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
-    let verdict = |kind: &str, body: &str| {
-        as_session(
-            &messages_uri(&cast),
-            &reviewer.id,
-            serde_json::json!({
-                "kind": kind,
-                "to_actor": "author",
-                "to_agent_id": cast.author.id,
-                "body": body,
-            }),
-        )
-    };
-
-    let first: MessageDto = h
-        .json(verdict("approve", "looks right"), StatusCode::CREATED)
-        .await;
-    assert_eq!(first.kind, MessageKind::Approve);
-
-    let envelope: ErrorBody = h
-        .json(
-            verdict("request_changes", "on second thoughts"),
-            StatusCode::CONFLICT,
-        )
-        .await;
-    assert!(
-        envelope.error.message.contains("already given its verdict"),
-        "{}",
-        envelope.error.message
-    );
-
-    // Asked again, and the same reviewer has a verdict to give again.
-    h.store
-        .send_message(ariadne_store::NewMessage {
-            goal_id: cast.goal.id.clone(),
-            task_id: Some(cast.task.id.clone()),
-            kind: MessageKind::ReviewRequest,
-            from_actor: Actor::Author,
-            from_agent_id: Some(cast.author.id.clone()),
-            from_session: None,
-            to_actor: Actor::Reviewer,
-            to_agent_id: Some(cast.reviewer.id.clone()),
-            body: "revised".into(),
-        })
-        .await
-        .unwrap();
-
-    let again: MessageDto = h
-        .json(verdict("approve", "fixed now"), StatusCode::CREATED)
-        .await;
-    assert_eq!(again.kind, MessageKind::Approve);
-    assert_eq!(
-        h.store.open_verdicts(&cast.task.id).await.unwrap().len(),
-        1,
-        "and the verdict before the request is not counted in this review"
+        pasted.contains(&format!(
+            r#"Message from the develop agent of task {} "{}":"#,
+            second_task.id, second_task.title
+        )),
+        "{pasted}"
     );
 }
 
@@ -1308,20 +360,11 @@ async fn only_one_verdict_per_reviewer_per_review_is_taken() {
 async fn a_message_handed_over_as_a_prompt_is_absent_from_a_default_read() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let author = h.agent_session(&cast, "develop").await;
     h.agent_runs(&author).await;
     h.set_status(&author, SessionStatus::Idle).await;
-    let reviewer = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
-        )
-        .await;
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
+    let reviewer = h.agent_session(&cast, "review").await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
 
     let sent: MessageDto = h
         .json(
@@ -1329,8 +372,8 @@ async fn a_message_handed_over_as_a_prompt_is_absent_from_a_default_read() {
                 &messages_uri(&cast),
                 &reviewer.id,
                 message(
-                    "author",
-                    Some(&cast.author.id),
+                    "agent",
+                    Some(&cast.develop().id),
                     "The bound is the caller's.",
                 ),
             ),
@@ -1384,26 +427,17 @@ async fn a_message_handed_over_as_a_prompt_is_absent_from_a_default_read() {
 async fn a_message_a_read_hands_over_is_never_handed_over_as_a_prompt() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let author = h.agent_session(&cast, "develop").await;
     h.agent_runs(&author).await;
     h.set_status(&author, SessionStatus::Idle).await;
-    let reviewer = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
-        )
-        .await;
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
+    let reviewer = h.agent_session(&cast, "review").await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
     let write = |body: &'static str| {
         h.json::<MessageDto>(
             as_session(
                 &messages_uri(&cast),
                 &reviewer.id,
-                message("author", Some(&cast.author.id), body),
+                message("agent", Some(&cast.develop().id), body),
             ),
             StatusCode::CREATED,
         )
@@ -1427,9 +461,7 @@ async fn a_message_a_read_hands_over_is_never_handed_over_as_a_prompt() {
 
     // The recipient comes up again, and the daemon with it.
     h.set_status(&author, SessionStatus::Exited).await;
-    let resumed = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    let resumed = h.agent_session(&cast, "develop").await;
     h.agent_runs(&resumed).await;
     h.set_status(&resumed, SessionStatus::Idle).await;
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
@@ -1453,84 +485,478 @@ async fn a_message_a_read_hands_over_is_never_handed_over_as_a_prompt() {
     );
 }
 
-/// A change request reaches its author once.
-///
-/// The author of a task with one author is resumed with the feedback of every
-/// reviewer that asked for changes, in a briefing that says what the round
-/// decided. That briefing is the delivery of each verdict it carries, and
-/// stamps it, so the transport does not type the same words at the author a
-/// second time as a bare message.
-#[tokio::test]
-async fn a_change_request_reaches_its_author_once() {
-    let h = harness().scheduler().await;
+/// A develop agent that sits inside a turn until the test writes the file
+/// this answers with: the agent of a task that waits for an answer inside
+/// one turn. The review agent is the session the test writes to it as.
+async fn author_held_in_a_turn(h: &Harness) -> (Cast, AgentSession, AgentSession, PathBuf) {
+    author_held_in(h, json!({})).await
+}
+
+/// [`author_held_in_a_turn`], with `ending` added to the held turn's script:
+/// what the agent does once the test lets the turn go.
+async fn author_held_in(
+    h: &Harness,
+    ending: serde_json::Value,
+) -> (Cast, AgentSession, AgentSession, PathBuf) {
+    let release = h.at("release-turn");
+    let mut turn = json!({"wait_for": release.display().to_string(), "updates": [], "stop_reason": "end_turn"});
+    turn.as_object_mut()
+        .unwrap()
+        .extend(ending.as_object().unwrap().clone());
+    let mut held = acp::script();
+    held["prompts"] = json!([turn]);
+    h.agent.reprogram(held);
+    // A real repository: the scheduler cuts the task's worktree from it when
+    // it puts the agent back on its feet.
     h.git_repo("repo");
     let cast = h.active_cast().await;
-    let author = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
+    // In its first column and briefed, so the console input below is the
+    // agent's first turn and a message its next prompt.
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    h.briefed(&cast.task).await;
+    let author = h.agent_session(&cast, "develop").await;
     h.agent_runs(&author).await;
     h.set_status(&author, SessionStatus::Idle).await;
-    let reviewer = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Reviewer,
-            &cast.reviewer.id,
-        )
+    let reviewer = h.agent_session(&cast, "review").await;
+    let (status, _) = h
+        .send(post_json(
+            &format!("/v1/sessions/{}/console/input", author.id),
+            json!({"text": "HOLD: wait for the reviewer's answer."}),
+        ))
         .await;
-    h.advance(&cast.task, TaskStatus::UnderReview).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let reached = h.at("release-turn.reached");
+    eventually(TIMEOUT, "the author's turn to be held open", async || {
+        reached.exists()
+    })
+    .await;
+    (cast, author, reviewer, release)
+}
+
+/// One scheduler pass over the task, run to its end.
+async fn pass(sched: &UnboundedSender<SchedEvent>, cast: &Cast) {
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
+    scheduler::flush_for_test(sched).await;
+}
+
+/// The kind of every event this session stored, in order.
+async fn event_kinds(h: &Harness, session: &AgentSession) -> Vec<String> {
     h.store
-        .send_message(ariadne_store::NewMessage {
-            goal_id: cast.goal.id.clone(),
-            task_id: Some(cast.task.id.clone()),
-            kind: MessageKind::ReviewRequest,
-            from_actor: Actor::Author,
-            from_agent_id: Some(cast.author.id.clone()),
-            from_session: None,
-            to_actor: Actor::Reviewer,
-            to_agent_id: Some(cast.reviewer.id.clone()),
-            body: "the first review".into(),
+        .list_events(EventFilter {
+            session_id: Some(session.id.clone()),
+            ..Default::default()
         })
         .await
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .map(|event| event.kind)
+        .collect()
+}
 
-    let verdict: MessageDto = h
+/// The prompts this session's agent was sent that carry `body`.
+fn prompts_carrying(h: &Harness, session: &AgentSession, body: &str) -> usize {
+    h.prompts_to(session)
+        .iter()
+        .filter(|prompt| prompt.contains(body))
+        .count()
+}
+
+/// A message to an agent mid-turn reaches it through a read.
+///
+/// The agent waits for an answer inside one turn, and polls the channel. The
+/// scheduler queues the message behind that turn, which never ends while the
+/// agent waits, so a stamp at the queue would hide the message from every
+/// poll. The stamp is at the read instead, and the queued prompt is then
+/// skipped. The second message, which arrives as a prompt after the turn,
+/// proves the queue was walked past the first.
+#[tokio::test]
+async fn a_message_to_an_agent_mid_turn_reaches_it_through_a_read() {
+    let h = harness().await;
+    let (cast, author, reviewer, release) = author_held_in_a_turn(&h).await;
+    let write = |body: &'static str| {
+        h.json::<MessageDto>(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message("agent", Some(&cast.develop().id), body),
+            ),
+            StatusCode::CREATED,
+        )
+    };
+
+    let first = write("FIRST: the bound is the caller's.").await;
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    assert!(
+        !h.store.get_message(&first.id).await.unwrap().is_delivered(),
+        "a message queued behind a turn is not stamped"
+    );
+
+    let read: Vec<MessageDto> = h
+        .json(
+            read_as(&format!("{}?deliver=true", messages_uri(&cast)), &author.id),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        read.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        [first.id.as_str()],
+        "the agent mid-turn reads the queued message"
+    );
+    assert!(read[0].delivered_at.is_some(), "{read:?}");
+
+    std::fs::write(&release, "go").unwrap();
+    eventually(TIMEOUT, "the held turn to end", async || {
+        event_kinds(&h, &author)
+            .await
+            .iter()
+            .any(|kind| kind == "stop")
+    })
+    .await;
+    write("SECOND: and the inner one stays.").await;
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "the second message to arrive as a prompt",
+        async || h.prompted(&author).contains("SECOND:"),
+    )
+    .await;
+    assert_eq!(
+        prompts_carrying(&h, &author, "FIRST:"),
+        0,
+        "a message the agent read was typed at it as well: {}",
+        h.prompted(&author)
+    );
+}
+
+/// A message queued behind a turn is stamped when its prompt goes out, and
+/// not before.
+#[tokio::test]
+async fn a_message_queued_behind_a_turn_is_stamped_when_its_prompt_goes_out() {
+    let h = harness().await;
+    let (cast, author, reviewer, release) = author_held_in_a_turn(&h).await;
+    let sent: MessageDto = h
         .json(
             as_session(
                 &messages_uri(&cast),
                 &reviewer.id,
-                serde_json::json!({
-                    "kind": "request_changes",
-                    "to_actor": "author",
-                    "to_agent_id": cast.author.id,
-                    "body": "BOUND: the retry loop has no bound.",
-                }),
+                message(
+                    "agent",
+                    Some(&cast.develop().id),
+                    "QUEUED: the bound is the caller's.",
+                ),
             ),
             StatusCode::CREATED,
         )
         .await;
 
-    h.notify(&cast.task.id);
-    eventually(TIMEOUT, "the author to be sent back to work", async || {
-        h.status(&cast.task.id).await == TaskStatus::InProgress
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    assert!(
+        !h.store.get_message(&sent.id).await.unwrap().is_delivered(),
+        "a message queued behind a turn is not stamped"
+    );
+
+    std::fs::write(&release, "go").unwrap();
+    eventually(TIMEOUT, "the queued prompt to go out", async || {
+        h.prompted(&author).contains("QUEUED:")
     })
     .await;
-    h.flush_scheduler().await;
+    assert!(
+        h.store.get_message(&sent.id).await.unwrap().is_delivered(),
+        "the driver claims the message before its prompt goes out"
+    );
+    let inbox: Vec<MessageDto> = h
+        .json(
+            read_as(&format!("{}?deliver=true", messages_uri(&cast)), &author.id),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(
+        inbox.is_empty(),
+        "a read handed over a message the agent had as a prompt: {inbox:?}"
+    );
+}
 
-    let told = h.told(&author.id);
+/// A message is queued once, however many scheduler passes hand it while
+/// the turn it waits behind runs.
+///
+/// The message is unstamped while it waits, so every pass hands it again.
+/// The message written after the turn proves the queue is walked to its end.
+#[tokio::test]
+async fn a_message_is_queued_once_across_scheduler_passes() {
+    let h = harness().await;
+    let (cast, author, reviewer, release) = author_held_in_a_turn(&h).await;
+    let write = |body: &'static str| {
+        h.json::<MessageDto>(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message("agent", Some(&cast.develop().id), body),
+            ),
+            StatusCode::CREATED,
+        )
+    };
+
+    write("ONCE: the bound is the caller's.").await;
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    pass(&sched, &cast).await;
+
+    std::fs::write(&release, "go").unwrap();
+    eventually(TIMEOUT, "the queued prompt to go out", async || {
+        h.prompted(&author).contains("ONCE:")
+    })
+    .await;
+    write("AFTER: and the inner one stays.").await;
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "the next message to arrive as a prompt",
+        async || h.prompted(&author).contains("AFTER:"),
+    )
+    .await;
     assert_eq!(
-        told.matches("BOUND:").count(),
+        prompts_carrying(&h, &author, "ONCE:"),
         1,
-        "the change request reached its author more than once: {told}"
+        "{}",
+        h.prompted(&author)
+    );
+}
+
+/// Messages keep their order across a read and the queue: a read mid-turn
+/// returns every queued message, oldest first, and none of them is typed at
+/// the agent after the turn.
+#[tokio::test]
+async fn messages_keep_their_order_across_a_read_and_the_queue() {
+    let h = harness().await;
+    let (cast, author, reviewer, release) = author_held_in_a_turn(&h).await;
+    let write = |body: &'static str| {
+        h.json::<MessageDto>(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message("agent", Some(&cast.develop().id), body),
+            ),
+            StatusCode::CREATED,
+        )
+    };
+
+    let older = write("OLDER: the bound is the caller's.").await;
+    let newer = write("NEWER: and the inner one stays.").await;
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+
+    let read: Vec<MessageDto> = h
+        .json(
+            read_as(&format!("{}?deliver=true", messages_uri(&cast)), &author.id),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        read.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        [older.id.as_str(), newer.id.as_str()],
+        "a read returns the queued messages oldest first"
+    );
+
+    std::fs::write(&release, "go").unwrap();
+    write("THIRD: the caller retries too.").await;
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
+    eventually(
+        TIMEOUT,
+        "the third message to arrive as a prompt",
+        async || h.prompted(&author).contains("THIRD:"),
+    )
+    .await;
+    let prompted = h.prompted(&author);
+    assert!(
+        !prompted.contains("OLDER:") && !prompted.contains("NEWER:"),
+        "a message the agent read was typed at it as well: {prompted}"
+    );
+}
+
+/// A message whose prompt the agent answered with an error stays delivered.
+///
+/// The error is the agent's answer, so the agent read the prompt and has the
+/// text. Only a prompt the driver never wrote gives its claim back. The
+/// driver's `session.error` comes after that decision, so it is what the test
+/// waits for.
+#[tokio::test]
+async fn a_message_the_agent_answered_with_an_error_stays_delivered() {
+    let h = harness().await;
+    let mut refusing = acp::script();
+    refusing["unsupported_methods"] = json!(["session/prompt"]);
+    h.agent.reprogram(refusing);
+    let cast = h.active_cast().await;
+    let author = h.agent_session(&cast, "develop").await;
+    h.agent_runs(&author).await;
+    h.set_status(&author, SessionStatus::Idle).await;
+    let reviewer = h.agent_session(&cast, "review").await;
+    // In its column, and already briefed: the message is the next prompt.
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    h.briefed(&cast.task).await;
+    let sent: MessageDto = h
+        .json(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message(
+                    "agent",
+                    Some(&cast.develop().id),
+                    "REFUSED: the bound is the caller's.",
+                ),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    eventually(TIMEOUT, "the agent's error to end the driver", async || {
+        event_kinds(&h, &author)
+            .await
+            .iter()
+            .any(|kind| kind == "session.error")
+    })
+    .await;
+    assert!(
+        h.prompted(&author).contains("REFUSED:"),
+        "the prompt reached the agent: {}",
+        h.prompted(&author)
     );
     assert!(
-        h.store
-            .get_message(&verdict.id)
-            .await
-            .unwrap()
-            .is_delivered(),
-        "the briefing that carried it is its delivery, so it is stamped"
+        h.store.get_message(&sent.id).await.unwrap().is_delivered(),
+        "an error answer gave the claim back, so the message would go out again"
     );
+}
+
+/// A claimed message whose prompt the agent's stdin never took gives its
+/// claim back, and reaches the agent's next launch.
+///
+/// The agent closes its stdin as it ends the held turn, so the queued
+/// prompt finds no reader: the driver claims the message, the write fails,
+/// and the connection goes down with the prompt unwritten. A stamp kept
+/// there would hide the message from every later pass and every read.
+#[tokio::test]
+async fn an_unwritten_prompt_gives_its_message_back_for_the_relaunch() {
+    let h = harness().await;
+    let (cast, author, reviewer, release) = author_held_in(&h, json!({"close_stdin": true})).await;
+    let sent: MessageDto = h
+        .json(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message(
+                    "agent",
+                    Some(&cast.develop().id),
+                    "UNWRITTEN: the bound is the caller's.",
+                ),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    // The scheduler puts the agent back on its feet, and the next launch is
+    // an agent that reads what it is sent.
+    let mut next = acp::script();
+    next["stored_sessions"] = json!(["stub-session"]);
+    h.agent.reprogram(next);
+
+    std::fs::write(&release, "go").unwrap();
+    eventually(
+        TIMEOUT,
+        "the message to reach the relaunched agent",
+        async || h.prompted(&author).contains("UNWRITTEN:"),
+    )
+    .await;
+    assert_eq!(
+        prompts_carrying(&h, &author, "UNWRITTEN:"),
+        1,
+        "{}",
+        h.prompted(&author)
+    );
+    assert!(
+        event_kinds(&h, &author)
+            .await
+            .iter()
+            .any(|kind| kind == "session_end"),
+        "the message reached a later launch, not the one whose stdin closed"
+    );
+    eventually(TIMEOUT, "the relaunch to stamp the message", async || {
+        h.store.get_message(&sent.id).await.unwrap().is_delivered()
+    })
+    .await;
+}
+
+/// A message to the agent of a column the task is not in waits for that
+/// column: the agent sits idle, and a message is no reason to wake it. Once
+/// the task comes back to its column, the next pass hands the message over.
+#[tokio::test]
+async fn a_message_to_an_idle_column_waits_for_its_column() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let author = h.agent_session(&cast, "develop").await;
+    h.agent_runs(&author).await;
+    h.set_status(&author, SessionStatus::Idle).await;
+    // The review column's agent is up and briefed, so the scheduler has
+    // nothing to start and nothing to say to it.
+    let reviewer = h.agent_session(&cast, "review").await;
+    h.agent_runs(&reviewer).await;
+    h.set_status(&reviewer, SessionStatus::Idle).await;
+    h.advance_to(&cast.task, "review").await;
+    h.briefed(&cast.task).await;
+
+    let sent: MessageDto = h
+        .json(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message(
+                    "agent",
+                    Some(&cast.develop().id),
+                    "WAITING: the bound is the caller's.",
+                ),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
+    pass(&sched, &cast).await;
+    pass(&sched, &cast).await;
+    assert_eq!(
+        prompts_carrying(&h, &author, "WAITING:"),
+        0,
+        "a message reached the agent of a column the task is not in: {}",
+        h.prompted(&author)
+    );
+    assert!(!h.store.get_message(&sent.id).await.unwrap().is_delivered());
+
+    h.store
+        .move_step(
+            &cast.task.id,
+            "develop",
+            Actor::Daemon,
+            "the test sent the task back",
+            None,
+        )
+        .await
+        .unwrap();
+    pass(&sched, &cast).await;
+    eventually(
+        TIMEOUT,
+        "the message to reach its column's agent",
+        async || h.prompted(&author).contains("WAITING:"),
+    )
+    .await;
 }
 
 /// A delivering read is refused a channel of another goal.
@@ -1553,8 +979,8 @@ async fn a_delivering_read_is_refused_a_channel_of_another_goal() {
             goal_id: cast.goal.id.clone(),
             task_id: Some(cast.task.id.clone()),
             kind: MessageKind::Message,
-            from_actor: Actor::Author,
-            from_agent_id: Some(cast.author.id.clone()),
+            from_actor: Actor::Agent,
+            from_agent_id: Some(cast.develop().id.clone()),
             from_session: None,
             to_actor: Actor::Orchestrator,
             to_agent_id: None,
@@ -1592,7 +1018,7 @@ async fn a_delivering_read_is_refused_a_channel_of_another_goal() {
 ///
 /// Every message carries the goal it belongs to, the ones about a task
 /// included, so a read narrowed by the goal alone would hand every task's
-/// author-to-reviewer thread to whoever read the goal — the whole of what
+/// column-to-column thread to whoever read the goal — the whole of what
 /// this task cut out of `read_messages`.
 #[tokio::test]
 async fn a_goals_channel_holds_none_of_what_its_tasks_said() {
@@ -1604,8 +1030,8 @@ async fn a_goals_channel_holds_none_of_what_its_tasks_said() {
             goal_id: cast.goal.id.clone(),
             task_id: None,
             kind: MessageKind::Message,
-            from_actor: Actor::Author,
-            from_agent_id: Some(cast.author.id.clone()),
+            from_actor: Actor::Agent,
+            from_agent_id: Some(cast.develop().id.clone()),
             from_session: None,
             to_actor: Actor::Orchestrator,
             to_agent_id: None,
@@ -1618,11 +1044,11 @@ async fn a_goals_channel_holds_none_of_what_its_tasks_said() {
             goal_id: cast.goal.id.clone(),
             task_id: Some(cast.task.id.clone()),
             kind: MessageKind::Message,
-            from_actor: Actor::Reviewer,
-            from_agent_id: Some(cast.reviewer.id.clone()),
+            from_actor: Actor::Agent,
+            from_agent_id: Some(cast.review().id.clone()),
             from_session: None,
-            to_actor: Actor::Author,
-            to_agent_id: Some(cast.author.id.clone()),
+            to_actor: Actor::Agent,
+            to_agent_id: Some(cast.develop().id.clone()),
             body: "PRIVATE: the retry loop has no bound.".into(),
         })
         .await

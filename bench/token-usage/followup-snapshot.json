@@ -1,0 +1,66 @@
+{
+  "analyzer_sha256": "6eb82923321f9c9188de02600e694d9afdd857769217ddf93be122ea9cc192fe",
+  "analyzer_version": "2",
+  "baseline_database": {
+    "available": true,
+    "session_ids": 615,
+    "sha256": "b63f022f7c51a3b17d620196e55f504f4582744a4e8dab6e4cc3a57c47041f47"
+  },
+  "coverage": {
+    "claude_parser": {
+      "conflicting_usage_records": 6818,
+      "duplicate_request_records": 81531
+    },
+    "codex_inventory": {
+      "after_cutoff": 2833,
+      "cumulative_counter_records": 57834,
+      "request_usage_records": 40282,
+      "state_records_without_usage": 2294
+    },
+    "formats": [
+      {
+        "family": "claude",
+        "files": 1377,
+        "mapped_sessions": 372,
+        "reason": "assistant requestId/message.id and per-message usage are retained",
+        "request_history": "supported"
+      },
+      {
+        "family": "codex",
+        "files": 1535,
+        "mapped_sessions": 232,
+        "reason": "token_usage_record has a native response_id and non-overlapping usage field; turn and thread totals overlap",
+        "request_history": "supported_with_field_semantics_limit"
+      },
+      {
+        "family": "ariadne_sqlite",
+        "files": 1,
+        "mapped_sessions": 623,
+        "reason": "session_usage is cumulative by session/source; daemon events lack per-request token attribution",
+        "request_history": "unavailable"
+      },
+      {
+        "family": "opencode",
+        "files": 1,
+        "mapped_sessions": 0,
+        "reason": "token-bearing records exist, but no native Ariadne session join or validated deduplication rule is retained",
+        "request_history": "unavailable"
+      }
+    ],
+    "mapped_request_sessions": 604,
+    "partial_sessions": 2
+  },
+  "cutoff": "2026-10-14T22:17:05.521Z",
+  "revision": "7d3b22e29d3a61bd18578be91b0692aa214066c0",
+  "separation": {
+    "baseline": "frozen artifacts under bench/token-usage excluding followup-*",
+    "goal_overhead": "01m4y11d2c2q2zt30qgg5gjkj9",
+    "shared_cohort": "native agent_sessions.id intersection with supplied frozen database"
+  },
+  "source": {
+    "external_snapshot_location": "/tmp/token-followup.db",
+    "label": "SQLite backup created 2026-10-15",
+    "sha256": "adfae5cd052310fedd19d3f7b2aa4742c1a6f2a60f546a65de32f7894bc2a06a"
+  },
+  "transcript_manifest_sha256": "50f6fc30a06c68e4a6e970a3c697e99fed7185d98cd503445eb32c7b29aa03a7"
+}

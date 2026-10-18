@@ -44,10 +44,30 @@ struct SocketOnly {
 pub struct FileConfig {
     pub socket_path: Option<PathBuf>,
     pub db_path: Option<PathBuf>,
+    /// The telemetry database: every log record and metric sample (033).
+    pub telemetry_db_path: Option<PathBuf>,
+    /// How long a raw metric sample is kept before retention deletes it
+    /// (default 30; it is rolled into an hourly bucket well before then).
+    pub telemetry_samples_days: Option<i64>,
+    /// How long a log record is kept before retention deletes it (default 14).
+    pub telemetry_logs_days: Option<i64>,
+    /// How long an hourly metric rollup is kept before retention deletes it
+    /// (default 365).
+    pub telemetry_rollups_days: Option<i64>,
     pub worktree_root: Option<PathBuf>,
     pub run_dir: Option<PathBuf>,
+    pub skills_dir: Option<PathBuf>,
     /// e.g. "127.0.0.1:7676" — TCP listener is disabled unless set.
     pub tcp_listen: Option<SocketAddr>,
+    /// Extra browser origins allowed to use the loopback TCP listener.
+    #[serde(default)]
+    pub tcp_allowed_origins: Vec<String>,
+    pub webhook_listen: Option<SocketAddr>,
+    pub webhook_public_url: Option<String>,
+    /// The localtunnel server the webhook tunnel registers with.
+    pub tunnel_host: Option<String>,
+    /// The subdomain the tunnel asks for, over the stored one.
+    pub tunnel_subdomain: Option<String>,
     /// tracing filter, e.g. "info,ariadne_daemon=debug"
     pub log_filter: Option<String>,
     /// Path to the `ariadne` CLI used for MCP (default: sibling of
@@ -63,14 +83,30 @@ pub struct FileConfig {
     pub delete_merged_worktrees: Option<bool>,
     /// Keep the machine awake while agent sessions are live (default true).
     pub prevent_sleep: Option<bool>,
+    /// Switch a seat to another ranked model after an exhausted prompt.
+    pub auto_switch: Option<bool>,
+    /// Case-insensitive message fragments that identify exhausted prompts.
+    pub exhausted_patterns: Option<Vec<String>>,
+    /// Classify a failed ACP session's error with the AI permission model's
+    /// local Kev service, as an advisory `session.diagnosis` event beside
+    /// it (024). Off by default, and never changes what `auto_switch` and
+    /// `exhausted_patterns` decide.
+    pub ai_failure_diagnosis: Option<bool>,
     /// ACP registry index URL, fetched only on an explicit refresh.
     pub acp_registry_url: Option<String>,
-    /// The Python 3.10-or-newer interpreter the model's install runs on
-    /// (default: `python3` on the daemon's PATH).
+    /// The Python 3.12 or 3.13 interpreter the model's install runs on
+    /// (default: `python3.13`, `python3.12`, then `python3` on the daemon's PATH).
     pub python_bin: Option<String>,
-    /// Where the AI permission model release document is read from, listing the wheel an
-    /// install takes and the tag it carries.
-    pub ai_permissions_release_url: Option<String>,
+    /// The `nvidia-smi` the hardware probe runs to find a GPU (022, flavours
+    /// and devices; default: `nvidia-smi` on the daemon's PATH).
+    pub nvidia_smi_bin: Option<String>,
+    /// The `gh` the GitHub integration runs (025; default: `gh` on the
+    /// daemon's PATH).
+    pub gh_bin: Option<String>,
+    /// Retired GitLab CLI location (025). Accepted and ignored, never read:
+    /// an old config.toml naming it must still parse, so the daemon reaches
+    /// the database's own reset guidance instead of failing on an unknown key.
+    pub glab_bin: Option<String>,
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,
@@ -266,6 +302,16 @@ mod tests {
         assert_eq!(config.acp_agents.len(), 1);
         assert_eq!(config.acp_agents[0].id, "my-agent");
         assert_eq!(config.acp_agents[0].command, ["my-agent", "acp"]);
+    }
+
+    /// A config.toml set up before 025 dropped GitLab must still parse, so
+    /// the daemon reaches the database's reset guidance instead of dying on
+    /// a key this crate no longer acts on.
+    #[test]
+    fn a_retired_glab_bin_key_still_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(dir.path(), "glab_bin = \"/opt/bin/glab\"\n");
+        assert!(parse_config(dir.path()).unwrap().is_some());
     }
 
     /// A misspelled key is the whole point of parsing strictly: it would

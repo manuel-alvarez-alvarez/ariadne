@@ -1,0 +1,1156 @@
+//! Timer fallback and explicit repository wakes. Each repository has one worker.
+use super::live::{Details, Live, LivePulls};
+use super::{ForgeClient, Refusal, pulls};
+use crate::{
+    bus::EventBus, config::Config, scheduler::SchedEvent, timeouts::Timeouts, webhooks::Public,
+};
+use ariadne_api::stream::DomainEvent;
+use ariadne_store::{ForgeIntegration, PullRequest, PullRequestFilter, PullRequestRow, Store};
+use chrono::{DateTime, SecondsFormat, Utc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, OnceLock},
+    time::{Duration, Instant as StdInstant},
+};
+use tokio::sync::{Notify, Semaphore, mpsc, oneshot, watch};
+use tokio::time::{Instant, sleep_until};
+use tracing::warn;
+
+/// Prefixed onto a fetch's stored error once the forge CLI's own sign-in
+/// check, run reactively after the fetch already failed, confirms it is
+/// signed out — the recovery producer's deterministic word that this one
+/// fetch error is an `access` cause rather than a transient one
+/// (`crate::attention::recovery`).
+pub const FORGE_SIGNED_OUT: &str = "the forge CLI is not signed in";
+
+/// Prefixed onto a fetch's stored error, with the forge's own reset time
+/// appended in RFC 3339, while a rate limit pauses the worker: the
+/// deterministic words a test, and the desktop, read it by.
+pub const FORGE_RATE_LIMITED: &str = "rate limited until";
+
+/// How many repository fetches may run at once against one forge host —
+/// `github.com`, or a GitHub Enterprise host — whatever started them:
+/// startup, the timer, or an explicit wake. Every repository on that host
+/// shares the same cap; a different host never waits on it.
+pub const FORGE_HOST_FETCH_LIMIT: usize = 2;
+
+/// One [`Semaphore`] per forge host, lazily created with
+/// [`FORGE_HOST_FETCH_LIMIT`] permits the first time a worker on that host
+/// asks for it, and shared by every repository worker on it from then on.
+#[derive(Clone, Default)]
+struct HostFetchLimits(Arc<std::sync::Mutex<HashMap<String, Arc<Semaphore>>>>);
+
+impl HostFetchLimits {
+    fn semaphore(&self, host: &str) -> Arc<Semaphore> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(host.to_string())
+            .or_insert_with(|| Arc::new(Semaphore::new(FORGE_HOST_FETCH_LIMIT)))
+            .clone()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Timer,
+    WakeOnly,
+}
+
+enum Command {
+    Wake(String),
+    Mode(String, Mode),
+    Changed(String, oneshot::Sender<()>),
+}
+#[derive(Clone)]
+pub struct ForgePoll {
+    commands: mpsc::UnboundedSender<Command>,
+    webhook_url: crate::webhooks::WebhookUrl,
+    /// Where a changed request is reported, once the scheduler is up: it
+    /// is what starts, tells and ends the request's session (026).
+    scheduler: Waker,
+    /// The same map a worker's own `Handoff` hashes requests against
+    /// (`pulls_moved`), shared rather than copied: a direct, route-level
+    /// read outside the poll's own cycle (`http::pull_requests::read_now`)
+    /// can change the very evidence that hash covers, and dropping this
+    /// repository's entry here is how the next poll-driven fetch is kept
+    /// from comparing that change against a hash taken before it.
+    pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>>,
+}
+
+/// The scheduler's event sender, shared by the handle and every worker.
+type Waker = Arc<OnceLock<mpsc::UnboundedSender<SchedEvent>>>;
+
+/// Tell the scheduler that `pull_request_id` changed.
+fn wake_scheduler(scheduler: &Waker, pull_request_id: &str) {
+    if let Some(tx) = scheduler.get() {
+        let _ = tx.send(SchedEvent::PullRequestChanged(pull_request_id.into()));
+    }
+}
+
+/// What a fetch hands its changed rows on to (026): how long a detail fetch
+/// may take, and the scheduler to report to; and where a move of the open
+/// issues is published (028), with what each repository's last read of them
+/// held.
+#[derive(Clone)]
+struct Handoff {
+    details: Duration,
+    scheduler: Waker,
+    bus: EventBus,
+    issues_seen: Arc<std::sync::Mutex<HashMap<String, u64>>>,
+    /// What each repository's last fetch read of its requests held, so a
+    /// fetch that finds them moved says so to the desktop (026).
+    pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>>,
+    /// Where each read of a request Ariadne works on is left (026).
+    live: LivePulls,
+    /// Caps how many of this fetch's host's repositories run at once.
+    host_limits: HostFetchLimits,
+}
+struct Worker {
+    identity: (String, String, String, String),
+    public_url: Public,
+    wake: Arc<Notify>,
+    mode: watch::Sender<Mode>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+/// The delay after one ordinary fetch. Timer-mode failures double it until
+/// their cap; success starts the ordinary interval again. Wake-only failures
+/// carry their delay unchanged because that mode never spends it.
+fn next_backoff(
+    current: Duration,
+    base: Duration,
+    cap: Duration,
+    succeeded: bool,
+    timer_mode: bool,
+) -> Duration {
+    if succeeded {
+        base
+    } else if timer_mode {
+        current.saturating_mul(2).min(cap)
+    } else {
+        current
+    }
+}
+impl Drop for Worker {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl ForgePoll {
+    pub fn webhook_url(&self) -> crate::webhooks::WebhookUrl {
+        self.webhook_url.clone()
+    }
+
+    /// Finish an integration change before its HTTP response returns.
+    pub(crate) async fn changed(&self, repository_id: &str) {
+        let (done, wait) = oneshot::channel();
+        if self
+            .commands
+            .send(Command::Changed(repository_id.into(), done))
+            .is_ok()
+        {
+            let _ = wait.await;
+        }
+    }
+
+    /// Report every changed request to `tx` from now on.
+    pub fn connect_scheduler(&self, tx: mpsc::UnboundedSender<SchedEvent>) {
+        let _ = self.scheduler.set(tx);
+    }
+
+    pub fn wake(&self, repository_id: &str) {
+        let _ = self.commands.send(Command::Wake(repository_id.into()));
+    }
+    pub fn set_mode(&self, repository_id: &str, mode: Mode) {
+        let _ = self
+            .commands
+            .send(Command::Mode(repository_id.into(), mode));
+    }
+
+    /// Drop this repository's dedup hash, the same way an outer list
+    /// failure does on the poll's own side: the next call to
+    /// `pulls_moved`, whichever path triggers it, is compared against
+    /// nothing rather than against a hash taken before a direct,
+    /// route-level read changed the evidence it covers, so that read's
+    /// own transition is never read back as "no different from before".
+    pub(crate) fn invalidate_pulls_dedup(&self, repository_id: &str) {
+        self.pulls_seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(repository_id);
+    }
+}
+
+/// Start the fetches: `timeouts.forge_poll` is the fallback timer, and
+/// `timeouts.forge_details` bounds one detail fetch of a request.
+pub fn start(
+    store: Store,
+    cfg: Arc<Config>,
+    events: &EventBus,
+    live: LivePulls,
+    timeouts: Timeouts,
+) -> ForgePoll {
+    let scheduler: Waker = Arc::default();
+    let pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>> = Arc::default();
+    let handoff = Handoff {
+        details: timeouts.forge_details,
+        scheduler: scheduler.clone(),
+        bus: events.clone(),
+        issues_seen: Arc::default(),
+        pulls_seen: pulls_seen.clone(),
+        live,
+        host_limits: HostFetchLimits::default(),
+    };
+    let webhook_url = crate::webhooks::WebhookUrl::new(cfg.webhook_public_url.clone());
+    let mut urls = webhook_url.subscribe();
+    let mut events = events.subscribe();
+    let (commands, mut requests) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut workers = HashMap::new();
+        let mut public_url = urls.borrow_and_update().clone();
+        reconcile(&store, &cfg, timeouts, &mut workers, &public_url, &handoff).await;
+        loop {
+            tokio::select! {
+                changed = urls.changed() => {
+                    if changed.is_err() { break; }
+                    public_url = urls.borrow_and_update().clone();
+                    reconcile(&store, &cfg, timeouts, &mut workers, &public_url, &handoff).await;
+                },
+                command = requests.recv() => match command {
+                    None => break,
+                    Some(Command::Changed(id, done)) => {
+                        sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
+                        let _ = done.send(());
+                    }
+                    Some(Command::Wake(id)) => {
+                        let existed = workers.contains_key(&id);
+                        sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
+                        if existed && let Some(worker) = workers.get(&id) { worker.wake.notify_one(); }
+                    }
+                    Some(Command::Mode(id, mode)) => {
+                        sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
+                        if let Some(worker) = workers.get(&id) { worker.mode.send_replace(mode); }
+                    }
+                },
+                event = events.recv() => match event {
+                    Ok(event) => match event.event {
+                        DomainEvent::RepositoryCreated(repo) | DomainEvent::RepositoryUpdated(repo) => {
+                            sync(&store, &cfg, timeouts, &mut workers, &repo.id, &public_url, &handoff).await;
+                        }
+                        DomainEvent::RepositoryDeleted(repo) => { workers.remove(&repo.id); }
+                        _ => {}
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => reconcile(&store, &cfg, timeouts, &mut workers, &public_url, &handoff).await,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    });
+    ForgePoll {
+        commands,
+        webhook_url,
+        scheduler,
+        pulls_seen,
+    }
+}
+
+async fn reconcile(
+    store: &Store,
+    cfg: &Arc<Config>,
+    timeouts: Timeouts,
+    workers: &mut HashMap<String, Worker>,
+    public_url: &Public,
+    handoff: &Handoff,
+) {
+    match store.list_repositories().await {
+        Ok(repositories) => {
+            let ids: HashSet<_> = repositories.iter().map(|r| r.id.clone()).collect();
+            workers.retain(|id, _| ids.contains(id));
+            for repo in repositories {
+                sync(store, cfg, timeouts, workers, &repo.id, public_url, handoff).await;
+            }
+        }
+        Err(error) => warn!(%error, "cannot reconcile forge fetches"),
+    }
+}
+
+async fn sync(
+    store: &Store,
+    cfg: &Arc<Config>,
+    timeouts: Timeouts,
+    workers: &mut HashMap<String, Worker>,
+    id: &str,
+    public_url: &Public,
+    handoff: &Handoff,
+) {
+    let row = match store.forge_integration(id).await {
+        Ok(row) => row,
+        Err(error) => {
+            warn!(%error, repository = id, "cannot read forge integration");
+            return;
+        }
+    };
+    let enabled = row.as_ref().is_some_and(|r| r.enabled);
+    if !enabled {
+        if stop_worker_then_clear_list(workers.remove(id), &handoff.live, id).await {
+            handoff
+                .pulls_seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(id);
+            handoff.bus.pull_requests_changed(id);
+        }
+        if let Some(row) = row
+            && row.webhook_id.is_some()
+            && let Err(error) = super::hooks::reconcile(store, cfg, row, &Public::default()).await
+        {
+            warn!(%error, repository = id, "cannot remove forge hook");
+        }
+        // With the integration off nothing reads the forge for its
+        // requests: the scheduler ends the work of each but a task's,
+        // whose author keeps it until the integration is on again (026).
+        match store
+            .list_pull_requests(PullRequestFilter {
+                repository_id: Some(id.into()),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(rows) => {
+                for row in rows {
+                    wake_scheduler(&handoff.scheduler, &row.id);
+                }
+            }
+            Err(error) => {
+                warn!(%error, repository = id, "cannot list the requests of a disabled integration")
+            }
+        }
+        return;
+    }
+    let mut row = row.unwrap();
+    let identity = (
+        row.kind.clone(),
+        row.host.clone(),
+        row.owner.clone(),
+        row.name.clone(),
+    );
+    let integration_changed = workers
+        .get(id)
+        .is_some_and(|worker| worker.identity != identity);
+    if integration_changed
+        && stop_worker_then_clear_list(workers.remove(id), &handoff.live, id).await
+    {
+        handoff
+            .pulls_seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(id);
+        handoff.bus.pull_requests_changed(id);
+    }
+    let before = (
+        row.webhook_state.clone(),
+        row.webhook_url.clone(),
+        row.webhook_id,
+    );
+    let reconcile_hook = workers.get(id).is_none_or(|w| &w.public_url != public_url);
+    if reconcile_hook {
+        match super::hooks::reconcile(store, cfg, row, public_url).await {
+            Ok(current) => row = current,
+            Err(error) => {
+                warn!(%error, repository = id, "cannot reconcile forge hook");
+                return;
+            }
+        }
+    }
+    let initial_mode = if row.webhook_state == "live" {
+        Mode::WakeOnly
+    } else {
+        Mode::Timer
+    };
+    if let Some(worker) = workers.get_mut(id) {
+        if reconcile_hook {
+            worker.public_url = public_url.clone();
+            worker.mode.send_replace(initial_mode);
+            if before != (row.webhook_state, row.webhook_url, row.webhook_id) {
+                worker.wake.notify_one();
+            }
+        }
+    } else {
+        let wake = Arc::new(Notify::new());
+        let (mode, changes) = watch::channel(initial_mode);
+        let task = tokio::spawn(worker(
+            store.clone(),
+            cfg.clone(),
+            handoff.clone(),
+            id.into(),
+            timeouts,
+            wake.clone(),
+            changes,
+        ));
+        workers.insert(
+            id.into(),
+            Worker {
+                identity,
+                wake,
+                mode,
+                task,
+                public_url: public_url.clone(),
+            },
+        );
+    }
+}
+
+/// End a repository's fetch worker before deleting its held list. A worker
+/// can complete a list read while shutdown begins, so clearing first would
+/// let that completing worker restore the list after its integration changed.
+async fn stop_worker_then_clear_list(
+    worker: Option<Worker>,
+    live: &LivePulls,
+    repository_id: &str,
+) -> bool {
+    if let Some(mut worker) = worker {
+        worker.task.abort();
+        let _ = (&mut worker.task).await;
+    }
+    live.clear_list(repository_id)
+}
+
+async fn worker(
+    store: Store,
+    cfg: Arc<Config>,
+    handoff: Handoff,
+    id: String,
+    timeouts: Timeouts,
+    wake: Arc<Notify>,
+    mut mode: watch::Receiver<Mode>,
+) {
+    let mut backoff = timeouts.forge_poll;
+    loop {
+        // `fetch` itself acquires its host's permit, on the integration it
+        // rereads there and then — never on a host captured here, which a
+        // repository's own remote can move past between one call and the
+        // next, well before this worker is torn down and respawned under
+        // its new identity (`sync`'s own `integration_changed`).
+        let fetched = fetch(&store, &cfg, &handoff, &id).await;
+        if let Err(error) = &fetched
+            && Refusal::of(error.clone()).is_rate_limited()
+        {
+            warn!(%error, repository = id, "cannot fetch pull requests: rate limited");
+            let until = rate_limit_pause(&store, &cfg, &id, &timeouts).await;
+            let message = format!(
+                "{FORGE_RATE_LIMITED} {}",
+                until.to_rfc3339_opts(SecondsFormat::Secs, true)
+            );
+            if let Err(error) = store.set_forge_fetch_error(&id, Some(&message)).await {
+                warn!(%error, repository = id, "cannot record how the fetch went");
+            }
+            // The timer and the mode are both beside the point while the
+            // forge itself says to wait: every wake until `until` folds
+            // into the one fetch that runs once it passes.
+            let pause = (until - Utc::now())
+                .to_std()
+                .unwrap_or_default()
+                .max(timeouts.forge_poll);
+            let deadline = Instant::now() + pause;
+            loop {
+                tokio::select! {
+                    _ = sleep_until(deadline) => break,
+                    _ = wake.notified() => continue,
+                }
+            }
+            continue;
+        }
+        let timer_mode = *mode.borrow() == Mode::Timer;
+        if let Err(error) = &fetched {
+            warn!(%error, repository = id, "cannot fetch pull requests");
+        }
+        backoff = next_backoff(
+            backoff,
+            timeouts.forge_poll,
+            timeouts.forge_poll_backoff_cap,
+            fetched.is_ok(),
+            timer_mode,
+        );
+        // What says polling works, where no hook is live (026).
+        if let Err(error) = store
+            .set_forge_fetch_error(&id, fetched.err().as_deref())
+            .await
+        {
+            warn!(%error, repository = id, "cannot record how the fetch went");
+        }
+        loop {
+            let timer = *mode.borrow_and_update() == Mode::Timer;
+            tokio::select! {
+                _ = wake.notified() => {
+                    debounce(&wake, timeouts.forge_wake_debounce).await;
+                    break;
+                },
+                _ = tokio::time::sleep(backoff), if timer => break,
+                changed = mode.changed() => if changed.is_err() { return; },
+            }
+        }
+    }
+}
+
+/// Wait out one `window` after a wake, folding every wake inside it into the
+/// one fetch that follows: a burst of webhook deliveries for one push costs
+/// one fetch, not one per delivery.
+async fn debounce(wake: &Notify, window: Duration) {
+    let deadline = Instant::now() + window;
+    loop {
+        tokio::select! {
+            _ = sleep_until(deadline) => break,
+            _ = wake.notified() => continue,
+        }
+    }
+}
+
+/// When a rate-limited repository's worker may fetch again: the forge's
+/// own reset time, read with no quota of its own
+/// (`ForgeClient::rate_limit_reset`), else `Timeouts::forge_rate_limit_pause`
+/// from now, where the integration cannot be read, or the forge offers no
+/// such read.
+async fn rate_limit_pause(
+    store: &Store,
+    cfg: &Config,
+    id: &str,
+    timeouts: &Timeouts,
+) -> DateTime<Utc> {
+    let fallback = Utc::now() + timeouts.forge_rate_limit_pause;
+    let Ok(Some(integration)) = store.forge_integration(id).await else {
+        return fallback;
+    };
+    let client = ForgeClient::for_repository(cfg, &integration);
+    client
+        .rate_limit_reset(&integration.host)
+        .await
+        .unwrap_or(fallback)
+}
+
+async fn fetch(store: &Store, cfg: &Config, handoff: &Handoff, id: &str) -> Result<(), String> {
+    let Some(integration) = store
+        .forge_integration(id)
+        .await
+        .map_err(|e| e.to_string())?
+        .filter(|f| f.enabled)
+    else {
+        return Ok(());
+    };
+    // Acquired on this same read, not on a host captured when the worker
+    // started: a repository's remote can change its host between one fetch
+    // and the next, and the cap means nothing if a stale host still decides
+    // which semaphore a fetch waits on. Held for the rest of this call, on
+    // every exit path, by nothing more than this binding's own scope.
+    let _permit = handoff
+        .host_limits
+        .semaphore(&integration.host)
+        .acquire_owned()
+        .await
+        .expect("the host semaphore is never closed");
+    let client = ForgeClient::for_repository(cfg, &integration);
+    let slug = format!(
+        "{}/{}/{}",
+        integration.host, integration.owner, integration.name
+    );
+    let login = integration.login.clone().unwrap_or_default();
+    // Every open request of the repository, and which of them ask for the
+    // user's review.
+    let pulls::Listed {
+        open: listed,
+        requested,
+    } = match client.list_open_pull_requests(&slug, &login).await {
+        Ok(listed) => listed,
+        // Checking the CLI's own sign-in once the fetch it would have
+        // carried has already failed is not a new watch over it — only a
+        // reactive answer to a failure that already happened, read the
+        // same way a human asked to look into it would: is the CLI even
+        // signed in? The marker is written only where the CLI actually
+        // ran that check and said no (`confirmed_signed_out`) — a missing
+        // binary, a spawn or write failure, or a timeout proves nothing
+        // either way, and marking it regardless would tell the user to
+        // sign in when the real cause is, say, the CLI not being
+        // installed at all (which `configuration` already names).
+        Err(error) => {
+            let failure = match client.confirmed_signed_out(&integration.host).await {
+                true => format!("{FORGE_SIGNED_OUT}: {error}"),
+                false => error,
+            };
+            // The whole round failed before any row of this repository was
+            // ever read: every one of them a cache already holds is just
+            // as unconfirmed as a detail fetch failing would leave it, so
+            // this invalidates them the same way read_row's own failure
+            // paths do, rather than reporting a round-old evidence_ok as
+            // still good because this round never got far enough to say
+            // otherwise.
+            if let Ok(rows) = store
+                .list_pull_requests(PullRequestFilter {
+                    repository_id: Some(id.into()),
+                    ..Default::default()
+                })
+                .await
+            {
+                let invalidated = rows
+                    .iter()
+                    .filter(|row| handoff.live.mark_evidence_failed(&row.id))
+                    .count();
+                if invalidated > 0 {
+                    // `pulls_moved` never ran this round — there was no
+                    // list to hash — so its own dedup still holds the
+                    // hash of the last successful round. Dropping it here
+                    // means the next call to `pulls_moved`, whether this
+                    // round's own retry or a later recovery, is compared
+                    // against nothing rather than against a hash that
+                    // never saw this round's invalidation, so it reads
+                    // the recovery as a change too, not as "no different
+                    // from before the failure ever happened".
+                    handoff
+                        .pulls_seen
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(id);
+                    handoff.bus.pull_requests_changed(id);
+                }
+            }
+            return Err(failure);
+        }
+    };
+    // Held before the rows are read, so a concurrent list answers from this
+    // fetch's own lists rather than an older round's (026).
+    handoff.live.set_list(
+        id,
+        &integration,
+        listed.clone(),
+        requested.clone(),
+        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+    );
+    // A request that asks for my review, out of draft, is one Ariadne keeps
+    // a row of: nothing starts a session of its own (029), but the request
+    // still needs its row, so the `pull_request` attention producer can
+    // offer a human a manual start on it. Nothing else the lists hold is
+    // kept.
+    for pull in listed.iter().filter(|p| {
+        requested.contains(&p.number)
+            && !p.draft
+            && pulls::role(&p.author_login, &integration) == "reviewer"
+    }) {
+        if !still_enabled(store, &integration).await? {
+            return Ok(());
+        }
+        pulls::start_work(store, &integration, pull, None).await?;
+    }
+    let rows = store
+        .list_pull_requests(PullRequestFilter {
+            repository_id: Some(id.into()),
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut held = Vec::new();
+    for row in rows {
+        if !still_enabled(store, &integration).await? {
+            return Ok(());
+        }
+        let listed_pull = listed.iter().find(|p| p.number == row.number).cloned();
+        if let Err(error) = read_row(
+            handoff,
+            &client,
+            &slug,
+            &login,
+            &row,
+            listed_pull,
+            requested.contains(&row.number),
+        )
+        .await
+        {
+            warn!(%error, pull_request = %row.id, "cannot read a pull request Ariadne works on");
+        }
+        if let Some(live) = handoff.live.get(&row.id) {
+            held.push(live);
+        }
+        wake_scheduler(&handoff.scheduler, &row.id);
+    }
+    pulls_moved(handoff, &integration, &listed, &requested, &held);
+    issues_moved(handoff, &integration, &client).await;
+    Ok(())
+}
+
+/// Read one request Ariadne works on, and leave the read in memory (026):
+/// the list's read where the list holds it, else a read of its own — a
+/// merged or closed request, or one the list misses — and, while it is
+/// open, its details: its comments, its failed checks and its base. Where
+/// the list's own read moved nothing a detail read would also show
+/// (`Live::unmoved`), the detail read is skipped and the held details kept
+/// (perf). A detail read that fails keeps the details an earlier read found.
+async fn read_row(
+    handoff: &Handoff,
+    client: &ForgeClient,
+    slug: &str,
+    login: &str,
+    row: &PullRequestRow,
+    listed: Option<pulls::ForgePullRequest>,
+    asks: bool,
+) -> Result<(), String> {
+    // Captured before any of this read's own, slower network calls, so
+    // the detail read below knows which local addition, if any, is newer
+    // than this read's own snapshot (`LivePulls::generation`).
+    let since = handoff.live.generation(&row.id);
+    let read = match listed {
+        Some(pull) => pull,
+        None => match client.pull_request(slug, row.number).await {
+            Ok(pull) => pull,
+            Err(error) => {
+                // No new read to leave standing in its place, unlike the
+                // detail fetch below: the last good read of the pull
+                // itself is still what the cache holds, but the comment
+                // evidence beside it is no longer confirmed current.
+                handoff.live.mark_evidence_failed(&row.id);
+                return Err(error);
+            }
+        },
+    };
+    if read.number != row.number {
+        return Err("the forge returned another request number".into());
+    }
+    let requested = review_requested(handoff, client, slug, login, row, &read, asks).await;
+    if read.state != "open" {
+        handoff.live.set_pull(&row.id, read, requested);
+        return Ok(());
+    }
+    // The list's own read already repeats every field a detail read would
+    // also show (`Live::unmoved`): nothing moved since the last detail
+    // read, so this fetch keeps it rather than paying for a fresh one.
+    let now = StdInstant::now();
+    if handoff
+        .live
+        .get(&row.id)
+        .is_some_and(|held| held.unmoved(&read, since, now))
+    {
+        handoff.live.set_pull(&row.id, read, requested);
+        return Ok(());
+    }
+    match client
+        .details(slug, row.number, handoff.details, login)
+        .await
+    {
+        Ok(details) if details.pull.number == row.number => {
+            let head_sha = details.pull.head_sha.clone();
+            handoff.live.set_details(
+                &row.id,
+                details.pull,
+                requested,
+                since,
+                Details {
+                    comments: details.comments,
+                    failed_checks: details.failed_checks,
+                    behind_base: details.behind_base,
+                    head_sha,
+                    has_pending_posts: details.has_pending_posts,
+                },
+            );
+            Ok(())
+        }
+        Ok(_) => {
+            handoff
+                .live
+                .set_pull_evidence_failed(&row.id, read, requested);
+            Err("the forge returned another request number".into())
+        }
+        Err(error) => {
+            handoff
+                .live
+                .set_pull_evidence_failed(&row.id, read, requested);
+            Err(error)
+        }
+    }
+}
+
+/// Whether a request I review still asks for my review (029). The list of
+/// review requests that holds it says yes, and an ended request no. One it
+/// no longer holds, and that asked on the last read, is asked of the forge
+/// (`ForgeClient::review_still_requested`): GitHub drops a request from the
+/// list once I reviewed it, and a request withdrawn after that is told
+/// apart only by its timeline. Where the forge cannot answer, the last read
+/// stands. A request of mine asks for no review of mine.
+async fn review_requested(
+    handoff: &Handoff,
+    client: &ForgeClient,
+    slug: &str,
+    login: &str,
+    row: &PullRequestRow,
+    read: &pulls::ForgePullRequest,
+    asks: bool,
+) -> bool {
+    if row.role != "reviewer" || read.state != "open" {
+        return false;
+    }
+    if asks {
+        return true;
+    }
+    let before = handoff.live.get(&row.id).is_none_or(|l| l.review_requested);
+    if !before {
+        return false;
+    }
+    match client.review_still_requested(slug, row.number, login).await {
+        Ok(requested) => requested,
+        Err(error) => {
+            warn!(%error, pull_request = %row.id, "cannot read whether my review is still asked");
+            before
+        }
+    }
+}
+
+/// Publish `pull_requests_changed` where the repository's requests moved
+/// since the last fetch (026): the open list, which of them ask for my
+/// review, and what the requests Ariadne works on read now. The desktop
+/// reads its lists off the forge, so this is what tells it to read again.
+fn pulls_moved(
+    handoff: &Handoff,
+    integration: &ForgeIntegration,
+    listed: &[pulls::ForgePullRequest],
+    requested: &HashSet<i64>,
+    held: &[Live],
+) {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut requested: Vec<_> = requested.iter().collect();
+    requested.sort();
+    requested.hash(&mut hasher);
+    for pull in listed.iter().chain(held.iter().map(|l| &l.pull)) {
+        (
+            pull.number,
+            &pull.state,
+            pull.draft,
+            &pull.title,
+            &pull.head_sha,
+            &pull.checks,
+            &pull.review_decision,
+            &pull.mergeable,
+            &pull.updated_at,
+        )
+            .hash(&mut hasher);
+    }
+    for live in held {
+        // `evidence_ok` is hashed on its own: a failed detail refresh at
+        // the same head otherwise leaves every other hashed field
+        // unchanged (the old `details` is exactly what is still held),
+        // and a client watching only those fields would miss exactly the
+        // transition a `pull_request` readiness item depends on (031).
+        live.evidence_ok.hash(&mut hasher);
+        if let Some(details) = &live.details {
+            (details.behind_base, details.failed_checks.len()).hash(&mut hasher);
+            for comment in &details.comments {
+                (&comment.forge_id, &comment.body, comment.resolved).hash(&mut hasher);
+            }
+        }
+    }
+    let seen = hasher.finish();
+    let moved = handoff
+        .pulls_seen
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(integration.repository_id.clone(), seen)
+        != Some(seen);
+    if moved {
+        handoff
+            .bus
+            .pull_requests_changed(&integration.repository_id);
+    }
+}
+
+/// Read the repository's open issues, and publish `issues_changed` where
+/// they moved since the last read (028): the desktop's issues come from the
+/// forge on every read, so this is what tells it to read them again. A read
+/// that fails tells nothing, and the next fetch reads them again.
+async fn issues_moved(handoff: &Handoff, integration: &ForgeIntegration, client: &ForgeClient) {
+    use std::hash::{Hash, Hasher};
+    let repository = format!(
+        "{}/{}/{}",
+        integration.host, integration.owner, integration.name
+    );
+    let issues = match client.list_open_issues(&repository, None).await {
+        Ok(issues) => issues,
+        Err(error) => {
+            warn!(%error, repository = %integration.repository_id, "cannot read the open issues");
+            return;
+        }
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(&issues)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    let seen = hasher.finish();
+    let moved = handoff
+        .issues_seen
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(integration.repository_id.clone(), seen)
+        != Some(seen);
+    if moved {
+        handoff.bus.issues_changed(&integration.repository_id);
+    }
+}
+
+async fn still_enabled(store: &Store, expected: &ForgeIntegration) -> Result<bool, String> {
+    Ok(store
+        .forge_integration(&expected.repository_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some_and(|f| {
+            f.enabled
+                && f.host == expected.host
+                && f.owner == expected.owner
+                && f.name == expected.name
+                && f.login == expected.login
+        }))
+}
+
+/// Whether the request `row` wants a review session of its own: an open
+/// request out of draft, asked for directly on its own row by an explicit
+/// manual start (029). Authorship and GitHub review assignments do not
+/// change that explicit ask.
+pub(crate) fn wants_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
+    row.review_asked
+        && row.review_model.is_some()
+        && row.state == "open"
+        && integration.enabled
+        && !row.draft
+}
+
+/// Whether the request `row` wants a keeper session of its own (032): a
+/// request that no task opened, asked for directly on
+/// its own row by an explicit manual start, while it is open.
+pub(crate) fn wants_babysit_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
+    row.babysit_asked && row.babysit_model.is_some() && row.state == "open" && integration.enabled
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pull() -> PullRequest {
+        PullRequest {
+            id: "01pr".into(),
+            repository_id: "01repo".into(),
+            number: 7,
+            url: "https://github.com/acme/widgets/pull/7".into(),
+            title: "Fix widgets".into(),
+            author_login: "other".into(),
+            state: "open".into(),
+            draft: false,
+            head_branch: "fix".into(),
+            head_sha: "abc".into(),
+            head_repo: None,
+            base_branch: "main".into(),
+            checks: "none".into(),
+            review_decision: "none".into(),
+            mergeable: "unknown".into(),
+            unanswered_comments: 0,
+            origin_task_id: None,
+            opened_at: String::new(),
+            role: "reviewer".into(),
+            ready: false,
+            forge_updated_at: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            failed_checks: "[]".into(),
+            behind_base: false,
+            told_checks: "[]".into(),
+            told_behind_base: false,
+            told_review_decision: None,
+            told_state: None,
+            told_check_state: None,
+            news_told_at: None,
+            reviewed_sha: None,
+            told_head_sha: None,
+            review_requested: true,
+            review_asked: false,
+            body: String::new(),
+            review_model: None,
+            review_effort: None,
+            review_skills_json: "[]".into(),
+            merge_sha: None,
+            summary_comment_id: None,
+            reviewer_given_up_at: None,
+            reviewer_given_up_wedged: false,
+            keeper_given_up_at: None,
+            keeper_given_up_wedged: false,
+            ready_confirmed_at: None,
+            ready_head_sha: None,
+            babysit_asked: false,
+            babysit_model: None,
+            babysit_effort: None,
+            babysit_skills_json: "[]".into(),
+            asks_revision: 0,
+        }
+    }
+
+    fn integration() -> ForgeIntegration {
+        ForgeIntegration {
+            repository_id: "01repo".into(),
+            kind: "github".into(),
+            host: "github.com".into(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+            remote: "origin".into(),
+            enabled: true,
+            login: Some("me".into()),
+            webhook_id: None,
+            webhook_secret: None,
+            webhook_url: None,
+            webhook_state: "polling".into(),
+            webhook_error: None,
+            webhook_last_delivery_at: None,
+            fetch_error: None,
+            detected_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn timer_backoff_doubles_caps_and_resets() {
+        let base = Duration::from_secs(1);
+        let cap = Duration::from_secs(4);
+        let first = next_backoff(base, base, cap, false, true);
+        assert_eq!(first, Duration::from_secs(2));
+        let capped = next_backoff(first, base, cap, false, true);
+        assert_eq!(capped, cap);
+        assert_eq!(next_backoff(capped, base, cap, false, true), cap);
+        assert_eq!(next_backoff(capped, base, cap, true, true), base);
+        assert_eq!(next_backoff(capped, base, cap, false, false), capped);
+    }
+
+    /// A pending fetch that finishes while its worker is stopped. Its drop
+    /// writes the list at the same point a cancelled fetch could complete
+    /// its list read, so the order under test is deterministic.
+    struct WritesListWhenStopped {
+        live: LivePulls,
+        integration: ForgeIntegration,
+    }
+
+    impl Drop for WritesListWhenStopped {
+        fn drop(&mut self) {
+            self.live.set_list(
+                &self.integration.repository_id,
+                &self.integration,
+                vec![pulls::ForgePullRequest {
+                    number: 1,
+                    url: "https://github.com/acme/widgets/pull/1".into(),
+                    title: "Fix widgets".into(),
+                    body: String::new(),
+                    author_login: "other".into(),
+                    state: "open".into(),
+                    draft: false,
+                    head_branch: "fix".into(),
+                    head_sha: "abc".into(),
+                    head_repo: None,
+                    base_branch: "main".into(),
+                    checks: "none".into(),
+                    review_decision: "none".into(),
+                    mergeable: "clean".into(),
+                    opened_at: String::new(),
+                    updated_at: String::new(),
+                    merge_sha: None,
+                }],
+                HashSet::new(),
+                String::new(),
+            );
+        }
+    }
+
+    /// A fetch that completes while a worker stops cannot restore a list
+    /// after the shutdown clears it. The worker is awaited before the clear,
+    /// so its final write happens first.
+    #[tokio::test]
+    async fn a_stopped_worker_cannot_restore_its_held_list() {
+        let live = LivePulls::default();
+        let integration = integration();
+        let (started, ready) = oneshot::channel();
+        let list_on_stop = WritesListWhenStopped {
+            live: live.clone(),
+            integration: integration.clone(),
+        };
+        let task = tokio::spawn(async move {
+            let _list_on_stop = list_on_stop;
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        });
+        ready.await.unwrap();
+        let (mode, _changes) = watch::channel(Mode::Timer);
+        let worker = Worker {
+            identity: (
+                integration.kind.clone(),
+                integration.host.clone(),
+                integration.owner.clone(),
+                integration.name.clone(),
+            ),
+            public_url: Public::default(),
+            wake: Arc::new(Notify::new()),
+            mode,
+            task,
+        };
+
+        assert!(stop_worker_then_clear_list(Some(worker), &live, &integration.repository_id).await);
+        assert!(
+            live.list(&integration.repository_id, &integration)
+                .is_none(),
+            "the stopped worker wrote before the list was cleared"
+        );
+    }
+
+    /// A reviewer row carrying a model, with no ask of its own, wants no
+    /// session: `review_model` alone is never enough, since nothing but
+    /// the ask route (029 rule 10) ever writes one, and this predicate must
+    /// hold on its own terms rather than lean on that being the only writer.
+    #[test]
+    fn a_reviewer_row_with_a_model_but_no_ask_wants_no_session() {
+        let row = PullRequest {
+            review_model: Some("stub:test-model".into()),
+            review_asked: false,
+            review_requested: true,
+            ..pull()
+        };
+        assert!(!wants_session(&row, &integration()));
+    }
+
+    /// The same row, once asked, wants a session while the forge's own
+    /// timeline still asks for my review.
+    #[test]
+    fn a_reviewer_row_asked_and_still_requested_wants_a_session() {
+        let row = PullRequest {
+            review_model: Some("stub:test-model".into()),
+            review_asked: true,
+            review_requested: true,
+            ..pull()
+        };
+        assert!(wants_session(&row, &integration()));
+    }
+
+    /// A manual ask stays active independently of GitHub review requests.
+    #[test]
+    fn a_reviewer_row_asked_without_a_review_request_wants_a_session() {
+        let row = PullRequest {
+            review_model: Some("stub:test-model".into()),
+            review_asked: true,
+            review_requested: false,
+            ..pull()
+        };
+        assert!(wants_session(&row, &integration()));
+    }
+
+    /// A request of mine never reads `review_requested`: the field is the
+    /// forge's own "still asks for *my* review", which says nothing about a
+    /// request of mine, so `review_asked` and the model alone decide it.
+    #[test]
+    fn a_request_of_mine_wants_a_session_on_its_own_ask_alone() {
+        let row = PullRequest {
+            role: "author".into(),
+            review_model: Some("stub:test-model".into()),
+            review_asked: true,
+            review_requested: false,
+            ..pull()
+        };
+        assert!(wants_session(&row, &integration()));
+    }
+}

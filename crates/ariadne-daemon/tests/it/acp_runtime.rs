@@ -11,6 +11,8 @@ use crate::common;
 
 use serde_json::{Value, json};
 
+use ariadne_api::events::AgentEventDto;
+use ariadne_console::transcript::{TranscriptItem, fold};
 use ariadne_core::SessionStatus;
 use ariadne_store::{AgentPin, EventFilter};
 
@@ -24,7 +26,7 @@ use common::{Cast, Harness, TIMEOUT, eventually, harness, sh};
 async fn acp_cast(h: &Harness) -> Cast {
     let cast = registry_cast(h).await;
     h.store
-        .set_agent_pin(&cast.author.id, &registry_pin(Some("high")))
+        .set_agent_pin(&cast.develop().id, &registry_pin(Some("high")))
         .await
         .unwrap();
     cast
@@ -63,7 +65,7 @@ fn registry_pin(effort: Option<&str>) -> AgentPin {
 /// A task whose agents run on the registry agent `stub`, in a real repo.
 async fn registry_cast(h: &Harness) -> Cast {
     h.git_repo("repo");
-    h.cast_pinned("stub:test-model", 1).await
+    h.cast_pinned("stub:test-model").await
 }
 
 /// Every Codex process starts its sessions in codex-acp's full-access mode,
@@ -94,14 +96,240 @@ async fn event_kinds(h: &Harness, session_id: &str) -> Vec<String> {
         .collect()
 }
 
+/// Report one failed ACP prompt through the daemon's stored event and HTTP DTO.
+async fn failed_prompt_event(data: Value) -> AgentEventDto {
+    failed_prompt_event_with_data(Some(data)).await
+}
+
+async fn failed_prompt_event_with_data(data: Option<Value>) -> AgentEventDto {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut scripted = script();
+    let mut error = json!({
+        "code": -32603,
+        "message": "Internal error",
+    });
+    if let Some(data) = data {
+        error["data"] = data;
+    }
+    scripted["prompts"] = json!([{"error": error}]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = h.start_agent(&cast.task, "develop").await;
+    eventually(TIMEOUT, "the failed session to retire", || async {
+        h.session_status(&session).await == SessionStatus::Exited
+    })
+    .await;
+    let events: Vec<AgentEventDto> = h.get(&format!("/v1/events?session={}", session.id)).await;
+    events
+        .into_iter()
+        .find(|event| event.kind == "session.error")
+        .expect("the ACP error was recorded")
+}
+
+#[tokio::test]
+async fn an_acp_error_reports_its_details_in_the_event_message() {
+    let event = failed_prompt_event(json!({"details": "X", "agent_key": 7})).await;
+
+    assert_eq!(event.payload["error"]["code"], -32603);
+    assert_eq!(event.payload["error"]["message"], "Internal error");
+    assert_eq!(
+        event.payload["error"]["data"],
+        json!({
+            "details": "X",
+            "agent_key": 7,
+            "message": "Internal error: X",
+        })
+    );
+}
+
+#[tokio::test]
+async fn an_acp_error_detail_reaches_the_event_summary_and_session_logs() {
+    let event = failed_prompt_event(json!({"details": "thread held by another writer"})).await;
+
+    assert_eq!(
+        event.summary,
+        "Internal error: thread held by another writer"
+    );
+    let items = fold(&[event]);
+    assert!(matches!(
+        items.as_slice(),
+        [TranscriptItem::Error { text, .. }] if text == "Internal error: thread held by another writer"
+    ));
+}
+
+#[tokio::test]
+async fn an_acp_error_keeps_an_existing_message_and_reads_other_data_shapes() {
+    let existing = failed_prompt_event(json!({
+        "message": "Agent explanation",
+        "details": "extra detail",
+    }))
+    .await;
+    assert_eq!(
+        existing.payload["error"],
+        json!({
+            "code": -32603,
+            "message": "Internal error",
+            "data": {"message": "Agent explanation", "details": "extra detail"},
+        })
+    );
+
+    let string = failed_prompt_event(json!("writer busy")).await;
+    assert_eq!(
+        string.payload.pointer("/error/data/message"),
+        Some(&json!("Internal error: writer busy"))
+    );
+    assert_eq!(
+        string.payload.pointer("/error/data/details"),
+        Some(&json!("writer busy"))
+    );
+
+    let array = failed_prompt_event(json!(["writer", "busy"])).await;
+    assert_eq!(
+        array.payload.pointer("/error/data/message"),
+        Some(&json!("Internal error: [\"writer\",\"busy\"]"))
+    );
+    assert_eq!(
+        array.payload.pointer("/error/data/details"),
+        Some(&json!(["writer", "busy"]))
+    );
+}
+
+#[tokio::test]
+async fn an_acp_error_without_data_stays_unchanged_and_an_empty_message_is_filled() {
+    let absent = failed_prompt_event_with_data(None).await;
+    assert_eq!(
+        absent.payload["error"],
+        json!({
+            "code": -32603,
+            "message": "Internal error",
+            "data": null,
+        })
+    );
+
+    let empty = failed_prompt_event(json!({"message": "  ", "reason": "writer busy"})).await;
+    assert_eq!(
+        empty.payload.pointer("/error/data/message"),
+        Some(&json!("Internal error: writer busy"))
+    );
+}
+
+#[tokio::test]
+async fn an_acp_error_does_not_repeat_its_message_as_the_detail() {
+    let event = failed_prompt_event(json!({"details": "Internal error"})).await;
+    assert_eq!(
+        event.payload.pointer("/error/data/message"),
+        Some(&json!("Internal error"))
+    );
+}
+
 /// Spawn the task's author against the stub and wait for the turn to end.
 async fn spawned_idle(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
     eventually(TIMEOUT, "the prompt round trip to end", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
     session
+}
+
+/// The develop column's agent pinned to `model` on the stub `scripted`,
+/// launched and through its first turn: the session, and the
+/// `session.pin_fallback` its launch recorded, if any.
+async fn pinned_launch(
+    scripted: Value,
+    model: &str,
+) -> (Harness, ariadne_store::AgentSession, Option<Value>) {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = registry_cast(&h).await;
+    let pin = AgentPin {
+        model: model.into(),
+        effort: None,
+    };
+    h.store
+        .set_agent_pin(&cast.develop().id, &pin)
+        .await
+        .unwrap();
+    let session = spawned_idle(&h, &cast).await;
+    let events: Vec<AgentEventDto> = h.get(&format!("/v1/events?session={}", session.id)).await;
+    assert!(
+        events.iter().all(|event| event.kind != "session.error"),
+        "{events:#?}"
+    );
+    let fallback = events
+        .into_iter()
+        .find(|event| event.kind == "session.pin_fallback")
+        .map(|event| event.payload);
+    (h, session, fallback)
+}
+
+/// The stub, settling a pin of `test-model[1m]` on `test-model` and offering
+/// `offered`.
+fn respelling_script(offered: Value) -> Value {
+    let mut scripted = script();
+    scripted["config_options"][0]["options"] = offered;
+    scripted["settle_config_values"] = json!({"test-model[1m]": "test-model"});
+    scripted
+}
+
+/// Claude's agent offers a model without its context hint on a resumed
+/// conversation, and settles a pin of the hinted id there: that is the pin
+/// landing, under the only spelling the agent still offers.
+#[tokio::test]
+async fn a_pin_settled_on_its_id_without_the_context_hint_lands() {
+    let offered = json!([{"value": "test-model", "name": "Test"}]);
+    let (_h, _session, fallback) =
+        pinned_launch(respelling_script(offered), "stub:test-model[1m]").await;
+
+    assert_eq!(fallback, None);
+}
+
+/// Where the agent still offers the hinted id beside the bare one, the bare
+/// one is a smaller context window: a pin settled there did not land, and
+/// the session runs on the bare one and says so.
+#[tokio::test]
+async fn a_pin_settled_on_the_bare_id_beside_the_hinted_one_falls_back() {
+    let offered = json!([
+        {"value": "test-model", "name": "Test"},
+        {"value": "test-model[1m]", "name": "Test, 1M"},
+    ]);
+    let (_h, _session, fallback) =
+        pinned_launch(respelling_script(offered), "stub:test-model[1m]").await;
+
+    let fallback = fallback.expect("the fallback was recorded");
+    assert_eq!(fallback["option"], "model");
+    assert_eq!(fallback["asked"], "test-model[1m]");
+    assert_eq!(fallback["running"], "test-model");
+    let error = fallback["error"].as_str().unwrap();
+    assert!(
+        error.contains("kept model on `test-model` when asked for `test-model[1m]`"),
+        "{error}"
+    );
+}
+
+/// A model pin the agent refuses does not stop the launch: the session runs
+/// its turn on the agent's own model, records which, and keeps its pin for
+/// the next launch to ask for again.
+#[tokio::test]
+async fn a_refused_model_pin_runs_on_the_agents_own_model() {
+    let mut scripted = script();
+    scripted["reject_config_value"] = json!("test-model");
+    let (h, session, fallback) = pinned_launch(scripted, "stub:test-model").await;
+
+    let fallback = fallback.expect("the fallback was recorded");
+    assert_eq!(fallback["asked"], "test-model");
+    assert_eq!(fallback["running"], "old-model");
+    assert!(
+        fallback["error"]
+            .as_str()
+            .unwrap()
+            .contains("the agent refused the option"),
+        "{fallback}"
+    );
+    let row = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(row.model, "stub:test-model");
 }
 
 /// Launch, handshake, model and effort pins, the briefing as the first
@@ -170,6 +398,31 @@ async fn an_acp_author_runs_on_daemon_stdio() {
     assert!(h.launcher.acp.is_running(&session.id));
 }
 
+/// An update that this runtime does not know remains harmless to the live
+/// session, so a newer ACP agent can add update kinds independently.
+#[tokio::test]
+async fn an_unknown_session_update_does_not_fail_the_session() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut scripted = script();
+    scripted["prompts"][0]["updates"] = json!([
+        {"sessionUpdate": "future_agent_update", "value": "new"}
+    ]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+
+    let session = spawned_idle(&h, &cast).await;
+
+    assert_eq!(h.session_status(&session).await, SessionStatus::Idle);
+    assert!(h.launcher.acp.is_running(&session.id));
+    assert!(
+        !event_kinds(&h, &session.id)
+            .await
+            .iter()
+            .any(|kind| kind == "session.error")
+    );
+}
+
 /// Killing the session kills the daemon-owned agent process and retires the
 /// row.
 #[tokio::test]
@@ -234,7 +487,7 @@ async fn resuming_an_acp_author_replaces_the_agent_and_keeps_the_session() {
 
     let resumed = h
         .launcher
-        .resume_author(&cast.task.id, "fix it")
+        .relaunch_session(&session.id, "fix it")
         .await
         .unwrap();
     assert_eq!(resumed.id, session.id, "the same session comes back");
@@ -276,7 +529,7 @@ async fn resuming_an_acp_author_replaces_the_agent_and_keeps_the_session() {
     assert_eq!(h.session_status(&session).await, SessionStatus::Idle);
 }
 
-/// In auto mode every permission request is approved: the agent hears the
+/// In auto mode every permission request is allowed: the agent hears the
 /// allowing option wherever it stands in the list, and the ask and answer
 /// are events.
 #[tokio::test]
@@ -344,7 +597,7 @@ async fn a_dead_acp_agent_is_reaped_and_its_session_retired() {
     let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
 
     eventually(TIMEOUT, "the session to retire", || async {
         h.session_status(&session).await == SessionStatus::Exited
@@ -387,7 +640,7 @@ async fn an_agent_that_dies_mid_turn_keeps_the_text_it_was_writing() {
     let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
 
     eventually(TIMEOUT, "the session to retire", || async {
         h.session_status(&session).await == SessionStatus::Exited
@@ -427,7 +680,7 @@ async fn each_message_the_agent_names_is_stored_on_its_own() {
     let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
 
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let session = h.start_agent(&cast.task, "develop").await;
 
     eventually(TIMEOUT, "the turn to end", || async {
         event_kinds(&h, &session.id)
@@ -493,9 +746,9 @@ async fn an_orchestrator_runs_on_the_registry_agent() {
     assert!(h.launcher.acp.is_running(&session.id));
 }
 
-/// A reviewer seat runs on the registry agent the same way: a detached
-/// worktree as its cwd, the ariadne MCP server, and the briefing as the
-/// first prompt.
+/// The review column's agent runs on the registry agent the same way: the
+/// task's one shared worktree as its cwd, the ariadne MCP server, and the
+/// briefing as the first prompt.
 #[tokio::test]
 async fn a_reviewer_runs_on_the_registry_agent() {
     let agent_dir = tempfile::tempdir().unwrap();
@@ -505,21 +758,24 @@ async fn a_reviewer_runs_on_the_registry_agent() {
     // Something on the task branch to review.
     sh(&h.at("repo"), &format!("git branch {}", cast.task.branch));
 
-    let session = h
-        .launcher
-        .spawn_reviewer(&cast.task.id, &cast.reviewer.id)
-        .await
-        .unwrap();
+    let session = h.start_agent(&cast.task, "review").await;
     eventually(TIMEOUT, "the reviewer's first turn to end", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
 
     let new = &stub.calls_of("session/new")[0];
-    assert!(
-        new["cwd"].as_str().unwrap().contains("-rev-"),
-        "{}",
-        new["cwd"]
+    let worktree = h
+        .store
+        .get_task(&cast.task.id)
+        .await
+        .unwrap()
+        .worktree_path
+        .expect("the task has its worktree");
+    assert_eq!(
+        new["cwd"].as_str().unwrap(),
+        worktree,
+        "every column works in the task's one worktree"
     );
     assert_eq!(new["mcpServers"][0]["args"], json!(["mcp", "serve"]));
     assert_eq!(
@@ -556,6 +812,7 @@ async fn a_stub_session_resumes_through_session_load_after_a_daemon_restart() {
         acp: ariadne_daemon::acp::AcpRuntime::new(h.store.clone()),
         registry: h.launcher.registry.clone(),
         branches: ariadne_daemon::branch::BranchWatchers::new(h.bus.clone()),
+        live: h.launcher.live.clone(),
     };
     let revived = restarted
         .revive_session(&session.id, Some("carry on"))
@@ -597,7 +854,7 @@ async fn a_session_of_an_agent_without_session_load_is_not_resumable() {
 
     let error = h
         .launcher
-        .resume_author(&cast.task.id, "fix it")
+        .revive_session(&session.id, Some("fix it"))
         .await
         .unwrap_err();
     assert!(format!("{error:#}").contains("not resumable"), "{error:#}");
@@ -619,7 +876,7 @@ async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
     // The scheduler starts the author; its first turn ends idle.
     let idle_author = || async {
         h.sessions_of(&cast.task.id).await.into_iter().find(|s| {
-            s.seat() == Some(ariadne_core::Seat::Author) && s.status() == SessionStatus::Idle
+            s.seat() == Some(ariadne_core::Seat::Agent) && s.status() == SessionStatus::Idle
         })
     };
     eventually(TIMEOUT, "the author's first turn to end", || async {
@@ -630,6 +887,7 @@ async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
 
     // Quiet past the nudge threshold, in the situation it went idle in.
     h.launched_ago(&author, 240).await;
+    h.idle_for(&author, 240).await;
     h.set_status(&author, SessionStatus::Idle).await;
     h.notify(&cast.task.id);
 
@@ -637,7 +895,7 @@ async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
         stub.calls_of("session/prompt").iter().any(|prompt| {
             prompt["prompt"][0]["text"]
                 .as_str()
-                .is_some_and(|text| text.contains("Continue \"task\""))
+                .is_some_and(|text| text.contains("Not a new request: continue task at"))
         })
     })
     .await;

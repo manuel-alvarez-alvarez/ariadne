@@ -50,9 +50,18 @@ interface DaemonLogStreamHandlers {
   onStatus: (status: DaemonLogStatus, error?: string | null) => void
 }
 
-/** URL of the daemon log stream on the given daemon. */
-export function daemonLogStreamUrl(baseUrl: string): string {
-  return new URL("/v1/logs/stream", `${normalizeBaseUrl(baseUrl)}/`).toString()
+/** A log filter: an unset field leaves that query parameter off entirely. */
+interface DaemonLogFilter {
+  service?: string
+  level?: string
+}
+
+/** URL of the daemon log stream on the given daemon, narrowed by `filter`. */
+export function daemonLogStreamUrl(baseUrl: string, filter: DaemonLogFilter = {}): string {
+  const url = new URL("/v1/logs/stream", `${normalizeBaseUrl(baseUrl)}/`)
+  if (filter.service) url.searchParams.set("service", filter.service)
+  if (filter.level) url.searchParams.set("level", filter.level)
+  return url.toString()
 }
 
 export class DaemonLogStream extends ReconnectingEventStream<DaemonLogStatus> {
@@ -113,11 +122,12 @@ function parseLine(raw: string): LogLineDto | undefined {
 
 function isLogLine(value: unknown): value is LogLineDto {
   if (typeof value !== "object" || value === null) return false
-  const { ts, level, target, message } = value as Record<string, unknown>
+  const { ts, level, target, message, service } = value as Record<string, unknown>
   return (
     typeof ts === "string" &&
     typeof level === "string" &&
     typeof target === "string" &&
-    typeof message === "string"
+    typeof message === "string" &&
+    typeof service === "string"
   )
 }

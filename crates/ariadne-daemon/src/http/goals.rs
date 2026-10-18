@@ -12,9 +12,9 @@ use ariadne_store::{Goal, MessageFilter, NewGoal, SessionFilter, TaskFilter};
 
 use super::AppState;
 use super::caller::call_ctx;
-use super::convert::{goal_dto_of, message_dto};
+use super::convert::{goal_dto_of, goal_dtos_of, message_dto};
 use super::error::{ApiError, ApiResult, Json};
-use super::{landing, pins};
+use super::{channel, pins};
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub(super) struct GoalListQuery {
@@ -48,13 +48,14 @@ impl GoalListQuery {
 ///
 /// The repos are referenced, not copied: whatever `POST /v1/repositories`
 /// validated about a checkout holds for every goal that names it, and an edit
-/// there moves this goal too.
+/// there moves this goal too. The workflow is the one the request names, or
+/// the first repository's default, and its columns are copied onto the goal.
 #[utoipa::path(post, path = "/v1/goals", tag = "goals",
     request_body = CreateGoalRequest,
     responses(
         (status = 201, body = GoalDto),
         (status = 400),
-        (status = 404, description = "no such repository or orchestrator profile")
+        (status = 404, description = "no such repository or workflow")
     ))]
 pub(super) async fn create(
     State(state): State<AppState>,
@@ -84,8 +85,10 @@ pub(super) async fn create(
     let goal = state
         .store
         .create_goal(NewGoal {
+            workflow: req.workflow,
             title: req.title,
             description: req.description,
+            issue_url: req.issue_url,
             repository_ids: req.repository_ids,
             pin,
         })
@@ -104,11 +107,7 @@ pub(super) async fn list(
     Query(q): Query<GoalListQuery>,
 ) -> ApiResult<Json<Vec<GoalDto>>> {
     let goals = state.store.list_goals(&q.statuses()?).await?;
-    let mut out = Vec::with_capacity(goals.len());
-    for goal in goals {
-        out.push(goal_dto_of(&state.store, goal).await?);
-    }
-    Ok(Json(out))
+    Ok(Json(goal_dtos_of(&state.store, goals).await?))
 }
 
 /// Inspect a goal.
@@ -195,7 +194,9 @@ pub(super) async fn delete(
 
 /// Finalize the plan: goal moves planning -> active and its tasks start. The
 /// orchestrator's call alone, and there is nothing left for the user to
-/// approve.
+/// approve. A task with a column nobody staffs is refused by the column's
+/// name: every task runs through every column, and one with nobody on it
+/// would stop there.
 #[utoipa::path(post, path = "/v1/goals/{id}/finalize", tag = "goals",
     request_body = FinalizePlanRequest,
     params(("id" = String, Path, description = "goal id")),
@@ -228,6 +229,18 @@ pub(super) async fn finalize(
         .await?;
     if tasks.is_empty() {
         return Err(ApiError::conflict("cannot finalize a plan with no tasks"));
+    }
+    for task in &tasks {
+        let unstaffed = state.store.unstaffed_columns(task).await?;
+        if !unstaffed.is_empty() {
+            return Err(ApiError::conflict(format!(
+                "cannot finalize the plan: task {} \"{}\" has no agent on column {}; staff it \
+                 with update_task",
+                task.id,
+                task.title,
+                unstaffed.join(", ")
+            )));
+        }
     }
     let goal = state.store.set_goal_status(&id, GoalStatus::Active).await?;
     // Wake the scheduler: pending tasks with no deps become ready now.
@@ -315,13 +328,13 @@ pub(super) async fn list_goal_messages(
     state.store.get_goal(&id).await?;
     // The goal's own messages, and none of its tasks'. A message about a task
     // carries the goal it belongs to as well, so a filter on the goal alone
-    // hands every task's author-to-reviewer thread to whoever reads the goal.
+    // hands every task's channel to whoever reads the goal.
     let filter = MessageFilter {
         goal_id: Some(id.clone()),
         goal_channel_only: true,
         ..Default::default()
     };
-    landing::read_channel(&state, &headers, q, &id, filter).await
+    channel::read_channel(&state, &headers, q, &id, filter).await
 }
 
 /// Send a message about the goal itself.
@@ -337,7 +350,7 @@ pub(super) async fn post_goal_message(
 ) -> ApiResult<(StatusCode, Json<MessageDto>)> {
     let ctx = call_ctx(&state.store, &headers).await?;
     let goal = state.store.get_goal(&id).await?;
-    let message = super::landing::send(&state, &ctx, &goal.id, None, req).await?;
+    let message = channel::send(&state, &ctx, &goal.id, None, req).await?;
     state.notify_scheduler_goal(&id);
     Ok((StatusCode::CREATED, Json(message_dto(message))))
 }

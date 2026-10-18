@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-09-24
+updated: 2026-10-13
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -12,7 +12,7 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/resume.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
-  - crates/ariadne-daemon/src/agents/acp.rs
+  - crates/ariadne-daemon/src/acp.rs
 ---
 
 # Agent launch
@@ -59,20 +59,37 @@ skill says (017).
    command, and an entry that no name of it finds is registered as nothing at
    all.
 
-   A name only the package gives has to be the package's file as well: the
-   program found under it, or a link on the way to it, stands under the
-   directories the package is unpacked into — `@scope` and then the name,
-   or the name alone. That is what every package manager leaves behind, and
-   a program of another origin that carries the name has none of it:
-   `@minimax-ai/code` installs `code`, and so does an editor that speaks no
-   ACP. Such a program is passed over without being started, and the next
-   name is tried. A name the agent itself is known by — its registry id, or
-   the command of its own build — stands for the agent wherever it was
-   installed from, and is taken as it is found. Only the absolute entries of the `PATH` are searched, in their own
-   order: an empty entry — and an empty `PATH` is one — or a relative one
-   names the directory the daemon was started in, which is not where its
-   agents come from. Such an entry is dropped, and the entries behind it are
-   searched as they always were.
+   A name only the package gives has to be the package's file as well, and
+   three checks prove it, in order, the first to prove it stopping the rest.
+   First, the symlink chain: the program found under the name, or a link on
+   the way to it, stands under the directories the package is unpacked into
+   — `@scope` and then the name, or the name alone. That is what npm and uv
+   leave behind. Second, where the chain never reaches the package — a
+   Volta shim links every tool it manages to one binary and tells them
+   apart by name alone, never by a link into the package — a package
+   manager's own file: Volta's own record of what it linked
+   (`$VOLTA_HOME/tools/user/bins/<name>.json`, default `~/.volta`, whose
+   `package` field has to name the same package, unpinned); a pnpm global
+   shim, a script rather than a symlink, whose own text has to hold a path
+   under the package's directories; or an asdf or mise install
+   (`<data dir>/installs/*/*/bin/<name>`, asdf's `$ASDF_DATA_DIR` default
+   `~/.asdf`, mise's `$MISE_DATA_DIR` default `$XDG_DATA_HOME/mise` else
+   `~/.local/share/mise`) that itself passes the symlink check. Third, where
+   neither proves it and the name is not on the daemon's own short skip
+   list — `code` starts it, the collision `@minimax-ai/code` makes with an
+   editor that speaks no ACP at all — the ACP probe itself, which rule 4
+   says how it decides.
+
+   A program of another origin than the package carries none of this, and
+   one on the skip list is passed over without being started at all, either
+   way the next name is tried. A name the agent itself is known by — its
+   registry id, or the command of its own build — stands for the agent
+   wherever it was installed from, and is taken as it is found. Only the
+   absolute entries of the `PATH` are searched, in their own order: an empty
+   entry — and an empty `PATH` is one — or a relative one names the
+   directory the daemon was started in, which is not where its agents come
+   from. Such an entry is dropped, and the entries behind it are searched as
+   they always were.
 2. A registry id is any non-empty word without `:`, the delimiter that splits
    a pin into its agent and its model. A configured entry whose id an agent of
    the index already holds replaces that agent, where it stands: the
@@ -117,15 +134,25 @@ skill says (017).
    offers a model option with at least one choice. Anything short of that is
    `rejected`, with the reason on the entry.
 
-   An entry the `PATH` answered for under the name of its package alone is
-   the one exception: a probe that shows the program is no ACP agent at all
-   — it never negotiated the protocol, and it did not merely run out of time
-   — takes the entry off the registry, which then holds it no more than it
-   holds an agent the `PATH` never had. Only an answer does that. A probe
-   that ran out of time showed nothing either way and leaves the agent
-   listed with what it measured, so a loaded machine keeps the agents its
-   sessions are pinned to, and an agent that negotiated the protocol
+   An entry the `PATH` answered for under the name of its package alone,
+   proven by the symlink chain or a package manager's own file (rule 1),
+   is the one exception: a probe that shows the program is no ACP agent at
+   all — it never negotiated the protocol, and it did not merely run out of
+   time — takes the entry off the registry, which then holds it no more
+   than it holds an agent the `PATH` never had. Only an answer does that. A
+   probe that ran out of time showed nothing either way and leaves the
+   agent listed with what it measured, so a loaded machine keeps the agents
+   its sessions are pinned to, and an agent that negotiated the protocol
    answered for itself whatever it is rejected for afterwards.
+
+   An entry neither check proved is unproven, and its probe has the whole
+   answer rather than the last word: the entry is kept only where the probe
+   negotiates ACP version 1 and its `agentInfo.name` names the registry
+   package, unpinned, exactly. A wrong name, no `agentInfo` at all, a
+   failure to negotiate, or a probe that runs out of time all take the
+   entry off the registry the same way — timeout included, unlike the
+   proven entry above, since silence proves nothing of an identity nothing
+   else already vouched for.
 5. A ready agent that lacks an optional capability is degraded, one flag per
    gap: `no_efforts` for no effort option, `no_adoption` for no
    `session_list`, and `no_restart_resume` for no `session_load`.
@@ -143,33 +170,41 @@ skill says (017).
 9. The pin is `<agent>:<model>` (011). The agent is told only the model half,
    and the effort only where the session pinned one. Both come off the
    session row, so no launch of a session moves either.
-10. Every launch carries the session context in its environment —
+10. A staffed launch carries the session context in its environment —
    `ARIADNE_SESSION_ID`, `ARIADNE_LAUNCH_ID`, `ARIADNE_GOAL_ID`,
    `ARIADNE_SEAT`, `ARIADNE_SOCKET`, and `ARIADNE_TASK_ID` for a task seat —
    and runs in the seat's worktree, or the repository for the orchestrator.
    Every `codex-acp` process also carries `INITIAL_AGENT_MODE` set to
    `agent-full-access`, so its sessions never hand an approval to Codex's
    guardian sub-agent. The setting applies to that process only and does not
-   edit the user's Codex configuration.
+   edit the user's Codex configuration. A loose session carries only `ARIADNE_SESSION_ID`
+   and `ARIADNE_LAUNCH_ID`, while a pull-request session carries `ARIADNE_PULL_REQUEST_ID`
+   and no goal id.
 11. The launch id is fresh for every process started under a session row,
     and the row is told it before the process starts. That is what tells the
     events of a replaced agent from those of the agent that replaces it.
-12. Every launch writes `acp.json` into the session's run directory: the
+12. A staffed launch writes `acp.json` into the session's run directory: the
     system prompt, the first prompt, the model, the effort, the session it
     resumes, and one MCP server, `ariadne` — the `ariadne` CLI with the
     arguments `mcp serve` and the session context as its environment. The
-    runtime sends the agent exactly what this file says.
-13. A spawn opens a new agent session and carries the briefing as the first
-    prompt. A resume names the agent session it continues and carries its
+    runtime sends the agent exactly what this file says. A loose launch writes no
+    `acp.json` and starts no MCP server.
+13. Orchestrator and loose spawns carry their briefing as the first prompt; a column-agent spawn has no initial prompt and receives its column prompt afterwards. A resume names the agent session it continues and carries its
     instruction once, as the next prompt; an empty instruction resumes an
     agent that is told nothing.
 14. A briefing has no size limit on its way to the agent: it travels in the
     launch file and the protocol, never on a command line.
-15. The skill documents of the agent are written into its run directory
-    before the launch is planned, one `<name>/SKILL.md` under `skills/`, and
-    never into the worktree. The index in the system prompt names each one by
-    that path (006). A skill the agent no longer holds is removed by the same
-    write.
+15. Before the launch is planned, the agent's run directory gets a `skills`
+    folder linked onto the daemon's shared home copy (017), never a copy of
+    its own and never anything under the worktree. On macOS and Linux this is
+    a symlink; on Windows it is a symlink where the platform grants one, or
+    else a copy of the whole home folder. The index in the system prompt
+    names each skill the agent was staffed with by its path under that link
+    (006), though the agent can open any skill the link carries. The link is
+    a live path to the home copy: a later sync can change a document a
+    running agent reads, and a write through the path changes the home copy.
+    A second launch of the same session replaces the link or copy, leaving
+    the home copy untouched.
 16. A resume is gated on discovery: an agent whose cached capabilities lack
     `session_load` is refused as not resumable, and no process starts.
 17. A session with no agent session id is not revived, and the next launch of
@@ -219,6 +254,28 @@ skill says (017).
   (`::a_program_under_the_package_name_that_speaks_no_acp_is_registered_as_nothing`),
   and one whose probe runs out of time stays registered with what it showed
   (`::a_package_named_agent_whose_probe_times_out_is_still_registered`).
+- A Volta shim whose own file names the right package is registered under
+  the shim's command
+  (`acp_discovery.rs::a_volta_shim_naming_the_right_package_is_registered`),
+  one naming a different package falls to the probe instead of registering
+  or dropping outright
+  (`::a_volta_shim_naming_a_different_package_goes_to_the_probe`), a pnpm
+  shim whose own text names the package is registered
+  (`::a_pnpm_shim_naming_the_right_package_is_registered`), a path is a
+  whole component rather than a substring, so a shim naming a package that
+  only shares a prefix with the real one does not pass
+  (`::a_pnpm_shim_naming_a_similarly_prefixed_package_does_not_pass_check_2`),
+  and an asdf shim and a mise shim each with a matching install are
+  registered
+  (`::an_asdf_shim_and_a_mise_shim_with_a_matching_install_are_registered`).
+- A shim neither check proves is registered once its probe names the
+  registry package exactly
+  (`acp_discovery.rs::an_unproven_shim_is_registered_when_the_probe_names_the_package`),
+  and it is dropped outright for a wrong `agentInfo.name`, no `agentInfo`,
+  or a timeout — unlike a proven entry, which a timeout leaves listed
+  (`::an_unproven_shim_is_dropped_unless_the_probe_names_it_exactly`).
+- A program on the daemon's skip list is never started, even unproven
+  (`acp_discovery.rs::a_skip_listed_program_name_is_never_started`).
 - A configured entry replaces the discovered agent of its id, and a launch
   runs the configured command
   (`acp_discovery.rs::a_configured_agent_replaces_the_discovered_agent_of_its_id`).
@@ -265,8 +322,7 @@ skill says (017).
 - A seat runs the registry command its pin names, with the bare model half
   pinned (`acp_runtime.rs::an_orchestrator_runs_on_the_registry_agent`).
 - The model and effort of a session never move across its launches
-  (`resume.rs::a_running_reviewer_keeps_the_model_its_session_started_on`,
-  `::a_resumed_author_stays_on_the_model_its_session_started_on`,
+  (`resume.rs::a_relaunched_agent_stays_on_the_model_its_session_started_on`,
   `::an_orchestrator_respawn_stays_on_the_goals_pin`).
 - Every launch carries the session context, in the agent's environment and
   the MCP server's (`adapters.rs::every_launch_carries_the_session_context`).
@@ -284,14 +340,18 @@ skill says (017).
   (`resume.rs::a_briefing_of_any_size_reaches_the_agent_whole`).
 - The skill documents are on disk where the index names them
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`),
-  and a dropped skill leaves nothing behind
-  (`adapters.rs::a_dropped_skill_leaves_nothing_behind`).
+  a launch links the run directory's `skills` folder to the home copy
+  (`adapters.rs::a_launch_links_the_run_dirs_skills_folder_to_the_home_copy`),
+  a second launch replaces that link without touching the home copy
+  (`adapters.rs::a_second_launch_replaces_the_link_and_leaves_the_home_copy_whole`),
+  and the Windows copy fallback copies every skill's document
+  (`adapters.rs::the_copy_fallback_copies_every_skills_md_into_the_run_dir`).
 - A session of an agent without `session_load` is refused as not resumable
   (`acp_runtime.rs::a_session_of_an_agent_without_session_load_is_not_resumable`).
 - A session without an agent session id is not revived
-  (`resume.rs::a_session_without_an_agent_id_is_not_revived`), a reviewer
+  (`resume.rs::a_session_without_an_agent_id_is_not_resumed_and_a_fresh_one_is_spawned`), an agent
   without one is spawned afresh
-  (`::a_reviewer_without_an_agent_id_is_spawned_afresh`), a session of a
+  (the same test), a session of a
   completed goal revives without reopening the goal
   (`::a_session_of_a_completed_goal_revives_and_the_goal_stays_completed`), and a revive brings back
   the row it names (`::reviving_a_session_revives_it_in_place`).

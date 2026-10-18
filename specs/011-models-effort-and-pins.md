@@ -1,7 +1,7 @@
 ---
 id: models-effort-and-pins
 status: current
-updated: 2026-09-24
+updated: 2026-10-10
 areas: [core, api, store, daemon, cli]
 commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, a69b953f, 03f9c8b7]
 tests:
@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/tests/it/pins.rs
   - crates/ariadne-daemon/tests/it/resume.rs
+  - crates/ariadne-daemon/tests/it/switch.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - ui/src/features/agents/agents-page.test.tsx
@@ -40,7 +41,7 @@ orchestrator decides (003).
 2. Both halves are required. A model is required wherever an agent is
    pinned, and no agent default stands in for one. A bare agent, a string
    with no `:`, an empty agent half, and an empty or whitespace-only model
-   half are each refused, and the refusal says a model is required.
+   half are each refused; a missing or blank model says a model is required.
 3. A request with no model, an empty or whitespace-only one, or the word
    `default` as a model is refused, and the refusal says a model is required.
 4. The agent half must name an agent the registry holds. Any other agent is
@@ -59,9 +60,14 @@ orchestrator decides (003).
 9. An edit that moves the model moves the pin whole: an effort that belonged
    to the model left behind does not travel with it.
 10. A goal carries the orchestrator's pin. Every other pin sits on the agent
-    the task staffs (017), one per author and per reviewer.
+    the task staffs (017), one per column.
 11. A session freezes its pin at its first launch: a re-pin steers the next
-    spawn, never the conversation already running.
+    spawn, never the conversation already running. A column's agent whose
+    pin an edit moved gets a session of its own at its next entry — the
+    retry of a failed task — on the new pin, and the session that ran on
+    the old pin stays as history (030). A switch moves the
+    seat's pin. A same-agent switch moves the pin of the running session and
+    keeps its conversation; a cross-agent switch starts a new session (008).
 12. The registry holds the agents of the shipped ACP registry index that the
     daemon's `PATH` holds — `claude-acp` (command `claude-agent-acp`),
     `codex-acp` (`codex-acp`) and `opencode` (`opencode acp`) among them —
@@ -161,19 +167,28 @@ orchestrator decides (003).
   does not list takes any effort but a blank one
   (`models.rs (core)::an_unlisted_model_takes_any_effort_but_a_blank_one`,
   `pins.rs::a_discovered_models_effort_choices_bound_its_pin`).
-- An effort of its own is run at the model already pinned, and `default`
-  clears it (`pins.rs::an_effort_of_its_own_is_run_at_the_model_already_pinned`).
+- An edit that names the model a column already runs with another effort
+  runs it at that effort, and `default` clears it
+  (`pins.rs::an_edit_runs_the_same_model_at_another_effort_and_default_clears_it`).
 - An edit moves the pin whole (`pins.rs::an_edit_moves_the_pin_whole`).
 - A task staffs each agent on its own pin
   (`pins.rs::a_task_staffs_each_agent_on_its_own_pin`), and a discovered
   catalog id pins agents through the API and reaches the registry command
   (`pins.rs::a_discovered_catalog_id_pins_agents_through_the_api`).
-- A session keeps what it started on for every seat
-  (`resume.rs::a_resumed_author_stays_on_the_model_its_session_started_on`,
-  `::a_running_reviewer_keeps_the_model_its_session_started_on`,
+- A session keeps what it started on for every seat, and a moved pin gets a
+  session of its own at the next entry of the column
+  (`resume.rs::a_relaunched_agent_stays_on_the_model_its_session_started_on`,
+  `::a_retry_after_a_staffing_edit_starts_a_new_session_on_the_new_pin`,
   `::an_orchestrator_respawn_stays_on_the_goals_pin`).
-- The registry lists its three built-ins and a configured agent
-  (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`),
+- A switch moves the seat's pin: the staffed agent's for a column's agent,
+  the goal's for an orchestrator
+  (`switch.rs::a_switched_agent_starts_a_new_session_briefed_on_its_column`,
+  `::a_switched_orchestrator_moves_the_goals_pin`).
+- A same-agent switch moves the running row's pin, including its effort
+  (`switch.rs::a_same_agent_switch_keeps_the_row_and_conversation`,
+  `::a_same_agent_switch_sets_effort_and_clears_the_old_pin`).
+- The registry lists an installed index agent and a configured agent
+  (`acp_discovery.rs::the_api_lists_an_installed_index_agent_and_one_user_agent`),
   and refreshes its cache on demand (`::discovery_refreshes_on_demand`).
 - A registry id that spells a CLI's name is an agent like any other
   (`acp_discovery.rs::a_registry_id_that_spells_a_cli_name_is_an_agent_like_any_other`);

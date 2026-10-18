@@ -7,13 +7,15 @@
 //! as a turn.
 //!
 //! A message to an agent mid-turn is queued behind the turn by the runtime.
-//! `delivered_at` is what says which have gone: it is stamped when the
-//! runtime takes the text, and a message that is still NULL is one still
-//! waiting for a live agent to take it.
+//! `delivered_at` says the agent has the text. Nothing stamps a message when
+//! it is queued: the driver claims it right before its prompt goes out, and a
+//! delivering read claims what it returns. A queued message is unstamped, so
+//! an agent that waits inside its turn still gets it through a read. Its
+//! prompt is then skipped, because the claim fails.
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use ariadne_core::{Actor, MessageKind, PromptKind, Seat};
+use ariadne_core::{Actor, PromptKind, Seat};
 use ariadne_store::{AgentSession, Message, MessageFilter, SessionFilter};
 
 use crate::agents::prompts;
@@ -29,28 +31,7 @@ impl super::Scheduler {
                 ..Default::default()
             })
             .await;
-        self.deliver(
-            waiting.unwrap_or_default(),
-            self.briefs_its_author(task_id).await,
-        )
-        .await;
-    }
-
-    /// Whether this task answers a change request with a briefing of its own.
-    ///
-    /// A task with one author does: the `changes_requested` arm resumes that
-    /// author with the feedback of every reviewer that asked, and stamps
-    /// those verdicts. A contested task does not — each of its authors is
-    /// nudged on its own branch while the reviews run side by side — so there
-    /// the channel is what carries a change request.
-    async fn briefs_its_author(&self, task_id: &str) -> bool {
-        let Ok(task) = self.store.get_task(task_id).await else {
-            return false;
-        };
-        let Ok(authors) = self.store.list_task_authors(task_id).await else {
-            return false;
-        };
-        authors.len() == 1 || task.picked_agent_id.is_some()
+        self.deliver(waiting.unwrap_or_default()).await;
     }
 
     /// And everything waiting on the goal's own channel, which is the
@@ -67,59 +48,47 @@ impl super::Scheduler {
                 ..Default::default()
             })
             .await;
-        // Nothing on a goal's channel is a verdict, so nothing there is
-        // briefed anywhere else.
-        self.deliver(waiting.unwrap_or_default(), false).await;
+        self.deliver(waiting.unwrap_or_default()).await;
     }
 
     /// One pass over a batch of undelivered messages, in the order they were
     /// written: the runtime queues each prompt behind the one before it.
     ///
-    /// `briefed_author` says that a change request in this batch travels as
-    /// the author's own briefing, so it is not handed on here as well.
-    async fn deliver(&mut self, waiting: Vec<Message>, briefed_author: bool) {
+    /// A message to the agent of a column the task is not in waits: that
+    /// agent sits idle until its column is current, and a message is not a
+    /// reason to wake it.
+    async fn deliver(&mut self, waiting: Vec<Message>) {
         for message in waiting {
-            // A review request is not a message to hand on: the reviewer's
-            // briefing is its delivery, and that briefing stamps it delivered.
-            if message.kind() == Some(MessageKind::ReviewRequest)
-                && message.to_actor() == Some(Actor::Reviewer)
-            {
-                debug!(message = %message.id, "a review request travels as the reviewer's briefing");
-                continue;
-            }
-            // And a change request is not one either: the author is resumed
-            // with the feedback of every reviewer that asked, in one briefing
-            // that stamps them. Handed on here as well, each one would reach
-            // the author twice.
-            if briefed_author
-                && message.kind() == Some(MessageKind::RequestChanges)
-                && message.to_actor() == Some(Actor::Author)
-            {
-                debug!(message = %message.id, "a change request travels as the author's briefing");
-                continue;
-            }
             let Some(session) = self.recipient_session(&message).await else {
                 debug!(message = %message.id, "nothing live to deliver the message to yet");
                 continue;
             };
-            let from = self.sender_name(&message).await;
+            if session.seat() == Some(Seat::Agent)
+                && !crate::attention::work_is_active(&self.store, &session).await
+            {
+                continue;
+            }
+            let seat = message.from_actor().map_or("agent", |actor| actor.as_str());
+            let task_title = self.sender_task_title(&message).await;
+            let column = self.sender_column(&message).await;
             let template = prompts::template_for(PromptKind::IncomingMessage);
-            let text = prompts::incoming_message_briefing(template, &message, &from);
+            let text = prompts::incoming_message_briefing(
+                template,
+                &message,
+                seat,
+                task_title.as_deref(),
+                column.as_deref(),
+            );
             info!(
                 message = %message.id,
                 session = %session.id,
                 kind = %message.kind,
                 "delivering a message to the agent it is for"
             );
-            // Stamped once the runtime took it: one it refused — the agent
-            // went away between the lookup and the hand-off — waits for the
-            // next pass.
-            if !self.hand_prompt(&session, text) {
-                continue;
-            }
-            if let Err(e) = self.store.mark_message_delivered(&message.id).await {
-                warn!(message = %message.id, error = %e, "stamping the message failed");
-            }
+            // Stamped by nobody here: the driver claims it when its prompt
+            // goes out. One the runtime refused — the agent went away
+            // between the lookup and the hand-off — waits for the next pass.
+            self.hand_message(&session, &message.id, text);
         }
     }
 
@@ -147,37 +116,30 @@ impl super::Scheduler {
         let live = self.store.list_sessions(filter).await.ok()?;
         live.into_iter().find(|s| match message.to_actor() {
             Some(Actor::Orchestrator) => s.seat() == Some(Seat::Orchestrator),
-            // Addressed to one staffed agent, and to no other in its seat:
-            // two reviewers on a task are two recipients.
+            // Addressed to one staffed agent, and to no other of the task:
+            // the agents of two columns are two recipients.
             _ => s.task_agent_id.is_some() && s.task_agent_id == message.to_agent_id,
         })
     }
 
-    /// How the sender is named to the agent that reads it.
-    ///
-    /// An agent has no name of its own, so it is named by its seat and the
-    /// skills it works with — "reviewer (code-review)" — which is the only
-    /// thing about it that means anything to the reader. The orchestrator and
-    /// the user are named by what they are.
-    async fn sender_name(&self, message: &Message) -> String {
-        let seat = message
-            .from_actor()
-            .map_or("agent", |actor| actor.as_str())
-            .to_string();
-        let Some(agent_id) = &message.from_agent_id else {
-            return seat;
+    /// The title of the task the sender's agent is staffed on, for the
+    /// briefing to name: None where there is none to name, because the
+    /// sender carries no agent id or no task.
+    async fn sender_task_title(&self, message: &Message) -> Option<String> {
+        let (Some(_), Some(task_id)) = (&message.from_agent_id, &message.task_id) else {
+            return None;
         };
-        let skills = self.store.agent_skills(agent_id).await.unwrap_or_default();
-        match skills.is_empty() {
-            true => format!("{seat} {agent_id}"),
-            false => format!(
-                "{seat} ({})",
-                skills
-                    .iter()
-                    .map(|s| s.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        }
+        self.store.get_task(task_id).await.ok().map(|t| t.title)
+    }
+
+    /// The workflow column of the agent that sent `message`, or None for a
+    /// message with no sending agent, such as the orchestrator's.
+    async fn sender_column(&self, message: &Message) -> Option<String> {
+        let agent_id = message.from_agent_id.as_ref()?;
+        self.store
+            .get_task_agent(agent_id)
+            .await
+            .ok()
+            .map(|agent| agent.step)
     }
 }

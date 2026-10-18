@@ -1,0 +1,127 @@
+{
+  "kind": "Dashboard",
+  "metadata": { "name": "stats" },
+  "spec": {
+    "duration": "7d",
+    "refreshInterval": "30s",
+    "variables": [],
+    "layouts": [{
+      "kind": "Grid",
+      "spec": {
+        "display": { "title": "Ariadne stats" },
+        "items": [
+          { "x": 0, "y": 0, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/tasks-ended" } },
+          { "x": 12, "y": 0, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/active-tasks" } },
+          { "x": 0, "y": 6, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/tokens-by-model" } },
+          { "x": 12, "y": 6, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/pending-attention" } },
+          { "x": 0, "y": 12, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/http-latency" } },
+          { "x": 12, "y": 12, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/stream-clients" } },
+          { "x": 0, "y": 18, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/turns-by-model" } },
+          { "x": 12, "y": 18, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/task-status" } },
+          { "x": 0, "y": 24, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/task-lead-time" } },
+          { "x": 12, "y": 24, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/session-lifetime" } },
+          { "x": 0, "y": 30, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/input-tokens" } },
+          { "x": 12, "y": 30, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/warnings-and-errors" } }
+        ]
+      }
+    }],
+    "panels": {
+      "tasks-ended": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Tasks ended", "description": "Completed task outcomes in the selected time range." },
+          "plugin": { "kind": "StatChart", "spec": { "calculation": "last-number", "format": { "unit": "decimal" } } },
+          "queries": [{ "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": { "query": "sum(increase(ariadne_tasks_ended_total[7d]))" } } } }]
+        }
+      },
+      "active-tasks": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Active tasks", "description": "Tasks that are still active." },
+          "plugin": { "kind": "StatChart", "spec": { "calculation": "last-number", "format": { "unit": "decimal" } } },
+          "queries": [{ "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": { "query": "sum(ariadne_tasks_active)" } } } }]
+        }
+      },
+      "tokens-by-model": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Tokens by model", "description": "Tokens used by each model." },
+          "plugin": { "kind": "StatChart", "spec": { "calculation": "last-number", "format": { "unit": "decimal" } } },
+          "queries": [{ "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": { "query": "sum by (model) (increase(ariadne_tokens_total[7d]))" } } } }]
+        }
+      },
+      "pending-attention": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Pending attention", "description": "Attention items by reason." },
+          "plugin": { "kind": "StatChart", "spec": { "calculation": "last-number", "format": { "unit": "decimal" } } },
+          "queries": [{ "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": { "query": "sum by (reason) (ariadne_attention_pending)" } } } }]
+        }
+      },
+      "http-latency": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "HTTP latency", "description": "Median HTTP request duration." },
+          "plugin": { "kind": "StatChart", "spec": { "calculation": "last-number", "format": { "unit": "seconds" } } },
+          "queries": [{ "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": { "query": "histogram_quantile(0.5, sum by (le) (rate(http_server_request_duration_seconds_bucket[7d])))" } } } }]
+        }
+      },
+      "stream-clients": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Stream clients", "description": "Connected event stream clients." },
+          "plugin": { "kind": "StatChart", "spec": { "calculation": "last-number", "format": { "unit": "decimal" } } },
+          "queries": [{ "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": { "query": "ariadne_events_stream_clients" } } } }]
+        }
+      },
+      "turns-by-model": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Turns by model", "description": "Completed turns by model." },
+          "plugin": { "kind": "StatChart", "spec": { "calculation": "last-number", "format": { "unit": "decimal" } } },
+          "queries": [{ "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": { "query": "sum by (model) (increase(ariadne_turns_total[7d]))" } } } }]
+        }
+      },
+      "task-status": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Task status", "description": "Task outcomes by status." },
+          "plugin": { "kind": "StatChart", "spec": { "calculation": "last-number", "format": { "unit": "decimal" } } },
+          "queries": [{ "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": { "query": "sum by (status) (increase(ariadne_tasks_ended_total[7d]))" } } } }]
+        }
+      },
+      "task-lead-time": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Task lead time", "description": "Median task lead time." },
+          "plugin": { "kind": "StatChart", "spec": { "calculation": "last-number", "format": { "unit": "seconds" } } },
+          "queries": [{ "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": { "query": "histogram_quantile(0.5, sum by (le) (rate(ariadne_task_lead_time_seconds_bucket[7d])))" } } } }]
+        }
+      },
+      "session-lifetime": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Session lifetime", "description": "Average session lifetime." },
+          "plugin": { "kind": "StatChart", "spec": { "calculation": "last-number", "format": { "unit": "seconds" } } },
+          "queries": [{ "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": { "query": "sum(rate(ariadne_session_lifetime_seconds_sum[7d])) / sum(rate(ariadne_session_lifetime_seconds_count[7d]))" } } } }]
+        }
+      },
+      "input-tokens": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Input tokens", "description": "Input token use." },
+          "plugin": { "kind": "StatChart", "spec": { "calculation": "last-number", "format": { "unit": "decimal" } } },
+          "queries": [{ "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": { "query": "sum(increase(ariadne_tokens_total{kind=\"input\"}[7d]))" } } } }]
+        }
+      },
+      "warnings-and-errors": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Warnings and errors", "description": "Recent daemon warnings and errors." },
+          "plugin": { "kind": "LogsTable", "spec": { "showTime": true, "allowWrap": true, "enableDetails": true } },
+          "queries": [{ "kind": "LogQuery", "spec": { "plugin": { "kind": "LokiLogQuery", "spec": { "query": "{service=\"ariadned\", level=~\"warn|error\"}" } } } }]
+        }
+      }
+    }
+  }
+}

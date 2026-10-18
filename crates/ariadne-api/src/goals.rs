@@ -9,14 +9,23 @@ use crate::usage::TokenUsageDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct GoalDto {
+    /// The workflow every task of the goal runs on, chosen when the goal was
+    /// created.
+    pub workflow: String,
+    /// The columns of that workflow as they were when the goal was created:
+    /// a later edit of the catalog reaches later goals alone.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub steps: Vec<crate::workflows::WorkflowStepDto>,
     pub id: String,
     pub title: String,
     pub description: String,
+    pub issue_url: Option<String>,
     pub status: GoalStatus,
     /// Whether this goal has an orchestrator for its lifetime.
     pub orchestrated: bool,
-    /// What the orchestrator or adopted author runs on, `<agent>:<model>`:
-    /// the registry agent and, after the `:`, the model of it.
+    /// What the orchestrator runs on, `<agent>:<model>`: the registry agent
+    /// and, after the `:`, the model of it.
     #[schema(example = "claude-acp:claude-opus-5")]
     pub model: String,
     /// The reasoning effort that model is run at, pinned like `model`. None =
@@ -32,19 +41,19 @@ pub struct GoalDto {
     pub updated_at: String,
 }
 
-/// What a goal cost, by the seat that spent it. Grouped by seat rather than
-/// by agent: a goal's authors are as many as it has tasks, and what is
-/// read at this height is where the tokens went, not which agent went there.
+/// What a goal cost, by the seat that spent it, and by the agent of every
+/// column of every task under it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct GoalUsageDto {
     /// Every session of the goal summed, the orchestrator's included.
     pub total: TokenUsageDto,
     /// The orchestrator's sessions, which belong to no task.
     pub orchestrator: TokenUsageDto,
-    /// Every author session of every task of the goal.
-    pub authors: TokenUsageDto,
-    /// Every reviewer session of every task of the goal, all rounds.
-    pub reviewers: TokenUsageDto,
+    /// One entry per agent of every task of the goal that has a session,
+    /// task by task and column by column.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub agents: Vec<crate::tasks::AgentUsageDto>,
 }
 
 /// Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and
@@ -65,9 +74,16 @@ pub struct CompleteGoalRequest {}
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateGoalRequest {
+    /// The workflow every task of the goal runs on, a name of the catalog
+    /// (`GET /v1/workflows`). Omitted = the default of the first repository.
+    /// It cannot change once the goal is created.
+    #[serde(default)]
+    pub workflow: Option<String>,
     pub title: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub issue_url: Option<String>,
     /// Ids of registered repositories (`POST /v1/repositories`); at least one.
     pub repository_ids: Vec<String>,
     /// What the orchestrator runs on, `<agent>:<model>` — the id of an agent

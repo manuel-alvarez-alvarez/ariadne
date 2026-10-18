@@ -226,6 +226,7 @@ fn seat_label(s: &SkillDto) -> String {
     match s.seat {
         SkillSeat::Orchestrator => "orchestrator only".into(),
         SkillSeat::Task => "task agents".into(),
+        SkillSeat::PullRequest => "pull request sessions only".into(),
     }
 }
 

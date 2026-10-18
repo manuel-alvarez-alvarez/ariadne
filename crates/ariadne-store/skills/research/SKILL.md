@@ -1,6 +1,6 @@
 ---
 name: research
-description: Answer a question from evidence, with a recommendation and what would change it. Use when a task asks a question or compares options.
+description: When a task asks a question or compares options, answers from evidence, with a recommendation.
 ---
 
 # Research
@@ -9,8 +9,9 @@ A finding without a source is an opinion.
 
 ## Steps
 
-1. Write the question in one sentence. Agree it before you start.
-   Done when the question is agreed in writing.
+1. Write the question in one sentence. Confirm it with the orchestrator
+   through `send_message` where the task does not state it.
+   Done when the task or the orchestrator states the question.
 2. List what an answer needs. Name the sources that can give it.
    Done when answers to every listed need would settle the question, and
    each need names a source.
@@ -20,6 +21,7 @@ A finding without a source is an opinion.
    Done when you have hunted the strongest counter-evidence and written
    what you found.
 5. Write the report: question, findings, recommendation, confidence.
+6. Call `complete_step` with the column report.
 
 ## Rules
 
@@ -39,9 +41,8 @@ A finding without a source is an opinion.
   the source that disagrees.
 - "The report reads thin without more." -> Padding buries the finding. An
   unsettled question is a finding too.
-- "This might help somebody later." -> The report is the record.
 
 ## Done
 
-The report answers the question, names the source of every fact, states a
-recommendation with its confidence, and lists what would change it.
+The report answers the question and names the source of every fact. It
+states a recommendation with its confidence, and lists what would change it.

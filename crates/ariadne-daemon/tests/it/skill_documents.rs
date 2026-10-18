@@ -12,12 +12,14 @@ use crate::common;
 use axum::http::StatusCode;
 
 use ariadne_api::skills::{SkillDto, SkillSeat};
-use ariadne_core::Seat;
+use ariadne_core::{Seat, TaskStatus};
 use ariadne_store::defaults::{
-    BUILTIN_SKILLS, ORCHESTRATION_SKILL, default_skill_document, default_system_prompt, skill_text,
+    BUILTIN_SKILLS, ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, default_skill_document,
+    default_system_prompt, skill_text,
 };
+use ariadne_store::{AgentSession, Task};
 
-use common::{delete, get, harness, post, post_json, put_json};
+use common::{Harness, delete, get, harness, post, post_json, put_json};
 
 /// A shipped skill runs on the text Ariadne ships and stores none of it; a
 /// text written over it is the skill's own until the reset takes it back off.
@@ -120,6 +122,257 @@ async fn a_skill_of_your_own_is_deleted_rather_than_reset() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// A name with `/`, `\`, `..`, a space, a leading dot or a leading hyphen is
+/// not shaped as a skill name, or does not stay a direct entry under the
+/// skills directory once joined onto it: `sync_skills` writes `SKILL.md`
+/// under `skills_dir.join(name)`, and accepting one of these would write
+/// outside it.
+#[tokio::test]
+async fn a_skill_name_outside_the_shape_is_refused() {
+    let h = harness().await;
+    for name in [
+        "../escape",
+        "a/b",
+        "a\\b",
+        "api design",
+        ".hidden",
+        "-leading",
+    ] {
+        let err = h
+            .error(
+                post_json(
+                    "/v1/skills",
+                    serde_json::json!({
+                        "name": name,
+                        "document": "---\nname: x\ndescription: x\n---\n",
+                    }),
+                ),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await;
+        assert!(
+            err.error.message.contains("skill name"),
+            "{name:?}: {}",
+            err.error.message
+        );
+    }
+    let escaped = h.launcher.cfg.skills_dir.parent().unwrap().join("escape");
+    assert!(
+        !escaped.exists(),
+        "a name with `..` wrote outside the skills directory"
+    );
+}
+
+/// The looser rule: ASCII letters in either case, digits, hyphens and
+/// underscores, not leading with a hyphen — wider than kebab-case, and
+/// still shaped enough to stay one entry under the skills directory.
+#[tokio::test]
+async fn a_mixed_case_name_with_an_underscore_and_a_digit_is_accepted() {
+    let h = harness().await;
+    let created: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "My_Skill2",
+                    "document": "---\nname: x\ndescription: x\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(created.name, "My_Skill2");
+}
+
+/// A case-insensitive volume — the macOS default, and Windows's own —
+/// writes `Demo` and `demo` to one directory: distinct rows by the exact
+/// name the database compares would still collide the moment the sync
+/// wrote both, one document silently overwriting the other. The second
+/// name is refused before either ever reaches the filesystem.
+#[tokio::test]
+async fn a_name_differing_only_in_case_from_an_existing_skill_is_refused() {
+    let h = harness().await;
+    let _: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "Demo",
+                    "document": "---\nname: x\ndescription: x\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let (status, _) = h
+        .send(post_json(
+            "/v1/skills",
+            serde_json::json!({
+                "name": "demo",
+                "document": "---\nname: x\ndescription: y\n---\n",
+            }),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let kept: SkillDto = h.json(get("/v1/skills/Demo"), StatusCode::OK).await;
+    assert_eq!(
+        kept.summary, "x",
+        "the first skill's document was overwritten"
+    );
+}
+
+/// A name that passes the slug check is still refused the write where a
+/// symlink already sits at its directory: `sync_skills` never follows one,
+/// to decide a name is stale or to write through it, so nothing lands
+/// outside the skills directory and the create still leaves the skill
+/// readable at its own, now real, directory.
+#[tokio::test]
+async fn a_symlinked_skill_directory_is_never_written_through() {
+    let h = harness().await;
+    let outside = tempfile::tempdir().unwrap();
+    let skills_dir = &h.launcher.cfg.skills_dir;
+    std::fs::create_dir_all(skills_dir).unwrap();
+    let link = skills_dir.join("safe");
+    std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+
+    let created: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "safe",
+                    "document": "---\nname: safe\ndescription: safe\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(created.name, "safe");
+
+    assert!(
+        !outside.path().join("SKILL.md").exists(),
+        "wrote through the symlink to outside the skills directory"
+    );
+    assert!(
+        !std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the symlink at the skill's own directory survived the sync"
+    );
+    assert_eq!(
+        std::fs::read_to_string(link.join("SKILL.md")).unwrap(),
+        created.document,
+        "the skill was not written to its own, now real, directory"
+    );
+}
+
+/// The same proof one level down: a real directory already at a slug-valid
+/// name, but its `SKILL.md` itself is the symlink. Writing the real document
+/// never goes through it either.
+#[tokio::test]
+async fn a_symlinked_skill_md_is_never_written_through() {
+    let h = harness().await;
+    let outside = tempfile::tempdir().unwrap();
+    let decoy = outside.path().join("decoy.md");
+    std::fs::write(&decoy, "not a skill").unwrap();
+    let skills_dir = &h.launcher.cfg.skills_dir;
+    let dir = skills_dir.join("also-safe");
+    std::fs::create_dir_all(&dir).unwrap();
+    let document_path = dir.join("SKILL.md");
+    std::os::unix::fs::symlink(&decoy, &document_path).unwrap();
+
+    let created: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "also-safe",
+                    "document": "---\nname: also-safe\ndescription: also safe\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    assert_eq!(
+        std::fs::read_to_string(&decoy).unwrap(),
+        "not a skill",
+        "wrote through the symlink to a file outside the skill's own directory"
+    );
+    assert!(
+        !std::fs::symlink_metadata(&document_path)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the symlinked SKILL.md survived the sync"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&document_path).unwrap(),
+        created.document,
+        "the skill was not written to its own, now real, SKILL.md"
+    );
+}
+
+/// A configured `skills_dir` that is itself a symlink — a home moved onto
+/// another volume, say — is resolved once up front, so every write and
+/// every stale-entry read goes through its real target. Opening the
+/// symlink path itself with `O_NOFOLLOW`, as a skill's own write does,
+/// would refuse it outright and fail the sync for every skill.
+#[tokio::test]
+async fn a_symlinked_skills_root_still_syncs_through_its_target() {
+    let h = harness().await;
+    let real_skills_dir = h.launcher.cfg.skills_dir.clone();
+    let link = real_skills_dir.parent().unwrap().join("skills-link");
+    std::os::unix::fs::symlink(&real_skills_dir, &link).unwrap();
+
+    ariadne_daemon::agents::sync_skills(&h.store, &link)
+        .await
+        .unwrap();
+
+    assert!(
+        std::fs::read_to_string(link.join("coding").join("SKILL.md")).is_ok(),
+        "a skills_dir that is itself a symlink must still sync through its target"
+    );
+}
+
+/// A write that keeps failing is reported by `sync_skills` itself: a
+/// skill's own directory refusing new entries fails every attempt at a
+/// temporary file, and the function answers `Err` for it rather than
+/// logging the failure and still answering `Ok`, which is what a caller —
+/// the create route among them — reads as "every skill is now on disk."
+#[tokio::test]
+async fn sync_skills_reports_a_persistently_failing_write() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let h = harness().await;
+    let skills_dir = h.launcher.cfg.skills_dir.clone();
+    let _: SkillDto = h
+        .json(
+            post_json(
+                "/v1/skills",
+                serde_json::json!({
+                    "name": "broken",
+                    "document": "---\nname: broken\ndescription: broken\n---\n",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let dir = skills_dir.join("broken");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let result = ariadne_daemon::agents::sync_skills(&h.store, &skills_dir).await;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert!(
+        result.is_err(),
+        "a persistently failing write must not be reported as Ok"
+    );
+}
+
 /// And the other way round: a shipped skill is reset rather than deleted, so
 /// the catalog cannot be emptied by mistake.
 #[tokio::test]
@@ -171,22 +424,42 @@ async fn an_orchestrator_session_indexes_the_orchestration_skill() {
     );
 }
 
-/// The playbook is editable like any shipped skill, and an edit reaches the
-/// next launch rather than the ones already running: the document written for
-/// a fresh orchestrator session is what the store holds at that moment.
+/// The playbook is editable like any shipped skill. Each session's link
+/// reads the home copy live, so an edit reaches an existing session and the
+/// next launch.
 #[tokio::test]
 async fn an_edited_orchestration_skill_reaches_the_next_launch() {
     let h = harness().await;
     let goal = h.planning_goal().await;
 
     let first = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
-    h.launcher.kill_session(&first.id).await.unwrap();
 
     const EDITED: &str = "---\nname: orchestration\ndescription: our playbook\n---\nAsk twice.\n";
     h.store
         .set_skill_document(ORCHESTRATION_SKILL, EDITED)
         .await
         .unwrap();
+    // A direct store edit, unlike the `PUT /v1/skills/:name` route, does not
+    // sync the home copy itself; the daemon call it bypasses is what a real
+    // edit goes through.
+    ariadne_daemon::agents::sync_skills(&h.store, &h.launcher.cfg.skills_dir)
+        .await
+        .unwrap();
+
+    let first_document = h
+        .launcher
+        .cfg
+        .run_dir
+        .join(&first.id)
+        .join("skills")
+        .join(ORCHESTRATION_SKILL)
+        .join("SKILL.md");
+    assert_eq!(
+        std::fs::read_to_string(&first_document).unwrap(),
+        EDITED,
+        "the existing session's link reads the edited home document"
+    );
+    h.launcher.kill_session(&first.id).await.unwrap();
 
     let second = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
     let document = h
@@ -201,6 +474,102 @@ async fn an_edited_orchestration_skill_reaches_the_next_launch() {
         std::fs::read_to_string(&document).unwrap(),
         EDITED,
         "the next launch reads the edited document"
+    );
+}
+
+/// The session of the agent of column `step`, once the scheduler has started
+/// it: the goal is active and the task in progress, and the daemon moves it
+/// forward to that column.
+async fn column_session(h: &Harness, task: &Task, step: &str) -> AgentSession {
+    h.advance_to(task, step).await;
+    h.notify(&task.id);
+    h.step_session(task, step).await
+}
+
+/// Where a session's launch wrote the document of `skill`.
+fn skill_file(h: &Harness, session: &AgentSession, skill: &str) -> std::path::PathBuf {
+    h.launcher
+        .cfg
+        .run_dir
+        .join(&session.id)
+        .join("skills")
+        .join(skill)
+        .join("SKILL.md")
+}
+
+/// A column's agent loads the skills it is staffed on, and no other: the
+/// `pr` column of `develop-review-pr` stages `pr-babysit`, so its agent is
+/// indexed on that document and nothing else, over the seat text every
+/// column's agent owes. The `develop` column's agent is indexed on `coding`
+/// and knows nothing of the request.
+#[tokio::test]
+async fn a_columns_agent_loads_its_staffed_skills_and_the_pr_column_loads_pr_babysit() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast_running(Some("develop-review-pr")).await;
+    let pr = column_session(&h, &cast.task, "pr").await;
+
+    let launch = h.launch_file(&pr.id).expect("a launch file");
+    assert!(
+        launch
+            .system_prompt
+            .starts_with(default_system_prompt(Seat::Agent).trim()),
+        "the seat's own text first: {}",
+        launch.system_prompt
+    );
+    assert!(
+        launch
+            .system_prompt
+            .contains(&format!("- {PR_BABYSIT_SKILL}: ")),
+        "{}",
+        launch.system_prompt
+    );
+    assert!(
+        !launch.system_prompt.contains("- coding: "),
+        "the request column does not write code: {}",
+        launch.system_prompt
+    );
+    let document = skill_file(&h, &pr, PR_BABYSIT_SKILL);
+    assert_eq!(
+        std::fs::read_to_string(&document).expect("the document on disk"),
+        skill_text(default_skill_document(PR_BABYSIT_SKILL).unwrap())
+    );
+    assert!(
+        skill_file(&h, &pr, "coding").is_file(),
+        "the link carries every skill the home copy holds, staffed or not"
+    );
+}
+
+/// `pull-request` left the catalog: opening a request is the daemon's own
+/// tool now, behind `open_pull_request`, so no agent reads a skill for it —
+/// not even the agent of a `pr` column.
+///
+/// An old staffing on it is the kept-row case any dropped skill leaves
+/// ([`crate::common::Harness::stage_dropped_skill`]): the row stays because
+/// the agent still names it, and it reads as empty since nothing ships
+/// under the name any more, so the document the home copy holds for it, and
+/// the run directory's link resolves to, is blank.
+#[tokio::test]
+async fn an_old_staffing_on_pull_request_reads_as_empty() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    h.stage_dropped_skill(&cast.develop().id, "pull-request", 2)
+        .await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    h.notify(&cast.task.id);
+    let develop = h.step_session(&cast.task, "develop").await;
+
+    assert_eq!(
+        std::fs::read_to_string(skill_file(&h, &develop, "pull-request")).unwrap(),
+        "",
+        "an old staffing on pull-request does not read the removed skill"
+    );
+    assert!(
+        !std::fs::read_to_string(skill_file(&h, &develop, "coding"))
+            .unwrap()
+            .is_empty(),
+        "the column's own skill is read whole beside it"
     );
 }
 

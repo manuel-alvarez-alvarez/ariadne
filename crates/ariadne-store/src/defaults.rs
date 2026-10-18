@@ -1,5 +1,5 @@
-//! Built-in default texts: the lifecycle prompts, and the skills Ariadne
-//! ships.
+//! Built-in default texts: the lifecycle prompts, the skills and the
+//! workflows Ariadne ships.
 //!
 //! The one place a default text lives. A lifecycle briefing is read from these
 //! constants on every launch and every resume, and no row holds one of its
@@ -13,33 +13,34 @@
 //! turn, and says nothing about the work itself — what an agent can do comes
 //! from its skills. A skill states how one kind of work is done; for the
 //! orchestrator that work is Ariadne's own planning loop, so its playbook is
-//! a skill too ([`ORCHESTRATION_SKILL`]). A briefing template carries the values of one goal, task or
-//! task and whatever is only true of this moment — the changes a review
-//! asked for, the landing procedure — and nothing of the playbook that reached
-//! the agent. A resume is a nudge: where the work stands and what ends it.
-//! What every session is told alike — that Ariadne is reached through its MCP
-//! tools, whom a question reaches, and how few turns to take — is the MCP
-//! server's `instructions`, which every session already receives, and appears
-//! in no prompt here. What each seat does when it cannot go on is one line of
-//! its own: the orchestrator asks the user, the author gives the task up, the
-//! reviewer asks for changes.
+//! a skill too ([`ORCHESTRATION_SKILL`]). A workflow column states what its
+//! agent does with the task, and the skills it does it with. A briefing
+//! template carries the values of one goal, task or column and whatever is
+//! only true of this moment — the reason a task came back to a column — and
+//! nothing of the playbook that reached the agent. A resume is a nudge: where
+//! the work stands and what ends it. What every session is told alike — that
+//! Ariadne is reached through its MCP tools, whom a question reaches, and how
+//! few turns to take — is the MCP server's `instructions`, which every
+//! session already receives, and appears in no prompt here. What each seat
+//! does when it cannot go on is one line of its own: the orchestrator asks
+//! the user, a column's agent gives the task up or hands it back.
 //!
 //! Every text here is written in ASD-STE100 Simplified Technical English: one
 //! instruction to a sentence, the imperative for an instruction, the active
 //! voice, sentences that stay short, one meaning per word, a list for a
 //! sequence of steps. It is what an agent misreads least and pays fewest
 //! tokens for, and each playbook holds the agent to it in turn — the
-//! orchestrator for its task descriptions, the author for its summaries,
-//! commit text and failure reasons, the reviewer for its verdicts. That the
-//! rule holds for every seat, and for every word an agent writes, is the MCP
-//! server's session rules to say, so `STE` is all a text here spells.
+//! orchestrator for its task descriptions, a column's agent for its step
+//! reasons, commit text and failure reasons. That the rule holds for every
+//! seat, and for every word an agent writes, is the MCP server's session
+//! rules to say, so `STE` is all a text here spells.
 //!
 //! The texts are kept small on purpose. `size_caps_hold` keeps the lifecycle
 //! prompts small, `skill_size_caps_hold` keeps the skills small, and
 //! `every_default_text_is_simplified_technical_english` keeps the sentences
 //! short across both.
 
-use ariadne_core::{Landing, PromptKind, Seat};
+use ariadne_core::{PromptKind, Seat};
 
 /// A skill Ariadne ships: one document that tells a generic agent how to do
 /// one kind of work.
@@ -60,6 +61,17 @@ pub struct BuiltinSkill {
 /// the launcher loads this skill for every orchestrator session.
 pub const ORCHESTRATION_SKILL: &str = "orchestration";
 
+/// The skill that keeps an open request moving (026, 030): the `pr` column
+/// of `develop-review-pr` stages it, and its agent keeps the request until a
+/// human merges or closes it. Its seat is a fact of the name, as the
+/// orchestrator's is.
+pub const PR_BABYSIT_SKILL: &str = "pr-babysit";
+
+/// The skill of a reviewer pull request session (029): the daemon loads it
+/// for every session it starts on an open request that asks for the user's
+/// review. Its seat is a fact of the name, as `pr-babysit`'s is.
+pub const PR_REVIEWER_SKILL: &str = "pr-reviewer";
+
 /// The skills a fresh database is seeded with, grouped by what they are for:
 /// orchestrating a goal, producing work, reviewing it, and operating what it
 /// produced.
@@ -68,7 +80,7 @@ pub const ORCHESTRATION_SKILL: &str = "orchestration";
 /// adding a kind of work Ariadne knows how to staff. One skill is nobody's to
 /// staff: [`ORCHESTRATION_SKILL`] belongs to the orchestrator's seat, and the
 /// store refuses a task agent staffed on it.
-pub const BUILTIN_SKILLS: [BuiltinSkill; 13] = [
+pub const BUILTIN_SKILLS: [BuiltinSkill; 16] = [
     // Orchestrating.
     builtin(
         ORCHESTRATION_SKILL,
@@ -107,12 +119,23 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 13] = [
         "architecture-review",
         include_str!("../skills/architecture-review/SKILL.md"),
     ),
+    builtin(
+        PR_REVIEWER_SKILL,
+        include_str!("../skills/pr-reviewer/SKILL.md"),
+    ),
     // Operating.
     builtin("migration", include_str!("../skills/migration/SKILL.md")),
     builtin(
         "conflict-resolution",
         include_str!("../skills/conflict-resolution/SKILL.md"),
     ),
+    builtin(
+        PR_BABYSIT_SKILL,
+        include_str!("../skills/pr-babysit/SKILL.md"),
+    ),
+    // The `merge` column of the shipped `develop-review-merge` workflow
+    // staffs this: land a reviewed task on the base branch itself.
+    builtin("merge", include_str!("../skills/merge/SKILL.md")),
 ];
 
 const fn builtin(name: &'static str, document: &'static str) -> BuiltinSkill {
@@ -129,7 +152,7 @@ const fn builtin(name: &'static str, document: &'static str) -> BuiltinSkill {
 /// row of the merged skill is left for the prune to take out.
 ///
 /// `testing` merged into `coding`: 92 of 96 staffings of it sat beside
-/// `coding` on the same agent, and an author that wrote the code wrote the
+/// `coding` on the same agent, and an agent that wrote the code wrote the
 /// tests with it. One document states both, and the orchestrator makes one
 /// decision instead of two.
 pub const MERGED_SKILLS: [(&str, &str); 1] = [("testing", "coding")];
@@ -141,6 +164,64 @@ pub fn default_skill_document(name: &str) -> Option<&'static str> {
         .iter()
         .find(|s| s.name == name)
         .map(|s| s.document)
+}
+
+/// A workflow Ariadne ships: a linear kanban of columns, parsed by
+/// [`ariadne_core::workflow::parse`]. Stored the same way a [`BuiltinSkill`]
+/// is: a `NULL` document while it runs on the text here, so a rewording
+/// reaches every database without a migration.
+pub struct BuiltinWorkflow {
+    pub name: &'static str,
+    pub document: &'static str,
+}
+
+const fn builtin_workflow(name: &'static str, document: &'static str) -> BuiltinWorkflow {
+    BuiltinWorkflow { name, document }
+}
+
+/// The workflow a repository registered without one runs its goals on, and
+/// the one every database that predates workflows was moved onto: the task
+/// lands on the base branch itself.
+pub const DEFAULT_WORKFLOW: &str = "develop-review-merge";
+
+/// The workflow that lands a task by a request a human merges or closes.
+pub const PULL_REQUEST_WORKFLOW: &str = "develop-review-pr";
+
+/// The two workflows Ariadne ships: one that lands a task on the base branch
+/// itself, and one that lands it by a request a human merges or closes.
+pub const BUILTIN_WORKFLOWS: [BuiltinWorkflow; 2] = [
+    builtin_workflow(
+        DEFAULT_WORKFLOW,
+        include_str!("../workflows/develop-review-merge.workflow"),
+    ),
+    builtin_workflow(
+        PULL_REQUEST_WORKFLOW,
+        include_str!("../workflows/develop-review-pr.workflow"),
+    ),
+];
+
+/// The document Ariadne ships under `name`, or `None` where it ships none —
+/// which is every workflow the user wrote, and those carry their own text.
+pub fn default_workflow_document(name: &str) -> Option<&'static str> {
+    BUILTIN_WORKFLOWS
+        .iter()
+        .find(|w| w.name == name)
+        .map(|w| w.document)
+}
+
+pub(crate) struct BuiltinDashboard {
+    pub name: &'static str,
+    pub document: &'static str,
+}
+pub(crate) const BUILTIN_DASHBOARDS: [BuiltinDashboard; 1] = [BuiltinDashboard {
+    name: "stats",
+    document: include_str!("../dashboards/stats.json"),
+}];
+pub(crate) fn default_dashboard_document(name: &str) -> Option<&'static str> {
+    BUILTIN_DASHBOARDS
+        .iter()
+        .find(|d| d.name == name)
+        .map(|d| d.document)
 }
 
 /// The one-line `description` of a `SKILL.md`, which is what the index in an
@@ -169,12 +250,15 @@ pub fn skill_text(document: &str) -> String {
 ///
 /// It says what the seat owes and nothing about the work itself: what an
 /// agent can do comes from the skills it loads, so this text is Ariadne's own
-/// and no row overrides it.
+/// and no row overrides it. A pull request reviewer (029) has a seat text of
+/// its own, [`pull_request_system_prompt`], and so does a request's keeper
+/// (032), [`pull_request_keeper_system_prompt`].
 pub fn default_system_prompt(seat: Seat) -> &'static str {
     match seat {
         Seat::Orchestrator => ORCHESTRATOR_SYSTEM_PROMPT,
-        Seat::Author => AUTHOR_SYSTEM_PROMPT,
-        Seat::Reviewer => REVIEWER_SYSTEM_PROMPT,
+        Seat::Agent => AGENT_SYSTEM_PROMPT,
+        Seat::Reviewer => PULL_REQUEST_REVIEW_SYSTEM_PROMPT,
+        Seat::Keeper => PULL_REQUEST_KEEPER_SYSTEM_PROMPT,
     }
 }
 
@@ -186,94 +270,198 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
         PromptKind::OrchestratorResume => ORCHESTRATOR_RESUME,
         PromptKind::GoalAttention => GOAL_ATTENTION,
         PromptKind::IncomingMessage => INCOMING_MESSAGE,
-        PromptKind::AuthorBriefing => AUTHOR_BRIEFING,
-        PromptKind::AuthorResume => AUTHOR_RESUME,
-        PromptKind::ChangesRequested => CHANGES_REQUESTED,
-        PromptKind::ReviewerBriefing => REVIEWER_BRIEFING,
-        PromptKind::ReviewerResume => REVIEWER_RESUME,
-        PromptKind::ReviewerPick => REVIEWER_PICK,
+        PromptKind::StepBriefing => STEP_BRIEFING,
+        PromptKind::StepReturn => STEP_RETURN,
+        PromptKind::AgentResume => AGENT_RESUME,
     }
 }
 
-/// The whole procedure that ends a task on `landing`, which is what its
-/// author is handed once the task is approved.
-///
-/// One text per ending rather than one with three halves: a task ends one
-/// way, so the author reads the procedure it runs and nothing of the other
-/// two. Nothing overrides these — how a change reaches a base branch is a
-/// fact about the task, agreed with the user when the task was written
-/// (`Landing`), and a second answer stored anywhere else could only disagree
-/// with it.
-pub fn default_landing_prompt(landing: Landing) -> &'static str {
-    match landing {
-        Landing::Merge => LANDING_DIRECT,
-        Landing::PullRequest => LANDING_PULL_REQUEST,
-        Landing::None => LANDING_NONE,
-    }
+/// The system prompt of a session that reviews a request (029): what the
+/// seat owes, as [`default_system_prompt`] says it for the task seats. The
+/// work itself is the [`PR_REVIEWER_SKILL`] document. A request of the
+/// user's own has no session of its own: the `pr` column of its task keeps
+/// it (030).
+pub fn pull_request_system_prompt() -> &'static str {
+    PULL_REQUEST_REVIEW_SYSTEM_PROMPT
 }
+
+/// The briefing a review session starts on: the request, and the values its
+/// commands act on.
+pub fn pull_request_briefing_prompt() -> &'static str {
+    PULL_REQUEST_REVIEW_BRIEFING
+}
+
+/// The prompt the daemon wakes a session with when a request has news: one
+/// line per thing it has not been told yet, rendered by `forge::news`. The
+/// session is the review session of a request (029), or the agent of the
+/// `pr` column of the task that opened it (030).
+pub fn pull_request_news_prompt() -> &'static str {
+    PULL_REQUEST_NEWS
+}
+
+/// The placeholders [`pull_request_briefing_prompt`] and
+/// [`pull_request_news_prompt`] are rendered with, by the daemon's
+/// `prompts` builders.
+pub const PULL_REQUEST_PLACEHOLDERS: [&str; 10] = [
+    "title",
+    "url",
+    "repo_path",
+    "worktree_path",
+    "head_branch",
+    "base_branch",
+    "login",
+    "news",
+    "head_sha",
+    "reviewed_sha",
+];
+
+/// The system prompt of a session that keeps a request asked for by hand
+/// (032): what the seat owes, as [`default_system_prompt`]
+/// says it for the task seats. The work itself is the [`PR_BABYSIT_SKILL`]
+/// document, the same one the `pr` column of a task stages (030).
+pub fn pull_request_keeper_system_prompt() -> &'static str {
+    PULL_REQUEST_KEEPER_SYSTEM_PROMPT
+}
+
+/// The briefing a keeper session starts on: the request, its worktree and
+/// branch, and how to push a fix to it.
+pub fn pull_request_keeper_briefing_prompt() -> &'static str {
+    PULL_REQUEST_KEEPER_BRIEFING
+}
+
+/// The placeholders [`pull_request_keeper_briefing_prompt`] is rendered
+/// with, by the daemon's `prompts` builders. A keeper session is woken with
+/// news on [`pull_request_news_prompt`], the same text a review session is.
+pub const PULL_REQUEST_KEEPER_PLACEHOLDERS: [&str; 8] = [
+    "title",
+    "url",
+    "repo_path",
+    "worktree_path",
+    "branch",
+    "base_branch",
+    "login",
+    "push_command",
+];
 
 /// Orchestrator seat text: what the seat owes, and no step of the playbook.
 ///
-/// The playbook — the ten phases from reading the goal to `complete_goal`,
-/// and the one place `finalize_plan` is explained — is the
+/// The playbook — the phases from reading the goal to `complete_goal`, and
+/// the one place `finalize_plan` is explained — is the
 /// [`ORCHESTRATION_SKILL`] document, which the launcher loads for every
-/// orchestrator session the way a task agent's skills reach it: indexed in
-/// the system prompt, written into the run directory. So the playbook is
+/// orchestrator session the way a task agent's skills reach it: indexed
+/// beside this text, written into the run directory. So the playbook is
 /// editable and resettable like any shipped skill, and this text is
-/// Ariadne's own like the other two seats'.
+/// Ariadne's own like the agent's.
 ///
 /// What is owed is what no skill edit is allowed to take away: the plan is
 /// made *with* the user — the orchestrator is the one seat that talks to
 /// them — it writes no code, and a point it cannot settle goes to the user
-/// rather than being decided alone.
-const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You plan one Ariadne goal into tasks, with the user. Never write code. Ask the user where you are blocked."#;
+/// rather than being decided alone. How to ask is the session rules' (013),
+/// which every seat reads, so this text names no tool.
+const ORCHESTRATOR_SYSTEM_PROMPT: &str =
+    r#"Never write code. Plan the goal with the user. Decide no open point alone."#;
 
-/// Author persona and playbook: what it may touch, what it writes, and the
-/// one place `request_review` is explained. Landing is its own too, but the
-/// procedure belongs to the briefing that knows which repository this is.
+/// The one task seat text: what the agent of a column owes, whatever the
+/// column is. The work of the column is its skills'; what each of the three
+/// calls that move the task is for is said here and nowhere else. When the
+/// turn ends is the call's own description to say, and how to ask the user
+/// is the session rules'. The stop rule is here too, and nowhere else: a
+/// column's skill can tell an agent how to fix one thing, never how long to
+/// keep trying it.
+const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its branch. Work on your current column alone. Read its skills first.
+- Call `complete_step` when the column's work is done.
+- Call `fail_step` when the previous column must fix something.
+- Call `fail_task` when nobody can do the task as written.
+- Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again.
+- After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator with `send_message`, or call `fail_task`."#;
+
+/// First briefing of a column's agent: the task, the column, the values its
+/// commands act on, and what the column before it said.
+const STEP_BRIEFING: &str = r#"# {task_title}: {step_title} ({step_id})
+{task_description}
+{step_description}
+Goal: {goal_title}
+Worktree: {worktree_path}
+Branch: {branch}
+Base: {base_branch}
+Repo: {repo_path}
+Previous: {previous_summary}
+Dependencies: {dependencies}
+Do this column now."#;
+
+/// What a column's agent is briefed with when the task comes back to its
+/// column: which way it came, and why.
+const STEP_RETURN: &str = "Resume {task_title} at {step_title}.\nDirection: {direction}\n{reason}";
+
+/// What the agent of the current column is nudged with when it has gone
+/// quiet with the task still in front of it.
 ///
-/// It is also the one place the division of the checks is stated. An author
-/// runs the tests and the lint of what it changed, and no run of the whole
-/// suite is its own: a reviewer runs it once before each verdict it gives
-/// (`REVIEWER_SYSTEM_PROMPT`), and the landing runs it once after the rebase
-/// ([`LANDING_DIRECT`]). How many runs a branch takes is how many verdicts it
-/// takes, plus that one. A skill scopes the step it owns and names neither
-/// run, so the division cannot go stale in fourteen documents.
-///
-/// The commits are counted the same way, and here too. A task is one
-/// responsibility, cut as one tracer by the orchestrator and squashed by the
-/// landing, so it is one commit; a review answer is one more commit on top.
-/// An amend rewrites a commit a reviewer already judged by its SHA, so
-/// nothing amends.
-const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to the end. Work only in your worktree, on your task branch. Commit nothing generated or unrelated.
+/// Four things, and no more: this is not a new request, so there is nothing
+/// to plan or narrate; check whether the work the column owes is already
+/// done; make the call that ends the column, or go on with the work; and
+/// write no reply about the nudge itself, since a reply over the nudge is a
+/// turn spent on nothing the task needed.
+const AGENT_RESUME: &str = "Not a new request: continue {task_title} at {step_title}. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
 
-1. Read task and criteria. If stuck, call `fail_task` with the reason in STE.
-2. Implement only that task. Refactor nothing. Obey `AGENTS.md`, `CLAUDE.md` and `CONTRIBUTING.md`. Commit once in STE. Add a commit per review answer. Never amend. Add requested tests. Run changed tests and lint once before the commit. After the commit, run `git status`; leave nothing shown. Run the repository's generate step; leave no changes. Never run the whole suite: the reviewer runs it before each verdict; the landing runs it once.
-3. Write no authorship trailer, no tool trailer, no mention of Ariadne. Leave signing to git.
-4. Call `request_review` with a short STE summary: change, reason, verification. End your turn after it. Do not poll. Ariadne wakes you with a verdict or message. Apply every verdict on the same branch and call again. Explain disagreements in that summary.
-5. Ask reviewers or the orchestrator unanswered questions with `send_message`. Answer their questions. If the task is wrong, call `fail_task` and explain.
-6. Every reviewer approves, and Ariadne briefs you to end the task."#;
+/// Seat text of a reviewer pull request session (029).
+const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request where the user is a requested reviewer. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing. Ariadne wakes you with the request and its news. Review it as your skill says. Then end your turn."#;
 
-/// Reviewer persona and playbook, and the one place the verdict rule is
-/// stated: one per review asked for, through `submit_verdict`.
-const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one Ariadne task. An approval gates the merge: approve only what you would merge yourself. Your detached worktree holds the branch, read-only: do not edit, commit, amend or branch.
+/// Initial briefing of a reviewer pull request session (029).
+const PULL_REQUEST_REVIEW_BRIEFING: &str = r#"# Review pull request: {title}
 
-1. Install required tools. Move this worktree to the branch named in the briefing with `git checkout --detach <branch>`. Start the whole test suite, build and linters once for this verdict, in the foreground. Record `git rev-parse HEAD` as the SHA you judge.
-2. Read the task, its acceptance criteria and the author's summary. Call `get_diff` for the change. Read the code around it.
-3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests and clarity. Judge each test by reading its setup, action and assertions. Never change code to see whether a test fails.
-4. Wait for every check. Use each result in your verdict. Where something blocks the review, request changes and name it.
-5. `send_message` to ask the author what the change does not answer, and to answer what it asks you. A question is not a verdict.
-6. Call `submit_verdict` once per review you are asked for. Put that SHA in every verdict. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: list files and functions, with each item must-fix or optional. Write the verdict in STE."#;
+{url}
 
-/// Initial briefing of an orchestrator session: the goal, and the
-/// repositories it works in.
+## Context
+- Repo: {repo_path}
+- Worktree (your cwd): {worktree_path}, at {head_sha}
+- Branch: {head_branch} onto {base_branch}
+- Your login: {login}
+- Last reviewed sha: {reviewed_sha}
+
+Review this request."#;
+
+/// What a session is woken with when a request has news: the news since it
+/// was last told, one line each.
+const PULL_REQUEST_NEWS: &str = r#"News on "{title}":
+{news}
+
+Handle each item. Then end your turn."#;
+
+/// Seat text of a session that keeps a request asked for by hand (032).
+const PULL_REQUEST_KEEPER_SYSTEM_PROMPT: &str = r#"You keep one open request the user asked you to keep. Work only in your worktree, on its branch. Commit a fix and push it as the briefing says. Ariadne wakes you with the news. It ends you on the merge or the close. Then end your turn."#;
+
+/// Initial briefing of a keeper session (032): the request, the worktree and
+/// branch it works on, and the command that pushes a fix to the request.
+const PULL_REQUEST_KEEPER_BRIEFING: &str = r#"# Keep pull request: {title}
+
+{url}
+
+## Context
+- Repo: {repo_path}
+- Worktree (your cwd): {worktree_path}
+- Branch: {branch}, onto {base_branch}
+- Your login: {login}
+- Push with: {push_command}
+
+Keep this request."#;
+
+/// Initial briefing of an orchestrator session: the goal, its workflow with
+/// every column, and the repositories it works in.
 ///
 /// No numbers. How many tasks a goal takes is what the conversation with the
 /// user settles (003), and a cap written down before that conversation could
 /// only be a guess the orchestrator then has to plan around.
+///
+/// The workflow is settled before planning starts — at the goal, not asked
+/// task by task — so it is read here rather than asked for. Its columns are
+/// what every task is staffed against, one agent each, which is why they are
+/// in the one text that starts the plan.
 const ORCHESTRATOR_BRIEFING: &str = r#"# Goal: {goal_title}
 
 {goal_description}
+
+Workflow: {workflow}
+{columns}
 
 ## Repositories
 {repositories}"#;
@@ -299,7 +487,9 @@ const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}" where it stands. Wi
 /// goal, so the user can ask it anything and so the daemon has somebody to
 /// tell when a task needs a decision. That decision is the point of this
 /// text — a task that failed can be retried, rewritten or given up on, and
-/// only the orchestrator holds the plan those choices are made against.
+/// only the orchestrator holds the plan those choices are made against. A
+/// retry starts on the first column and needs an agent on every column,
+/// which a task moved onto a workflow may lack.
 ///
 /// The tasks are rendered by the scheduler that noticed them, one line each,
 /// because what happened is the daemon's to say and what to do about it is
@@ -308,7 +498,7 @@ const GOAL_ATTENTION: &str = r#"The tasks of "{goal_title}" need you:
 
 {tasks}
 
-Read them with `list_tasks`. Retry, cancel or rewrite what you must. Call `complete_goal` once every task is done."#;
+Read them with `list_tasks`. Retry, rewrite or cancel each one. Call `complete_goal` when every task is done."#;
 
 /// What one agent said to another, as it reaches the recipient's agent.
 ///
@@ -316,165 +506,27 @@ Read them with `list_tasks`. Retry, cancel or rewrite what you must. Call `compl
 /// runtime hands the message to the agent as a prompt, so it reaches the agent
 /// as a turn rather than as something it has to go and look for.
 ///
-/// The sender is named by its seat and its skills, which is the only thing
-/// about a generic agent that means anything to the reader. It carries no id:
-/// an answer is a message to that sender like any other, and nothing threads.
-const INCOMING_MESSAGE: &str = r#"Message from your {from}:
+/// The sender is named by its column, the task it is of and that task's
+/// title. A task staffs one agent per column, so the column names one
+/// sender, and it is the address an answer goes to: `{answer_to}` names it.
+/// A message with no task, such as the orchestrator's, is named by its seat
+/// alone, and `{answer_to}` is empty: there is no address to name.
+const INCOMING_MESSAGE: &str = r#"Message from {from}:
 
 {body}
 
-Answer it where it asks you something. Add nothing else. Go on with your work."#;
+Answer only a question{answer_to}. Then go on with your work."#;
 
-/// Initial briefing of an author session: the task, and the values its
-/// commands act on.
-const AUTHOR_BRIEFING: &str = r#"# Task: {task_title}
+/// What the orchestrator is told when an exhausted agent moved to another
+/// model on its own (021): the column, the task, both models, and that the
+/// user hears of it. Rendered by the scheduler that made the switch.
+const EXHAUSTED_SWITCH_NOTICE: &str = r#"The {column} agent of "{task_title}" moved from {old} to {new}. The old model ran out. Tell the user."#;
 
-{task_description}
-
-## Context
-- Goal: {goal_title}
-- Worktree (your cwd): {worktree_path}
-- Branch: {branch} onto {base_branch}, ending in {landing}
-- Repo: {repo_path}
-- Finished dependencies:
-{dependencies}"#;
-
-/// What an author holding unfinished work is picked up with, in both
-/// situations there are: a session that ended and is being started again, and
-/// one that is merely sitting idle with the task still open. Neither wants the
-/// task read out to it again — it is in the worktree it is standing in.
-const AUTHOR_RESUME: &str = r#"Continue "{task_title}" on {branch}. `git status` and `git log` say what the last session left. Work until the task is complete and verified."#;
-
-/// Resume briefing of an author whose review asked for changes, wherever they
-/// were written.
-///
-/// They can come from the reviewers Ariadne started, or from the people
-/// reading a published pull or merge request; `{feedback}` carries whichever
-/// it is, each entry under a heading naming who wrote it. What to do with a
-/// verdict is the author's playbook to say, not this text's; what this text
-/// says is what the review asks of the author, and a point it will not act on
-/// is answered as surely as one it will.
-const CHANGES_REQUESTED: &str = r#"A review requests changes.
-
-{feedback}
-
-Answer every point. Where you disagree, say why the code stays."#;
-
-/// What the author of an approved task in a `direct` repository is briefed
-/// with, unless the repository was given a landing briefing of its own:
-/// rebase, squash, fast-forward, so the base branch grows one commit per task
-/// and its history stays linear.
-///
-/// The push comes before `finish_task` because that call ends the task, and
-/// the cleanup behind it takes the worktree the push would have run from.
-///
-/// When the rebase changes nothing, HEAD keeps the reviewer's approved SHA and
-/// the whole-suite checks skip. Otherwise, the author runs them after the
-/// rebase, before the fast-forward, while failures remain fixable. The commits
-/// before them — the task's one, and one per review answer — were proven by the
-/// checks of what they changed alone ([`AUTHOR_SYSTEM_PROMPT`]).
-///
-/// The squash goes onto the merge base of the branch, never onto the name
-/// `{base_branch}`: a worktree shares its refs, so that name moves while the
-/// suite runs, and a reset onto it takes back what landed in between. The
-/// merge base is the commit the rebase used, and it needs no shell variable
-/// that a later command would lose. A base that moved then fails the guard
-/// and the fast-forward, and the author starts again from the fetch.
-///
-/// A later pass reruns the whole suite only where the new base commits and the
-/// task meet: a conflict, or a file both change. Elsewhere each side's tree was
-/// proven whole by its own landing, and the checks of the crates either side
-/// changed prove them together, so a busy base does not starve the landing.
-const LANDING_DIRECT: &str = r#"# Land task: {task_title}
-
-Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what `git -C {repo_path} remote -v` names, if anything.
-
-1. `git -C {repo_path} fetch <remote> {base_branch}`. Then `merge --ff-only <remote>/{base_branch}` if on {base_branch}. Else `fetch <remote> {base_branch}:{base_branch}`.
-2. `git rebase {base_branch}` in your worktree. Conflicts are yours.
-3. If the rebase changed nothing, keep the reviewer-approved SHA in HEAD. Skip checks. Otherwise, run the whole suite, build and linters once. On a later pass, do that only after a conflict or a base change to a task file. Else check the crates either side changed. Fix failures on {branch}; return to step 2.
-4. `git reset --soft "$(git merge-base {base_branch} HEAD)" && git commit`, with a Conventional Commits subject.
-5. If `git diff --stat {base_branch} HEAD` lists only task files, run `git -C {repo_path} merge --ff-only {branch}`. Else, or if it fails, go to step 1.
-6. `git -C {repo_path} push <remote> {base_branch}`. Push first: `finish_task` removes your worktree.
-7. `finish_task` with `git -C {repo_path} rev-parse {base_branch}`."#;
-
-/// What the author of an approved task in a `pull_request` repository is
-/// briefed with, unless the repository was given one of its own: publish it,
-/// then see it through in this session.
-///
-/// The forge is read off the `origin` remote at that moment — GitHub takes
-/// `gh`, GitLab `glab` — rather than configured anywhere, since the remote is
-/// the answer and cannot go stale.
-///
-/// A published branch is rebased once and never again: the people reading it
-/// are reading commits that have to stay where they are, so a revision is
-/// added on top and the base is merged in. The merge commit costs nothing —
-/// the forge squashes the request when it merges it.
-///
-/// Waiting happens inside this session, in a poll and sleep loop, and the
-/// sleep is capped at five minutes for the daemon's sake: a session that has
-/// reported nothing for `QUIET_FLAG_SECS` is flagged as stalled and the
-/// relaunch follows at `QUIET_RELAUNCH_SECS` — 600 s and 1800 s — while every
-/// poll counts as activity.
-const LANDING_PULL_REQUEST: &str = r#"# Land task: {task_title}
-
-Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {repo_path} remote -v` names. github.com takes `gh`, GitLab `glab`. Neither, or `auth status` shows no account: `fail_task` with the failed check.
-
-1. `git fetch <remote> {base_branch} && git rebase <remote>/{base_branch}`. The only rebase, and it comes before the push.
-2. `git push -u <remote> {branch}`. Then `gh pr create --base {base_branch}` or `glab mr create --target-branch {base_branch}`. Title it by the repository's commit conventions. Fill its template. Call `record_pull_request` with the URL.
-3. Poll it and its comments (`gh pr view`, `glab mr view`). `sleep 300` between polls, never longer in one call. Never end your turn while it is open.
-4. Answer every comment. Commit a change on {branch}. Put it through `request_review`. Push it once approved. A published branch only grows: no `commit --amend`, no rebase, no forced push. If it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}` and push plainly.
-5. Finished: `gh pr merge --squash` or `glab mr merge --squash`. In {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`. Then `finish_task` with `git rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
-
-/// What the author of an approved task that lands nothing is briefed with.
-///
-/// Not every task ends in a commit on a base branch. A release ends in a
-/// published tag, an audit in a filed report, a piece of research in a
-/// document somewhere else entirely. Ariadne calls all of those `finished`
-/// (`Landing::None`), and what this text has to do is the one thing the two
-/// landing briefings do for free: make sure nothing the task produced is left
-/// only in a worktree, which is thrown away with the task.
-///
-/// It names no forge and no merge command, because there is nothing to merge.
-const LANDING_NONE: &str = r#"# Finish task: {task_title}
-
-Approved. This task lands nothing: {branch} is thrown away when the task ends, and so is your worktree.
-
-1. Check what the task asked for is done, and is where the task said to put it.
-2. Anything still only in this worktree is lost. Put it where it belongs now.
-3. Call `finish_task`. It takes no merge commit, because nothing was merged."#;
-
-/// Initial briefing of a reviewer session: the task and the branch its
-/// worktree is pinned to.
-const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title}
-
-{task_description}
-
-## Context
-- Goal: {goal_title}
-- Branch: {branch} onto {base_branch}
-- Repo: {repo_path}
-- Author's summary: {summary}"#;
-
-/// What a reviewer that owes a verdict is picked up with, in both situations
-/// there are: an author that revised the change under its worktree, and a
-/// review it has simply gone quiet in. Either way the diff it last read may
-/// be stale and the verdict is still outstanding.
-const REVIEWER_RESUME: &str = r#""{task_title}" needs your verdict. Move this worktree to the current branch tip with `git checkout --detach {branch}`. Start the whole test suite, build and linters once again for this verdict, in the foreground.
-
-Read the SHA from your last verdict with `read_messages`. Confirm it with `git merge-base --is-ancestor <sha> HEAD`. If HEAD is not after that SHA, use `get_diff`. If no SHA is known, use `get_diff`. Otherwise, run `git log <sha>..HEAD` and `git diff <sha>..HEAD` here. Read only those new commits. Use every check result before your verdict.
-
-Summary: {summary}"#;
-
-/// What a reviewer is asked with once every author of a several-author task
-/// is approved: an approval says a change is sound, and the pick says which
-/// of the sound changes lands. One line per author, rendered by the scheduler
-/// that saw the last approval arrive.
-const REVIEWER_PICK: &str = r#"Every author of "{task_title}" is approved. Pick the one change that lands.
-
-The authors:
-{authors}
-
-Compare the branches with `get_diff`. Then call `pick_winner` once, with the id of the author you pick."#;
+/// The notice an orchestrator is sent when the scheduler moved an exhausted
+/// agent to another model.
+pub fn exhausted_switch_notice() -> &'static str {
+    EXHAUSTED_SWITCH_NOTICE
+}
 
 /// The two STE rules a text can be held to by reading it.
 ///
@@ -498,25 +550,33 @@ pub mod ste {
     ];
 
     /// The longest a sentence runs. STE holds a procedure to 20 words and a
-    /// description to 25; these texts are both, so 25 is the one number.
-    pub const MAX_WORDS: usize = 25;
+    /// description to 25. Every text here is read as a procedure, and the
+    /// session rules tell the agents 20, so 20 is the one number.
+    pub const MAX_WORDS: usize = 20;
 
     /// The sentences of `text`, as the rules are read on them.
     ///
     /// A line is a statement of its own — a heading, a bullet, a numbered
     /// step — and a line holding several sentences is cut at every `.`, `!`
     /// or `?` that a space or the end of the line follows. The stop inside
-    /// `AGENTS.md` is followed by a letter and cuts nothing; the one after a
-    /// digit is left alone too, so neither the `1.` a step opens on nor a
-    /// `step 1.` it ends on starts a sentence of its own.
+    /// `AGENTS.md` is followed by a letter and cuts nothing, and the `1.` a
+    /// step opens on is left alone. A `step 1.` that ends a sentence ends it.
     pub fn sentences(text: &str) -> Vec<&str> {
         let mut out = Vec::new();
         for line in text.lines() {
             let (mut start, mut previous) = (0, None);
             for (at, ch) in line.char_indices() {
                 let end = at + ch.len_utf8();
+                // A closing quote right after the stop belongs to the
+                // sentence it closes.
+                let end = match line[end..].strip_prefix('"') {
+                    Some(_) => end + 1,
+                    None => end,
+                };
                 if matches!(ch, '.' | '!' | '?')
-                    && !previous.is_some_and(|c: char| c.is_ascii_digit())
+                    && end > start
+                    && !(previous.is_some_and(|c: char| c.is_ascii_digit())
+                        && line[..at].trim().chars().all(|c| c.is_ascii_digit()))
                     && line[end..].chars().next().is_none_or(|c| c == ' ')
                 {
                     out.push(line[start..end].trim());
@@ -528,6 +588,49 @@ pub mod ste {
         }
         out.retain(|sentence| !sentence.is_empty());
         out
+    }
+
+    /// A markdown document with each wrapped sentence on one line again, so
+    /// [`sentences`] reads the sentence and not the fragments a wrap left.
+    ///
+    /// A line continues the one before it where neither is blank, a
+    /// heading or a fence, and it opens no list item of its own. A fenced
+    /// block is left out: it holds an example, not a sentence.
+    #[cfg(test)]
+    pub(crate) fn unwrapped_lines(document: &str) -> String {
+        let opens_item = |line: &str| {
+            line.starts_with("- ")
+                || line
+                    .split_once(". ")
+                    .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+        };
+        let mut lines: Vec<String> = Vec::new();
+        let mut fenced = false;
+        for line in document.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("```") {
+                fenced = !fenced;
+                lines.push(String::new());
+                continue;
+            }
+            if fenced {
+                continue;
+            }
+            let continues = lines
+                .last()
+                .is_some_and(|last| !last.trim().is_empty() && !last.starts_with('#'))
+                && !trimmed.is_empty()
+                && !trimmed.starts_with('#')
+                && !opens_item(trimmed);
+            match lines.last_mut() {
+                Some(last) if continues => {
+                    last.push(' ');
+                    last.push_str(trimmed);
+                }
+                _ => lines.push(line.to_string()),
+            }
+        }
+        lines.join("\n")
     }
 
     /// The first banned word `text` uses, whole and whatever its case.
@@ -547,10 +650,11 @@ pub mod ste {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SkillSeat;
 
     /// Every default text there is, named as the test failures name it: the
     /// system prompt of each seat, the template of each prompt kind, and the
-    /// landing briefing of each merge strategy.
+    /// texts of a pull request.
     fn all_defaults() -> Vec<(String, &'static str)> {
         Seat::ALL
             .into_iter()
@@ -565,12 +669,28 @@ mod tests {
                     .into_iter()
                     .map(|kind| (kind.as_str().to_string(), default_prompt_text(kind))),
             )
-            .chain(
-                Landing::ALL
-                    .into_iter()
-                    .map(|landing| (landing_name(landing), default_landing_prompt(landing))),
-            )
+            .chain(pull_request_texts())
+            .chain([(
+                "exhausted switch notice".to_string(),
+                exhausted_switch_notice(),
+            )])
             .collect()
+    }
+
+    /// The texts of a review session, of a keeper session and of a
+    /// request's news, named for a failure.
+    fn pull_request_texts() -> [(String, &'static str); 3] {
+        [
+            (
+                "pull request review briefing".into(),
+                pull_request_briefing_prompt(),
+            ),
+            ("pull request news".into(), pull_request_news_prompt()),
+            (
+                "pull request keeper briefing".into(),
+                pull_request_keeper_briefing_prompt(),
+            ),
+        ]
     }
 
     /// Every shipped skill, named the way a failure names it.
@@ -581,9 +701,12 @@ mod tests {
             .collect()
     }
 
-    /// How a strategy's landing briefing is named in a failure.
-    fn landing_name(landing: Landing) -> String {
-        format!("{} landing briefing", landing.as_str())
+    /// Every shipped workflow document, named the way a failure names it.
+    fn all_workflows() -> Vec<(String, &'static str)> {
+        BUILTIN_WORKFLOWS
+            .iter()
+            .map(|w| (format!("{} workflow", w.name), w.document))
+            .collect()
     }
 
     /// `text` with its line wrapping taken out, so a test reads a marker as
@@ -602,149 +725,41 @@ mod tests {
     /// up as characters.
     ///
     /// The totals are over the prompt kinds — what a briefing costs per turn
-    /// — and over the landing briefings a repository runs on, with the three
-    /// system prompts pinned separately and every text counted again in a
-    /// grand total, since a session pays for one of each.
+    /// — with the seat texts pinned separately and every text counted again
+    /// in a grand total, since a session pays for one of each.
     ///
-    /// Their history is a long creep and one cut. A system prompt went from
-    /// 900 to 1050 (when *not* to end planning), to 1200 (whom to write to),
-    /// to 1400 (how the orchestrator asks), to 1900 (sizing a task's model
-    /// and effort): every step a part of the lifecycle nothing else states.
-    /// Then every text was rewritten to say the same rules in fewer words —
-    /// short imperatives, no restated rationale, no rule stated in two layers
-    /// — and the caps came down to what that rewrite fits in: a quarter off
-    /// the whole, and a system prompt back under 1000 for the first time
-    /// since it was 900.
-    ///
-    /// What is left is rules and the commands that carry them out. The one
-    /// cap above its old aim is the published landing, at 1300 for 1200: two
-    /// forges spell `pr create`, `pr view` and `pr merge` differently, and
-    /// those six spellings are ~90 characters an author on either forge
-    /// needs in front of it. Moving a cap is a decision to argue for, never a
-    /// way round a failing assertion.
-    ///
-    /// Then the texts were written again in Simplified Technical English,
-    /// which costs a sentence break where a semicolon used to join two
-    /// instructions, and pays for it in two ways. The two lines telling an
-    /// agent not to ask went, since the session rules already say it. And
-    /// the English a seat writes its own texts in is said on the instruction
-    /// that writes them — `fail_task` with the reason in STE, commits whose
-    /// text is in STE — rather than in a step of its own. The whole is 5825
-    /// characters for the 5828 it was.
-    ///
-    /// The landings are where that English costs the most, since a step that
-    /// joined three commands with commas is three sentences now: they are
-    /// 2123 characters for the 2087 they were, and the briefing kinds pay it
-    /// back at 1067 for 1078. The caps came down to what the rewrite fits
-    /// in, the published landing's excepted.
-    ///
-    /// Then the orchestrator's playbook grew the phases no other seat has:
-    /// a goal clarified with the user, the tasks split out of it, an author
-    /// staffed on each, the review agreed task by task, the ending agreed the
-    /// same way, and an explicit yes waited for. The one cap of the three
-    /// system prompts became one per seat — the orchestrator's own, and the
-    /// 950 the author and the reviewer already fit in, which a shared cap
-    /// would have let them creep into.
-    ///
-    /// The briefing kinds then grew a third orchestrator text. The
-    /// orchestrator outlives its own hand-off now, so there are two ways to
-    /// pick it up rather than one: a nudge for the one that went quiet mid
-    /// conversation, and a wake for the one whose tasks need a decision. That
-    /// is 1293 characters for 1155, and no other kind paid for it — the total
-    /// went to 1350 for the second text, which is a situation the daemon
-    /// could not report before rather than a rewording of one it could.
-    ///
-    /// Then the agents got a channel to each other, and one more kind with
-    /// it: what a message looks like when it reaches an agent. Every seat is
-    /// briefed with that one — anybody can be written to — and it is the
-    /// transport for a thing no text could carry before, so the total went to
-    /// 1500 rather than the kinds being squeezed to fit it.
-    ///
-    /// The author's and the reviewer's went to 1060 for what a message is
-    /// *not* for. An agent handed a channel, and a peer that answers on it,
-    /// thanks whoever answered and is thanked back; the channel has one verb
-    /// now and nothing is answered, and each seat is told so where it is told
-    /// to use it. Every other text says what to do rather than what a message
-    /// is for, so there was nowhere else to say it.
-    ///
-    /// The orchestrator's went to 1750 for the mix: staffing a task was a
-    /// question about that task alone, and it is now a question about the
-    /// plan as well — the agents are spread over the tasks rather than
-    /// every agent going on whichever one the orchestrator likes. That is a
-    /// decision nothing else in the system makes, and the two sentences it
-    /// takes are the shortest it has been said in.
-    ///
-    /// Then the playbook moved out. The ten phases are the `orchestration`
-    /// skill now, capped with the skills (`skill_size_caps_hold`), and what
-    /// the seat text keeps is the three things no skill edit is allowed to
-    /// take away. So the orchestrator's cap fell from 1750 to 200 — under
-    /// the other two seats' for the first time — and the grand total came
-    /// down from 8000 to 6500 with it.
-    ///
-    /// The reviewer now starts the whole suite, build and linters before the
-    /// read, binds one run to each verdict and records the judged SHA. Its cap
-    /// first rose from 1060 to 1300 because those are new review rules, not
-    /// longer forms of existing rules. Review then found that a live
-    /// reviewer's detached worktree can still point at its last verdict. The
-    /// checkout that refreshes it raises the system cap to 1400. The resume
-    /// carries that checkout, the commands for the new commits and an ancestry
-    /// fallback, so its cap rises from 200 to 630. The kind total rises from
-    /// 1750 to 2020, and the grand total rises from 6500 to 7050, to hold those
-    /// additions.
-    ///
-    /// The other half of that division is the author's. An author used to be
-    /// told to keep the tests and the linters green, which every layer under it
-    /// read as the whole suite at every commit; it runs the checks of what it
-    /// changed now, and it names the two seats that do run the whole thing. The
-    /// division is three clauses of the author's seat text and a step of the
-    /// direct landing, and it is stated nowhere else, so it is paid for once:
-    /// the author's cap rises from 1060 to 1250, and the direct landing's from
-    /// 880 to 1000 for the run it gained after the rebase. The landings' total
-    /// rises from 2570 to 2700 with it. The grand total rises from 7050 to
-    /// 7380 for the added author and landing rules.
-    ///
-    /// Then five landings in one day each took back the work of another. The
-    /// direct landing gained the squash onto the merge base, the guard before
-    /// the fast-forward and the rule that keeps a busy base from rerunning the
-    /// whole suite on each pass. Those are new steps, and the rest of the text
-    /// was cut to hold them, so its cap rises from 1000 to 1150 alone. The
-    /// landings' total rises from 2700 to 2850, and the grand total from 7380
-    /// to 7530, with it.
+    /// Their history is a long creep, one cut, and one contraction. The
+    /// author's and the reviewer's seat texts grew to 1250 and 1400 for the
+    /// division of the checks and the verdict rules, and their briefings,
+    /// resumes and the landing procedures of three endings grew beside them
+    /// to over 9000 characters of defaults. The workflow columns took every
+    /// one of those rules: a column's skills say how its work is done, its
+    /// gate says what proves it, and the two step calls move the task. What
+    /// is left is one task seat text of 750, three step texts of 300 each,
+    /// the orchestrator's three, the message, and the two texts of a pull
+    /// request session. Moving a cap is a decision to argue for, never a way
+    /// round a failing assertion.
     #[test]
     fn size_caps_hold() {
-        // Raised from 1500 for the reviewer's pick briefing: a kind that did
-        // not exist before several authors could share a task.
-        const KIND_TOTAL: usize = 2020;
-        // Three now rather than two: the ending that lands nothing used to be
-        // counted apart, because a repository could rewrite the other two and
-        // never that one. Nothing rewrites any of them now, so they are one
-        // set, and the total is the two plus the third at its own cap.
-        const LANDING_TOTAL: usize = 2850;
-        const GRAND_TOTAL: usize = 7530;
+        // Three step texts, three orchestrator texts and the message.
+        const KIND_TOTAL: usize = 1500;
+        // Every seat text, every kind and the three pull request texts.
+        const GRAND_TOTAL: usize = 3400;
 
-        // A cap per seat, not one for the three. The orchestrator's carried
-        // its playbook up to 1750; the playbook is the `orchestration` skill
-        // now, and 200 holds what is left to the seat text it is.
-        //
-        // The author's and the reviewer's went to 1010 for the channel the
-        // agents talk on: one step each about asking and answering, which is
-        // a thing neither could do before rather than a rewording of a thing
-        // it could. Then the author's alone went to 1250 for the division of
-        // the checks, which is its text to state and no other seat's.
+        // A cap per seat. The orchestrator's carried its playbook up to
+        // 1750; the playbook is the `orchestration` skill now, and 200 holds
+        // what is left to the seat text it is. The agent's seven steps fit in
+        // 750, and the pull request reviewer's and keeper's one paragraph
+        // each in 400.
         let system_cap = |seat: Seat| match seat {
+            Seat::Agent => 750,
             Seat::Orchestrator => 200,
-            Seat::Author => 1250,
-            Seat::Reviewer => 1400,
+            Seat::Reviewer => 400,
+            Seat::Keeper => 400,
         };
         let cap = |kind: PromptKind| match kind {
-            PromptKind::OrchestratorResume | PromptKind::AuthorResume => 200,
-            PromptKind::ReviewerResume => 630,
+            PromptKind::OrchestratorResume | PromptKind::AgentResume => 200,
             _ => 300,
-        };
-        let landing_cap = |landing: Landing| match landing {
-            Landing::Merge => 1150,
-            Landing::PullRequest => 1300,
-            Landing::None => 420,
         };
 
         for (name, text) in all_defaults() {
@@ -779,28 +794,22 @@ mod tests {
             "the briefing templates total {kinds} characters, over {KIND_TOTAL}"
         );
 
-        let mut landings = 0;
-        for landing in Landing::ALL {
-            let text = default_landing_prompt(landing);
-            landings += text.len();
+        let mut pull_request = 0;
+        for (name, text) in pull_request_texts() {
+            pull_request += text.len();
             assert!(
-                text.len() <= landing_cap(landing),
-                "the {} is {} characters, over its {}",
-                landing_name(landing),
-                text.len(),
-                landing_cap(landing)
+                text.len() <= 400,
+                "the {name} is {} characters, over its 400",
+                text.len()
             );
         }
         assert!(
-            landings <= LANDING_TOTAL,
-            "the landing briefings total {landings} characters, over {LANDING_TOTAL}"
+            pull_request <= 700,
+            "the pull request texts total {pull_request} characters, over 700"
         );
 
         let grand: usize = all_defaults().iter().map(|(_, text)| text.len()).sum();
-        println!(
-            "{kinds:5}  every briefing template\n{landings:5}  every landing briefing\n\
-             {grand:5}  every default text"
-        );
+        println!("{kinds:5}  every briefing template\n{grand:5}  every default text");
         assert!(
             grand <= GRAND_TOTAL,
             "the defaults total {grand} characters, over {GRAND_TOTAL}"
@@ -816,10 +825,25 @@ mod tests {
             ste::sentences("# Head\n1. Run it. Then stop.\n- a bullet"),
             ["# Head", "1. Run it.", "Then stop.", "- a bullet"]
         );
-        // A file name and a step number end no sentence of their own.
+        // A file name and the number a step opens on end no sentence; a
+        // number at the end of a sentence still ends it.
         assert_eq!(
             ste::sentences("Read `AGENTS.md` first. Back to step 1. Then push."),
-            ["Read `AGENTS.md` first.", "Back to step 1. Then push."]
+            ["Read `AGENTS.md` first.", "Back to step 1.", "Then push."]
+        );
+
+        // A sentence a wrap cut in two is read whole again, a list item
+        // stays its own, and a fenced example is left out.
+        assert_eq!(
+            ste::unwrapped_lines(
+                "1. Squash the branch with this:\n   `git commit`.\n2. Push.\n```\nfeat: x\n```"
+            ),
+            "1. Squash the branch with this: `git commit`.\n2. Push.\n\n"
+        );
+        // A closing quote ends with the sentence it closes.
+        assert_eq!(
+            ste::sentences(r#"- "It is done." -> Prove it."#),
+            [r#"- "It is done.""#, "-> Prove it."]
         );
 
         assert_eq!(ste::banned_word("Ensure the tests pass"), Some("ensure"));
@@ -834,14 +858,24 @@ mod tests {
     /// Every default text is Simplified Technical English, in the two rules
     /// of it a test can read off the text: no sentence runs past
     /// [`ste::MAX_WORDS`], and no sentence uses a word of [`ste::BANNED`].
+    /// The shipped skills and the shipped workflow documents are read beside
+    /// the defaults: an agent reads every one of them.
     ///
     /// The rules a test cannot read — one instruction to a sentence, the
     /// imperative, the active voice — are what the texts above are written
     /// in, and what a rewrite of one is read against.
     #[test]
     fn every_default_text_is_simplified_technical_english() {
-        for (name, text) in all_defaults().into_iter().chain(all_skills()) {
-            for sentence in ste::sentences(text) {
+        let skills = all_skills()
+            .into_iter()
+            .map(|(name, text)| (name, ste::unwrapped_lines(text)));
+        for (name, text) in all_defaults()
+            .into_iter()
+            .chain(all_workflows())
+            .map(|(name, text)| (name, text.to_string()))
+            .chain(skills)
+        {
+            for sentence in ste::sentences(&text) {
                 let words = sentence.split_whitespace().count();
                 assert!(
                     words <= ste::MAX_WORDS,
@@ -850,7 +884,7 @@ mod tests {
                 );
             }
             assert_eq!(
-                ste::banned_word(text),
+                ste::banned_word(&text),
                 None,
                 "the {name} uses a word STE has no room for"
             );
@@ -858,10 +892,10 @@ mod tests {
     }
 
     /// How Ariadne is reached is the MCP server's `instructions` to say, and
-    /// only its: the block that used to be pasted into all three system
-    /// prompts lives in one place now, and no prompt here repeats it. The
-    /// skills are read beside the defaults, since a skill that restated a
-    /// session rule would be a second owner of it.
+    /// only its: the block that used to be pasted into every system prompt
+    /// lives in one place now, and no prompt here repeats it. The skills are
+    /// read beside the defaults, since a skill that restated a session rule
+    /// would be a second owner of it.
     #[test]
     fn no_default_repeats_what_every_session_is_told_by_the_mcp_server() {
         for (name, text) in all_defaults().into_iter().chain(all_skills()) {
@@ -883,14 +917,15 @@ mod tests {
     }
 
     /// A rule that holds for one seat is stated in that seat's prompt, and
-    /// only there: the reviewer's verdict rule and the author's ownership
-    /// of the landing are what the other prompts are free of.
+    /// only there: the two step calls are the agent's, the plan is the
+    /// orchestrator's, and the request is the pull request reviewer's.
     #[test]
     fn a_seat_rule_is_stated_in_its_own_prompt_alone() {
         for (owner, rule) in [
-            (Seat::Reviewer, "It is the verdict, and nothing else counts"),
-            (Seat::Author, "Ariadne briefs you to end the task"),
+            (Seat::Agent, "`complete_step`"),
+            (Seat::Agent, "`fail_step`"),
             (Seat::Orchestrator, "Never write code"),
+            (Seat::Reviewer, "Commit nothing and push nothing"),
         ] {
             for seat in Seat::ALL {
                 let prompt = default_system_prompt(seat);
@@ -904,309 +939,283 @@ mod tests {
         }
     }
 
-    /// A reviewer starts every expensive check before reading, so the checks
-    /// run while the review proceeds. Both texts say one run belongs to one
-    /// verdict, which prevents a second run before that verdict.
+    /// The one task seat text names what the three calls that move a task
+    /// are for, and the hook rule: the rules no column's skill is allowed to
+    /// take away. When a turn ends is the calls' own descriptions to say.
     #[test]
-    fn reviewer_checks_start_before_the_read_once_per_verdict() {
-        for (name, text) in [
+    fn the_agent_seat_text_moves_the_task_with_the_two_step_calls() {
+        let agent = default_system_prompt(Seat::Agent);
+        for rule in [
+            "Work only in the task's worktree, on its branch.",
+            "Work on your current column alone.",
+            "Call `complete_step` when the column's work is done.",
+            "Call `fail_step` when the previous column must fix something.",
+            "Call `fail_task` when nobody can do the task as written.",
+            "Never pass `--no-verify` or `-n` to git.",
+            "After three failed attempts at one fix, stop.",
+        ] {
+            assert!(agent.contains(rule), "the agent seat text and \"{rule}\"");
+        }
+        for gone in ["End your turn", "Do not poll", "`wait_for_user`"] {
+            assert!(!agent.contains(gone), "the agent seat text and \"{gone}\"");
+        }
+        // No retired call is briefed anywhere.
+        for (name, text) in all_defaults().into_iter().chain(all_skills()) {
+            for gone in [
+                "`request_review`",
+                "`submit_verdict`",
+                "`pick_winner`",
+                "`finish_task`",
+            ] {
+                assert!(!text.contains(gone), "the {name} names {gone}");
+            }
+        }
+    }
+
+    /// Every text this ticket gave word for word is the text that ships: the
+    /// two seat texts, the last line of a step briefing, an incoming message,
+    /// the end of a goal attention and the switch notice (006).
+    #[test]
+    fn the_agreed_texts_ship_word_for_word() {
+        assert_eq!(
+            default_system_prompt(Seat::Orchestrator),
+            "Never write code. Plan the goal with the user. Decide no open point alone."
+        );
+        assert_eq!(
+            default_system_prompt(Seat::Agent),
+            "Work only in the task's worktree, on its branch. Work on your current column alone. Read its skills first.\n\
+             - Call `complete_step` when the column's work is done.\n\
+             - Call `fail_step` when the previous column must fix something.\n\
+             - Call `fail_task` when nobody can do the task as written.\n\
+             - Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again.\n\
+             - After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator with `send_message`, or call `fail_task`."
+        );
+        assert!(
+            default_prompt_text(PromptKind::StepBriefing)
+                .ends_with("Dependencies: {dependencies}\nDo this column now.")
+        );
+        assert_eq!(
+            default_prompt_text(PromptKind::IncomingMessage),
+            "Message from {from}:\n\n{body}\n\nAnswer only a question{answer_to}. Then go on with your work."
+        );
+        assert!(default_prompt_text(PromptKind::GoalAttention).ends_with(
+            "Read them with `list_tasks`. Retry, rewrite or cancel each one. Call `complete_goal` when every task is done."
+        ));
+        assert_eq!(
+            exhausted_switch_notice(),
+            "The {column} agent of \"{task_title}\" moved from {old} to {new}. The old model ran out. Tell the user."
+        );
+    }
+
+    /// The quiet nudge says four things, and the agent seat text is the one
+    /// place a column's agent is told to stop after three failed attempts
+    /// at one fix.
+    #[test]
+    fn the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner() {
+        let nudge = default_prompt_text(PromptKind::AgentResume);
+        for rule in [
+            "Not a new request",
+            "Check if the work is done.",
+            "Make the call that ends the column, or go on.",
+            "Write no reply about this nudge.",
+        ] {
+            assert!(nudge.contains(rule), "the quiet nudge and \"{rule}\"");
+        }
+
+        let places = all_defaults()
+            .into_iter()
+            .chain(all_skills())
+            .filter(|(_, text)| text.contains("After three failed attempts at one fix, stop."))
+            .map(|(name, _)| name)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            places,
+            std::collections::BTreeSet::from(["agent system prompt".to_string()]),
+            "the stop rule is stated in {places:?}, not in the agent seat text alone"
+        );
+    }
+
+    /// The review column reads the column report as unverified claims
+    /// before it pins the scope, and pins the scope before it decides which
+    /// checks to run. It can reuse only evidence for the reviewed revision
+    /// and required check. A must-fix finding names a trigger and ends the
+    /// step on `fail_step` with the return report; a finding with no
+    /// trigger is optional, and an optional one never fails the step.
+    #[test]
+    fn the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call() {
+        let text = unwrapped(default_skill_document("code-review").unwrap());
+        let claims = text
+            .find("Read the column report as unverified claims, not proof.")
+            .expect("the code-review skill does not read the column report as unverified claims");
+        let scope = text
+            .find("Pin the scope to the diff.")
+            .expect("the code-review skill does not pin the scope to the diff");
+        let checks = text
+            .find("Run each required check with no reusable result, once for this verdict.")
+            .expect("the code-review skill does not run missing checks");
+        assert!(
+            claims < checks,
+            "the code-review skill chooses checks before it reads the column report"
+        );
+        assert!(
+            scope < checks,
+            "the code-review skill chooses checks before it pins the scope"
+        );
+        assert_eq!(
+            text.matches("once for this verdict").count(),
+            1,
+            "the code-review skill does not bind one check run to one verdict"
+        );
+        for rule in [
+            "`git checkout --detach <branch>` in the task worktree",
+            "Read the column report as unverified claims, not proof.",
+            "its revision matches `git rev-parse HEAD`",
+            "its command is a required check",
+            "Run each required check with no reusable result, once for this verdict.",
+            "Read code outside the diff only to judge a risk you can name.",
+            "Give each finding its trigger, the input or state that breaks it, and",
+            "is optional, not must-fix, and marked unverified",
+            "Cap optional findings at five, the ones you have most conviction in.",
+            "On a must-fix finding, call `fail_step` with the return report.",
+            "Else call `complete_step` with the verdict and the optional findings.",
+            "An optional finding never fails the step.",
+            "A must-fix finding breaks a criterion or a written repository rule.",
+            "Judge each test by reading its setup, action and assertions",
+            "Never change code to see whether a test fails",
+            "Edit no file",
+            "`git merge-base --is-ancestor <sha> HEAD`",
+            "Never rerun a check only to confirm the column report.",
+        ] {
+            assert!(text.contains(rule), "the code-review skill and {rule}");
+        }
+        assert!(
+            !text.contains("Complete the step only when both axes pass."),
+            "an optional finding fails no step"
+        );
+        assert!(
+            !text.contains("`read_messages`"),
+            "a second review reads the judged SHA from the conversation, not the channel"
+        );
+    }
+
+    /// A skill scopes its checks to what its step changed.
+    #[test]
+    fn a_skill_scopes_its_own_checks_to_what_the_task_changed() {
+        for (name, step) in [
             (
-                "reviewer system prompt",
-                default_system_prompt(Seat::Reviewer),
+                "coding",
+                "Run the checks of what you changed at the committed revision.",
             ),
             (
-                "code-review skill",
-                default_skill_document("code-review").unwrap(),
+                "code-review",
+                "Run each required check with no reusable result, once for this verdict.",
+            ),
+            (
+                "pr-babysit",
+                "Run the checks the batch affects, then push once.",
+            ),
+            (
+                "coding",
+                "For a code behavior change, write a failing test first",
+            ),
+            ("coding", "Run that test alone, never the suite around it."),
+            (
+                "coding",
+                "For prose or a behavior-preserving refactor, choose verification",
+            ),
+            (
+                "coding",
+                "Call `complete_step` with the column report, covering every criterion.",
+            ),
+            ("debugging", "The tests of the crate you changed are green."),
+            ("debugging", "Run the checks of what you changed."),
+            (
+                "conflict-resolution",
+                "Run the tests and the lint of the files you resolved.",
             ),
         ] {
-            let checks = text
-                .find("Start the whole test suite, build and linters once for this verdict")
-                .unwrap_or_else(|| panic!("the {name} does not start every check once"));
-            let read = text
-                .find("Read the task")
-                .unwrap_or_else(|| panic!("the {name} does not read the task"));
+            let document = unwrapped(default_skill_document(name).unwrap());
             assert!(
-                checks < read,
-                "the {name} reads before it starts the checks"
-            );
-            assert_eq!(
-                text.matches("once for this verdict").count(),
-                1,
-                "the {name} does not bind one check run to one verdict"
+                document.contains(step),
+                "the {name} skill does not say \"{step}\""
             );
         }
-    }
-
-    /// A verdict identifies the exact work it judged, so the next review can
-    /// start after it. The reviewer reads HEAD in its own worktree and puts
-    /// that SHA in every verdict.
-    #[test]
-    fn every_reviewer_verdict_carries_the_sha_it_judged() {
-        let prompt = default_system_prompt(Seat::Reviewer);
-        for rule in ["`git rev-parse HEAD`", "Put that SHA in every verdict"] {
-            assert!(prompt.contains(rule), "the reviewer prompt and {rule}");
-        }
-    }
-
-    /// Test quality is visible in the test's setup, action and assertions.
-    /// The reviewer reads those parts and never changes the author's code to
-    /// manufacture a failure in a read-only worktree.
-    #[test]
-    fn a_reviewer_judges_a_test_by_reading_it_without_changing_code() {
-        for (name, text) in [
-            (
-                "reviewer system prompt",
-                default_system_prompt(Seat::Reviewer),
-            ),
-            (
-                "code-review skill",
-                default_skill_document("code-review").unwrap(),
-            ),
-        ] {
-            for rule in [
-                "Judge each test by reading its setup, action and assertions",
-                "Never change code to see whether a test fails",
-            ] {
-                assert!(text.contains(rule), "the {name} and {rule}");
+        for (name, document) in all_skills() {
+            for phrase in ["whole suite", "full suite", "Start the whole test suite"] {
+                assert!(
+                    !document.contains(phrase),
+                    "the {name} skill contains {phrase}"
+                );
             }
         }
     }
 
-    /// A resumed reviewer reads only work added after its last verdict. The
-    /// last verdict's SHA bounds both the commit list and the diff; only a
-    /// missing SHA falls back to the whole change.
+    /// A task is built as one commit, and a return from review adds one on
+    /// top: the merge column squashes the branch onto the base.
+    ///
+    /// A task is one responsibility: the orchestrator cuts it as one tracer.
+    /// So a branch divided into parts buys nothing and costs the review a
+    /// diff of half-built commits. No skill sends an agent to a slice or to
+    /// a small commit. The amend rule is the two committing skills' alone:
+    /// `coding`, whose answer to a review is a new commit, and `pr-babysit`,
+    /// whose pushed request an amend would rewrite under its readers.
     #[test]
-    fn a_reviewer_resume_reads_only_commits_since_its_last_verdict_sha() {
-        let resume = default_prompt_text(PromptKind::ReviewerResume);
-        let checks = resume
-            .find("Start the whole test suite")
-            .expect("the reviewer resume does not start the checks");
-        let read = resume
-            .find("Read the SHA from your last verdict")
-            .expect("the reviewer resume does not read the last verdict SHA");
-        assert!(checks < read, "the reviewer resume reads before its checks");
-        for rule in [
-            "Read the SHA from your last verdict",
-            "`read_messages`",
-            "`git log <sha>..HEAD`",
-            "`git diff <sha>..HEAD`",
-            "Read only those new commits",
-            "If no SHA is known, use `get_diff`",
-            "once again for this verdict",
-        ] {
-            assert!(resume.contains(rule), "the reviewer resume and {rule}");
-        }
-    }
-
-    /// A live reviewer's detached worktree can still point at the last
-    /// verdict. The resume moves it to the branch named by the briefing before
-    /// it starts checks, so every result covers the new branch tip.
-    #[test]
-    fn reviewer_texts_refresh_the_named_branch_before_checks() {
-        for (name, text, command) in [
-            (
-                "reviewer system prompt",
-                default_system_prompt(Seat::Reviewer),
-                "`git checkout --detach <branch>`",
-            ),
-            (
-                "reviewer resume",
-                default_prompt_text(PromptKind::ReviewerResume),
-                "`git checkout --detach {branch}`",
-            ),
-            (
-                "code-review skill",
-                default_skill_document("code-review").unwrap(),
-                "`git checkout --detach <branch>`",
-            ),
-        ] {
-            let refresh = text
-                .find(command)
-                .unwrap_or_else(|| panic!("the {name} does not refresh its named branch"));
-            let checks = text
-                .find("Start the whole test suite")
-                .unwrap_or_else(|| panic!("the {name} does not start the checks"));
-            assert!(refresh < checks, "the {name} checks a stale worktree");
-        }
-    }
-
-    /// A last verdict can name a SHA outside the current history. Both review
-    /// texts test that relationship and fall back to the whole change instead
-    /// of treating an empty range as no change.
-    #[test]
-    fn a_reviewer_uses_the_whole_diff_when_head_does_not_follow_the_last_sha() {
-        for (name, text) in [
-            (
-                "reviewer resume",
-                default_prompt_text(PromptKind::ReviewerResume),
-            ),
-            (
-                "code-review skill",
-                default_skill_document("code-review").unwrap(),
-            ),
-        ] {
-            for rule in [
-                "`git merge-base --is-ancestor <sha> HEAD`",
-                "If HEAD is not after that SHA, use `get_diff`",
-            ] {
-                assert!(text.contains(rule), "the {name} and {rule}");
+    fn a_task_is_one_commit_and_nothing_amends_a_pushed_one() {
+        for (name, document) in all_skills() {
+            let document = unwrapped(document).to_lowercase();
+            for divided in ["slice", "small commit"] {
+                assert!(
+                    !document.contains(divided),
+                    "the {name} divides a task into a {divided}"
+                );
             }
-        }
-    }
-
-    /// A review that requests changes asks the author for two things, and
-    /// the briefing that carries the feedback is where both are asked: every
-    /// point answered, and, for a point the author will not act on, why the
-    /// code stays as it is. A briefing that asked only for the answers would
-    /// read as leave to drop the rest in silence.
-    #[test]
-    fn a_round_of_requested_changes_asks_for_every_point_and_for_a_disagreement() {
-        let text = default_prompt_text(PromptKind::ChangesRequested);
-        for rule in [
-            "Answer every point",
-            "Where you disagree, say why the code stays",
-        ] {
+            if name == format!("{PR_BABYSIT_SKILL} skill") || name == "coding skill" {
+                continue;
+            }
             assert!(
-                text.contains(rule),
-                "the changes-requested briefing and \"{rule}\": {text}"
+                !document.contains("amend"),
+                "the {name} repeats the rule about an amend"
             );
         }
-    }
 
-    /// `finish_task` is the end of the task: the daemon cleans the worktree up
-    /// behind it and the session can go with it. So whatever the author still
-    /// has to run has to come first — the push of the base branch above all,
-    /// which is the one step whose absence leaves the commit on this machine
-    /// alone with nothing left to notice.
-    #[test]
-    fn nothing_the_author_still_has_to_run_comes_after_the_call_that_ends_the_task() {
-        for landing in Landing::ALL {
-            let text = default_landing_prompt(landing);
-            let ends = text
-                .find("`finish_task`")
-                .unwrap_or_else(|| panic!("the {} never ends the task", landing_name(landing)));
-            for command in [
-                "git -C {repo_path} push",
-                "git push",
-                "gh pr merge",
-                "glab mr merge",
-                "request_review",
-                "record_pull_request",
-            ] {
-                if let Some(at) = text.find(command) {
-                    assert!(
-                        at < ends,
-                        "the {} runs {command} after finish_task",
-                        landing_name(landing)
-                    );
-                }
-            }
-        }
-
-        // And the reason is in the text, where the agent reading it is.
-        assert!(
-            default_landing_prompt(Landing::Merge).contains("Push first:"),
-            "the direct briefing does not say why the push comes first"
-        );
-    }
-
-    /// The author's checks are the checks of what it changed, and the seat
-    /// text says so with the reason: the whole suite is run by a reviewer
-    /// before each verdict and by the landing once, and neither run is the
-    /// author's.
-    ///
-    /// An author told to keep the tests and the linters green reads that as
-    /// the whole suite, and runs it at every step of the work — tens of runs
-    /// a task, each one minutes the task does not spend on the work. So
-    /// the seat text scopes the run and names the two seats that do run the
-    /// whole thing, because a scope with nobody behind it reads as a change
-    /// that nothing proves.
-    #[test]
-    fn the_author_scopes_its_checks_and_names_who_runs_the_whole_suite() {
-        let author = default_system_prompt(Seat::Author);
-        for rule in [
-            "Run changed tests and lint once before the commit.",
-            "After the commit, run `git status`; leave nothing shown.",
-            "Run the repository's generate step; leave no changes.",
-            "Never run the whole suite",
-            "the reviewer runs it before each verdict; the landing runs it once",
-            "End your turn after it. Do not poll.",
-            "Ariadne wakes you with a verdict or message.",
-        ] {
-            assert!(author.contains(rule), "the author seat text and \"{rule}\"");
-        }
-        // And the rule it replaced is gone, rather than sitting beside it.
-        assert!(
-            !author.contains("Keep tests and linters green"),
-            "the author seat text still asks for every linter at every commit"
-        );
-    }
-
-    /// The whole suite's one run on a task branch is the landing's, and it
-    /// stands between the rebase and the fast-forward.
-    ///
-    /// Before the rebase it proves a tree the base branch never grows, and a
-    /// base that moved under it is exactly what the run is for. After the
-    /// fast-forward it is too late: the base branch already carries the
-    /// commit, and a failure is a revert rather than a fix. So the run sits
-    /// between the two, and a check that fails goes back to the rebase.
-    #[test]
-    fn the_direct_landing_runs_the_whole_suite_after_the_rebase_and_before_the_fast_forward() {
-        let direct = default_landing_prompt(Landing::Merge);
-        let rebase = direct
-            .find("`git rebase {base_branch}`")
-            .expect("the direct landing never rebases");
-        let suite = direct
-            .find("Otherwise, run the whole suite, build and linters once.")
-            .expect("the direct landing never runs the whole suite");
-        let forward = direct
-            .find("merge --ff-only {branch}")
-            .expect("the direct landing never fast-forwards the base branch");
-        assert!(
-            rebase < suite && suite < forward,
-            "the whole suite does not run between the rebase and the fast-forward: {direct}"
-        );
-
-        // Once, and a failure is fixed on the branch and rebased again.
-        assert_eq!(direct.matches("whole suite").count(), 1, "{direct}");
-        assert!(
-            direct.contains("Fix failures on {branch}; return to step 2"),
-            "the direct landing does not say where a failed check is fixed: {direct}"
-        );
-        assert!(
-            direct.contains("If the rebase changed nothing, keep the reviewer-approved SHA in HEAD. Skip checks."),
-            "the direct landing does not skip checks after an unchanged rebase: {direct}"
-        );
-
-        // A base that moves during the run sends the author round again, and
-        // only a pass where the two sides meet pays for the whole run again.
-        assert!(
-            direct.contains(
-                "On a later pass, do that only after a conflict or a base change to a task file."
+        for (name, step) in [
+            (
+                "coding",
+                "On a return from review, add a new commit on top. Never amend. The merge column squashes.",
             ),
-            "the direct landing does not say when a later pass reruns the suite: {direct}"
-        );
-        assert!(
-            direct.contains("Else check the crates either side changed."),
-            "the direct landing does not scope the checks of a later pass: {direct}"
-        );
+            (
+                "refactoring",
+                "Commit the whole refactor once, after every move is green.",
+            ),
+            (
+                "pr-babysit",
+                "Never amend a pushed commit outside this rebase.",
+            ),
+        ] {
+            let document = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                document.contains(step),
+                "the {name} skill does not say \"{step}\""
+            );
+        }
     }
 
     /// A squash never removes the work of a landing that came in between.
     ///
-    /// A worktree shares its refs with the repository, so `{base_branch}` is
-    /// a name that moves while the whole suite runs. Squashed onto that name,
-    /// the commit sits on the new tip with the tree of the old rebase, and
-    /// takes back what landed in between; the fast-forward then succeeds,
-    /// because the new tip is its parent. This runs the brief's own commands
-    /// on a throwaway repository, with no remote, for two tasks rebased on the
-    /// same base: the first lands, then the second squashes.
+    /// A worktree shares its refs with the repository, so `<base>` is a name
+    /// that moves while the whole suite runs. Squashed onto that name, the
+    /// commit sits on the new tip with the tree of the old rebase, and takes
+    /// back what landed in between; the fast-forward then succeeds, because
+    /// the new tip is its parent. This runs the merge skill's own squash and
+    /// guard commands on a throwaway repository, with no remote, for two
+    /// tasks rebased on the same base: the first lands, then the second
+    /// squashes.
     #[test]
     fn a_late_squash_keeps_what_another_landing_put_on_the_base_branch() {
         use std::path::Path;
         use std::process::Command;
 
-        let direct = default_landing_prompt(Landing::Merge);
+        let merge = default_skill_document("merge").unwrap();
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("repo");
         let editor = dir.path().join("editor.sh");
@@ -1228,19 +1237,18 @@ mod tests {
             assert!(out.status.success(), "{script}: {out:?}");
             String::from_utf8(out.stdout).unwrap()
         };
-        // The backticked command of the brief that holds `needle`, rendered
-        // for `branch`.
-        let step = |needle: &str, branch: &str| {
-            let command = direct
+        // The backticked command of the skill that holds `needle`, rendered
+        // for the base branch `main`.
+        let step = |needle: &str| {
+            let command = merge
                 .split('`')
                 .skip(1)
                 .step_by(2)
                 .find(|command| command.contains(needle))
-                .unwrap_or_else(|| panic!("the direct landing has no {needle}: {direct}"));
+                .unwrap_or_else(|| panic!("the merge skill has no {needle}: {merge}"));
             command
-                .replace("{base_branch}", "main")
-                .replace("{branch}", branch)
-                .replace("{repo_path}", &repo.display().to_string())
+                .replace("<upstream>", "main")
+                .replace("<base>", "main")
         };
 
         std::fs::create_dir(&repo).unwrap();
@@ -1255,17 +1263,17 @@ mod tests {
                     "git worktree add -q -b {task} ../{task} && cd ../{task} && echo {task} > {task}.txt && git add . && git commit -qm {task}"
                 ),
             );
-            run(&dir.path().join(task), &step("git rebase", task));
+            run(&dir.path().join(task), "git rebase main");
         }
 
         // The first lands while the second runs its suite.
         let first = dir.path().join("first");
-        run(&first, &step("reset --soft", "first"));
-        run(&first, &step("merge --ff-only {branch}", "first"));
+        run(&first, &step("reset --soft"));
+        run(&repo, "git merge --ff-only first");
 
         let second = dir.path().join("second");
-        run(&second, &step("reset --soft", "second"));
-        let landed = sh(&second, &step("merge --ff-only {branch}", "second"));
+        run(&second, &step("reset --soft"));
+        let landed = sh(&repo, "git merge --ff-only second");
         let tree = run(&repo, "git ls-tree --name-only main");
         if landed.status.success() {
             assert!(
@@ -1277,15 +1285,15 @@ mod tests {
 
         // Refused, and the guard names why: the base moved under the squash.
         assert!(!tree.contains("second.txt"), "{tree}");
-        let guard = run(&second, &step("git diff --stat", "second"));
+        let guard = run(&second, &step("git diff --stat"));
         assert!(guard.contains("first.txt"), "{guard}");
 
         // So the second goes round again from its rebase, and lands both.
-        run(&second, &step("git rebase", "second"));
-        run(&second, &step("reset --soft", "second"));
-        let guard = run(&second, &step("git diff --stat", "second"));
+        run(&second, "git rebase main");
+        run(&second, &step("reset --soft"));
+        let guard = run(&second, &step("git diff --stat"));
         assert!(!guard.contains("first.txt"), "{guard}");
-        run(&second, &step("merge --ff-only {branch}", "second"));
+        run(&repo, "git merge --ff-only second");
         let tree = run(&repo, "git ls-tree --name-only main");
         assert!(
             tree.contains("first.txt") && tree.contains("second.txt"),
@@ -1293,164 +1301,283 @@ mod tests {
         );
     }
 
-    /// A skill scopes the step it owns to what the task changed, and names
-    /// none of the whole-suite runs: those belong to the author's seat text,
-    /// which is the one place the division is stated.
-    ///
-    /// The three here are the skills that used to end a step on the suite,
-    /// and `coding` carries two rules of its own since `testing` merged into
-    /// it: the scoped check at the end, and the one test it watches fail. The
-    /// one skill that is left out runs nowhere near a task branch:
-    /// `code-review` is the reviewer's.
+    /// The merge column's skill runs its steps in order — fetch, rebase,
+    /// squash, guard, push, fast-forward, the step call — and
+    /// a human merges every request: no skill names the command that would
+    /// let an agent merge one itself, on either forge.
     #[test]
-    fn a_skill_scopes_its_own_checks_to_what_the_task_changed() {
-        for (name, step) in [
-            ("coding", "run the tests and the lint of what you changed"),
-            ("coding", "Run the one test, never the suite around it."),
-            ("debugging", "the tests of the crate you changed are green"),
-            (
-                "conflict-resolution",
-                "Run the tests and the lint of the files you resolved.",
-            ),
+    fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
+        let text = unwrapped(default_skill_document("merge").unwrap());
+        let mut at = 0;
+        for step in [
+            "`<upstream>` is `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.",
+            "Where a remote exists, run `git fetch <remote> <base>`.",
+            "Rebase the task branch onto `<upstream>`.",
+            "git reset --soft \"$(git merge-base <upstream> HEAD)\" && git commit",
+            "git diff --stat <upstream> HEAD",
+            "push `HEAD:<base>` to `<remote>`",
+            "git -C <repo> merge --ff-only <remote>/<base>",
+            "else `git -C <repo> fetch <remote> <base>:<base>`",
+            "With no remote: run the checks the repository names for a landing.",
+            "Call `complete_step` with the column report and the sha of `<base>` as `merge_commit`.",
         ] {
-            let document = unwrapped(default_skill_document(name).unwrap());
-            assert!(
-                document.contains(step),
-                "the {name} skill does not say \"{step}\""
-            );
-            for suite in ["whole suite", "full suite", "the suite is green"] {
-                assert!(
-                    !document.contains(suite),
-                    "the {name} skill sends an author to the {suite}"
-                );
-            }
+            let found = text[at..]
+                .find(step)
+                .unwrap_or_else(|| panic!("the merge skill has no {step} after its last step"));
+            at += found + step.len();
         }
-    }
-
-    /// A task is one commit, and every text that tells an author when to
-    /// commit says the same thing.
-    ///
-    /// A task is one responsibility: the orchestrator cuts it as one tracer,
-    /// and the landing squashes the branch onto the base. So a branch divided
-    /// into parts buys nothing and costs the review a diff of half-built
-    /// commits. No skill sends an author to a slice or to a small commit, the
-    /// two skills that name the commit name one, and the seat text adds the
-    /// one commit each review answer takes.
-    ///
-    /// That last rule is the seat text's alone, and this is what holds it
-    /// there. A skill names the commit of the step it owns; what a review
-    /// answer costs and what an amend would break hold for every author
-    /// whatever it is doing, so a skill that repeated them would be a second
-    /// owner of a rule, free to go stale against the first.
-    #[test]
-    fn a_task_is_one_commit_and_a_review_answer_is_one_more() {
-        for (name, document) in all_skills() {
-            let document = unwrapped(document).to_lowercase();
-            for divided in ["slice", "small commit"] {
-                assert!(
-                    !document.contains(divided),
-                    "the {name} divides a task into a {divided}"
-                );
-            }
-            for lifecycle in ["commit per review answer", "amend"] {
-                assert!(
-                    !document.contains(lifecycle),
-                    "the {name} repeats the seat text's rule about \"{lifecycle}\""
-                );
-            }
-        }
-
-        for (name, step) in [
-            ("coding", "Done when the task is one commit on your branch."),
-            (
-                "refactoring",
-                "Commit the whole refactor once, after every move is green.",
-            ),
-        ] {
-            let document = unwrapped(default_skill_document(name).unwrap());
-            assert!(
-                document.contains(step),
-                "the {name} skill does not say \"{step}\""
-            );
-        }
-
-        let author = default_system_prompt(Seat::Author);
-        for rule in [
-            "Commit once in STE.",
-            "Add a commit per review answer. Never amend.",
-        ] {
-            assert!(author.contains(rule), "the author seat text and \"{rule}\"");
-        }
-        // And the rule it replaced is gone, rather than sitting beside it.
         assert!(
-            !author.contains("Make small commits"),
-            "the author seat text still asks for small commits"
+            text.contains("A refused push or a failed check is a fix on the task branch."),
+            "the merge skill does not name a refused push as a task-branch fix"
         );
+        assert!(
+            text.contains("The hooks run the checks."),
+            "the merge skill does not leave the push checks to the repository hooks"
+        );
+        assert!(
+            text.contains("The primary checkout is the `Repo:` path of your briefing."),
+            "the merge skill does not name the primary checkout"
+        );
+        for (name, text) in all_defaults().into_iter().chain(all_skills()) {
+            assert!(
+                !text.contains("gh pr merge"),
+                "the {name} names gh pr merge"
+            );
+        }
     }
 
-    /// Each landing briefing is the procedure of one merge strategy, whole,
-    /// and carries nothing of the other: the repository is on one strategy, so
-    /// the author has neither a section to skip nor a choice to make.
+    /// The `pr` column's agent is fed by the daemon (026, 030), so its skill
+    /// names none of the ways an agent would feed itself: no forge CLI, no
+    /// timer, no poll. A human closes a thread and a human merges, so it
+    /// names neither the call that resolves one nor a forge merge command.
+    /// The agent opens the request on a first turn with none open, and
+    /// starts on the news steps where one already is open. It completes
+    /// its step on the merge and fails the task on the close, each ending
+    /// its turn instead where it sits on no task.
     #[test]
-    fn each_landing_briefing_is_one_strategy_and_nothing_of_the_other() {
-        let direct = default_landing_prompt(Landing::Merge);
-        let published = default_landing_prompt(Landing::PullRequest);
-
-        // Squashed onto the base with git alone.
-        for step in [
-            "git rebase {base_branch}",
-            "git reset --soft \"$(git merge-base {base_branch} HEAD)\"",
-            "git diff --stat {base_branch} HEAD",
-            "merge --ff-only {branch}",
-            "git -C {repo_path} push <remote> {base_branch}",
-            "Conventional Commits",
-            "`finish_task`",
-        ] {
-            assert!(direct.contains(step), "the direct briefing has no {step}");
-        }
-
-        // Published, answered and merged by the author, on either forge.
-        for step in [
-            "auth status",
-            "gh pr create",
-            "gh pr view",
-            "gh pr merge",
-            "glab mr create",
-            "glab mr view",
-            "glab mr merge",
-            "record_pull_request",
-            "`finish_task`",
+    fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
+        let doc = default_skill_document(PR_BABYSIT_SKILL).expect("the pr-babysit skill");
+        let words: Vec<String> = doc
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .map(str::to_lowercase)
+            .collect();
+        for gone in [
+            "gh", "sleep", "timer", "poll", "polling", "resolve", "resolved",
         ] {
             assert!(
-                published.contains(step),
-                "the published briefing has no {step}"
+                !words.iter().any(|word| word == gone),
+                "the pr-babysit skill names {gone}"
             );
         }
-
-        // The wait is a poll loop in the author's own session, and the cap
-        // on one sleep is what keeps the daemon from relaunching it mid-wait.
-        assert!(published.contains("sleep 300"));
-        assert!(published.contains("never longer in one call"));
-
-        // A published branch only ever grows.
-        for never in ["forced push", "commit --amend"] {
+        for command in ["gh pr merge", "pr merge"] {
             assert!(
-                published.contains(never),
-                "the published briefing does not forbid {never}"
+                !doc.contains(command),
+                "the pr-babysit skill names {command}"
             );
         }
+        let doc = unwrapped(doc);
+        for step in [
+            "On your first turn, with no request open, do step 1.",
+            "With one already open, start at step 2.",
+            "On each later turn, Ariadne sends news: do steps 2 to 8. Then end your turn.",
+            "`get_pull_request`",
+            "`list_comments` with `unanswered_only`",
+            "The repository's history rules choose the branch update.",
+            "Fetch the base and task branch, then integrate before the checks.",
+            "A linear-history rule requires `git rebase <remote>/<base>`.",
+            "Where merges are allowed, run `git merge --no-edit <remote>/<base>`.",
+            "Push the task branch. Call `open_pull_request`.",
+            "repository's commit conventions",
+            "Fill its pull request template, or write three full sections: Why, What changed, How to test.",
+            "Group related accepted changes and failed-check fixes in one coherent commit per batch; keep unrelated changes separate.",
+            "Run the checks the batch affects, then push once.",
+            "Never amend a pushed commit outside this rebase.",
+            "Never force an unguarded push or discard one.",
+            "Call `report_pull_request` only when readiness changes:",
+            "`ready: true` with the `head_sha`",
+            "`ready: false` when one goes back",
+            "On a merge, where you sit on a task, update `<base>` in the primary checkout:",
+            "Call `complete_step` with the column report.",
+            "Else end your turn: Ariadne ends your session.",
+            "On a close, where you sit on a task, call `fail_task` with the reason.",
+            "## Done",
+        ] {
+            assert!(doc.contains(step), "the pr-babysit skill has no {step}");
+        }
+        assert!(
+            doc.find("integrate before the checks") < doc.find("Run the checks the batch affects"),
+            "the pr-babysit skill checks the batch before it integrates the base"
+        );
+        assert_eq!(SkillSeat::of(PR_BABYSIT_SKILL), SkillSeat::PullRequest);
+    }
 
-        // And neither one names the other's procedure.
-        for forge in ["gh ", "glab ", "pull request", "merge request", "sleep"] {
+    /// Each inline review comment of the other side gets one reply, in one
+    /// of three shapes: a fix with its commit or a kept line with its
+    /// reason, or a short answer to a question. A thanks gets none, a
+    /// follow-up in an answered thread gets a new answer, and a reviewer
+    /// reply that keeps a finding open gets no second try — the user
+    /// decides. A comment on the conversation gets the same answer, once
+    /// per comment. A suggestion block the agent accepts is applied
+    /// rather than rewritten; one it does not accept gets a kept line
+    /// instead. No unrelated forge discussion or code change is added.
+    #[test]
+    fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
+        let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
+        for rule in [
+            "Answer each inline review comment of the other side, once per comment:",
+            "whose accepted change or suggestion the batch includes: `Fixed in <sha>: <what changed>.`",
+            "A rejected request or a question keeps its step 3 reply.",
+            "A question: give one short answer.",
+            "Thanks or an acknowledgement: reply nothing.",
+            "A follow-up ask in a thread you answered: a new ask. Act on it.",
+            "A reviewer reply that keeps a finding open: no second try. The user decides.",
+            "A comment on the conversation: answer it the same way, once per comment.",
+            "A suggestion block you accept: apply it.",
+            "Else reply `Not changed: <why>.`",
+            "Group related accepted changes and failed-check fixes in one coherent commit per batch; keep unrelated changes separate.",
+            "Commit only what a comment or a failed check asks for.",
+            "Leave every thread open.",
+            "Post no new thread, summary or top-level comment, except steps 3 and 6's replies.",
+        ] {
+            assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
+        }
+    }
+
+    /// The reviewer session is fed by the daemon too (029), and the user
+    /// gives every approval and lands every request: the skill never
+    /// approves on its own, and names no merge, sleep, poll or forge CLI.
+    /// It names the three priorities, each with the trigger a finding must
+    /// name or be downgraded to P2, caps new P2 findings at five, asks for
+    /// changes only where a P0 or P1 stands, resolves a thread of its own
+    /// once a push fixed it, settles a declined or a still-open one without
+    /// a second warning, and suggests a fix where the edit is small and
+    /// local.
+    #[test]
+    fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
+        let doc = default_skill_document(PR_REVIEWER_SKILL).expect("the pr-reviewer skill");
+        let words: Vec<String> = doc
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .map(str::to_lowercase)
+            .collect();
+        for gone in ["merge", "sleep", "poll", "polling", "gh"] {
             assert!(
-                !direct.contains(forge),
-                "the direct briefing names {forge}, which is the other strategy's"
+                !words.iter().any(|word| word == gone),
+                "the pr-reviewer skill names {gone}"
             );
         }
-        for squash in ["reset --soft", "merge --ff-only {branch}"] {
+        // Nothing in the skill names the agent's own approval.
+        assert_eq!(
+            words.iter().filter(|word| *word == "approve").count(),
+            0,
+            "the pr-reviewer skill approves on its own"
+        );
+        let doc = unwrapped(doc);
+        for priority in ["P0: ", "P1: ", "P2: "] {
             assert!(
-                !published.contains(squash),
-                "the published briefing names {squash}, which is the other strategy's"
+                doc.contains(priority),
+                "the pr-reviewer skill has no {priority}"
+            );
+        }
+        for sentence in ste::sentences(&doc) {
+            if sentence.contains("`request_changes`") {
+                assert!(
+                    sentence.contains("P0") && sentence.contains("P1"),
+                    "`request_changes` without P0 and P1: {sentence}"
+                );
+            }
+        }
+        for step in [
+            "`get_pull_request`",
+            "`get_diff`",
+            "`since`",
+            "`submit_review` once with only new findings",
+            "P0 or P1",
+            "`report_pull_request` with `reviewed_sha`",
+            "without a reply",
+            "Reuse evidence only when it covers the reviewed head",
+            "On a later round, call `list_comments` first.",
+            "For each thread you opened",
+            "supervise_posts",
+            "Read code outside the diff only to judge a risk you can name.",
+            "Give every finding a trigger, the input or state that causes it, and a",
+            "A finding with no trigger you can name is P2. Mark it unverified.",
+            "Cap new P2 findings at five, the ones you have most conviction in.",
+            "P1: a proven defect, unmet requirement, or repository-rule violation",
+            // An unanswered thread waits; a declined fix is marked so and
+            // left open; a claimed fix that is not one is said once.
+            "Still there: <why>",
+            "Do not reply again in that thread",
+            "```suggestion block",
+            "Never post a second comment for a defect",
+            "call `resolve_thread` without a reply",
+            "Resolve only a thread you opened",
+            "one inline comment on the line of the defect",
+            "## Done",
+        ] {
+            assert!(doc.contains(step), "the pr-reviewer skill has no {step}");
+        }
+        assert!(
+            !doc.contains("git log"),
+            "the pr-reviewer skill still reads a commit list"
+        );
+        assert_eq!(SkillSeat::of(PR_REVIEWER_SKILL), SkillSeat::PullRequest);
+    }
+
+    /// Every review skill marks a blocking or must-fix finding with a
+    /// trigger and caps its non-blocking findings at five. A finding with
+    /// no nameable trigger is downgraded and marked unverified. The four
+    /// task-column review skills also pin their reading to the diff, reuse
+    /// the column report's evidence where it covers the reviewed revision
+    /// (and, for `performance-review`, the same workload too), and bound
+    /// reading outside the diff to a risk the reviewer can name.
+    #[test]
+    fn every_review_skill_names_a_trigger_and_caps_its_optional_findings() {
+        for name in [
+            "code-review",
+            PR_REVIEWER_SKILL,
+            "spec-review",
+            "architecture-review",
+            "performance-review",
+        ] {
+            let text = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                text.contains("trigger"),
+                "the {name} skill does not name a trigger"
+            );
+            assert!(
+                text.contains("Mark it unverified.") || text.contains("marked unverified"),
+                "the {name} skill does not mark an untriggered finding unverified"
+            );
+            assert!(
+                text.contains("at five"),
+                "the {name} skill does not cap its non-blocking findings at five"
+            );
+        }
+        for name in [
+            "code-review",
+            "spec-review",
+            "architecture-review",
+            "performance-review",
+        ] {
+            let text = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                text.contains("Pin the scope to the diff."),
+                "the {name} skill does not pin the scope to the diff"
+            );
+            assert!(
+                text.contains("the column report"),
+                "the {name} skill does not reuse the column report's evidence"
+            );
+            assert!(
+                text.contains("only to judge a risk you can name"),
+                "the {name} skill does not bound reading outside its scope to a named risk"
+            );
+        }
+        for name in ["spec-review", "architecture-review", "performance-review"] {
+            let text = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                text.contains("covers this revision") || text.contains("revision and workload"),
+                "the {name} skill does not bind its reused evidence to the reviewed revision"
             );
         }
     }
@@ -1462,45 +1589,43 @@ mod tests {
     /// the shipped skills are read beside them — and the way that stays
     /// readable is that each rule lives in the layer that needs it. A rule
     /// restated in a second one is a rule that goes stale in one of them.
-    ///
-    /// The landing briefings count as one place between them all: a
-    /// repository has one merge strategy, and a session has one seat, so the
-    /// author of a task is handed one of them and the orchestrator of a goal
-    /// another. No session ever reads two.
     #[test]
     fn each_rule_is_stated_in_exactly_one_briefing() {
-        // What a published branch may be done to, what ends a piece of
-        // engineering work, and what each of the three calls that move a task
-        // along is *for* — named elsewhere, explained here. The last one
-        // lives in the orchestration skill now, with the playbook it ends.
-        //
-        // The next two are the division of the checks: which agent runs the
-        // whole suite is the author's seat text to say, and the run itself is
-        // a step of the landing that owns it.
-        //
+        // The step calls, the hook rule and the stop rule belong to the
+        // agent seat text. `finalize_plan` belongs to the orchestration
+        // skill. The worktree scope and the plan-with-the-user rule belong
+        // to the agent and orchestrator seat texts: a skill that repeated
+        // either, as `merge` and `orchestration` once did, is the mistake
+        // this guards against.
         for marker in [
-            "git merge --no-edit",
-            "push plainly",
-            "--ff-only",
-            "Call `request_review` with a short STE summary",
-            "Call `submit_verdict` once per review you are asked for",
-            "It starts every task and ends planning",
-            "the reviewer runs it before each verdict; the landing runs it once",
-            "Otherwise, run the whole suite, build and linters once.",
+            "Call `complete_step` when",
+            "Call `fail_step` when",
+            "Never pass `--no-verify` or `-n` to git",
+            "After three failed attempts at one fix, stop.",
+            "Call it no earlier.",
+            "Work only in the task's worktree",
+            "Plan the goal with the user",
         ] {
             let places = all_defaults()
                 .into_iter()
                 .chain(all_skills())
                 .filter(|(_, text)| text.contains(marker))
-                .map(|(name, _)| match name.ends_with("landing briefing") {
-                    true => "a landing briefing".to_string(),
-                    false => name,
-                })
+                .map(|(name, _)| name)
                 .collect::<std::collections::BTreeSet<_>>();
             assert_eq!(
                 places.len(),
                 1,
                 "\"{marker}\" is stated in {places:?}, not in one place"
+            );
+        }
+        for (name, phrase) in [
+            ("merge", "Work from your worktree"),
+            ("orchestration", "Plan with the user"),
+        ] {
+            let document = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                !document.contains(phrase),
+                "the {name} skill repeats its seat's own \"{phrase}\""
             );
         }
     }
@@ -1518,21 +1643,14 @@ mod tests {
                 kind.as_str()
             );
         }
-        for landing in Landing::ALL {
-            assert_eq!(
-                Landing::validate_landing_template(default_landing_prompt(landing)),
-                Ok(()),
-                "the default {}",
-                landing_name(landing)
-            );
-        }
     }
 
     /// The orchestrator playbook is a conversation, and the order of its
-    /// phases is the playbook: the goal is read, every unclear point is asked
-    /// about one question at a time, the goal is split into tasks, each task
-    /// is staffed, the review and the ending of each are agreed with the user,
-    /// and only an explicit yes starts any of it.
+    /// phases is the playbook: the goal is read with its workflow, every
+    /// unclear point is asked about one question at a time, the goal is
+    /// split into tasks, each task is staffed one agent per column, each
+    /// agent is sized on its column's rank, and only an explicit yes starts
+    /// any of it.
     ///
     /// Staffing stands before the yes and the start stands after it, which is
     /// the whole of the arrangement: the user agrees to tasks that already
@@ -1543,27 +1661,25 @@ mod tests {
     /// The phases of the playbook, in the order the conversation runs them.
     /// Named once, because two assertions read them: the skill document holds
     /// all of them in this order, and the seat text holds none.
-    const PLAYBOOK_PHASES: [&str; 14] = [
-        "Read the goal. Explore its repositories.",
-        "Ask the user about every unclear point",
-        "Write one question in your turn text.",
-        "Wait for the answer in the console.",
-        "Split the goal into tasks",
-        "Staff the authors of each task with `create_task`",
-        "Staff one reviewer on every task.",
-        "Ask the user which tasks to leave unreviewed",
-        "Leave a task unreviewed only when nothing can be tested whole, such as a release or a report.",
-        "Ask the user how each task ends",
-        "Mix the agents evenly over the tasks.",
-        "Revise them until they write an explicit yes.",
-        "Call `finalize_plan`",
-        "Stay up for the rest of the goal.",
+    const PLAYBOOK_PHASES: [&str; 11] = [
+        "Read the goal and its columns.",
+        "Ask the user every open point",
+        "Split the goal into tracer tasks.",
+        "Write each ticket in STE",
+        "Staff one agent on every column with `create_task`.",
+        "Give each agent one model from `list_models`, at one of the column's ranks.",
+        "Show the user the tasks and the models.",
+        "Revise until the user writes an explicit yes.",
+        "Call `finalize_plan`.",
+        "Stay up until the goal ends.",
+        "Call `complete_goal` when every task is done.",
     ];
 
     /// The playbook is the `orchestration` skill, so the document read here
     /// is the shipped skill rather than the seat text, which carries no step
-    /// of it. A phase out of order is an orchestrator that fails to staff a
-    /// reviewer by default, or that starts a plan the user has not seen.
+    /// of it. A phase out of order is an orchestrator that staffs a task
+    /// before it knows the columns, or that starts a plan the user has not
+    /// seen.
     #[test]
     fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
         let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
@@ -1579,28 +1695,138 @@ mod tests {
         assert!(prompt.contains("Call it no earlier."), "{prompt}");
     }
 
+    /// Step 2 asks one open point per turn rather than a list of them: the
+    /// skill waits for each answer before it asks the next question, and
+    /// names the five parts a question carries. A plan with two questions
+    /// folded into one turn would hand the user a wall of options with no
+    /// room to answer one at a time, which is what this guards against. The
+    /// direct question is worded so a "yes" accepts the recommendation,
+    /// which is what lets the user agree in one word.
+    #[test]
+    fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for phrase in [
+            "Ask one question in a turn, then stop and wait for the answer.",
+            "Ask the next question only after the answer.",
+            "Put no second question in the context or in the options.",
+            "A title with its position, for example \"Question 2 of 3: <topic>\".",
+            "Context: the facts the user needs to answer.",
+            "Options: two or more.",
+            "A recommendation, with one reason.",
+            "One direct question, at the end.",
+            "Word it so a \"yes\" accepts the recommendation.",
+            "\"Two short questions fit in one turn.\" -> Ask one; the user answers each one with its full context.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
+        assert!(
+            !prompt.contains("numbered list"),
+            "the orchestration skill still groups open points into a numbered list: {prompt}"
+        );
+    }
+
+    /// The workflow is settled before planning starts, not asked about task
+    /// by task: the orchestrator reads its columns off its briefing, staffs
+    /// one agent per column, and asks the user nothing a column already
+    /// settles. The reviewer question and the final task are gone with the
+    /// pipeline they belonged to. Skills and models are read from the
+    /// catalog once for the whole goal, not re-read for every task it
+    /// staffs.
+    #[test]
+    fn the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question() {
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for gone in [
+            "Ask the user which tasks to leave unreviewed",
+            "Staff one reviewer on every task",
+            "Leave a task unreviewed",
+            "final task",
+            "feature_branch",
+            "author",
+            "reviewer",
+        ] {
+            assert!(
+                !prompt.contains(gone),
+                "the orchestration skill still says \"{gone}\": {prompt}"
+            );
+        }
+        for phrase in [
+            "The workflow columns in your briefing are settled: do not ask for them.",
+            "Ask nothing a column settles, such as review or landing.",
+            "List skills and models once for the goal, not once per task.",
+            "Staff one agent on every column with `create_task`.",
+            "or none for the column's own.",
+            "\"This task needs no review.\" -> The workflow decides; staff its column.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
+    }
+
     /// A false `depends_on` serializes two tasks that could run together, so
     /// the skill tells the orchestrator to write a shared interface into
-    /// both tickets instead. And the landing already proved the base branch,
-    /// so the orchestrator runs no checks of its own before `complete_goal`.
+    /// both tickets instead. And the last column already proved the work, so
+    /// the orchestrator runs no checks of its own before `complete_goal`.
     #[test]
     fn the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule() {
-        let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
-        assert!(
-            prompt.contains("Name what one task hands to another")
-                && prompt.contains("Add no\n   `depends_on` for it."),
-            "the skill has no contract rule in step 3: {prompt}"
-        );
-        assert!(
-            prompt.contains("Run no checks yourself: the landing proved the base"),
-            "the skill has no no-checks rule in step 10: {prompt}"
-        );
-        assert!(
-            prompt.contains("\"The frontend waits for the backend to land.\"")
-                && prompt.contains("Write the contract into")
-                && prompt.contains("Both run now."),
-            "the skill has no do-not-tell-yourself line for the contract rule: {prompt}"
-        );
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for phrase in [
+            "Give each one cohesive outcome, one repository, and a complete path through every layer it touches.",
+            "Write each contract between two tasks into both tickets: a route, a response shape, a function, a file.",
+            "Add `depends_on` only for a genuine compilation, execution, or acceptance prerequisite.",
+            "Do not add one only because two tasks touch nearby files.",
+            "Keep tasks that run together off the same code.",
+            "Run no checks yourself: the last column proved the work.",
+            "\"The frontend waits for the backend to land.\" -> Write the contract into both tickets. Both run now.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
+    }
+
+    /// A worker brief carries one objective, the interfaces from other
+    /// tasks, the boundaries, and what to report, and no pasted history: a
+    /// plan longer than the code it describes has written the code.
+    #[test]
+    fn the_orchestration_skill_names_what_a_ticket_carries() {
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for phrase in [
+            "one objective, the interfaces from other tasks, the boundaries, and what to report",
+            "Carry no pasted history.",
+            "\"A plan this long is thorough.\" -> A plan longer than the code it describes has written the code.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
+    }
+
+    /// Acceptance criteria state outcomes, not test cases: the coding agent
+    /// picks its own tests. And plan review asks one question at a time,
+    /// about tracer size and `depends_on`, the same as step 2's open points
+    /// — without this, a planner could prescribe tests or collect every
+    /// plan decision into one turn while this suite stays green.
+    #[test]
+    fn the_orchestration_skill_writes_outcomes_and_reviews_the_plan_one_question_at_a_time() {
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for phrase in [
+            "Write each criterion as an outcome.",
+            "Leave test cases and verification to the coding agent.",
+            "Ask about the plan one question at a time, with its five parts.",
+            "Ask about tracer size and each `depends_on`.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
     }
 
     /// The seat text carries no playbook step: not one of the phases, and no
@@ -1612,7 +1838,7 @@ mod tests {
         for phase in PLAYBOOK_PHASES {
             assert!(
                 !seat.contains(phase),
-                "the seat text carries \"{phase}\", which is the playbook's"
+                "the seat text carries \"{phase}\", which the playbook's"
             );
         }
         assert!(
@@ -1621,75 +1847,52 @@ mod tests {
         );
     }
 
-    /// A plan is staffed on a mix of agents, and fit comes first.
-    ///
-    /// Every task on one agent is a plan that stands or falls with that
-    /// agent: its rate limit, its outage, its blind spot on a kind of work.
-    /// So the orchestrator is told to spread them — and told in the same
-    /// breath not to spread them onto an agent the task does not suit, which
-    /// is the failure an instruction to mix invites. The telling is the
-    /// `orchestration` skill's, where the playbook lives.
-    #[test]
-    fn the_orchestrator_staffs_a_plan_on_a_mix_of_agents() {
-        let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
-        let mix = prompt
-            .find("Mix the agents evenly over the tasks.")
-            .expect("the orchestrator is not told to mix the agents");
-        let fit = prompt
-            .find("Take only an agent that suits the task.")
-            .expect("the orchestrator is not told to keep the mix suitable");
-        assert!(
-            fit > mix,
-            "the fit has to be the sentence after the mix, or the mix reads as the whole rule"
-        );
-        // Said where the agents are sized, not in a step of its own: which
-        // agent a task runs on is one answer with which model of it.
-        assert!(
-            mix > prompt
-                .find("Give each agent one model from `list_models`")
-                .unwrap(),
-            "the mix is stated before the sizing it is part of"
-        );
-    }
-
-    /// The orchestrator staffs the lowest rank and the lowest effort the task
-    /// earns.
+    /// The orchestrator staffs each column on one of the ranks its
+    /// capability band allows, and where a column names none, the lowest
+    /// rank and the lowest effort that finish the work.
     ///
     /// A model description says what a model can do and nothing about what it
     /// costs, so an orchestrator sized on the description alone staffed a
-    /// frontier model on a one-line fix. The user-set ranks are the cost
-    /// order, and the skill states them as a ladder from `fast` upward, with
-    /// `local` off it: a local model runs on the user's own machine, so it is
-    /// a choice the user makes rather than a cheaper rung.
+    /// frontier model on a one-line fix. A workflow column carries the band
+    /// its work earns. `local` is off the ladder: a local model runs on the
+    /// user's own machine, so it is a choice the user makes rather than a
+    /// cheaper rung.
     #[test]
-    fn the_orchestrator_staffs_the_lowest_rank_the_task_earns() {
+    fn the_orchestrator_staffs_each_column_on_its_rank() {
         // Read on one line, so where the document wraps holds nothing.
-        let prompt = default_skill_document(ORCHESTRATION_SKILL)
-            .unwrap()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
         for sentence in [
-            "The ranks make a ladder: `fast`, then `balanced`, then `frontier`.",
-            "Take the lowest rank that does the task, and the lowest effort that finishes it.",
-            "Keep `local` off the ladder: staff it only where the user names it.",
-            "Compare a rank with the same rank of another agent.",
-            "Prefer a rank, and size an unranked model from its description.",
-            "Balance power, cost and time.",
-            "Step up a rank or an effort only for a reason you state.",
+            "Give each agent one model from `list_models`, at one of the column's ranks.",
+            "Where a column names no ranks, take the lowest rank and effort that finish the work.",
+            "Staff `local` only where the user names it.",
+            "State a reason for each step up.",
         ] {
             assert!(
                 prompt.contains(sentence),
                 "the skill and the staffing rule \"{sentence}\""
             );
         }
-        // The ladder is stated in its own order, cheapest first: an
-        // orchestrator reading it takes the first rung that does the work.
-        let rung = |rank: &str| prompt.find(rank).expect(rank);
-        assert!(
-            rung("`fast`") < rung("`balanced`") && rung("`balanced`") < rung("`frontier`"),
-            "the ladder does not run from `fast` upward"
-        );
+    }
+
+    /// A reviewer that shares the coding agent's ACP identity cannot catch
+    /// what that agent is blind to, so the playbook pairs a task's coding
+    /// and review columns on different ACP agents where one is eligible at
+    /// the review column's rank, and otherwise falls back to the review
+    /// column's normal rank-based choice, telling the user independent
+    /// review was unavailable.
+    #[test]
+    fn the_orchestration_skill_requires_independent_providers_for_coding_and_review() {
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for sentence in [
+            "Give a task's coding and review columns models of different ACP agents, where one is eligible.",
+            "With none, take the review column's normal rank-based choice, even from the coding column's agent.",
+            "Tell the user independent review was unavailable.",
+        ] {
+            assert!(
+                prompt.contains(sentence),
+                "the skill and the independent-provider rule \"{sentence}\""
+            );
+        }
     }
 
     /// An orchestrator is nudged in the situation its goal stands in, and
@@ -1709,6 +1912,20 @@ mod tests {
                 resume.contains(phase),
                 "the orchestrator resume and \"{phase}\""
             );
+        }
+    }
+
+    /// A woken orchestrator is told its three choices for each task, and
+    /// what ends the goal.
+    #[test]
+    fn the_goal_attention_names_the_three_choices_and_the_end() {
+        let text = default_prompt_text(PromptKind::GoalAttention);
+        for rule in [
+            "Read them with `list_tasks`.",
+            "Retry, rewrite or cancel each one.",
+            "Call `complete_goal` when every task is done.",
+        ] {
+            assert!(text.contains(rule), "the goal attention and \"{rule}\"");
         }
     }
 
@@ -1738,16 +1955,32 @@ mod tests {
         }
     }
 
-    /// The orchestrator lands its spec, and still none of its own texts names a
-    /// forge or a strategy: which way a repository takes a change is the
-    /// repository's `merge_strategy` to say, and the procedure reaches the
-    /// orchestrator as a value its briefing carries
-    /// ([`default_spec_landing_prompt`]). A playbook that spelled out one of
-    /// the two landings would be a second copy of those details, going stale
-    /// on its own, and an orchestrator running it in the wrong repository.
-    /// The orchestration skill is one of its texts, so it is read here too.
+    /// Step 9 of the playbook is the orchestrator's answer to an agent that
+    /// is running a task into the ground: switch its session to a model the
+    /// ladder gives, and tell the user. Without it, a struggling agent was an
+    /// orchestrator's to notice and nobody's to act on.
     #[test]
-    fn the_orchestrator_is_told_nothing_of_forges_or_landing() {
+    fn the_orchestration_skill_switches_a_struggling_agents_session() {
+        let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for phrase in [
+            "When an agent is exhausted, stuck or unsuitable, call `switch_session` with a model one rank up.",
+            "Tell the user.",
+        ] {
+            assert!(
+                prompt.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
+    }
+
+    /// The orchestrator's own texts name no forge: which way a task lands is
+    /// the workflow's `pr` or `merge` column to say, and the procedure
+    /// reaches that column's agent as its skill. A playbook that spelled out
+    /// one of the two landings would be a second copy of those details,
+    /// going stale on its own. The orchestration skill is one of its texts,
+    /// so it is read here too.
+    #[test]
+    fn the_orchestrator_is_told_nothing_of_forges() {
         let orchestrator = std::iter::once(default_system_prompt(Seat::Orchestrator))
             .chain(std::iter::once(
                 default_skill_document(ORCHESTRATION_SKILL).unwrap(),
@@ -1759,23 +1992,26 @@ mod tests {
             )
             .collect::<Vec<_>>()
             .join("\n");
-        for forge in [
-            "GitHub",
-            "github",
-            "GitLab",
-            "gitlab",
-            "`gh`",
-            "gh pr",
-            "`glab`",
-            "glab mr",
-            "pull request",
-            "merge request",
-            "merge_strategy",
-        ] {
+        for forge in ["GitHub", "github", "`gh`", "gh pr", "pull request"] {
             assert!(
                 !orchestrator.contains(forge),
                 "the orchestrator prompts name {forge}"
             );
+        }
+    }
+
+    /// The orchestrator briefing names the workflow and its columns where it
+    /// used to name a landing, and nothing of the pipeline the columns took
+    /// over.
+    #[test]
+    fn the_orchestrator_briefing_names_the_workflow_and_its_columns() {
+        let briefing = default_prompt_text(PromptKind::OrchestratorBriefing);
+        assert!(
+            briefing.contains("Workflow: {workflow}\n{columns}"),
+            "{briefing}"
+        );
+        for gone in ["landing", "Landing", "author", "reviewer"] {
+            assert!(!briefing.contains(gone), "{briefing}");
         }
     }
 
@@ -1821,65 +2057,81 @@ mod tests {
         }
     }
 
-    /// A background poll of a check was the largest single waste a
-    /// measurement of this week's sessions found: an agent started
-    /// `cargo nextest` in the background and re-sent its whole context on
-    /// every no-op turn spent waiting for it. `coding`, `debugging` and
-    /// `code-review` each carry the fix: a check runs in
-    /// the foreground and is never polled, and its full output goes to a
-    /// log file outside the worktree so only the summary and the failures
-    /// reach the agent's context.
-    ///
-    /// The reviewer's seat text starts the same checks, so it names the
-    /// foreground rule too, in its own words: the detail of the fix —
-    /// the timeout, the log file, the command — stays the skill's alone to
-    /// state, the way spec 006 holds every rule to one place.
-    ///
-    /// Each document is read with its line wrapping taken out first, so a
-    /// rewrap that moves a marker across a line break cannot make a rule
-    /// that is still there read as gone.
+    /// The two shipped workflows are named once, each parses, and each
+    /// names only skills the catalog ships: a column staged on a skill
+    /// nothing ships would refuse every task of its goal.
     #[test]
-    fn checks_run_in_the_foreground_and_print_only_failures() {
-        for name in ["coding", "debugging", "code-review"] {
-            let doc = unwrapped(default_skill_document(name).unwrap());
-            assert!(
-                doc.contains("in the foreground"),
-                "{name} does not run a check in the foreground"
-            );
-            assert!(
-                doc.contains("no-op command"),
-                "{name} does not forbid polling a background run with a no-op command"
-            );
-            assert!(
-                doc.contains("a log file outside the worktree"),
-                "{name} does not send a check's output to a log file outside the worktree"
-            );
-            assert!(
-                doc.contains(
-                    "cargo nextest run --status-level fail --final-status-level fail 2>&1 | tail -n 40"
-                ),
-                "{name} does not print only the summary and the failures of a nextest run"
-            );
-            assert!(
-                doc.contains("the detail of a failure"),
-                "{name} does not scope a log read to the detail of a failure"
-            );
+    fn every_shipped_workflow_parses_and_stages_shipped_skills() {
+        let mut names: Vec<&str> = BUILTIN_WORKFLOWS.iter().map(|w| w.name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            BUILTIN_WORKFLOWS.len(),
+            "a workflow is listed twice"
+        );
+        assert!(names.contains(&DEFAULT_WORKFLOW));
+        assert!(names.contains(&PULL_REQUEST_WORKFLOW));
+        for workflow in &BUILTIN_WORKFLOWS {
+            let parsed = ariadne_core::workflow::parse(workflow.document)
+                .unwrap_or_else(|e| panic!("{} does not parse: {e}", workflow.name));
+            assert_eq!(parsed.name, workflow.name);
+            for step in &parsed.steps {
+                for skill in &step.skills {
+                    assert!(
+                        default_skill_document(skill).is_some(),
+                        "{} stages {skill}, which nothing ships",
+                        workflow.name
+                    );
+                    assert_ne!(SkillSeat::of(skill), SkillSeat::Orchestrator);
+                    assert_ne!(skill, PR_REVIEWER_SKILL);
+                }
+            }
         }
+    }
 
-        for (name, text) in [
-            (
-                "reviewer system prompt",
-                default_system_prompt(Seat::Reviewer),
-            ),
-            (
-                "reviewer resume",
-                default_prompt_text(PromptKind::ReviewerResume),
-            ),
-        ] {
-            assert!(
-                unwrapped(text).contains("in the foreground"),
-                "{name} does not run a check in the foreground"
-            );
+    /// A background poll of a check was the largest single waste a
+    /// measurement of one week's sessions found: an agent started
+    /// `cargo nextest` in the background and re-sent its whole context on
+    /// every no-op turn spent waiting for it. The fix — a check in the
+    /// foreground, never polled, its output in a log outside the worktree —
+    /// is the session rules' to state (013), which every seat reads. The
+    /// skills that run checks say only which checks to run.
+    #[test]
+    fn the_skills_leave_how_a_check_runs_to_the_session_rules() {
+        for name in ["coding", "debugging", "code-review", "pr-reviewer"] {
+            let doc = unwrapped(default_skill_document(name).unwrap());
+            for block in [
+                "in the foreground",
+                "no-op command",
+                "outside the worktree",
+                "tail -n 40",
+                "the detail of a failure",
+            ] {
+                assert!(
+                    !doc.contains(block),
+                    "{name} repeats the check block: {block}"
+                );
+            }
+        }
+    }
+
+    /// Never polling a request is the session rules' to state too (006 rule
+    /// 5), for the `agent` and `reviewer` seats alone: no shipped skill
+    /// names a timer or a poll of its own.
+    #[test]
+    fn no_skill_names_a_timer_or_a_poll() {
+        for (name, document) in all_skills() {
+            let words: Vec<String> = document
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .map(str::to_lowercase)
+                .collect();
+            for gone in ["timer", "poll", "polling"] {
+                assert!(
+                    !words.iter().any(|word| word == gone),
+                    "the {name} names a {gone}"
+                );
+            }
         }
     }
 
@@ -1894,6 +2146,34 @@ mod tests {
         );
     }
 
+    /// `coding` names the column report at its own end, and every other
+    /// produce skill that ends its own column names it the same way. None
+    /// of them restates a field of the report, which the `complete_step`
+    /// description alone defines.
+    #[test]
+    fn a_produce_skill_names_the_column_report_where_it_ends_a_column() {
+        for name in [
+            "coding",
+            "debugging",
+            "refactoring",
+            "migration",
+            "conflict-resolution",
+            "documentation",
+            "research",
+            "spec-writing",
+        ] {
+            let document = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                document.contains("Call `complete_step` with the column report"),
+                "the {name} skill does not name the column report where it ends"
+            );
+            assert!(
+                !document.contains("Fifteen lines at most"),
+                "the {name} skill restates the column report's own line cap"
+            );
+        }
+    }
+
     #[test]
     fn skill_text_returns_its_document() {
         assert_eq!(skill_text("Ask twice.\n"), "Ask twice.\n");
@@ -1905,66 +2185,107 @@ mod tests {
     /// failing assertion.
     ///
     /// This is that decision, taken once for the suite rather than a skill at
-    /// a time. The catalog is being rewritten to one template — a description
-    /// that says when to load the skill as well as what it does, a checkable
-    /// bound on every step that can end early, one anchor word carried through
-    /// the body, and the two or three excuses the agent talks itself into —
-    /// and the old 1800 held none of that. The numbers below are the budget of
-    /// that rewrite: what a document of the template costs, not what the
-    /// documents happen to weigh today.
+    /// a time. The catalog is written to one template — a description that
+    /// says when to load the skill as well as what it does, a checkable bound
+    /// on every step that can end early, one anchor word carried through the
+    /// body, and the two or three excuses the agent talks itself into.
     ///
     /// Three tiers, by how much procedure the skill carries. `orchestration`
-    /// and `debugging` get 3200: one runs the ten phases of a whole goal, the
-    /// other a feedback loop the agent is talked out of at every step, and
-    /// both spend their length on the excuses rather than on the steps.
+    /// and `debugging` get the most: one runs the ten phases of a whole goal,
+    /// the other a feedback loop the agent is talked out of at every step,
+    /// and both spend their length on the excuses rather than on the steps.
     /// `coding` and `code-review` get the room of the skills almost every
     /// task loads, and the two whose failure modes are worth spelling out.
     /// Every other skill gets 2400, which is a template document with room
-    /// for its rules. The total is the thirteen at their tiers, so a skill
+    /// for its rules. The total is the sixteen at their tiers, so a skill
     /// that grows costs a decision here rather than a quiet raid on another
-    /// skill's share. The four skills nothing was ever staffed on —
-    /// `release`, `dependency-upgrade`, `security-review` and `triage` —
-    /// left the catalog, and the total came down with them rather than
-    /// becoming room nobody had argued for.
+    /// skill's share.
     ///
-    /// `coding` gets 5400, because `testing` merged into it. The two ran at
-    /// 3000 each and shared three blocks: the check that ends a step, the
-    /// log rule and half the rationalizations. One document
-    /// states them once and adds the commit form, so the merged cap is the
-    /// two tiers less the overlap the merge took out.
+    /// `coding` gets 5400, because `testing` merged into it. `orchestration`
+    /// gets 4600: it staffs one agent per column on the column's rank, and
+    /// staffs a missing column before a retry.
     ///
-    /// `code-review` rises from 3000 to 3500 for the new review mechanics. It
-    /// starts every check before reading, refreshes a detached worktree and
-    /// scopes another review from the last verdict SHA. These rules add
-    /// commands and ordering that the old procedure did not hold.
+    /// The five review skills were tightened for falsifiable findings, a
+    /// cap on the optional ones, and the diff as scope: every blocking or
+    /// must-fix finding now names a trigger, a failure and the criterion,
+    /// behavior or written rule it breaks; a finding with none is
+    /// downgraded and marked unverified; the non-blocking findings are
+    /// capped at five; reading outside the diff is bound to a named risk;
+    /// and the verdict comes first with no preamble or closing summary.
+    /// `code-review` falls from 4100 to 3100: it drops naming the evidence
+    /// sources the column report now carries alone, and names the return
+    /// report by name instead of restating a field of it. `pr-reviewer`
+    /// falls from 6200 to 3750: its own summary paragraph and closing table
+    /// were pruned, since the trigger a finding names already answers what
+    /// the risk is, and its "Supervised repositories" section keeps only
+    /// the routing decision the pending-edit tools do not state themselves.
+    /// `architecture-review`, `spec-review` and `performance-review` move
+    /// off the shared 2400 onto their own, lower caps — 2380, 2320 and
+    /// 2380 — since each now reuses the column report's evidence and
+    /// names the trigger a blocking finding carries and the rule it
+    /// breaks, which cost more than the shared template budgeted, so a line
+    /// restating the same requirement a second time was cut to make room.
     ///
-    /// `debugging` rises from 3200 to 3400 and `code-review` from 3500 to
-    /// 4000 for one more rule, carried in `testing`, `coding`, `debugging`
-    /// and `code-review` alike: run a check in the foreground, never poll a
-    /// background run, and send its output to a log file so only the
-    /// summary and the failures reach the agent. A background poll of
-    /// `cargo nextest` was the largest single waste a measurement of this
-    /// week's sessions found, and the fix costs each of the four skills a
-    /// paragraph.
+    /// The eight produce skills were pruned to findings 1 to 7, past the
+    /// restated fields and the named ending, to the generic reasons and
+    /// slogans the review found: a description written as an instruction
+    /// instead of in the third person, a seat rule a skill repeated in its
+    /// own words, and a "Do not tell yourself" entry naming no failure.
+    /// Each cap comes down with the text: `coding` drops from 5400 to
+    /// 3300, `debugging` from 3400 to 2700, and `refactoring`, `migration`,
+    /// `conflict-resolution`, `documentation`, `research` and
+    /// `spec-writing` share 2000, down from the default 2400. The total
+    /// comes down with them, from 43000 to 40000.
+    ///
+    /// A pass pruned every line of `orchestration`, `merge` and
+    /// `pr-babysit` that a tool description, the session rules, a spec or
+    /// another skill already said, or that cost nothing to remove.
+    /// `orchestration` still grew: its ticket step now names the four
+    /// things a ticket carries and bars pasted history, and its question
+    /// step words a question so a "yes" accepts the recommendation; its cap
+    /// moves from 4600 to 4500, the size the rewrite fits in with the usual
+    /// margin. `pr-babysit` lost its restated lead sentence, a log-URL tip
+    /// a tool's own response already carries, a redundant push-flag detail,
+    /// and a generic "do not tell yourself" entry that only restated the
+    /// no-polling session rule; its "Supervised repositories" section no
+    /// longer repeats what `edit_pending_comment` and
+    /// `delete_pending_comment` already say about when they are refused.
+    /// Its cap moves from 4000 to 3800, trading the one-line margin finding
+    /// 4 found for one that holds through a small future edit. `merge` lost
+    /// only its restated lead sentence, since every rule it states — the
+    /// refused push, the failed fast-forward, the forced push it never
+    /// makes — is its own case with its own trigger. It gets a cap of its
+    /// own, 1700, rather than the 2400 every unlisted skill shares, since a
+    /// landing procedure this short does not need a template's room.
     #[test]
     fn skill_size_caps_hold() {
-        const TOTAL: usize = 39_000;
+        const TOTAL: usize = 40_000;
         let cap = |name: &str| match name {
-            // The orchestration playbook grew a step-4 choice — one author
-            // for most tasks, several where the reviewers pick a winner —
-            // and the contract rule that keeps a frontend task and its
-            // backend task off a false `depends_on`.
-            // Step 7 rose from two sentences about the model description to
-            // the staffing ladder: the rank order, `local` off it, the
-            // per-agent comparison, the unranked fallback, the effort rule,
-            // the balance of power against cost and time, and the reason a
-            // step up costs. The rule it replaces let an orchestrator staff a
-            // frontier model on a one-line fix, so the 100 characters here
-            // buy a goal's token bill back many times over.
-            ORCHESTRATION_SKILL => 4200,
-            "debugging" => 3400,
-            "code-review" => 4000,
-            "coding" => 5400,
+            ORCHESTRATION_SKILL => 4500,
+            "debugging" => 2700,
+            "code-review" => 3100,
+            "coding" => 3300,
+            "architecture-review" => 2380,
+            "spec-review" => 2320,
+            "performance-review" => 2380,
+            "refactoring"
+            | "migration"
+            | "conflict-resolution"
+            | "documentation"
+            | "research"
+            | "spec-writing" => 2000,
+            "merge" => 1700,
+            // Eight steps: the open, the read, the three reply shapes and
+            // the two loop stops (a follow-up and a kept-open finding), the
+            // suggestion rule, the checks, the report, and the two endings.
+            // Plus a "Supervised repositories" section (026 rule 25).
+            PR_BABYSIT_SKILL => 3800,
+            // Eight steps: the read, the checks, the hunt, the three
+            // priorities with a trigger and a cap on P2, one inline comment
+            // per finding, the one review and the report. Plus a
+            // "Supervised repositories" section (026 rule 25), pruned to
+            // the routing decision the pending-edit tools do not state.
+            PR_REVIEWER_SKILL => 3750,
             _ => 2400,
         };
 

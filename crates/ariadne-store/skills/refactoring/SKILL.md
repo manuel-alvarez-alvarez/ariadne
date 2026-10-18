@@ -1,12 +1,11 @@
 ---
 name: refactoring
-description: Change the structure of code, not what it does, and prove it. Use when a task asks for a rename, an extraction, a move, or a cleanup.
+description: For a rename, an extraction, a move, or a cleanup, reshapes code and proves behavior unchanged.
 ---
 
 # Refactoring
 
-Behavior stays identical. That is the whole contract, and green tests are
-the proof.
+Behavior stays identical, and green tests are the proof.
 
 ## Steps
 
@@ -24,6 +23,7 @@ the proof.
    Done when each move ends green.
 6. Commit the whole refactor once, after every move is green.
    Done when one commit holds every move.
+7. Call `complete_step` with the column report.
 
 ## Rules
 

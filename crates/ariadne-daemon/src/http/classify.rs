@@ -38,17 +38,27 @@ pub(super) fn status_for_event(kind: &str) -> Option<ariadne_core::SessionStatus
 }
 
 /// Attention an event raises on its session (None = leave it alone).
-pub(super) fn attention_for_event(kind: &str) -> Option<ariadne_core::AttentionReason> {
+pub(super) fn attention_for_event(
+    kind: &str,
+    payload: &serde_json::Value,
+) -> Option<ariadne_core::AttentionReason> {
     use ariadne_core::AttentionReason as A;
     match kind {
         // A failed turn, or a protocol failure the runtime reports before the
         // session ends: only the flag goes up.
+        "session.error"
+            if payload.pointer("/error/exhausted") == Some(&serde_json::Value::Bool(true)) =>
+        {
+            Some(A::Exhausted)
+        }
         "session.error" => Some(A::AgentError),
         // The agent asked for a permission. The runtime reports the ask as it
         // arrives, before the answer is known, so it marks the wait and not
         // its outcome; `permission.replied` follows with the answer, and
         // clears it.
-        "permission_request" => Some(A::WaitingPermission),
+        "permission_request" if payload.get("waiting") == Some(&serde_json::Value::Bool(true)) => {
+            Some(A::WaitingPermission)
+        }
         _ => None,
     }
 }
@@ -120,6 +130,22 @@ const TOOL_INPUT_FIELDS: [&str; 7] = [
 /// `cwd` is read only to relativize a path already read off one of those — it
 /// is never a summary of its own, and it never appears in one.
 pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
+    if kind == "permission.replied" {
+        return finish(&permission_reply_summary(payload));
+    }
+    if kind == "session.diagnosis" {
+        return finish(&diagnosis_summary(payload));
+    }
+    if kind == "session.pin_fallback" {
+        return finish(&pin_fallback_summary(payload));
+    }
+    // An agent's flag that it waits for the user (031): the hint it gave,
+    // the one line the Needs attention list shows for it.
+    if kind == super::agent_requests::AGENT_REQUEST_EVENT
+        && let Some(hint) = non_empty_str(payload.get("hint"))
+    {
+        return finish(&format!("waiting for you · {hint}"));
+    }
     let text = tool_call_summary(payload)
         .or_else(|| {
             (kind == "post_tool_use")
@@ -128,6 +154,61 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
         })
         .or_else(|| agent_text(kind, payload));
     finish(&text.unwrap_or_else(|| "…".to_string()))
+}
+
+/// An answered permission request: the option chosen and who chose it, and,
+/// where the AI permission model had a part, why it did not decide —
+/// `allow-once in the console — AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`,
+/// `AI allowed · allow 91%, deny 1% · danger 4% (allow up to 5%, deny from 65%)`.
+fn permission_reply_summary(payload: &serde_json::Value) -> String {
+    let decided_by = non_empty_str(payload.get("decided_by"));
+    if decided_by == Some("ai")
+        && let Some(note) = ariadne_api::permissions::ai_permission_note(payload)
+    {
+        return note;
+    }
+    let option = non_empty_str(payload.get("option_id")).unwrap_or("cancelled");
+    let mut answer = match decided_by {
+        Some("console") => format!("{option} in the console"),
+        Some(decider) => format!("{option}, {decider}"),
+        None => option.to_string(),
+    };
+    if decided_by == Some("learned") {
+        match non_empty_str(payload.get("learned_level")) {
+            Some("command") => answer.push_str(" · command"),
+            Some("family") => {
+                answer.push_str(" · family");
+                if let Some(family) = non_empty_str(payload.get("learned_key")) {
+                    answer.push(' ');
+                    answer.push_str(family);
+                }
+            }
+            _ => {}
+        }
+    }
+    match ariadne_api::permissions::ai_permission_note(payload) {
+        Some(note) => format!("{answer} — {note}"),
+        None => answer,
+    }
+}
+
+/// A `session.diagnosis` event's one line: the same advisory note the
+/// console and the desktop app show beside the original failure (024), or
+/// `…` for a payload nothing here can read.
+fn diagnosis_summary(payload: &serde_json::Value) -> String {
+    ariadne_api::events::diagnosis_note(payload).unwrap_or_else(|| "…".to_string())
+}
+
+/// A `session.pin_fallback` event's one line: the pin the launch asked for
+/// and what the agent runs instead — `model claude-fable-5-1[1m] did not
+/// land, running on opus[1m]`.
+fn pin_fallback_summary(payload: &serde_json::Value) -> String {
+    let option = non_empty_str(payload.get("option")).unwrap_or("pin");
+    let asked = non_empty_str(payload.get("asked")).unwrap_or("…");
+    match non_empty_str(payload.get("running")) {
+        Some(running) => format!("{option} {asked} did not land, running on {running}"),
+        None => format!("{option} {asked} did not land, running on the agent's own"),
+    }
 }
 
 /// A payload's field, where it holds a non-empty string.
@@ -239,6 +320,7 @@ mod tests {
             "session_id": "stub-session",
             "tool_name": "Bash",
             "tool_input": {"command": "touch /tmp/probe"},
+            "waiting": true,
             "options": [{"optionId": "yes", "name": "Allow", "kind": "allow_once"}],
         })
     }
@@ -275,13 +357,75 @@ mod tests {
             "session.error",
             "session_end",
         ] {
-            let acted_on = status_for_event(kind).is_some() || attention_for_event(kind).is_some();
+            let payload = if kind == "permission_request" {
+                json!({"waiting": true})
+            } else {
+                json!({})
+            };
+            let acted_on =
+                status_for_event(kind).is_some() || attention_for_event(kind, &payload).is_some();
             assert!(acted_on, "{kind} is reported but ingested as a no-op");
         }
         // Not among them: a compaction the agent ran by itself, which the
         // daemon neither asks for nor advertises (007, rule 17).
         assert!(status_for_event("compaction_update").is_none());
-        assert!(attention_for_event("compaction_update").is_none());
+        assert!(attention_for_event("compaction_update", &json!({})).is_none());
+    }
+
+    /// A `session.diagnosis` is an advisory, read well after the session's
+    /// own lifecycle: it moves neither the status nor the attention flag,
+    /// whatever its category (024).
+    #[test]
+    fn a_diagnosis_event_moves_neither_status_nor_attention() {
+        let payload = json!({"error_event_id": "01EV", "category": "exhausted"});
+        assert_eq!(status_for_event("session.diagnosis"), None);
+        assert_eq!(attention_for_event("session.diagnosis", &payload), None);
+    }
+
+    /// An `agent_request` is the daemon's own line in the session's stream,
+    /// written when the agent flagged a wait (031): it moves neither the
+    /// status nor the attention flag — the pending request itself is what
+    /// the Needs attention list reads — and its summary is the hint.
+    #[test]
+    fn an_agent_request_event_reads_as_its_hint_and_moves_nothing() {
+        let payload = json!({"request_id": "01RQ", "hint": "Approve the plan?"});
+        assert_eq!(status_for_event("agent_request"), None);
+        assert_eq!(attention_for_event("agent_request", &payload), None);
+        assert_eq!(
+            summarize("agent_request", &payload),
+            "waiting for you · Approve the plan?"
+        );
+    }
+
+    /// The summary a `session.diagnosis` event reads as is the same advisory
+    /// note the console and the desktop app show.
+    #[test]
+    fn a_diagnosis_events_summary_is_its_advisory_note() {
+        let payload = json!({
+            "category": "exhausted",
+            "probabilities": {"exhausted": 0.72},
+        });
+        assert_eq!(
+            summarize("session.diagnosis", &payload),
+            "AI suggests: quota exhaustion (72%)"
+        );
+    }
+
+    /// A pin that did not land reads as the pin asked for and what the agent
+    /// runs instead, and moves neither the status nor the attention.
+    #[test]
+    fn a_pin_fallback_says_what_was_asked_and_what_runs() {
+        let payload = json!({
+            "option": "model",
+            "asked": "claude-fable-5-1[1m]",
+            "running": "opus[1m]",
+        });
+        assert_eq!(
+            summarize("session.pin_fallback", &payload),
+            "model claude-fable-5-1[1m] did not land, running on opus[1m]"
+        );
+        assert_eq!(status_for_event("session.pin_fallback"), None);
+        assert_eq!(attention_for_event("session.pin_fallback", &payload), None);
     }
 
     /// The lifecycle events, and nothing about them raises attention.
@@ -297,7 +441,7 @@ mod tests {
             ("session_end", Exited),
         ] {
             assert_eq!(status_for_event(event), Some(expected), "{event}");
-            assert_eq!(attention_for_event(event), None, "{event}");
+            assert_eq!(attention_for_event(event, &json!({})), None, "{event}");
         }
     }
 
@@ -306,13 +450,29 @@ mod tests {
     /// attention the event raises.
     #[test]
     fn a_wait_on_the_user_is_raised_and_never_reads_as_liveness() {
-        for (kind, expected) in [
-            ("permission_request", AttentionReason::WaitingPermission),
-            ("session.error", AttentionReason::AgentError),
+        for (kind, payload, expected) in [
+            (
+                "permission_request",
+                json!({"waiting": true}),
+                AttentionReason::WaitingPermission,
+            ),
+            ("session.error", json!({}), AttentionReason::AgentError),
         ] {
-            assert_eq!(attention_for_event(kind), Some(expected), "{kind}");
+            assert_eq!(
+                attention_for_event(kind, &payload),
+                Some(expected),
+                "{kind}"
+            );
             assert_eq!(status_for_event(kind), None, "{kind}");
         }
+    }
+
+    #[test]
+    fn an_automatic_permission_request_raises_no_attention() {
+        assert_eq!(
+            attention_for_event("permission_request", &json!({"waiting": false})),
+            None
+        );
     }
 
     /// What takes the flag back down: the answer hands the agent control
@@ -325,7 +485,7 @@ mod tests {
                 Some(SessionStatus::Running),
                 "{kind}"
             );
-            assert_eq!(attention_for_event(kind), None, "{kind}");
+            assert_eq!(attention_for_event(kind, &json!({})), None, "{kind}");
         }
     }
 
@@ -475,6 +635,75 @@ mod tests {
 
     /// A payload nothing above can read — here, one carrying only its `cwd` —
     /// summarizes to `…`, visibly, rather than to nothing.
+    #[test]
+    fn an_answered_permission_says_who_answered_and_why_the_model_did_not() {
+        let reply = |fields: serde_json::Value| {
+            let mut payload = json!({"session_id": "stub-session", "option_id": "allow-once",
+                                     "decided_by": "console", "label": null, "danger": null,
+                                     "allow_threshold": null, "deny_threshold": null,
+                                     "ai_error": null});
+            payload
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            summarize("permission.replied", &payload)
+        };
+        assert_eq!(
+            reply(
+                json!({"decided_by": "ai", "label": "deny", "danger": 0.9312,
+                "allow_threshold": 0.0531, "deny_threshold": 0.6522,
+                "probabilities": {"0": 0.01, "1": 0.11, "2": 0.88}})
+            ),
+            "AI denied · allow 1%, deny 88% · danger 93% (allow up to 5%, deny from 65%)"
+        );
+        assert_eq!(
+            reply(
+                json!({"decided_by": "ai", "label": "allow", "danger": 0.0412,
+                "allow_threshold": 0.0531, "deny_threshold": 0.6522,
+                "probabilities": {"0": 0.91, "1": 0.08, "2": 0.01}})
+            ),
+            "AI allowed · allow 91%, deny 1% · danger 4% (allow up to 5%, deny from 65%)"
+        );
+        assert_eq!(
+            reply(
+                json!({"label": "ask", "danger": 0.21, "allow_threshold": 0.0531,
+                "deny_threshold": 0.6522, "probabilities": {"0": 0.62, "1": 0.33, "2": 0.05}})
+            ),
+            "allow-once in the console — AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)"
+        );
+        assert_eq!(
+            reply(
+                json!({"label": "ask", "danger": 0.02, "allow_threshold": 0.0531,
+                "deny_threshold": 0.6522, "probabilities": {"0": 0.96, "1": 0.03, "2": 0.01},
+                "cap": "reviewer_directive", "risk_tags": ["reviewer_directive"]})
+            ),
+            "allow-once in the console — AI said ask · allow 96%, deny 1% · danger 2% (allow up to 5%, deny from 65%) · tags: reviewer_directive · capped by reviewer_directive"
+        );
+        assert_eq!(
+            reply(json!({"ai_error": "unavailable"})),
+            "allow-once in the console — AI unavailable"
+        );
+        assert_eq!(
+            reply(json!({"decided_by": "learned"})),
+            "allow-once, learned"
+        );
+        assert_eq!(
+            reply(json!({"decided_by": "learned", "learned_level": "family",
+                         "learned_key": "git rebase"})),
+            "allow-once, learned · family git rebase"
+        );
+        assert_eq!(reply(json!({"decided_by": "auto"})), "allow-once, auto");
+        assert_eq!(
+            reply(json!({"option_id": null})),
+            "cancelled in the console"
+        );
+        assert_eq!(
+            summarize("permission.replied", &json!({"option_id": "yes"})),
+            "yes",
+            "a reply recorded before deciders were named still reads"
+        );
+    }
+
     #[test]
     fn a_payload_with_nothing_readable_but_its_cwd_summarizes_to_an_ellipsis() {
         let payload = json!({"session_id": "stub-session", "cwd": "/tmp/wt"});

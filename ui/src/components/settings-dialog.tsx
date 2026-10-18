@@ -1,6 +1,8 @@
 /**
- * Where the daemon lives. This is the only thing the UI needs configured: the
- * address of `tcp_listen` in `~/.ariadne/config.toml`.
+ * Where the daemon lives — the one thing the UI itself needs configured: the
+ * address of `tcp_listen` in `~/.ariadne/config.toml` — and the daemon's own
+ * webhook tunnel switch, which is written the moment it is flipped rather than
+ * on Save, since it is the daemon's setting and not this window's.
  */
 
 import { useEffect, useState } from "react"
@@ -19,6 +21,8 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
+import { TunnelSettings } from "@/features/repositories/tunnel-settings"
 import { useSettingsStore } from "@/stores/settings"
 
 export function SettingsDialog({
@@ -30,6 +34,8 @@ export function SettingsDialog({
 }) {
   const baseUrl = useSettingsStore((state) => state.baseUrl)
   const setBaseUrl = useSettingsStore((state) => state.setBaseUrl)
+  const diagnosticsEnabled = useSettingsStore((state) => state.diagnosticsEnabled)
+  const setDiagnosticsEnabled = useSettingsStore((state) => state.setDiagnosticsEnabled)
 
   const [draft, setDraft] = useState(baseUrl)
   const [error, setError] = useState<string | null>(null)
@@ -66,21 +72,26 @@ export function SettingsDialog({
               listens on.
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
+          <div className="flex flex-col gap-6 py-4">
             <Field data-invalid={error ? "" : undefined}>
               <FieldLabel htmlFor="daemon-base-url">Daemon URL</FieldLabel>
-              <Input
-                id="daemon-base-url"
-                value={draft}
-                onChange={(event) => {
-                  setDraft(event.target.value)
-                  setError(null)
-                }}
-                placeholder={DEFAULT_BASE_URL}
-                spellCheck={false}
-                autoComplete="off"
-                aria-invalid={error ? true : undefined}
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="daemon-base-url"
+                  value={draft}
+                  onChange={(event) => {
+                    setDraft(event.target.value)
+                    setError(null)
+                  }}
+                  placeholder={DEFAULT_BASE_URL}
+                  spellCheck={false}
+                  autoComplete="off"
+                  aria-invalid={error ? true : undefined}
+                />
+                {/* No `pending`: this writes to the local store and nothing else.
+                    There is no request to wait for, so a spinner would be a lie. */}
+                <Button type="submit">Save</Button>
+              </div>
               {error ? (
                 <FieldError>{error}</FieldError>
               ) : (
@@ -91,6 +102,24 @@ export function SettingsDialog({
                 </FieldDescription>
               )}
             </Field>
+            <Field orientation="horizontal">
+              <div className="flex-1">
+                <FieldLabel htmlFor="send-app-diagnostics">
+                  Send app diagnostics to the daemon
+                </FieldLabel>
+                <FieldDescription>
+                  Send app logs and performance metrics to this daemon for troubleshooting.
+                </FieldDescription>
+              </div>
+              <Switch
+                id="send-app-diagnostics"
+                checked={diagnosticsEnabled}
+                onCheckedChange={setDiagnosticsEnabled}
+              />
+            </Field>
+            <div className="border-t pt-4">
+              <TunnelSettings open={open} />
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -103,10 +132,7 @@ export function SettingsDialog({
             >
               Reset to default
             </Button>
-            <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-            {/* No `pending`: this writes to the local store and nothing else.
-                There is no request to wait for, so a spinner would be a lie. */}
-            <Button type="submit">Save</Button>
+            <DialogClose render={<Button type="button" variant="outline" />}>Close</DialogClose>
           </DialogFooter>
         </form>
       </DialogContent>

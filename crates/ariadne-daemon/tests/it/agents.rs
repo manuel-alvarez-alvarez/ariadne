@@ -12,8 +12,10 @@ use axum::http::StatusCode;
 
 use ariadne_api::agents::AgentConfigDto;
 
+use ariadne_core::TaskStatus;
+
 use common::acp::{script, stub_acp_agent};
-use common::{STUB, TIMEOUT, eventually, get, harness, put_json};
+use common::{STUB, TIMEOUT, eventually, get, harness, heard_from, put_json};
 
 /// Every agent the registry holds is listed, in registry order — the agents
 /// of the index the `PATH` holds, then the configured ones — and one nobody
@@ -116,8 +118,8 @@ async fn an_unknown_agent_is_refused_by_name() {
 }
 
 /// The point of the whole setting: what the config says is what the agent is
-/// launched with, behind its registry command, on the spawn path and the
-/// resume path alike.
+/// launched with, behind its registry command, on every launch of a column's
+/// agent — the one that resumes its conversation included.
 #[tokio::test]
 async fn a_launch_takes_its_flags_from_the_agent_config() {
     let h = harness().discover_agents().await;
@@ -130,12 +132,14 @@ async fn a_launch_takes_its_flags_from_the_agent_config() {
             StatusCode::OK,
         )
         .await;
-    let (cast, _) = h.resumable_author().await;
-    let task = cast.task.id;
+    let (cast, _) = h.resumable_agent().await;
+    h.activate(&cast.goal).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let task = h.store.get_task(&cast.task.id).await.unwrap();
 
     let session = h
         .launcher
-        .resume_author(&task, "Round 1: please fix things.")
+        .start_step_agent(&task, cast.develop())
         .await
         .unwrap();
     eventually(TIMEOUT, "the first launch", || async {
@@ -154,11 +158,22 @@ async fn a_launch_takes_its_flags_from_the_agent_config() {
             StatusCode::OK,
         )
         .await;
-    let session = h
+    // Heard from before it goes down, so the relaunch resumes this session
+    // rather than replacing one that died on arrival.
+    eventually(TIMEOUT, "the agent to report", || async {
+        heard_from(&h.store.get_session(&session.id).await.unwrap())
+    })
+    .await;
+    h.launcher.kill_session(&session.id).await.unwrap();
+    let relaunched = h
         .launcher
-        .resume_author(&task, "Round 2: please fix things.")
+        .start_step_agent(&task, cast.develop())
         .await
         .unwrap();
+    assert_eq!(
+        relaunched.id, session.id,
+        "the same session, launched again"
+    );
     eventually(TIMEOUT, "the second launch", || async {
         h.agent.launches_for(&session.id).len() == 2
     })

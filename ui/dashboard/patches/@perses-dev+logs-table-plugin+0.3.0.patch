@@ -1,0 +1,47 @@
+diff --git a/node_modules/@perses-dev/logs-table-plugin/lib/components/LogRow/ansiColors.css b/node_modules/@perses-dev/logs-table-plugin/lib/components/LogRow/ansiColors.css
+new file mode 100644
+index 0000000..a80ae33
+--- /dev/null
++++ b/node_modules/@perses-dev/logs-table-plugin/lib/components/LogRow/ansiColors.css
+@@ -0,0 +1,41 @@
++/*
++ * Missing from the published 0.3.0 tarball (LogRow.js imports it, but it was
++ * never included in the package) — fixed upstream in 0.4.0, still a
++ * prerelease. Standard 16-colour ANSI palette, the same values `ansi_up`
++ * itself (this plugin's own dependency) defines its class names from, so log
++ * lines with ANSI colour codes still render them rather than plain text
++ * until a stable 0.4.0 lands and this patch (`patches/`) is dropped.
++ */
++.ansi-black-fg { color: #000000; }
++.ansi-red-fg { color: #bb0000; }
++.ansi-green-fg { color: #00bb00; }
++.ansi-yellow-fg { color: #bbbb00; }
++.ansi-blue-fg { color: #0000bb; }
++.ansi-magenta-fg { color: #bb00bb; }
++.ansi-cyan-fg { color: #00bbbb; }
++.ansi-white-fg { color: #ffffff; }
++.ansi-bright-black-fg { color: #555555; }
++.ansi-bright-red-fg { color: #ff5555; }
++.ansi-bright-green-fg { color: #00ff00; }
++.ansi-bright-yellow-fg { color: #ffff55; }
++.ansi-bright-blue-fg { color: #5555ff; }
++.ansi-bright-magenta-fg { color: #ff55ff; }
++.ansi-bright-cyan-fg { color: #55ffff; }
++.ansi-bright-white-fg { color: #ffffff; }
++
++.ansi-black-bg { background-color: #000000; }
++.ansi-red-bg { background-color: #bb0000; }
++.ansi-green-bg { background-color: #00bb00; }
++.ansi-yellow-bg { background-color: #bbbb00; }
++.ansi-blue-bg { background-color: #0000bb; }
++.ansi-magenta-bg { background-color: #bb00bb; }
++.ansi-cyan-bg { background-color: #00bbbb; }
++.ansi-white-bg { background-color: #ffffff; }
++.ansi-bright-black-bg { background-color: #555555; }
++.ansi-bright-red-bg { background-color: #ff5555; }
++.ansi-bright-green-bg { background-color: #00ff00; }
++.ansi-bright-yellow-bg { background-color: #ffff55; }
++.ansi-bright-blue-bg { background-color: #5555ff; }
++.ansi-bright-magenta-bg { background-color: #ff55ff; }
++.ansi-bright-cyan-bg { background-color: #55ffff; }
++.ansi-bright-white-bg { background-color: #ffffff; }

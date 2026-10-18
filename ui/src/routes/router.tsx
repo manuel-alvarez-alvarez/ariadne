@@ -23,14 +23,20 @@ import { createHashRouter, Navigate, type RouteObject, useParams } from "react-r
 
 import { AppShell, type PageHandle } from "@/components/app-shell"
 import { AgentsPage } from "@/features/agents/agents-page"
+import { ForgePage } from "@/features/forge/forge-page"
 import { GoalsListPage } from "@/features/goals/goals-list-page"
+import { IssuesPage } from "@/features/issues/issues-page"
 import { PermissionsPage } from "@/features/permissions/permissions-page"
+import { PullRequestsPage } from "@/features/pull-requests/pull-requests-page"
 import { RepositoriesPage } from "@/features/repositories/repositories-page"
 import { SessionsPage } from "@/features/sessions/sessions-page"
 import { SkillsPage } from "@/features/skills/skills-page"
+import { WorkflowsPage } from "@/features/workflows/workflows-page"
 import { RouteErrorPage } from "@/routes/error-page"
 import { NotFoundPage } from "@/routes/not-found-page"
 import { paths } from "@/routes/paths"
+import { StatsPage } from "@/routes/stats"
+import { recordNavigation } from "@/telemetry/telemetry"
 
 function GoalPanelRedirect() {
   const { goalId = "" } = useParams<{ goalId: string }>()
@@ -45,11 +51,25 @@ function TaskPanelRedirect() {
 const routes: RouteObject[] = [
   { index: true, element: <Navigate to={paths.goals()} replace /> },
   { path: "goals", element: <GoalsListPage />, handle: { title: "Goals" } satisfies PageHandle },
+  // Forge: what the forge integration (GitHub today) of an enabled
+  // repository reads, one screen with a tab each. The screen's title is the
+  // parent's.
+  {
+    path: "forge",
+    element: <ForgePage />,
+    handle: { title: "Forge" } satisfies PageHandle,
+    children: [
+      { index: true, element: <Navigate to={paths.pullRequests()} replace /> },
+      { path: "pull-requests", element: <PullRequestsPage /> },
+      { path: "issues", element: <IssuesPage /> },
+    ],
+  },
   { path: "goals/:goalId", element: <GoalPanelRedirect /> },
   { path: "tasks", element: <Navigate to={paths.goals()} replace /> },
   { path: "tasks/:taskId", element: <TaskPanelRedirect /> },
   { path: "sessions", element: <SessionsPage />, handle: { title: "Sessions" } },
   { path: "skills", element: <SkillsPage />, handle: { title: "Skills" } },
+  { path: "workflows", element: <WorkflowsPage />, handle: { title: "Workflows" } },
   { path: "agents", element: <AgentsPage />, handle: { title: "Agents" } },
   // The models were folded into the agents screen; the address outlives it.
   { path: "models", element: <Navigate to={paths.agents()} replace /> },
@@ -59,6 +79,7 @@ const routes: RouteObject[] = [
     handle: { title: "Permissions" } satisfies PageHandle,
   },
   { path: "repositories", element: <RepositoriesPage />, handle: { title: "Repositories" } },
+  { path: "stats", element: <StatsPage />, handle: { title: "Stats" } satisfies PageHandle },
   { path: "*", element: <NotFoundPage /> },
 ]
 
@@ -67,3 +88,11 @@ export const router = createHashRouter([
   // things and offer different ways on: see `error-page.tsx`.
   { path: "/", element: <AppShell />, errorElement: <RouteErrorPage />, children: routes },
 ])
+
+router.subscribe((state) => {
+  const route = state.matches
+    .map((match) => match.route.path)
+    .filter((path): path is string => path !== undefined && path !== "*")
+    .join("/")
+  if (route) recordNavigation(`/${route.replace(/^\/+/, "")}`)
+})

@@ -2,19 +2,18 @@
 # reads, so a failed test's name shows up in the run summary instead of
 # buried in the log. One profile: the whole suite, tmux and git tests
 # included, runs as a single invocation.
-[test-groups]
-# Daemon integration tests start Python stubs and real git worktrees, so cap
-# them at two to keep tick-driven assertions from starving on four-core CI.
-daemon-integration = { max-threads = 2 }
+
+[profile.default]
+# Mark tests that run past 10 seconds: no daemon test waits on a clock.
+# A test marked SLOW waits on sleep or a scheduler tick. The marker
+# does not fail the test; it signals a test that needs rework to
+# poll the thing it needs instead.
+slow-timeout = { period = "10s" }
 
 [profile.ci]
 # A run that stops at the first failure hides every other failure behind it,
 # so the report step sees one flaky test where twenty may have failed.
 fail-fast = false
-
-[[profile.ci.overrides]]
-filter = 'package(ariadne-daemon) & kind(test)'
-test-group = 'daemon-integration'
 
 [profile.ci.junit]
 path = "junit.xml"

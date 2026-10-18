@@ -4,20 +4,26 @@
 //! client deserializes them, utoipa derives the OpenAPI schemas from them.
 
 pub mod agents;
+pub mod attention;
+pub mod dashboards;
 pub mod doctor;
 pub mod error;
 pub mod events;
 pub mod goals;
+pub mod issues;
 pub mod logs;
 pub mod messages;
 pub mod models;
 pub mod permissions;
+pub mod pull_requests;
 pub mod repositories;
 pub mod sessions;
 pub mod skills;
+pub mod stats;
 pub mod stream;
 pub mod tasks;
 pub mod usage;
+pub mod workflows;
 
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};

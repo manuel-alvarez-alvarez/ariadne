@@ -42,6 +42,10 @@ interface AgentEventFilters extends PageFilters {
   task?: string
 }
 
+interface LearnedPermissionFilters {
+  repository?: string
+}
+
 /** What `GET /v1/outside-sessions` narrows its snapshot by, page aside. */
 interface OutsideSessionFilters {
   agent?: string
@@ -52,6 +56,21 @@ interface OutsideSessionFilters {
 }
 
 export const qk = {
+  pullRequests: {
+    all: () => ["pull-requests"] as const,
+    lists: () => ["pull-requests", "list"] as const,
+    list: (filters?: { repo?: string; role?: string; requested?: boolean }) =>
+      ["pull-requests", "list", filters ?? {}] as const,
+    /** By Ariadne's id of a request it works on, or by `repository:number`. */
+    detail: (id: string) => ["pull-requests", "detail", id] as const,
+    search: (repo: string, q: string) => ["pull-requests", "search", { repo, q }] as const,
+  },
+  issues: {
+    list: (repository: string, assigned: "me" | "all") =>
+      ["issues", "list", repository, { assigned }] as const,
+    /** Both assignment filters of one repository's issues. */
+    ofRepository: (repository: string) => ["issues", "list", repository] as const,
+  },
   goals: {
     all: () => ["goals"] as const,
     lists: () => ["goals", "list"] as const,
@@ -93,6 +112,14 @@ export const qk = {
     details: () => ["skills", "detail"] as const,
     detail: (name: string) => ["skills", "detail", name] as const,
   },
+  workflows: {
+    all: () => ["workflows"] as const,
+    lists: () => ["workflows", "list"] as const,
+    list: () => ["workflows", "list", {}] as const,
+    details: () => ["workflows", "detail"] as const,
+    detail: (name: string) => ["workflows", "detail", name] as const,
+    parse: (document: string) => ["workflows", "parse", document] as const,
+  },
   /**
    * The registered checkouts goals are created against
    * (`GET /v1/repositories`). One unfiltered list — the daemon takes no
@@ -113,6 +140,17 @@ export const qk = {
     all: () => ["agents"] as const,
     lists: () => ["agents", "list"] as const,
     list: () => ["agents", "list", {}] as const,
+  },
+  /**
+   * The authoritative "Needs attention" list (`GET /v1/attention`), one
+   * unfiltered list the daemon's own producers fill — `attention.ts` folds
+   * it into the task/session rows it derives itself rather than reading it
+   * blind.
+   */
+  attention: {
+    all: () => ["attention"] as const,
+    lists: () => ["attention", "list"] as const,
+    list: () => ["attention", "list", {}] as const,
   },
   /** The model catalog (`GET /v1/models`), one unfiltered list for all agents. */
   models: {
@@ -136,10 +174,36 @@ export const qk = {
     list: (filters?: AgentEventFilters) => ["agent-events", "list", filters ?? {}] as const,
   },
   /**
-   * The Laya settings behind the `ai` permission mode
-   * (`GET /v1/permissions/laya`). One row, so a detail key and no list.
+   * The AI permission model's settings, behind the `ai` permission mode
+   * (`GET /v1/permissions/ai`). One row, so a detail key and no list.
    */
   permissions: {
-    laya: () => ["permissions", "detail", "laya"] as const,
+    ai: () => ["permissions", "detail", "ai"] as const,
+  },
+  /**
+   * The webhook tunnel's switch and state (`GET /v1/forge/tunnel`). One row,
+   * so a detail key and no list.
+   */
+  forge: {
+    tunnel: () => ["forge", "detail", "tunnel"] as const,
+  },
+  learnedPermissions: {
+    all: () => ["learned-permissions"] as const,
+    lists: () => ["learned-permissions", "list"] as const,
+    list: (filters?: LearnedPermissionFilters) =>
+      ["learned-permissions", "list", filters ?? {}] as const,
+    details: () => ["learned-permissions", "detail"] as const,
+    detail: (id: string) => ["learned-permissions", "detail", id] as const,
+  },
+  /**
+   * Perses dashboard documents (`GET /v1/dashboards`), keyed by name rather
+   * than id — `DashboardDto` carries no id of its own.
+   */
+  dashboards: {
+    all: () => ["dashboards"] as const,
+    lists: () => ["dashboards", "list"] as const,
+    list: () => ["dashboards", "list", {}] as const,
+    details: () => ["dashboards", "detail"] as const,
+    detail: (name: string) => ["dashboards", "detail", name] as const,
   },
 } as const

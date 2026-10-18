@@ -10,13 +10,13 @@
 //! in the ACP registry and a model of it — on the way in and on the way out.
 //! The effort rides in the field beside it, checked against the model it is
 //! to run at before anything is written; `default` stays legal for the
-//! effort alone.
+//! effort alone. An edit of a task replaces its whole staffing: every column
+//! is staffed afresh, with the model and the effort the edit names for it.
 
 use crate::common;
 
 use ariadne_api::goals::GoalDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::Seat;
 
 use axum::http::StatusCode;
 
@@ -32,27 +32,46 @@ async fn goal_on(h: &Harness, pin: serde_json::Value) -> GoalDto {
         .await
 }
 
-/// A task on `goal`, its author and its one reviewer staffed with the pins
-/// given: two agents that answer for themselves, so no assertion below can
-/// pass by reading the other one's.
+/// The staffing of a task's `develop` and `review` columns, each agent on
+/// the pin given: two agents that answer for themselves, so no assertion
+/// below can pass by reading the other one's.
+fn staffing(develop: serde_json::Value, review: serde_json::Value) -> serde_json::Value {
+    let mut d = serde_json::json!({ "step": "develop", "skills": ["coding"] });
+    merge(&mut d, develop);
+    let mut r = serde_json::json!({ "step": "review", "skills": ["code-review"] });
+    merge(&mut r, review);
+    serde_json::json!([d, r])
+}
+
+/// A task on `goal`, its `develop` and `review` columns staffed with the
+/// pins given.
 async fn task_on(
     h: &Harness,
     goal: &GoalDto,
-    author: serde_json::Value,
-    reviewer: serde_json::Value,
+    develop: serde_json::Value,
+    review: serde_json::Value,
 ) -> TaskDto {
-    let mut a = serde_json::json!({ "seat": "author", "skills": ["coding"] });
-    merge(&mut a, author);
-    let mut r = serde_json::json!({ "seat": "reviewer", "skills": ["code-review"] });
-    merge(&mut r, reviewer);
     h.json(
         post_json(
             &format!("/v1/goals/{}/tasks", goal.id),
-            serde_json::json!({ "title": "Do the thing", "agents": [a, r] }),
+            serde_json::json!({ "title": "Do the thing", "agents": staffing(develop, review) }),
         ),
         StatusCode::CREATED,
     )
     .await
+}
+
+/// The edit that staffs `task` afresh: `PATCH /v1/tasks/{id}` with the whole
+/// staffing, which is what a change of one agent's pin amounts to.
+fn restaff(
+    task: &TaskDto,
+    develop: serde_json::Value,
+    review: serde_json::Value,
+) -> axum::http::Request<axum::body::Body> {
+    patch_json(
+        &format!("/v1/tasks/{}", task.id),
+        serde_json::json!({ "agents": staffing(develop, review) }),
+    )
 }
 
 /// The fields of `extra` written over `body`.
@@ -63,12 +82,12 @@ fn merge(body: &mut serde_json::Value, extra: serde_json::Value) {
     }
 }
 
-/// The agent in `seat`, which is what a pin is read off.
-fn agent(task: &TaskDto, seat: Seat) -> &ariadne_api::tasks::TaskAgentDto {
+/// The agent of column `step`, which is what a pin is read off.
+fn agent<'a>(task: &'a TaskDto, step: &str) -> &'a ariadne_api::tasks::TaskAgentDto {
     task.agents
         .iter()
-        .find(|a| a.seat == seat)
-        .unwrap_or_else(|| panic!("the task staffs no {}", seat.as_str()))
+        .find(|a| a.step == step)
+        .unwrap_or_else(|| panic!("the task staffs no {step}"))
 }
 
 /// A harness whose registry agent offers two models, discovered: a catalog
@@ -151,21 +170,21 @@ async fn a_request_with_no_model_is_refused_because_a_model_is_required() {
     // An agent assignment is held to the same rule: the field is required on
     // the wire, and the words that used to clear it are refused by the rule.
     let goal = goal_on(&h, serde_json::json!({ "model": "stub:model-one" })).await;
-    for (author, status) in [
+    for (develop, status) in [
         (
-            serde_json::json!({ "seat": "author", "skills": ["coding"] }),
+            serde_json::json!({ "step": "develop", "skills": ["coding"] }),
             StatusCode::UNPROCESSABLE_ENTITY,
         ),
         (
-            serde_json::json!({ "seat": "author", "skills": ["coding"], "model": "" }),
+            serde_json::json!({ "step": "develop", "skills": ["coding"], "model": "" }),
             StatusCode::BAD_REQUEST,
         ),
         (
-            serde_json::json!({ "seat": "author", "skills": ["coding"], "model": "default" }),
+            serde_json::json!({ "step": "develop", "skills": ["coding"], "model": "default" }),
             StatusCode::BAD_REQUEST,
         ),
         (
-            serde_json::json!({ "seat": "author", "skills": ["coding"], "model": "stub: " }),
+            serde_json::json!({ "step": "develop", "skills": ["coding"], "model": "stub: " }),
             StatusCode::BAD_REQUEST,
         ),
     ] {
@@ -173,7 +192,7 @@ async fn a_request_with_no_model_is_refused_because_a_model_is_required() {
             .error(
                 post_json(
                     &format!("/v1/goals/{}/tasks", goal.id),
-                    serde_json::json!({ "title": "A task", "agents": [author] }),
+                    serde_json::json!({ "title": "A task", "agents": [develop] }),
                 ),
                 status,
             )
@@ -193,9 +212,10 @@ async fn a_request_with_no_model_is_refused_because_a_model_is_required() {
     for model in ["", " ", "default", "stub: "] {
         let err = h
             .error(
-                patch_json(
-                    &format!("/v1/tasks/{}", task.id),
+                restaff(
+                    &task,
                     serde_json::json!({ "model": model }),
+                    serde_json::json!({ "model": "stub:model-one" }),
                 ),
                 StatusCode::BAD_REQUEST,
             )
@@ -206,9 +226,18 @@ async fn a_request_with_no_model_is_refused_because_a_model_is_required() {
             err.error.message
         );
     }
+    h.error(
+        restaff(
+            &task,
+            serde_json::json!({}),
+            serde_json::json!({ "model": "stub:model-one" }),
+        ),
+        StatusCode::UNPROCESSABLE_ENTITY,
+    )
+    .await;
     let untouched: TaskDto = h.json(get_task(&task.id), StatusCode::OK).await;
     assert_eq!(
-        agent(&untouched, Seat::Author).model,
+        agent(&untouched, "develop").model,
         "stub:model-two",
         "a refused edit moved nothing"
     );
@@ -245,8 +274,8 @@ async fn a_bare_agent_is_refused_wherever_a_model_is_written() {
     );
 }
 
-/// Every agent of a task answers for itself: the author's pin and the
-/// reviewer's are each read off their own row.
+/// Every agent of a task answers for itself: the develop column's pin and
+/// the review column's are each read off their own row.
 #[tokio::test]
 async fn a_task_staffs_each_agent_on_its_own_pin() {
     let h = harness().await;
@@ -259,17 +288,18 @@ async fn a_task_staffs_each_agent_on_its_own_pin() {
     )
     .await;
 
-    let author = agent(&task, Seat::Author);
-    assert_eq!(author.model, "stub:model-two");
-    assert_eq!(author.effort.as_deref(), Some("high"));
+    let develop = agent(&task, "develop");
+    assert_eq!(develop.model, "stub:model-two");
+    assert_eq!(develop.effort.as_deref(), Some("high"));
 
-    let reviewer = agent(&task, Seat::Reviewer);
-    assert_eq!(reviewer.model, "stub:model-three");
-    assert_eq!(reviewer.effort, None, "no effort chosen is the agent's own");
+    let review = agent(&task, "review");
+    assert_eq!(review.model, "stub:model-three");
+    assert_eq!(review.effort, None, "no effort chosen is the agent's own");
 }
 
-/// An edit moves the author's pin whole: the new model, and no effort left
-/// behind from the model that was.
+/// An edit moves a column's pin whole: the new model, and no effort left
+/// behind from the model that was. The other column keeps what the edit
+/// names for it.
 #[tokio::test]
 async fn an_edit_moves_the_pin_whole() {
     let h = harness().await;
@@ -284,19 +314,21 @@ async fn an_edit_moves_the_pin_whole() {
 
     let moved: TaskDto = h
         .json(
-            patch_json(
-                &format!("/v1/tasks/{}", task.id),
+            restaff(
+                &task,
                 serde_json::json!({ "model": "stub:model-three" }),
+                serde_json::json!({ "model": "stub:model-one" }),
             ),
             StatusCode::OK,
         )
         .await;
-    let author = agent(&moved, Seat::Author);
-    assert_eq!(author.model, "stub:model-three");
+    let develop = agent(&moved, "develop");
+    assert_eq!(develop.model, "stub:model-three");
     assert_eq!(
-        author.effort, None,
+        develop.effort, None,
         "the effort belonged to the model that was left behind"
     );
+    assert_eq!(agent(&moved, "review").model, "stub:model-one");
 }
 
 /// A model is one field, and it names the registry agent that runs it: a
@@ -384,11 +416,12 @@ async fn an_effort_is_checked_against_the_model_it_runs_at() {
     );
 }
 
-/// The effort rides beside the model and moves with it: an edit that names an
-/// effort alone leaves the model where it is, and `default` — still legal for
-/// the effort — clears it back to the agent's own.
+/// The effort rides beside the model: an edit that names the model the
+/// column already runs with another effort runs it at that effort, and
+/// `default` — still legal for the effort — clears it back to the agent's
+/// own.
 #[tokio::test]
-async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
+async fn an_edit_runs_the_same_model_at_another_effort_and_default_clears_it() {
     let h = harness().await;
     let goal = goal_on(&h, serde_json::json!({ "model": "stub:model-one" })).await;
     let task = task_on(
@@ -401,41 +434,43 @@ async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
 
     let deeper: TaskDto = h
         .json(
-            patch_json(
-                &format!("/v1/tasks/{}", task.id),
-                serde_json::json!({ "effort": "xhigh" }),
+            restaff(
+                &task,
+                serde_json::json!({ "model": "stub:model-two", "effort": "xhigh" }),
+                serde_json::json!({ "model": "stub:model-one" }),
             ),
             StatusCode::OK,
         )
         .await;
-    let author = agent(&deeper, Seat::Author);
+    let develop = agent(&deeper, "develop");
     assert_eq!(
-        author.model, "stub:model-two",
+        develop.model, "stub:model-two",
         "the model stayed where it was"
     );
-    assert_eq!(author.effort.as_deref(), Some("xhigh"));
+    assert_eq!(develop.effort.as_deref(), Some("xhigh"));
 
     let plain: TaskDto = h
         .json(
-            patch_json(
-                &format!("/v1/tasks/{}", task.id),
-                serde_json::json!({ "effort": "default" }),
+            restaff(
+                &task,
+                serde_json::json!({ "model": "stub:model-two", "effort": "default" }),
+                serde_json::json!({ "model": "stub:model-one" }),
             ),
             StatusCode::OK,
         )
         .await;
-    let author = agent(&plain, Seat::Author);
-    assert_eq!(author.model, "stub:model-two");
-    assert_eq!(author.effort, None);
+    let develop = agent(&plain, "develop");
+    assert_eq!(develop.model, "stub:model-two");
+    assert_eq!(develop.effort, None);
 }
 
 /// A model the user turned off is refused wherever an agent is staffed on it,
-/// and by name: the goal it would run in, the author of a task, a reviewer of
-/// one, and an edit that moves an agent onto it.
+/// and by name: the goal it would run in, either column of a task, and an
+/// edit that moves an agent onto it.
 ///
 /// Work already staffed on it is not disturbed — a pin is the snapshot a row
-/// was created with — so the check is on the model a request *names*, and an
-/// effort moved on its own goes through untouched.
+/// was created with — so the check is on the model a request *names*, and
+/// the task staffed before the model went off keeps running on it.
 #[tokio::test]
 async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
     let dir = tempfile::tempdir().unwrap();
@@ -489,13 +524,13 @@ async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
         .message,
     );
 
-    // An author, and a reviewer, on a task being created.
+    // The develop column, and the review column, on a task being created.
     for agents in [
-        serde_json::json!([{ "seat": "author", "skills": ["coding"], "model": off }]),
-        serde_json::json!([
-            { "seat": "author", "skills": ["coding"], "model": on },
-            { "seat": "reviewer", "skills": ["code-review"], "model": off },
-        ]),
+        serde_json::json!([{ "step": "develop", "skills": ["coding"], "model": off }]),
+        staffing(
+            serde_json::json!({ "model": on }),
+            serde_json::json!({ "model": off }),
+        ),
     ] {
         refused(
             h.error(
@@ -514,8 +549,9 @@ async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
     // And an edit that would move an agent onto it.
     refused(
         h.error(
-            patch_json(
-                &format!("/v1/tasks/{}", task.id),
+            restaff(
+                &task,
+                serde_json::json!({ "model": on }),
                 serde_json::json!({ "model": off }),
             ),
             StatusCode::BAD_REQUEST,
@@ -525,24 +561,11 @@ async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
         .message,
     );
 
-    // The task staffed on it before it went off is untouched, and its effort
-    // still moves: what a row runs on is what it was created with.
-    let moved: TaskDto = h
-        .json(
-            patch_json(
-                &format!("/v1/tasks/{}", task.id),
-                serde_json::json!({ "effort": "low" }),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    let author = moved
-        .agents
-        .iter()
-        .find(|a| a.seat == Seat::Author)
-        .expect("the task keeps its author");
-    assert_eq!(author.model, off);
-    assert_eq!(author.effort.as_deref(), Some("low"));
+    // The task staffed on it before it went off is untouched: what a row
+    // runs on is what it was created with, and no refused edit moved it.
+    let kept: TaskDto = h.json(get_task(&task.id), StatusCode::OK).await;
+    assert_eq!(agent(&kept, "develop").model, off);
+    assert_eq!(agent(&kept, "review").model, on);
 }
 
 /// A discovered catalog id — `<agent-id>:<model>`, the id `GET /v1/models`
@@ -574,18 +597,20 @@ async fn a_discovered_catalog_id_pins_agents_through_the_api() {
         serde_json::json!({ "model": "stub:old-model", "effort": "low" }),
     )
     .await;
-    assert_eq!(agent(&task, Seat::Author).model, "stub:old-model");
-    assert_eq!(agent(&task, Seat::Reviewer).model, "stub:old-model");
+    assert_eq!(agent(&task, "develop").model, "stub:old-model");
+    assert_eq!(agent(&task, "review").model, "stub:old-model");
     let moved: TaskDto = h
         .json(
-            patch_json(
-                &format!("/v1/tasks/{}", task.id),
+            restaff(
+                &task,
                 serde_json::json!({ "model": "stub:old-model", "effort": "low" }),
+                serde_json::json!({ "model": "stub:old-model" }),
             ),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(agent(&moved, Seat::Author).model, "stub:old-model");
+    assert_eq!(agent(&moved, "develop").model, "stub:old-model");
+    assert_eq!(agent(&moved, "develop").effort.as_deref(), Some("low"));
 
     // The pin reaches the registry command: the orchestrator spawned off it
     // runs the stub, with the bare model and effort halves pinned.
@@ -602,9 +627,10 @@ async fn a_discovered_catalog_id_pins_agents_through_the_api() {
     // An id the registry does not carry is refused as before.
     let err = h
         .error(
-            patch_json(
-                &format!("/v1/tasks/{}", task.id),
+            restaff(
+                &task,
                 serde_json::json!({ "model": "nobody:some-model" }),
+                serde_json::json!({ "model": "stub:old-model" }),
             ),
             StatusCode::BAD_REQUEST,
         )

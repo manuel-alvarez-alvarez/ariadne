@@ -1,6 +1,6 @@
 ---
 name: spec-writing
-description: Write a specification - scope, behavior, and the criteria that prove it. Use when a goal has no spec or its criteria are missing.
+description: When a goal has no spec, writes the scope, behavior, and criteria that prove it.
 ---
 
 # Spec writing
@@ -12,7 +12,8 @@ must be one a reader can test.
 
 1. Read the goal and the code it touches. List what you do not know.
    Done when each unknown is written as a question.
-2. Ask the user about each unknown. Ask one question at a time.
+2. Ask the orchestrator about each unknown with `send_message`. Ask one
+   question at a time.
    Done when no question is open.
 3. Write the scope. Name what is in it. Name what is out of it, and say
    where that belongs instead.
@@ -20,7 +21,8 @@ must be one a reader can test.
 5. Write one acceptance criterion per claim. Name the test that proves it.
    Done when every claim has a criterion and every criterion names a test.
 6. Follow the format of the specs already in the repository. Where there
-   are none, agree a path and a format with the user first.
+   are none, agree a path and a format with the orchestrator first.
+7. Call `complete_step` with the column report.
 
 ## Rules
 
@@ -44,4 +46,4 @@ must be one a reader can test.
 ## Done
 
 The spec names its scope, its claims and its criteria. Every criterion
-names a test. The user agreed to it in writing.
+names a test. The orchestrator agreed to it through `send_message`.

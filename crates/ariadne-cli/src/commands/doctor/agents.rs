@@ -13,9 +13,9 @@ use super::Check;
 use super::checks::{THERE, forge_check, required_tool};
 
 /// What to do about a Python the daemon cannot install the model into, whether it
-/// is too old or was not found at all — the one hint both `python_check` and
+/// is unsupported or was not found at all — the one hint both `python_check` and
 /// `ClientError::hint`'s `python_unavailable` case give, in the same words.
-const PYTHON_HINT: &str = "install Python 3.10 or newer, or set python_bin in config.toml";
+const PYTHON_HINT: &str = "install Python 3.12 or 3.13, or set python_bin in config.toml";
 
 /// The daemon's cached discovery result for each ACP registry entry — and,
 /// where none of them is ready, the failure that says no session can be
@@ -118,7 +118,7 @@ pub(super) fn daemon_environment(
     // A forge CLI is judged by the same two questions wherever it is reported
     // from, and neither of them stops a session being spawned.
     checks.extend(daemon.tools.iter().map(|tool| {
-        match tool.authenticated.is_some() || matches!(tool.name.as_str(), "gh" | "glab") {
+        match tool.authenticated.is_some() || tool.name == "gh" {
             true => forge_check(tool, THERE),
             false => required_tool(tool, THERE),
         }
@@ -166,9 +166,9 @@ fn python_check(python: &PythonDto) -> Check {
         (true, _, Some(version)) => Check::ok("python", format!("Python {version}")),
         (false, Some(path), Some(version)) => Check::warn(
             "python",
-            format!("python {version} found, the AI permission model needs 3.10 or newer"),
+            format!("python {version} found, the AI permission model needs 3.12 or 3.13"),
         )
-        .hint(format!("{path} is too old — {PYTHON_HINT}")),
+        .hint(format!("{path} is unsupported — {PYTHON_HINT}")),
         _ => Check::warn("python", "not found").hint(PYTHON_HINT),
     }
 }
@@ -177,17 +177,18 @@ fn python_check(python: &PythonDto) -> Check {
 /// permission mode among four and nothing else depends on it.
 fn ai_permissions_check(status: &AiPermissionsStatusDto) -> Check {
     match status.state {
-        AiPermissionsState::Disabled => Check::ok("ai-permissions", "disabled"),
-        AiPermissionsState::Installing => Check::ok("ai-permissions", "installing"),
+        AiPermissionsState::Disabled => Check::ok("ai permissions", "disabled"),
+        AiPermissionsState::Installing => Check::ok("ai permissions", "installing"),
         AiPermissionsState::Ready => Check::ok(
-            "ai-permissions",
+            "ai permissions",
             format!(
-                "ready {}",
-                status.installed_release.as_deref().unwrap_or("-")
+                "ready kev-{} on {}",
+                status.flavour.as_str(),
+                status.device.as_str()
             ),
         ),
         AiPermissionsState::Failed => Check::warn(
-            "ai-permissions",
+            "ai permissions",
             format!(
                 "failed: {}",
                 status.last_error.as_deref().unwrap_or("unknown reason")
@@ -296,11 +297,7 @@ mod tests {
             home: "/home/me/.ariadne".into(),
             socket_path: "/home/me/.ariadne/ariadned.sock".into(),
             acp_agents: Vec::new(),
-            tools: vec![
-                binary("git", false, None),
-                binary("gh", true, Some(false)),
-                binary("glab", false, None),
-            ],
+            tools: vec![binary("git", false, None), binary("gh", true, Some(false))],
             python: ariadne_api::permissions::PythonDto {
                 path: Some("/usr/bin/python3".into()),
                 version: Some("3.12.1".into()),
@@ -316,11 +313,8 @@ mod tests {
         assert_eq!(by_name(&checks, "git").status, Status::Fail);
         assert_eq!(by_name(&checks, "gh").status, Status::Warn);
         assert!(by_name(&checks, "gh").detail.contains("not signed in"));
-        let glab = by_name(&checks, "glab");
-        assert_eq!(glab.status, Status::Warn);
-        assert!(glab.detail.contains("not found on the daemon's PATH"));
         assert_eq!(by_name(&checks, "python").status, Status::Ok);
-        assert_eq!(by_name(&checks, "ai-permissions").status, Status::Ok);
+        assert_eq!(by_name(&checks, "ai permissions").status, Status::Ok);
 
         let checks = daemon_environment(None, None);
         assert_eq!(checks.len(), 1);
@@ -331,9 +325,18 @@ mod tests {
     fn ai_permissions_status(state: AiPermissionsState) -> AiPermissionsStatusDto {
         AiPermissionsStatusDto {
             enabled: true,
-            checkpoints: ariadne_api::permissions::AiPermissionsCheckpoints::English,
-            threshold: 0.8,
-            schedule: None,
+            allow_threshold: 0.2,
+            deny_threshold: 0.8,
+            thresholds_default: false,
+            flavour: ariadne_api::permissions::Flavour::Kev4B,
+            device: ariadne_api::permissions::Device::Mlx,
+            hardware: ariadne_api::permissions::HardwareDto {
+                os: "macos".into(),
+                arch: "aarch64".into(),
+                memory_bytes: 64 * 1024 * 1024 * 1024,
+                gpu: None,
+            },
+            flavours: Vec::new(),
             python: PythonDto {
                 path: Some("/usr/bin/python3".into()),
                 version: Some("3.12.1".into()),
@@ -346,16 +349,6 @@ mod tests {
             endpoint: None,
             last_refresh_at: None,
             last_error: None,
-            prompts: ariadne_api::permissions::AiPermissionsPrompts {
-                question: "q".into(),
-                allow_criteria: "a".into(),
-                review_criteria: "r".into(),
-            },
-            default_prompts: ariadne_api::permissions::AiPermissionsPrompts {
-                question: "q".into(),
-                allow_criteria: "a".into(),
-                review_criteria: "r".into(),
-            },
         }
     }
 
@@ -381,7 +374,18 @@ mod tests {
         let check = python_check(&too_old);
         assert_eq!(check.status, Status::Warn);
         assert!(check.detail.contains("3.9.2"), "{}", check.detail);
-        assert!(check.detail.contains("3.10 or newer"), "{}", check.detail);
+        assert!(check.detail.contains("3.12 or 3.13"), "{}", check.detail);
+        assert!(check.hint.as_deref().unwrap().contains("unsupported"));
+
+        let too_new = PythonDto {
+            path: Some("/usr/bin/python3".into()),
+            version: Some("3.14.0".into()),
+            ok: false,
+        };
+        let check = python_check(&too_new);
+        assert_eq!(check.status, Status::Warn);
+        assert!(check.detail.contains("3.14.0"), "{}", check.detail);
+        assert!(check.hint.as_deref().unwrap().contains("unsupported"));
 
         let missing = PythonDto {
             path: None,
@@ -391,7 +395,13 @@ mod tests {
         let check = python_check(&missing);
         assert_eq!(check.status, Status::Warn);
         assert_eq!(check.detail, "not found");
-        assert!(check.hint.as_deref().unwrap().contains("Python 3.10"));
+        assert!(
+            check
+                .hint
+                .as_deref()
+                .unwrap()
+                .contains("Python 3.12 or 3.13")
+        );
     }
 
     /// The four states the model's install reports, none of them a failure.
@@ -407,7 +417,7 @@ mod tests {
         );
         let ready = ai_permissions_check(&ai_permissions_status(AiPermissionsState::Ready));
         assert_eq!(ready.status, Status::Ok);
-        assert!(ready.detail.contains("v0.1.4"), "{}", ready.detail);
+        assert_eq!(ready.detail, "ready kev-4b on mlx");
 
         let failed = AiPermissionsStatusDto {
             last_error: Some("pip install failed".into()),

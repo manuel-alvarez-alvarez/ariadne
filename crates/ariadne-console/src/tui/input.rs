@@ -11,6 +11,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::{DIM, INPUT_CONTINUATION, INPUT_PLACEHOLDER, INPUT_PROMPT, INPUT_RULE, USER};
+use crate::wrap;
 
 /// How many rows of typed text the input box grows to before it scrolls.
 const INPUT_ROWS: usize = 4;
@@ -66,17 +67,12 @@ impl Input {
             let mut start = 0;
             let mut end = 0;
             let mut used = 0;
-            for grapheme in text.graphemes(true) {
-                let grapheme_width = grapheme.width();
-                if used > 0 && used + grapheme_width > width {
-                    rows.push(VisualRow { line, start, end });
-                    start = end;
-                    used = 0;
-                }
-                end += grapheme.chars().count();
-                used += grapheme_width;
+            for row in wrap::wrap_exact(&text, width) {
+                end = start + row.chars().count();
+                used = wrap::width(&row);
+                rows.push(VisualRow { line, start, end });
+                start = end;
             }
-            rows.push(VisualRow { line, start, end });
             if line == self.row && self.column == end && used == width {
                 rows.push(VisualRow {
                     line,
@@ -99,8 +95,9 @@ impl Input {
         u16::try_from(rows).unwrap_or(1) + BORDER_ROWS
     }
 
-    /// Draw the box, the text in it and the cursor.
-    pub(super) fn draw(&self, frame: &mut Draw, area: Rect) {
+    /// Draw the box, the text in it and the cursor, and `hint` dim after the
+    /// text, which is not input.
+    pub(super) fn draw(&self, frame: &mut Draw, area: Rect, hint: Option<&str>) {
         let width = usize::from(area.width);
         self.width.set(width);
         let rule = Line::styled(INPUT_RULE.repeat(width), DIM);
@@ -119,8 +116,8 @@ impl Input {
         );
 
         let rows = self.visual_rows(width);
-        let empty = self.lines.len() == 1 && self.lines[0].is_empty();
-        let lines = rows
+        let empty = self.is_empty();
+        let mut lines = rows
             .iter()
             .enumerate()
             .map(|(at, row)| {
@@ -141,6 +138,9 @@ impl Input {
                 Line::from(vec![marker, content])
             })
             .collect::<Vec<_>>();
+        if let (Some(hint), Some(last)) = (hint, lines.last_mut()) {
+            last.push_span(Span::styled(hint.to_string(), DIM));
+        }
         let text_area = Rect::new(
             area.x,
             area.y.saturating_add(1),
@@ -279,7 +279,50 @@ impl Input {
             .unwrap_or(self.lines[self.row].len())
     }
 
-    fn joined(&self) -> String {
+    /// Whether the box holds nothing at all.
+    pub(super) fn is_empty(&self) -> bool {
+        self.lines.len() == 1 && self.lines[0].is_empty()
+    }
+
+    /// The first word of the box, while no white space is before the
+    /// cursor: the word the cursor is in. `None` once it has left it.
+    pub(super) fn leading_word(&self) -> Option<String> {
+        if self.row != 0
+            || self.lines[0][..self.column]
+                .iter()
+                .any(|c| c.is_whitespace())
+        {
+            return None;
+        }
+        Some(
+            self.lines[0]
+                .iter()
+                .take_while(|character| !character.is_whitespace())
+                .collect(),
+        )
+    }
+
+    /// Write `word` over the first word of the box, with a space after it
+    /// where `space` is set, and put the cursor after both.
+    pub(super) fn complete(&mut self, word: &str, space: bool) {
+        let line = &mut self.lines[0];
+        let end = line
+            .iter()
+            .position(|character| character.is_whitespace())
+            .unwrap_or(line.len());
+        let mut written: Vec<char> = word.chars().collect();
+        let spaced = space && line.get(end).is_some_and(|c| c.is_whitespace());
+        if space && !spaced {
+            written.push(' ');
+        }
+        let length = written.len() + usize::from(spaced);
+        line.splice(..end, written);
+        self.row = 0;
+        self.column = length;
+        self.vertical_column = None;
+    }
+
+    pub(super) fn joined(&self) -> String {
         self.lines
             .iter()
             .map(|line| line.iter().collect::<String>())

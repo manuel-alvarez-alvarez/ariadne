@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Ariadne Desktop",
-  "version": "0.9.0",
+  "version": "0.11.0",
   "identifier": "dev.ariadne.ui",
   "build": {
     "frontendDist": "../dist",
@@ -19,11 +19,12 @@
         "minWidth": 900,
         "minHeight": 600,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "acceptFirstMouse": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self' http: https: ws: wss: ipc: http://ipc.localhost; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     }
   },
   "bundle": {

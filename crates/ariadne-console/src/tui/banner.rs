@@ -1,11 +1,11 @@
 //! The short session identity banner printed into scrollback as a console opens.
 
 use ratatui::text::Line;
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::Header;
 use crate::theme;
+use crate::wrap::clip;
 
 const FRAME_AT: usize = 40;
 
@@ -94,25 +94,6 @@ pub(super) fn draw(header: &Header, width: usize) -> Vec<Line<'static>> {
         theme::BANNER,
     ));
     lines
-}
-
-/// Cut at a grapheme boundary and account for display width.
-fn clip(text: &str, room: usize) -> String {
-    if text.width() <= room {
-        return text.to_string();
-    }
-    let mut cut = String::new();
-    let mut used = 0;
-    for grapheme in text.graphemes(true) {
-        let width = grapheme.width();
-        if used + width > room.saturating_sub(1) {
-            break;
-        }
-        used += width;
-        cut.push_str(grapheme);
-    }
-    cut.push('…');
-    cut
 }
 
 #[cfg(test)]

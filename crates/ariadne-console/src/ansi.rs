@@ -324,8 +324,6 @@ fn color(out: &mut impl Write, color: Color, base: u8) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
     use ratatui::style::Style;
@@ -334,50 +332,9 @@ mod tests {
     use ratatui::{Terminal, TerminalOptions, Viewport};
 
     use crate::tui::Anchored;
+    use crate::tui::testing::Tap;
 
     use super::*;
-
-    /// The bytes the backend wrote, readable while the terminal still owns
-    /// the backend.
-    #[derive(Clone, Default)]
-    struct Tap(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for Tap {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl Tap {
-        /// What a terminal of `window`'s size shows after reading the bytes,
-        /// scrolled `back` rows into its scrollback: one trimmed string per
-        /// row.
-        fn screen(&self, window: &Window, back: usize) -> Vec<String> {
-            let size = window.size();
-            let mut parser = vt100::Parser::new(size.height, size.width, back);
-            parser.process(&self.0.lock().unwrap());
-            parser.screen_mut().set_scrollback(back);
-            parser
-                .screen()
-                .contents()
-                .lines()
-                .map(|row| row.trim_end().to_string())
-                .collect()
-        }
-
-        fn cursor(&self, window: &Window) -> Position {
-            let size = window.size();
-            let mut parser = vt100::Parser::new(size.height, size.width, 0);
-            parser.process(&self.0.lock().unwrap());
-            let (y, x) = parser.screen().cursor_position();
-            Position { x, y }
-        }
-    }
 
     /// An inline viewport of 3 rows on the backend, under the pane's own
     /// backend as every host has it ([`crate::tui::open`]).
@@ -435,7 +392,7 @@ mod tests {
                 row.trim_end().to_string()
             })
             .collect();
-        assert_eq!(tap.screen(&window, 0), expected);
+        assert_eq!(tap.screen_at(&window, 0), expected);
         let bytes = tap.0.lock().unwrap().clone();
         let text = String::from_utf8_lossy(&bytes);
         assert!(
@@ -573,9 +530,9 @@ mod tests {
             .unwrap();
         draw(&mut terminal, &["status", "[input]"]);
 
-        assert_eq!(tap.screen(&window, 0), ["third", "status", "[input]"]);
+        assert_eq!(tap.screen_at(&window, 0), ["third", "status", "[input]"]);
         assert_eq!(
-            tap.screen(&window, 2),
+            tap.screen_at(&window, 2),
             ["first", "second", "third", "status"],
             "the two rows that ran off the top are in the scrollback"
         );
@@ -664,11 +621,11 @@ mod tests {
         };
         terminal.draw(boxed).unwrap();
         assert!(
-            tap.screen(&window, 0)
+            tap.screen_at(&window, 0)
                 .iter()
                 .any(|row| row == "┌──────────┐"),
             "{:?}",
-            tap.screen(&window, 0)
+            tap.screen_at(&window, 0)
         );
 
         window.set(6, 6);
@@ -676,9 +633,9 @@ mod tests {
         terminal.draw(boxed).unwrap();
 
         assert!(
-            tap.screen(&window, 0).iter().any(|row| row == "┌────┐"),
+            tap.screen_at(&window, 0).iter().any(|row| row == "┌────┐"),
             "{:?}",
-            tap.screen(&window, 0)
+            tap.screen_at(&window, 0)
         );
     }
 }

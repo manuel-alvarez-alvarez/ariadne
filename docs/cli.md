@@ -3,6 +3,12 @@
 Use `ariadne` to create goals, follow the work, and connect to an agent's
 console. `ariadne --help` is the complete command reference.
 
+## Command telemetry
+
+The CLI sends a command count, duration, warnings, and errors to its daemon.
+Set `ARIADNE_TELEMETRY=off` to disable this for one command or shell session.
+The CLI does not send prompt or message text.
+
 ## A first run
 
 Choose a model that `ariadne models ls` reports, then create a goal with its
@@ -35,11 +41,29 @@ The listing shows every agent's id, status and command. A rejected agent also
 shows why it could not be used. Use `--format json` when a script needs the
 unchanged list returned by the daemon.
 
+## Test an AI permission request
+
+Use this command to see how the enabled AI permission model scores one tool
+request without granting or recording anything:
+
+```sh
+ariadne permissions ai test --tool "git status" --kind execute \
+  --input '{"command":"git status","description":"Show the status"}' \
+  --option Yes --option "Yes, and don't ask again for git status * commands" --option No \
+  --workspace "$PWD"
+```
+
+It prints a line such as `ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)`. `--tool` is
+the tool call title the model sees: the command for `Bash`, `Edit <path>` for
+an edit. Repeat `--option` for each offered option; the first represents an
+allowing option. Repeat `--location` for each path the call touches.
+`--input` must be valid JSON. `--format json` prints the full response.
+
 ## List every session
 
-`ariadne session ls` lists Ariadne's own sessions — an orchestrator's, an
-author's, a reviewer's — next to outside sessions: conversations an ACP agent
-holds that Ariadne never started. Rows come newest activity first.
+`ariadne session ls` lists Ariadne's own sessions — an orchestrator's, a
+column agent's, a reviewer's, a keeper's — next to outside sessions: conversations an ACP
+agent holds that Ariadne never started. Rows come newest activity first.
 
 ```sh
 ariadne session ls
@@ -83,8 +107,8 @@ above.
 
 ```sh
 ariadne attach <goal-id>                 # the orchestrator
-ariadne attach <task-id>                 # the task's author
-ariadne attach <task-id> --seat reviewer # that task's reviewer
+ariadne attach <task-id>                 # the agent of the task's current column
+ariadne task attach <task-id> --step review   # one column's agent instead
 ariadne attach <session-id>              # one specific session, live or ended
 ariadne attach <internal-id> --agent codex-acp  # an outside session
 ```
@@ -115,7 +139,7 @@ your shell prompt comes back right under the last block, so the transcript
 stays in your scrollback, each line once.
 
 ```
- author · claude:opus · running   ⠹ thinking 12s
+ agent · claude:opus · running   ⠹ thinking 12s
 ────────────────────────────────────────────────────────
 ❯ the input box
 ────────────────────────────────────────────────────────
@@ -139,8 +163,8 @@ a turn ends. Nothing is shown there before the session has spent a token.
 
 Every fold below is one press of Ctrl-O away. It switches the pane between
 folded, which is where each attach starts, and whole, which draws every line
-of a tool's output, a diff, a thought and a daemon prompt; press it again to
-fold them back. A reconnect keeps whichever the attach had. A block that
+of a tool's output, a diff and a daemon prompt; press it again to fold them
+back. A thought is always whole. A reconnect keeps whichever the attach had. A block that
 leaves for the scrollback while the pane is whole keeps every line there too,
 since a block already in the scrollback cannot be drawn again. A block that
 is part-way into the scrollback keeps the fold its first lines had, and
@@ -189,6 +213,26 @@ An empty box says `Tell the agent what to do` in dim text. The hint is not
 part of the prompt. The box grows to four text rows, then scrolls with the
 cursor.
 
+### Agent slash commands
+
+When an agent supplies slash commands, type `/` at the start of the input box
+to open its command list. Typing after the `/` filters the names without
+regard to case. The list comes from the agent, so it can differ between
+agents and sessions. Claude ACP, Codex ACP, and OpenCode supplied a list in
+the terminal console check.
+
+| Key | What it does while the list is open |
+| --- | --- |
+| Up, Down | Move the selected command without moving through prompt history |
+| Tab | Put the selected command and a trailing space in the input box |
+| Enter | Run a selected command without input; for a command with input, put its name and a trailing space in the box |
+| Escape | Close the list and keep the text in the input box |
+
+The hint after a command with input describes its argument and is not sent.
+Other editing keys work as they do in the input box. Press Enter after a
+command with its input to run it. If the text does not name a listed command,
+including a path such as `/tmp/x`, Enter sends it as an ordinary prompt.
+
 The transcript starts with a short welcome banner naming the seat, task (or
 orchestrator goal), model and effort, repository, and session, and one blank
 line under it. It scrolls into the scrollback like any other line.
@@ -213,7 +257,7 @@ in a language the console knows, such as `rust`, `json` or `sh`, is coloured
 in your terminal's own palette: comments dim, strings green, keywords
 magenta, numbers cyan and types yellow. Other fenced code is drawn in one
 colour, and so is a language the console does not bundle, such as TOML. A
-thought is dimmed and folded to a few lines, until Ctrl-O unfolds it. A plan
+thought is markdown too, dimmed and always drawn whole. A plan
 is a checklist that counts what is done (`plan 2/5`): `☐` pending, `◐` in
 progress, `☑` done and dimmed. A briefing or a nudge from the daemon shows
 under `» daemon`, folded to its first six lines, until Ctrl-O unfolds it. An
@@ -262,6 +306,9 @@ replacement draws plain instead.
 | Shift+Enter, Alt+Enter, Ctrl-J | Starts a new line without sending. Shift+Enter needs a terminal that reports it through the kitty keyboard protocol; Alt+Enter and Ctrl-J work in every terminal |
 | `\` then Enter | Removes the final backslash and starts a new line without sending |
 | ↑, ↓ | Moves by a wrapped row; at the first or last row, moves through prompt history |
+| Home | Moves to the start of the line |
+| End | Moves to the end of the line |
+| Delete | Deletes the character after the cursor |
 | Ctrl-A, Ctrl-E | Moves to the start or the end of the line |
 | Ctrl-U, Ctrl-K | Deletes to the start or the end of the line |
 | Ctrl-W | Deletes the word before the cursor |
@@ -300,7 +347,7 @@ The task form finds the session for you:
 ```sh
 ariadne session logs <session-id> --tail 20
 ariadne session logs <session-id> --since 10m --kind agent_message
-ariadne task logs <task-id> --seat reviewer --follow
+ariadne task logs <task-id> --follow
 ```
 
 `--tail N` keeps the last N blocks. `--since` accepts RFC 3339 or a duration
@@ -312,15 +359,24 @@ every turn it ever ran; during `--follow`, `--kind` also narrows new events.
 Use `ariadne session send <session-id> "Please explain the failure"`
 when a script or a one-line response is enough. When a session is waiting on a
 permission request, the console shows the call it asks about — its head line,
-and the whole command or the diff under it — and then its choices; pick one
-with the arrow keys or its number key. See
-[Permission modes](permissions.md).
+the rest of the command or the diff under it — and then its choices; pick one
+with the arrow keys or its number key. The rest of the command draws in your
+terminal's own foreground, not dimmed. See [Permission modes](permissions.md).
+When an agent asks you a question, it calls `wait_for_user` with a one-line
+hint, then writes the whole question in its reply in the console, as any other
+turn: a numbered list of the open points and their options. The hint is what
+the Needs attention list shows, and the console draws it above the question as
+`waiting for you · <hint>`. The daemon
+refuses a hint over 100 characters or over more than one line, so the question
+is never hidden inside the call. Answer by typing in the console; that input
+answers every question the session has open. A later turn keeps a question
+only when it calls `wait_for_user` again with its hint. Otherwise, the turn
+ending ends the wait.
 
 ```
 ─ permission ───────────────────────────────────
 Bash
 ○ $ cargo build
-    cargo build
     cargo nextest run
 ❯ 1. Allow
   2. Reject
@@ -379,31 +435,272 @@ permission requests are answered belongs to the repository, not the task:
 ariadne repo update <repo-id> --permission-mode ask
 ```
 
-See [Permission modes](permissions.md) and [Resuming a session](resuming-sessions.md)
-for the related session workflows.
+A repository's `supervise_posts` flag is on by default: it puts agent
+replies, reviews and resolves in your pending GitHub review, and opens pull
+requests as drafts. See [Repositories, branches and
+worktrees](../specs/002-repositories-branches-and-worktrees.md), rule 13, for
+the rule. The desktop app and `repo inspect` show it only once the
+repository's forge integration is on — see [Forge
+integration](../specs/025-forge-integration.md), rule 16. Turn it off with:
 
-## Permissions and Laya
+```sh
+ariadne repo update <repo-id> --supervise-posts off
+```
 
-`ariadne permissions` manages Laya, the model behind the `ai` permission
-mode: see [Permission modes](permissions.md#laya) for what it installs and
+## Exhausted models and automatic switching
+
+When a model runs out of tokens, reaches a rate limit, or hits another quota
+exhaustion, the daemon can switch to another agent or model. Set `auto_switch`
+to `false` in the configuration to wait for input instead.
+
+The daemon picks a replacement in this order: another agent at the same rank,
+then the same agent at the same rank, then one rank up, then one rank down. For
+example, a `balanced` model tries another balanced agent, then itself, then
+`frontier`, then `fast`.
+When the current model has no rank, or when nothing fits, the daemon flags the
+session `exhausted` and waits. OpenCode's silent retries are not detected, so a
+token limit there cannot trigger a switch.
+
+Switch to another agent or model yourself at any time:
+
+```sh
+ariadne session switch <id> --model codex-acp:<model-id>
+```
+
+See [Configuration](configuration.md) and [Resuming a session](resuming-sessions.md)
+for the related configuration and session workflows.
+
+## AI permissions
+
+Use `ariadne permissions learned` to inspect and remove the recorded
+permission answers:
+
+```sh
+ariadne permissions learned list --repo ~/projects/api
+ariadne permissions learned show <id>
+ariadne permissions learned rm <id>
+```
+
+`list` accepts a repository id or path, and shows the tool, the level, the
+family, the key, the scope, the permission mode at the time (`target`) and
+the selected option. `show` prints every field, the risk tags included, with
+the tool call (its original input included), the options and the model
+output as formatted JSON. Only a permission decision writes a row, so there is no `add` or
+`edit`. Add `--format json` to any verb for JSON output.
+
+`ariadne permissions ai` manages the AI permission model behind the `ai` permission
+mode: see [Permission modes](permissions.md#the-ai-permission-model) for what it installs and
 what each setting does.
 
 ```sh
-ariadne permissions show                    # settings, install state, python
-ariadne permissions enable --wait            # turn it on and wait for the install
-ariadne permissions set --checkpoints all    # english (843 MB) or all (2.4 GB)
-ariadne permissions set --threshold 0.6      # how sure Laya has to be, 0 to 1
-ariadne permissions set --schedule 03:30     # daily reinstall, or --no-schedule
-ariadne permissions refresh --wait           # install again, on the settings as they stand
-ariadne permissions disable                  # keeps the files
+ariadne permissions ai show                    # settings, hardware, flavours and devices
+ariadne permissions ai enable --wait            # turn it on and wait for the install
+ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
+ariadne permissions ai set --default-thresholds # back to the flavour's pair
+ariadne permissions ai set --flavour 9b --device cuda  # only a combination the machine can run
+ariadne permissions ai refresh --wait           # install again, on the settings as they stand
+ariadne permissions ai disable                  # keeps the files
 ```
+
+Each flavour has a default threshold pair, and a pair you never set follows
+the flavour ([Permission modes](permissions.md#the-ai-permission-model) lists
+them). Each threshold must be from 0 to 1, and the allow threshold must be
+lower than the deny threshold. The daemon refuses an invalid pair without
+changing either setting. A threshold you set keeps the pair across a flavour
+change; `--default-thresholds` goes back to the flavour's pair and cannot be
+given with a threshold.
 
 `enable` and `refresh` answer at once with `installing`; `--wait` blocks
 until the install leaves that state and exits 1 with the reason on a
-`failed` one. A repository refused `ai` before Laya is on, and a `laya_disabled`
-error anywhere, name the fix: `run ariadne permissions enable`. `ariadne
-doctor` reports the Python interpreter Laya needs and where its install
+`failed` one. A repository refused `ai` before the AI permission model is on, and an `ai_disabled`
+error anywhere names the fix: `run ariadne permissions ai enable`. `ariadne
+doctor` reports the Python interpreter the AI permission model needs and where its install
 stands, next to the rest of the daemon's environment.
+
+## Pull requests, issues and the forge
+
+```sh
+ariadne repo add ~/projects/api --forge on
+ariadne repo update <repo-id> --forge off
+```
+
+`repo add` and `repo update` take `--forge on` or `--forge off` to work with
+the forge a repository's remote is on, once `gh` is signed in to
+its host. No `--forge` flag sends no change to it. There is no repository
+setting that pins a review: every review's model and effort are picked on
+the request itself, by `pr review` below. A request a task opens needs no
+pin either way: the agent of the task's `pr` column keeps it. See [The
+forge integration](forge.md) for what each session does.
+
+```sh
+ariadne pr ls --repo <repo-id>
+ariadne pr ls --mine
+ariadne pr ls --review-requests --watch
+ariadne pr search --repo <repo-id> "rate limit"
+ariadne pr inspect <repo-id> 42
+ariadne pr refresh --repo <repo-id>
+ariadne pr review <repo-id> 42 --model claude-acp:<model-id>
+ariadne pr review <repo-id> 42 --model claude-acp:<model-id> --skill security-review --attach
+ariadne pr review <repo-id> 42 --stop
+ariadne pr babysit <repo-id> 42 --model claude-acp:<model-id>
+ariadne pr babysit <repo-id> 42 --stop
+```
+
+`ariadne pr ls` lists the open requests from each enabled repository's last
+fetch, as the desktop's **All** does. A repository with no fetch yet has no
+requests in the list. `--mine` narrows it to
+your own, and `--review-requests` to the ones that ask for your review; the
+two do not combine. `--repo` narrows it to one repository, and `--watch`
+redraws it as requests move. The author column reads "you" on a request of
+yours, and the `ariadne` column says whether Ariadne keeps it for a task,
+reviews it, babysits it by hand, both of the last two together, or does
+nothing with it; `branches` reads `head → base`, and `session` links the
+request's newest session.
+`ariadne pr inspect <repo> <number>` prints every field of one request,
+read off the forge now, as a key-value block in a fixed reading order, the
+body last after a `---` line. `ariadne pr search` searches an enabled
+repository's last fetched open requests, by number, title or author, your
+own left out. `ariadne pr refresh` requests an immediate fetch for one
+repository, or every enabled one. It returns after it wakes the fetch, not
+after the fetch ends, so a following `pr ls` can still show the previous
+list.
+
+`ariadne pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
+S]... [--attach]` asks Ariadne to review a request of your own (029):
+`--model` is required with no `--stop`, since there is no repository
+setting to fall back to. `--skill` loads another skill beside `pr-reviewer`, which
+every review loads anyway; repeat it for more than one. `--attach` waits for
+the review session to start and opens its console, the way `session new
+--attach` does. `ariadne pr review <repo> <number> --stop` stops Ariadne's
+review and cannot be combined with `--model`, `--effort`, `--skill` or
+`--attach`.
+
+`ariadne pr babysit <repo> <number> --model AGENT:MODEL [--effort E]
+[--skill S]... [--attach]` asks Ariadne to keep a request of your own that
+no task opened (032), the same way `pr review` asks for a review:
+`--model` is required with no `--stop`. `--skill` loads another skill
+beside `pr-babysit`, which every keeper session loads anyway. `--attach`
+waits for the keeper session to start and opens its console. `ariadne pr
+babysit <repo> <number> --stop` stops it, and cannot be combined with
+`--model`, `--effort`, `--skill` or `--attach`. Asking is refused on a
+request a task opened or one by another login.
+
+Beside these two ways to ask for or stop a review or a keeper session,
+nothing here adds or removes a request: Ariadne starts and stops its other
+work on one on its own (see [The forge integration](forge.md)).
+
+```sh
+ariadne issue ls --repo <repo-id>
+ariadne issue ls --repo <repo-id> --all
+ariadne goal create --from-issue https://github.com/owner/repo/issues/7 \
+    --model codex-acp:<model-id>
+```
+
+`ariadne issue ls` lists open issues from an enabled repository, assigned to
+your forge login by default, or every open one with `--all`. `goal create
+--from-issue` reads one issue and uses its title and body to fill the goal.
+The orchestrator reads them marked as somebody else's words, never yours,
+since the issue could be anybody's; a title and description you type
+yourself reach it in plain text.
+
+```sh
+ariadne forge tunnel
+ariadne forge tunnel on
+ariadne forge tunnel off
+```
+
+`ariadne forge tunnel` prints the webhook tunnel's switch, state, URL and
+bound listener address; `on` and `off` set the switch. See [The forge
+integration](forge.md) for enabling a repository's integration, how an
+author keeps its request, what a `pr-reviewer` session does, and the tunnel's fallback
+to polling; see [Configuration](configuration.md) for `gh_bin`
+and the webhook keys.
+
+## Dashboards
+
+`ariadne dashboard` manages Perses dashboard documents. Use `ls`, `get`, `set`, `reset`, and `rm`.
+
+```sh
+ariadne dashboard ls
+ariadne dashboard get stats
+ariadne dashboard set mine dashboard.json
+ariadne dashboard reset stats
+ariadne dashboard rm mine
+```
+
+## Custom workflows
+
+A workflow is a linear kanban of columns a goal's tasks step through, one
+agent per column. Ariadne ships two, `develop-review-merge` and
+`develop-review-pr`; `ariadne workflow` manages the catalog the way `ariadne
+skill` manages skills — a shipped one is reset rather than deleted, one of
+your own is deleted rather than reset. See [Workflows](workflows.md) for the
+document syntax and what each gate checks.
+
+```sh
+ariadne workflow ls
+ariadne workflow show develop-review-merge
+ariadne workflow check --file draft.md
+ariadne workflow create my-workflow --file draft.md
+ariadne workflow update my-workflow --file draft.md
+ariadne workflow reset develop-review-merge
+ariadne workflow rm my-workflow
+```
+
+`create` and `update` read the document from `--file`, or from stdin where
+none is named or where `-` names it. `check` parses a draft without saving it anywhere: it prints
+the document's columns, or the line a syntax rule broke on. `show` prints
+the document whole, through `$PAGER`; `--format json` prints the DTO.
+
+### Running a goal through a workflow
+
+Every goal runs through a workflow. `goal create --workflow <name>` picks
+it; left out, the goal takes its first repository's default workflow.
+`repo add --workflow <name>` and `repo update --workflow <name>` set that
+default:
+
+```sh
+ariadne goal create --title "Add rate limiting" --repo ~/projects/api \
+    --model codex-acp:<model-id> --workflow develop-review-merge
+ariadne repo update <repo-id> --workflow develop-review-merge
+```
+
+A task is staffed one agent per column with `--agent
+STEP[:SKILLS]=MODEL[@EFFORT]`, repeatable:
+
+```sh
+ariadne task create <goal-id> --title "Add the rate limiter" \
+    --agent develop:coding=codex-acp:<model-id> \
+    --agent review:code-review=claude-acp:<model-id>@high \
+    --agent merge=codex-acp:<model-id>
+ariadne task update <task-id> --agent develop=codex-acp:<other-model-id>
+```
+
+Leaving the `:SKILLS` half out stages the column's own skills. `task update
+--agent` replaces the whole staffing.
+
+`task ls` shows each task's current column in a `step` column, and `--step
+<id>` narrows the list to it. `task inspect` prints the workflow, the current
+column, and one line per column — its skills, its pin, and its session.
+`task history` paints the column a move left and the one it entered beside
+the statuses. `goal inspect` prints the workflow and its columns, each with
+its capability band — every rank it lists — and its gate:
+
+```sh
+ariadne task ls --step review
+ariadne task inspect <task-id>
+ariadne goal inspect <goal-id>
+```
+
+`attach --step <id>` opens the console of that column's agent, live or not;
+left out, it is the task's current column. `--seat agent` names the same
+seat every stepped session carries, on `task attach`, `task logs` and
+`session ls` alike:
+
+```sh
+ariadne task attach <task-id> --step review
+ariadne session ls --seat agent
+```
 
 ## Output and troubleshooting
 
@@ -421,3 +718,28 @@ ariadne doctor
 `ariadne doctor` checks the CLI, daemon, configuration, service, and ACP
 registry. It distinguishes an agent command your shell cannot find from one
 the daemon cannot find or cannot use.
+
+## Command reference
+
+All commands accept `--endpoint`. Table commands also accept `--format`,
+`--color`, `--no-trunc`, `-q`, `--output`, and `--columns`; long output
+accepts `--no-pager`. Use `ariadne help [COMMAND]` or `COMMAND --help` for
+the built-in help screen.
+
+| Group | Commands and options |
+| --- | --- |
+| `version`, `doctor` | No command-specific options. |
+| `daemon` | `start`, `stop [--timeout SECONDS]`, `restart [--timeout SECONDS]`, `status`, and `logs [-f]`; each accepts `--home PATH`. |
+| `agent` | `ls`, `refresh`, and `update AGENT [--flag FLAG]... [--clear-flags\|--reset]`. |
+| `models` | `ls [--agent AGENT]`, `show MODEL`, `enable MODEL`, `disable MODEL`, `rank MODEL RANK\|--clear`. |
+| `skill` | `ls`, `get NAME`, `inspect NAME`, `create NAME [--file FILE]`, `set NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
+| `workflow` | `ls`, `show NAME`, `check [--file FILE]`, `create NAME [--file FILE]`, `update NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
+| `repo` | `ls`, `inspect ID`, `add PATH`, `update ID`, `rm ID [-y]`. Add and update use `--branch`, `--description`, `--permission-mode auto\|ask\|learn\|ai`, `--supervise-posts on\|off`, `--workflow`, and `--forge on\|off`; update also uses `--path`. |
+| `goal` | `create --model AGENT:MODEL [--title] [-d\|--description] [--from-issue] [--repo]... [--effort] [--workflow]`; `ls [--status STATUS,...] [-a] [--watch]`; `inspect`, `complete`, `cancel [-y]`, `rm [-y]`, and `attach` take an ID. |
+| `task` | `create GOAL --title TEXT --agent STEP[:SKILLS]=MODEL[@EFFORT] [--description] [--depends-on]... [--repo]`; `update ID` accepts `--title`, `--description`, repeatable `--agent` and `--depends-on`, or `--clear-depends-on`; `ls` accepts `--goal`, repeatable `--status`, `-a`, `--step`, and `--watch`; `inspect`, `messages [--full]`, `history`, `cancel [-y]`, `retry`, `diff`, `attach [--seat] [--step]`, and `logs [--seat] [-f] [--tail] [--since] [--kind]...` take an ID. |
+| `session` | `ls` accepts `--kind`, `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `--refresh`, `-a`, and `--watch`; `new --model AGENT:MODEL [--effort] [--dir] [--attach]`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
+| `events`, `attention`, `attach` | `events [-f] [--goal] [--task] [--session] [--kind]...`; `attention [--watch]`; `attach ID [--seat orchestrator\|agent\|reviewer\|keeper] [--agent AGENT]`. |
+| `stats` | `work`, `time`, `spend`, `models`, and `attention`; each accepts `--since` and `--repo`; `models` also accepts `--seat`. |
+| `pr`, `issue`, `forge` | `pr ls [--repo] [--mine\|--review-requests] [--watch]`, `inspect REPO NUMBER`, `search --repo REPO QUERY`, `refresh [--repo]`, `review REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`, `babysit REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`; `issue ls --repo REPO [--all]`; `forge tunnel [on\|off]`. |
+| `permissions` | `ai show`, `enable [--wait]`, `disable`, `refresh [--wait]`, `set` with `--allow-threshold`, `--deny-threshold`, `--default-thresholds`, `--flavour`, or `--device`, and `test --tool TEXT --input JSON [--kind] [--option]... [--location]... [--workspace]`; `learned list [--repo]`, `show ID`, `rm ID`, and `scope ID all\|repository`. |
+| `completions`, `mcp` | `completions SHELL [--static]` for bash, elvish, fish, PowerShell, or zsh; `completions install [--shell bash\|zsh\|fish]`; `mcp serve`. |

@@ -1,9 +1,8 @@
 //! Integration tests for the AI permission settings, the Python check and the install
 //! behind `/v1/permissions/ai` (022).
 //!
-//! Nothing here downloads anything. The release document is served by the
-//! test, the whole install is one shell script the daemon runs in place of
-//! the venv, the wheel and the checkpoints, and the interpreter is a script
+//! Nothing here downloads anything. The whole install is one shell script the
+//! daemon runs in place of the venv, package and weights, and the interpreter is a script
 //! that prints a version. What is proved is the daemon's own rules: what it
 //! refuses, what it starts, what it writes down and what it says on the
 //! stream.
@@ -15,25 +14,32 @@ use axum::http::StatusCode;
 use serde_json::json;
 
 use ariadne_api::error::ErrorBody;
-use ariadne_api::permissions::{
-    AiPermissionsCheckpoints, AiPermissionsState, AiPermissionsStatusDto,
-};
+use ariadne_api::permissions::{AiPermissionsState, AiPermissionsStatusDto};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::PermissionMode;
 use ariadne_daemon::ai_permissions::AiPermissions;
+use ariadne_daemon::ai_permissions::hardware::HardwareOverride;
 use ariadne_daemon::bus::EventBus;
 use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::Store;
 
 use common::{
-    Harness, HarnessBuilder, TIMEOUT, delete, eventually, harness, next_event, post, post_json,
-    put_json, shared_script,
+    Harness, HarnessBuilder, QUIET, TIMEOUT, delete, eventually, harness, next_event, post,
+    post_json, put_json, shared_script,
 };
 
-/// The release the served document names, and the wheel on it.
-const TAG: &str = "v0.1.4";
-const WHEEL: &str = "model-0.1.4-py3-none-any.whl";
+/// The release of 4b on `mlx`, the choice [`with_ai_permissions`]'s Mac settles on.
+const PIN: &str = "kev@f1535963 jaredpalmer/kev-4b@139fdd94 on mlx";
+const RUN: &str = "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101";
+const KEV_COMMIT: &str = "f1535963cea021439370c23127bc970b6788e730";
+
+/// The default threshold pair of `4b`, which the benchmark selected on kev-4b
+/// (022, rule 24). `0.8b` and `27b` take it too.
+const PAIR_4B: (f64, f64) = (0.0201, 0.6321);
+/// The default threshold pair of `9b`: the 4b pair, since the benchmark's
+/// kev-9b pair allows nothing.
+const PAIR_9B: (f64, f64) = (0.0201, 0.6321);
 
 // -- the stubs ---------------------------------------------------------------
 
@@ -55,13 +61,14 @@ fn python_printing(version: &str) -> String {
 fn installer(record: &std::path::Path, hold: &str, status: &str) -> Vec<String> {
     let script = shared_script(
         "#!/bin/sh\n\
-         printf '%s\\n%s\\n%s\\n%s\\n' \
-           \"$LAYA_HOME\" \"$LAYA_CHECKPOINTS\" \"$LAYA_WHEEL_URL\" \"$LAYA_RELEASE\" > \"$1\"\n\
+         printf '%s\\n%s\\n%s\\n%s\\n%s\\n' \
+           \"$AI_PERMISSIONS_HOME\" \"$AI_PERMISSIONS_RUN\" \"$AI_PERMISSIONS_KEV_COMMIT\" \
+           \"$AI_PERMISSIONS_FLAVOUR\" \"$AI_PERMISSIONS_DEVICE\" > \"$1\"\n\
          if [ -n \"$2\" ]; then\n\
            while [ ! -f \"$2\" ]; do sleep 0.05; done\n\
          fi\n\
          if [ \"$3\" != \"0\" ]; then\n\
-           echo 'the wheel could not be installed' >&2\n\
+           echo 'the package could not be installed' >&2\n\
          fi\n\
          exit \"$3\"\n",
     );
@@ -73,8 +80,8 @@ fn installer(record: &std::path::Path, hold: &str, status: &str) -> Vec<String> 
     ]
 }
 
-/// What the installer recorded: `LAYA_HOME`, `LAYA_CHECKPOINTS`,
-/// `LAYA_WHEEL_URL` and `LAYA_RELEASE`, in that order.
+/// What the installer recorded: its home, run, Kev commit, flavour and
+/// device, in that order.
 fn recorded(record: &std::path::Path) -> Vec<String> {
     std::fs::read_to_string(record)
         .unwrap_or_default()
@@ -83,50 +90,24 @@ fn recorded(record: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-/// A release document served over loopback, with the tarball ahead of the
-/// wheel so the pick is a pick and not the first asset.
-struct ReleaseServer {
-    url: String,
-    task: tokio::task::JoinHandle<()>,
-}
-
-impl ReleaseServer {
-    async fn start() -> Self {
-        let document = json!({
-            "tag_name": TAG,
-            "assets": [
-                {"browser_download_url": "https://example.test/model-0.1.4.tar.gz"},
-                {"browser_download_url": format!("https://example.test/{WHEEL}")},
-            ],
-        });
-        let app = axum::Router::new().route(
-            "/release.json",
-            axum::routing::get(move || {
-                let document = document.clone();
-                async move { axum::Json(document) }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/release.json", listener.local_addr().unwrap());
-        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        Self { url, task }
-    }
-}
-
-impl Drop for ReleaseServer {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
 // -- the harness -------------------------------------------------------------
 
-/// A daemon whose Python is new enough and whose release document is the
-/// served one. The install itself is the caller's to configure.
-fn with_ai_permissions(python: &str, release: &ReleaseServer) -> HarnessBuilder {
+/// A daemon whose Python is new enough, on a 64 GB Apple Silicon Mac, which
+/// settles on 4b on `mlx`. The install itself is the caller's to configure.
+fn with_ai_permissions(python: &str) -> HarnessBuilder {
     harness()
         .python_bin(python_printing(python))
-        .ai_permissions_release_url(release.url.clone())
+        .ai_permissions_hardware(machine("macos", "aarch64", 64, None))
+}
+
+fn machine(os: &str, arch: &str, memory_gb: u64, vram_gb: Option<u64>) -> HardwareOverride {
+    HardwareOverride {
+        os: os.into(),
+        arch: arch.into(),
+        memory_gb,
+        gpu_name: vram_gb.map(|_| "test-gpu".to_string()),
+        vram_gb,
+    }
 }
 
 async fn status(h: &Harness) -> AiPermissionsStatusDto {
@@ -149,19 +130,18 @@ async fn settles_on(h: &Harness, state: AiPermissionsState) -> AiPermissionsStat
 // -- the tests ---------------------------------------------------------------
 
 /// A daemon nobody has configured answers with the defaults, and with the
-/// interpreter it probed: off, English alone, the threshold the schema
-/// carries, and no daily refresh.
+/// interpreter it probed: off, the thresholds the schema carries, and the
+/// default flavour.
 #[tokio::test]
 async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
-    let release = ReleaseServer::start().await;
-    let python = python_printing("3.12.1");
-    let h = with_ai_permissions("3.12.1", &release).await;
+    let python = python_printing("3.13.1");
+    let h = with_ai_permissions("3.13.1").await;
 
     let status = status(&h).await;
     assert!(!status.enabled);
-    assert_eq!(status.checkpoints, AiPermissionsCheckpoints::English);
-    assert_eq!(status.threshold, 0.8);
-    assert_eq!(status.schedule, None);
+    assert_eq!(status.flavour.as_str(), "4b");
+    assert_eq!((status.allow_threshold, status.deny_threshold), PAIR_4B);
+    assert!(status.thresholds_default);
     assert_eq!(status.state, AiPermissionsState::Disabled);
     assert_eq!(status.installed_release, None);
     assert_eq!(status.latest_release, None);
@@ -171,34 +151,33 @@ async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
     assert_eq!(status.last_error, None);
 
     assert_eq!(status.python.path.as_deref(), Some(python.as_str()));
-    assert_eq!(status.python.version.as_deref(), Some("3.12.1"));
+    assert_eq!(status.python.version.as_deref(), Some("3.13.1"));
     assert!(status.python.ok);
 }
 
 /// The model installs PyTorch into a virtual environment of the daemon's Python,
-/// and needs 3.10 for it. Turning it on against an older one is refused
+/// and needs Python 3.12 or 3.13. Turning it on against Python 3.14 is refused
 /// before anything is downloaded — and the refusal leaves the settings
 /// exactly as they were, so nothing has to be undone.
 #[tokio::test]
 async fn turning_the_model_on_without_a_new_enough_python_is_refused_and_changes_nothing() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.9.18", &release)
+    let h = with_ai_permissions("3.14.0")
         .ai_permissions_installer(installer(record.path(), "", "0"))
         .await;
 
     let refused: ErrorBody = h
-        .json(
-            update(json!({"enabled": true, "checkpoints": "all"})),
-            StatusCode::CONFLICT,
-        )
+        .json(update(json!({"enabled": true})), StatusCode::CONFLICT)
         .await;
     assert_eq!(refused.error.code, "python_unavailable");
-    assert!(refused.error.message.contains("3.9.18"), "{refused:?}");
+    assert!(refused.error.message.contains("3.14.0"), "{refused:?}");
+    assert!(
+        refused.error.message.contains("3.12 or 3.13"),
+        "{refused:?}"
+    );
 
     let after = status(&h).await;
     assert!(!after.enabled, "the refusal wrote nothing");
-    assert_eq!(after.checkpoints, AiPermissionsCheckpoints::English);
     assert_eq!(after.state, AiPermissionsState::Disabled);
     assert!(!after.python.ok);
     assert!(
@@ -209,14 +188,12 @@ async fn turning_the_model_on_without_a_new_enough_python_is_refused_and_changes
 
 /// Turning the model on answers at once with `installing` — the install takes
 /// minutes and gigabytes — and says on the stream when it is ready. What the
-/// installer saw is the checkpoints the settings name and the wheel of the
-/// release document, and what is written down afterwards is the tag it
-/// installed.
+/// installer saw is the model home, run and package commit, and the status
+/// records the pin it installed.
 #[tokio::test]
 async fn turning_the_model_on_starts_the_install_and_reports_it_ready() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), "", "0"))
         .await;
     let mut events = h.bus.subscribe();
@@ -239,8 +216,8 @@ async fn turning_the_model_on_starts_the_install_and_reports_it_ready() {
     assert!(installing.enabled);
 
     let ready = settles_on(&h, AiPermissionsState::Ready).await;
-    assert_eq!(ready.installed_release.as_deref(), Some(TAG));
-    assert_eq!(ready.latest_release.as_deref(), Some(TAG));
+    assert_eq!(ready.installed_release.as_deref(), Some(PIN));
+    assert_eq!(ready.latest_release.as_deref(), Some(PIN));
     assert!(ready.weights_present);
     assert!(ready.last_refresh_at.is_some());
     assert_eq!(ready.last_error, None);
@@ -254,9 +231,10 @@ async fn turning_the_model_on_starts_the_install_and_reports_it_ready() {
                 .join("ai-permissions")
                 .display()
                 .to_string(),
-            "english".to_string(),
-            format!("https://example.test/{WHEEL}"),
-            TAG.to_string(),
+            RUN.to_string(),
+            KEV_COMMIT.to_string(),
+            "4b".to_string(),
+            "mlx".to_string(),
         ]
     );
 
@@ -273,9 +251,8 @@ async fn turning_the_model_on_starts_the_install_and_reports_it_ready() {
 /// The earlier install, where there is one, is left on disk.
 #[tokio::test]
 async fn an_install_that_fails_keeps_the_model_on_and_says_why() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), "", "7"))
         .await;
 
@@ -289,7 +266,7 @@ async fn an_install_that_fails_keeps_the_model_on_and_says_why() {
     );
     assert_eq!(
         failed.last_error.as_deref(),
-        Some("the wheel could not be installed"),
+        Some("the package could not be installed"),
         "the installer's own stderr is what the user is left to act on"
     );
     assert!(!failed.weights_present);
@@ -297,35 +274,37 @@ async fn an_install_that_fails_keeps_the_model_on_and_says_why() {
 }
 
 /// The settings a user chooses are kept, refused where they are not a
-/// threshold or a time, and read back by the daemon that comes up next: an
+/// threshold pair, and read back by the daemon that comes up next: an
 /// install that ran for minutes must not be forgotten by a restart.
 #[tokio::test]
 async fn the_settings_are_validated_and_survive_a_daemon_restart() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), "", "0"))
         .await;
 
     let chosen: AiPermissionsStatusDto = h
         .json(
-            update(json!({"checkpoints": "all", "threshold": 0.6, "schedule": "03:30"})),
+            update(json!({"allow_threshold": 0.2, "deny_threshold": 0.8})),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(chosen.checkpoints, AiPermissionsCheckpoints::All);
-    assert_eq!(chosen.threshold, 0.6);
-    assert_eq!(chosen.schedule.as_deref(), Some("03:30"));
+    assert_eq!(chosen.allow_threshold, 0.2);
+    assert_eq!(chosen.deny_threshold, 0.8);
 
-    for bad in [json!({"threshold": 1.5}), json!({"schedule": "25:00"})] {
+    for bad in [
+        json!({"allow_threshold": 1.5}),
+        json!({"deny_threshold": 1.5}),
+        json!({"allow_threshold": 0.8}),
+    ] {
         let refused: ErrorBody = h
             .json(update(bad.clone()), StatusCode::UNPROCESSABLE_ENTITY)
             .await;
         assert_eq!(refused.error.code, "invalid_request", "{bad}");
     }
     let unchanged = status(&h).await;
-    assert_eq!(unchanged.threshold, 0.6, "a refusal wrote nothing");
-    assert_eq!(unchanged.schedule.as_deref(), Some("03:30"));
+    assert_eq!(unchanged.allow_threshold, 0.2, "a refusal wrote nothing");
+    assert_eq!(unchanged.deny_threshold, 0.8, "a refusal wrote nothing");
 
     // The daemon that comes up next reads the same settings.
     let restarted = Store::open(h.dir.path().join("test.db")).await.unwrap();
@@ -336,146 +315,100 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
         Timeouts::default(),
     );
     let kept = ai_permissions.status().await;
-    assert_eq!(kept.checkpoints, AiPermissionsCheckpoints::All);
-    assert_eq!(kept.threshold, 0.6);
-    assert_eq!(kept.schedule.as_deref(), Some("03:30"));
-
-    // An absent schedule keeps it; a null turns it off.
-    let untouched: AiPermissionsStatusDto = h
-        .json(update(json!({"threshold": 0.7})), StatusCode::OK)
-        .await;
-    assert_eq!(untouched.schedule.as_deref(), Some("03:30"));
-    let off: AiPermissionsStatusDto = h
-        .json(update(json!({"schedule": null})), StatusCode::OK)
-        .await;
-    assert_eq!(off.schedule, None);
+    assert_eq!(kept.allow_threshold, 0.2);
+    assert_eq!(kept.deny_threshold, 0.8);
 }
 
-/// A prompt set on the settings is what the status reports, and a `null`
-/// restores the built-in text: the status then shows `prompts` equal to
-/// `default_prompts`, and the row holds no text of its own.
-#[tokio::test]
-async fn a_null_prompt_restores_the_built_in_text() {
-    let release = ReleaseServer::start().await;
-    let h = with_ai_permissions("3.12.1", &release).await;
-    let defaults = status(&h).await.default_prompts;
-    assert_eq!(
-        status(&h).await.prompts,
-        defaults,
-        "a fresh daemon sends the built-in texts"
-    );
-
-    let set: AiPermissionsStatusDto = h
-        .json(
-            update(json!({
-                "question": "Is this safe?",
-                "allow_criteria": "reading",
-                "review_criteria": "writing",
-            })),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(set.prompts.question, "Is this safe?");
-    assert_eq!(set.prompts.allow_criteria, "reading");
-    assert_eq!(set.prompts.review_criteria, "writing");
-    assert_eq!(
-        set.default_prompts, defaults,
-        "the built-in texts do not move"
-    );
-
-    let restored: AiPermissionsStatusDto = h
-        .json(
-            update(json!({"question": null, "allow_criteria": null, "review_criteria": null})),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(restored.prompts, restored.default_prompts);
-    let row = h.store.ai_permission_settings().await.unwrap();
-    assert_eq!(
-        (row.question, row.allow_criteria, row.review_criteria),
-        (None, None, None)
-    );
+fn pair(status: &AiPermissionsStatusDto) -> (f64, f64) {
+    (status.allow_threshold, status.deny_threshold)
 }
 
-/// A blank prompt is no prompt: it stores NULL, so the model is never sent an
-/// empty question. An absent prompt keeps what was there.
+/// A fresh daemon switched to `9b` reports the default pair of `9b`, not the
+/// pair the row was seeded with.
 #[tokio::test]
-async fn a_blank_prompt_stores_null() {
-    let release = ReleaseServer::start().await;
-    let h = with_ai_permissions("3.12.1", &release).await;
+async fn a_fresh_daemon_on_9b_reports_the_9b_default_pair() {
+    let h = with_ai_permissions("3.13.1").await;
+
+    let on_9b: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "9b"})), StatusCode::OK)
+        .await;
+
+    assert_eq!(on_9b.flavour.as_str(), "9b");
+    assert_eq!(pair(&on_9b), PAIR_9B);
+    assert!(on_9b.thresholds_default);
+}
+
+/// A pair nobody set by hand follows each flavour change to that flavour's
+/// default. A threshold sent marks the pair hand-set, and a later flavour
+/// change keeps it.
+#[tokio::test]
+async fn a_hand_set_pair_survives_a_flavour_change_and_a_default_pair_follows_it() {
+    let h = with_ai_permissions("3.13.1").await;
+    let on_9b: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "9b"})), StatusCode::OK)
+        .await;
+    assert_eq!(pair(&on_9b), PAIR_9B);
+
+    let on_4b: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "4b"})), StatusCode::OK)
+        .await;
+    assert_eq!(pair(&on_4b), PAIR_4B, "a default pair follows the flavour");
+    assert!(on_4b.thresholds_default);
+
+    let hand_set: AiPermissionsStatusDto = h
+        .json(update(json!({"allow_threshold": 0.2})), StatusCode::OK)
+        .await;
+    assert_eq!(pair(&hand_set), (0.2, PAIR_4B.1));
+    assert!(!hand_set.thresholds_default);
+
+    let switched: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "9b"})), StatusCode::OK)
+        .await;
+    assert_eq!(switched.flavour.as_str(), "9b");
+    assert_eq!(pair(&switched), (0.2, PAIR_4B.1), "a hand-set pair stays");
+    assert!(!switched.thresholds_default);
+}
+
+/// `default_thresholds` drops a hand-set pair and goes back to the default
+/// of the chosen flavour. Sent with a threshold, it is refused and writes
+/// nothing.
+#[tokio::test]
+async fn default_thresholds_returns_a_hand_set_pair_to_the_flavour_default() {
+    let h = with_ai_permissions("3.13.1").await;
     let _: AiPermissionsStatusDto = h
         .json(
-            update(json!({"question": "Is this safe?", "review_criteria": "writing"})),
+            update(json!({"flavour": "9b", "allow_threshold": 0.2, "deny_threshold": 0.8})),
             StatusCode::OK,
         )
         .await;
 
-    let blank: AiPermissionsStatusDto = h
-        .json(update(json!({"question": "  \n "})), StatusCode::OK)
-        .await;
-    assert_eq!(blank.prompts.question, blank.default_prompts.question);
-    assert_eq!(
-        blank.prompts.review_criteria, "writing",
-        "an absent prompt is kept"
-    );
-    let row = h.store.ai_permission_settings().await.unwrap();
-    assert_eq!(row.question, None);
-    assert_eq!(row.review_criteria.as_deref(), Some("writing"));
-}
-
-/// A prompt over 4000 characters is refused with 422 `invalid_request`, and
-/// the refusal writes nothing, not even the fields beside it.
-#[tokio::test]
-async fn a_prompt_over_4000_characters_is_refused() {
-    let release = ReleaseServer::start().await;
-    let h = with_ai_permissions("3.12.1", &release).await;
-
-    let longest = "é".repeat(4000);
-    let kept: AiPermissionsStatusDto = h
-        .json(update(json!({"allow_criteria": longest})), StatusCode::OK)
-        .await;
-    assert_eq!(
-        kept.prompts.allow_criteria, longest,
-        "4000 characters is the limit, not bytes"
-    );
-
-    for field in ["question", "allow_criteria", "review_criteria"] {
-        let refused: ErrorBody = h
-            .json(
-                update(json!({field: "x".repeat(4001), "threshold": 0.5})),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            )
-            .await;
-        assert_eq!(refused.error.code, "invalid_request", "{field}");
-    }
-    let unchanged = status(&h).await;
-    assert_eq!(unchanged.threshold, 0.8, "a refusal wrote nothing");
-    assert_eq!(
-        unchanged.prompts.question,
-        unchanged.default_prompts.question
-    );
-    assert_eq!(unchanged.prompts.allow_criteria, longest);
-}
-
-/// A client that shows the prompts learns of a change from the stream, as it
-/// does of every other change to the settings.
-#[tokio::test]
-async fn a_prompt_change_publishes_ai_permissions_updated() {
-    let release = ReleaseServer::start().await;
-    let h = with_ai_permissions("3.12.1", &release).await;
-    let mut events = h.bus.subscribe();
-
-    let _: AiPermissionsStatusDto = h
+    let refused: ErrorBody = h
         .json(
-            update(json!({"review_criteria": "writing"})),
-            StatusCode::OK,
+            update(json!({"default_thresholds": true, "allow_threshold": 0.3})),
+            StatusCode::UNPROCESSABLE_ENTITY,
         )
         .await;
-    next_event(
-        &mut events,
-        |e| matches!(&e.event, DomainEvent::AiPermissionsUpdated(s) if s.prompts.review_criteria == "writing"),
-    )
-    .await;
+    assert_eq!(refused.error.code, "invalid_request");
+    assert_eq!(
+        pair(&status(&h).await),
+        (0.2, 0.8),
+        "a refusal wrote nothing"
+    );
+
+    let reset: AiPermissionsStatusDto = h
+        .json(update(json!({"default_thresholds": true})), StatusCode::OK)
+        .await;
+    assert_eq!(pair(&reset), PAIR_9B);
+    assert!(reset.thresholds_default);
+
+    let on_4b: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "4b"})), StatusCode::OK)
+        .await;
+    assert_eq!(
+        pair(&on_4b),
+        PAIR_4B,
+        "the reset pair follows the flavour again"
+    );
 }
 
 /// The old name of the settings is gone from the wire: nothing answers at the
@@ -494,11 +427,10 @@ async fn the_old_route_answers_404() {
 /// install is running, because one runs at a time.
 #[tokio::test]
 async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_install() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let hold = tempfile::tempdir().unwrap();
     let hold = hold.path().join("let-go");
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
 
@@ -510,10 +442,7 @@ async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_instal
     // The installer holds until the file appears, so the daemon is busy for
     // as long as the test needs it to be, and not a moment by the clock.
     let _: AiPermissionsStatusDto = h
-        .json(
-            update(json!({"enabled": true, "checkpoints": "all"})),
-            StatusCode::OK,
-        )
+        .json(update(json!({"enabled": true})), StatusCode::OK)
         .await;
     let busy: ErrorBody = h
         .json(post("/v1/permissions/ai/refresh"), StatusCode::CONFLICT)
@@ -524,8 +453,7 @@ async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_instal
     settles_on(&h, AiPermissionsState::Ready).await;
     std::fs::remove_file(&hold).unwrap();
 
-    // A refresh of a ready model runs the installer again, on the checkpoints
-    // the settings name now.
+    // A refresh of a ready model runs the installer again on the built-in checkpoint.
     std::fs::write(record.path(), "").unwrap();
     let again: AiPermissionsStatusDto = h
         .json(post("/v1/permissions/ai/refresh"), StatusCode::ACCEPTED)
@@ -535,7 +463,7 @@ async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_instal
     settles_on(&h, AiPermissionsState::Ready).await;
     assert_eq!(
         recorded(record.path()).get(1).map(String::as_str),
-        Some("all")
+        Some(RUN)
     );
 }
 
@@ -543,9 +471,8 @@ async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_instal
 /// and nothing else, and the weights that took an hour stay where they are.
 #[tokio::test]
 async fn turning_the_model_off_keeps_the_files_it_installed() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), "", "0"))
         .await;
 
@@ -559,7 +486,7 @@ async fn turning_the_model_off_keeps_the_files_it_installed() {
         .await;
     assert!(!off.enabled);
     assert_eq!(off.state, AiPermissionsState::Disabled);
-    assert_eq!(off.installed_release.as_deref(), Some(TAG));
+    assert_eq!(off.installed_release.as_deref(), Some(PIN));
     assert!(off.weights_present, "the files are still on disk");
 }
 
@@ -568,11 +495,10 @@ async fn turning_the_model_off_keeps_the_files_it_installed() {
 /// down, and the state stays `disabled`.
 #[tokio::test]
 async fn turning_the_model_off_during_an_install_keeps_it_off_when_the_install_ends() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let hold = tempfile::tempdir().unwrap();
     let hold = hold.path().join("let-go");
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
     let mut events = h.bus.subscribe();
@@ -602,7 +528,7 @@ async fn turning_the_model_off_during_an_install_keeps_it_off_when_the_install_e
         AiPermissionsState::Disabled,
         "the install did not turn it on"
     );
-    assert_eq!(ended.installed_release.as_deref(), Some(TAG));
+    assert_eq!(ended.installed_release.as_deref(), Some(PIN));
     assert!(ended.weights_present, "what it put on disk is written down");
     assert_eq!(status(&h).await.state, AiPermissionsState::Disabled);
 }
@@ -612,11 +538,10 @@ async fn turning_the_model_off_during_an_install_keeps_it_off_when_the_install_e
 /// what the model is on.
 #[tokio::test]
 async fn turning_the_model_back_on_during_its_install_reports_that_install() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let hold = tempfile::tempdir().unwrap();
     let hold = hold.path().join("let-go");
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
 
@@ -634,7 +559,7 @@ async fn turning_the_model_back_on_during_its_install_reports_that_install() {
 
     std::fs::write(&hold, "go").unwrap();
     let ready = settles_on(&h, AiPermissionsState::Ready).await;
-    assert_eq!(ready.installed_release.as_deref(), Some(TAG));
+    assert_eq!(ready.installed_release.as_deref(), Some(PIN));
 }
 
 /// The race of turning the model on while its install runs, taken in its bad
@@ -647,11 +572,10 @@ async fn turning_the_model_back_on_during_its_install_reports_that_install() {
 /// is the same on every run.
 #[tokio::test]
 async fn a_turn_off_that_lands_before_the_rejoin_keeps_the_model_off() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let hold = tempfile::tempdir().unwrap();
     let hold = hold.path().join("let-go");
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
     let mut events = h.bus.subscribe();
@@ -691,95 +615,13 @@ async fn a_turn_off_that_lands_before_the_rejoin_keeps_the_model_off() {
     assert_eq!(status(&h).await.state, AiPermissionsState::Disabled);
 }
 
-/// A local time on a January day, when no daylight-saving change is near.
-fn local(time: &str) -> chrono::DateTime<chrono::Local> {
-    use chrono::TimeZone;
-    let naive = chrono::NaiveDate::from_ymd_opt(2026, 1, 10)
-        .unwrap()
-        .and_time(chrono::NaiveTime::parse_from_str(time, "%H:%M:%S").unwrap());
-    chrono::Local
-        .from_local_datetime(&naive)
-        .earliest()
-        .unwrap()
-}
-
-/// The daily refresh runs the install once, on the tick that passes its
-/// minute, on the settings as they stand. It runs nothing on the next tick,
-/// nothing while the AI permission model is off, and nothing without a schedule. The test says
-/// what time it is, so nothing here waits on a clock.
-#[tokio::test]
-async fn the_daily_refresh_runs_the_install_once_at_its_minute() {
-    let release = ReleaseServer::start().await;
-    let record = tempfile::NamedTempFile::new().unwrap();
-    // The installer waits while this file is missing: it is there, so the
-    // first install ends at once, and the refresh removes it to hold its own
-    // install open while the test reads `installing`.
-    let hold = tempfile::tempdir().unwrap();
-    let hold = hold.path().join("hold");
-    std::fs::write(&hold, "").unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
-        .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
-        .await;
-    let ai_permissions = &h.state.ai_permissions;
-    let (before, over, after) = (local("03:29:40"), local("03:30:10"), local("03:30:40"));
-
-    let _: AiPermissionsStatusDto = h
-        .json(update(json!({"enabled": true})), StatusCode::OK)
-        .await;
-    settles_on(&h, AiPermissionsState::Ready).await;
-    assert!(
-        !ai_permissions.run_schedule(before, over).await,
-        "no schedule, no refresh"
-    );
-
-    let _: AiPermissionsStatusDto = h
-        .json(
-            update(json!({"schedule": "03:30", "checkpoints": "all"})),
-            StatusCode::OK,
-        )
-        .await;
-    std::fs::write(record.path(), "").unwrap();
-    assert!(!ai_permissions.run_schedule(local("03:29:00"), before).await);
-    assert!(
-        recorded(record.path()).is_empty(),
-        "a tick before the minute runs nothing"
-    );
-
-    std::fs::remove_file(&hold).unwrap();
-    assert!(ai_permissions.run_schedule(before, over).await);
-    assert_eq!(status(&h).await.state, AiPermissionsState::Installing);
-    std::fs::write(&hold, "").unwrap();
-    settles_on(&h, AiPermissionsState::Ready).await;
-    assert_eq!(
-        recorded(record.path()).get(1).map(String::as_str),
-        Some("all"),
-        "the refresh installs what the settings name now"
-    );
-
-    std::fs::write(record.path(), "").unwrap();
-    assert!(
-        !ai_permissions.run_schedule(over, after).await,
-        "the tick after the minute runs nothing"
-    );
-
-    let _: AiPermissionsStatusDto = h
-        .json(update(json!({"enabled": false})), StatusCode::OK)
-        .await;
-    assert!(
-        !ai_permissions.run_schedule(before, over).await,
-        "a model that is off is not refreshed"
-    );
-    assert!(recorded(record.path()).is_empty());
-}
-
 /// The `ai` mode asks the model, so a repository cannot be put into it while
 /// there is no model to ask. It is refused where it is set rather than an
 /// hour into an agent's work, and allowed once the model is on.
 #[tokio::test]
 async fn a_repository_takes_the_ai_mode_only_once_the_model_is_on() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), "", "0"))
         .await;
     let repo = h.git_repo("repo");
@@ -844,12 +686,16 @@ async fn a_repository_takes_the_ai_mode_only_once_the_model_is_on() {
 /// server reports, and nothing is live while the AI permission model is off.
 #[tokio::test]
 async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
+    let hold = tempfile::tempdir().unwrap();
+    let hold = hold.path().join("let-go");
 
     // With nothing configured, the endpoint is whatever the server reported.
-    let h = with_ai_permissions("3.12.1", &release)
-        .ai_permissions_installer(installer(record.path(), "", "0"))
+    // The test reports it by hand, so the installer holds and the install
+    // never gets ready: a ready install starts the real server, which has no
+    // Python here, exits, and takes the reported endpoint away with it.
+    let h = with_ai_permissions("3.13.1")
+        .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
     assert_eq!(h.state.ai_permissions.endpoint(), None);
     assert_eq!(h.state.ai_permissions.live().await, None);
@@ -868,7 +714,8 @@ async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
 
     let _: AiPermissionsStatusDto = h
         .json(
-            update(json!({"enabled": true, "threshold": 0.6})),
+            update(json!({"enabled": true, "allow_threshold": 0.2,
+                          "deny_threshold": 0.8})),
             StatusCode::OK,
         )
         .await;
@@ -879,7 +726,17 @@ async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
         .await
         .expect("the model is on and served");
     assert_eq!(live.endpoint, "http://127.0.0.1:9001");
-    assert_eq!(live.threshold, 0.6);
+    assert_eq!(live.allow_threshold, 0.2);
+    assert_eq!(live.deny_threshold, 0.8);
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"default_thresholds": true})), StatusCode::OK)
+        .await;
+    let live = h.state.ai_permissions.live().await.expect("still served");
+    assert_eq!(
+        (live.allow_threshold, live.deny_threshold),
+        PAIR_4B,
+        "a decision holds the flavour default once the pair is reset"
+    );
     assert_eq!(
         status(&h).await.endpoint.as_deref(),
         Some("http://127.0.0.1:9001"),
@@ -889,7 +746,7 @@ async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
     assert_eq!(h.state.ai_permissions.live().await, None);
 
     // A configured endpoint is the answer whatever a server says.
-    let pinned = with_ai_permissions("3.12.1", &release)
+    let pinned = with_ai_permissions("3.13.1")
         .ai_permissions_endpoint("http://127.0.0.1:9999")
         .await;
     assert_eq!(
@@ -906,8 +763,8 @@ async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
     );
 }
 
-/// The wire contract four other tasks build on: the three paths, the request
-/// and reply schemas, the nullable schedule and the event kind.
+/// The wire contract four other tasks build on: the four paths, the request
+/// and reply schemas, the flavour and device shapes and the event kind.
 #[tokio::test]
 async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
     let h = harness().await;
@@ -916,31 +773,83 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
     assert!(doc["paths"]["/v1/permissions/ai"]["get"].is_object());
     assert!(doc["paths"]["/v1/permissions/ai"]["put"].is_object());
     assert!(doc["paths"]["/v1/permissions/ai/refresh"]["post"].is_object());
+    assert!(doc["paths"]["/v1/permissions/ai/test"]["post"].is_object());
 
     let schemas = &doc["components"]["schemas"];
     for name in [
         "AiPermissionsStatusDto",
         "UpdateAiPermissionsRequest",
-        "AiPermissionsCheckpoints",
         "AiPermissionsState",
-        "AiPermissionsPrompts",
         "PythonDto",
+        "TestAiPermissionRequest",
+        "TestAiPermissionResponse",
+        "Flavour",
+        "Device",
+        "HardwareDto",
+        "FlavourOptionsDto",
+        "DeviceOptionDto",
     ] {
         assert!(schemas[name].is_object(), "{name} is not in the document");
     }
-    // A schedule that can be turned off has to say so on the wire.
-    let schedule = &schemas["UpdateAiPermissionsRequest"]["properties"]["schedule"];
-    assert!(
-        schedule.to_string().contains("null"),
-        "the schedule is not nullable: {schedule}"
-    );
-    for prompt in ["question", "allow_criteria", "review_criteria"] {
-        let field = &schemas["UpdateAiPermissionsRequest"]["properties"][prompt];
+    for field in [
+        "flavour",
+        "device",
+        "hardware",
+        "flavours",
+        "thresholds_default",
+    ] {
         assert!(
-            field.to_string().contains("null"),
-            "{prompt} is not nullable: {field}"
+            schemas["AiPermissionsStatusDto"]["properties"][field].is_object(),
+            "{field} is absent from the status schema"
         );
     }
+    for field in ["flavour", "device", "default_thresholds"] {
+        assert!(
+            schemas["UpdateAiPermissionsRequest"]["properties"][field].is_object(),
+            "{field} is absent from the update schema"
+        );
+    }
+    for field in ["allow_threshold", "deny_threshold"] {
+        assert!(
+            schemas["AiPermissionsStatusDto"]["properties"][field].is_object(),
+            "{field} is absent from the status schema"
+        );
+        assert!(
+            schemas["UpdateAiPermissionsRequest"]["properties"][field].is_object(),
+            "{field} is absent from the update schema"
+        );
+    }
+    for field in ["workspace", "locations"] {
+        assert!(
+            schemas["TestAiPermissionRequest"]["properties"][field].is_object(),
+            "{field} is absent from the test request"
+        );
+    }
+    for field in ["operation", "risk_tags", "cap", "probabilities"] {
+        assert!(
+            schemas["TestAiPermissionResponse"]["properties"][field].is_object(),
+            "{field} is absent from the test response"
+        );
+    }
+    assert_eq!(
+        schemas["TestAiPermissionResponse"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "ai_error",
+            "allow_threshold",
+            "cap",
+            "danger",
+            "deny_threshold",
+            "label",
+            "operation",
+            "probabilities",
+            "risk_tags"
+        ]
+    );
 
     // The doctor's report carries the interpreter the AI permission model installs into.
     assert!(schemas["DaemonReportDto"]["properties"]["python"].is_object());
@@ -954,13 +863,12 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
 /// python3 is there but whether it is new enough.
 #[tokio::test]
 async fn the_doctor_reports_the_interpreter_the_model_needs() {
-    let release = ReleaseServer::start().await;
-    let python = python_printing("3.9.18");
-    let h = with_ai_permissions("3.9.18", &release).await;
+    let python = python_printing("3.14.0");
+    let h = with_ai_permissions("3.14.0").await;
 
     let report: ariadne_api::doctor::DaemonReportDto = h.get("/v1/doctor").await;
     assert_eq!(report.python.path.as_deref(), Some(python.as_str()));
-    assert_eq!(report.python.version.as_deref(), Some("3.9.18"));
+    assert_eq!(report.python.version.as_deref(), Some("3.14.0"));
     assert!(
         !report.python.ok,
         "3.9 is not one the AI permission model installs into"
@@ -976,4 +884,164 @@ async fn the_doctor_reports_the_interpreter_the_model_needs() {
     assert_eq!(report.python.path, None);
     assert_eq!(report.python.version, None);
     assert!(!report.python.ok);
+}
+
+/// Each choice installs its own flavour on its own device: the installer
+/// gets the flavour, the device and the flavour's `--run`, and the release
+/// names all three. Every choice after the first is a switch of a model that
+/// is on, so it starts its install at once.
+#[tokio::test]
+async fn the_install_gets_the_run_flavour_and_device_of_each_choice() {
+    let record = tempfile::NamedTempFile::new().unwrap();
+    let h = harness()
+        .python_bin(python_printing("3.13.1"))
+        .ai_permissions_hardware(machine("linux", "x86_64", 256, Some(256)))
+        .ai_permissions_installer(installer(record.path(), "", "0"))
+        .await;
+    let choices = [
+        (
+            "0.8b",
+            "cpu",
+            "jaredpalmer/kev-0.8b@9a45d25eb2ab761841196625383fa1dff0e56c1e",
+            "kev@f1535963 jaredpalmer/kev-0.8b@9a45d25e on cpu",
+        ),
+        (
+            "4b",
+            "cuda",
+            "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
+            "kev@f1535963 jaredpalmer/kev-4b@139fdd94 on cuda",
+        ),
+        (
+            "9b",
+            "cpu",
+            "jaredpalmer/kev-9b@2629c06a5aeb0feb3b9783bafed17ed8f39ecf5c",
+            "kev@f1535963 jaredpalmer/kev-9b@2629c06a on cpu",
+        ),
+        (
+            "27b",
+            "cuda",
+            "jaredpalmer/kev-27b@01b81998019be550f0ae858727df49bac9511195",
+            "kev@f1535963 jaredpalmer/kev-27b@01b81998 on cuda",
+        ),
+    ];
+    for (index, (flavour, device, run, release)) in choices.into_iter().enumerate() {
+        let body = match index {
+            0 => json!({"enabled": true, "flavour": flavour, "device": device}),
+            _ => json!({"flavour": flavour, "device": device}),
+        };
+        let started: AiPermissionsStatusDto = h.json(update(body), StatusCode::OK).await;
+        assert_eq!(started.state, AiPermissionsState::Installing, "{flavour}");
+        let ready = settles_on(&h, AiPermissionsState::Ready).await;
+        assert_eq!(ready.installed_release.as_deref(), Some(release));
+        assert_eq!(
+            recorded(record.path())[1..],
+            [
+                run.to_string(),
+                KEV_COMMIT.to_string(),
+                flavour.to_string(),
+                device.to_string(),
+            ]
+        );
+    }
+}
+
+/// A switch while the model is off is only stored: nothing installs until
+/// the model is turned on, and then the stored choice is what installs.
+#[tokio::test]
+async fn a_switch_while_off_is_only_stored_and_the_next_turn_on_installs_it() {
+    let record = tempfile::NamedTempFile::new().unwrap();
+    let h = with_ai_permissions("3.13.1")
+        .ai_permissions_installer(installer(record.path(), "", "0"))
+        .await;
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"enabled": true})), StatusCode::OK)
+        .await;
+    settles_on(&h, AiPermissionsState::Ready).await;
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"enabled": false})), StatusCode::OK)
+        .await;
+    std::fs::write(record.path(), "").unwrap();
+
+    let stored: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "0.8b"})), StatusCode::OK)
+        .await;
+    assert_eq!(stored.state, AiPermissionsState::Disabled);
+    assert_eq!(stored.flavour.as_str(), "0.8b");
+    tokio::time::sleep(QUIET).await;
+    assert!(recorded(record.path()).is_empty(), "nothing installed");
+    assert_eq!(status(&h).await.installed_release.as_deref(), Some(PIN));
+
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"enabled": true})), StatusCode::OK)
+        .await;
+    let ready = settles_on(&h, AiPermissionsState::Ready).await;
+    assert_eq!(
+        ready.installed_release.as_deref(),
+        Some("kev@f1535963 jaredpalmer/kev-0.8b@9a45d25e on mlx")
+    );
+    assert_eq!(recorded(record.path())[3..], ["0.8b", "mlx"]);
+}
+
+/// A switch that installs well deletes the Hugging Face cache folders of
+/// every other flavour. One that fails keeps them, so the weights that
+/// worked are still there; a refresh then repairs the stored choice.
+#[tokio::test]
+async fn a_successful_switch_deletes_the_other_flavours_weights_and_a_failed_one_keeps_them() {
+    let outcome = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(outcome.path(), "0").unwrap();
+    let h = with_ai_permissions("3.13.1")
+        .ai_permissions_installer(vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "exit \"$(cat \"$1\")\"".into(),
+            "installer".into(),
+            outcome.path().display().to_string(),
+        ])
+        .await;
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"enabled": true})), StatusCode::OK)
+        .await;
+    settles_on(&h, AiPermissionsState::Ready).await;
+    let hub = h.launcher.cfg.root.join("ai-permissions/hf/hub");
+    let kept = [
+        "models--jaredpalmer--kev-0.8b",
+        "models--Qwen--Qwen3.5-0.8B-Base",
+    ];
+    let others = [
+        "models--jaredpalmer--kev-4b",
+        "models--Qwen--Qwen3.5-4B-Base",
+        "models--jaredpalmer--kev-9b",
+    ];
+    for folder in kept.iter().chain(&others) {
+        std::fs::create_dir_all(hub.join(folder).join("snapshots")).unwrap();
+    }
+
+    std::fs::write(outcome.path(), "1").unwrap();
+    let _: AiPermissionsStatusDto = h
+        .json(update(json!({"flavour": "0.8b"})), StatusCode::OK)
+        .await;
+    settles_on(&h, AiPermissionsState::Failed).await;
+    for folder in kept.iter().chain(&others) {
+        assert!(hub.join(folder).exists(), "a failed switch keeps {folder}");
+    }
+
+    std::fs::write(outcome.path(), "0").unwrap();
+    let _: AiPermissionsStatusDto = h
+        .json(post("/v1/permissions/ai/refresh"), StatusCode::ACCEPTED)
+        .await;
+    let ready = settles_on(&h, AiPermissionsState::Ready).await;
+    assert_eq!(
+        ready.installed_release.as_deref(),
+        Some("kev@f1535963 jaredpalmer/kev-0.8b@9a45d25e on mlx"),
+        "the refresh repaired the stored choice"
+    );
+    for folder in kept {
+        assert!(
+            hub.join(folder).exists(),
+            "the chosen flavour keeps {folder}"
+        );
+    }
+    for folder in others {
+        assert!(!hub.join(folder).exists(), "{folder} is deleted");
+    }
 }

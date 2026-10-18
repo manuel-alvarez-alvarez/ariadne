@@ -2,10 +2,20 @@
  * Create and edit dialog for a repository — one form for both, because the two
  * differ only in where they post and in what an omitted base branch means.
  *
- * A repository is a checkout, a base branch, and how its agents' permission
- * requests are answered. How work *ends* in it is not here: that is the task's
- * own ending, agreed with the user task by task, and the procedure it names is
- * Ariadne's. So none of the fields is about landing.
+ * A repository is a checkout, a base branch, how its agents' permission
+ * requests are answered, and the workflow a new goal against it runs where the
+ * goal's own request names none. Which workflow a given goal runs is still
+ * agreed with the user there, not here — this is only the default that choice
+ * starts from.
+ *
+ * A repository whose remote is on a forge Ariadne supports (GitHub today)
+ * also shows one switch for the integration with that forge (spec 025).
+ * Editing sends it only when it moved, since an absent field is one the
+ * daemon leaves alone. Registering
+ * probes `POST /v1/forge/detect` itself, off the path field, and sends it
+ * only once that probe actually found one; a checkout with no such remote
+ * shows neither there nor once registered. "Supervise posts" sits right
+ * below the switch and only while it is on, in both forms.
  *
  * The client only catches what it can know on its own: a missing or relative
  * path. Everything else is the daemon's to say — it opens the checkout and
@@ -15,12 +25,18 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useEffect } from "react"
-import { Controller, useForm } from "react-hook-form"
+import { useCallback, useEffect, useRef, useState } from "react"
+import {
+  type Control,
+  Controller,
+  type FieldError as FormFieldError,
+  useForm,
+  useWatch,
+} from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
-import { ApiError, type RepositoryDto } from "@/api"
+import { ApiError, type ForgeDetectionDto, type ForgeDto, type RepositoryDto } from "@/api"
 import { FormDialog, FormDialogBody, FormDialogContent } from "@/components/form-dialog"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -31,13 +47,31 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { pickedWorkflow, WorkflowSelect } from "@/features/workflows/workflow-select"
 import { describeError } from "@/lib/format"
-
+import { forgeCliName, forgeKindLabel, forgeRepositoryLabel } from "./forge"
 import { PERMISSION_MODES } from "./permission-modes"
-import { useCreateRepository, useUpdateRepository } from "./queries"
+import { useCreateRepository, useDetectForge, useUpdateRepository } from "./queries"
 
 const PERMISSION_ITEMS = PERMISSION_MODES.map(({ value, label }) => ({ value, label }))
+
+/** How long the path field sits still before a detection fires on its own. */
+const DETECT_SETTLES_MS = 400
+
+/** Whether two probes of `POST /v1/forge/detect` answer the same forge, or
+ * both answer none — a repeated probe of a path nothing changed about. */
+function sameDetection(a: ForgeDetectionDto | null, b: ForgeDetectionDto | null): boolean {
+  if (a === null || b === null) return a === b
+  return (
+    a.kind === b.kind &&
+    a.host === b.host &&
+    a.owner === b.owner &&
+    a.name === b.name &&
+    a.remote === b.remote
+  )
+}
 
 const formSchema = z.object({
   path: z
@@ -48,6 +82,9 @@ const formSchema = z.object({
   base_branch: z.string().trim(),
   description: z.string(),
   permission_mode: z.enum(["auto", "ask", "learn", "ai"]),
+  supervise_posts: z.boolean(),
+  default_workflow: z.string().min(1, "Pick a workflow."),
+  forge_enabled: z.boolean(),
 })
 
 type RepositoryFormValues = z.infer<typeof formSchema>
@@ -57,6 +94,9 @@ const EMPTY_VALUES: RepositoryFormValues = {
   base_branch: "",
   description: "",
   permission_mode: "auto",
+  supervise_posts: true,
+  default_workflow: "",
+  forge_enabled: false,
 }
 
 export function RepositoryFormDialog({
@@ -72,25 +112,98 @@ export function RepositoryFormDialog({
   const editing = repository !== null
   const createRepository = useCreateRepository()
   const updateRepository = useUpdateRepository()
+  const detectForge = useDetectForge()
   const saving = createRepository.isPending || updateRepository.isPending
 
   const form = useForm<RepositoryFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: EMPTY_VALUES,
   })
-  const { control, formState, handleSubmit, register, reset, setError } = form
+  const { control, formState, handleSubmit, register, reset, setError, setValue } = form
+  const forgeEnabled = useWatch({ control, name: "forge_enabled" })
+
+  // Registering probes the path itself — nothing is detected server-side
+  // until the daemon has opened the checkout. Editing skips this: the
+  // repository already carries what the daemon detected, in `forge`.
+  const [detected, setDetected] = useState<ForgeDetectionDto | null>(null)
+  const detectedRef = useRef<ForgeDetectionDto | null>(null)
+  const detectRequest = useRef(0)
+  const detectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const probe = useCallback(
+    (path: string) => {
+      if (editing) return
+      const request = ++detectRequest.current
+      // A changed detection — on, off, or none — answers a switch left on
+      // for the checkout before it, so that must not survive it. A probe
+      // that only repeats the one already settled — the blur a click on
+      // the switch itself fires, not a typed change — must leave the
+      // switch exactly as the person just set it.
+      const settle = (result: ForgeDetectionDto | null) => {
+        if (request !== detectRequest.current) return
+        if (!sameDetection(result, detectedRef.current)) {
+          setValue("forge_enabled", false)
+        }
+        detectedRef.current = result
+        setDetected(result)
+      }
+      if (!path.startsWith("/")) {
+        settle(null)
+        return
+      }
+      detectForge.mutate({ path }, { onSuccess: settle, onError: () => settle(null) })
+    },
+    [editing, detectForge, setValue],
+  )
+
+  const onPathChange = useCallback(
+    (path: string) => {
+      clearTimeout(detectTimeout.current ?? undefined)
+      // The path text just changed, so whatever the last probe answered —
+      // on, off, or none — no longer describes it. Clear it at once, rather
+      // than leaving it to survive into a submit that beats the next probe
+      // back.
+      if (!editing) {
+        detectRequest.current++
+        detectedRef.current = null
+        setDetected(null)
+        setValue("forge_enabled", false)
+      }
+      detectTimeout.current = setTimeout(() => probe(path), DETECT_SETTLES_MS)
+    },
+    [editing, probe, setValue],
+  )
+
+  const onPathBlur = useCallback(
+    (path: string) => {
+      clearTimeout(detectTimeout.current ?? undefined)
+      probe(path)
+    },
+    [probe],
+  )
+
+  useEffect(() => () => clearTimeout(detectTimeout.current ?? undefined), [])
+
+  const forge = editing ? (repository?.forge ?? null) : detected
 
   // Every open starts from what is actually stored, never from the previous
   // attempt. Keyed off the dialog opening rather than the prop: a
   // `repository_updated` off the stream mid-edit must not wipe what was typed.
   useEffect(() => {
     if (!open) return
+    detectRequest.current++
+    clearTimeout(detectTimeout.current ?? undefined)
+    setDetected(null)
+    detectedRef.current = null
     if (repository) {
       reset({
         path: repository.path,
         base_branch: repository.base_branch,
         description: repository.description ?? "",
         permission_mode: repository.permission_mode,
+        supervise_posts: repository.supervise_posts,
+        default_workflow: repository.default_workflow ?? "",
+        forge_enabled: repository.forge?.enabled ?? false,
       })
       return
     }
@@ -101,8 +214,10 @@ export function RepositoryFormDialog({
     const path = values.path.trim()
     const branch = values.base_branch.trim()
     const description = values.description.trim()
+    const workflow = pickedWorkflow(values.default_workflow)
     try {
       if (repository) {
+        const forgeMoved = repository.forge && values.forge_enabled !== repository.forge.enabled
         await updateRepository.mutateAsync({
           id: repository.id,
           body: {
@@ -113,6 +228,9 @@ export function RepositoryFormDialog({
             // Empty is how the daemon spells "clear the description".
             description,
             permission_mode: values.permission_mode,
+            supervise_posts: values.supervise_posts,
+            default_workflow: workflow,
+            ...(forgeMoved ? { forge: { enabled: values.forge_enabled } } : {}),
           },
         })
         toast.success("Repository updated", { description: path })
@@ -123,6 +241,9 @@ export function RepositoryFormDialog({
           base_branch: branch || null,
           description: description || null,
           permission_mode: values.permission_mode,
+          supervise_posts: values.supervise_posts,
+          default_workflow: workflow,
+          ...(detected ? { forge: { enabled: values.forge_enabled } } : {}),
         })
         toast.success("Repository registered", { description: created.path })
       }
@@ -137,19 +258,30 @@ export function RepositoryFormDialog({
    *
    * A 400 is one of three things — the path is not absolute, it is not a git
    * work tree, or the branch is unknown — and the message picks the field.
-   * `laya_disabled` is about the mode just picked, so it lands there too,
-   * pointing at the screen that turns Laya on rather than repeating the
-   * daemon's own CLI-flavoured words. A 409 about the pair goes above the
-   * buttons instead — no field of this form is what it is about.
+   * `ai_disabled` is about the mode just picked, so it lands there too,
+   * pointing at the screen that turns the model on rather than repeating the
+   * daemon's own CLI-flavoured words. A refusal to enable the forge — its CLI
+   * is not signed in, or another registration of the checkout holds it — is
+   * the switch's. A 409 about the pair goes above the buttons instead — no
+   * field of this form is what it is about.
    */
   function showFailure(error: unknown): void {
+    if (
+      ApiError.is(error) &&
+      (error.code.startsWith("forge_") || /forge integration/.test(error.message))
+    ) {
+      setError("forge_enabled", { message: describeError(error) })
+      return
+    }
     if (ApiError.is(error) && error.status === 400) {
       const message = describeError(error)
       setError(/branch/i.test(error.message) ? "base_branch" : "path", { message })
       return
     }
-    if (ApiError.is(error) && error.code === "laya_disabled") {
-      setError("permission_mode", { message: "Enable Laya on the Permissions screen first" })
+    if (ApiError.is(error) && error.code === "ai_disabled") {
+      setError("permission_mode", {
+        message: "Enable the AI permission model on the Permissions screen first",
+      })
       return
     }
     setError("root", { message: describeError(error) })
@@ -184,7 +316,10 @@ export function RepositoryFormDialog({
               spellCheck={false}
               className="font-mono"
               aria-invalid={formState.errors.path ? true : undefined}
-              {...register("path")}
+              {...register("path", {
+                onChange: (e) => onPathChange(e.target.value),
+                onBlur: (e) => onPathBlur(e.target.value),
+              })}
             />
             {formState.errors.path ? (
               <FieldError errors={[formState.errors.path]} />
@@ -274,8 +409,109 @@ export function RepositoryFormDialog({
               </FieldDescription>
             )}
           </Field>
+
+          <Field data-invalid={formState.errors.default_workflow ? true : undefined}>
+            <FieldLabel htmlFor="repository-default-workflow">Default workflow</FieldLabel>
+            <WorkflowSelect
+              control={control}
+              name="default_workflow"
+              id="repository-default-workflow"
+              enabled={open}
+            />
+            {formState.errors.default_workflow ? (
+              <FieldError errors={[formState.errors.default_workflow]} />
+            ) : (
+              <FieldDescription>
+                The workflow a new goal against this repository runs, where the goal names none.
+              </FieldDescription>
+            )}
+          </Field>
+
+          {forge ? (
+            <ForgeSwitch forge={forge} control={control} error={formState.errors.forge_enabled} />
+          ) : null}
+
+          {forge && forgeEnabled ? (
+            <Field>
+              <div className="flex items-center gap-3">
+                <Controller
+                  control={control}
+                  name="supervise_posts"
+                  render={({ field }) => (
+                    <Switch
+                      id="repository-supervise-posts"
+                      aria-label="Supervise posts"
+                      checked={field.value}
+                      onCheckedChange={(checked) => field.onChange(checked)}
+                    />
+                  )}
+                />
+                <FieldLabel htmlFor="repository-supervise-posts">Supervise posts</FieldLabel>
+              </div>
+              <FieldDescription>
+                Put agent replies, reviews and resolves in your pending GitHub review, and open pull
+                requests as drafts.
+              </FieldDescription>
+            </Field>
+          ) : null}
         </FormDialogBody>
       </FormDialogContent>
     </FormDialog>
+  )
+}
+
+/**
+ * The integration with the forge the daemon detected on the remote (spec 025),
+ * as one switch. Enabling asks the forge's own CLI whether it is signed in to
+ * the host, so a refusal comes back in the CLI's words and lands here.
+ *
+ * `forge` is a stored `ForgeDto` once the repository is registered, or the
+ * leaner `ForgeDetectionDto` the create form's own probe answers with ahead
+ * of that — neither `enabled` nor `login` apply there yet.
+ */
+function ForgeSwitch({
+  forge,
+  control,
+  error,
+}: {
+  forge: ForgeDto | ForgeDetectionDto
+  control: Control<RepositoryFormValues>
+  error: FormFieldError | undefined
+}) {
+  const label = `${forgeKindLabel(forge.kind)} integration`
+  return (
+    <Field data-invalid={error ? true : undefined}>
+      {/* The switch leads the row: its hit area reaches past its edge, and at
+          the row's far end that is past the scrolling body's, which then
+          scrolls sideways by that much. */}
+      <div className="flex items-center gap-3">
+        <Controller
+          control={control}
+          name="forge_enabled"
+          render={({ field }) => (
+            <Switch
+              id="forge-enabled"
+              aria-label={label}
+              checked={field.value}
+              onCheckedChange={(checked) => field.onChange(checked)}
+              aria-invalid={error ? true : undefined}
+            />
+          )}
+        />
+        <FieldLabel htmlFor="forge-enabled">{label}</FieldLabel>
+      </div>
+      {error ? (
+        <FieldError errors={[error]} />
+      ) : (
+        <FieldDescription data-testid="forge-remote">
+          <span className="font-mono">{forgeRepositoryLabel(forge)}</span>, via{" "}
+          <code>{forgeCliName(forge.kind)}</code>
+          {"enabled" in forge && forge.enabled && forge.login
+            ? `, signed in as ${forge.login}`
+            : ""}
+          . Lists its pull requests and issues, and keeps them up to date.
+        </FieldDescription>
+      )}
+    </Field>
   )
 }
