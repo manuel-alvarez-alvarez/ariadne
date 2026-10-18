@@ -20,4 +20,23 @@ describe("the shipped stats dashboard", () => {
   it("opens through the installed Perses layout converter", () => {
     expect(() => convertLayoutsToPanelGroups(shippedStats.spec.layouts)).not.toThrow()
   })
+
+  it("lays out every panel once, and refers to no panel it lacks", () => {
+    const laidOut = shippedStats.spec.layouts.flatMap((layout) =>
+      "items" in layout.spec
+        ? layout.spec.items.map((item) => item.content.$ref.replace("#/spec/panels/", ""))
+        : [],
+    )
+    expect([...laidOut].sort()).toEqual(Object.keys(shippedStats.spec.panels).sort())
+  })
+
+  it("names only the variables it declares or Perses builds in", () => {
+    const declared = new Set(shippedStats.spec.variables.map((variable) => variable.spec.name))
+    const builtin = new Set(["__range", "__rate_interval", "__interval"])
+    const used = JSON.stringify(shippedStats.spec.panels).matchAll(/\$\{?(\w+)/g)
+    const unknown = [...used]
+      .map((match) => match[1] ?? "")
+      .filter((name) => !declared.has(name) && !builtin.has(name))
+    expect(unknown).toEqual([])
+  })
 })
