@@ -5,6 +5,7 @@
 
 pub mod agents;
 pub mod attention;
+pub mod dashboards;
 pub mod doctor;
 pub mod error;
 pub mod events;

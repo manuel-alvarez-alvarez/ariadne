@@ -209,6 +209,21 @@ pub fn default_workflow_document(name: &str) -> Option<&'static str> {
         .map(|w| w.document)
 }
 
+pub(crate) struct BuiltinDashboard {
+    pub name: &'static str,
+    pub document: &'static str,
+}
+pub(crate) const BUILTIN_DASHBOARDS: [BuiltinDashboard; 1] = [BuiltinDashboard {
+    name: "stats",
+    document: include_str!("../dashboards/stats.json"),
+}];
+pub(crate) fn default_dashboard_document(name: &str) -> Option<&'static str> {
+    BUILTIN_DASHBOARDS
+        .iter()
+        .find(|d| d.name == name)
+        .map(|d| d.document)
+}
+
 /// The one-line `description` of a `SKILL.md`, which is what the index in an
 /// agent's system prompt carries and what a listing shows.
 ///

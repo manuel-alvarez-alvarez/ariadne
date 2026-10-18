@@ -6,7 +6,7 @@
 //! change can reach the database unannounced.
 
 use crate::{
-    AgentEvent, AgentSession, Goal, LearnedPermission, Message, Repository, Skill, Task,
+    AgentEvent, AgentSession, Dashboard, Goal, LearnedPermission, Message, Repository, Skill, Task,
     TaskTransition, Workflow,
 };
 
@@ -36,6 +36,9 @@ pub enum Change {
     WorkflowCreated(Workflow),
     WorkflowUpdated(Workflow),
     WorkflowDeleted(String),
+    DashboardCreated(Dashboard),
+    DashboardUpdated(Dashboard),
+    DashboardDeleted(Dashboard),
     RepositoryCreated(Repository),
     RepositoryUpdated(Repository),
     RepositoryDeleted(String),

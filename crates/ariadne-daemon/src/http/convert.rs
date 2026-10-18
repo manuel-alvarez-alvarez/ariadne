@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use ariadne_api::dashboards::DashboardDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
 use ariadne_api::messages::MessageDto;
@@ -49,6 +50,12 @@ macro_rules! dto {
 }
 
 dto! {
+    pub(crate) fn dashboard_dto(d: store::Dashboard) -> DashboardDto {
+        builtin: d.is_builtin(),
+        document_is_default: d.document_is_default(),
+        document: serde_json::from_str(d.document_text()).unwrap_or(serde_json::Value::Null),
+        .. name, created_at, updated_at
+    }
     pub(crate) fn skill_dto(s: store::Skill) -> SkillDto {
         seat: match s.seat() {
             store::SkillSeat::Orchestrator => SkillSeat::Orchestrator,

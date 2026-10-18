@@ -358,6 +358,14 @@ pub(crate) fn workflow_names() -> Vec<CompletionCandidate> {
         .collect()
 }
 
+/// Dashboard names, with the built-in state as help.
+pub(crate) fn dashboard_names() -> Vec<CompletionCandidate> {
+    fetch("/v1/dashboards")
+        .iter()
+        .map(|d| candidate(s(d, "name"), s(d, "builtin").to_string()))
+        .collect()
+}
+
 /// Registered repository ids (repo subcommands, `goal create --repo`).
 pub(crate) fn repo_ids() -> Vec<CompletionCandidate> {
     fetch("/v1/repositories").iter().map(repository).collect()

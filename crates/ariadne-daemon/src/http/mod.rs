@@ -10,6 +10,7 @@ mod channel;
 pub(crate) mod classify;
 mod console;
 pub(crate) mod convert;
+mod dashboards;
 mod doctor;
 mod error;
 pub(crate) mod events;
@@ -144,6 +145,7 @@ impl AppState {
         skills::reset_document,
         workflows::create, workflows::list, workflows::get, workflows::update,
         workflows::delete, workflows::reset, workflows::parse,
+        dashboards::create, dashboards::list, dashboards::get, dashboards::update, dashboards::delete, dashboards::reset,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
         forge::detect, forge::get_tunnel, forge::set_tunnel,
@@ -199,6 +201,7 @@ impl AppState {
         (name = "acp-agents", description = "The ACP agent registry: what's on PATH or configured, and what discovery found"),
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "workflows", description = "The kanban of columns a task is staged through"),
+        (name = "dashboards", description = "Editable Perses dashboards"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "permissions", description = "The AI permission model: the local model the `ai` permission mode answers with"),
         (name = "goals", description = "Goals and their plans"),
@@ -308,6 +311,17 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/workflows/{name}/reset", post(workflows::reset))
         .route("/v1/workflows/parse", post(workflows::parse))
+        .route(
+            "/v1/dashboards",
+            post(dashboards::create).get(dashboards::list),
+        )
+        .route(
+            "/v1/dashboards/{name}",
+            get(dashboards::get)
+                .put(dashboards::update)
+                .delete(dashboards::delete),
+        )
+        .route("/v1/dashboards/{name}/reset", post(dashboards::reset))
         // repositories
         .route(
             "/v1/repositories",

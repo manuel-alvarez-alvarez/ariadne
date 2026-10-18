@@ -11,6 +11,7 @@ mod agent_requests;
 mod agents;
 mod ai_permissions;
 mod change;
+mod dashboards;
 pub mod defaults;
 mod entities;
 mod events;
@@ -36,6 +37,7 @@ mod workflows;
 pub use agent_requests::AgentRequest;
 pub use ai_permissions::AiPermissionSettingsUpdate;
 pub use change::Change;
+pub use dashboards::NewDashboard;
 pub use entities::*;
 pub use events::{EventFilter, EventOrder, NewAgentEvent};
 pub use forge::{ForgeWrite, SetForgeIntegration};
@@ -74,6 +76,8 @@ static MIGRATIONS: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
+    #[error("dashboard {0} is one Ariadne ships; reset it instead")]
+    DashboardBuiltin(String),
     #[error("workflow {0} is still in use")]
     WorkflowInUse(String),
     #[error("{entity} not found: {id}")]
@@ -316,6 +320,7 @@ impl Store {
         };
         store.seed_builtin_skills().await?;
         store.seed_builtin_workflows().await?;
+        store.seed_builtin_dashboards().await?;
         Ok(store)
     }
 

@@ -8,6 +8,7 @@ pub(crate) mod values;
 
 use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
+use crate::commands::dashboard::DashboardCommand;
 use crate::commands::goal::GoalCommand;
 use crate::commands::issue::IssueCommand;
 use crate::commands::models::ModelsCommand;
@@ -36,6 +37,7 @@ Examples:
   ariadne task ls --goal <goal-id>         # the tasks it was broken into
   ariadne attach <id>                      # a session, task or goal id
 ";
+const DASHBOARD_EXAMPLES: &str = "Examples:\n  ariadne dashboard ls\n  ariadne dashboard get stats\n  ariadne dashboard set mine dashboard.json";
 
 /// What each group's help ends with: what that group is most often asked to
 /// do, in the spelling it takes today.
@@ -367,6 +369,12 @@ pub(crate) enum Command {
     Workflow {
         #[command(subcommand)]
         command: WorkflowCommand,
+    },
+    /// Manage editable Perses dashboards
+    #[command(about = "Manage editable Perses dashboards", long_about = "Manage editable Perses dashboards that the daemon stores and serves.", after_help = DASHBOARD_EXAMPLES)]
+    Dashboard {
+        #[command(subcommand)]
+        command: DashboardCommand,
     },
     /// Track pull requests
     ///

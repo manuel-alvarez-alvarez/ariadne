@@ -1,0 +1,19 @@
+{
+  "kind": "Dashboard",
+  "metadata": { "name": "stats" },
+  "spec": {
+    "duration": "7d",
+    "refresh": "30s",
+    "variables": [{"name":"repo","kind":"LabelValues","label":"repo"},{"name":"model","kind":"LabelValues","label":"model"}],
+    "layouts": [
+      {"kind":"Grid","title":"Key figures","panels":[{"title":"Tasks ended","description":"This panel shows completed task outcomes.","query":"sum(increase(ariadne_tasks_ended_total[7d]))"},{"title":"Active tasks","description":"This panel shows tasks that are still active.","query":"sum(ariadne_tasks_active)"}]},
+      {"kind":"Grid","title":"Models","panels":[{"title":"Tokens by model","description":"This panel shows tokens used by each model.","query":"sum by (model) (increase(ariadne_tokens_total[7d]))"},{"title":"Turns by model","description":"This panel shows completed turns by model.","query":"sum by (model) (increase(ariadne_turns_total[7d]))"}]},
+      {"kind":"Grid","title":"Work","panels":[{"title":"Task status","description":"This panel shows task outcomes by status.","query":"sum by (status) (increase(ariadne_tasks_ended_total[7d]))"},{"title":"Task lead time","description":"This panel shows median task lead time.","query":"histogram_quantile(0.5, sum by (le) (rate(ariadne_task_lead_time_seconds_bucket[7d])))"}]},
+      {"kind":"Grid","title":"Time","panels":[{"title":"Session lifetime","description":"This panel shows average session lifetime.","query":"sum(rate(ariadne_session_lifetime_seconds_sum[7d])) / sum(rate(ariadne_session_lifetime_seconds_count[7d]))"}]},
+      {"kind":"Grid","title":"Spend","panels":[{"title":"Input tokens","description":"This panel shows input token use.","query":"sum(increase(ariadne_tokens_total{kind=\"input\"}[7d]))"}]},
+      {"kind":"Grid","title":"Attention","panels":[{"title":"Pending attention","description":"This panel shows attention items by reason.","query":"sum by (reason) (ariadne_attention_pending)"}]},
+      {"kind":"Grid","title":"Daemon","panels":[{"title":"HTTP latency","description":"This panel shows median HTTP request duration.","query":"histogram_quantile(0.5, sum by (le) (rate(http_server_request_duration_seconds_bucket[7d])))"},{"title":"Stream clients","description":"This panel shows connected event stream clients.","query":"ariadne_events_stream_clients"}]},
+      {"kind":"Grid","title":"Logs","panels":[{"kind":"LogsTable","title":"Warnings and errors","description":"This panel shows recent daemon warnings and errors.","query":"{service=\"ariadned\", level=~\"warn|error\"}"}]}
+    ]
+  }
+}

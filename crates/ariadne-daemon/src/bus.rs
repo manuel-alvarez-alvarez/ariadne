@@ -26,8 +26,8 @@ use ariadne_api::stream::{DeletedDto, DomainEvent, TaskUpdatedDto};
 use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
 
 use crate::http::convert::{
-    event_dto, goal_dto_of, message_dto, repository_dto, session_dto_of, skill_dto, task_dto_of,
-    transition_dto, workflow_dto,
+    dashboard_dto, event_dto, goal_dto_of, message_dto, repository_dto, session_dto_of, skill_dto,
+    task_dto_of, transition_dto, workflow_dto,
 };
 
 /// Events buffered per subscriber before it is considered too slow.
@@ -373,6 +373,15 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         }
         Change::WorkflowDeleted(name) => {
             unscoped(DomainEvent::WorkflowDeleted(DeletedDto { id: name }))
+        }
+        Change::DashboardCreated(dashboard) => {
+            unscoped(DomainEvent::DashboardCreated(dashboard_dto(dashboard)))
+        }
+        Change::DashboardUpdated(dashboard) => {
+            unscoped(DomainEvent::DashboardUpdated(dashboard_dto(dashboard)))
+        }
+        Change::DashboardDeleted(dashboard) => {
+            unscoped(DomainEvent::DashboardDeleted(dashboard_dto(dashboard)))
         }
         Change::PullRequestsChanged(repository_id) => unscoped(DomainEvent::PullRequestsChanged(
             ariadne_api::stream::PullRequestsChangedDto { repository_id },

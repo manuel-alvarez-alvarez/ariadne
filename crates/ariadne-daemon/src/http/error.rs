@@ -60,6 +60,7 @@ impl From<StoreError> for ApiError {
             StoreError::WorkflowInUse(_) => {
                 Self::new(StatusCode::CONFLICT, "workflow_in_use", e.to_string())
             }
+            StoreError::DashboardBuiltin(_) => Self::conflict(e.to_string()),
             StoreError::Conflict(message) => Self::conflict(message.clone()),
             // Rust variant names are for the log; the envelope gets the
             // sentence a person can act on.

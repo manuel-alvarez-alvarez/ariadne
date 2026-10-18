@@ -6,6 +6,7 @@ pub(crate) mod attention;
 pub(crate) mod completions;
 pub(crate) mod console;
 pub(crate) mod daemon;
+pub(crate) mod dashboard;
 pub(crate) mod doctor;
 pub(crate) mod events;
 #[cfg(test)]

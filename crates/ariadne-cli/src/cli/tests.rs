@@ -7,6 +7,7 @@ use clap::FromArgMatches;
 
 use ariadne_core::{GoalStatus, PermissionMode, Seat, SessionStatus, TaskStatus};
 
+use crate::commands::dashboard::DashboardCommand;
 use crate::commands::models::ModelsCommand;
 use crate::commands::permissions::{
     AiPermissionsCommand, LearnedPermissionsCommand, PermissionsCommand,
@@ -26,6 +27,7 @@ fn the_command_tree_is_well_formed() {
 /// `ariadne --help`, so every one of them has to read the same way.
 const GROUPS: &[&str] = &[
     "agent",
+    "dashboard",
     "daemon",
     "goal",
     "permissions",
@@ -174,6 +176,11 @@ const LEAVES: &[(&str, bool)] = &[
     ("daemon start", true),
     ("daemon status", true),
     ("daemon stop", true),
+    ("dashboard get", true),
+    ("dashboard ls", true),
+    ("dashboard reset", true),
+    ("dashboard rm", true),
+    ("dashboard set", true),
     ("doctor", true),
     ("events", true),
     ("goal attach", false),
@@ -1549,6 +1556,26 @@ fn every_workflow_verb_parses_and_is_classified() {
             command: WorkflowCommand::Ls
         }
     ));
+}
+
+#[test]
+fn every_dashboard_verb_parses() {
+    let Command::Dashboard {
+        command: DashboardCommand::Set { name, file },
+    } = parse(&["ariadne", "dashboard", "set", "mine", "dash.json"]).command
+    else {
+        panic!("dashboard set");
+    };
+    assert_eq!(name, "mine");
+    assert_eq!(file, PathBuf::from("dash.json"));
+    for verb in ["ls", "get", "reset", "rm"] {
+        let args = if verb == "ls" {
+            vec!["ariadne", "dashboard", verb]
+        } else {
+            vec!["ariadne", "dashboard", verb, "stats"]
+        };
+        assert!(matches!(parse(&args).command, Command::Dashboard { .. }));
+    }
 }
 
 /// The daemon group is about one home, so `--home` is the group's: it reaches

@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::dashboards::DashboardDto;
 use crate::events::AgentEventSummaryDto;
 use crate::goals::GoalDto;
 use crate::messages::MessageDto;
@@ -108,6 +109,9 @@ pub enum DomainEvent {
     WorkflowCreated(WorkflowDto),
     WorkflowUpdated(WorkflowDto),
     WorkflowDeleted(DeletedDto),
+    DashboardCreated(DashboardDto),
+    DashboardUpdated(DashboardDto),
+    DashboardDeleted(DashboardDto),
     RepositoryCreated(RepositoryDto),
     RepositoryUpdated(RepositoryDto),
     RepositoryDeleted(DeletedDto),
@@ -158,6 +162,9 @@ impl DomainEvent {
             Self::WorkflowCreated(_) => "workflow_created",
             Self::WorkflowUpdated(_) => "workflow_updated",
             Self::WorkflowDeleted(_) => "workflow_deleted",
+            Self::DashboardCreated(_) => "dashboard_created",
+            Self::DashboardUpdated(_) => "dashboard_updated",
+            Self::DashboardDeleted(_) => "dashboard_deleted",
             Self::RepositoryCreated(_) => "repository_created",
             Self::RepositoryUpdated(_) => "repository_updated",
             Self::RepositoryDeleted(_) => "repository_deleted",
@@ -191,6 +198,8 @@ impl DomainEvent {
             Self::SkillDeleted(d) => json(d),
             Self::WorkflowCreated(w) | Self::WorkflowUpdated(w) => json(w),
             Self::WorkflowDeleted(d) => json(d),
+            Self::DashboardCreated(d) | Self::DashboardUpdated(d) => json(d),
+            Self::DashboardDeleted(d) => json(d),
             Self::RepositoryCreated(r) | Self::RepositoryUpdated(r) => json(r),
             Self::RepositoryDeleted(d) => json(d),
             Self::AiPermissionsUpdated(l) => json(l),

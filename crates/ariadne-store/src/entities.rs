@@ -10,8 +10,8 @@ use ariadne_core::{
 };
 
 use crate::defaults::{
-    ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, PR_REVIEWER_SKILL, default_skill_document,
-    default_workflow_document, skill_summary,
+    ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, PR_REVIEWER_SKILL, default_dashboard_document,
+    default_skill_document, default_workflow_document, skill_summary,
 };
 
 /// The typed reading of a TEXT column that holds a core enum. The accessor
@@ -161,6 +161,29 @@ pub struct Workflow {
     pub builtin: i64,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Dashboard {
+    pub name: String,
+    pub document: Option<String>,
+    pub builtin: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+impl Dashboard {
+    pub fn is_builtin(&self) -> bool {
+        self.builtin != 0
+    }
+    pub fn document_text(&self) -> &str {
+        self.document
+            .as_deref()
+            .or_else(|| default_dashboard_document(&self.name))
+            .unwrap_or("")
+    }
+    pub fn document_is_default(&self) -> bool {
+        self.document.is_none()
+    }
 }
 
 impl Workflow {

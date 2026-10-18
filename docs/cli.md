@@ -610,6 +610,18 @@ author keeps its request, what a `pr-reviewer` session does, and the tunnel's fa
 to polling; see [Configuration](configuration.md) for `gh_bin`
 and the webhook keys.
 
+## Dashboards
+
+`ariadne dashboard` manages Perses dashboard documents. Use `ls`, `get`, `set`, `reset`, and `rm`.
+
+```sh
+ariadne dashboard ls
+ariadne dashboard get stats
+ariadne dashboard set mine dashboard.json
+ariadne dashboard reset stats
+ariadne dashboard rm mine
+```
+
 ## Custom workflows
 
 A workflow is a linear kanban of columns a goal's tasks step through, one
