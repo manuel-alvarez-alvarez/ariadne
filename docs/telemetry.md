@@ -122,6 +122,9 @@ nanosecond timestamp.
 
 - Instant and range selectors with `=`, `!=`, `=~` and `!~`, and `offset`.
   An instant selector looks back 5 minutes for a sample.
+- The `@` modifier: `x @ end()`, `x @ start()` or `x @ 1700000000` reads
+  `x` at that time on every step of the query, so `increase(x[$__range] @
+  end())` is the whole range's total however the chart is stepped.
 - `rate`, `irate`, `increase`, `delta`, `idelta`.
 - `sum`, `avg`, `min`, `max`, `count`, `topk`, `bottomk` and `quantile`,
   with `by` or `without`.
@@ -136,8 +139,7 @@ nanosecond timestamp.
   `absent`, `time`, `vector`, `scalar`, `label_replace`, `label_join`,
   `sort`, `sort_desc`.
 
-Subqueries, the `@` modifier and every other function refuse with
-`bad_data`.
+Subqueries and every other function refuse with `bad_data`.
 
 Raw samples are kept for `telemetry_samples_days`. Past that, a series has
 only its hourly rollups. An hour with no raw sample reads its rollup: an

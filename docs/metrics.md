@@ -115,8 +115,16 @@ reads the same names.
 ## The dashboard
 
 The desktop app shows the shipped `stats` dashboard over these metrics
-([spec 036](../specs/036-dashboards.md)). Its panels are queries like the
-ones above, and a dashboard you edit is kept as your own.
+([spec 036](../specs/036-dashboards.md)). A row of headline numbers leads:
+tasks finished, success rate, median lead time, what needs you now, tokens,
+the prompt cache's share, goals completed and active tasks. Below it are
+sections for the work, the spend, agents and models, attention and
+permissions, and, folded away, the daemon's health and its warnings.
+
+The Repository and Model pickers at the top narrow every panel whose metric
+carries that label, and Per sets the width of each bar over time: an hour,
+six hours or a day. Its panels are queries like the ones above, and a
+dashboard you edit is kept as your own.
 
 The full catalog, with the place each metric is recorded, is in
 [spec 035](../specs/035-metrics.md).

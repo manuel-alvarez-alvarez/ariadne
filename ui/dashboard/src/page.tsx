@@ -10,8 +10,9 @@
  * tree entirely), the MUI theme and the matching Perses charts theme, a
  * snackbar host for its own toasts, the `use-query-params` provider its
  * internal `*WithQueryParams` hooks read and write the URL through — the
- * window adapter, since there is no router here to hand it instead — and the
- * plugin registry.
+ * window adapter, since there is no router here to hand it instead — the
+ * plugin registry, and the `ValidationProvider` whose schemas its panel,
+ * variable and datasource editors read.
  *
  * Perses resources are project-scoped; the daemon's dashboards are not, so
  * `PROJECT` is a constant this page invents to satisfy that shape and strips
@@ -28,7 +29,7 @@ import {
   SnackbarProvider,
 } from "@perses-dev/components"
 import { ViewDashboard } from "@perses-dev/dashboards"
-import { PluginRegistry } from "@perses-dev/plugin-system"
+import { PluginRegistry, ValidationProvider } from "@perses-dev/plugin-system"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { QueryParamProvider } from "use-query-params"
@@ -131,17 +132,19 @@ export function Page() {
                     Could not load {params.dashboardName}: {String(error)}
                   </p>
                 ) : dashboard ? (
-                  <ViewDashboard
-                    key={version}
-                    dashboardResource={dashboard}
-                    datasourceApi={datasourceApi}
-                    isReadonly={false}
-                    isEditing
-                    isVariableEnabled
-                    isAnnotationEnabled={false}
-                    isDatasourceEnabled={false}
-                    onSave={onSave}
-                  />
+                  <ValidationProvider>
+                    <ViewDashboard
+                      key={version}
+                      dashboardResource={dashboard}
+                      datasourceApi={datasourceApi}
+                      isReadonly={false}
+                      isEditing
+                      isVariableEnabled
+                      isAnnotationEnabled={false}
+                      isDatasourceEnabled={false}
+                      onSave={onSave}
+                    />
+                  </ValidationProvider>
                 ) : (
                   <p>Loading…</p>
                 )}

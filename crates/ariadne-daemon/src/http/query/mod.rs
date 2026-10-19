@@ -323,7 +323,7 @@ async fn prom_query(
     let t = params.time("time", Some(now_ms()))?;
     let expr = promql::parse(params.get("query").unwrap_or(""))?;
     let series = promql::load(&state.telemetry_store, &expr, t, t).await?;
-    let value = promql::Evaluator::new(&series).eval(&expr, t)?;
+    let value = promql::Evaluator::new(&series, t, t).eval(&expr, t)?;
     Ok(success(match value {
         Value::Scalar(v) => json!({"resultType": "scalar", "result": [seconds(t), number(v)]}),
         Value::String(s) => json!({"resultType": "string", "result": [seconds(t), s]}),
@@ -346,7 +346,7 @@ async fn prom_range(
     let step = params.step(start, end)?;
     let expr = promql::parse(params.get("query").unwrap_or(""))?;
     let series = promql::load(&state.telemetry_store, &expr, start, end).await?;
-    let evaluator = promql::Evaluator::new(&series);
+    let evaluator = promql::Evaluator::new(&series, start, end);
     let mut out: BTreeMap<Labels, Vec<(i64, f64)>> = BTreeMap::new();
     let mut t = start;
     while t <= end {

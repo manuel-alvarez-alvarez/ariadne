@@ -1,7 +1,7 @@
 ---
 id: telemetry-query
 status: current
-updated: 2026-10-18
+updated: 2026-10-19
 areas: [daemon, cli, docs, specs]
 commits: []
 tests:
@@ -91,7 +91,9 @@ Out: recording metrics (the exporter is 033's), the stats ledger and
 
 9. A query is parsed with `promql-parser` 0.11 and checked before any read.
    The subset is: instant and range selectors with `=`, `!=`, `=~` and
-   `!~` (the regular expressions anchored); `offset`; `rate`, `irate`,
+   `!~` (the regular expressions anchored); `offset`; the `@` modifier
+   with a timestamp, `start()` or `end()`, which pins a selector to that
+   time at every step (in a `match[]` selector, `@` is refused); `rate`, `irate`,
    `increase`, `delta`, `idelta`; `sum`, `avg`, `min`, `max`, `count`,
    `topk`, `bottomk`, `quantile`, with `by` and `without`;
    `avg_over_time`, `sum_over_time`, `min_over_time`, `max_over_time`,
@@ -102,7 +104,7 @@ Out: recording metrics (the exporter is 033's), the stats ledger and
    and `group_right`; `and`, `or`, `unless`; `abs`, `ceil`, `floor`,
    `round`, `clamp`, `clamp_min`, `clamp_max`, `absent`, `time`, `vector`,
    `scalar`, `label_replace`, `label_join`, `sort`, `sort_desc`. A
-   subquery, the `@` modifier, `fill`, `or` inside a selector, and every
+   subquery, `fill`, `or` inside a selector, and every
    other function, aggregation and operator answer `bad_data` naming it.
 10. The lookback delta is 5 minutes: an instant selector takes a series'
     latest sample in the 5 minutes up to its time.
@@ -176,6 +178,10 @@ Out: recording metrics (the exporter is 033's), the stats ledger and
   (`telemetry_query.rs::an_unsupported_query_answers_bad_data_naming_it`),
   and so do an unsupported aggregation, operator, subquery and modifier
   (`promql.rs::tests::unsupported_functions_and_operators_are_named`).
+- `@ start()`, `@ end()` and `@ <time>` pin a selector, `offset` included,
+  and a `match[]` selector refuses `@`
+  (`promql.rs::tests::at_pins_a_selector_to_the_query_start_end_or_a_time`,
+  `promql.rs::tests::a_series_selector_refuses_at`).
 - Labels, label values, series and metadata answer, the histogram under
   its family, and `/-/healthy` answers
   (`telemetry_query.rs::discovery_routes_list_labels_series_and_metadata`);

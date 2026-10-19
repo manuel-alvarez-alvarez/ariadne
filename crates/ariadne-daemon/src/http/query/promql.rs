@@ -16,8 +16,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use promql_parser::label::Matcher;
 use promql_parser::parser::{
-    self, AggregateExpr, BinaryExpr, Call, Expr, LabelModifier, Offset, VectorMatchCardinality,
-    VectorSelector,
+    self, AggregateExpr, AtModifier, BinaryExpr, Call, Expr, LabelModifier, Offset,
+    VectorMatchCardinality, VectorSelector,
 };
 
 use ariadne_store::telemetry::{MetricKind, SeriesMeta, TelemetryStore, TimeRange};
@@ -272,6 +272,9 @@ pub(super) fn parse_selector(text: &str) -> Result<VectorSelector> {
     match parser::parse(text).map_err(EvalError)? {
         Expr::VectorSelector(selector) => {
             check_selector(&selector)?;
+            if selector.at.is_some() {
+                return fail("unsupported modifier @ in a series selector");
+            }
             Ok(selector)
         }
         _ => fail(format!("invalid series selector {text:?}")),
@@ -290,9 +293,6 @@ pub(super) fn parse(text: &str) -> Result<Expr> {
 }
 
 fn check_selector(selector: &VectorSelector) -> Result<()> {
-    if selector.at.is_some() {
-        return fail("unsupported modifier @");
-    }
     if !selector.matchers.or_matchers.is_empty() {
         return fail("unsupported operator or inside a selector");
     }
@@ -346,6 +346,22 @@ fn offset_ms(offset: &Option<Offset>) -> i64 {
         Some(Offset::Neg(duration)) => -(duration.as_millis() as i64),
         None => 0,
     }
+}
+
+/// The time a selector reads at when its query is evaluated at `t`: `t`
+/// itself, or the time its `@` pins — the query's own `start` or `end`, or
+/// a timestamp — less its offset, as Prometheus reads it.
+fn read_time(selector: &VectorSelector, t: i64, start: i64, end: i64) -> i64 {
+    let pinned = match &selector.at {
+        None => t,
+        Some(AtModifier::Start) => start,
+        Some(AtModifier::End) => end,
+        Some(AtModifier::At(time)) => match time.duration_since(std::time::UNIX_EPOCH) {
+            Ok(since) => since.as_millis() as i64,
+            Err(before) => -(before.duration().as_millis() as i64),
+        },
+    };
+    pinned - offset_ms(&selector.offset)
 }
 
 /// Every selector in the tree, with how far back of its evaluation time it
@@ -503,9 +519,8 @@ pub(super) async fn load(
     let mut from = start;
     let mut to = end;
     for (selector, range) in &wanted {
-        let offset = offset_ms(&selector.offset);
-        from = from.min(start - offset - range - LOOKBACK_MS - HOUR_MS);
-        to = to.max(end - offset);
+        from = from.min(read_time(selector, start, start, end) - range - LOOKBACK_MS - HOUR_MS);
+        to = to.max(read_time(selector, end, start, end));
     }
     let span = TimeRange {
         since: rfc3339(from),
@@ -642,11 +657,15 @@ fn without_name(mut labels: Labels) -> Labels {
 
 pub(super) struct Evaluator<'a> {
     series: &'a [Series],
+    /// The query's first and last evaluation time, which `@ start()` and
+    /// `@ end()` pin a selector to: one time for an instant query.
+    start: i64,
+    end: i64,
 }
 
 impl<'a> Evaluator<'a> {
-    pub(super) fn new(series: &'a [Series]) -> Self {
-        Self { series }
+    pub(super) fn new(series: &'a [Series], start: i64, end: i64) -> Self {
+        Self { series, start, end }
     }
 
     pub(super) fn eval(&self, expr: &Expr, t: i64) -> Result<Value> {
@@ -686,7 +705,7 @@ impl<'a> Evaluator<'a> {
     }
 
     fn instant(&self, selector: &VectorSelector, t: i64) -> Vec<Sample> {
-        let at = t - offset_ms(&selector.offset);
+        let at = read_time(selector, t, self.start, self.end);
         self.series
             .iter()
             .filter(|series| selects(selector, &series.labels))
@@ -700,7 +719,7 @@ impl<'a> Evaluator<'a> {
     }
 
     fn windows(&self, selector: &VectorSelector, range: i64, t: i64) -> Vec<(Labels, Window)> {
-        let at = t - offset_ms(&selector.offset);
+        let at = read_time(selector, t, self.start, self.end);
         self.series
             .iter()
             .filter(|series| selects(selector, &series.labels))
@@ -872,7 +891,7 @@ impl<'a> Evaluator<'a> {
             return fail(format!("{name} expects a range vector"));
         };
         let range = matrix.range.as_millis() as i64;
-        let at = t - offset_ms(&matrix.vs.offset);
+        let at = read_time(&matrix.vs, t, self.start, self.end);
         let keep_name = name == "last_over_time";
         Ok(Value::Vector(
             self.windows(&matrix.vs, range, t)
@@ -1527,7 +1546,7 @@ mod tests {
     }
 
     fn eval(data: &[Series], query: &str) -> Result<Value> {
-        Evaluator::new(data).eval(&parse(query)?, T)
+        Evaluator::new(data, T, T).eval(&parse(query)?, T)
     }
 
     fn vector(data: &[Series], query: &str) -> Vec<(Labels, f64)> {
@@ -1668,6 +1687,35 @@ mod tests {
     }
 
     #[test]
+    fn at_pins_a_selector_to_the_query_start_end_or_a_time() {
+        let data = tokens();
+        // A range query over the three samples, evaluated at its first step.
+        let evaluator = Evaluator::new(&data, T - 120_000, T);
+        let first = |query: &str| match evaluator.eval(&parse(query).unwrap(), T - 120_000) {
+            Ok(Value::Vector(samples)) => samples[0].value,
+            other => panic!("{query}: {other:?}"),
+        };
+        let author = r#"ariadne_tokens_total{seat="author"}"#;
+        assert_eq!(first(author), 10.0);
+        assert_eq!(first(&format!("{author} @ end()")), 30.0);
+        assert_eq!(first(&format!("{author} @ start()")), 10.0);
+        let at_middle = (T - 60_000) / 1000;
+        assert_eq!(first(&format!("{author} @ {at_middle}")), 20.0);
+        assert_eq!(first(&format!("{author} @ end() offset 1m")), 20.0);
+        assert_eq!(
+            first(&format!("increase({author}[2m] @ end())")),
+            20.0,
+            "a window pinned to the end reads the whole range at every step"
+        );
+    }
+
+    #[test]
+    fn a_series_selector_refuses_at() {
+        assert!(parse_selector("x @ end()").is_err());
+        assert!(parse_selector("x").is_ok());
+    }
+
+    #[test]
     fn rate_and_increase_extrapolate_like_prometheus() {
         let data = tokens();
         let rate = vector(&data, r#"rate(ariadne_tokens_total{seat="author"}[2m])"#);
@@ -1721,7 +1769,9 @@ mod tests {
             Vec::new(),
             vec![rollup],
         )];
-        let at = |query: &str, t: i64| match Evaluator::new(&data).eval(&parse(query).unwrap(), t) {
+        let at = |query: &str, t: i64| match Evaluator::new(&data, t, t)
+            .eval(&parse(query).unwrap(), t)
+        {
             Ok(Value::Vector(samples)) => samples.first().map(|s| s.value),
             other => panic!("{other:?}"),
         };
@@ -1945,7 +1995,6 @@ mod tests {
             ("predict_linear(x[5m], 1)", "predict_linear"),
             ("x atan2 y", "atan2"),
             ("max_over_time(x[5m:1m])", "subquery"),
-            ("x @ 100", "@"),
             ("count_values(\"v\", x)", "count_values"),
         ] {
             let error = parse(query).unwrap_err();
