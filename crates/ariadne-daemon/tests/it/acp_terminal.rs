@@ -297,8 +297,8 @@ async fn the_terminal_draws_the_transcript_and_the_status_line_at_the_client_siz
         .unwrap_or_else(|| panic!("the input box spans the client's width:\n{screen}"));
     assert_eq!(
         rows[top - 1].trim_end(),
-        " agent · stub:test-model · idle",
-        "the status row names the seat, the model and the status:\n{screen}"
+        " agent · develop · stub:test-model · idle",
+        "the status row names the seat, the column, the model and the status:\n{screen}"
     );
     let bottom = top
         + 1
