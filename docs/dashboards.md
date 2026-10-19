@@ -15,6 +15,23 @@ Prometheus-compatible metrics API, and a log panel's against its
 Loki-compatible one. Nothing here aggregates on its own; a panel is only ever
 as fresh as the query behind it.
 
+## Creating, copying, renaming and deleting
+
+**New dashboard**, beside the picker, asks for a name and what it starts
+from: **Empty**, a blank dashboard with nothing on it, or `Copy of
+<picked dashboard>`, which takes the picked dashboard's own panels, layouts,
+variables and time settings and files them under the new name — a starting
+point rather than a blank one.
+
+**Rename** files the picked dashboard's document under the new name and
+then removes the old one, so a name already taken, or any other refusal,
+leaves the old dashboard exactly as it was. **Delete** asks for confirmation
+first, since there is no undo. Neither is offered for the built-in `stats`
+dashboard: reset it instead.
+
+Whichever of the three you use, the picker opens on the dashboard it names —
+the new one after a create or a rename, and a remaining one after a delete.
+
 ## Editing a panel
 
 The dashboard opens already editable. Add a panel, resize or move one, change

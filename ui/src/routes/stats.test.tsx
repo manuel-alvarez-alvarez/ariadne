@@ -10,7 +10,7 @@
  * `document_is_default` gate — not anything Perses draws.
  */
 
-import { screen, within } from "@testing-library/react"
+import { fireEvent, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -40,16 +40,37 @@ const CUSTOM: DashboardDto = aDashboard({
 /** Every request the screen made, by path. */
 let requests: { method: string; path: string }[] = []
 
+/**
+ * Every dashboard the stub daemon knows, mutated by create and delete so a
+ * list refetch after either — which the Stats screen's picker depends on to
+ * show the right dashboard — reflects what was just done.
+ */
+let dashboards: DashboardDto[] = []
+
 beforeEach(() => {
   requests = []
+  dashboards = [STATS, CUSTOM]
   mockTheme.resolvedTheme = "light"
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     const url = new URL(request.url)
     requests.push({ method: request.method, path: url.pathname })
-    if (url.pathname === "/v1/dashboards") return jsonResponse([STATS, CUSTOM])
+    if (request.method === "GET" && url.pathname === "/v1/dashboards") {
+      return jsonResponse(dashboards)
+    }
     if (url.pathname === "/v1/dashboards/custom/reset") {
       return jsonResponse({ ...CUSTOM, document_is_default: true })
+    }
+    if (request.method === "POST" && url.pathname === "/v1/dashboards") {
+      const body = (await request.json()) as { name: string; document: unknown }
+      const created = aDashboard({ name: body.name, builtin: false, document: body.document })
+      dashboards = [...dashboards, created]
+      return jsonResponse(created, 201)
+    }
+    const deleteMatch = url.pathname.match(/^\/v1\/dashboards\/([^/]+)$/)
+    if (request.method === "DELETE" && deleteMatch) {
+      dashboards = dashboards.filter((one) => one.name !== deleteMatch[1])
+      return new Response(null, { status: 204 })
     }
     return jsonResponse({})
   })
@@ -144,5 +165,70 @@ describe("StatsPage", () => {
     await vi.waitFor(() => {
       expect(post).toHaveBeenCalledWith({ type: "theme", theme: "dark" }, window.location.origin)
     })
+  })
+
+  it("disables Rename and Delete on the built-in dashboard, and enables them on one of your own", async () => {
+    const user = userEvent.setup()
+    renderScreen(<StatsPage />, { route: "/stats" })
+    await screen.findByTitle("stats dashboard")
+
+    expect((screen.getByRole("button", { name: "Rename" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    )
+    expect((screen.getByRole("button", { name: "Delete" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    )
+
+    await user.click(screen.getByRole("combobox", { name: "Dashboard" }))
+    await user.click(await screen.findByRole("option", { name: "custom" }))
+    await screen.findByTitle("custom dashboard")
+
+    expect((screen.getByRole("button", { name: "Rename" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    )
+    expect((screen.getByRole("button", { name: "Delete" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    )
+  })
+
+  it("creates a dashboard and opens the picker on it", async () => {
+    const user = userEvent.setup()
+    renderScreen(<StatsPage />, { route: "/stats" })
+    await screen.findByTitle("stats dashboard")
+
+    await user.click(screen.getByRole("button", { name: "New dashboard" }))
+    const createDialog = screen.getByRole("dialog", { name: "New dashboard" })
+    await user.type(within(createDialog).getByLabelText("Name"), "on-call")
+    await user.click(within(createDialog).getByRole("button", { name: "Create dashboard" }))
+
+    expect(await screen.findByTitle("on-call dashboard")).toBeDefined()
+  })
+
+  it("renames a dashboard and opens the picker on the new name", async () => {
+    const user = userEvent.setup()
+    renderScreen(<StatsPage />, { route: "/stats?dashboard=custom" })
+    await screen.findByTitle("custom dashboard")
+
+    await user.click(screen.getByRole("button", { name: "Rename" }))
+    const renameDialog = screen.getByRole("dialog", { name: "Rename custom" })
+    fireEvent.change(within(renameDialog).getByLabelText("Name"), { target: { value: "" } })
+    await user.type(within(renameDialog).getByLabelText("Name"), "on-call")
+    await user.click(within(renameDialog).getByRole("button", { name: "Rename" }))
+
+    expect(await screen.findByTitle("on-call dashboard")).toBeDefined()
+    expect(requests).toContainEqual({ method: "DELETE", path: "/v1/dashboards/custom" })
+  })
+
+  it("asks before it deletes a dashboard, then opens the picker on a remaining one", async () => {
+    const user = userEvent.setup()
+    renderScreen(<StatsPage />, { route: "/stats?dashboard=custom" })
+    await screen.findByTitle("custom dashboard")
+
+    await user.click(screen.getByRole("button", { name: "Delete" }))
+    const confirm = await screen.findByRole("dialog", { name: "Delete custom?" })
+    await user.click(within(confirm).getByRole("button", { name: "Delete" }))
+
+    expect(await screen.findByTitle("stats dashboard")).toBeDefined()
+    expect(requests).toContainEqual({ method: "DELETE", path: "/v1/dashboards/custom" })
   })
 })
