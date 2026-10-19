@@ -1,7 +1,7 @@
 ---
 id: how-a-task-ends
 status: superseded
-updated: 2026-10-10
+updated: 2026-10-19
 superseded_by: 030
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
@@ -25,6 +25,11 @@ The final workflow column now owns task completion.
 ## Acceptance criteria
 
 1. The final workflow column completes only after its gate passes (`crates/ariadne-daemon/tests/it/workflow_steps.rs::a_step_agent_opens_its_request_and_completion_reads_the_forge_now`).
+2. A merge column fetches its remote base before it accepts a merge commit,
+   and tells its agent to push `HEAD:<base>` and retry when that check fails
+   (`crates/ariadne-daemon/tests/it/workflow_steps.rs::a_merge_gate_requires_the_commit_on_the_fetched_remote_base`).
+3. A merge column uses its current remote-base ref and logs a warning when
+   the base fetch fails (`crates/ariadne-daemon/tests/it/workflow_steps.rs::a_merge_gate_uses_the_current_remote_base_when_fetch_fails`).
 
 ## Sources
 

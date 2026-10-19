@@ -318,6 +318,17 @@ impl GitManager {
         Ok(())
     }
 
+    /// Fetch `branch` from `from` into its remote-tracking ref: the base a
+    /// merge column verifies before it completes (030).
+    pub(crate) async fn fetch_branch(&self, repo: &Path, from: &str, branch: &str) -> Result<()> {
+        if !self.is_valid_branch_name(repo, branch).await? {
+            bail!("not a valid branch name: {branch}");
+        }
+        self.git(repo, &["fetch", "--end-of-options", from, branch])
+            .await?;
+        Ok(())
+    }
+
     /// The tip `branch` has on `from` — a remote name or a clone URL — as a
     /// full sha, fetched into `FETCH_HEAD` alone: the base a request merged
     /// into, which the checkout's own branch may not have caught up with

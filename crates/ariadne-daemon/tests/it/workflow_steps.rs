@@ -886,6 +886,81 @@ async fn the_push_gate_requires_the_current_tip_on_the_remote() {
 }
 
 #[tokio::test]
+async fn a_merge_gate_requires_the_commit_on_the_fetched_remote_base() {
+    let h = harness().await;
+    let (task, session) = gated_task(&h, "merged").await;
+    let repo = h.store.get_repository(&task.repo_id).await.unwrap();
+    with_forge(&h, &repo).await;
+    let worktree = std::path::Path::new(session.worktree_path.as_deref().unwrap());
+    sh(
+        worktree,
+        "echo merged > feature && git add feature && git -c user.name=Test -c user.email=test@test commit -qm 'feat: merge guard'",
+    );
+    let sha = sh(worktree, "git rev-parse HEAD");
+    sh(
+        worktree,
+        &format!("git push -q origin HEAD:{}", task.branch),
+    );
+    let uri = format!("/v1/tasks/{}/step/complete", task.id);
+    let refused = h
+        .error(
+            as_session(
+                &uri,
+                &session.id,
+                json!({"reason":"Landed.", "merge_commit":sha.trim()}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert_eq!(refused.error.code, "step_gate_failed");
+    assert_eq!(
+        refused.error.message,
+        "push HEAD:main to origin and try again"
+    );
+    sh(worktree, "git push -q origin HEAD:main");
+    let finished: Value = h
+        .json(
+            as_session(
+                &uri,
+                &session.id,
+                json!({"reason":"Landed.", "merge_commit":sha.trim()}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(finished["status"], "finished");
+}
+
+#[tokio::test]
+async fn a_merge_gate_uses_the_current_remote_base_when_fetch_fails() {
+    let h = harness().await;
+    let (task, session) = gated_task(&h, "merged").await;
+    let repo = h.store.get_repository(&task.repo_id).await.unwrap();
+    with_forge(&h, &repo).await;
+    let path = std::path::Path::new(&repo.path);
+    let worktree = std::path::Path::new(session.worktree_path.as_deref().unwrap());
+    sh(
+        worktree,
+        "echo merged > feature && git add feature && git -c user.name=Test -c user.email=test@test commit -qm 'feat: merge guard'",
+    );
+    let sha = sh(worktree, "git rev-parse HEAD");
+    sh(worktree, "git push -q origin HEAD:main");
+    sh(path, "git fetch -q origin main");
+    sh(path, "git remote set-url origin /no/such/remote");
+    let finished: Value = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/step/complete", task.id),
+                &session.id,
+                json!({"reason":"Landed.", "merge_commit":sha.trim()}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(finished["status"], "finished");
+}
+
+#[tokio::test]
 async fn a_step_agent_opens_its_request_and_completion_reads_the_forge_now() {
     use crate::common::forge::{answer, check_states, opened_pull, stub_forge_cli};
     let url = "https://github.com/acme/widgets/pull/1";

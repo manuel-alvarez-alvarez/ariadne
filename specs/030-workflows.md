@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-10-17
+updated: 2026-10-19
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
@@ -215,7 +215,9 @@ every other kebab-case word in it; the wire spells the same gate
    - `committed`: at least one commit past the base, with a clean worktree;
    - `pushed`: the remote holds the branch tip;
    - `merged`: the supplied merge commit and the task branch are ancestors
-     of the base branch;
+     of the base branch. Where a remote is configured, the daemon fetches
+     its base first and checks that fetched tip. If that fetch fails, the
+     daemon logs a warning and checks the current remote-base ref instead;
    - `request_merged`: a fresh forge read says the task's request merged.
    A column with no gate moves on the reason alone. A gate that fails
    returns 409 `step_gate_failed` and leaves the task in place. A stored
@@ -426,6 +428,11 @@ every other kebab-case word in it; the wire spells the same gate
   each call
   (`workflow_steps.rs::the_push_gate_requires_the_current_tip_on_the_remote`,
   `::a_step_agent_opens_its_request_and_completion_reads_the_forge_now`).
+- A merge gate fetches the remote base before it accepts the merge commit and
+  task branch. A failed fetch logs a warning and uses the current remote-base
+  ref. A refused gate tells the agent to push `HEAD:<base>` and retry
+  (`workflow_steps.rs::a_merge_gate_requires_the_commit_on_the_fetched_remote_base`,
+  `::a_merge_gate_uses_the_current_remote_base_when_fetch_fails`).
 - The `pr` column opens and keeps one request. Its agent gets comments and
   failed checks once, reports ready, enforces the merge gate, and cleans up
   after a merge. A close ends nothing. The daemon finishes the task when its

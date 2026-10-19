@@ -109,18 +109,41 @@ pub(super) async fn complete(
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
                 .ok_or_else(|| gate_failed("provide the merge commit on the base branch"))?;
-            if !git
-                .is_ancestor(path, sha, &repo.base_branch)
-                .await
-                .unwrap_or(false)
+            let base = match repo.forge.as_ref() {
+                Some(forge) => {
+                    if let Err(error) = git
+                        .fetch_branch(path, &forge.remote, &repo.base_branch)
+                        .await
+                    {
+                        tracing::warn!(
+                            task = %task.id,
+                            remote = %forge.remote,
+                            base = %repo.base_branch,
+                            %error,
+                            "merge gate could not fetch the remote base; checking its current ref"
+                        );
+                    }
+                    format!("{}/{}", forge.remote, repo.base_branch)
+                }
+                None => repo.base_branch.clone(),
+            };
+            if !git.is_ancestor(path, sha, &base).await.unwrap_or(false)
                 || !git
-                    .is_ancestor(path, &task.branch, &repo.base_branch)
+                    .is_ancestor(path, &task.branch, &base)
                     .await
                     .unwrap_or(false)
             {
-                return Err(gate_failed(
-                    "the merge commit and task branch must be on the base branch",
-                ));
+                let remote = repo.forge.as_ref().map(|forge| forge.remote.as_str());
+                let fix = remote.map_or_else(
+                    || {
+                        format!(
+                            "push HEAD:{} to the base branch and try again",
+                            repo.base_branch
+                        )
+                    },
+                    |remote| format!("push HEAD:{} to {remote} and try again", repo.base_branch),
+                );
+                return Err(gate_failed(fix));
             }
             verified_merge_commit = Some(sha.to_string());
         }

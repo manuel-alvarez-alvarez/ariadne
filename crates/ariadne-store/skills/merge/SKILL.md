@@ -17,8 +17,14 @@ The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
    `git reset --soft "$(git merge-base <upstream> HEAD)" && git commit`.
 4. Run `git diff --stat <upstream> HEAD`. It names only files of the task.
    Done when the list holds no other file.
-5. With a remote: push `HEAD:<base>` to `<remote>`. The hooks run the
-   checks. Then fast-forward `<base>` in the primary checkout:
+5. With a remote, run:
+
+   ```sh
+   git push <remote> HEAD:<base>
+   ```
+
+   The hooks run the checks. Then fast-forward `<base>` in the primary
+   checkout:
    - `git -C <repo> merge --ff-only <remote>/<base>` where `<base>` is checked out there
    - else `git -C <repo> fetch <remote> <base>:<base>`.
 6. With no remote: run the checks the repository names for a landing. Then
@@ -31,6 +37,7 @@ The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
 - A refused push or a failed check is a fix on the task branch. Start
   again from step 1.
 - A failed fast-forward means the base moved. Start again from step 1.
+- Never push the task branch by its name.
 - Never force a push to `<base>`.
 
 ## Done

@@ -1307,7 +1307,8 @@ mod tests {
     /// let an agent merge one itself, on either forge.
     #[test]
     fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
-        let text = unwrapped(default_skill_document("merge").unwrap());
+        let document = default_skill_document("merge").unwrap();
+        let text = unwrapped(document);
         let mut at = 0;
         for step in [
             "`<upstream>` is `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.",
@@ -1315,7 +1316,7 @@ mod tests {
             "Rebase the task branch onto `<upstream>`.",
             "git reset --soft \"$(git merge-base <upstream> HEAD)\" && git commit",
             "git diff --stat <upstream> HEAD",
-            "push `HEAD:<base>` to `<remote>`",
+            "git push <remote> HEAD:<base>",
             "git -C <repo> merge --ff-only <remote>/<base>",
             "else `git -C <repo> fetch <remote> <base>:<base>`",
             "With no remote: run the checks the repository names for a landing.",
@@ -1337,6 +1338,14 @@ mod tests {
         assert!(
             text.contains("The primary checkout is the `Repo:` path of your briefing."),
             "the merge skill does not name the primary checkout"
+        );
+        assert!(
+            document.contains("```sh\n   git push <remote> HEAD:<base>\n   ```"),
+            "the merge skill does not show the base push as a literal command"
+        );
+        assert!(
+            text.contains("Never push the task branch by its name."),
+            "the merge skill does not forbid pushing the task branch by name"
         );
         for (name, text) in all_defaults().into_iter().chain(all_skills()) {
             assert!(
