@@ -3265,6 +3265,8 @@ dependencies = [
  "lrlex",
  "lrpar",
  "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
