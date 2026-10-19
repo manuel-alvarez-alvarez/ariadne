@@ -64,8 +64,8 @@ pub(crate) enum ModelsCommand {
     /// Stop agents being staffed on a model
     ///
     /// It stays in the catalogue, off: the orchestrator is no longer offered
-    /// it, and a pin naming it is refused. Work already staffed on it keeps
-    /// running — a pin is what a task was created with, not a lookup.
+    /// it, but a user may still pin it manually. Work already staffed on it
+    /// keeps running — a pin is what a task was created with, not a lookup.
     Disable {
         /// Model id, as `models ls` spells it
         #[arg(value_parser = parse_model,

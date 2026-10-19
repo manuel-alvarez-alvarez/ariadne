@@ -15,13 +15,15 @@
 
 use crate::common;
 
+use ariadne_api::SESSION_HEADER;
 use ariadne_api::goals::GoalDto;
+use ariadne_api::models::ModelDto;
 use ariadne_api::tasks::TaskDto;
 
 use axum::http::StatusCode;
 
 use common::acp::{discovery_settled, registry_home, script, stub_acp_agent};
-use common::{Harness, TIMEOUT, eventually, harness, patch_json, post_json, put_json};
+use common::{Harness, TIMEOUT, eventually, get, harness, patch_json, post_json, put_json};
 
 /// A goal on `pin`, in a repository of its own.
 async fn goal_on(h: &Harness, pin: serde_json::Value) -> GoalDto {
@@ -464,21 +466,16 @@ async fn an_edit_runs_the_same_model_at_another_effort_and_default_clears_it() {
     assert_eq!(develop.effort, None);
 }
 
-/// A model the user turned off is refused wherever an agent is staffed on it,
-/// and by name: the goal it would run in, either column of a task, and an
-/// edit that moves an agent onto it.
-///
-/// Work already staffed on it is not disturbed — a pin is the snapshot a row
-/// was created with — so the check is on the model a request *names*, and
-/// the task staffed before the model went off keeps running on it.
+/// A model the user turned off remains a manual choice, without silently
+/// turning it back on: the goal, task creation, and task edit each keep its
+/// disabled state. Automated staffing still uses the filtered MCP catalog.
 #[tokio::test]
-async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
+async fn a_model_that_is_turned_off_is_manual_only() {
     let dir = tempfile::tempdir().unwrap();
     let h = two_model_harness(dir.path()).await;
     let off = "stub:old-model";
     let on = "stub:new-model";
 
-    // Staffed before it goes off, which is the row that has to keep working.
     let goal = goal_on(&h, serde_json::json!({ "model": on })).await;
     let task = task_on(
         &h,
@@ -498,17 +495,10 @@ async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
         )
         .await;
 
-    let refused = |message: String| {
-        assert!(
-            message.contains(off) && message.contains("turned off"),
-            "the refusal names the model and why: {message}"
-        );
-    };
-
-    // A goal.
+    // A manually created goal keeps the disabled choice disabled.
     let repo = h.repository(&h.git_repo("second")).await;
-    refused(
-        h.error(
+    let manual_goal: GoalDto = h
+        .json(
             post_json(
                 "/v1/goals",
                 serde_json::json!({
@@ -517,14 +507,21 @@ async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
                     "model": off,
                 }),
             ),
-            StatusCode::BAD_REQUEST,
+            StatusCode::CREATED,
         )
-        .await
-        .error
-        .message,
+        .await;
+    assert_eq!(manual_goal.model, off);
+    let catalog: Vec<ModelDto> = h.json(get("/v1/models"), StatusCode::OK).await;
+    assert!(
+        !catalog
+            .iter()
+            .find(|model| model.id == off)
+            .unwrap()
+            .enabled,
+        "manual selection does not turn the model back on"
     );
 
-    // The develop column, and the review column, on a task being created.
+    // Either manually staffed column may use it.
     for agents in [
         serde_json::json!([{ "step": "develop", "skills": ["coding"], "model": off }]),
         staffing(
@@ -532,40 +529,47 @@ async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
             serde_json::json!({ "model": off }),
         ),
     ] {
-        refused(
-            h.error(
+        let _: TaskDto = h
+            .json(
                 post_json(
                     &format!("/v1/goals/{}/tasks", goal.id),
                     serde_json::json!({ "title": "A task", "agents": agents }),
                 ),
-                StatusCode::BAD_REQUEST,
+                StatusCode::CREATED,
             )
-            .await
-            .error
-            .message,
-        );
+            .await;
     }
 
-    // And an edit that would move an agent onto it.
-    refused(
-        h.error(
+    // A manual edit moves a row onto it too.
+    let edited: TaskDto = h
+        .json(
             restaff(
                 &task,
                 serde_json::json!({ "model": on }),
                 serde_json::json!({ "model": off }),
             ),
-            StatusCode::BAD_REQUEST,
+            StatusCode::OK,
         )
-        .await
-        .error
-        .message,
-    );
+        .await;
+    assert_eq!(agent(&edited, "review").model, off);
 
-    // The task staffed on it before it went off is untouched: what a row
-    // runs on is what it was created with, and no refused edit moved it.
-    let kept: TaskDto = h.json(get_task(&task.id), StatusCode::OK).await;
-    assert_eq!(agent(&kept, "develop").model, off);
-    assert_eq!(agent(&kept, "review").model, on);
+    // The orchestrator cannot put the same disabled choice back into a plan,
+    // even if it names the id rather than taking the filtered MCP catalog.
+    let orchestrator = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
+    let mut automatic = patch_json(
+        &format!("/v1/tasks/{}", task.id),
+        serde_json::json!({
+            "agents": staffing(
+                serde_json::json!({ "model": off }),
+                serde_json::json!({ "model": on }),
+            ),
+        }),
+    );
+    automatic
+        .headers_mut()
+        .insert(SESSION_HEADER, orchestrator.id.parse().unwrap());
+    let err = h.error(automatic, StatusCode::BAD_REQUEST).await;
+    assert!(err.error.message.contains("`stub:old-model` is turned off"));
 }
 
 /// A discovered catalog id — `<agent-id>:<model>`, the id `GET /v1/models`
@@ -686,10 +690,10 @@ async fn a_discovered_models_effort_choices_bound_its_pin() {
     assert_eq!(goal.effort.as_deref(), Some("anything"));
 }
 
-/// A discovered model turned off is refused under the same id the switch
-/// stores: the catalog id whole.
+/// A manually chosen discovered model stays available under the same catalog
+/// id after it is turned off.
 #[tokio::test]
-async fn a_discovered_model_turned_off_cannot_be_staffed_on() {
+async fn a_discovered_model_turned_off_can_be_manually_pinned() {
     let dir = tempfile::tempdir().unwrap();
     let h = two_model_harness(dir.path()).await;
 
@@ -704,8 +708,8 @@ async fn a_discovered_model_turned_off_cannot_be_staffed_on() {
         .await;
 
     let repo = h.repository(&h.dir.path().join("plain-repo")).await;
-    let err = h
-        .error(
+    let goal: GoalDto = h
+        .json(
             post_json(
                 "/v1/goals",
                 serde_json::json!({
@@ -714,12 +718,8 @@ async fn a_discovered_model_turned_off_cannot_be_staffed_on() {
                     "model": "stub:old-model",
                 }),
             ),
-            StatusCode::BAD_REQUEST,
+            StatusCode::CREATED,
         )
         .await;
-    assert!(
-        err.error.message.contains("`stub:old-model` is turned off"),
-        "the refusal names the catalog id: {}",
-        err.error.message
-    );
+    assert_eq!(goal.model, "stub:old-model");
 }

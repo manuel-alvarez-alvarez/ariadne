@@ -111,20 +111,17 @@ export function PinPicker({
    * The catalog under one heading per agent, in the order the catalog lists
    * them.
    *
-   * A model turned off on the models screen is not offered at all. It is not
-   * a choice — the daemon refuses it as a pin — and a row that can be picked
-   * and then refused on submit is worse than a row that is not there. What a
-   * slot is *already* pinned to still shows: it was pinned while the model
-   * was on, and the picker has to be able to say what a field holds.
+   * A model turned off on the models screen remains a manual choice. The
+   * marker distinguishes it from models automatic staffing can choose.
    */
   const groups = useMemo(() => {
-    const offered = (models ?? []).filter((entry) => entry.enabled || entry.id === pinned)
+    const offered = models ?? []
     const agents = [...new Set(offered.map((entry) => entry.agent_id))]
     return agents.map((agent) => ({
       agent,
       models: offered.filter((entry) => entry.agent_id === agent),
     }))
-  }, [models, pinned])
+  }, [models])
 
   // An effort belongs to the model it runs at, so a model moved out from under
   // one that does not take it clears the effort — the daemon's own rule
@@ -243,6 +240,11 @@ export function PinPicker({
                             // one option taking over the list.
                             <span className="line-clamp-2 text-xs leading-snug text-muted-foreground">
                               {entry.description}
+                            </span>
+                          ) : null}
+                          {!entry.enabled ? (
+                            <span className="text-xs leading-snug text-muted-foreground">
+                              Manual only
                             </span>
                           ) : null}
                         </span>

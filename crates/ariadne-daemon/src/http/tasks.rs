@@ -26,19 +26,30 @@ use super::pins;
 pub(super) async fn resolve_agents(
     state: &AppState,
     assignments: &[AgentAssignment],
+    manual: bool,
 ) -> ApiResult<Vec<NewTaskAgent>> {
     let mut agents = Vec::with_capacity(assignments.len());
     for assignment in assignments {
         agents.push(NewTaskAgent {
             step: assignment.step.clone(),
             skills: assignment.skills.clone(),
-            pin: pins::chosen(
-                &state.store,
-                &state.agent_registry,
-                Some(&assignment.model),
-                assignment.effort.as_deref(),
-            )
-            .await?,
+            pin: if manual {
+                pins::chosen(
+                    &state.store,
+                    &state.agent_registry,
+                    Some(&assignment.model),
+                    assignment.effort.as_deref(),
+                )
+                .await?
+            } else {
+                pins::staffed(
+                    &state.store,
+                    &state.agent_registry,
+                    Some(&assignment.model),
+                    assignment.effort.as_deref(),
+                )
+                .await?
+            },
             brief: assignment.brief.clone(),
         });
     }
@@ -87,7 +98,7 @@ pub(super) async fn create(
         }
     };
 
-    let agents = resolve_agents(&state, &req.agents).await?;
+    let agents = resolve_agents(&state, &req.agents, ctx.actor == Actor::User).await?;
 
     let task = state
         .store
@@ -157,7 +168,7 @@ pub(super) async fn update(
         ));
     }
     let agents = match &req.agents {
-        Some(a) => Some(resolve_agents(&state, a).await?),
+        Some(a) => Some(resolve_agents(&state, a, ctx.actor == Actor::User).await?),
         None => None,
     };
     let task = state

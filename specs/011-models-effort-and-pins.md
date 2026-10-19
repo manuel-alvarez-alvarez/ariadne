@@ -1,8 +1,8 @@
 ---
 id: models-effort-and-pins
 status: current
-updated: 2026-10-10
-areas: [core, api, store, daemon, cli]
+updated: 2026-10-19
+areas: [core, api, store, daemon, cli, ui, specs]
 commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, a69b953f, 03f9c8b7]
 tests:
   - crates/ariadne-core/src/models.rs
@@ -109,10 +109,10 @@ orchestrator decides (003).
 18. Each entry of the catalog can be turned off, and every model is on until
     it is. What is stored is the subtraction from discovery, so a model an
     agent gains arrives usable.
-19. A model turned off stays in the catalog, marked off, and is out of use: a
-    pin naming it is refused, the orchestrator is not offered it
-    (`list_models`), and the desktop app's picker leaves it out. Where a slot
-    is already pinned to it the picker still shows it.
+19. A model turned off stays in the catalog, marked off, and is manual-only:
+    a user may pin it through the desktop app or CLI without changing its
+    enabled state, but automatic staffing and MCP `list_models` leave it out.
+    Every desktop picker shows it with that manual-only mark.
 20. Work already staffed on a model turned off is not disturbed: a task keeps
     running, and an effort moved on its own still moves.
 21. An id the catalog does not carry cannot be turned off, and the last entry
@@ -208,12 +208,12 @@ orchestrator decides (003).
   agent discovery has not accepted offers nothing
   (`::an_agent_discovery_has_not_accepted_offers_no_model`), and no bare-agent
   entry is listed (`::no_bare_agent_entry_is_listed`).
-- A model turned off stays in the catalog and out of use
+- A model turned off stays in the catalog and is manual-only
   (`models.rs::a_model_turned_off_stays_in_the_catalog_and_out_of_use`,
   `store.rs::a_model_is_available_until_it_is_turned_off`).
-- It cannot be staffed on, while work already on it keeps running
-  (`pins.rs::a_model_that_is_turned_off_cannot_be_staffed_on`,
-  `::a_discovered_model_turned_off_cannot_be_staffed_on`), and the
+- A user can pin it manually without turning it on, while automatic staffing
+  cannot and work already on it keeps running
+  (`pins.rs::a_model_that_is_turned_off_is_manual_only`), and the
   orchestrator is not offered it
   (`tools.rs::the_catalog_an_agent_sees_holds_only_the_models_it_can_be_staffed_on`).
 - An id the catalog does not carry cannot be turned off
@@ -225,9 +225,9 @@ orchestrator decides (003).
   (`agents-page.test.tsx::puts each model in the tab of the agent that runs it`,
   `::sends the id in the body, so a model named with a slash still travels`,
   `::says why, where the daemon refuses to turn a model off`); the picker
-  leaves an entry that is off out unless it is the one pinned, and takes free
+  marks each disabled entry manual-only, and takes free
   text for a model the catalog does not list
-  (`pin-picker.test.tsx::leaves out a model that is turned off, unless it is the one pinned`,
+  (`pin-picker.test.tsx::offers a turned-off model as manual-only`,
   `::takes free text for a model of a known agent the catalog does not list`);
   and the pin's shape is checked on the field
   (`model-ref.test.ts::refuses one half on its own by showing where the other goes`).

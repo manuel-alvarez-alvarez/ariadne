@@ -20,7 +20,7 @@ use ariadne_daemon::agents::prompts;
 use ariadne_store::{AgentPin, AgentSession, NewAgentEvent};
 
 use common::acp::{pid_is_alive, registry_home, script, stub_acp_agent};
-use common::{Cast, Harness, TIMEOUT, eventually, harness, post_json, put_json};
+use common::{Cast, Harness, TIMEOUT, as_session, eventually, harness, post_json, put_json};
 
 /// The line every handoff opens with.
 const HANDOFF: &str = "This is the history of the session you continue.";
@@ -646,8 +646,8 @@ async fn a_session_of_a_cancelled_goal_is_not_switched() {
     assert_ne!(develop.model, TO, "a refused switch moves no pin");
 }
 
-/// A model the user turned off is refused as a pin on it is, and so is a
-/// model whose agent the registry does not hold.
+/// An agent session cannot switch to a model the user turned off, even where
+/// it names the id instead of taking the filtered MCP catalog.
 #[tokio::test]
 async fn a_switch_to_a_model_that_is_turned_off_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -672,7 +672,7 @@ async fn a_switch_to_a_model_that_is_turned_off_is_refused() {
 
     let err = h
         .error(
-            post_json(&uri, json!({ "model": off })),
+            as_session(&uri, &session.id, json!({ "model": off })),
             StatusCode::BAD_REQUEST,
         )
         .await;

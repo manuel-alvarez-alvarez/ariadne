@@ -53,7 +53,18 @@ pub(super) async fn chosen(
     model: Option<&str>,
     effort: Option<&str>,
 ) -> ApiResult<AgentPin> {
-    pin(store, registry, required(model)?, named(effort)).await
+    pin(store, registry, required(model)?, named(effort), false).await
+}
+
+/// The pin automatic staffing asks for. Disabled models stay manual choices,
+/// but are unavailable to an orchestrator sizing a task from its catalog.
+pub(super) async fn staffed(
+    store: &Store,
+    registry: &AgentRegistry,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> ApiResult<AgentPin> {
+    pin(store, registry, required(model)?, named(effort), true).await
 }
 
 /// A model refused for how it is written, before anything it names is looked
@@ -109,9 +120,12 @@ async fn pin(
     registry: &AgentRegistry,
     model: &str,
     effort: Option<&str>,
+    require_enabled: bool,
 ) -> ApiResult<AgentPin> {
     let chosen = parsed(model, registry)?;
-    available(store, &chosen).await?;
+    if require_enabled {
+        available(store, &chosen).await?;
+    }
     if let Some(effort) = effort {
         checked(registry, Standing { model }, effort).await?;
     }

@@ -20,7 +20,7 @@ use crate::acp_sessions::{Filter, QueryError};
 /// with no goal, task or seat behind it.
 ///
 /// The model is checked as a goal's pin is — a registry agent and a model of
-/// it, not one the user turned off — and the effort against that model. The
+/// it, including a user-disabled manual-only model — and the effort against that model. The
 /// directory must be an absolute path to one that exists. The session comes
 /// back live, waiting for the first prompt typed into its console, which
 /// becomes its title.
@@ -217,8 +217,9 @@ pub(super) async fn kill(
 /// Switch a session to another model or agent. A same-agent switch keeps the
 /// session and conversation; another agent starts a new session on the seat.
 ///
-/// The pin is checked as `POST /v1/sessions` checks it, a model turned off
-/// included. A session of a cancelled goal is refused.
+/// A user may switch manually to a disabled manual-only model. An agent
+/// session must switch only to a model automatic staffing can use. A session
+/// of a cancelled goal is refused.
 #[utoipa::path(post, path = "/v1/sessions/{id}/switch", tag = "sessions",
     operation_id = "switch_session",
     params(("id" = String, Path, description = "session id")),
@@ -227,16 +228,28 @@ pub(super) async fn kill(
 pub(super) async fn switch(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<SwitchSessionRequest>,
 ) -> ApiResult<Json<SessionDto>> {
     let session = state.store.get_session(&id).await?;
-    let pin = super::pins::chosen(
-        &state.store,
-        &state.agent_registry,
-        Some(&req.model),
-        req.effort.as_deref(),
-    )
-    .await?;
+    let ctx = call_ctx(&state.store, &headers).await?;
+    let pin = if ctx.session.is_none() {
+        super::pins::chosen(
+            &state.store,
+            &state.agent_registry,
+            Some(&req.model),
+            req.effort.as_deref(),
+        )
+        .await?
+    } else {
+        super::pins::staffed(
+            &state.store,
+            &state.agent_registry,
+            Some(&req.model),
+            req.effort.as_deref(),
+        )
+        .await?
+    };
     if let Some(goal_id) = session.goal_id.as_deref()
         && state.store.get_goal(goal_id).await?.status() == ariadne_core::GoalStatus::Cancelled
     {
