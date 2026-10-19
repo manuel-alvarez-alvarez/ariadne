@@ -60,6 +60,25 @@ flags and keep the tail:
 cargo nextest run --status-level fail --final-status-level fail 2>&1 | tail -n 40
 ```
 
+For a confirmed intermittent Rust test, import `ariadne_core::flaky_test` and
+wrap its test item. Call the macro once per parent module; it puts the item in
+a `flaky` module that nextest selects for two retries in both profiles:
+
+```rust
+use ariadne_core::flaky_test;
+
+flaky_test! {
+    #[test]
+    fn reports_the_result() {
+        assert!(std::path::Path::new("Cargo.toml").exists());
+    }
+}
+```
+
+The test keeps its original assertion and fails after its third unsuccessful
+attempt. Follow the evidence rule in the root [`AGENTS.md`](../AGENTS.md#intermittent-tests)
+before using this marker.
+
 `unreachable_pub` is a workspace lint, so a `pub` item that its crate does not
 export is a warning. It cannot see a `pub` item of a library crate that no
 other crate uses: to rustc, that is the library's interface.

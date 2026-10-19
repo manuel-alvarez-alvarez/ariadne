@@ -1223,4 +1223,5 @@ account of the sessions screen in particular rests on reading
 ## Sources
 
 `ui/AGENTS.md` (the layout and the conventions), `ui/src/`, `ui/src-tauri/`,
-`ui/dashboard/`.
+`ui/dashboard/`, `ui/src/test/flaky.ts`,
+`ui/dashboard/src/test/flaky.ts` (the explicit bounded test marker).

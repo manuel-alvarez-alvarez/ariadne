@@ -10,10 +10,19 @@
 # poll the thing it needs instead.
 slow-timeout = { period = "10s" }
 
+[[profile.default.overrides]]
+# flaky_test! puts only confirmed intermittent tests in this module.
+filter = 'test(/(^|::)flaky::/)'
+retries = 2
+
 [profile.ci]
 # A run that stops at the first failure hides every other failure behind it,
 # so the report step sees one flaky test where twenty may have failed.
 fail-fast = false
+
+[[profile.ci.overrides]]
+filter = 'test(/(^|::)flaky::/)'
+retries = 2
 
 [profile.ci.junit]
 path = "junit.xml"

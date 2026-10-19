@@ -19,6 +19,18 @@ pub use probe::{
 };
 pub use state_machine::{Actor, TaskStatus, TransitionError, check_transition};
 
+/// Put confirmed intermittent tests under a `flaky` module so nextest applies
+/// its bounded retry rule. Call this once per parent module.
+#[macro_export]
+macro_rules! flaky_test {
+    ($($test:item)*) => {
+        mod flaky {
+            use super::*;
+            $($test)*
+        }
+    };
+}
+
 use serde::{Deserialize, Serialize};
 
 /// The three things every enum that crosses the wire answers to: the spelling

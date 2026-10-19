@@ -18,6 +18,23 @@ npm run check:audit            # dependency advisories, always whole
 [The dashboard package](#the-dashboard-package)) with its own copy of every
 command above, run from inside it rather than from `ui/`.
 
+For a confirmed intermittent test, import `flaky` from `src/test/flaky.ts` in
+this package, or from the same path in `ui/dashboard/`. In a test beside that
+helper, use this form:
+
+```ts
+import { expect } from "vitest"
+import { flaky } from "./flaky"
+
+flaky("reports the result", () => {
+  expect(2 + 2).toBe(4)
+})
+```
+
+Adjust the relative import for another directory. The marker retries twice,
+then fails under its original test name. Follow the evidence rule in the root
+[`AGENTS.md`](../AGENTS.md#intermittent-tests) before adding one.
+
 The pre-commit hook (`.githooks/pre-commit`) runs, for a staged file under
 `ui/` (outside `ui/src-tauri` and `ui/dashboard`): `npx biome check <staged
 files>` and `npm run typecheck`, both from inside `ui/` (`npm ci` first when

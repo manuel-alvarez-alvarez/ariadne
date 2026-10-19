@@ -78,6 +78,15 @@ What each hook runs for an area is in that area's own file:
 [`crates/AGENTS.md`](crates/AGENTS.md) for Rust, and
 [`ui/AGENTS.md`](ui/AGENTS.md) for the UI and the Tauri shell.
 
+## Intermittent tests
+
+Add a flaky marker only after the same test fails and succeeds on one
+unchanged revision. Record the revision, both commands, and their outcomes in
+the task report. Investigate the cause first and fix it when possible. Use a
+marker only while the cause remains unresolved. A marked test gets at most
+three attempts. Its final failure still fails the suite and names the test in
+CI. Do not skip a test or use a suite-wide retry setting.
+
 ## Commit messages
 
 This is the one place the commit types are written down: `README.md` and
