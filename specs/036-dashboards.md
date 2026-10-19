@@ -43,7 +43,7 @@ message protocol are spec 015's.
     mode, and Perses's own Save and Cancel both return it to view mode —
     Save after writing the document through the daemon's `PUT`, Cancel by
     discarding the edit. A legend shows a value where one helps the reader:
-    each pie chart's legend is a table with the last value of its slice; the
+    each pie chart's legend is a table with its slice value and percent; the
     per-bucket time series (tasks, tokens, turns and attention over time)
     show the sum of each series; the lead-time trend shows the mean and the
     max of each series. The daemon-health charts keep a plain list legend,

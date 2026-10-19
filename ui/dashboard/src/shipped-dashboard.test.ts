@@ -62,9 +62,12 @@ describe("the shipped stats dashboard", () => {
     "permissions-by-answer",
   ]
 
-  it.each(PIE_CHARTS)("%s shows a table legend with the value of each slice", (panel) => {
-    expect(legendOf(panel)).toMatchObject({ mode: "table", values: ["last-number"] })
-  })
+  it.each(PIE_CHARTS)(
+    "%s shows a table legend with the value and percent of each slice",
+    (panel) => {
+      expect(legendOf(panel)).toMatchObject({ mode: "table", values: ["abs", "relative"] })
+    },
+  )
 
   const SUM_OVER_TIME = [
     "tasks-over-time",

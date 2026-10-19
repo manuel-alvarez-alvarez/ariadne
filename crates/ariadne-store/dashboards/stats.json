@@ -962,7 +962,7 @@
                 "position": "bottom",
                 "mode": "table",
                 "size": "small",
-                "values": ["last-number"]
+                "values": ["abs", "relative"]
               },
               "mode": "value",
               "radius": 70,
@@ -1200,7 +1200,7 @@
                 "position": "bottom",
                 "mode": "table",
                 "size": "small",
-                "values": ["last-number"]
+                "values": ["abs", "relative"]
               },
               "mode": "value",
               "radius": 70,
@@ -1307,7 +1307,7 @@
                 "position": "bottom",
                 "mode": "table",
                 "size": "small",
-                "values": ["last-number"]
+                "values": ["abs", "relative"]
               },
               "mode": "value",
               "radius": 70,
@@ -1364,7 +1364,7 @@
                 "position": "bottom",
                 "mode": "table",
                 "size": "small",
-                "values": ["last-number"]
+                "values": ["abs", "relative"]
               },
               "mode": "value",
               "radius": 70,
@@ -1588,7 +1588,7 @@
                 "position": "bottom",
                 "mode": "table",
                 "size": "small",
-                "values": ["last-number"]
+                "values": ["abs", "relative"]
               },
               "mode": "value",
               "radius": 70,
@@ -1954,7 +1954,7 @@
               "legend": {
                 "position": "right",
                 "mode": "table",
-                "values": ["last-number"]
+                "values": ["abs", "relative"]
               },
               "mode": "value",
               "radius": 70,
@@ -2010,7 +2010,7 @@
               "legend": {
                 "position": "right",
                 "mode": "table",
-                "values": ["last-number"]
+                "values": ["abs", "relative"]
               },
               "mode": "value",
               "radius": 70,
