@@ -52,11 +52,20 @@ beforeEach(() => {
 })
 
 describe("starting point", () => {
-  it("offers Empty and Copy of the current dashboard when one is given", () => {
-    renderDialog(aDashboard({ name: "stats" }))
+  it("offers Empty and Copy of the current dashboard's display name when one is given", () => {
+    renderDialog(
+      aDashboard({
+        name: "stats",
+        document: {
+          kind: "Dashboard",
+          metadata: { name: "stats" },
+          spec: { display: { name: "Default" } },
+        },
+      }),
+    )
 
     expect(within(dialog()).getByRole("radio", { name: "Empty" })).toBeDefined()
-    expect(within(dialog()).getByRole("radio", { name: "Copy of stats" })).toBeDefined()
+    expect(within(dialog()).getByRole("radio", { name: "Copy of Default" })).toBeDefined()
   })
 
   it("offers no Copy choice without a current dashboard to copy from", () => {
@@ -106,20 +115,24 @@ describe("creating", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalled())
   })
 
-  it("copies the current dashboard's panels, layouts, variables and time settings under the new name", async () => {
+  it("replaces the copied dashboard's display name with its new name", async () => {
     const user = userEvent.setup()
     const current = aDashboard({
       name: "stats",
       document: {
         kind: "Dashboard",
         metadata: { name: "stats" },
-        spec: { duration: "7d", panels: { usage: { kind: "Panel" } } },
+        spec: {
+          display: { name: "Default" },
+          duration: "7d",
+          panels: { usage: { kind: "Panel" } },
+        },
       },
     })
     renderDialog(current)
 
     await user.type(within(dialog()).getByLabelText("Name"), "on-call")
-    await user.click(within(dialog()).getByRole("radio", { name: "Copy of stats" }))
+    await user.click(within(dialog()).getByRole("radio", { name: "Copy of Default" }))
     await user.click(within(dialog()).getByRole("button", { name: "Create dashboard" }))
 
     await waitFor(() => {
@@ -128,7 +141,11 @@ describe("creating", () => {
         document: {
           kind: "Dashboard",
           metadata: { name: "on-call" },
-          spec: { duration: "7d", panels: { usage: { kind: "Panel" } } },
+          spec: {
+            display: { name: "on-call" },
+            duration: "7d",
+            panels: { usage: { kind: "Panel" } },
+          },
         },
       })
     })

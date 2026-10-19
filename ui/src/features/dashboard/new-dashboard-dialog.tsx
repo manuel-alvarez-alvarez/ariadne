@@ -27,6 +27,7 @@ import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { describeError } from "@/lib/format"
 
+import { dashboardDisplayName } from "./display-name"
 import { copyDashboardDocument, emptyDashboardDocument } from "./document"
 import { useCreateDashboard } from "./queries"
 
@@ -60,7 +61,7 @@ export function NewDashboardDialog({
         : emptyDashboardDocument(named)
     try {
       const created = await createDashboard.mutateAsync({ name: named, document })
-      toast.success("Dashboard created", { description: created.name })
+      toast.success("Dashboard created", { description: dashboardDisplayName(created) })
       onOpenChange(false)
       onCreated?.(created)
     } catch (error) {
@@ -114,7 +115,7 @@ export function NewDashboardDialog({
             {current ? (
               <label className="flex items-center gap-2 text-sm">
                 <input type="radio" value="copy" {...register("source")} />
-                {`Copy of ${current.name}`}
+                {`Copy of ${dashboardDisplayName(current)}`}
               </label>
             ) : null}
           </div>

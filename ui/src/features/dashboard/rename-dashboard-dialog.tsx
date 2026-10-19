@@ -19,6 +19,7 @@ import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { describeError } from "@/lib/format"
 
+import { dashboardDisplayName } from "./display-name"
 import { useRenameDashboard } from "./queries"
 
 type RenameDashboardFormValues = { name: string }
@@ -53,7 +54,7 @@ export function RenameDashboardDialog({
         to: named,
         document: dashboard.document,
       })
-      toast.success("Dashboard renamed", { description: renamed.name })
+      toast.success("Dashboard renamed", { description: dashboardDisplayName(renamed) })
       onOpenChange(false)
       onRenamed?.(renamed)
     } catch (error) {
@@ -68,7 +69,7 @@ export function RenameDashboardDialog({
   return (
     <FormDialog open={open} onOpenChange={onOpenChange} dirty={formState.isDirty}>
       <FormDialogContent
-        title={`Rename ${dashboard.name}`}
+        title={`Rename ${dashboardDisplayName(dashboard)}`}
         description="Files this dashboard's panels, layouts, variables and time settings under a new name, then removes the old one."
         onSubmit={handleSubmit(submit)}
         error={

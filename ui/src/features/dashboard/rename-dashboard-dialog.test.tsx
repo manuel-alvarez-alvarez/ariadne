@@ -40,7 +40,7 @@ const CUSTOM = aDashboard({
   document: {
     kind: "Dashboard",
     metadata: { name: "custom" },
-    spec: { duration: "1d" },
+    spec: { display: { name: "On call" }, duration: "1d" },
   },
 })
 
@@ -59,7 +59,7 @@ function renderDialog() {
 }
 
 function dialog(): HTMLElement {
-  return screen.getByRole("dialog", { name: "Rename custom" })
+  return screen.getByRole("dialog", { name: "Rename On call" })
 }
 
 beforeEach(() => {
@@ -72,7 +72,7 @@ beforeEach(() => {
 })
 
 describe("renaming", () => {
-  it("opens on the dashboard's current name", () => {
+  it("titles the dialog with the dashboard's display name", () => {
     renderDialog()
 
     expect((within(dialog()).getByLabelText("Name") as HTMLInputElement).value).toBe("custom")

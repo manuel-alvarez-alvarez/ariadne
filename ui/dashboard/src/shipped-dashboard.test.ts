@@ -24,6 +24,11 @@ function legendOf(panel: string): { mode?: string; values?: string[] } | undefin
 }
 
 describe("the shipped stats dashboard", () => {
+  it("uses Default as its display name while retaining stats as its metadata name", () => {
+    expect(shippedStats.metadata.name).toBe("stats")
+    expect(shippedStats.spec.display?.name).toBe("Default")
+  })
+
   it("opens through the installed Perses layout converter", () => {
     expect(() => convertLayoutsToPanelGroups(shippedStats.spec.layouts)).not.toThrow()
   })

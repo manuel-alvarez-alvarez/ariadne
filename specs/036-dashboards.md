@@ -48,6 +48,11 @@ message protocol are spec 015's.
     show the sum of each series; the lead-time trend shows the mean and the
     max of each series. The daemon-health charts keep a plain list legend,
     with no values.
+11. The shipped dashboard has display name `Default`. The desktop app uses a
+    dashboard document's `spec.display.name` wherever it presents the
+    dashboard to the user, falling back to its metadata name when absent;
+    routes and mutations continue to use the metadata name. Copying a
+    dashboard replaces its display name with the copy's metadata name.
 
 ## Acceptance criteria
 
@@ -61,6 +66,17 @@ message protocol are spec 015's.
    (`ui/dashboard/src/page.test.tsx::opens the dashboard in view mode, not
    Perses's own editing mode`, `::remounts ViewDashboard with the fresh
    document on a reload message`).
+4. `ui/src/routes/stats.test.tsx::lists display names in the picker, falls
+   back to metadata names, and keeps the id in the iframe` and `::uses the
+   selected dashboard's display name in Reset and Delete confirmations`,
+   `ui/src/features/dashboard/new-dashboard-dialog.test.tsx::offers Empty and
+   Copy of the current dashboard's display name when one is given`, and
+   `::replaces the copied dashboard's display name with its new name`,
+   `ui/src/features/dashboard/rename-dashboard-dialog.test.tsx::titles the
+   dialog with the dashboard's display name`, and
+   `ui/dashboard/src/shipped-dashboard.test.ts::uses Default as its display
+   name while retaining stats as its metadata name` prove the shipped name,
+   desktop labels, and fallback of rule 11.
 
 ## Sources
 

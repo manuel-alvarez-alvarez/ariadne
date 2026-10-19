@@ -24,5 +24,12 @@ export function emptyDashboardDocument(name: string): DashboardDocument {
 export function copyDashboardDocument(document: unknown, name: string): DashboardDocument {
   const cloned = structuredClone(document) as DashboardDocument
   cloned.metadata = { ...cloned.metadata, name }
+  const spec = cloned.spec
+  if (typeof spec === "object" && spec !== null && !Array.isArray(spec)) {
+    const display = (spec as { display?: unknown }).display
+    if (typeof display === "object" && display !== null && !Array.isArray(display)) {
+      cloned.spec = { ...spec, display: { ...display, name } }
+    }
+  }
   return cloned
 }

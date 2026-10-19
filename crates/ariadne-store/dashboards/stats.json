@@ -5,7 +5,7 @@
   },
   "spec": {
     "display": {
-      "name": "Ariadne stats"
+      "name": "Default"
     },
     "duration": "7d",
     "refreshInterval": "1m",

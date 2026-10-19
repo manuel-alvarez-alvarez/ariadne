@@ -17,7 +17,7 @@ describe("copyDashboardDocument", () => {
     kind: "Dashboard",
     metadata: { name: "stats" },
     spec: {
-      display: { name: "Ariadne stats" },
+      display: { name: "Default" },
       duration: "7d",
       variables: [{ kind: "ListVariable", spec: { name: "repo" } }],
       layouts: [{ kind: "Grid", spec: { items: [] } }],
@@ -29,7 +29,7 @@ describe("copyDashboardDocument", () => {
     expect(copyDashboardDocument(source, "mine")).toEqual({
       kind: "Dashboard",
       metadata: { name: "mine" },
-      spec: source.spec,
+      spec: { ...source.spec, display: { name: "mine" } },
     })
   })
 

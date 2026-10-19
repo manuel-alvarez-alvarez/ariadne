@@ -50,6 +50,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { dashboardDisplayName } from "@/features/dashboard/display-name"
 import { NewDashboardDialog } from "@/features/dashboard/new-dashboard-dialog"
 import {
   dashboardsQueryOptions,
@@ -133,7 +134,7 @@ export function StatsPage() {
               <SelectContent>
                 {(dashboards.data ?? []).map((dashboard) => (
                   <SelectItem key={dashboard.name} value={dashboard.name}>
-                    {dashboard.name}
+                    {dashboardDisplayName(dashboard)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -182,7 +183,7 @@ export function StatsPage() {
       ) : selected ? (
         <iframe
           ref={iframeRef}
-          title={`${selected.name} dashboard`}
+          title={`${dashboardDisplayName(selected)} dashboard`}
           src={iframeSrc(baseUrl, selected.name, srcTheme.current.theme)}
           className="min-h-0 flex-1 rounded-md border"
         />
@@ -192,7 +193,7 @@ export function StatsPage() {
       <ConfirmDialog
         open={confirmReset}
         onClose={() => setConfirmReset(false)}
-        title={selected ? `Reset ${selected.name}?` : "Reset?"}
+        title={selected ? `Reset ${dashboardDisplayName(selected)}?` : "Reset?"}
         description="Throws away what was saved over this dashboard and goes back to the one Ariadne ships."
         confirmLabel="Reset"
         pending={reset.isPending}
@@ -204,7 +205,7 @@ export function StatsPage() {
       <ConfirmDialog
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
-        title={selected ? `Delete ${selected.name}?` : "Delete?"}
+        title={selected ? `Delete ${dashboardDisplayName(selected)}?` : "Delete?"}
         description="This is permanent. There is no undo."
         confirmLabel="Delete"
         destructive
