@@ -244,7 +244,7 @@
               "x": 16,
               "y": 17,
               "width": 8,
-              "height": 8,
+              "height": 9,
               "content": {
                 "$ref": "#/spec/panels/goal-outcomes"
               }
@@ -284,7 +284,7 @@
               "x": 0,
               "y": 9,
               "width": 8,
-              "height": 8,
+              "height": 9,
               "content": {
                 "$ref": "#/spec/panels/tokens-by-seat"
               }
@@ -867,7 +867,8 @@
             "spec": {
               "legend": {
                 "position": "bottom",
-                "mode": "list"
+                "mode": "table",
+                "values": ["sum"]
               },
               "yAxis": {
                 "format": {
@@ -958,8 +959,10 @@
                 "decimalPlaces": 0
               },
               "legend": {
-                "position": "right",
-                "mode": "list"
+                "position": "bottom",
+                "mode": "table",
+                "size": "small",
+                "values": ["last-number"]
               },
               "mode": "value",
               "radius": 70,
@@ -1024,7 +1027,8 @@
             "spec": {
               "legend": {
                 "position": "bottom",
-                "mode": "list"
+                "mode": "table",
+                "values": ["mean", "max"]
               },
               "yAxis": {
                 "format": {
@@ -1193,8 +1197,10 @@
                 "decimalPlaces": 0
               },
               "legend": {
-                "position": "right",
-                "mode": "list"
+                "position": "bottom",
+                "mode": "table",
+                "size": "small",
+                "values": ["last-number"]
               },
               "mode": "value",
               "radius": 70,
@@ -1246,7 +1252,8 @@
             "spec": {
               "legend": {
                 "position": "right",
-                "mode": "list"
+                "mode": "table",
+                "values": ["sum"]
               },
               "yAxis": {
                 "format": {
@@ -1297,8 +1304,10 @@
                 "shortValues": true
               },
               "legend": {
-                "position": "right",
-                "mode": "list"
+                "position": "bottom",
+                "mode": "table",
+                "size": "small",
+                "values": ["last-number"]
               },
               "mode": "value",
               "radius": 70,
@@ -1352,8 +1361,10 @@
                 "shortValues": true
               },
               "legend": {
-                "position": "right",
-                "mode": "list"
+                "position": "bottom",
+                "mode": "table",
+                "size": "small",
+                "values": ["last-number"]
               },
               "mode": "value",
               "radius": 70,
@@ -1522,7 +1533,8 @@
             "spec": {
               "legend": {
                 "position": "right",
-                "mode": "list"
+                "mode": "table",
+                "values": ["sum"]
               },
               "yAxis": {
                 "format": {
@@ -1573,8 +1585,10 @@
                 "decimalPlaces": 0
               },
               "legend": {
-                "position": "right",
-                "mode": "list"
+                "position": "bottom",
+                "mode": "table",
+                "size": "small",
+                "values": ["last-number"]
               },
               "mode": "value",
               "radius": 70,
@@ -1782,7 +1796,8 @@
             "spec": {
               "legend": {
                 "position": "bottom",
-                "mode": "list"
+                "mode": "table",
+                "values": ["sum"]
               },
               "yAxis": {
                 "format": {
@@ -1938,7 +1953,8 @@
               },
               "legend": {
                 "position": "right",
-                "mode": "list"
+                "mode": "table",
+                "values": ["last-number"]
               },
               "mode": "value",
               "radius": 70,
@@ -1993,7 +2009,8 @@
               },
               "legend": {
                 "position": "right",
-                "mode": "list"
+                "mode": "table",
+                "values": ["last-number"]
               },
               "mode": "value",
               "radius": 70,
