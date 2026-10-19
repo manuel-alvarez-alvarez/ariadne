@@ -56,11 +56,19 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 4. It writes one task per unit of work: one cohesive outcome, one repository,
    and a complete path through every layer the outcome touches. A task
    groups behaviors that share context and verification rather than
-   splitting them apart. Each ticket carries one objective, the interfaces
-   from other tasks, the boundaries, and what to report, each written as
-   an outcome, in Simplified Technical English (006); the test cases and
-   the verification are the coding agent's to choose. It carries no pasted
-   history: a plan longer than the code it describes has written the code.
+   splitting them apart. Each ticket is written in Simplified Technical
+   English (006), as four markdown sections, in this order.
+   `## Objective` states one outcome. `## Criteria` is a numbered list.
+   Each item is one outcome. `## Interfaces` names each contract with
+   another task, as a route, a response shape, a function or a file.
+   Write "None" where there is none. `## Out of scope` states the task's
+   boundaries. The test cases and the verification are the coding agent's
+   to choose. It carries no pasted history: a plan longer than the code it
+   describes has written the code.
+   The coding column reads the four sections by name. It ends its column
+   report with one line per criterion number and the proof for that
+   criterion. The review column gives one pass or fail line per criterion
+   number in its verdict. It judges the diff against `## Out of scope`.
 5. `depends_on` is for a genuine compilation, execution, or acceptance
    prerequisite only; tasks that merely touch nearby files run together.
    Tasks that run together stay off the same code.
@@ -148,9 +156,11 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   `depends_on` names only a real prerequisite
   (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`,
   `::the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule`).
-- Each ticket carries one objective, the interfaces from other tasks, the
-  boundaries and what to report, and no pasted history
-  (`defaults.rs::the_orchestration_skill_names_what_a_ticket_carries`).
+- Each ticket is the four sections, in order, with the criteria numbered,
+  and carries no pasted history
+  (`defaults.rs::the_orchestration_skill_names_what_a_ticket_carries`). The
+  orchestration, coding and code-review skills all name the same format
+  (`::the_three_skills_name_the_ticket_format`).
 - The playbook keeps each choice within its column's ranks, assesses scope
   and complexity case by case, chooses the smallest capable model and effort
   for routine or uncertain work, and states why a more powerful eligible

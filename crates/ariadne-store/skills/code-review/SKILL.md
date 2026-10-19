@@ -26,15 +26,17 @@ first. No preamble, no narration, no closing summary.
    only to judge a risk you can name.
 5. Judge the repository axis against documented style, naming, structure
    and patterns. Judge the acceptance axis against every criterion and
-   added behavior. Judge each test by reading its setup, action and
-   assertions. Never change code to see whether a test fails.
+   added behavior, and the diff against the Out of scope section. Judge
+   each test by reading its setup, action and assertions. Never change
+   code to see whether a test fails.
 6. Give each finding its trigger, the input or state that breaks it, and
    its failure. A finding with no trigger you can name is optional, not
    must-fix, and marked unverified. Cap optional findings at five, the
    ones you have most conviction in.
-7. Write the verdict under each axis's own heading. On a must-fix finding,
-   call `fail_step` with the return report. Else call `complete_step` with
-   the verdict and the optional findings.
+7. Write the verdict under each axis's own heading, with one pass or fail
+   line per Criteria number. On a must-fix finding, call `fail_step` with
+   the return report. Else call `complete_step` with the verdict and the
+   optional findings.
 
 ## Repository conventions axis
 

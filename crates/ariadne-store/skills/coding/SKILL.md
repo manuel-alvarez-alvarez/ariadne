@@ -10,8 +10,9 @@ changes, and use verification that fits work that preserves behavior.
 
 ## Steps
 
-1. Read the task, acceptance criteria, named spec, repository instructions
-   and surrounding code. Match its style, naming and structure.
+1. Read the ticket's Objective, Criteria, Interfaces and Out of scope
+   sections by name. Read the named spec, repository instructions and
+   surrounding code. Match its style, naming and structure.
    Done when you can name each definition you change and its callers.
 2. Name an assumption for each gap. Send a contradiction to the orchestrator
    with both readings and your pick.
@@ -30,7 +31,8 @@ changes, and use verification that fits work that preserves behavior.
 6. Commit the work in the form below. Run the checks of what you changed at
    the committed revision.
    Done when the required checks are green.
-7. Call `complete_step` with the column report, covering every criterion.
+7. Call `complete_step` with the column report. End it with one line per
+   Criteria number and the proof for that criterion.
 
 ## The commit
 

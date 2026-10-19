@@ -40,6 +40,11 @@ its own git worktree.
    integration](forge.md) for how each keeps up with the request, and what
    `ariadne attention` shows while one waits on you.
 
+Every task the orchestrator writes is one ticket, in four sections.
+`## Objective` names one outcome. `## Criteria` is a numbered list of
+outcomes. `## Interfaces` names any contract with another task.
+`## Out of scope` draws the task's boundaries.
+
 ## Sessions and attention
 
 A session is the conversation an ACP agent holds for the orchestrator, for

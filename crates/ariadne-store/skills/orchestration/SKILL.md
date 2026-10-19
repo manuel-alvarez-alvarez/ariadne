@@ -30,14 +30,18 @@ The workflow columns in your briefing are settled: do not ask for them.
    For a wide refactor, plan expand-contract: expand, migrate callers in
    batches, then contract. Gate each batch on the expand.
    Done when each task has one outcome.
-4. Write each ticket in STE: one objective, the interfaces from other
-   tasks, the boundaries, and what to report. Carry no pasted history.
-   Write each criterion as an outcome. Leave test cases and verification to
-   the coding agent. Write each contract between two tasks into both
-   tickets: a route, a response shape, a function, a file. Add `depends_on`
-   only for a genuine compilation, execution, or acceptance prerequisite. Do
-   not add one only because two tasks touch nearby files.
-   Keep tasks that run together off the same code.
+4. Write each ticket in STE, with four sections in order.
+   `## Objective` states one outcome.
+   `## Criteria` is numbered. Each item is one outcome.
+   `## Interfaces` names each contract with another task, as a route, a
+   response shape, a function or a file. Write it in both tickets. Write
+   "None" where there is none.
+   `## Out of scope` states the task's boundaries.
+   Carry no pasted history. Leave test cases and verification to the
+   coding agent. Add `depends_on` only for a genuine compilation,
+   execution, or acceptance prerequisite. Do not add one only because
+   two tasks touch nearby files. Keep tasks that run together off the
+   same code.
 5. List skills and models once for the goal, not once per task.
    Staff one agent on every column with `create_task`. Give it the
    skills its work needs from `list_skills`, or none for the column's

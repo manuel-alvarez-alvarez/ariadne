@@ -1126,7 +1126,7 @@ mod tests {
             ),
             (
                 "coding",
-                "Call `complete_step` with the column report, covering every criterion.",
+                "Call `complete_step` with the column report. End it with one line per Criteria number and the proof for that criterion.",
             ),
             ("debugging", "The tests of the crate you changed are green."),
             ("debugging", "Run the checks of what you changed."),
@@ -1803,7 +1803,7 @@ mod tests {
         let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
         for phrase in [
             "Give each one cohesive outcome, one repository, and a complete path through every layer it touches.",
-            "Write each contract between two tasks into both tickets: a route, a response shape, a function, a file.",
+            "`## Interfaces` names each contract with another task, as a route, a response shape, a function or a file.",
             "Add `depends_on` only for a genuine compilation, execution, or acceptance prerequisite.",
             "Do not add one only because two tasks touch nearby files.",
             "Keep tasks that run together off the same code.",
@@ -1817,20 +1817,68 @@ mod tests {
         }
     }
 
-    /// A worker brief carries one objective, the interfaces from other
-    /// tasks, the boundaries, and what to report, and no pasted history: a
-    /// plan longer than the code it describes has written the code.
+    /// A worker brief is four sections, in order: `## Objective`, one
+    /// outcome; `## Criteria`, a numbered list of outcomes; `## Interfaces`,
+    /// each contract with another task; and `## Out of scope`, the task's
+    /// boundaries. It carries no pasted history: a plan longer than the
+    /// code it describes has written the code.
     #[test]
     fn the_orchestration_skill_names_what_a_ticket_carries() {
         let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
         for phrase in [
-            "one objective, the interfaces from other tasks, the boundaries, and what to report",
+            "Write each ticket in STE, with four sections in order.",
+            "`## Objective` states one outcome.",
+            "`## Criteria` is numbered. Each item is one outcome.",
+            "`## Out of scope` states the task's boundaries.",
             "Carry no pasted history.",
             "\"A plan this long is thorough.\" -> A plan longer than the code it describes has written the code.",
         ] {
             assert!(
                 prompt.contains(phrase),
                 "the orchestration skill and \"{phrase}\": {prompt}"
+            );
+        }
+    }
+
+    /// One ticket format, named the same way in all three skills that read
+    /// or judge it: `orchestration` writes the four sections and numbers
+    /// the criteria, `coding` reads each section by name and ends its
+    /// report one line per criterion, `code-review` gives one pass or fail
+    /// line per criterion and judges the diff against `## Out of scope`.
+    #[test]
+    fn the_three_skills_name_the_ticket_format() {
+        let orchestration = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+        for phrase in [
+            "`## Objective` states one outcome.",
+            "`## Criteria` is numbered. Each item is one outcome.",
+            "`## Interfaces` names each contract with another task, as a route, a response shape, a function or a file.",
+            "`## Out of scope` states the task's boundaries.",
+        ] {
+            assert!(
+                orchestration.contains(phrase),
+                "the orchestration skill and \"{phrase}\": {orchestration}"
+            );
+        }
+
+        let coding = unwrapped(default_skill_document("coding").unwrap());
+        for phrase in [
+            "Read the ticket's Objective, Criteria, Interfaces and Out of scope sections by name.",
+            "End it with one line per Criteria number and the proof for that criterion.",
+        ] {
+            assert!(
+                coding.contains(phrase),
+                "the coding skill and \"{phrase}\": {coding}"
+            );
+        }
+
+        let review = unwrapped(default_skill_document("code-review").unwrap());
+        for phrase in [
+            "with one pass or fail line per Criteria number",
+            "the diff against the Out of scope section",
+        ] {
+            assert!(
+                review.contains(phrase),
+                "the code-review skill and \"{phrase}\": {review}"
             );
         }
     }
@@ -1844,7 +1892,7 @@ mod tests {
     fn the_orchestration_skill_writes_outcomes_and_reviews_the_plan_one_question_at_a_time() {
         let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
         for phrase in [
-            "Write each criterion as an outcome.",
+            "`## Criteria` is numbered. Each item is one outcome.",
             "Leave test cases and verification to the coding agent.",
             "Ask about the plan one question at a time, with its five parts.",
             "Ask about tracer size and each `depends_on`.",
@@ -2328,11 +2376,20 @@ mod tests {
     /// makes — is its own case with its own trigger. It gets a cap of its
     /// own, 1700, rather than the 2400 every unlisted skill shares, since a
     /// landing procedure this short does not need a template's room.
+    ///
+    /// The one ticket format lands in three skills at once. `orchestration`
+    /// writes the four sections and numbers the criteria in place of its
+    /// old one-line summary of what a ticket carries; its cap moves from
+    /// 4500 to 4650, the size the new step fits in with the usual margin.
+    /// `coding` reads the sections by name and ends its report one line per
+    /// criterion, and `code-review` gives one pass or fail line per
+    /// criterion and judges the diff against `## Out of scope`; both hold
+    /// their 3300 and 3100 caps. The total moves from 40000 to 40200.
     #[test]
     fn skill_size_caps_hold() {
-        const TOTAL: usize = 40_000;
+        const TOTAL: usize = 40_200;
         let cap = |name: &str| match name {
-            ORCHESTRATION_SKILL => 4500,
+            ORCHESTRATION_SKILL => 4650,
             "debugging" => 2700,
             "code-review" => 3100,
             "coding" => 3300,
