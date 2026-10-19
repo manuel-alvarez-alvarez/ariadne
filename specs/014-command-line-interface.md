@@ -170,7 +170,9 @@ same binary also serves (013).
     `ariadne goal inspect` shows its workflow and its columns (rule 40), and
     no landing and no goal branch. `pr inspect` prints a fixed reading order
     of its own, the body last after a `---` line (rule 42).
-    Missing session goals, tasks and seats print a dash.
+    Missing session goals, tasks and seats print a dash. An agent seat whose
+    task agent still has a workflow column names it too, `agent · develop`;
+    every other seat names only itself.
     A row's subject column is `title`, except that the agent listing keeps `agent`.
     Boolean columns use the shared `yes_no` wording. Every empty listing states
     what is empty, then gives the next command when one exists.
@@ -183,8 +185,12 @@ same binary also serves (013).
     the daemon's list unchanged.
 26. `ariadne session ls` lists one filtered page of Ariadne sessions and
     outside ACP sessions. Its columns are `id`, `title`, `status`, `goal`,
-    `task`, `agent`, `model`, `age` and `tokens`; `directory` is available with
-    `--columns`. An outside row leaves status, goal and task empty. It sends
+    `task`, `seat`, `agent`, `model`, `age` and `tokens`; `directory` is
+    available with `--columns`. The `seat` column names a column agent's
+    workflow column beside its seat, `agent · develop`; every other seat
+    names only itself (rule 24). That column reads the task behind each row,
+    since the page object carries no step of its own. An outside row leaves
+    status, goal, task and seat empty. It sends
     `--kind`, `--agent`, `--status`, `--seat`, `--goal`, `--task`, `--attention`,
     `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`,
     `--refresh`, `--all` and `--pull-request` to the daemon, the last as
@@ -608,6 +614,15 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `::a_row_stars_the_default_effort_and_dashes_what_is_unsaid`).
 - A loose session prints dashes for absent goal, task and seat fields
   (`session.rs::a_loose_session_prints_dashes_for_missing_fields`).
+- An agent seat with a workflow column names both, and every other seat
+  names only itself, in `session inspect`, `session kill`'s confirmation and
+  the `seat` column of `session ls`, which reads the column off the task
+  behind each row rather than off the listing's own DTO
+  (`session.rs::an_agent_seat_with_a_step_names_the_step_beside_it`,
+  `::an_orchestrator_seat_names_no_step`,
+  `::a_column_agents_row_names_its_step_beside_its_seat`,
+  `::an_orchestrators_row_names_only_its_seat`,
+  `::step_labels_reads_each_tasks_agents`).
 - `session inspect` shows a reported context window with compact token counts
   (`session.rs::the_inspect_block_shows_the_reported_context_window`).
 - `session inspect` prints `title` and `continues`, dashed where the DTO

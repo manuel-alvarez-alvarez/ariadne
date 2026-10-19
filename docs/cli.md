@@ -71,9 +71,11 @@ ariadne session ls --kind outside --agent codex-acp --dir ~/projects/api
 ariadne session ls --status running --attention
 ```
 
-Its columns are `id`, `title`, `status`, `goal`, `task`, `agent`, `model`,
-`age` and `tokens`; add `directory` with `--columns`. An outside session
-leaves `status`, `goal` and `task` empty. By default, the table holds only the
+Its columns are `id`, `title`, `status`, `goal`, `task`, `seat`, `agent`,
+`model`, `age` and `tokens`; add `directory` with `--columns`. The `seat`
+column names a column agent's workflow column beside its seat, `agent ·
+develop`; every other seat names only itself. An outside session leaves
+`status`, `goal`, `task` and `seat` empty. By default, the table holds only the
 last 7 days of activity. Use `--since` or `--until` to set an activity bound.
 Use `--all` to remove the default 7-day window, include ended sessions, and
 fetch every page into one table.
@@ -139,7 +141,7 @@ your shell prompt comes back right under the last block, so the transcript
 stays in your scrollback, each line once.
 
 ```
- agent · claude:opus · running   ⠹ thinking 12s
+ agent · develop · claude:opus · running   ⠹ thinking 12s
 ────────────────────────────────────────────────────────
 ❯ the input box
 ────────────────────────────────────────────────────────
@@ -148,7 +150,9 @@ stays in your scrollback, each line once.
 
 The status row names the seat, the model and the session's status — `running`
 while the agent works, `idle` between turns, `exited` once it has gone, moving
-as the session does — and a spinner says "thinking" or "running &lt;tool&gt;"
+as the session does. A column agent's seat is followed by the workflow
+column it works, `agent · develop`; every other seat names only itself. A
+spinner says "thinking" or "running &lt;tool&gt;"
 while a turn runs, with how long the turn has been running next to it: `12s`,
 or `1m 04s` past a minute. A prompt you type while a turn runs does not change
 what the row says. The count starts again with each turn and is not
@@ -233,7 +237,8 @@ Other editing keys work as they do in the input box. Press Enter after a
 command with its input to run it. If the text does not name a listed command,
 including a path such as `/tmp/x`, Enter sends it as an ordinary prompt.
 
-The transcript starts with a short welcome banner naming the seat, task (or
+The transcript starts with a short welcome banner naming the seat — with its
+workflow column too, for a column agent, `agent · develop` — task (or
 orchestrator goal), model and effort, repository, and session, and one blank
 line under it. It scrolls into the scrollback like any other line.
 On a narrow terminal it uses the same lines without a box; long titles are

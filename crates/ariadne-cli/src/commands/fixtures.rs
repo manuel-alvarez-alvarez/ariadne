@@ -84,6 +84,7 @@ pub(crate) fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> Session
             None => Seat::Orchestrator,
         }),
         task_agent_id: Some("01DEVELOP".into()),
+        step: task_id.map(|_| "develop".into()),
         model: "stub:test-model".into(),
         effort: None,
         internal_session_id: None,

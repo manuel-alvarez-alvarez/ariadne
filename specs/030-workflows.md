@@ -192,7 +192,13 @@ every other kebab-case word in it; the wire spells the same gate
    keeps its row, and with it the sessions, messages and usage that name it;
    a column staffed for the first time gets a new row; two rows on one
    column fold into the first; a column the edit leaves out loses its agent
-   only while nothing names it, and is refused by name otherwise.
+   only while nothing names it, and is refused by name otherwise. A session
+   on a staffed agent reports that agent's column as its own `step`
+   (`SessionDto.step`); an orchestrator, a loose or an outside session,
+   carrying no staffed agent, reports none. `GET /v1/sessions`'s listing DTO
+   carries no `step` of its own, so its JSON stays what it was; a reader of
+   the listing finds a row's column on the task behind it instead (014
+   rule 26).
 3. All columns share the task's branch and worktree (002). The task starts
    in the first column and stays `in_progress` between columns: the column
    it is on is `TaskDto.step`. Only the current column's agent receives work
@@ -398,6 +404,10 @@ every other kebab-case word in it; the wire spells the same gate
 - Repository defaults, immutable snapshots, deletion protection and
   `pr-babysit` work together
   (`store.rs::workflow_snapshots_keep_their_columns_and_references_prevent_deletion`).
+- A session on a staffed agent reports that agent's column as its `step`,
+  an orchestrator session reports none, and the listing's own JSON carries
+  no such field
+  (`workflow_steps.rs::a_sessions_step_is_its_staffed_agents_column`).
 - A task walks forward, returns for changes, and finishes through its gates
   on one worktree. Each move records both columns and its reason, and
   finishing stops every agent

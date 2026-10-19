@@ -1,5 +1,7 @@
 //! `ariadne session ...`
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use clap::Subcommand;
 
@@ -9,6 +11,7 @@ use ariadne_api::sessions::{
     SessionPageDto, SessionPageQuery, SwitchSessionRequest,
 };
 use ariadne_api::stream::EventStreamQuery;
+use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, SseEvent};
 use ariadne_core::models::agent_of;
 use ariadne_core::{AttentionReason, Seat, SessionStatus};
@@ -31,8 +34,9 @@ const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 40).title(),
     col("status", UNCAPPED).status(),
-    col("goal", UNCAPPED).id().rank(5),
-    col("task", UNCAPPED).id().rank(4),
+    col("goal", UNCAPPED).id().rank(6),
+    col("task", UNCAPPED).id().rank(5),
+    col("seat", UNCAPPED).rank(4),
     col("agent", UNCAPPED).rank(3),
     col("model", UNCAPPED).rank(2),
     col("age", UNCAPPED).rank(1),
@@ -43,13 +47,14 @@ const LS_WITH_DIRECTORY: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 40).title(),
     col("status", UNCAPPED).status(),
-    col("goal", UNCAPPED).id().rank(5),
-    col("task", UNCAPPED).id().rank(4),
+    col("goal", UNCAPPED).id().rank(6),
+    col("task", UNCAPPED).id().rank(5),
+    col("seat", UNCAPPED).rank(4),
     col("agent", UNCAPPED).rank(3),
     col("model", UNCAPPED).rank(2),
     col("age", UNCAPPED).rank(1),
     col("tokens", UNCAPPED).rank(0),
-    col("directory", 40).rank(6),
+    col("directory", 40).rank(7),
 ];
 
 fn session_columns(columns: &[String]) -> &'static [Column] {
@@ -597,7 +602,11 @@ fn shell_arg(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn session_row(session: &SessionEntryDto, now: chrono::DateTime<chrono::Utc>) -> Vec<String> {
+fn session_row(
+    session: &SessionEntryDto,
+    now: chrono::DateTime<chrono::Utc>,
+    steps: &HashMap<String, String>,
+) -> Vec<String> {
     vec![
         session.id.clone(),
         session.title.clone().unwrap_or_default(),
@@ -606,6 +615,15 @@ fn session_row(session: &SessionEntryDto, now: chrono::DateTime<chrono::Utc>) ->
             .map_or_else(String::new, |status| status.as_str().into()),
         session.goal_id.clone().unwrap_or_default(),
         session.task_id.clone().unwrap_or_default(),
+        seat_text(
+            session.seat,
+            session
+                .task_agent_id
+                .as_deref()
+                .and_then(|id| steps.get(id))
+                .map(String::as_str),
+            "",
+        ),
         session.agent_id.clone(),
         session.model.clone().unwrap_or_default(),
         session
@@ -639,11 +657,27 @@ async fn render_page(client: &Client, options: &ListOptions, format: Format) -> 
         }
     }
     link_pull_requests(&mut page, &pulls);
+    // Each task a column agent's row names, read for its step: the listing
+    // itself carries none, so its JSON stays exactly what it was.
+    let mut task_ids: Vec<String> = page
+        .sessions
+        .iter()
+        .filter_map(|s| s.task_id.clone())
+        .collect();
+    task_ids.sort();
+    task_ids.dedup();
+    let mut tasks: Vec<TaskDto> = Vec::new();
+    for id in task_ids {
+        if let Ok(task) = client.get_json(&format!("/v1/tasks/{id}")).await {
+            tasks.push(task);
+        }
+    }
+    let steps = step_labels(&tasks);
     print_list(
         format,
         &page.sessions,
         session_columns(&view().columns),
-        |session| session_row(session, chrono::Utc::now()),
+        |session| session_row(session, chrono::Utc::now(), &steps),
         empty_state(
             "No sessions match that filter.",
             Some("ariadne session ls --all"),
@@ -671,6 +705,17 @@ fn link_pull_requests(page: &mut SessionPageDto, pulls: &[PullRequestDto]) {
         };
         session.title = Some(format!("{} ({})", pull.title, pull.url));
     }
+}
+
+/// The workflow column of each staffed agent behind these tasks, keyed by
+/// its `task_agent_id`: what a row's seat column reads beside `agent`,
+/// without the listing's own DTO carrying a step of its own.
+fn step_labels(tasks: &[TaskDto]) -> HashMap<String, String> {
+    tasks
+        .iter()
+        .flat_map(|task| &task.agents)
+        .map(|agent| (agent.id.clone(), agent.step.clone()))
+        .collect()
 }
 
 fn session_path(id: &str) -> String {
@@ -744,7 +789,7 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
         ("goal", Kv::id(dash(s.goal_id.as_deref()))),
         ("task", Kv::id(dash(s.task_id.as_deref()))),
         ("pull request", Kv::id(dash(s.pull_request_id.as_deref()))),
-        ("seat", s.seat.map_or("-", |seat| seat.as_str()).into()),
+        ("seat", seat_label(s).into()),
         ("agent id", Kv::id(dash(s.task_agent_id.as_deref()))),
         ("agent", agent_of(&s.model).into()),
         // Recorded at launch, so it is what this session runs on even if the
@@ -784,25 +829,35 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
     pairs
 }
 
+/// How a seat reads: the seat alone, or, for the agent of a workflow column
+/// that still has one, the seat and the column together, e.g. `agent ·
+/// develop`. `absent` is what an unseated row (a loose or outside session)
+/// prints — a dash in an inspect block, empty in a table cell.
+fn seat_text(seat: Option<Seat>, step: Option<&str>, absent: &str) -> String {
+    match (seat, step) {
+        (Some(Seat::Agent), Some(step)) => format!("agent · {step}"),
+        (Some(seat), _) => seat.as_str().into(),
+        (None, _) => absent.into(),
+    }
+}
+
+/// How a session's seat reads in an inspect block or a confirmation: the
+/// seat alone, or the seat and its workflow column together.
+fn seat_label(s: &SessionDto) -> String {
+    seat_text(s.seat, s.step.as_deref(), "-")
+}
+
 /// Whose agent it is: a session has no title, and the seat and the piece
 /// of work it was spawned for are what stand in for one.
 fn what_for(s: &SessionDto) -> String {
     if let Some(pull) = &s.pull_request_id {
-        return format!(
-            "{} of pull request {}",
-            s.seat.map_or("-", |seat| seat.as_str()),
-            short_id(pull)
-        );
+        return format!("{} of pull request {}", seat_label(s), short_id(pull));
     }
     match &s.task_id {
-        Some(task) => format!(
-            "{} on task {}",
-            s.seat.map_or("-", |seat| seat.as_str()),
-            short_id(task)
-        ),
+        Some(task) => format!("{} on task {}", seat_label(s), short_id(task)),
         None => format!(
             "{} of goal {}",
-            s.seat.map_or("-", |seat| seat.as_str()),
+            seat_label(s),
             s.goal_id
                 .as_deref()
                 .map(short_id)
@@ -1216,11 +1271,25 @@ mod tests {
         );
     }
 
+    /// The seat column reads a row's step off the task behind it, not off
+    /// the listing's own DTO — which carries none, so its JSON cannot
+    /// change — the same way `link_pull_requests` reads a title off the
+    /// pull request behind a row rather than the listing itself.
+    #[test]
+    fn step_labels_reads_each_tasks_agents() {
+        let steps = step_labels(&[crate::commands::fixtures::task("01TASK", "01GOAL")]);
+        assert_eq!(steps.get("01DEVELOP").map(String::as_str), Some("develop"));
+    }
+
     #[test]
     fn the_session_table_has_the_unified_columns_and_empty_outside_fields() {
         let table = crate::output::render_table(
             LS,
-            &[session_row(&outside("outside-id"), chrono::Utc::now())],
+            &[session_row(
+                &outside("outside-id"),
+                chrono::Utc::now(),
+                &HashMap::new(),
+            )],
             &View::plain(),
         )
         .unwrap();
@@ -1228,12 +1297,12 @@ mod tests {
         assert_eq!(
             header,
             [
-                "ID", "TITLE", "STATUS", "GOAL", "TASK", "AGENT", "MODEL", "AGE", "TOKENS"
+                "ID", "TITLE", "STATUS", "GOAL", "TASK", "SEAT", "AGENT", "MODEL", "AGE", "TOKENS"
             ]
         );
         assert_eq!(
-            session_row(&outside("outside-id"), chrono::Utc::now())[2..5],
-            ["", "", ""]
+            session_row(&outside("outside-id"), chrono::Utc::now(), &HashMap::new())[2..6],
+            ["", "", "", ""]
         );
     }
 
@@ -1247,17 +1316,17 @@ mod tests {
             output_tokens: 300,
         });
 
-        let row = session_row(&session, chrono::Utc::now());
-        assert_eq!(row[6], "codex-acp:gpt-5");
-        assert_eq!(row[8], "↑1.2k 66.7% ↓300");
+        let row = session_row(&session, chrono::Utc::now(), &HashMap::new());
+        assert_eq!(row[7], "codex-acp:gpt-5");
+        assert_eq!(row[9], "↑1.2k 66.7% ↓300");
     }
 
     #[test]
     fn an_outside_row_without_model_or_usage_keeps_both_cells_empty() {
-        let row = session_row(&outside("outside-id"), chrono::Utc::now());
+        let row = session_row(&outside("outside-id"), chrono::Utc::now(), &HashMap::new());
 
-        assert_eq!(row[6], "");
-        assert_eq!(row[8], "");
+        assert_eq!(row[7], "");
+        assert_eq!(row[9], "");
     }
 
     #[test]
@@ -1265,11 +1334,31 @@ mod tests {
         let row = session_row(
             &ariadne("ariadne-id", SessionStatus::Running),
             chrono::Utc::now(),
+            &HashMap::new(),
         );
 
-        assert_eq!(row[5], "codex-acp");
-        assert_eq!(row[6], "codex-acp:model");
-        assert_eq!(row[8], "↑0 0.0% ↓0");
+        assert_eq!(row[6], "codex-acp");
+        assert_eq!(row[7], "codex-acp:model");
+        assert_eq!(row[9], "↑0 0.0% ↓0");
+    }
+
+    #[test]
+    fn a_column_agents_row_names_its_step_beside_its_seat() {
+        let mut session = ariadne("ariadne-id", SessionStatus::Running);
+        session.seat = Some(Seat::Agent);
+        session.task_agent_id = Some("01DEVELOP".into());
+        let steps = HashMap::from([("01DEVELOP".to_string(), "develop".to_string())]);
+        let row = session_row(&session, chrono::Utc::now(), &steps);
+        assert_eq!(row[5], "agent · develop");
+    }
+
+    #[test]
+    fn an_orchestrators_row_names_only_its_seat() {
+        let mut session = ariadne("ariadne-id", SessionStatus::Running);
+        session.seat = Some(Seat::Orchestrator);
+        session.task_agent_id = None;
+        let row = session_row(&session, chrono::Utc::now(), &HashMap::new());
+        assert_eq!(row[5], "orchestrator");
     }
 
     #[test]
@@ -1281,9 +1370,12 @@ mod tests {
             ..View::plain()
         };
 
-        let table =
-            crate::output::render_table(LS, &[session_row(&session, chrono::Utc::now())], &view)
-                .unwrap();
+        let table = crate::output::render_table(
+            LS,
+            &[session_row(&session, chrono::Utc::now(), &HashMap::new())],
+            &view,
+        )
+        .unwrap();
 
         assert_eq!(table.lines().next(), Some("MODEL"));
         assert!(
@@ -1327,6 +1419,30 @@ mod tests {
             let line = block.lines().find(|line| line.starts_with(field)).unwrap();
             assert_eq!(line.split_whitespace().collect::<Vec<_>>(), [field, "-"]);
         }
+    }
+
+    #[test]
+    fn an_agent_seat_with_a_step_names_the_step_beside_it() {
+        let s = session("01SESS", "01GOAL", Some("01TASK"));
+        let block = kv_block(&inspect_pairs(&s), &View::plain());
+        let line = block.lines().find(|line| line.starts_with("seat")).unwrap();
+        assert_eq!(
+            line.split_whitespace().collect::<Vec<_>>(),
+            ["seat", "agent", "·", "develop"]
+        );
+        assert_eq!(what_for(&s), "agent · develop on task 01TASK");
+    }
+
+    #[test]
+    fn an_orchestrator_seat_names_no_step() {
+        let s = session("01SESS", "01GOAL", None);
+        let block = kv_block(&inspect_pairs(&s), &View::plain());
+        let line = block.lines().find(|line| line.starts_with("seat")).unwrap();
+        assert_eq!(
+            line.split_whitespace().collect::<Vec<_>>(),
+            ["seat", "orchestrator"]
+        );
+        assert_eq!(what_for(&s), "orchestrator of goal 01GOAL");
     }
 
     #[test]

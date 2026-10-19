@@ -15,6 +15,10 @@ pub struct SessionDto {
     pub seat: Option<Seat>,
     /// The staffed agent this session runs; None for an orchestrator or loose session.
     pub task_agent_id: Option<String>,
+    /// The workflow column `task_agent_id` works, where the session still has
+    /// one; null for an orchestrator, a loose session, or an agent its task
+    /// no longer staffs.
+    pub step: Option<String>,
     /// Model requested at launch, `<agent>:<model>`: the registry agent the
     /// session runs on, and the model of it.
     pub model: String,

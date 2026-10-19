@@ -1,6 +1,9 @@
 use crate::common::{Harness, TIMEOUT, as_session, eventually, sh, test_pin, with_forge};
+use ariadne_api::sessions::SessionDto;
 use ariadne_core::{Actor, GoalStatus, Seat, TaskStatus};
-use ariadne_store::{AgentSession, NewGoal, NewTask, NewTaskAgent, SessionFilter, Task};
+use ariadne_store::{
+    AgentSession, NewGoal, NewSession, NewTask, NewTaskAgent, SessionFilter, Task,
+};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
@@ -48,6 +51,67 @@ async fn a_goal_takes_the_repository_default_and_snapshots_its_workflow() {
             .collect::<Vec<_>>(),
         ["develop", "review", "pr"]
     );
+}
+
+/// A session's `step` is the workflow column its staffed agent works, read
+/// back over `GET /v1/sessions/{id}`. The listing's own `GET /v1/sessions`
+/// carries no such field: its JSON is unchanged, and the CLI reads a row's
+/// step off the task behind it instead.
+#[tokio::test]
+async fn a_sessions_step_is_its_staffed_agents_column() {
+    let h = harness().await;
+    let task = stepped(&h).await;
+    let agent = h
+        .store
+        .list_task_agents(&task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|a| a.step == "develop")
+        .unwrap();
+    let session = h
+        .store
+        .create_session(NewSession {
+            goal_id: Some(task.goal_id.clone()),
+            task_id: Some(task.id.clone()),
+            seat: Some(Seat::Agent),
+            task_agent_id: Some(agent.id.clone()),
+            model: "stub:develop-model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+
+    let dto: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+    assert_eq!(dto.step.as_deref(), Some("develop"));
+
+    let page: Value = h.get(&format!("/v1/sessions?task={}", task.id)).await;
+    let entry = page["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == session.id)
+        .unwrap();
+    assert!(!entry.as_object().unwrap().contains_key("step"), "{entry}");
+
+    let orchestrator = h
+        .store
+        .create_session(NewSession {
+            goal_id: Some(task.goal_id.clone()),
+            task_id: None,
+            seat: Some(Seat::Orchestrator),
+            task_agent_id: None,
+            model: "stub:orchestrator-model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    let dto: SessionDto = h.get(&format!("/v1/sessions/{}", orchestrator.id)).await;
+    assert_eq!(dto.step, None);
 }
 
 async fn stepped(h: &Harness) -> Task {

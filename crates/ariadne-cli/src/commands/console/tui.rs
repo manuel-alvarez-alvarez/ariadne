@@ -462,6 +462,7 @@ mod tests {
             goal_id: Some("goal".into()),
             task_id: Some("task".into()),
             task_agent_id: None,
+            step: None,
             seat: Some(Seat::Agent),
             model: "stub:model".into(),
             effort: Some("high".into()),

@@ -171,12 +171,14 @@ dto! {
            body, delivered_at, created_at
     }
 
-    /// `usage` is what this session has spent, which the caller loads.
-    fn session_dto(s: store::AgentSession, usage: TokenUsageDto) -> SessionDto {
+    /// `usage` is what this session has spent and `step` is the workflow
+    /// column its `task_agent_id` works, both loaded by the caller.
+    fn session_dto(s: store::AgentSession, usage: TokenUsageDto, step: Option<String>) -> SessionDto {
         seat: s.seat(),
         status: s.status(),
         attention_reason: s.attention_reason(),
         usage: usage,
+        step: step,
         context_used: s.context_used.and_then(|value| u64::try_from(value).ok()),
         context_size: s.context_size.and_then(|value| u64::try_from(value).ok()),
         .. id, goal_id, task_id, task_agent_id, model, effort, internal_session_id,
@@ -281,13 +283,18 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
     Ok(task_dto(task, agents, sessions, depends_on, usage, reason))
 }
 
-/// [`session_dto`] with what the session has spent loaded from the store.
+/// [`session_dto`] with what the session has spent, and the column its
+/// staffed agent works, loaded from the store.
 pub(crate) async fn session_dto_of(
     store: &Store,
     session: store::AgentSession,
 ) -> Result<SessionDto, StoreError> {
     let usage = store.session_usage(&session.id).await?;
-    Ok(session_dto(session, usage.into()))
+    let step = match &session.task_agent_id {
+        Some(id) => store.get_task_agent(id).await.ok().map(|agent| agent.step),
+        None => None,
+    };
+    Ok(session_dto(session, usage.into(), step))
 }
 
 /// One row of the session listing: the session as its own endpoint answers

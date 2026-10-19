@@ -40,6 +40,7 @@ use tokio::time::{Instant, interval};
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::usage::TokenUsageDto;
+use ariadne_core::Seat;
 
 use crate::transcript::{self, PermissionOption, TranscriptItem};
 use crate::wrap;
@@ -122,6 +123,16 @@ pub struct Header {
     usage: TokenUsageDto,
 }
 
+/// How a session's seat reads: the seat alone, or, for the agent of a
+/// workflow column that still has one, the seat and the column together.
+fn seat_label(seat: Option<Seat>, step: Option<&str>) -> String {
+    match (seat, step) {
+        (Some(Seat::Agent), Some(step)) => format!("agent · {step}"),
+        (Some(seat), _) => seat.as_str().into(),
+        (None, _) => "-".into(),
+    }
+}
+
 impl Header {
     /// Build the header from a session and its task or goal context.
     pub fn for_session(
@@ -148,7 +159,7 @@ impl Header {
                 usage: TokenUsageDto::default(),
             },
             |session| Self {
-                seat: session.seat.map_or("-", |seat| seat.as_str()).into(),
+                seat: seat_label(session.seat, session.step.as_deref()),
                 model: Some(session.model.clone()),
                 effort: session.effort.clone(),
                 id: Some(session.id.clone()),
@@ -1310,6 +1321,21 @@ mod tests {
 
     use crate::tui::testing::*;
     use crate::tui::*;
+
+    #[test]
+    fn an_agent_seat_with_a_step_names_both() {
+        assert_eq!(
+            seat_label(Some(Seat::Agent), Some("develop")),
+            "agent · develop"
+        );
+    }
+
+    #[test]
+    fn a_seat_with_no_step_names_only_itself() {
+        assert_eq!(seat_label(Some(Seat::Orchestrator), None), "orchestrator");
+        assert_eq!(seat_label(Some(Seat::Agent), None), "agent");
+        assert_eq!(seat_label(None, None), "-");
+    }
 
     /// A live `tool_call_update` carries the daemon's merged call under
     /// `acp` and no `tool_name` (021).

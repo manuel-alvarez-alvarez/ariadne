@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 ariadne-api = { workspace = true }
+ariadne-core = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 # The three the inline console is made of: the key events it reads, the
