@@ -651,6 +651,7 @@ pub mod ste {
 mod tests {
     use super::*;
     use crate::SkillSeat;
+    use ariadne_core::models::ModelRank;
 
     /// Every default text there is, named as the test failures name it: the
     /// system prompt of each seat, the template of each prompt kind, and the
@@ -2118,6 +2119,45 @@ mod tests {
                     assert_ne!(skill, PR_REVIEWER_SKILL);
                 }
             }
+        }
+    }
+
+    /// The shipped workflows give each column only the capability bands that
+    /// its work earns. These bands are the catalog contract, not a parser
+    /// example: changing one changes which configured models can staff it.
+    #[test]
+    fn shipped_workflow_rank_bands_match_the_catalog_contract() {
+        let expected = [
+            (
+                DEFAULT_WORKFLOW,
+                vec![
+                    vec![ModelRank::Fast, ModelRank::Balanced, ModelRank::Frontier],
+                    vec![ModelRank::Balanced, ModelRank::Frontier],
+                    vec![ModelRank::Fast, ModelRank::Balanced],
+                ],
+            ),
+            (
+                PULL_REQUEST_WORKFLOW,
+                vec![
+                    vec![ModelRank::Fast, ModelRank::Balanced, ModelRank::Frontier],
+                    vec![ModelRank::Balanced, ModelRank::Frontier],
+                    vec![ModelRank::Fast, ModelRank::Balanced],
+                ],
+            ),
+        ];
+
+        for (name, bands) in expected {
+            let document = default_workflow_document(name).unwrap();
+            let workflow = ariadne_core::workflow::parse(document).unwrap();
+            assert_eq!(
+                workflow
+                    .steps
+                    .into_iter()
+                    .map(|step| step.ranks)
+                    .collect::<Vec<_>>(),
+                bands,
+                "{name} rank bands"
+            );
         }
     }
 

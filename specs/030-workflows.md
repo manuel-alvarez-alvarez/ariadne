@@ -52,7 +52,7 @@ workflow develop-review-merge
   develop[Develop]
     Build the task on its branch and commit it.
     skills: coding
-    ranks: balanced
+    ranks: fast, balanced, frontier
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
@@ -61,7 +61,7 @@ workflow develop-review-merge
   merge[Merge]
     Land the task on the base branch.
     skills: merge
-    ranks: fast
+    ranks: fast, balanced
     gate: merged
 ```
 
@@ -106,12 +106,15 @@ every other kebab-case word in it; the wire spells the same gate
    own deleted rather than reset. The same open adopts a user workflow under
    a name the catalog gains, and prunes a built-in the catalog drops that
    holds nothing of anybody's.
-2. Ariadne ships `develop-review-merge` with `develop` (`committed`), `review`
-   (no gate), and `merge` (`merged`) columns, and `develop-review-pr` with
-   `develop` (`committed`), `review` (no gate), and `pr[Pull request]`
-   (`request-merged`) columns; `merge` stages `merge`, `pr` stages
+2. Ariadne ships `develop-review-merge` with `develop` (`fast`, `balanced`,
+   `frontier`; `committed`), `review` (`balanced`, `frontier`; no gate), and
+   `merge` (`fast`, `balanced`; `merged`) columns, and `develop-review-pr`
+   with the same `develop` and `review` bands and gates, then `pr[Pull request]`
+   (`fast`, `balanced`; `request-merged`). `merge` stages `merge`, `pr` stages
    `pr-babysit`, and `develop-review-merge` is the default of every repository
-   that names none (`DEFAULT_WORKFLOW`).
+   that names none (`DEFAULT_WORKFLOW`). The orchestrator assesses each task
+   case by case, chooses the smallest capable eligible model, and chooses a
+   more powerful eligible model only where the task demands justify it.
 3. A save — a create or a document write — parses the document and refuses a
    document that breaks a syntax rule, naming the line. It also refuses a
    document whose `workflow <name>` line does not equal the row's name, and
@@ -375,10 +378,12 @@ every other kebab-case word in it; the wire spells the same gate
   `::a_missing_workflow_is_a_404_naming_workflow_not_found`,
   `::a_taken_name_is_a_409_and_a_built_in_refuses_delete_and_a_user_one_refuses_reset`,
   `::resetting_a_built_in_drops_the_override`).
-- Every shipped workflow parses and stages shipped skills, and the `merge`
-  skill passes the shipped-skill tests: named once, describes itself, STE,
-  within its cap, lands in order and merges no request itself
+- Every shipped workflow parses, stages shipped skills, and carries its
+  approved rank bands. The `merge` skill passes the shipped-skill tests:
+  named once, describes itself, STE, within its cap, lands in order and merges
+  no request itself
   (`defaults.rs::every_shipped_workflow_parses_and_stages_shipped_skills`,
+  `::shipped_workflow_rank_bands_match_the_catalog_contract`,
   `::every_shipped_skill_is_named_once_and_describes_itself`,
   `::skill_size_caps_hold`,
   `::every_default_text_is_simplified_technical_english`,

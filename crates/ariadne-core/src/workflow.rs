@@ -313,7 +313,7 @@ mod tests {
   develop[Develop]
     Build the task on its branch and commit it.
     skills: coding
-    ranks: balanced
+    ranks: fast, balanced, frontier
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
@@ -322,7 +322,7 @@ mod tests {
   merge[Merge]
     Land the task on the base branch.
     skills: merge
-    ranks: fast
+    ranks: fast, balanced
     gate: merged
 "#;
 
@@ -340,7 +340,10 @@ mod tests {
             "Build the task on its branch and commit it."
         );
         assert_eq!(develop.skills, vec!["coding".to_string()]);
-        assert_eq!(develop.ranks, vec![ModelRank::Balanced]);
+        assert_eq!(
+            develop.ranks,
+            vec![ModelRank::Fast, ModelRank::Balanced, ModelRank::Frontier]
+        );
         assert_eq!(develop.gate, Some(StepGate::Committed));
 
         let review = &workflow.steps[1];
@@ -353,6 +356,7 @@ mod tests {
 
         let merge = &workflow.steps[2];
         assert_eq!(merge.skills, vec!["merge".to_string()]);
+        assert_eq!(merge.ranks, vec![ModelRank::Fast, ModelRank::Balanced]);
         assert_eq!(merge.gate, Some(StepGate::Merged));
     }
 
@@ -362,7 +366,7 @@ mod tests {
   develop[Develop]
     Build the task on its branch and commit it.
     skills: coding
-    ranks: balanced
+    ranks: fast, balanced, frontier
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
@@ -371,16 +375,25 @@ mod tests {
   pr[Pull request]
     Keep the task's request until it merges or closes.
     skills: pr-babysit
-    ranks: balanced
+    ranks: fast, balanced
     gate: request-merged
 "#;
         let workflow = parse(text).unwrap();
         assert_eq!(workflow.name, "develop-review-pr");
+        assert_eq!(
+            workflow.steps[0].ranks,
+            vec![ModelRank::Fast, ModelRank::Balanced, ModelRank::Frontier]
+        );
+        assert_eq!(
+            workflow.steps[1].ranks,
+            vec![ModelRank::Balanced, ModelRank::Frontier]
+        );
         let pr = &workflow.steps[2];
         assert_eq!(pr.id, "pr");
         assert_eq!(pr.title, "Pull request");
         assert_eq!(pr.gate, Some(StepGate::RequestMerged));
         assert_eq!(pr.skills, vec!["pr-babysit".to_string()]);
+        assert_eq!(pr.ranks, vec![ModelRank::Fast, ModelRank::Balanced]);
     }
 
     #[test]

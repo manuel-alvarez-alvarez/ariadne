@@ -19,7 +19,7 @@ workflow develop-review-merge
   develop[Develop]
     Build the task on its branch and commit it.
     skills: coding
-    ranks: balanced
+    ranks: fast, balanced, frontier
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
@@ -29,7 +29,7 @@ workflow develop-review-merge
   merge[Merge]
     Rebase onto the base branch, squash, fast-forward and push.
     skills: merge
-    ranks: fast
+    ranks: fast, balanced
     gate: merged
 ```
 
@@ -72,7 +72,7 @@ workflow develop-review-pr
   develop[Develop]
     Build the task on its branch and commit it.
     skills: coding
-    ranks: balanced
+    ranks: fast, balanced, frontier
     gate: committed
   review[Review]
     Judge the change against the task and the repository rules.
@@ -82,7 +82,7 @@ workflow develop-review-pr
   pr[Pull request]
     Push the branch, open the request and keep it until it merges or closes.
     skills: pr-babysit
-    ranks: balanced
+    ranks: fast, balanced
     gate: request-merged
 ```
 
@@ -117,7 +117,9 @@ than one, and planning may staff it on any rank it names — `ranks: balanced,
 frontier` lets either answer. `ariadne models rank` sets which model answers
 to each rank — see [Using the CLI](cli.md#work-with-tasks). A column with no
 `ranks` is staffed on whichever model the task's creator or the orchestrator
-picks.
+picks. Planning assesses every task case by case, uses the smallest capable
+eligible model, and uses a more powerful eligible model only where the task
+demands justify it.
 
 ## The catalog
 
