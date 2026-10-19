@@ -25,11 +25,12 @@ import { daemonFetch } from "./test/setup"
 
 let mounts = 0
 let lastSpec = ""
+let lastIsEditing: boolean | undefined
 
 // `vi.mock` hoists above every import in the file, regardless of where it is
 // written, so `Page` below reads these in place of the real modules.
 vi.mock("@perses-dev/dashboards", () => ({
-  ViewDashboard: (props: { dashboardResource: { spec: unknown } }) => {
+  ViewDashboard: (props: { dashboardResource: { spec: unknown }; isEditing?: boolean }) => {
     // `mounts` counts actual mounts, through an effect with no dependency —
     // not renders, which a prop update alone would also produce without
     // proving the component (and so Perses's own internal store) was torn
@@ -38,6 +39,7 @@ vi.mock("@perses-dev/dashboards", () => ({
       mounts += 1
     }, [])
     lastSpec = JSON.stringify(props.dashboardResource.spec)
+    lastIsEditing = props.isEditing
     return <div data-testid="view-dashboard">{lastSpec}</div>
   },
 }))
@@ -65,10 +67,20 @@ function jsonResponse(body: unknown): Response {
 beforeEach(() => {
   mounts = 0
   lastSpec = ""
+  lastIsEditing = undefined
   window.history.pushState({}, "", "/?daemon=http://127.0.0.1:7676&dashboard=stats&theme=light")
 })
 
 describe("Page", () => {
+  it("opens the dashboard in view mode, not Perses's own editing mode", async () => {
+    daemonFetch.mockImplementation(async () => jsonResponse({ document: document({}) }))
+
+    render(<Page />)
+
+    await screen.findByTestId("view-dashboard")
+    expect(lastIsEditing).toBeFalsy()
+  })
+
   it("still shows the loaded dashboard under StrictMode's development double-invoke", async () => {
     daemonFetch.mockImplementation(async () => jsonResponse({ document: document({}) }))
 
@@ -102,5 +114,6 @@ describe("Page", () => {
       expect(mounts).toBeGreaterThan(mountsAfterOpen)
     })
     expect(lastSpec).toBe('{"changed":true}')
+    expect(lastIsEditing).toBeFalsy()
   })
 })

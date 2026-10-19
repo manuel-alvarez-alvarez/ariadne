@@ -1,6 +1,9 @@
 /**
- * The whole app: one Perses dashboard, in `isEditing` `ViewDashboard`, over
- * the daemon named on this page's own query string (rule 2).
+ * The whole app: one Perses dashboard, in `ViewDashboard`, over the daemon
+ * named on this page's own query string (rule 2). `ViewDashboard` opens in
+ * view mode — its own Edit button, not a prop here, is what switches it into
+ * edit mode; Save and Cancel, which Perses shows once there, both land back
+ * in view mode on their own.
  *
  * The provider tree below `ViewDashboard` itself is Perses's own choice, not
  * ours — `ViewDashboard` wraps its datasource, time-range and variable state
@@ -138,7 +141,6 @@ export function Page() {
                       dashboardResource={dashboard}
                       datasourceApi={datasourceApi}
                       isReadonly={false}
-                      isEditing
                       isVariableEnabled
                       isAnnotationEnabled={false}
                       isDatasourceEnabled={false}

@@ -34,10 +34,11 @@ the new one after a create or a rename, and a remaining one after a delete.
 
 ## Editing a panel
 
-The dashboard opens already editable. Add a panel, resize or move one, change
-a query, or edit the text of a Markdown panel the same way you would in
-Perses itself: nothing here is read-only, and there is no separate edit mode
-to switch into.
+The dashboard opens read-only. Click **Edit**, in the dashboard's own
+toolbar, to add a panel, resize or move one, change a query, or edit the
+text of a Markdown panel, the same way you would in Perses itself. **Save**
+writes the change and returns to the read-only view; **Cancel** discards it
+and returns there too.
 
 ## Saving
 

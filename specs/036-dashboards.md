@@ -12,7 +12,10 @@ tests:
 
 ## Scope
 
-Dashboard documents are editable Perses resources. The desktop renderer is out of scope.
+Dashboard documents are editable Perses resources. In: the renderer's view
+and edit mode, since it decides whether an edit reaches the daemon at all
+(rule 10). Out: the rest of the desktop renderer — its layout, wiring and
+message protocol are spec 015's.
 
 ## Behavior
 
@@ -35,12 +38,16 @@ Dashboard documents are editable Perses resources. The desktop renderer is out o
 9. A total over the selected range reads `[$__range] @ end()`, so every step
    of the range query shows the whole range and a series with nothing in
    it drops out instead of showing a count from before the range.
-10. A legend shows a value where one helps the reader: each pie chart's
-    legend is a table with the last value of its slice; the per-bucket
-    time series (tasks, tokens, turns and attention over time) show the
-    sum of each series; the lead-time trend shows the mean and the max of
-    each series. The daemon-health charts keep a plain list legend, with no
-    values.
+10. The desktop renderer opens a dashboard in view mode: Perses's own Edit
+    button, not a prop the renderer sets, is what switches it into edit
+    mode, and Perses's own Save and Cancel both return it to view mode —
+    Save after writing the document through the daemon's `PUT`, Cancel by
+    discarding the edit. A legend shows a value where one helps the reader:
+    each pie chart's legend is a table with the last value of its slice; the
+    per-bucket time series (tasks, tokens, turns and attention over time)
+    show the sum of each series; the lead-time trend shows the mean and the
+    max of each series. The daemon-health charts keep a plain list legend,
+    with no values.
 
 ## Acceptance criteria
 
@@ -49,6 +56,11 @@ Dashboard documents are editable Perses resources. The desktop renderer is out o
    through the installed Perses layout converter, lays out every panel
    once, names only declared or built-in variables, and proves the legend
    values of rule 10.
+3. The renderer opens `ViewDashboard` out of edit mode, on first load and
+   again after a remount
+   (`ui/dashboard/src/page.test.tsx::opens the dashboard in view mode, not
+   Perses's own editing mode`, `::remounts ViewDashboard with the fresh
+   document on a reload message`).
 
 ## Sources
 

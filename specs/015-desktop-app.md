@@ -645,9 +645,9 @@ Out: the daemon endpoints themselves (012).
     global Loki datasource, each `directUrl` the daemon's own address — which
     serves the standard Prometheus API under `/api/v1/` and the standard
     Loki API under `/loki/api/v1/` at its root — loads
-    `GET /v1/dashboards/{name}`, renders Perses's `ViewDashboard` with
-    editing on, and saves an edit through `PUT /v1/dashboards/{name}` from
-    `ViewDashboard`'s own `onSave`.
+    `GET /v1/dashboards/{name}`, renders Perses's `ViewDashboard` in the
+    view or edit mode spec 036 rule 10 decides, and saves an edit through
+    `PUT /v1/dashboards/{name}` from `ViewDashboard`'s own `onSave`.
 38. Toasts show at the bottom left, clear of the header and the pane
     (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
 39. A goal a workflow runs (030) is shown by its columns. Its lane on the
