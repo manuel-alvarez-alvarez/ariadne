@@ -1,7 +1,7 @@
 ---
 id: telemetry
 status: current
-updated: 2026-10-18
+updated: 2026-10-19
 areas: [store, daemon, cli, ui, scripts]
 commits: []
 tests:
@@ -221,6 +221,12 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
   `::hostile_log_content_survives_sse_framing`,
   `::both_endpoints_are_in_the_openapi_document`,
   `::the_pipeline_counts_exported_log_records_on_its_own_metric`.
+- Log integration tests wait for stored records or the next stream message
+  under `Timeouts::telemetry_pipeline_patience`. They report the first failed
+  wait without retrying the test:
+  `logs.rs::the_default_snapshot_is_bounded_even_without_an_explicit_tail`,
+  `::service_narrows_the_snapshot_to_one_service`,
+  `::level_narrows_the_stream_snapshot_and_its_deltas`.
 - The metric exporter stores the resource's service name under the
   reserved key, and moves a colliding attribute aside without losing it
   (`telemetry/metrics_exporter.rs::tests::the_resource_service_wins_and_a_colliding_attribute_moves_aside`,

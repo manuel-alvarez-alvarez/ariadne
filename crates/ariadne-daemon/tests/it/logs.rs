@@ -10,12 +10,13 @@
 
 use crate::common;
 
+use axum::body::Body;
 use axum::http::{StatusCode, header};
 use tracing_subscriber::layer::SubscriberExt;
 
 use ariadne_api::logs::{LogLineDto, LogSnapshotResponse};
 
-use common::{Harness, TIMEOUT, eventually, get, harness, next_sse_message, parse_sse};
+use common::{Harness, Sse, TIMEOUT, eventually, get, harness, next_sse, parse_sse};
 
 /// The daemon's real bridge layer, scoped to this thread: while the guard
 /// lives, `tracing` macros feed the telemetry pipeline behind the API.
@@ -30,11 +31,26 @@ fn capture(h: &Harness) -> tracing::subscriber::DefaultGuard {
 /// as one of the test's own lines.
 async fn flush_until_stored(h: &Harness, count: usize) {
     h.telemetry.flush();
-    eventually(TIMEOUT, "the captured lines to be stored", async || {
-        let stored: LogSnapshotResponse = h.get("/v1/logs?tail=100000").await;
-        stored.lines.len() >= count
-    })
+    eventually(
+        h.timeouts.telemetry_pipeline_patience,
+        "the captured lines to be stored",
+        async || {
+            let stored: LogSnapshotResponse = h.get("/v1/logs?tail=100000").await;
+            stored.lines.len() >= count
+        },
+    )
     .await;
+}
+
+/// The next SSE message on a log stream, patient the same way
+/// [`flush_until_stored`] is: a delta has no snapshot read to poll instead,
+/// so the wait is on the message itself, under
+/// `Timeouts::telemetry_pipeline_patience` rather than the generic `TIMEOUT`.
+async fn next_log_message(h: &Harness, body: &mut Body) -> String {
+    match next_sse(body, h.timeouts.telemetry_pipeline_patience).await {
+        Sse::Message(message) => message,
+        other => panic!("expected an sse message, got {other:?}"),
+    }
 }
 
 fn messages(lines: &[LogLineDto]) -> Vec<&str> {
@@ -168,7 +184,7 @@ async fn level_narrows_the_stream_snapshot_and_its_deltas() {
     flush_until_stored(&h, 1).await;
 
     let mut body = h.stream(get("/v1/logs/stream?level=warn")).await;
-    let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
+    let (name, payload) = parse_sse(&next_log_message(&h, &mut body).await);
     assert_eq!(name, "snapshot");
     let snapshot: LogSnapshotResponse = serde_json::from_value(payload).unwrap();
     assert_eq!(
@@ -182,7 +198,7 @@ async fn level_narrows_the_stream_snapshot_and_its_deltas() {
         tracing::warn!("keep this delta");
     }
     h.telemetry.flush();
-    let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
+    let (name, payload) = parse_sse(&next_log_message(&h, &mut body).await);
     assert_eq!(name, "delta");
     let line: LogLineDto = serde_json::from_value(payload).unwrap();
     assert_eq!(line.message, "keep this delta");
@@ -215,7 +231,7 @@ async fn the_stream_opens_with_a_snapshot_then_follows_with_deltas() {
     );
     let mut body = response.into_body();
 
-    let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
+    let (name, payload) = parse_sse(&next_log_message(&h, &mut body).await);
     assert_eq!(name, "snapshot");
     let snapshot: LogSnapshotResponse = serde_json::from_value(payload).unwrap();
     assert_eq!(messages(&snapshot.lines), vec!["before the stream opened"]);
@@ -225,7 +241,7 @@ async fn the_stream_opens_with_a_snapshot_then_follows_with_deltas() {
         tracing::info!(answer = 42, "a line while the stream is open");
     }
     h.telemetry.flush();
-    let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
+    let (name, payload) = parse_sse(&next_log_message(&h, &mut body).await);
     assert_eq!(name, "delta");
     let line: LogLineDto = serde_json::from_value(payload).unwrap();
     assert_eq!(line.message, "a line while the stream is open answer=42");
@@ -237,7 +253,7 @@ async fn the_stream_opens_with_a_snapshot_then_follows_with_deltas() {
         tracing::error!("another one");
     }
     h.telemetry.flush();
-    let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
+    let (name, payload) = parse_sse(&next_log_message(&h, &mut body).await);
     assert_eq!(name, "delta");
     let line: LogLineDto = serde_json::from_value(payload).unwrap();
     assert_eq!(line.message, "another one");
@@ -258,7 +274,7 @@ async fn hostile_log_content_survives_sse_framing() {
 
     let mut body = h.stream(get("/v1/logs/stream")).await;
 
-    let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
+    let (name, payload) = parse_sse(&next_log_message(&h, &mut body).await);
     assert_eq!(name, "snapshot");
     let snapshot: LogSnapshotResponse = serde_json::from_value(payload).unwrap();
     assert_eq!(

@@ -110,6 +110,14 @@ pub struct Timeouts {
     /// keeping its own `Duration` constant, so every clock a test waits on
     /// stays in one place.
     pub dead_launch_patience: Duration,
+    /// How long a test may wait for one round trip through the telemetry
+    /// pipeline: a captured log line reaching the store, or a log stream's
+    /// next delta. Not a pace the runtime keeps either. Each SDK
+    /// `force_flush` gives up after a fixed 5 seconds, and the batch it
+    /// could not reach still clears the one export thread
+    /// (`crate::telemetry`) on its own schedule. Under the full suite's load
+    /// on every core at once, that took longer than the generic test wait.
+    pub telemetry_pipeline_patience: Duration,
 }
 
 impl Default for Timeouts {
@@ -136,6 +144,7 @@ impl Default for Timeouts {
             checkpoint: Duration::from_secs(30),
             telemetry_retention: Duration::from_secs(3600),
             dead_launch_patience: Duration::from_secs(30),
+            telemetry_pipeline_patience: Duration::from_secs(120),
         }
     }
 }
