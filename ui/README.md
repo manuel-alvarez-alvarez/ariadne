@@ -3,8 +3,8 @@
 Desktop client for `ariadned`. A [Tauri 2](https://v2.tauri.app) window around a
 Vite + React + TypeScript app. The goals board draws a stepped task in its
 workflow's column, and the Workflows screen edits the catalog — shipped and
-your own, each with a document editor and a live kanban preview. The Stats
-screen embeds a Perses dashboard, over the daemon's own Prometheus and Loki
+your own, each with a document editor and a live kanban preview. The
+Dashboards screen embeds a Perses dashboard, over the daemon's own Prometheus and Loki
 APIs — [`dashboard/`](dashboard) is its own package, on React 18, built
 separately and served same-origin under `/dashboard/`.
 
@@ -58,7 +58,7 @@ The packaged webview has a content security policy. It loads scripts, styles,
 fonts and images from the app, and it permits HTTP, HTTPS, WebSocket and secure
 WebSocket connections because the daemon URL is configurable. It permits Tauri
 IPC through `ipc:` and `http://ipc.localhost`, so bundled plugins work. It
-permits a frame from the app itself, which is what lets the Stats screen's
+permits a frame from the app itself, which is what lets the Dashboards screen's
 dashboard open in its iframe. It rejects evaluated script, plugins, document
 base changes and embedded ancestors.
 

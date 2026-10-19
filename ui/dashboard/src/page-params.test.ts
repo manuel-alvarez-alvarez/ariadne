@@ -4,9 +4,9 @@ import { readPageParams } from "./page-params"
 
 describe("readPageParams", () => {
   it("reads the daemon, the dashboard and the theme off the query string", () => {
-    expect(readPageParams("?daemon=http://127.0.0.1:7676&dashboard=stats&theme=dark")).toEqual({
+    expect(readPageParams("?daemon=http://127.0.0.1:7676&dashboard=default&theme=dark")).toEqual({
       daemonUrl: "http://127.0.0.1:7676",
-      dashboardName: "stats",
+      dashboardName: "default",
       theme: "dark",
     })
   })

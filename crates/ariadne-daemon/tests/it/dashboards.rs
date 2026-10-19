@@ -55,9 +55,12 @@ async fn dashboard_documents_must_be_named_perses_dashboards() {
     let err = h.error(post_json("/v1/dashboards", serde_json::json!({"name":"mine","document":{"kind":"NotDashboard","metadata":{"name":"other"},"spec":[]}})), StatusCode::UNPROCESSABLE_ENTITY).await;
     assert_eq!(err.error.code, "invalid_request");
     assert!(err.error.message.contains("kind"));
-    assert_eq!(h.send(get("/v1/dashboards/stats")).await.0, StatusCode::OK);
+    assert_eq!(
+        h.send(get("/v1/dashboards/default")).await.0,
+        StatusCode::OK
+    );
     let err = h
-        .error(delete("/v1/dashboards/stats"), StatusCode::CONFLICT)
+        .error(delete("/v1/dashboards/default"), StatusCode::CONFLICT)
         .await;
     assert_eq!(err.error.code, "dashboard_builtin");
 }
@@ -65,11 +68,11 @@ async fn dashboard_documents_must_be_named_perses_dashboards() {
 #[tokio::test]
 async fn resetting_a_built_in_dashboard_restores_its_shipped_document() {
     let h = harness().await;
-    let override_document = document("stats");
+    let override_document = document("default");
     let updated: DashboardDto = h
         .json(
             put_json(
-                "/v1/dashboards/stats",
+                "/v1/dashboards/default",
                 serde_json::json!({"document": override_document}),
             ),
             StatusCode::OK,
@@ -79,12 +82,12 @@ async fn resetting_a_built_in_dashboard_restores_its_shipped_document() {
 
     let reset: DashboardDto = h
         .json(
-            post_json("/v1/dashboards/stats/reset", serde_json::json!({})),
+            post_json("/v1/dashboards/default/reset", serde_json::json!({})),
             StatusCode::OK,
         )
         .await;
     assert!(reset.document_is_default);
-    assert_ne!(reset.document, document("stats"));
+    assert_ne!(reset.document, document("default"));
 
     let _: DashboardDto = h
         .json(

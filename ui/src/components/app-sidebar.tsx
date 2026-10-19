@@ -70,7 +70,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: paths.agents(), label: "Agents", icon: BotIcon },
   { to: paths.skills(), label: "Skills", icon: CpuIcon },
   { to: paths.permissions(), label: "Permissions", icon: ShieldIcon },
-  { to: paths.stats(), label: "Stats", icon: ChartColumnIcon },
+  { to: paths.dashboards(), label: "Dashboards", icon: ChartColumnIcon },
 ]
 
 export function AppSidebar({ collapsed = false }: { collapsed?: boolean }) {

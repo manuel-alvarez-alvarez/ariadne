@@ -10,42 +10,42 @@ import type { DashboardResource } from "@perses-dev/client"
 import { convertLayoutsToPanelGroups } from "@perses-dev/dashboards/dist/context/DashboardProvider/panel-group-slice"
 import { describe, expect, it } from "vitest"
 
-import stats from "../../../crates/ariadne-store/dashboards/stats.json"
+import defaultDashboard from "../../../crates/ariadne-store/dashboards/default.json"
 
 // The daemon's stored document has no project metadata. `page.tsx` adds that
 // Perses-only field before rendering it, so this test needs only its spec.
-const shippedStats = stats as unknown as DashboardResource
+const shippedDefault = defaultDashboard as unknown as DashboardResource
 
 // The plugin spec of a panel is `UnknownSpec` to Perses's own types, so a
-// legend check reaches through a cast, the same way `shippedStats` itself does.
+// legend check reaches through a cast, the same way `shippedDefault` itself does.
 function legendOf(panel: string): { mode?: string; values?: string[] } | undefined {
-  const spec = shippedStats.spec.panels[panel]?.spec.plugin.spec as Record<string, unknown>
+  const spec = shippedDefault.spec.panels[panel]?.spec.plugin.spec as Record<string, unknown>
   return spec.legend as { mode?: string; values?: string[] } | undefined
 }
 
-describe("the shipped stats dashboard", () => {
-  it("uses Default as its display name while retaining stats as its metadata name", () => {
-    expect(shippedStats.metadata.name).toBe("stats")
-    expect(shippedStats.spec.display?.name).toBe("Default")
+describe("the shipped default dashboard", () => {
+  it("uses Default as its display name while retaining default as its metadata name", () => {
+    expect(shippedDefault.metadata.name).toBe("default")
+    expect(shippedDefault.spec.display?.name).toBe("Default")
   })
 
   it("opens through the installed Perses layout converter", () => {
-    expect(() => convertLayoutsToPanelGroups(shippedStats.spec.layouts)).not.toThrow()
+    expect(() => convertLayoutsToPanelGroups(shippedDefault.spec.layouts)).not.toThrow()
   })
 
   it("lays out every panel once, and refers to no panel it lacks", () => {
-    const laidOut = shippedStats.spec.layouts.flatMap((layout) =>
+    const laidOut = shippedDefault.spec.layouts.flatMap((layout) =>
       "items" in layout.spec
         ? layout.spec.items.map((item) => item.content.$ref.replace("#/spec/panels/", ""))
         : [],
     )
-    expect([...laidOut].sort()).toEqual(Object.keys(shippedStats.spec.panels).sort())
+    expect([...laidOut].sort()).toEqual(Object.keys(shippedDefault.spec.panels).sort())
   })
 
   it("names only the variables it declares or Perses builds in", () => {
-    const declared = new Set(shippedStats.spec.variables.map((variable) => variable.spec.name))
+    const declared = new Set(shippedDefault.spec.variables.map((variable) => variable.spec.name))
     const builtin = new Set(["__range", "__rate_interval", "__interval"])
-    const used = JSON.stringify(shippedStats.spec.panels).matchAll(/\$\{?(\w+)/g)
+    const used = JSON.stringify(shippedDefault.spec.panels).matchAll(/\$\{?(\w+)/g)
     const unknown = [...used]
       .map((match) => match[1] ?? "")
       .filter((name) => !declared.has(name) && !builtin.has(name))

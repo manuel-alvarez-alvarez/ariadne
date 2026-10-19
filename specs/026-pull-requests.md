@@ -440,7 +440,7 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   (`::offers a refresh only while a repository in view polls or its webhook is down`),
   and holds no button: a click on the row opens the panel.
 - The sidebar lists Forge beside the other screens:
-  `app-shell.test.tsx::ends the navigation with stats, and lists Forge beside the other screens`.
+  `app-shell.test.tsx::ends the navigation with dashboards, and lists Forge beside the other screens`.
   Its tabs are routes of their own: `forge-page.test.tsx::shows the tab its URL names, and a tab click moves to the other`.
 - The panel reads the request by its repository and number, its facts by name, renders the description, links the forge and each failed check, lists the review sessions, and removes nothing:
   `pull-request-panel.test.tsx::reads its facts by name, renders its description, links the forge, and removes nothing`,

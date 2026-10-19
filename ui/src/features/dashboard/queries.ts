@@ -14,7 +14,7 @@ import { copyDashboardDocument } from "./document"
 
 /**
  * Every dashboard, shipped and saved. One unfiltered list — the daemon takes
- * no filters — read by the Stats screen's picker.
+ * no filters — read by the Dashboards screen's picker.
  */
 export function dashboardsQueryOptions() {
   return queryOptions({
@@ -52,7 +52,7 @@ export function useDeleteDashboard() {
  * table's own key, so this creates the panels, layouts, variables and time
  * settings of `from` under `to`, then deletes `from` — in that order, so a
  * name already taken, or a validation error, leaves `from` exactly as it
- * was. The built-in dashboard is kept out of reach of this by the Stats
+ * was. The built-in dashboard is kept out of reach of this by the Dashboards
  * screen, the same as a delete: calling it there would create the copy and
  * then fail to delete `from`, the daemon refusing that half the same way it
  * refuses a plain delete of it.
@@ -86,7 +86,7 @@ export function useRenameDashboard() {
 
 /**
  * Puts a dashboard back on the document Ariadne ships, by dropping what was
- * saved over it. The Stats screen disables this while `document_is_default`.
+ * saved over it. The Dashboards screen disables this while `document_is_default`.
  */
 export function useResetDashboard() {
   const queryClient = useQueryClient()

@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-10-17
+updated: 2026-10-19
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -84,7 +84,7 @@ Out: the daemon endpoints themselves (012).
    be staffed on, Workflows — shipped and user workflows grouped separately,
    with a document editor and a parsed preview drawn as a numbered pipeline
    — Permissions — the AI permission model's settings behind the `ai`
-   permission mode (022) — Stats
+   permission mode (022) — Dashboards
    (rule 37), and a daemon-logs drawer. The Skills and Workflows screens each
    put a filterable combobox at the top rather than a left-hand list: its
    trigger reads as the selected row or a placeholder, its popup groups
@@ -604,12 +604,13 @@ Out: the daemon endpoints themselves (012).
     `ui/src/features/permissions/ai-card.test.tsx::draws the marker and the
     label from a test result`, `::relabels the same danger once a threshold
     moves, with no second call`, `::draws no marker for an ai_error answer`).
-37. The Stats screen is at `#/stats`, titled `Stats`, last in the sidebar
+37. The Dashboards screen is at `#/dashboards`, titled `Dashboards`, last in the sidebar
     (023). Its header holds a dashboard picker over `GET /v1/dashboards`
     (`qk.dashboards.list()`) and a Reset action; the rest of the screen is
     an iframe over a Perses dashboard, rendered by the `ui/dashboard`
     package. Picking a dashboard from the picker is kept in the URL as
-    `?dashboard=`, defaulting to the first the list answers with. Reset opens
+    `?dashboard=`, defaulting to the shipped `default` dashboard, or the
+    first the list answers with where that name is absent. Reset opens
     a confirm dialog (`ConfirmDialog`) whose confirmation sends
     `POST /v1/dashboards/{name}/reset`; the action itself is disabled while
     the picked dashboard's `document_is_default` is true, since there is
@@ -699,7 +700,7 @@ Out: the daemon endpoints themselves (012).
     and secure WebSocket connections because the user selects the daemon's
     host. It permits Tauri IPC connections through `ipc:` and
     `http://ipc.localhost`, so bundled plugins can work. It permits a frame
-    from the app itself (`frame-src 'self'`), which is what lets the Stats
+    from the app itself (`frame-src 'self'`), which is what lets the Dashboards
     screen's iframe (rule 37) open at all. It permits no objects, bases,
     embedded ancestors or evaluated script.
 47. A click on an external `<a>`, anywhere in the app, opens it in the
@@ -780,14 +781,20 @@ Out: the daemon endpoints themselves (012).
 - Closing an expanded pane returns focus to the board opener, the same as a
   docked one
   (`ui/src/components/pane-focus.test.tsx::returns focus to the board opener after closing an expanded pane`).
-- The Stats screen opens its iframe on the first dashboard the picker lists,
-  with the daemon, the dashboard's name and the resolved theme on the
-  iframe's own query string, and reopens it on the dashboard a `?dashboard=`
-  in the URL names
-  (`ui/src/routes/stats.test.tsx::opens the iframe on the first dashboard,
-  with the daemon, its name and the theme on its own query string`,
-  `::opens the dashboard the URL names`); the picker lists every dashboard
-  and switches the iframe on a pick
+- The Dashboards screen opens its iframe on the shipped `default` dashboard
+  when the URL names none — an absent or empty `?dashboard=` alike — even
+  where another dashboard sorts before it, falling back to the first the
+  list answers with where `default` is absent, with the daemon, the
+  dashboard's name and the resolved theme on the iframe's own query string,
+  and reopens it on the dashboard a `?dashboard=` in the URL names
+  (`ui/src/routes/dashboards.test.tsx::opens the iframe on the shipped
+  default dashboard when the URL names none, even though custom sorts
+  before it, with the daemon, its name and the theme on its own query
+  string`, `::falls back to the first dashboard the list answers with where
+  none is named default`, `::treats an empty dashboard parameter as naming
+  none, and opens the default dashboard`, `::opens the dashboard the URL
+  names`); the picker lists every dashboard and switches the iframe on a
+  pick
   (`::lists every dashboard in the picker, and switches the iframe on a
   pick`); Reset is disabled on the shipped document and enabled once
   something was saved over it, and a confirmed reset sends
@@ -828,9 +835,9 @@ Out: the daemon endpoints themselves (012).
   own `*.test.tsx` beside them, though a few (noted under Known gap) are
   exercised only through the panels and boards that mount them.
 - The sidebar lists Goals, Sessions, Forge, Repositories, Workflows, Agents,
-  Skills, Permissions and Stats, in that order, and `#/repositories` mounts
+  Skills, Permissions and Dashboards, in that order, and `#/repositories` mounts
   the repositories screen, while a screen the app dropped leads nowhere
-  (`ui/src/components/app-shell.test.tsx::ends the navigation with stats, and lists Forge beside the other screens`,
+  (`ui/src/components/app-shell.test.tsx::ends the navigation with dashboards, and lists Forge beside the other screens`,
   `ui/src/routes/router.test.tsx::mounts the repositories screen at #/repositories`,
   `ui/src/routes/router.test.tsx::leads nowhere from a screen the app no longer has`).
 - The palette opens `#/repositories` on a picked repository

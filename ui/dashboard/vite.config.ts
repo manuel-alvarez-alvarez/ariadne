@@ -3,7 +3,7 @@ import { defineConfig } from "vitest/config"
 
 // `base` matches where the host app's `main` dev server proxies this
 // package's dev server to, and where the packaged app serves its build
-// (`ui/README.md`): the iframe `routes/stats.tsx` opens is same-origin in
+// (`ui/README.md`): the iframe `routes/dashboards.tsx` opens is same-origin in
 // both.
 export default defineConfig({
   base: "/dashboard/",

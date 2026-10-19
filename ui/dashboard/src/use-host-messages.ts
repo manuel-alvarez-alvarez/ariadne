@@ -1,5 +1,5 @@
 /**
- * The host's own half of the protocol `routes/stats.tsx` documents:
+ * The host's own half of the protocol `routes/dashboards.tsx` documents:
  * `{type: "theme", theme}` and `{type: "reload"}`, `postMessage`d from the
  * parent window. Same-origin by the content security policy's own
  * `frame-src 'self'`, so the origin check is a sanity guard rather than the

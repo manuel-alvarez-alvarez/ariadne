@@ -54,7 +54,7 @@ vi.mock("./plugins", () => ({
 import { Page } from "./page"
 
 function document(spec: Record<string, unknown>): unknown {
-  return { kind: "Dashboard", metadata: { name: "stats" }, spec }
+  return { kind: "Dashboard", metadata: { name: "default" }, spec }
 }
 
 function jsonResponse(body: unknown): Response {
@@ -68,7 +68,7 @@ beforeEach(() => {
   mounts = 0
   lastSpec = ""
   lastIsEditing = undefined
-  window.history.pushState({}, "", "/?daemon=http://127.0.0.1:7676&dashboard=stats&theme=light")
+  window.history.pushState({}, "", "/?daemon=http://127.0.0.1:7676&dashboard=default&theme=light")
 })
 
 describe("Page", () => {

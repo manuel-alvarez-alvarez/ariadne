@@ -21,7 +21,7 @@ export default defineConfig({
       // Rust sources are rebuilt by `tauri dev`, not by Vite.
       ignored: ["**/src-tauri/**"],
     },
-    // The Stats screen's iframe opens `/dashboard/`: in a packaged build that
+    // The Dashboards screen's iframe opens `/dashboard/`: in a packaged build that
     // is the `ui/dashboard` package's own build, under this one's `dist/`
     // (see its own `vite.config.ts`); in development it is this package's
     // dev server instead, so the iframe stays same-origin either way.

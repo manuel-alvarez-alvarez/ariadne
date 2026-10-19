@@ -33,7 +33,7 @@ function stubDaemon(answer: () => Response) {
   })
 }
 
-function renderDialog(current = aDashboard({ name: "stats", builtin: true })) {
+function renderDialog(current = aDashboard({ name: "default", builtin: true })) {
   const onCreated = vi.fn()
   const onOpenChange = vi.fn()
   renderScreen(
@@ -55,10 +55,10 @@ describe("starting point", () => {
   it("offers Empty and Copy of the current dashboard's display name when one is given", () => {
     renderDialog(
       aDashboard({
-        name: "stats",
+        name: "default",
         document: {
           kind: "Dashboard",
-          metadata: { name: "stats" },
+          metadata: { name: "default" },
           spec: { display: { name: "Default" } },
         },
       }),
@@ -118,10 +118,10 @@ describe("creating", () => {
   it("replaces the copied dashboard's display name with its new name", async () => {
     const user = userEvent.setup()
     const current = aDashboard({
-      name: "stats",
+      name: "default",
       document: {
         kind: "Dashboard",
-        metadata: { name: "stats" },
+        metadata: { name: "default" },
         spec: {
           display: { name: "Default" },
           duration: "7d",

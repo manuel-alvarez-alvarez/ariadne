@@ -214,8 +214,8 @@ pub(crate) struct BuiltinDashboard {
     pub document: &'static str,
 }
 pub(crate) const BUILTIN_DASHBOARDS: [BuiltinDashboard; 1] = [BuiltinDashboard {
-    name: "stats",
-    document: include_str!("../dashboards/stats.json"),
+    name: "default",
+    document: include_str!("../dashboards/default.json"),
 }];
 pub(crate) fn default_dashboard_document(name: &str) -> Option<&'static str> {
     BUILTIN_DASHBOARDS

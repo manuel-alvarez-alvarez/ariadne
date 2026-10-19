@@ -1568,7 +1568,7 @@ fn every_dashboard_verb_parses() {
         let args = if verb == "ls" {
             vec!["ariadne", "dashboard", verb]
         } else {
-            vec!["ariadne", "dashboard", verb, "stats"]
+            vec!["ariadne", "dashboard", verb, "default"]
         };
         assert!(matches!(parse(&args).command, Command::Dashboard { .. }));
     }

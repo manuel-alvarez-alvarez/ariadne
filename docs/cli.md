@@ -644,9 +644,9 @@ for the supported PromQL and the metric names.
 
 ```sh
 ariadne dashboard ls
-ariadne dashboard get stats
+ariadne dashboard get default
 ariadne dashboard set mine dashboard.json
-ariadne dashboard reset stats
+ariadne dashboard reset default
 ariadne dashboard rm mine
 ```
 

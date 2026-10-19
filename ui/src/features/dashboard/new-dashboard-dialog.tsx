@@ -5,7 +5,7 @@
  * panels on. "Copy" takes the picked dashboard's own panels, layouts,
  * variables and time settings and files them under the new name, a starting
  * point rather than a blank one. Offered only while a dashboard is picked to
- * copy from, which the Stats screen always has — the shipped `stats`
+ * copy from, which the Dashboards screen always has — the shipped `default`
  * dashboard is never gone.
  *
  * Validation is client-side for the name and daemon-side for what it alone

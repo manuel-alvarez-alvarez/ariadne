@@ -37,7 +37,7 @@ Examples:
   ariadne attach <id>                      # a session, task or goal id
 ";
 const QUERY_EXAMPLES: &str = "Examples:\n  ariadne query 'sum by (seat) (ariadne_tokens_total)'\n  ariadne query 'rate(ariadne_tokens_total[5m])' --since 6h --step 1m\n  ariadne query up --at 2026-01-01T10:00:00Z --format json";
-const DASHBOARD_EXAMPLES: &str = "Examples:\n  ariadne dashboard ls\n  ariadne dashboard get stats\n  ariadne dashboard set mine dashboard.json";
+const DASHBOARD_EXAMPLES: &str = "Examples:\n  ariadne dashboard ls\n  ariadne dashboard get default\n  ariadne dashboard set mine dashboard.json";
 
 /// What each group's help ends with: what that group is most often asked to
 /// do, in the spelling it takes today.

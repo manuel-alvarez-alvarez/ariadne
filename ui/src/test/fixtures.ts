@@ -256,10 +256,10 @@ export function aSkill(overrides: Partial<SkillDto> = {}): SkillDto {
 
 export function aDashboard(overrides: Partial<DashboardDto> = {}): DashboardDto {
   return {
-    name: "stats",
+    name: "default",
     builtin: true,
     document_is_default: true,
-    document: { kind: "Dashboard", metadata: { name: "stats" }, spec: {} },
+    document: { kind: "Dashboard", metadata: { name: "default" }, spec: {} },
     created_at: STAMP,
     updated_at: STAMP,
     ...overrides,

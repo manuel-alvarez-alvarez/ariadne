@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * The Stats screen against a stubbed daemon.
+ * The Dashboards screen against a stubbed daemon.
  *
  * The screen itself renders no chart: it opens the `ui/dashboard` package in
  * an iframe and leaves the dashboard to it. What is pinned here is the glue —
@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { type DashboardDto, qk } from "@/api"
 import { aDashboard } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
-import { StatsPage } from "./stats"
+import { DashboardsPage } from "./dashboards"
 
 /**
  * `next-themes` outside its own provider (which this harness never mounts)
@@ -29,13 +29,13 @@ vi.mock("next-themes", () => ({
   useTheme: () => ({ resolvedTheme: mockTheme.resolvedTheme, setTheme: vi.fn() }),
 }))
 
-const STATS: DashboardDto = aDashboard({
-  name: "stats",
+const DEFAULT_DASHBOARD: DashboardDto = aDashboard({
+  name: "default",
   builtin: true,
   document_is_default: true,
   document: {
     kind: "Dashboard",
-    metadata: { name: "stats" },
+    metadata: { name: "default" },
     spec: { display: { name: "Default" } },
   },
 })
@@ -51,14 +51,17 @@ let requests: { method: string; path: string }[] = []
 
 /**
  * Every dashboard the stub daemon knows, mutated by create and delete so a
- * list refetch after either — which the Stats screen's picker depends on to
+ * list refetch after either — which the Dashboards screen's picker depends on to
  * show the right dashboard — reflects what was just done.
  */
 let dashboards: DashboardDto[] = []
 
 beforeEach(() => {
   requests = []
-  dashboards = [STATS, CUSTOM]
+  // `custom` sorts before `default` — the daemon lists dashboards by name —
+  // so a test that opens with no `?dashboard=` and still lands on `default`
+  // is proof the screen picks the shipped dashboard by name, not by position.
+  dashboards = [CUSTOM, DEFAULT_DASHBOARD]
   mockTheme.resolvedTheme = "light"
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
@@ -85,20 +88,33 @@ beforeEach(() => {
   })
 })
 
-describe("StatsPage", () => {
-  it("opens the iframe on the first dashboard, with the daemon, its name and the theme on its own query string", async () => {
-    renderScreen(<StatsPage />, { route: "/stats" })
+describe("DashboardsPage", () => {
+  it("opens the iframe on the shipped default dashboard when the URL names none, even though custom sorts before it, with the daemon, its name and the theme on its own query string", async () => {
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
 
     const iframe = (await screen.findByTitle("Default dashboard")) as HTMLIFrameElement
     const src = new URL(iframe.getAttribute("src") ?? "", "http://localhost")
     expect(src.pathname).toBe("/dashboard/")
     expect(src.searchParams.get("daemon")).toBe("http://127.0.0.1:7676")
-    expect(src.searchParams.get("dashboard")).toBe("stats")
+    expect(src.searchParams.get("dashboard")).toBe("default")
     expect(src.searchParams.get("theme")).toBe("light")
   })
 
+  it("falls back to the first dashboard the list answers with where none is named default", async () => {
+    dashboards = [CUSTOM]
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
+
+    expect(await screen.findByTitle("custom dashboard")).toBeDefined()
+  })
+
+  it("treats an empty dashboard parameter as naming none, and opens the default dashboard", async () => {
+    renderScreen(<DashboardsPage />, { route: "/dashboards?dashboard=" })
+
+    expect(await screen.findByTitle("Default dashboard")).toBeDefined()
+  })
+
   it("opens the dashboard the URL names", async () => {
-    renderScreen(<StatsPage />, { route: "/stats?dashboard=custom" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards?dashboard=custom" })
 
     const iframe = (await screen.findByTitle("custom dashboard")) as HTMLIFrameElement
     const src = new URL(iframe.getAttribute("src") ?? "", "http://localhost")
@@ -107,7 +123,7 @@ describe("StatsPage", () => {
 
   it("lists display names in the picker, falls back to metadata names, and keeps the id in the iframe", async () => {
     const user = userEvent.setup()
-    renderScreen(<StatsPage />, { route: "/stats" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
     await screen.findByTitle("Default dashboard")
 
     await user.click(screen.getByRole("combobox", { name: "Dashboard" }))
@@ -118,7 +134,7 @@ describe("StatsPage", () => {
   })
 
   it("disables Reset on the shipped document, and enables it once something was saved over it", async () => {
-    renderScreen(<StatsPage />, { route: "/stats" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
     await screen.findByTitle("Default dashboard")
     expect((screen.getByRole("button", { name: "Reset" }) as HTMLButtonElement).disabled).toBe(true)
 
@@ -134,7 +150,7 @@ describe("StatsPage", () => {
 
   it("asks before it resets a dashboard, then sends the reset", async () => {
     const user = userEvent.setup()
-    renderScreen(<StatsPage />, { route: "/stats?dashboard=custom" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards?dashboard=custom" })
     await screen.findByTitle("custom dashboard")
 
     await user.click(screen.getByRole("button", { name: "Reset" }))
@@ -146,7 +162,7 @@ describe("StatsPage", () => {
 
   it("uses the selected dashboard's display name in Reset and Delete confirmations", async () => {
     dashboards = [
-      STATS,
+      DEFAULT_DASHBOARD,
       {
         ...CUSTOM,
         document: {
@@ -157,7 +173,7 @@ describe("StatsPage", () => {
       },
     ]
     const user = userEvent.setup()
-    renderScreen(<StatsPage />, { route: "/stats?dashboard=custom" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards?dashboard=custom" })
     await screen.findByTitle("On call dashboard")
 
     await user.click(screen.getByRole("button", { name: "Reset" }))
@@ -169,7 +185,9 @@ describe("StatsPage", () => {
   })
 
   it("tells the iframe to load the document again once the shown dashboard is edited elsewhere", async () => {
-    const { queryClient } = renderScreen(<StatsPage />, { route: "/stats?dashboard=custom" })
+    const { queryClient } = renderScreen(<DashboardsPage />, {
+      route: "/dashboards?dashboard=custom",
+    })
     const iframe = (await screen.findByTitle("custom dashboard")) as HTMLIFrameElement
     const post = vi.spyOn(iframe.contentWindow as Window, "postMessage")
 
@@ -177,7 +195,7 @@ describe("StatsPage", () => {
     // (`src/events/dispatch.ts`); the screen reacts to the row changing, not
     // to the event itself.
     queryClient.setQueryData(qk.dashboards.list(), [
-      STATS,
+      DEFAULT_DASHBOARD,
       { ...CUSTOM, updated_at: "2026-01-03T00:00:00Z" },
     ])
 
@@ -187,13 +205,13 @@ describe("StatsPage", () => {
   })
 
   it("keeps the iframe's src unchanged across a theme change, and posts the new theme instead", async () => {
-    const { rerender } = renderScreen(<StatsPage />, { route: "/stats" })
+    const { rerender } = renderScreen(<DashboardsPage />, { route: "/dashboards" })
     const iframe = (await screen.findByTitle("Default dashboard")) as HTMLIFrameElement
     const initialSrc = iframe.getAttribute("src")
     const post = vi.spyOn(iframe.contentWindow as Window, "postMessage")
 
     mockTheme.resolvedTheme = "dark"
-    rerender(<StatsPage />)
+    rerender(<DashboardsPage />)
 
     expect(iframe.getAttribute("src")).toBe(initialSrc)
     await vi.waitFor(() => {
@@ -203,7 +221,7 @@ describe("StatsPage", () => {
 
   it("disables Rename and Delete on the built-in dashboard, and enables them on one of your own", async () => {
     const user = userEvent.setup()
-    renderScreen(<StatsPage />, { route: "/stats" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
     await screen.findByTitle("Default dashboard")
 
     expect((screen.getByRole("button", { name: "Rename" }) as HTMLButtonElement).disabled).toBe(
@@ -227,7 +245,7 @@ describe("StatsPage", () => {
 
   it("creates a dashboard and opens the picker on it", async () => {
     const user = userEvent.setup()
-    renderScreen(<StatsPage />, { route: "/stats" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards" })
     await screen.findByTitle("Default dashboard")
 
     await user.click(screen.getByRole("button", { name: "New dashboard" }))
@@ -240,7 +258,7 @@ describe("StatsPage", () => {
 
   it("renames a dashboard and opens the picker on the new name", async () => {
     const user = userEvent.setup()
-    renderScreen(<StatsPage />, { route: "/stats?dashboard=custom" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards?dashboard=custom" })
     await screen.findByTitle("custom dashboard")
 
     await user.click(screen.getByRole("button", { name: "Rename" }))
@@ -255,7 +273,7 @@ describe("StatsPage", () => {
 
   it("asks before it deletes a dashboard, then opens the picker on a remaining one", async () => {
     const user = userEvent.setup()
-    renderScreen(<StatsPage />, { route: "/stats?dashboard=custom" })
+    renderScreen(<DashboardsPage />, { route: "/dashboards?dashboard=custom" })
     await screen.findByTitle("custom dashboard")
 
     await user.click(screen.getByRole("button", { name: "Delete" }))

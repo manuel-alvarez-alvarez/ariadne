@@ -32,10 +32,10 @@ import { RepositoriesPage } from "@/features/repositories/repositories-page"
 import { SessionsPage } from "@/features/sessions/sessions-page"
 import { SkillsPage } from "@/features/skills/skills-page"
 import { WorkflowsPage } from "@/features/workflows/workflows-page"
+import { DashboardsPage } from "@/routes/dashboards"
 import { RouteErrorPage } from "@/routes/error-page"
 import { NotFoundPage } from "@/routes/not-found-page"
 import { paths } from "@/routes/paths"
-import { StatsPage } from "@/routes/stats"
 import { recordNavigation } from "@/telemetry/telemetry"
 
 function GoalPanelRedirect() {
@@ -79,7 +79,11 @@ const routes: RouteObject[] = [
     handle: { title: "Permissions" } satisfies PageHandle,
   },
   { path: "repositories", element: <RepositoriesPage />, handle: { title: "Repositories" } },
-  { path: "stats", element: <StatsPage />, handle: { title: "Stats" } satisfies PageHandle },
+  {
+    path: "dashboards",
+    element: <DashboardsPage />,
+    handle: { title: "Dashboards" } satisfies PageHandle,
+  },
   { path: "*", element: <NotFoundPage /> },
 ]
 

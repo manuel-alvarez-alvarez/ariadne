@@ -19,12 +19,12 @@ message protocol are spec 015's.
 
 ## Behavior
 
-1. Ariadne ships `stats` and stores overrides in `dashboards`.
+1. Ariadne ships `default` and stores overrides in `dashboards`.
 2. A document is a Perses `Dashboard` with its matching metadata name and an object spec.
 3. The REST catalog creates, lists, reads, replaces, deletes and resets dashboard documents.
 4. Dashboard changes publish fat created, updated and deleted events.
 5. The CLI exposes `dashboard ls`, `get`, `set`, `reset` and `rm`.
-6. The shipped `stats` document uses Perses layouts that refer to named
+6. The shipped `default` document uses Perses layouts that refer to named
    panels, with installed Prometheus, Loki and panel plugins.
 7. Its sections are Overview (headline numbers), Work, Spend, Agents &
    models, Attention & permissions, Daemon health and Logs; the last two
@@ -66,7 +66,7 @@ message protocol are spec 015's.
    (`ui/dashboard/src/page.test.tsx::opens the dashboard in view mode, not
    Perses's own editing mode`, `::remounts ViewDashboard with the fresh
    document on a reload message`).
-4. `ui/src/routes/stats.test.tsx::lists display names in the picker, falls
+4. `ui/src/routes/dashboards.test.tsx::lists display names in the picker, falls
    back to metadata names, and keeps the id in the iframe` and `::uses the
    selected dashboard's display name in Reset and Delete confirmations`,
    `ui/src/features/dashboard/new-dashboard-dialog.test.tsx::offers Empty and
@@ -75,7 +75,7 @@ message protocol are spec 015's.
    `ui/src/features/dashboard/rename-dashboard-dialog.test.tsx::titles the
    dialog with the dashboard's display name`, and
    `ui/dashboard/src/shipped-dashboard.test.ts::uses Default as its display
-   name while retaining stats as its metadata name` prove the shipped name,
+   name while retaining default as its metadata name` prove the shipped name,
    desktop labels, and fallback of rule 11.
 
 ## Sources

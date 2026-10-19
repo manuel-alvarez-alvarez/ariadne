@@ -22,7 +22,7 @@ import { useLocation, useSearchParams } from "react-router-dom"
  */
 export const SKILL_PARAM = "skill"
 export const WORKFLOW_PARAM = "workflow"
-/** Which dashboard the Stats screen shows, under `?dashboard=`. */
+/** Which dashboard the Dashboards screen shows, under `?dashboard=`. */
 export const DASHBOARD_PARAM = "dashboard"
 
 /**
@@ -73,7 +73,7 @@ export const paths = {
   agents: () => "/agents",
   permissions: () => "/permissions",
   repositories: () => "/repositories",
-  stats: () => "/stats",
+  dashboards: () => "/dashboards",
   /**
    * The goals board with this goal's panel open on one of its sessions.
    *

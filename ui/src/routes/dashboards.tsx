@@ -1,5 +1,5 @@
 /**
- * The Stats screen: a Perses dashboard, rendered by the `ui/dashboard`
+ * The Dashboards screen: a Perses dashboard, rendered by the `ui/dashboard`
  * package in a same-origin iframe (see its own `README.md` for the package
  * and the build that feeds `/dashboard/`).
  *
@@ -68,7 +68,10 @@ function iframeSrc(baseUrl: string, name: string, theme: string): string {
   return `/dashboard/?${params.toString()}`
 }
 
-export function StatsPage() {
+/** The shipped dashboard's name — what an empty `?dashboard=` opens on. */
+const DEFAULT_DASHBOARD_NAME = "default"
+
+export function DashboardsPage() {
   const [search, setSearch] = useSearchParams()
   const baseUrl = useBaseUrl()
   const { resolvedTheme } = useTheme()
@@ -82,7 +85,12 @@ export function StatsPage() {
   const [renameOpen, setRenameOpen] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  const selectedName = search.get(DASHBOARD_PARAM) ?? dashboards.data?.[0]?.name
+  const fallbackName = dashboards.data?.some(
+    (dashboard) => dashboard.name === DEFAULT_DASHBOARD_NAME,
+  )
+    ? DEFAULT_DASHBOARD_NAME
+    : dashboards.data?.[0]?.name
+  const selectedName = search.get(DASHBOARD_PARAM) || fallbackName
   const selected = dashboards.data?.find((dashboard) => dashboard.name === selectedName)
 
   // The iframe's `src` carries the theme only as its *opening* value — once
@@ -123,7 +131,7 @@ export function StatsPage() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       <PageHeader
-        title="Stats"
+        title="Dashboards"
         description="A Perses dashboard, read and edited from this window."
         actions={
           <>

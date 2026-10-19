@@ -114,7 +114,7 @@ reads the same names.
 
 ## The dashboard
 
-The desktop app shows the shipped `stats` dashboard over these metrics
+The desktop app shows the shipped `default` dashboard over these metrics
 ([spec 036](../specs/036-dashboards.md)). A row of headline numbers leads:
 tasks finished, success rate, median lead time, what needs you now, tokens,
 the prompt cache's share, goals completed and active tasks. Below it are

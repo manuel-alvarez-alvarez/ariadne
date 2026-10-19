@@ -151,7 +151,7 @@ src/
   stores/          zustand: settings (daemon URL), stream status
   hooks/           shared hooks (connection state, global shortcuts, focus return)
   lib/             format, clipboard, keyboard chords, design tokens
-  routes/          the route table, URL/panel helpers, the Stats page, panel
+  routes/          the route table, URL/panel helpers, the Dashboards page, panel
                    history, and the error and 404 pages
   components/      app shell, sidebar, theme + settings + connection, and the
                    table / form dialog / delete dialog / panel pieces features reuse
@@ -161,7 +161,7 @@ src/
     goals/         the goals board (swimlanes, attention strip), the goal panel,
                    and the attention count the shell shows everywhere else
     tasks/         the task panel: facts, steps, diff, messages, sessions, history
-    dashboard/     the Stats screen's data layer: the dashboard picker's list,
+    dashboard/     the Dashboards screen's data layer: the dashboard picker's list,
                    and the reset mutation — the iframe itself is `ui/dashboard/`
                    (see "The dashboard package")
     forge/         the Forge screen: one sidebar entry, its two tabs the
@@ -423,12 +423,12 @@ one line, and a file that mounted one said less about its feature than the line
 it held. What the header calls a screen rides on the route's own `handle`.
 
 Screens with URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
-`#/workflows`, `#/agents`, `#/permissions`, `#/repositories`, `#/stats`, and
-the Forge screen's two tabs, `#/forge/pull-requests` and `#/forge/issues`
+`#/workflows`, `#/agents`, `#/permissions`, `#/repositories`, `#/dashboards`,
+and the Forge screen's two tabs, `#/forge/pull-requests` and `#/forge/issues`
 (`#/forge` opens the first) — and `#/` redirects onto the board. `#/models`
 redirects onto `#/agents`, which folded the model catalog in; `#/tasks`
-redirects the same way onto the board. The Stats screen is
-`src/routes/stats.tsx`: a picker and a Reset action over `GET /v1/dashboards`
+redirects the same way onto the board. The Dashboards screen is
+`src/routes/dashboards.tsx`: a picker and a Reset action over `GET /v1/dashboards`
 (`src/features/dashboard/queries.ts`), and an iframe over the `ui/dashboard`
 package's own build (or, in development, its own dev server — see "The
 dashboard package"), which renders the picked Perses dashboard.
@@ -544,8 +544,8 @@ not only the scaffolding CLI.
 
 ## The dashboard package
 
-`ui/dashboard/` is the Perses dashboard the Stats screen opens in an iframe
-(`src/routes/stats.tsx`) — its own npm package, on React 18 and
+`ui/dashboard/` is the Perses dashboard the Dashboards screen opens in an iframe
+(`src/routes/dashboards.tsx`) — its own npm package, on React 18 and
 `@tanstack/react-query` v4, because [`@perses-dev/dashboards`](https://www.npmjs.com/package/@perses-dev/dashboards)
 and its plugins peer-depend on those, a major and a line behind what `ui/`
 itself runs. It shares nothing with `ui/`'s own `src/api` — two endpoints are
@@ -585,7 +585,7 @@ package's own dev server (port 1421, `ui/`'s own is 1420), so the iframe is
 same-origin in both the packaged app and `npm run dev` alike, matching rule 1
 of the task that added this package.
 
-**The message protocol**, between `src/routes/stats.tsx` (the host) and this
+**The message protocol**, between `src/routes/dashboards.tsx` (the host) and this
 package's `page.tsx` — see its own docstring for the fuller rationale:
 
 - the iframe opens on `?daemon=<url>&dashboard=<name>&theme=<light|dark>`;

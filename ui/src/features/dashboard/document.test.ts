@@ -15,7 +15,7 @@ describe("emptyDashboardDocument", () => {
 describe("copyDashboardDocument", () => {
   const source = {
     kind: "Dashboard",
-    metadata: { name: "stats" },
+    metadata: { name: "default" },
     spec: {
       display: { name: "Default" },
       duration: "7d",
@@ -36,7 +36,7 @@ describe("copyDashboardDocument", () => {
   it("never writes the new name back into the document it was copied from", () => {
     copyDashboardDocument(source, "mine")
 
-    expect(source.metadata.name).toBe("stats")
+    expect(source.metadata.name).toBe("default")
   })
 
   it("clones the spec rather than aliasing it, so editing the copy leaves the source untouched", () => {

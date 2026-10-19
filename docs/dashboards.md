@@ -2,12 +2,12 @@
 
 See what the work did, as a dashboard: panels of charts, tables and text
 over the daemon's own metrics and logs, edited in place rather than read
-only. Ariadne ships one, `stats`, and keeps any others you save over it or
+only. Ariadne ships one, `default`, and keeps any others you save over it or
 add.
 
 ## What the screen shows
 
-Open **Stats** in the sidebar. The picker at the top names every dashboard
+Open **Dashboards** in the sidebar. The picker at the top names every dashboard
 the daemon knows; pick one to open it below. What opens is a real Perses
 dashboard — the same open-source tool, embedded — so every panel it draws
 reads straight off the daemon: a chart's query runs against the daemon's own
@@ -26,7 +26,7 @@ point rather than a blank one.
 **Rename** files the picked dashboard's document under the new name and
 then removes the old one, so a name already taken, or any other refusal,
 leaves the old dashboard exactly as it was. **Delete** asks for confirmation
-first, since there is no undo. Neither is offered for the built-in `stats`
+first, since there is no undo. Neither is offered for the built-in `default`
 dashboard: reset it instead.
 
 Whichever of the three you use, the picker opens on the dashboard it names —

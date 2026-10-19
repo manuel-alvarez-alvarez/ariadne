@@ -2,7 +2,7 @@
  * Renaming a dashboard: the name is the table's own key (036), so this is one
  * field, submitted as a create under the new name followed by a delete of the
  * old one (`useRenameDashboard`). Never offered for the built-in dashboard —
- * the Stats screen keeps that action out of reach itself.
+ * the Dashboards screen keeps that action out of reach itself.
  */
 
 import { useForm } from "react-hook-form"

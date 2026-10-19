@@ -4,7 +4,7 @@ import { getDashboard, saveDashboard } from "./dashboard-client"
 import { daemonFetch } from "./test/setup"
 
 const DAEMON_URL = "http://127.0.0.1:7676"
-const DOCUMENT = { kind: "Dashboard", metadata: { name: "stats" }, spec: {} }
+const DOCUMENT = { kind: "Dashboard", metadata: { name: "default" }, spec: {} }
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -17,9 +17,9 @@ describe("getDashboard", () => {
   it("reads the document off GET /v1/dashboards/{name}", async () => {
     daemonFetch.mockImplementation(async (input: Request | string | URL) => {
       const url = new URL(String(input))
-      expect(url.pathname).toBe("/v1/dashboards/stats")
+      expect(url.pathname).toBe("/v1/dashboards/default")
       return jsonResponse({
-        name: "stats",
+        name: "default",
         builtin: true,
         document_is_default: true,
         document: DOCUMENT,
@@ -28,7 +28,7 @@ describe("getDashboard", () => {
       })
     })
 
-    expect(await getDashboard(DAEMON_URL, "stats")).toEqual(DOCUMENT)
+    expect(await getDashboard(DAEMON_URL, "default")).toEqual(DOCUMENT)
   })
 
   it("throws the daemon's own message on a refusal", async () => {
@@ -50,7 +50,7 @@ describe("saveDashboard", () => {
         body: JSON.parse(String(init?.body)),
       }
       return jsonResponse({
-        name: "stats",
+        name: "default",
         builtin: true,
         document_is_default: false,
         document: DOCUMENT,
@@ -59,10 +59,10 @@ describe("saveDashboard", () => {
       })
     })
 
-    const saved = await saveDashboard(DAEMON_URL, "stats", DOCUMENT)
+    const saved = await saveDashboard(DAEMON_URL, "default", DOCUMENT)
 
     expect(seen?.method).toBe("PUT")
-    expect(new URL(seen?.url ?? "").pathname).toBe("/v1/dashboards/stats")
+    expect(new URL(seen?.url ?? "").pathname).toBe("/v1/dashboards/default")
     expect(seen?.body).toEqual({ document: DOCUMENT })
     expect(saved).toEqual(DOCUMENT)
   })
