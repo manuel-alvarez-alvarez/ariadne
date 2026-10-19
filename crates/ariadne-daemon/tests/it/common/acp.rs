@@ -54,9 +54,20 @@ impl StubAcpAgent {
         std::fs::write(dir.join("acp-parent-pid"), pid.to_string()).unwrap();
     }
     /// Every JSON-RPC message the daemon sent, in the order it arrived.
+    ///
+    /// The stub's own `log()` can still be mid-write on a long message: its
+    /// `open`-`write`-`close` is one `write(2)` only while the text fits the
+    /// buffer, so a read racing a longer one can see a prefix with no
+    /// trailing newline yet. That prefix is dropped rather than parsed, same
+    /// as everything after the last complete line — it belongs to the next
+    /// read, once the writer finishes it.
     pub(crate) fn messages(&self) -> Vec<Value> {
-        std::fs::read_to_string(&self.log)
-            .unwrap_or_default()
+        let content = std::fs::read_to_string(&self.log).unwrap_or_default();
+        let complete = match content.rfind('\n') {
+            Some(end) => &content[..end],
+            None => "",
+        };
+        complete
             .lines()
             .map(|line| serde_json::from_str(line).expect("a logged JSON-RPC message"))
             .collect()
@@ -687,3 +698,62 @@ while True:
             error["data"] = failure.data
         send({"jsonrpc": "2.0", "id": message["id"], "error": error})
 "#;
+
+#[cfg(test)]
+mod message_log_tests {
+    use super::StubAcpAgent;
+    use std::io::Write;
+
+    fn agent_over(log: std::path::PathBuf) -> StubAcpAgent {
+        StubAcpAgent {
+            bin: String::new(),
+            script_file: log.with_file_name("script.json"),
+            launches: log.with_file_name("launches.jsonl"),
+            pid_file: log.with_file_name("pid"),
+            log,
+        }
+    }
+
+    /// `log()` in the stub's own Python (`STUB`) opens the file, writes one
+    /// `json.dumps(message) + "\n"` and closes it, which stays one atomic
+    /// `write(2)` only while the text fits the buffer `TextIOWrapper` holds
+    /// before it flushes in pieces — a prompt long enough to spill past it
+    /// leaves a reader able to see a prefix with no trailing newline yet, the
+    /// shape that produced a real `EOF while parsing a string` panic in CI
+    /// (`prompts::a_return_and_a_nudge_assemble_word_for_word`). A line still
+    /// missing its newline is still being written, so a read must leave it
+    /// for the next poll rather than parse it as one more message.
+    #[test]
+    fn a_line_still_missing_its_newline_is_left_for_the_next_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent = agent_over(dir.path().join("log.jsonl"));
+        let mut file = std::fs::File::create(&agent.log).unwrap();
+        file.write_all(
+            concat!(
+                r#"{"method":"session/prompt"}"#,
+                "\n",
+                r#"{"method":"session/update","par"#,
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        drop(file);
+
+        assert_eq!(
+            agent.messages(),
+            vec![serde_json::json!({"method": "session/prompt"})]
+        );
+    }
+
+    #[test]
+    fn every_complete_line_is_read_even_with_none_torn() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent = agent_over(dir.path().join("log.jsonl"));
+        std::fs::write(&agent.log, "{\"a\":1}\n{\"a\":2}\n").unwrap();
+
+        assert_eq!(
+            agent.messages(),
+            vec![serde_json::json!({"a": 1}), serde_json::json!({"a": 2})]
+        );
+    }
+}

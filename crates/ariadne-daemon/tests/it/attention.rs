@@ -1335,10 +1335,14 @@ async fn a_failed_tasks_item_stays_suppressed_while_its_orchestrators_turn_on_it
 #[tokio::test]
 async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacement_answers() {
     // The replacement's launch waits on the periodic full reconcile: nothing
-    // an agent dying mid-turn reports ever wakes the scheduler about it.
+    // an agent dying mid-turn reports ever wakes the scheduler about it. The
+    // kill below must also sit out the cancel grace rather than resolve it:
+    // shortened here, the way `a_relaunch_after_a_kill_resumes_once_the_killed_agent_is_gone`
+    // (`acp_console.rs`) does for the same reason.
     let h = harness()
         .timeouts(Timeouts {
             full_reconcile: RUNS_OUT,
+            cancel_grace: RUNS_OUT,
             ..Timeouts::default()
         })
         .scheduler()
@@ -1352,6 +1356,12 @@ async fn a_lost_delivery_is_retried_after_resume_and_confirmed_once_its_replacem
             "updates": [],
             "wait_for": gate.display().to_string(),
             "stop_reason": "end_turn",
+            // Without this, the stub cooperates with the `session/cancel`
+            // the kill sends and answers normally — a graceful end, not the
+            // crash this test means to simulate, which let the confirmation
+            // through often enough to flake CI (e.g. run 39271217812: panic
+            // "a turn that never returned cannot have confirmed anything").
+            "ignore_cancel": true,
         }));
     h.agent.reprogram(script);
 
