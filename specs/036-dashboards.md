@@ -6,6 +6,7 @@ areas: [store, daemon, api, cli, docs, ui]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/dashboards.rs
+  - ui/dashboard/src/format-value.test.ts
 ---
 
 # Dashboards
@@ -53,6 +54,17 @@ message protocol are spec 015's.
     dashboard to the user, falling back to its metadata name when absent;
     routes and mutations continue to use the metadata name. Copying a
     dashboard replaces its display name with the copy's metadata name.
+12. No query in the shipped `default` document gives `NaN` over an empty
+    range: a division whose denominator can be zero guards it with
+    `> 0`, and a quantile over a histogram guards its result with an `and`
+    over its own `+Inf` bucket's `increase()`. A query a guard leaves with
+    no series answers with the renderer's own empty state, the same way a
+    panel already filters out a zero with `> 0` elsewhere in the document.
+    The desktop renderer turns a `NaN` panel value into that same empty
+    state in any dashboard, including one the user wrote: `formatValue`,
+    the one function every panel kind formats its numbers through, is
+    patched in `@perses-dev/components` to answer a `NaN` with "No data"
+    before any unit formatter sees it.
 
 ## Acceptance criteria
 
@@ -77,6 +89,11 @@ message protocol are spec 015's.
    `ui/dashboard/src/shipped-dashboard.test.ts::uses Default as its display
    name while retaining default as its metadata name` prove the shipped name,
    desktop labels, and fallback of rule 11.
+5. `dashboards.rs::no_panel_query_in_the_shipped_dashboard_gives_nan_over_an_empty_range`
+   sweeps every Prometheus query of the shipped document over a range with
+   every counter held flat rather than absent, and proves none answers
+   `NaN`. `ui/dashboard/src/format-value.test.ts` proves the patched
+   `formatValue` of rule 12 answers a `NaN` with "No data".
 
 ## Sources
 

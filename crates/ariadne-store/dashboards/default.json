@@ -632,7 +632,7 @@
                 "plugin": {
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
-                    "query": "sum(increase(ariadne_tasks_ended_total{status=\"finished\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end())) / sum(increase(ariadne_tasks_ended_total{repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))"
+                    "query": "sum(increase(ariadne_tasks_ended_total{status=\"finished\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end())) / (sum(increase(ariadne_tasks_ended_total{repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end())) > 0)"
                   }
                 }
               }
@@ -663,7 +663,7 @@
                 "plugin": {
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
-                    "query": "histogram_quantile(0.5, sum by (le) (increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\"}[$__range] @ end())))"
+                    "query": "histogram_quantile(0.5, sum by (le) (increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\"}[$__range] @ end()))) and sum(increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\", le=\"+Inf\"}[$__range] @ end())) > 0"
                   }
                 }
               }
@@ -783,7 +783,7 @@
                 "plugin": {
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
-                    "query": "sum(increase(ariadne_tokens_total{kind=\"cached_input\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end())) / sum(increase(ariadne_tokens_total{kind=\"input\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))"
+                    "query": "sum(increase(ariadne_tokens_total{kind=\"cached_input\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end())) / (sum(increase(ariadne_tokens_total{kind=\"input\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end())) > 0)"
                   }
                 }
               }
@@ -1054,7 +1054,7 @@
                 "plugin": {
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
-                    "query": "histogram_quantile(0.5, sum by (le) (increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\"}[$bucket])))",
+                    "query": "histogram_quantile(0.5, sum by (le) (increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\"}[$bucket]))) and sum(increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\", le=\"+Inf\"}[$bucket])) > 0",
                     "seriesNameFormat": "median",
                     "minStep": "$bucket"
                   }
@@ -1067,7 +1067,7 @@
                 "plugin": {
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
-                    "query": "histogram_quantile(0.9, sum by (le) (increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\"}[$bucket])))",
+                    "query": "histogram_quantile(0.9, sum by (le) (increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\"}[$bucket]))) and sum(increase(ariadne_task_lead_time_seconds_bucket{status=\"finished\", repo=~\"${repo:regexliteral}\", le=\"+Inf\"}[$bucket])) > 0",
                     "seriesNameFormat": "90th percentile",
                     "minStep": "$bucket"
                   }
@@ -1478,7 +1478,7 @@
                 "plugin": {
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
-                    "query": "sum(increase(ariadne_tokens_total{kind=\"cached_input\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end())) / sum(increase(ariadne_tokens_total{kind=\"input\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))"
+                    "query": "sum(increase(ariadne_tokens_total{kind=\"cached_input\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end())) / (sum(increase(ariadne_tokens_total{kind=\"input\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end())) > 0)"
                   }
                 }
               }
@@ -2086,7 +2086,7 @@
                 "plugin": {
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
-                    "query": "histogram_quantile(0.5, sum by (le) (rate(http_server_request_duration_seconds_bucket[$__rate_interval])))",
+                    "query": "histogram_quantile(0.5, sum by (le) (rate(http_server_request_duration_seconds_bucket[$__rate_interval]))) and sum(rate(http_server_request_duration_seconds_bucket{le=\"+Inf\"}[$__rate_interval])) > 0",
                     "seriesNameFormat": "median"
                   }
                 }
@@ -2098,7 +2098,7 @@
                 "plugin": {
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
-                    "query": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket[$__rate_interval])))",
+                    "query": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket[$__rate_interval]))) and sum(rate(http_server_request_duration_seconds_bucket{le=\"+Inf\"}[$__rate_interval])) > 0",
                     "seriesNameFormat": "95th percentile"
                   }
                 }
@@ -2192,7 +2192,7 @@
                 "plugin": {
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
-                    "query": "histogram_quantile(0.5, sum by (le) (rate(ariadne_scheduler_tick_duration_seconds_bucket[$__rate_interval])))",
+                    "query": "histogram_quantile(0.5, sum by (le) (rate(ariadne_scheduler_tick_duration_seconds_bucket[$__rate_interval]))) and sum(rate(ariadne_scheduler_tick_duration_seconds_bucket{le=\"+Inf\"}[$__rate_interval])) > 0",
                     "seriesNameFormat": "median"
                   }
                 }
@@ -2204,7 +2204,7 @@
                 "plugin": {
                   "kind": "PrometheusTimeSeriesQuery",
                   "spec": {
-                    "query": "histogram_quantile(0.95, sum by (le) (rate(ariadne_scheduler_tick_duration_seconds_bucket[$__rate_interval])))",
+                    "query": "histogram_quantile(0.95, sum by (le) (rate(ariadne_scheduler_tick_duration_seconds_bucket[$__rate_interval]))) and sum(rate(ariadne_scheduler_tick_duration_seconds_bucket{le=\"+Inf\"}[$__rate_interval])) > 0",
                     "seriesNameFormat": "95th percentile"
                   }
                 }

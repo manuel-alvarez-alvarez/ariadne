@@ -602,7 +602,7 @@ package's `page.tsx` — see its own docstring for the fuller rationale:
 package itself: every plugin's `peerDependencies` (checked against the
 published packages, not assumed) resolves cleanly against `dashboards`,
 `plugin-system`, `components` and `client` all at `^0.54.0` and `spec` at
-`^0.2.0`. One *patch* was needed instead, not an override:
+`^0.2.0`. Two *patches* were needed instead, not an override:
 `@perses-dev/logs-table-plugin@0.3.0`'s `LogRow.js` imports
 `./ansiColors.css`, a file missing from the published tarball (fixed
 upstream, but only in an 0.4.0 prerelease that would drag every other
@@ -611,6 +611,19 @@ missing file back — the standard 16-colour ANSI palette `ansi_up` (this
 plugin's own dependency) defines its class names from — as a
 `postinstall: patch-package` script reapplies on every `npm ci`. Drop it
 once a stable 0.4.0 ships.
+
+`@perses-dev/components@0.54.0`'s `formatValue` — the one function every
+panel kind (stat, gauge, pie, bar, table, time series) formats its numbers
+through — stringifies a `NaN` query result as the literal `"NaN"`, straight
+off `Intl.NumberFormat`. Every panel's number, including one a user wrote
+their own dashboard's query to produce, must show Perses's own "No data"
+state instead (036). The second patch makes `formatValue` answer `"No data"`
+for a `NaN` value before it reaches a unit formatter, so this holds for
+every dashboard the app opens, not only the shipped one.
+`src/format-value.test.ts` proves it through a deep import
+(`@perses-dev/components/dist/model/units`): the package's own barrel pulls
+in its MUI theme, which `require()`s raw `.css` files that only Vite's build
+step, never a plain Vitest module load, knows how to read.
 
 **Checks.** The same five commands as `ui/`'s own
 (`npx biome check`/`npm run typecheck`/`npm test`/`npm run check:unused`/`npm
