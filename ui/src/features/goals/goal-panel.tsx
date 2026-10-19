@@ -39,6 +39,7 @@ import { When } from "@/components/when"
 import { ModelPin } from "@/features/models/model-pin"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { taskListQueryOptions } from "@/features/tasks"
+import { stepTitle } from "@/features/tasks/steps"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/clipboard"
@@ -275,7 +276,10 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
       <Fact label="Tokens">
         {/* Every session of the goal, its orchestrator's included, with the hint
             breaking the same total down by the seat that spent it. */}
-        <TokenFigure usage={goal.usage.total} rows={goalUsageRows(goal.usage)} />
+        <TokenFigure
+          usage={goal.usage.total}
+          rows={goalUsageRows(goal.usage, (step) => stepTitle(goal.steps, step))}
+        />
       </Fact>
       {goal.issue_url && (
         <Fact label="Issue">

@@ -358,10 +358,10 @@ export function useBoardAttention(): BoardAttention {
 /**
  * The flagged sessions folded onto their subjects.
  *
- * A task can have several sessions flagged at once — an author waiting on a
- * permission prompt while last round's reviewer sits disconnected — and a card
- * has room for one badge, so the most recently raised reason wins: it is the
- * one the strip lists first, and the one the user has not seen yet.
+ * A task can have several sessions flagged at once — an agent waiting on a
+ * permission prompt while a previous column's agent sits disconnected — and a
+ * card has room for one badge, so the most recently raised reason wins: it is
+ * the one the strip lists first, and the one the user has not seen yet.
  */
 function collectBoardAttention(sessions: SessionDto[] | undefined): BoardAttention {
   const byTask = new Map<string, Flagged>()

@@ -29,11 +29,11 @@ import { useSettingsStore } from "@/stores/settings"
 import {
   type FilterParam,
   GOAL_PARAM,
-  ROLE_PARAM,
-  readRoleFilter,
   readScopeFilter,
+  readSeatFilter,
   readStatusFilter,
   restoreSessionFilters,
+  SEAT_PARAM,
   STATUS_PARAM,
   type StatusValue,
   TASK_PARAM,
@@ -62,11 +62,11 @@ interface SessionFiltersState {
 export function useSessionFilters(): SessionFiltersState {
   const [search, setSearch] = useSearchParams()
   const rememberedStatus = useSettingsStore((state) => state.sessionStatusFilter)
-  const rememberedRole = useSettingsStore((state) => state.sessionRoleFilter)
+  const rememberedSeat = useSettingsStore((state) => state.sessionSeatFilter)
   const rememberedGoal = useSettingsStore((state) => state.sessionGoalFilter)
   const rememberedTask = useSettingsStore((state) => state.sessionTaskFilter)
   const rememberStatus = useSettingsStore((state) => state.setSessionStatusFilter)
-  const rememberRole = useSettingsStore((state) => state.setSessionRoleFilter)
+  const rememberSeat = useSettingsStore((state) => state.setSessionSeatFilter)
   const rememberGoal = useSettingsStore((state) => state.setSessionGoalFilter)
   const rememberTask = useSettingsStore((state) => state.setSessionTaskFilter)
 
@@ -75,13 +75,13 @@ export function useSessionFilters(): SessionFiltersState {
   // first render, instead of loading the unfiltered one and replacing it.
   const restored = restoreSessionFilters(search, {
     status: rememberedStatus,
-    seat: rememberedRole,
+    seat: rememberedSeat,
     goal: rememberedGoal,
     task: rememberedTask,
   })
   const params = restored ?? search
   const status = readStatusFilter(params)
-  const seat = readRoleFilter(params)
+  const seat = readSeatFilter(params)
   const goal = readScopeFilter(params, GOAL_PARAM)
   const task = readScopeFilter(params, TASK_PARAM)
   const restoreTo = restored?.toString() ?? null
@@ -99,8 +99,8 @@ export function useSessionFilters(): SessionFiltersState {
   }, [status, rememberStatus])
 
   useEffect(() => {
-    rememberRole(seat ?? "")
-  }, [seat, rememberRole])
+    rememberSeat(seat ?? "")
+  }, [seat, rememberSeat])
 
   useEffect(() => {
     rememberGoal(goal ?? "")
@@ -117,7 +117,7 @@ export function useSessionFilters(): SessionFiltersState {
     // put straight back if the store still held the old one.
     const remember = {
       [STATUS_PARAM]: rememberStatus,
-      [ROLE_PARAM]: rememberRole,
+      [SEAT_PARAM]: rememberSeat,
       [GOAL_PARAM]: rememberGoal,
       [TASK_PARAM]: rememberTask,
     }[param]
@@ -127,9 +127,9 @@ export function useSessionFilters(): SessionFiltersState {
 
   function clearFilters(also: readonly string[]) {
     const next = new URLSearchParams(search)
-    for (const param of [STATUS_PARAM, ROLE_PARAM, ...also]) next.delete(param)
+    for (const param of [STATUS_PARAM, SEAT_PARAM, ...also]) next.delete(param)
     rememberStatus("")
-    rememberRole("")
+    rememberSeat("")
     setSearch(next, { replace: true })
   }
 

@@ -27,7 +27,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { TaskCard, taskListQueryOptions } from "@/features/tasks"
-import { findStep } from "@/features/tasks/steps"
+import { findStep, stepTitle } from "@/features/tasks/steps"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
 import { cn, folderName, formatAbsolute } from "@/lib/format"
 import { paths } from "@/routes/paths"
@@ -291,11 +291,14 @@ function Lane({
             <span>
               {done}/{total}
             </span>
-            {/* What the whole goal has cost — orchestrator, authors and reviewers —
-                which is the one number the board can show without opening
-                anything. The hint behind it names the halves and splits the
-                total between the three roles. */}
-            <TokenFigure usage={goal.usage.total} rows={goalUsageRows(goal.usage)} />
+            {/* What the whole goal has cost — the orchestrator and every
+                column's agents — which is the one number the board can show
+                without opening anything. The hint behind it names the halves
+                and splits the total by who spent it. */}
+            <TokenFigure
+              usage={goal.usage.total}
+              rows={goalUsageRows(goal.usage, (step) => stepTitle(goal.steps, step))}
+            />
           </span>
         )}
       </header>

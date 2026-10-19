@@ -159,7 +159,7 @@ interface LaneCounts {
   failed: number
   /** A session stopped moving before it could report a task failure. */
   stalled: number
-  /** Not started — waiting on a dependency, or on an author session. */
+  /** Not started — waiting on a dependency, or on an agent session. */
   waiting: number
   cancelled: number
 }

@@ -4,7 +4,7 @@
  * They live in the URL for the reason the goals board's does: every other bit
  * of screen state is already there, a reload is routine in a hash-router
  * desktop app, and a narrowed screen is worth linking to. Each is one value —
- * `?status=failed`, `?seat=author`, `?goal=<id>`, `?task=<id>` — and an
+ * `?status=failed`, `?seat=agent`, `?goal=<id>`, `?task=<id>` — and an
  * absent param is no filter.
  *
  * The last two are the daemon's own list filters, and on this screen they are
@@ -28,7 +28,7 @@ import { SESSION_STATUS_META } from "./session-display"
 
 /** The params the filters travel in, alongside `?session=`. */
 export const STATUS_PARAM = "status"
-export const ROLE_PARAM = "seat"
+export const SEAT_PARAM = "seat"
 /** The two the daemon answers itself, and the ones a chip stands for. */
 export const GOAL_PARAM = "goal"
 export const TASK_PARAM = "task"
@@ -36,7 +36,7 @@ export const TASK_PARAM = "task"
 /** The params this screen remembers, and the only ones `filterBy` writes. */
 export type FilterParam =
   | typeof STATUS_PARAM
-  | typeof ROLE_PARAM
+  | typeof SEAT_PARAM
   | typeof GOAL_PARAM
   | typeof TASK_PARAM
 
@@ -69,7 +69,7 @@ export const ATTENTION = "attention"
 /** Every status, in the order the badge ramp declares them (live ones first). */
 export const STATUSES = Object.keys(SESSION_STATUS_META) as SessionStatus[]
 
-export const ROLES = Object.keys(SEAT_LABELS) as Seat[]
+export const SEATS = Object.keys(SEAT_LABELS) as Seat[]
 
 /** A `?status=` this screen understands: a daemon status, `live`, or `attention`. */
 export type StatusValue = SessionStatus | typeof LIVE | typeof ATTENTION
@@ -86,8 +86,8 @@ function parseStatusFilter(value: string | null): StatusValue | null {
 }
 
 /** The same, for a seat: one of the daemon's, or no filter. */
-function parseRoleFilter(value: string | null): Seat | null {
-  return ROLES.find((known) => known === value) ?? null
+function parseSeatFilter(value: string | null): Seat | null {
+  return SEATS.find((known) => known === value) ?? null
 }
 
 /** What a `?status=` asks for, or `null` for no filter. */
@@ -96,8 +96,8 @@ export function readStatusFilter(params: URLSearchParams): StatusValue | null {
 }
 
 /** What a `?seat=` asks for, or `null` for no filter. */
-export function readRoleFilter(params: URLSearchParams): Seat | null {
-  return parseRoleFilter(params.get(ROLE_PARAM))
+export function readSeatFilter(params: URLSearchParams): Seat | null {
+  return parseSeatFilter(params.get(SEAT_PARAM))
 }
 
 /**
@@ -155,8 +155,8 @@ export function statusLabel(value: StatusValue | null): string {
 }
 
 /** What the seat trigger says. */
-export function roleLabel(value: Seat | null): string {
-  return value ? SEAT_LABELS[value] : "All roles"
+export function seatFilterLabel(value: Seat | null): string {
+  return value ? SEAT_LABELS[value] : "All seats"
 }
 
 /** The selections the screen was last left with, spelled as their params. */
@@ -192,9 +192,9 @@ export function restoreSessionFilters(
     const status = parseStatusFilter(remembered.status)
     if (status) next = withFilter(next, STATUS_PARAM, status)
   }
-  if (!params.has(ROLE_PARAM)) {
-    const seat = parseRoleFilter(remembered.seat)
-    if (seat) next = withFilter(next, ROLE_PARAM, seat)
+  if (!params.has(SEAT_PARAM)) {
+    const seat = parseSeatFilter(remembered.seat)
+    if (seat) next = withFilter(next, SEAT_PARAM, seat)
   }
   for (const param of SCOPE_PARAMS) {
     if (params.has(param)) continue

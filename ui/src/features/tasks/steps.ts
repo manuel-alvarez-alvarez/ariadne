@@ -23,9 +23,10 @@ export function stepTitle(steps: readonly WorkflowStepDto[] | undefined, id: str
 }
 
 /**
- * The column a session of seat `agent` staffs, by title — what a step agent is
- * called wherever a seat would name an author or a reviewer. Undefined for any
- * other seat, and where the task is not at hand to say which column it is.
+ * The column a session of seat `agent` staffs, by title — the name a step
+ * agent is given in place of its seat, which is `agent` for every column and
+ * says nothing on its own about which one it staffs. Undefined for any other
+ * seat, and where the task is not at hand to say which column it is.
  */
 export function sessionColumn(
   session: Pick<SessionDto, "seat" | "task_agent_id">,

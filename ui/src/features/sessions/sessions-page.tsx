@@ -77,11 +77,11 @@ import {
   type FilterParam,
   GOAL_PARAM,
   LIVE,
-  ROLE_PARAM,
-  ROLES,
-  roleLabel,
+  SEAT_PARAM,
+  SEATS,
   STATUS_PARAM,
   STATUSES,
+  seatFilterLabel,
   statusFilters,
   statusLabel,
   TASK_PARAM,
@@ -393,12 +393,12 @@ export function SessionsPage() {
             allLabel="All statuses"
           />
           <FilterMenu
-            what="Role"
+            what="Seat"
             value={seat ?? ALL}
-            valueLabel={seat ? roleLabel(seat) : null}
-            onSelect={(value) => filterBy(ROLE_PARAM, value)}
-            options={ROLES.map((known) => ({ value: known, label: SEAT_LABELS[known] }))}
-            allLabel="All roles"
+            valueLabel={seat ? seatFilterLabel(seat) : null}
+            onSelect={(value) => filterBy(SEAT_PARAM, value)}
+            options={SEATS.map((known) => ({ value: known, label: SEAT_LABELS[known] }))}
+            allLabel="All seats"
           />
           <WindowFilter value={browse.window} onSelect={browse.filterWindow} />
           <DirectoryFilter value={browse.values.dir} onSettle={browse.filterBy} />

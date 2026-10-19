@@ -37,7 +37,7 @@ import { cachedShare, cn, formatTokens, shortId } from "@/lib/format"
 interface UsageRow {
   /** Stable across renders: a profile id where there is one, the seat otherwise. */
   key: string
-  /** Who spent it — a seat ("Orchestrator", "Authors") or one agent's name. */
+  /** Who spent it — the orchestrator's seat, or one agent's workflow column. */
   label: string
   usage: TokenUsage
 }
@@ -157,33 +157,23 @@ function NamedHalves({ usage }: { usage: TokenUsage }) {
 }
 
 /**
- * A goal's three roles, in the order the work goes through them: the orchestrator
- * that wrote the tasks, the authors that did them, the reviewers that read
- * them. No names, because past the orchestrator each seat is as many agents as the
- * goal has tasks — the task panels are where those are.
- *
- * A seat that has spent nothing is still a line: "the reviewers have used
- * nothing yet" is an answer, and a list that drops its empty lines makes the
- * reader work out which ones are missing.
+ * A goal's usage, in the order the work goes through it: the orchestrator
+ * that wrote the tasks, then every agent that has worked a column of one of
+ * them, named by the column's title — the same as {@link stepUsageRows}. No
+ * names beyond that: past the orchestrator, a column is as many agents as the
+ * goal has tasks on it, and the task panels are where those are.
  */
-export function goalUsageRows(usage: GoalUsage): UsageRow[] {
+export function goalUsageRows(usage: GoalUsage, title: (step: string) => string): UsageRow[] {
   return [
     { key: "orchestrator", label: "Orchestrator", usage: usage.orchestrator },
     ...usage.agents.map((agent) => ({
       key: agent.agent_id,
-      label: agent.step ?? shortId(agent.agent_id),
+      label: agent.step ? title(agent.step) : shortId(agent.agent_id),
       usage: agent.usage,
     })),
   ]
 }
 
-/**
- * A task's agents: its author, then each reviewer the daemon has usage for —
- * which is every reviewer that has been spawned, and only those. A reviewer
- * replaced after it had already run keeps its line, since what it spent is
- * still in the total above it; the daemon sends the name it ran under, and the
- * tail of its profile id stands in where it sent none.
- */
 /**
  * The breakdown of a stepped task's total: one line per workflow column, named
  * by the column, for every agent that has spent anything there. `title` turns

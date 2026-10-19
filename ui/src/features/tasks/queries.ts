@@ -147,7 +147,7 @@ export function useCancelTask(taskId: string) {
 
 /**
  * Retry is not optimistic. The daemon does not just flip a status: it schedules
- * a fresh author session, and the task's next status is its answer, not ours.
+ * a fresh agent session, and the task's next status is its answer, not ours.
  */
 export function useRetryTask(taskId: string) {
   return useTaskAction(taskId, () =>

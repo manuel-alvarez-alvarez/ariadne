@@ -53,9 +53,9 @@ export interface SessionListFilters {
   pull_request?: string
   status?: SessionStatus
   /**
-   * Applied here rather than by the daemon: `GET /v1/sessions` takes no seat.
-   * The request — and so the cache entry — is the same one an unfiltered list
-   * makes, and the seat is a per-observer `select` over it.
+   * Applied here rather than by the daemon, even though `GET /v1/sessions`
+   * takes a seat: the request — and so the cache entry — stays the same one
+   * an unfiltered list makes, and the seat is a per-observer `select` over it.
    */
   seat?: Seat
   /**

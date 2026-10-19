@@ -683,7 +683,7 @@ Out: the daemon endpoints themselves (012).
     register or save without one picked — and has no default landing select.
 43. A session of seat `agent` is named by the column its agent staffs: its
     badge on the sessions screen, the attention list and the palette. The
-    sessions screen's role filter offers the seat.
+    sessions screen's seat filter offers the seat.
 44. The task panel's sessions table names each row by the title of its
     agent's workflow step, found through the task's own `agents` and the
     goal's own `steps` rather than a daemon call: the staffed agent of
