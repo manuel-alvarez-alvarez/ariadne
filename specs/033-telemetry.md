@@ -209,28 +209,38 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
   level refused with 400, the stream's opening snapshot and its deltas,
   hostile content surviving SSE framing, both routes in the OpenAPI
   document, and the pipeline's own counter moving on an exported record:
-  `logs.rs::the_snapshot_returns_captured_lines_in_order`,
+  `logs.rs::flaky::the_snapshot_returns_captured_lines_in_order`,
   `::tail_limits_the_snapshot_to_the_last_n_lines`,
-  `::the_default_snapshot_is_bounded_even_without_an_explicit_tail`,
+  `logs.rs::the_default_snapshot_is_bounded_even_without_an_explicit_tail`,
   `::service_narrows_the_snapshot_to_one_service`,
   `::level_narrows_the_snapshot_to_that_level_and_above`,
   `::an_unknown_level_is_a_bad_request`,
-  `::the_stream_opens_with_a_snapshot_then_follows_with_deltas`,
+  `logs.rs::flaky::the_stream_opens_with_a_snapshot_then_follows_with_deltas`,
   `ariadne_daemon::http::logs::tests::an_export_during_stream_initialization_is_in_the_snapshot`,
   `::a_live_since_filter_normalizes_fractional_precision_and_offsets`,
-  `::hostile_log_content_survives_sse_framing`,
-  `::both_endpoints_are_in_the_openapi_document`,
-  `::the_pipeline_counts_exported_log_records_on_its_own_metric`.
+  `logs.rs::flaky::hostile_log_content_survives_sse_framing`,
+  `logs.rs::both_endpoints_are_in_the_openapi_document`,
+  `logs.rs::flaky::the_pipeline_counts_exported_log_records_on_its_own_metric`.
 - Log integration tests wait for stored records or the next stream message
   under `Timeouts::telemetry_pipeline_patience`. They report the first failed
   wait without retrying the test:
   `logs.rs::the_default_snapshot_is_bounded_even_without_an_explicit_tail`,
   `::service_narrows_the_snapshot_to_one_service`,
-  `::level_narrows_the_stream_snapshot_and_its_deltas`.
+  `::level_narrows_the_snapshot_to_that_level_and_above`.
+- Six of those waits still starved past their patience under the full
+  suite's load on every core at once, each observed failing and passing on
+  one unchanged revision: `flaky_test!` bounds them to two retries
+  (`crates/AGENTS.md#checks`):
+  `logs.rs::flaky::the_snapshot_returns_captured_lines_in_order`,
+  `::tail_limits_the_snapshot_to_the_last_n_lines`,
+  `::level_narrows_the_stream_snapshot_and_its_deltas`,
+  `::the_stream_opens_with_a_snapshot_then_follows_with_deltas`,
+  `::hostile_log_content_survives_sse_framing`,
+  `::the_pipeline_counts_exported_log_records_on_its_own_metric`.
 - The metric exporter stores the resource's service name under the
   reserved key, and moves a colliding attribute aside without losing it
   (`telemetry/metrics_exporter.rs::tests::the_resource_service_wins_and_a_colliding_attribute_moves_aside`,
-  `logs.rs::the_pipeline_counts_exported_log_records_on_its_own_metric`).
+  `logs.rs::flaky::the_pipeline_counts_exported_log_records_on_its_own_metric`).
 - `check-migrations.sh` guards `telemetry-migrations/` the same way it
   guards `migrations/`, each numbered from its own `0001`
   (`scripts/tests/check-migrations.sh`: `telemetry-reject-edit`,

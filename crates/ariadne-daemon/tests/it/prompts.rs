@@ -183,7 +183,7 @@ async fn the_orchestrator_briefing_names_the_workflow_and_its_columns_and_no_lan
     assert!(
         briefing.lines().any(|line| line
             == "- develop [Develop]: Build the task on its branch and commit \
-                                   it. Skills: coding. Ranks: balanced."),
+                                   it. Skills: coding. Ranks: fast, balanced, frontier."),
         "{briefing}"
     );
     assert!(
@@ -199,7 +199,7 @@ async fn the_orchestrator_briefing_names_the_workflow_and_its_columns_and_no_lan
     // happen to share.
     let edited = ariadne_store::defaults::default_workflow_document(&goal.workflow)
         .unwrap()
-        .replacen("ranks: fast", "ranks: local", 1);
+        .replacen("ranks: fast, balanced\n", "ranks: local\n", 1);
     h.store
         .set_workflow_document(&goal.workflow, &edited)
         .await

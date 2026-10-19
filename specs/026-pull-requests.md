@@ -403,8 +403,10 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `forge_rate_limit.rs::a_past_rate_limit_reset_waits_for_the_poll_interval`.
   A failed timer fetch that is not a rate limit doubles its wait up to the
   cap and resets on success: `forge::poll::tests::timer_backoff_doubles_caps_and_resets`.
-  A wake still fetches at once from that pending timer:
-  `forge_rate_limit.rs::a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once`.
+  A wake still fetches at once from that pending timer. Its wall-clock
+  margins can still lose to the full suite's load on every core at once, so
+  `flaky_test!` bounds it to two retries (`crates/AGENTS.md#checks`):
+  `forge_rate_limit.rs::flaky::a_failed_fetch_in_timer_mode_backs_off_and_a_wake_still_fetches_at_once`.
   Wakes inside the debounce window fold into one fetch, and continued wakes
   do not move its first deadline:
   `forge_rate_limit.rs::three_wakes_inside_the_debounce_window_cause_one_fetch`,
