@@ -62,7 +62,7 @@ memory-stats = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_urlencoded = { workspace = true }
-promql-parser = { workspace = true }
+promql-parser = { workspace = true, features = ["ser"] }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 tower-http = { workspace = true }

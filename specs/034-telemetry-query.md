@@ -32,7 +32,8 @@ Out: recording metrics (the exporter is 033's), the stats ledger and
 ### Routes
 
 1. The Prometheus routes are `GET` and `POST /api/v1/query` (`query`,
-   `time`), `GET` and `POST /api/v1/query_range` (`query`, `start`, `end`,
+   `time`), `GET` and `POST /api/v1/parse_query` (`query`), `GET` and `POST
+   /api/v1/query_range` (`query`, `start`, `end`,
    `step`), `GET` and `POST /api/v1/labels` (`match[]`, `start`, `end`),
    `GET /api/v1/label/{name}/values` (`match[]`, `start`, `end`), `GET` and
    `POST /api/v1/series` (`match[]`, `start`, `end`), `GET /api/v1/metadata`
@@ -178,6 +179,9 @@ Out: recording metrics (the exporter is 033's), the stats ledger and
   (`telemetry_query.rs::an_unsupported_query_answers_bad_data_naming_it`),
   and so do an unsupported aggregation, operator, subquery and modifier
   (`promql.rs::tests::unsupported_functions_and_operators_are_named`).
+- `parse_query` accepts both request forms and answers its Prometheus AST;
+  malformed PromQL answers `400` `bad_data`
+  (`telemetry_query.rs::the_parse_query_route_answers_an_ast_or_bad_data`).
 - `@ start()`, `@ end()` and `@ <time>` pin a selector, `offset` included,
   and a `match[]` selector refuses `@`
   (`promql.rs::tests::at_pins_a_selector_to_the_query_start_end_or_a_time`,

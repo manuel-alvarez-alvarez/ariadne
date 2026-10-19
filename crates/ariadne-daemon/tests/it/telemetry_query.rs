@@ -238,6 +238,38 @@ async fn an_unsupported_query_answers_bad_data_naming_it() {
 }
 
 #[tokio::test]
+async fn the_parse_query_route_answers_an_ast_or_bad_data() {
+    let h = harness().await;
+    let data = ok(
+        &h,
+        form(
+            "/api/v1/parse_query",
+            &[("query", r#"ariadne_tokens_total{seat="author"}"#)],
+        ),
+    )
+    .await;
+    assert_eq!(
+        data,
+        json!({
+            "type": "vectorSelector",
+            "name": "ariadne_tokens_total",
+            "matchers": [{"name": "seat", "type": "=", "value": "author"}],
+            "offset": 0,
+            "startOrEnd": null,
+            "timestamp": null,
+        })
+    );
+
+    let (status, body) = h
+        .send(get(&uri("/api/v1/parse_query", &[("query", "sum(")])))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["status"], "error");
+    assert_eq!(body["errorType"], "bad_data");
+}
+
+#[tokio::test]
 async fn discovery_routes_list_labels_series_and_metadata() {
     let h = harness().await;
     seed_metrics(&h).await;

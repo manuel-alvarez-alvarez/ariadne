@@ -62,6 +62,10 @@ pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/-/healthy", get(healthy))
         .route("/api/v1/query", get(prom_query).post(prom_query))
+        .route(
+            "/api/v1/parse_query",
+            get(prom_parse_query).post(prom_parse_query),
+        )
         .route("/api/v1/query_range", get(prom_range).post(prom_range))
         .route("/api/v1/labels", get(prom_labels).post(prom_labels))
         .route("/api/v1/label/{name}/values", get(prom_label_values))
@@ -333,6 +337,17 @@ async fn prom_query(
         ),
         Value::Matrix(series) => matrix(series),
     }))
+}
+
+/// Parse a PromQL expression into the JSON AST that the Prometheus editor's
+/// tree view consumes. Parsing intentionally does not apply the evaluator's
+/// smaller supported subset: this endpoint describes syntax only.
+async fn prom_parse_query(RawQuery(query): RawQuery, body: String) -> ApiResult {
+    let params = Params::new(query, &body)?;
+    let expr = promql::parse_ast(params.get("query").unwrap_or(""))?;
+    let ast = serde_json::to_value(expr)
+        .map_err(|error| QueryError(format!("cannot serialize PromQL AST: {error}")))?;
+    Ok(success(ast))
 }
 
 async fn prom_range(
