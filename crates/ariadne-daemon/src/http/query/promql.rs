@@ -284,12 +284,18 @@ pub(super) fn parse_selector(text: &str) -> Result<VectorSelector> {
 // ---- parsing and the supported subset ----
 
 pub(super) fn parse(text: &str) -> Result<Expr> {
+    let expr = parse_ast(text)?;
+    check(&expr)?;
+    Ok(expr)
+}
+
+/// Parse PromQL for the Prometheus parse-query API. Unlike [`parse`], this
+/// does not limit callers to the evaluator's supported subset.
+pub(super) fn parse_ast(text: &str) -> Result<Expr> {
     if text.trim().is_empty() {
         return fail("missing query parameter");
     }
-    let expr = parser::parse(text).map_err(EvalError)?;
-    check(&expr)?;
-    Ok(expr)
+    parser::parse(text).map_err(EvalError)
 }
 
 fn check_selector(selector: &VectorSelector) -> Result<()> {
