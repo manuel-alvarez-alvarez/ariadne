@@ -1,7 +1,7 @@
 ---
 id: metrics
 status: current
-updated: 2026-10-18
+updated: 2026-10-19
 areas: [daemon, store, docs]
 commits: []
 tests:
@@ -85,11 +85,11 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 | `ariadne.task.status_time` | histogram | s | `status` (the status left) | change hook, each transition, from the transition before it (or the task's creation) |
 | `ariadne.goals.ended` | counter | | `status`, `workflow`, `repo` | goal cancel and complete |
 | `ariadne.goal.lead_time` | histogram | s | `status`, `workflow` | the same, from the goal's creation |
-| `ariadne.sessions.ended` | counter | | `status`, `seat`, `model`, `attention_reason` | change hook, the first committed row of a launch that is no longer live |
-| `ariadne.session.lifetime` | histogram | s | `seat`, `model` | the same, from the launch (or the creation) to the end |
-| `ariadne.tokens` | counter | | `kind` (`input`, `cached_input`, `output`), `model`, `seat`, `repo` | each usage write, ACP and ingestion, by the delta it adds |
+| `ariadne.sessions.ended` | counter | | `status`, `seat`, `model`, `step`, `attention_reason` | change hook, the first committed row of a launch that is no longer live |
+| `ariadne.session.lifetime` | histogram | s | `seat`, `model`, `step` | the same, from the launch (or the creation) to the end |
+| `ariadne.tokens` | counter | | `kind` (`input`, `cached_input`, `output`), `model`, `seat`, `repo`, `step` | each usage write, ACP and ingestion, by the delta it adds |
 | `ariadne.switches` | counter | | `reason`, `automatic`, `same_agent`, `from_model`, `to_model` | `Launcher::switch_session`, before the pin moves |
-| `ariadne.messages` | counter | | `kind`, `from_seat`, `to_seat` | each stored message of the channel |
+| `ariadne.messages` | counter | | `kind`, `from_actor`, `to_actor` | each stored message of the channel |
 | `ariadne.permissions` | counter | | `decided_by`, `answer`, `tool_name` | each ACP permission answer |
 | `ariadne.permission.wait` | histogram | s | `decided_by` | the same, from the request to the answer |
 | `ariadne.attention.raised` | counter | | `reason` | change hook, a flag raised |
@@ -99,9 +99,15 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 11. A usage write records the delta of each kind. A delta below zero records
     nothing, so spend moves while a turn runs and never goes down.
 12. `landed` is whether the task carries the commit its change landed as.
-    `model` of a task is the model of its column's agent.
+    `model` of a task is the model of the agent of its first column with
+    `gate: committed` (030), or, where the workflow names no such column, the
+    model of the agent of its last column, as before. A task that never
+    reached a column names no model either way.
 13. `answer` is `allow` where the chosen option is an allowing one or the AI
     model allowed, `cancelled` where no option was chosen, else `deny`.
+14. `step` is the workflow column id of an agent session's staffed task
+    agent. A session no column staffs — the orchestrator's, a reviewer's, a
+    keeper's, or one resumed loose — carries `none`.
 
 ### Group 2: live state
 
@@ -109,10 +115,10 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 | --- | --- | --- |
 | `ariadne.tasks.active` | gauge | `status`, each status but the three endings |
 | `ariadne.goals.active` | gauge | `status`, each status but `completed` and `cancelled` |
-| `ariadne.sessions.live` | gauge | `status`, `seat` |
+| `ariadne.sessions.live` | gauge | `status`, `seat`, `step` |
 | `ariadne.attention.pending` | gauge | `reason` |
 
-14. Each collection reads these counts off the store. A gauge callback runs
+15. Each collection reads these counts off the store. A gauge callback runs
     on the metric reader's own thread, so the read runs on a small runtime of
     the metrics module's own (`metrics-collect`), never on a daemon thread a
     flush may be blocking. A read that fails, or takes longer than 2 s,
@@ -137,7 +143,7 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 | `process.cpu.time` | counter | s | | the process CPU clock, read on collection |
 | `process.memory.usage` | gauge | By | | the resident memory, read on collection |
 
-15. `http.route` is the matched route template, never the path. The layer
+16. `http.route` is the matched route template, never the path. The layer
     leaves out `/v1/events/stream`, `/v1/logs/stream`, a session's console
     stream and its terminal WebSocket, and every route under `/otlp/`,
     `/api/v1/` and `/loki/`.
@@ -146,15 +152,15 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 
 | Instrument | Type | Unit | Attributes | Recorded at |
 | --- | --- | --- | --- | --- |
-| `ariadne.turns` | counter | | `seat`, `model` | each stored `stop` |
-| `ariadne.turn.duration` | histogram | s | `seat`, `model` | the same, from its `user_prompt_submit` |
+| `ariadne.turns` | counter | | `seat`, `model`, `step` | each stored `stop` |
+| `ariadne.turn.duration` | histogram | s | `seat`, `model`, `step` | the same, from its `user_prompt_submit` |
 | `ariadne.tool_calls` | counter | | `tool_name`, `model` | each stored `pre_tool_use` |
 | `ariadne.ai_permissions.decisions` | counter | | `verdict` (`allow`, `deny`, `ask`, `unanswered`) | each decision of the AI permission model (022) |
 | `ariadne.ai_permissions.latency` | histogram | s | | the same |
 
 ### The ledger
 
-16. Migration `0006_drop_stat_facts.sql` drops `stat_facts` from
+17. Migration `0006_drop_stat_facts.sql` drops `stat_facts` from
     `ariadne.db`. The routes under `/v1/stats/*`, their DTOs, and the store's
     and the daemon's ledger code are gone.
 
@@ -166,6 +172,9 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
   (`metrics.rs::a_finished_task_counts_its_ending_and_times_each_status_it_left`).
 - A task cancelled before its first column names no column and no model
   (`metrics.rs::a_task_cancelled_before_its_first_column_names_no_column`).
+- A finished task names the model of its committed-gate column, even where
+  it finishes on a later column on another model
+  (`metrics.rs::a_finished_task_names_the_model_of_its_committed_gate_column`).
 - A cancelled goal counts one ending and one lead time, and a refused second
   cancel counts nothing (`metrics.rs::a_cancelled_goal_counts_one_ending`).
 - A completed goal counts one ending with its repository
@@ -190,6 +199,8 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 - The live-state gauges read the store on collection, a status that empties
   reads zero, and the database size and the process metrics are read
   (`metrics.rs::the_live_state_gauges_read_the_store_on_collection`).
+- A session on no column carries no step
+  (`metrics.rs::a_session_on_no_column_carries_no_step`).
 - A failed gauge read observes nothing, and only a successful read reports
   an emptied attribute set as zero
   (`metrics.rs::a_failed_read_reports_no_zero_and_an_empty_read_does`).
@@ -198,8 +209,8 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 - A request is timed under its route template, and no label holds its path
   (`metrics.rs::a_request_is_timed_under_its_route_template`).
 - A scheduler pass is timed (`metrics.rs::a_scheduler_pass_is_timed`).
-- A message is counted by its kind and seats
-  (`metrics.rs::a_message_is_counted_by_its_seats`).
+- A message is counted by its kind and actors
+  (`metrics.rs::a_message_is_counted_by_its_actors`).
 - A follower of the event stream is counted while it follows
   (`metrics.rs::an_event_stream_follower_is_counted_while_it_follows`), and a
   lagged one counts a resync

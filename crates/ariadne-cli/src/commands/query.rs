@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn an_instant_table_has_a_column_per_label_then_value() {
         let data = json!({"resultType": "vector", "result": [
-            {"metric": {"seat": "author"}, "value": [1.0, "30"]},
+            {"metric": {"seat": "agent"}, "value": [1.0, "30"]},
             {"metric": {"seat": "reviewer", "job": "ariadned"}, "value": [1.0, "3"]},
         ]});
         let (columns, rows) = table(&data);
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn a_range_table_has_one_row_per_time() {
         let data = json!({"resultType": "matrix", "result": [
-            {"metric": {"seat": "author"}, "values": [[1.0, "1"], [2.0, "2"]]},
+            {"metric": {"seat": "agent"}, "values": [[1.0, "1"], [2.0, "2"]]},
             {"metric": {"seat": "reviewer"}, "values": [[1.0, "5"]]},
         ]});
         let (columns, rows) = table(&data);

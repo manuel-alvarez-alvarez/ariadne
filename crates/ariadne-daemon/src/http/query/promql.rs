@@ -1567,7 +1567,7 @@ mod tests {
             series(
                 &[
                     (NAME, "ariadne_tokens_total"),
-                    ("seat", "author"),
+                    ("seat", "agent"),
                     ("job", "ariadned"),
                 ],
                 &[(T - 120_000, 10.0), (T - 60_000, 20.0), (T, 30.0)],
@@ -1666,19 +1666,19 @@ mod tests {
     fn selectors_apply_all_four_matchers_and_the_lookback() {
         let data = tokens();
         assert_eq!(
-            vector(&data, r#"ariadne_tokens_total{seat="author"}"#).len(),
+            vector(&data, r#"ariadne_tokens_total{seat="agent"}"#).len(),
             1
         );
         assert_eq!(
-            vector(&data, r#"ariadne_tokens_total{seat!="author"}"#).len(),
+            vector(&data, r#"ariadne_tokens_total{seat!="agent"}"#).len(),
             1
         );
         assert_eq!(
-            vector(&data, r#"ariadne_tokens_total{seat=~"auth.*"}"#).len(),
+            vector(&data, r#"ariadne_tokens_total{seat=~"agen.*"}"#).len(),
             1
         );
         assert_eq!(
-            vector(&data, r#"ariadne_tokens_total{seat!~"auth"}"#).len(),
+            vector(&data, r#"ariadne_tokens_total{seat!~"agen"}"#).len(),
             2
         );
         let stale = [series(&[(NAME, "x")], &[(T - LOOKBACK_MS, 1.0)])];
@@ -1688,8 +1688,8 @@ mod tests {
     #[test]
     fn offset_reads_an_earlier_sample() {
         let data = tokens();
-        let author = r#"ariadne_tokens_total{seat="author"} offset 1m"#;
-        assert_eq!(vector(&data, author)[0].1, 20.0);
+        let agent = r#"ariadne_tokens_total{seat="agent"} offset 1m"#;
+        assert_eq!(vector(&data, agent)[0].1, 20.0);
     }
 
     #[test]
@@ -1701,15 +1701,15 @@ mod tests {
             Ok(Value::Vector(samples)) => samples[0].value,
             other => panic!("{query}: {other:?}"),
         };
-        let author = r#"ariadne_tokens_total{seat="author"}"#;
-        assert_eq!(first(author), 10.0);
-        assert_eq!(first(&format!("{author} @ end()")), 30.0);
-        assert_eq!(first(&format!("{author} @ start()")), 10.0);
+        let agent = r#"ariadne_tokens_total{seat="agent"}"#;
+        assert_eq!(first(agent), 10.0);
+        assert_eq!(first(&format!("{agent} @ end()")), 30.0);
+        assert_eq!(first(&format!("{agent} @ start()")), 10.0);
         let at_middle = (T - 60_000) / 1000;
-        assert_eq!(first(&format!("{author} @ {at_middle}")), 20.0);
-        assert_eq!(first(&format!("{author} @ end() offset 1m")), 20.0);
+        assert_eq!(first(&format!("{agent} @ {at_middle}")), 20.0);
+        assert_eq!(first(&format!("{agent} @ end() offset 1m")), 20.0);
         assert_eq!(
-            first(&format!("increase({author}[2m] @ end())")),
+            first(&format!("increase({agent}[2m] @ end())")),
             20.0,
             "a window pinned to the end reads the whole range at every step"
         );
@@ -1724,7 +1724,7 @@ mod tests {
     #[test]
     fn rate_and_increase_extrapolate_like_prometheus() {
         let data = tokens();
-        let rate = vector(&data, r#"rate(ariadne_tokens_total{seat="author"}[2m])"#);
+        let rate = vector(&data, r#"rate(ariadne_tokens_total{seat="agent"}[2m])"#);
         // 20 over 120s of samples in a 120s window: the start extrapolates by
         // the duration to zero (120s * 10/20 = 60s is beyond the 0s gap).
         assert!((rate[0].1 - 20.0 / 120.0).abs() < 1e-9, "{rate:?}");
@@ -1804,7 +1804,7 @@ mod tests {
         assert_eq!(
             vector(&data, "sum by (seat) (ariadne_tokens_total)"),
             vec![
-                (labels(&[("seat", "author")]), 30.0),
+                (labels(&[("seat", "agent")]), 30.0),
                 (labels(&[("seat", "reviewer")]), 3.0)
             ]
         );
@@ -1818,7 +1818,7 @@ mod tests {
         assert_eq!(one("count(ariadne_tokens_total)"), 2.0);
         assert_eq!(one("quantile(0.5, ariadne_tokens_total)"), 16.5);
         let top = vector(&data, "topk(1, ariadne_tokens_total)");
-        assert_eq!((top.len(), top[0].0["seat"].as_str()), (1, "author"));
+        assert_eq!((top.len(), top[0].0["seat"].as_str()), (1, "agent"));
         let bottom = vector(&data, "bottomk(1, ariadne_tokens_total)");
         assert_eq!(bottom[0].0["seat"], "reviewer");
     }
@@ -1838,10 +1838,10 @@ mod tests {
     #[test]
     fn arithmetic_and_comparisons_with_scalars() {
         let data = tokens();
-        let doubled = vector(&data, r#"ariadne_tokens_total{seat="author"} * 2"#);
+        let doubled = vector(&data, r#"ariadne_tokens_total{seat="agent"} * 2"#);
         assert_eq!(
             doubled,
-            vec![(labels(&[("seat", "author"), ("job", "ariadned")]), 60.0)]
+            vec![(labels(&[("seat", "agent"), ("job", "ariadned")]), 60.0)]
         );
         let filtered = vector(&data, "ariadne_tokens_total > 10");
         assert_eq!(filtered.len(), 1);
@@ -1862,7 +1862,7 @@ mod tests {
     #[test]
     fn vector_matching_with_on_ignoring_and_groups() {
         let data = vec![
-            series(&[(NAME, "a"), ("seat", "author"), ("x", "1")], &[(T, 6.0)]),
+            series(&[(NAME, "a"), ("seat", "agent"), ("x", "1")], &[(T, 6.0)]),
             series(
                 &[(NAME, "a"), ("seat", "reviewer"), ("x", "1")],
                 &[(T, 4.0)],
@@ -1873,7 +1873,7 @@ mod tests {
             vector(&data, "a / on (x) group_left (team) b"),
             vec![
                 (
-                    labels(&[("seat", "author"), ("x", "1"), ("team", "core")]),
+                    labels(&[("seat", "agent"), ("x", "1"), ("team", "core")]),
                     3.0
                 ),
                 (
@@ -1885,11 +1885,11 @@ mod tests {
         assert_eq!(
             vector(&data, "b - on (x) group_right a"),
             vec![
-                (labels(&[("seat", "author"), ("x", "1")]), -4.0),
+                (labels(&[("seat", "agent"), ("x", "1")]), -4.0),
                 (labels(&[("seat", "reviewer"), ("x", "1")]), -2.0)
             ]
         );
-        let one = vector(&data, r#"a{seat="author"} + ignoring (seat, team) b"#);
+        let one = vector(&data, r#"a{seat="agent"} + ignoring (seat, team) b"#);
         assert_eq!(one, vec![(labels(&[("x", "1")]), 8.0)]);
         let error = eval(&data, "a + on (x) b").unwrap_err();
         assert!(error.0.contains("group_left"), "{error:?}");
@@ -1932,9 +1932,9 @@ mod tests {
     #[test]
     fn set_operators_match_on_labels() {
         let data = vec![
-            series(&[(NAME, "a"), ("seat", "author")], &[(T, 1.0)]),
+            series(&[(NAME, "a"), ("seat", "agent")], &[(T, 1.0)]),
             series(&[(NAME, "a"), ("seat", "reviewer")], &[(T, 2.0)]),
-            series(&[(NAME, "b"), ("seat", "author")], &[(T, 3.0)]),
+            series(&[(NAME, "b"), ("seat", "agent")], &[(T, 3.0)]),
             series(&[(NAME, "b"), ("seat", "keeper")], &[(T, 4.0)]),
         ];
         let seats = |q: &str| {
@@ -1943,9 +1943,9 @@ mod tests {
                 .map(|(l, _)| l["seat"].clone())
                 .collect::<Vec<_>>()
         };
-        assert_eq!(seats("a and b"), vec!["author"]);
+        assert_eq!(seats("a and b"), vec!["agent"]);
         assert_eq!(seats("a unless b"), vec!["reviewer"]);
-        assert_eq!(seats("a or b"), vec!["author", "reviewer", "keeper"]);
+        assert_eq!(seats("a or b"), vec!["agent", "reviewer", "keeper"]);
     }
 
     #[test]
@@ -1985,7 +1985,7 @@ mod tests {
         );
         assert_eq!(vector(&data, "vector(2)"), vec![(labels(&[]), 2.0)]);
         assert_eq!(
-            eval(&data, r#"scalar(ariadne_tokens_total{seat="author"})"#).unwrap(),
+            eval(&data, r#"scalar(ariadne_tokens_total{seat="agent"})"#).unwrap(),
             Value::Scalar(30.0)
         );
         let sorted = vector(&data, "sort(ariadne_tokens_total)");

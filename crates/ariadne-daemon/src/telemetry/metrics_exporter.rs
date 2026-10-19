@@ -241,11 +241,11 @@ mod tests {
 
     #[test]
     fn the_resource_service_wins_and_a_colliding_attribute_moves_aside() {
-        let mut plain = json!({"seat": "author"});
+        let mut plain = json!({"seat": "agent"});
         stamp_service(&mut plain, "worker");
         assert_eq!(
             plain,
-            json!({"seat": "author", "__resource_service_name__": "worker"})
+            json!({"seat": "agent", "__resource_service_name__": "worker"})
         );
 
         let mut colliding = json!({

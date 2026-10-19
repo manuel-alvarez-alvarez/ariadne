@@ -258,8 +258,7 @@ every other kebab-case word in it; the wire spells the same gate
    Step sessions carry seat `agent`, share the task branch, and load their
    assigned skill documents. `TaskUsageDto { total, agents }` names each
    agent's column; `GoalUsageDto { total, orchestrator, agents }` splits the
-   goal's. Session facts carry seat `agent` and `data.step`, and the
-   `task_ended` fact carries `step` (023).
+   goal's.
 9. The schema holds no pipeline for this spec to replace: `goals.workflow`
    is `NOT NULL REFERENCES workflows (name)`, and
    `repositories.default_workflow` is `NOT NULL DEFAULT

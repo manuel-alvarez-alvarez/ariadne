@@ -283,25 +283,34 @@
             {
               "x": 0,
               "y": 9,
-              "width": 8,
-              "height": 9,
+              "width": 6,
+              "height": 8,
               "content": {
                 "$ref": "#/spec/panels/tokens-by-seat"
               }
             },
             {
-              "x": 8,
+              "x": 6,
               "y": 9,
-              "width": 8,
+              "width": 6,
+              "height": 8,
+              "content": {
+                "$ref": "#/spec/panels/tokens-by-step"
+              }
+            },
+            {
+              "x": 12,
+              "y": 9,
+              "width": 6,
               "height": 8,
               "content": {
                 "$ref": "#/spec/panels/cache-gauge"
               }
             },
             {
-              "x": 16,
+              "x": 18,
               "y": 9,
-              "width": 8,
+              "width": 6,
               "height": 8,
               "content": {
                 "$ref": "#/spec/panels/tokens-by-repo"
@@ -323,19 +332,28 @@
             {
               "x": 0,
               "y": 0,
-              "width": 16,
+              "width": 12,
               "height": 9,
               "content": {
                 "$ref": "#/spec/panels/turns-over-time"
               }
             },
             {
-              "x": 16,
+              "x": 12,
               "y": 0,
-              "width": 8,
+              "width": 6,
               "height": 9,
               "content": {
                 "$ref": "#/spec/panels/runs-by-seat"
+              }
+            },
+            {
+              "x": 18,
+              "y": 0,
+              "width": 6,
+              "height": 9,
+              "content": {
+                "$ref": "#/spec/panels/runs-by-step"
               }
             },
             {
@@ -1151,7 +1169,7 @@
         "spec": {
           "display": {
             "name": "Finished by model",
-            "description": "Finished tasks per model, the model on the task's last step."
+            "description": "Finished tasks per model: the model of the coding column (gate: committed), or of the last step."
           },
           "plugin": {
             "kind": "BarChart",
@@ -1350,7 +1368,7 @@
         "spec": {
           "display": {
             "name": "Tokens by seat",
-            "description": "Who spends: the orchestrator, authors, reviewers and keepers."
+            "description": "Who spends: orchestrator, agent, reviewer and keeper, or none."
           },
           "plugin": {
             "kind": "PieChart",
@@ -1395,6 +1413,63 @@
                   "spec": {
                     "query": "(sum by (seat) (increase(ariadne_tokens_total{kind=~\"input|output\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
                     "seriesNameFormat": "{{seat}}"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "tokens-by-step": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Tokens by step",
+            "description": "Where the agent seat spends: tokens per workflow column."
+          },
+          "plugin": {
+            "kind": "PieChart",
+            "spec": {
+              "calculation": "last-number",
+              "format": {
+                "unit": "decimal",
+                "shortValues": true
+              },
+              "legend": {
+                "position": "bottom",
+                "mode": "table",
+                "size": "small",
+                "values": ["abs", "relative"]
+              },
+              "mode": "value",
+              "radius": 70,
+              "showLabels": false,
+              "sort": "desc",
+              "colorPalette": [
+                "#56B4E9",
+                "#009E73",
+                "#0072B2",
+                "#CC79A7",
+                "#F0E442",
+                "#E69F00",
+                "#D55E00",
+                "#7E57C2",
+                "#26A69A",
+                "#8D6E63",
+                "#EC407A",
+                "#9CCC65"
+              ]
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "PrometheusTimeSeriesQuery",
+                  "spec": {
+                    "query": "(sum by (step) (increase(ariadne_tokens_total{kind=~\"input|output\", seat=\"agent\", repo=~\"${repo:regexliteral}\", model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
+                    "seriesNameFormat": "{{step}}"
                   }
                 }
               }
@@ -1619,6 +1694,63 @@
                   "spec": {
                     "query": "(sum by (seat) (increase(ariadne_sessions_ended_total{model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
                     "seriesNameFormat": "{{seat}}"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "runs-by-step": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Runs by step",
+            "description": "Agent runs that ended, by the workflow column they held."
+          },
+          "plugin": {
+            "kind": "PieChart",
+            "spec": {
+              "calculation": "last-number",
+              "format": {
+                "unit": "decimal",
+                "decimalPlaces": 0
+              },
+              "legend": {
+                "position": "bottom",
+                "mode": "table",
+                "size": "small",
+                "values": ["abs", "relative"]
+              },
+              "mode": "value",
+              "radius": 70,
+              "showLabels": false,
+              "sort": "desc",
+              "colorPalette": [
+                "#56B4E9",
+                "#009E73",
+                "#0072B2",
+                "#CC79A7",
+                "#F0E442",
+                "#E69F00",
+                "#D55E00",
+                "#7E57C2",
+                "#26A69A",
+                "#8D6E63",
+                "#EC407A",
+                "#9CCC65"
+              ]
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "PrometheusTimeSeriesQuery",
+                  "spec": {
+                    "query": "(sum by (step) (increase(ariadne_sessions_ended_total{seat=\"agent\", model=~\"${model:regexliteral}\"}[$__range] @ end()))) > 0",
+                    "seriesNameFormat": "{{step}}"
                   }
                 }
               }

@@ -49,7 +49,7 @@ async fn seed_metrics(h: &Harness) {
             "ariadne.tokens",
             MetricKind::Counter,
             Some("{token}"),
-            json!({"seat": "author"}),
+            json!({"seat": "agent"}),
             t,
             total,
         ));
@@ -153,7 +153,7 @@ async fn an_instant_query_answers_a_vector_under_prometheus_names() {
     assert_eq!(
         data,
         json!({"resultType": "vector", "result": [
-            {"metric": {"seat": "author"}, "value": [T as f64, "30"]},
+            {"metric": {"seat": "agent"}, "value": [T as f64, "30"]},
             {"metric": {"seat": "reviewer"}, "value": [T as f64, "3"]},
         ]})
     );
@@ -163,7 +163,7 @@ async fn an_instant_query_answers_a_vector_under_prometheus_names() {
         get(&uri(
             "/api/v1/query",
             &[
-                ("query", r#"ariadne_tokens_total{seat="author"}"#),
+                ("query", r#"ariadne_tokens_total{seat="agent"}"#),
                 ("time", &time),
             ],
         )),
@@ -171,7 +171,7 @@ async fn an_instant_query_answers_a_vector_under_prometheus_names() {
     .await;
     assert_eq!(
         raw["result"][0]["metric"],
-        json!({"__name__": "ariadne_tokens_total", "seat": "author", "service": "ariadned", "job": "ariadned"})
+        json!({"__name__": "ariadne_tokens_total", "seat": "agent", "service": "ariadned", "job": "ariadned"})
     );
 
     let p50 = ok(
@@ -201,7 +201,7 @@ async fn a_form_posted_range_query_answers_a_matrix_per_step() {
         form(
             "/api/v1/query_range",
             &[
-                ("query", r#"ariadne_tokens_total{seat="author"} * 2"#),
+                ("query", r#"ariadne_tokens_total{seat="agent"} * 2"#),
                 ("start", &start),
                 ("end", &end),
                 ("step", "1m"),
@@ -244,7 +244,7 @@ async fn the_parse_query_route_answers_an_ast_or_bad_data() {
         &h,
         form(
             "/api/v1/parse_query",
-            &[("query", r#"ariadne_tokens_total{seat="author"}"#)],
+            &[("query", r#"ariadne_tokens_total{seat="agent"}"#)],
         ),
     )
     .await;
@@ -253,7 +253,7 @@ async fn the_parse_query_route_answers_an_ast_or_bad_data() {
         json!({
             "type": "vectorSelector",
             "name": "ariadne_tokens_total",
-            "matchers": [{"name": "seat", "type": "=", "value": "author"}],
+            "matchers": [{"name": "seat", "type": "=", "value": "agent"}],
             "offset": 0,
             "startOrEnd": null,
             "timestamp": null,
@@ -280,7 +280,7 @@ async fn discovery_routes_list_labels_series_and_metadata() {
     .await;
     assert_eq!(labels, json!(["__name__", "job", "seat", "service"]));
     let seats = ok(&h, get("/api/v1/label/seat/values")).await;
-    assert_eq!(seats, json!(["author", "reviewer"]));
+    assert_eq!(seats, json!(["agent", "reviewer"]));
     let series = ok(
         &h,
         get(&uri(
@@ -434,7 +434,7 @@ async fn discovery_bounds_list_only_series_with_a_sample_between_them() {
     let names = ok(&h, get(&uri("/api/v1/label/__name__/values", &inside))).await;
     assert_eq!(names, json!(["ariadne_tokens_total"]));
     let seats = ok(&h, get(&uri("/api/v1/label/seat/values", &inside))).await;
-    assert_eq!(seats, json!(["author", "reviewer"]));
+    assert_eq!(seats, json!(["agent", "reviewer"]));
     let only_start = ok(
         &h,
         get(&uri("/api/v1/label/__name__/values", &[("start", &after)])),

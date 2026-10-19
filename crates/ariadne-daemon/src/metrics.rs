@@ -150,6 +150,23 @@ fn seat(session: &AgentSession) -> String {
     session.seat.clone().unwrap_or_else(|| NONE.into())
 }
 
+/// The workflow column id of an agent session: its staffed task agent's
+/// column. A session no column staffs — the orchestrator's, a reviewer's, a
+/// keeper's, or one resumed loose — carries none.
+async fn step(store: &Store, session: &AgentSession) -> String {
+    if session.seat.as_deref() != Some(ariadne_core::Seat::Agent.as_str()) {
+        return NONE.into();
+    }
+    match &session.task_agent_id {
+        Some(id) => store
+            .get_task_agent(id)
+            .await
+            .map(|agent| agent.step)
+            .unwrap_or_else(|_| NONE.into()),
+        None => NONE.into(),
+    }
+}
+
 // ---- Group 1: what the work did -------------------------------------------
 
 /// The launch of each session whose end has been counted.
@@ -163,7 +180,7 @@ fn ended_launches() -> &'static Mutex<HashMap<String, String>> {
 /// and the end its agent reports after it, and every later write of the
 /// ended row all carry the same launch, and count nothing more. A row that
 /// ended before this daemon started is not one it saw end.
-fn record_run_end(session: &AgentSession) {
+async fn record_run_end(store: &Store, session: &AgentSession) {
     let Some(ended) = session.ended_at.as_deref() else {
         return;
     };
@@ -185,6 +202,7 @@ fn record_run_end(session: &AgentSession) {
     let attrs = [
         kv("seat", seat(session)),
         kv("model", session.model.clone()),
+        kv("step", step(store, session).await),
         kv("status", session.status.clone()),
         kv(
             "attention_reason",
@@ -202,7 +220,7 @@ fn record_run_end(session: &AgentSession) {
             .unwrap_or(&session.created_at),
         ended,
     );
-    seconds("ariadne.session.lifetime").record(lifetime, &attrs[..2]);
+    seconds("ariadne.session.lifetime").record(lifetime, &attrs[..3]);
 }
 
 /// Record a model switch, off the session that leaves.
@@ -225,14 +243,14 @@ pub fn record_switch(
     );
 }
 
-/// Record one stored message, by its kind and the seats at its two ends.
-pub fn record_message(kind: &str, from_seat: &str, to_seat: &str) {
+/// Record one stored message, by its kind and the actors at its two ends.
+pub fn record_message(kind: &str, from_actor: &str, to_actor: &str) {
     counter("ariadne.messages").add(
         1,
         &[
             kv("kind", kind),
-            kv("from_seat", from_seat),
-            kv("to_seat", to_seat),
+            kv("from_actor", from_actor),
+            kv("to_actor", to_actor),
         ],
     );
 }
@@ -266,6 +284,7 @@ pub async fn record_tokens(store: &Store, session_id: &str, moved: TokenUsage) {
         return;
     };
     let repo = session_repo(store, &session).await;
+    let column = step(store, &session).await;
     let tokens = counter("ariadne.tokens");
     for (kind, delta) in deltas {
         if delta > 0 {
@@ -276,6 +295,7 @@ pub async fn record_tokens(store: &Store, session_id: &str, moved: TokenUsage) {
                     kv("model", session.model.clone()),
                     kv("seat", seat(&session)),
                     kv("repo", repo.clone()),
+                    kv("step", column.clone()),
                 ],
             );
         }
@@ -309,15 +329,37 @@ pub async fn record_task_transition(store: &Store, task: &Task, transition: &Tas
         return;
     }
     let step = task.step.clone().unwrap_or_else(|| NONE.into());
-    let model = match &task.step {
-        Some(step) => store
-            .list_task_agents(&task.id)
-            .await
-            .ok()
-            .and_then(|agents| agents.into_iter().find(|agent| agent.step == *step))
-            .map(|agent| agent.model),
-        None => None,
-    };
+    let agents = store.list_task_agents(&task.id).await.unwrap_or_default();
+    // The model credited to the task is the agent of its coding column, the
+    // first with `gate: committed`, so a task that finishes further on still
+    // credits the model that wrote the change. A workflow with no such
+    // column (030) falls back to the agent of the task's last column.
+    let committed = store
+        .goal_steps(&task.goal_id)
+        .await
+        .ok()
+        .and_then(|steps| {
+            steps.into_iter().find(|s| {
+                s.gate.as_deref() == Some(ariadne_core::workflow::StepGate::Committed.as_str())
+            })
+        });
+    // A task that never reached a column names no model, whatever the
+    // workflow's committed-gate column is staffed with.
+    let model = task.step.as_ref().and_then(|last| {
+        committed
+            .and_then(|committed| {
+                agents
+                    .iter()
+                    .find(|agent| agent.step == committed.id)
+                    .map(|agent| agent.model.clone())
+            })
+            .or_else(|| {
+                agents
+                    .iter()
+                    .find(|agent| agent.step == *last)
+                    .map(|agent| agent.model.clone())
+            })
+    });
     let workflow = store
         .get_goal(&task.goal_id)
         .await
@@ -390,8 +432,8 @@ fn watching_since() -> &'static DateTime<Utc> {
 
 /// Record a raise and a clear of a session's attention flag, from the change
 /// hook: the store sends a session's row after every write of its flag.
-pub fn record_session_update(session: &AgentSession) {
-    record_run_end(session);
+pub async fn record_session_update(store: &Store, session: &AgentSession) {
+    record_run_end(store, session).await;
     let now = Utc::now();
     let flag = session
         .attention_reason
@@ -525,6 +567,7 @@ pub async fn record_agent_activity(
     let attrs = [
         kv("seat", seat(&session)),
         kv("model", session.model.clone()),
+        kv("step", step(store, &session).await),
     ];
     if kind == "stop" {
         counter("ariadne.turns").add(1, &attrs);
@@ -657,16 +700,23 @@ async fn read_live(store: &Store, gauge: Live) -> ariadne_store::Result<Vec<Obse
                 .filter(|g| !matches!(g.status(), GoalStatus::Completed | GoalStatus::Cancelled))
                 .map(|g| vec![kv("status", g.status.clone())]),
         ),
-        Live::Sessions => tally(
-            store
+        Live::Sessions => {
+            let sessions = store
                 .list_sessions(SessionFilter {
                     live_only: true,
                     ..SessionFilter::default()
                 })
-                .await?
-                .iter()
-                .map(|s| vec![kv("status", s.status.clone()), kv("seat", seat(s))]),
-        ),
+                .await?;
+            let mut keys = Vec::with_capacity(sessions.len());
+            for session in &sessions {
+                keys.push(vec![
+                    kv("status", session.status.clone()),
+                    kv("seat", seat(session)),
+                    kv("step", step(store, session).await),
+                ]);
+            }
+            tally(keys)
+        }
         Live::Attention => tally(
             store
                 .list_sessions(SessionFilter {

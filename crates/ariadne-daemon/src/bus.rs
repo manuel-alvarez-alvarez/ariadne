@@ -279,7 +279,7 @@ async fn pump(
 /// the event and nothing else.
 async fn publish(store: &Store, change: Change, bus: &EventBus) {
     if let Change::SessionUpdated(session) = &change {
-        crate::metrics::record_session_update(session);
+        crate::metrics::record_session_update(store, session).await;
     }
     if let Change::TaskUpdated {
         task,

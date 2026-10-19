@@ -30,16 +30,16 @@ So `ariadne.tasks.ended` is `ariadne_tasks_ended_total`, and
 
 | Metric | Type | Labels | What it counts |
 | --- | --- | --- | --- |
-| `ariadne_tasks_ended_total` | counter | `status`, `step`, `landed`, `workflow`, `repo`, `model` | tasks that finished, were cancelled or failed |
+| `ariadne_tasks_ended_total` | counter | `status`, `step`, `landed`, `workflow`, `repo`, `model` | tasks that finished, were cancelled or failed; `model` credits the agent of the coding column (`gate: committed`), or of the last column |
 | `ariadne_task_lead_time_seconds` | histogram | `status`, `step`, `workflow`, `repo` | from a task's creation to its ending |
 | `ariadne_task_status_time_seconds` | histogram | `status` | the time a task spent in the status it left |
 | `ariadne_goals_ended_total` | counter | `status`, `workflow`, `repo` | goals completed or cancelled |
 | `ariadne_goal_lead_time_seconds` | histogram | `status`, `workflow` | from a goal's creation to its ending |
-| `ariadne_sessions_ended_total` | counter | `status`, `seat`, `model`, `attention_reason` | agent runs that ended |
-| `ariadne_session_lifetime_seconds` | histogram | `seat`, `model` | how long a run lived |
-| `ariadne_tokens_total` | counter | `kind`, `model`, `seat`, `repo` | tokens spent: `input`, `cached_input` (part of `input`) and `output` |
+| `ariadne_sessions_ended_total` | counter | `status`, `seat`, `model`, `step`, `attention_reason` | agent runs that ended |
+| `ariadne_session_lifetime_seconds` | histogram | `seat`, `model`, `step` | how long a run lived |
+| `ariadne_tokens_total` | counter | `kind`, `model`, `seat`, `repo`, `step` | tokens spent: `input`, `cached_input` (part of `input`) and `output` |
 | `ariadne_switches_total` | counter | `reason`, `automatic`, `same_agent`, `from_model`, `to_model` | model switches |
-| `ariadne_messages_total` | counter | `kind`, `from_seat`, `to_seat` | agent messages |
+| `ariadne_messages_total` | counter | `kind`, `from_actor`, `to_actor` | agent messages |
 | `ariadne_permissions_total` | counter | `decided_by`, `answer`, `tool_name` | permission answers |
 | `ariadne_permission_wait_seconds` | histogram | `decided_by` | how long an agent waited for an answer |
 | `ariadne_attention_raised_total` | counter | `reason` | attention flags raised |
@@ -55,7 +55,7 @@ ends.
 | --- | --- | --- |
 | `ariadne_tasks_active` | `status` | unfinished tasks |
 | `ariadne_goals_active` | `status` | unfinished goals |
-| `ariadne_sessions_live` | `status`, `seat` | sessions starting, running or idle |
+| `ariadne_sessions_live` | `status`, `seat`, `step` | sessions starting, running or idle |
 | `ariadne_attention_pending` | `reason` | flags up now |
 
 These are read off the database each time the metrics are collected, so a
@@ -82,8 +82,8 @@ change shows in the next read.
 
 | Metric | Type | Labels | What it counts |
 | --- | --- | --- | --- |
-| `ariadne_turns_total` | counter | `seat`, `model` | agent turns |
-| `ariadne_turn_duration_seconds` | histogram | `seat`, `model` | from a prompt to its stop |
+| `ariadne_turns_total` | counter | `seat`, `model`, `step` | agent turns |
+| `ariadne_turn_duration_seconds` | histogram | `seat`, `model`, `step` | from a prompt to its stop |
 | `ariadne_tool_calls_total` | counter | `tool_name`, `model` | tool calls |
 | `ariadne_ai_permissions_decisions_total` | counter | `verdict` | answers of the AI permission model |
 | `ariadne_ai_permissions_latency_seconds` | histogram | | how long the model took |

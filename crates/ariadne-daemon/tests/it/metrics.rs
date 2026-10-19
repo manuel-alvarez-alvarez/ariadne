@@ -46,12 +46,13 @@ fn usage(source: &str, input: u64, cached: u64, output: u64) -> serde_json::Valu
 }
 
 /// The labels of the develop agent's tokens of `kind`.
-fn tokens<'a>(kind: &'a str, repo: &'a str) -> [(&'a str, &'a str); 4] {
+fn tokens<'a>(kind: &'a str, repo: &'a str) -> [(&'a str, &'a str); 5] {
     [
         ("kind", kind),
         ("model", "stub:test-model"),
         ("seat", "agent"),
         ("repo", repo),
+        ("step", "develop"),
     ]
 }
 
@@ -202,6 +203,40 @@ async fn a_task_cancelled_before_its_first_column_names_no_column() {
     .await;
 }
 
+/// A finished task's ending names the model of its committed-gate column —
+/// the one that wrote the change — even where it finishes on a later one on
+/// another model.
+#[tokio::test]
+async fn a_finished_task_names_the_model_of_its_committed_gate_column() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    h.move_agent(&cast.agent("merge").id, "stub:sonnet").await;
+    h.advance_to(&cast.task, "merge").await;
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::Finished,
+            Actor::Daemon,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
+    eventually(TIMEOUT, "the task's ending", || async {
+        h.metric(
+            "ariadne.tasks.ended",
+            &[
+                ("status", "finished"),
+                ("step", "merge"),
+                ("model", "stub:test-model"),
+            ],
+        )
+        .await
+            == 1.0
+    })
+    .await;
+}
+
 /// Cancelling a goal counts one ending and one lead time; a second cancel is
 /// refused and counts nothing.
 #[tokio::test]
@@ -347,11 +382,12 @@ async fn a_run_counts_one_ending_however_often_it_is_reported() {
         ("status", "exited"),
         ("seat", "agent"),
         ("model", "stub:test-model"),
+        ("step", "develop"),
         ("attention_reason", "none"),
     ];
     assert_eq!(h.metric("ariadne.sessions.ended", &ended).await, 1.0);
     assert_eq!(
-        h.metric("ariadne.session.lifetime_count", &ended[1..3])
+        h.metric("ariadne.session.lifetime_count", &ended[1..4])
             .await,
         2.0,
         "one lifetime for each launch"
@@ -408,7 +444,11 @@ async fn a_raised_and_cleared_flag_counts_the_raise_the_clear_and_the_wait() {
 async fn the_live_state_gauges_read_the_store_on_collection() {
     let h = harness().await;
     let (cast, session) = running_agent(&h).await;
-    let running = [("status", "running"), ("seat", "agent")];
+    let running = [
+        ("status", "running"),
+        ("seat", "agent"),
+        ("step", "develop"),
+    ];
     assert_eq!(
         h.metric("ariadne.tasks.active", &[("status", "pending")])
             .await,
@@ -448,6 +488,23 @@ async fn the_live_state_gauges_read_the_store_on_collection() {
     );
     assert!(h.metric("process.memory.usage", &[]).await > 0.0);
     assert!(h.metric("process.cpu.time", &[]).await > 0.0);
+}
+
+/// A session on no column — the orchestrator's — carries no step.
+#[tokio::test]
+async fn a_session_on_no_column_carries_no_step() {
+    let h = harness().await;
+    let goal = h.planning_goal().await;
+    let orchestrator = h.orchestrator_session(&goal).await;
+    h.set_status(&orchestrator, SessionStatus::Running).await;
+    assert_eq!(
+        h.metric(
+            "ariadne.sessions.live",
+            &[("seat", "orchestrator"), ("step", "none")],
+        )
+        .await,
+        1.0
+    );
 }
 
 /// The bucket bounds of one histogram series, as exported.
@@ -525,9 +582,9 @@ async fn a_scheduler_pass_is_timed() {
     .await;
 }
 
-/// A message is counted by its kind and the seats at its two ends.
+/// A message is counted by its kind and the actors at its two ends.
 #[tokio::test]
-async fn a_message_is_counted_by_its_seats() {
+async fn a_message_is_counted_by_its_actors() {
     let h = harness().await;
     let cast = h.cast().await;
     let (status, _) = h
@@ -542,8 +599,8 @@ async fn a_message_is_counted_by_its_seats() {
             "ariadne.messages",
             &[
                 ("kind", "message"),
-                ("from_seat", "user"),
-                ("to_seat", "orchestrator"),
+                ("from_actor", "user"),
+                ("to_actor", "orchestrator"),
             ],
         )
         .await,
@@ -703,7 +760,11 @@ async fn an_agent_run_counts_its_launch_turns_tools_and_permission() {
         ))
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let agent = [("seat", "agent"), ("model", session.model.as_str())];
+    let agent = [
+        ("seat", "agent"),
+        ("model", session.model.as_str()),
+        ("step", "develop"),
+    ];
     eventually(TIMEOUT, "the turn and the answer", || async {
         h.metric("ariadne.turns", &agent).await >= 1.0
             && h.metric(
