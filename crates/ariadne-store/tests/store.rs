@@ -4053,6 +4053,54 @@ async fn a_skill_a_goals_snapshot_still_names_cannot_be_deleted() {
     );
 }
 
+/// A skill a goal's snapshot names, and an agent of that goal still loads,
+/// is freed the moment the goal ends: nothing more will ever staff from a
+/// terminal goal's snapshot, so the references that blocked the delete while
+/// it was running stop counting once it is `completed` or `cancelled`.
+#[tokio::test]
+async fn a_skill_named_only_by_a_terminal_goals_snapshot_and_agent_can_be_deleted() {
+    let (store, _dir) = test_store().await;
+    let (goal, repo) = seed_goal(&store).await;
+    store
+        .create_skill(NewSkill {
+            name: "api-design".into(),
+            document: "---\nname: api-design\ndescription: shape an API\n---\n".into(),
+        })
+        .await
+        .unwrap();
+    store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Shape it".into(),
+            description: "do things".into(),
+            agents: vec![NewTaskAgent::new("develop", ["api-design"], default_pin())],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+
+    let refused = store.delete_skill("api-design").await;
+    assert!(
+        matches!(refused, Err(StoreError::Conflict(_))),
+        "a nonterminal goal's agent still blocks the delete: {refused:?}"
+    );
+
+    store
+        .end_goal(&goal.id, GoalStatus::Completed)
+        .await
+        .unwrap();
+
+    store
+        .delete_skill("api-design")
+        .await
+        .expect("a skill named only by a terminal goal's snapshot and agent is free to delete");
+    assert!(matches!(
+        store.get_skill("api-design").await,
+        Err(StoreError::NotFound { .. })
+    ));
+}
+
 /// A workflow save checks a skill it names, and a skill deletion checks the
 /// same thing about every workflow, on the store's one writer: concurrent
 /// calls serialize through that one connection rather than each reading the
@@ -6099,6 +6147,113 @@ async fn workflow_snapshots_keep_their_columns_and_references_prevent_deletion()
         store.agent_skills(&agent.id).await.unwrap()[0].name,
         "pr-babysit"
     );
+}
+
+/// A workflow a goal names is freed for deletion once that goal ends: a
+/// repository's default keeps blocking regardless, but a goal's reference
+/// stops counting once nothing more will ever staff from it.
+#[tokio::test]
+async fn a_workflow_named_only_by_a_terminal_goal_can_be_deleted() {
+    let (store, _dir) = test_store().await;
+    store
+        .create_workflow(NewWorkflow {
+            name: "custom".into(),
+            document: "workflow custom\n build[Build]\n skills: pr-babysit\n".into(),
+        })
+        .await
+        .unwrap();
+    let repo = seed_repository(&store).await;
+    let goal = store
+        .create_goal(NewGoal {
+            workflow: Some("custom".into()),
+            title: "Use it then stop".into(),
+            description: "desc".into(),
+            issue_url: None,
+            repository_ids: vec![repo.id.clone()],
+            pin: default_pin(),
+        })
+        .await
+        .unwrap();
+
+    let refused = store.delete_workflow("custom").await;
+    assert!(
+        matches!(refused, Err(StoreError::WorkflowInUse(_))),
+        "a nonterminal goal still blocks the delete: {refused:?}"
+    );
+
+    store
+        .end_goal(&goal.id, GoalStatus::Cancelled)
+        .await
+        .unwrap();
+
+    store
+        .delete_workflow("custom")
+        .await
+        .expect("a workflow named only by a terminal goal is free to delete");
+    assert!(matches!(
+        store.get_workflow("custom").await,
+        Err(StoreError::NotFound { .. })
+    ));
+}
+
+/// A workflow's usage check and its delete run in the one writer
+/// transaction a goal creation also reads and writes on: of the two issued
+/// together for the same name, whichever reaches that one connection first
+/// runs its whole transaction to completion before the other is even let
+/// in, so exactly one of the two wins outright and the other sees its
+/// result rather than the state from before it. A goal can never be
+/// created naming a workflow a concurrent deletion already removed, and a
+/// deletion can never remove a workflow a concurrent, nonterminal goal
+/// creation already named — the two states this match has no arm for, so
+/// it fails on either rather than silently passing through them.
+///
+/// Neither call ever waits on a lock held by anything outside the store: both
+/// read and write the one writer-pool connection (`max_connections(1)`), so
+/// there is nothing to time or poll for and nothing to hold open from the
+/// test — the loser is simply not let onto that connection until the
+/// winner's whole transaction has committed, which `tokio::join!` alone
+/// already guarantees, deterministically and without a wall clock.
+#[tokio::test]
+async fn concurrent_goal_creation_never_outruns_a_workflow_deletion() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    store
+        .create_workflow(NewWorkflow {
+            name: "custom-flow".into(),
+            document:
+                "workflow custom-flow\n  build[Build]\n    Do the work.\n    skills: pr-babysit\n"
+                    .into(),
+        })
+        .await
+        .unwrap();
+
+    let delete = store.delete_workflow("custom-flow");
+    let create = store.create_goal(NewGoal {
+        workflow: Some("custom-flow".into()),
+        issue_url: None,
+        title: "Test goal".into(),
+        description: "desc".into(),
+        repository_ids: vec![repo.id.clone()],
+        pin: default_pin(),
+    });
+    match tokio::join!(delete, create) {
+        (Ok(()), Err(_)) => {
+            // The delete won: nothing is left for the goal to have named.
+            assert!(store.get_workflow("custom-flow").await.is_err());
+        }
+        (Err(_), Ok(goal)) => {
+            // The goal won: its own reference must be what refused the delete.
+            assert_eq!(goal.workflow, "custom-flow");
+            assert!(
+                store.get_workflow("custom-flow").await.is_ok(),
+                "a goal naming the workflow means the deletion must have been refused"
+            );
+        }
+        other => panic!(
+            "exactly one of the delete or the create must win outright, \
+             never both succeeding or both failing: {other:?}"
+        ),
+    }
 }
 
 /// A second connection to the database file a store holds open, for the

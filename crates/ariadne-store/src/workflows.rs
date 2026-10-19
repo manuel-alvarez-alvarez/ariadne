@@ -7,14 +7,16 @@
 //! stored with a `NULL` document while it runs on the text Ariadne ships, and
 //! a reset is a `NULL` rather than a copy of the default.
 //!
-//! Goals snapshot their workflow columns. Goals and repository defaults keep
-//! a reference to the catalog name, so a workflow in use cannot be deleted.
+//! Goals snapshot their workflow columns. A repository default keeps a
+//! reference to the catalog name that blocks deletion outright; a goal's
+//! reference blocks it only while the goal has not yet ended, so a workflow
+//! named by nothing but terminal goals is free to delete.
 
 use ariadne_core::workflow::{self, WorkflowParseError};
 
 use crate::defaults::{BUILTIN_WORKFLOWS, ORCHESTRATION_SKILL, PR_REVIEWER_SKILL};
 use crate::query::Filtered;
-use crate::{Change, Result, Store, StoreError, Workflow, now};
+use crate::{Change, Result, Store, StoreError, Workflow, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewWorkflow {
@@ -148,10 +150,36 @@ impl Store {
 
     /// Delete a workflow of the user's own; refused for a built-in, which is
     /// reset rather than removed.
+    ///
+    /// A repository naming it as its default blocks the delete outright. A
+    /// goal naming it blocks the delete only while that goal is not yet
+    /// terminal (`completed` or `cancelled`): once every goal that named it
+    /// has ended, the workflow is unused and free to go.
+    ///
+    /// The check and the delete run on the writer's own connection, inside
+    /// the one transaction that commits them: a read on the separate read
+    /// pool could find the workflow unused a moment before a concurrent
+    /// goal creation — itself read and written on the writer (`create_goal`)
+    /// — commits a fresh, nonterminal reference to it, which the delete
+    /// would then remove out from under.
     pub async fn delete_workflow(&self, name: &str) -> Result<()> {
-        let workflow = self.get_workflow(name).await?;
-        let used: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM goals WHERE workflow = ?1 UNION ALL SELECT 1 FROM repositories WHERE default_workflow = ?1)")
-            .bind(name).fetch_one(self.r()).await?;
+        let mut tx = self.w().begin().await?;
+        let workflow: Workflow = sqlx::query_as("SELECT * FROM workflows WHERE name = ?")
+            .bind(name)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| not_found("workflow", name))?;
+        let used: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                 SELECT 1 FROM goals
+                 WHERE workflow = ?1 AND status NOT IN ('completed', 'cancelled')
+                 UNION ALL
+                 SELECT 1 FROM repositories WHERE default_workflow = ?1
+             )",
+        )
+        .bind(name)
+        .fetch_one(&mut *tx)
+        .await?;
         if used {
             return Err(StoreError::WorkflowInUse(name.into()));
         }
@@ -162,8 +190,9 @@ impl Store {
         }
         sqlx::query("DELETE FROM workflows WHERE name = ?")
             .bind(name)
-            .execute(self.w())
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         self.publish(Change::WorkflowDeleted(name.to_string()));
         Ok(())
     }

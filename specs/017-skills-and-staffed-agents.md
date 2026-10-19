@@ -120,8 +120,14 @@ written into the system prompt (006), and the lifecycle the seats sit in
    goes on the open after the last task naming it is deleted.
 8. A skill Ariadne ships is reset, never deleted. A skill of the user's own is
    deleted, never reset: nothing ships under its name to go back to.
-9. A skill still loaded by a staffed agent cannot be deleted, and an agent
-   cannot be staffed on a skill nothing answers to.
+9. A skill a staffed agent still loads, or a goal's own snapshot still names
+   in a column, cannot be deleted while the goal either belongs to is not
+   yet `completed` or `cancelled`; a workflow's own column names a skill
+   unconditionally, with no goal to go terminal, and keeps blocking the
+   delete regardless. Once a goal ends, nothing more will ever staff a task
+   off its agents or its snapshot, so a skill only such a goal still names
+   is free to delete. An agent cannot be staffed on a skill nothing answers
+   to.
 10. A skill has a seat, read off its name and stored in no column
     (`Skill::seat`): `orchestration` is the orchestrator's, `pr-reviewer` is
     loaded by the daemon itself for a review session, and every other skill
@@ -279,6 +285,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`store.rs::a_skill_an_agent_still_loads_cannot_be_deleted`), and an agent
   cannot be staffed on a skill nothing answers to
   (`store.rs::an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to`).
+- A skill a nonterminal goal's agent or snapshot still names stays blocked,
+  and the same skill is freed for deletion once that goal ends
+  (`store.rs::a_skill_named_only_by_a_terminal_goals_snapshot_and_agent_can_be_deleted`,
+  `tests/it/skill_documents.rs::a_skill_is_freed_for_deletion_once_the_goal_loading_it_ends`).
 - A task agent cannot be staffed on the orchestrator's skill or the review
   session's, at creation or by a later edit, and can load `pr-babysit`
   (`store.rs::a_task_agent_cannot_be_staffed_on_the_orchestrators_skill`,

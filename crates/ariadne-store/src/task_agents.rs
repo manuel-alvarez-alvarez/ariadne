@@ -47,9 +47,11 @@ impl Store {
     /// Write a task's agents, in the order they were given, inside the
     /// transaction that creates or re-staffs the task.
     ///
-    /// The skills are written by name and the schema holds them to skills that
-    /// exist, so an agent cannot be staffed on a skill nothing ships or the
-    /// user never wrote.
+    /// The skills are written by name, checked by hand against the catalog
+    /// rather than by a foreign key the schema no longer carries (a skill
+    /// deleted after its goal ended must stay nameable by the row that
+    /// already staffed it), so an agent still cannot be staffed on a skill
+    /// nothing ships or the user never wrote.
     pub(crate) async fn staff_agents_in_tx(
         tx: &mut Transaction<'_, Sqlite>,
         task_id: &str,
@@ -233,6 +235,18 @@ impl Store {
                 }
                 SkillSeat::Task => {}
             }
+            // `skill_name` carries no foreign key (a terminal goal's agent
+            // may keep naming a skill already deleted), so a fresh staffing
+            // checks the catalog itself rather than letting the database
+            // enforce it.
+            let exists: Option<String> =
+                sqlx::query_scalar("SELECT name FROM skills WHERE name = ?")
+                    .bind(name)
+                    .fetch_optional(&mut **tx)
+                    .await?;
+            if exists.is_none() {
+                return Err(StoreError::Conflict(format!("no skill is called {name}")));
+            }
             sqlx::query(
                 "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal) VALUES (?, ?, ?)",
             )
@@ -240,8 +254,7 @@ impl Store {
             .bind(name)
             .bind(ordinal as i64)
             .execute(&mut **tx)
-            .await
-            .map_err(|e| unknown_skill(e, name))?;
+            .await?;
         }
         Ok(())
     }
@@ -298,16 +311,5 @@ impl Store {
         Self::write_agent_skills_in_tx(&mut tx, agent_id, skills).await?;
         tx.commit().await?;
         Ok(())
-    }
-}
-
-/// The `REFERENCES skills (name)` violation, said by the name that was asked
-/// for rather than as a foreign key.
-fn unknown_skill(e: sqlx::Error, name: &str) -> StoreError {
-    match e {
-        sqlx::Error::Database(ref db) if db.is_foreign_key_violation() => {
-            StoreError::Conflict(format!("no skill is called {name}"))
-        }
-        other => StoreError::Db(other),
     }
 }

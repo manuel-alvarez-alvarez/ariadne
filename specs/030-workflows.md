@@ -153,7 +153,11 @@ every other kebab-case word in it; the wire spells the same gate
    - `POST /v1/workflows/{name}/reset` — put a built-in back on its shipped
      text; 409 on a workflow of the user's own.
    - `DELETE /v1/workflows/{name}` — 204, or 409 on a built-in, or 409
-     `workflow_in_use` on a workflow a goal or a repository names.
+     `workflow_in_use` on a workflow a repository names, or one a goal names
+     while that goal is not yet `completed` or `cancelled`. A workflow named
+     only by a terminal goal is free to delete: nothing more will ever staff
+     a task off that goal's own snapshot, so the name it kept no longer
+     matters.
    - `POST /v1/workflows/parse` — parse a document without saving it
      anywhere; 200 with its name and steps, or 400 `workflow_invalid` with
      `details.line` and the message.
@@ -413,6 +417,10 @@ every other kebab-case word in it; the wire spells the same gate
 - Repository defaults, immutable snapshots, deletion protection and
   `pr-babysit` work together
   (`store.rs::workflow_snapshots_keep_their_columns_and_references_prevent_deletion`).
+- A workflow a repository names stays blocked regardless of status; a
+  workflow only a goal names is freed for deletion the moment that goal ends
+  (`store.rs::a_workflow_named_only_by_a_terminal_goal_can_be_deleted`,
+  `tests/it/workflows.rs::a_workflow_is_freed_for_deletion_once_the_goal_naming_it_ends`).
 - A session on a staffed agent reports that agent's column as its `step`,
   an orchestrator session reports none, and the listing's own JSON carries
   no such field

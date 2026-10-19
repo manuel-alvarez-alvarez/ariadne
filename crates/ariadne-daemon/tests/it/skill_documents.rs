@@ -12,12 +12,12 @@ use crate::common;
 use axum::http::StatusCode;
 
 use ariadne_api::skills::{SkillDto, SkillSeat};
-use ariadne_core::{Seat, TaskStatus};
+use ariadne_core::{GoalStatus, Seat, TaskStatus};
 use ariadne_store::defaults::{
     BUILTIN_SKILLS, ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, default_skill_document,
     default_system_prompt, skill_text,
 };
-use ariadne_store::{AgentSession, Task};
+use ariadne_store::{AgentSession, NewSkill, NewTask, NewTaskAgent, Task};
 
 use common::{Harness, delete, get, harness, post, post_json, put_json};
 
@@ -116,6 +116,49 @@ async fn a_skill_of_your_own_is_deleted_rather_than_reset() {
 
     let (status, _) = h.send(post("/v1/skills/api-design/document/reset")).await;
     assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _) = h.send(delete("/v1/skills/api-design")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = h.send(get("/v1/skills/api-design")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// A skill a nonterminal goal's agent still loads is a 409; the same delete
+/// succeeds once that goal ends, since nothing more will ever staff from it.
+#[tokio::test]
+async fn a_skill_is_freed_for_deletion_once_the_goal_loading_it_ends() {
+    let h = harness().await;
+    h.store
+        .create_skill(NewSkill {
+            name: "api-design".into(),
+            document: "---\nname: api-design\ndescription: mine\n---\n".into(),
+        })
+        .await
+        .unwrap();
+    let (goal, repo) = h.goal().await;
+    h.store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Shape it".into(),
+            description: "do things".into(),
+            agents: vec![NewTaskAgent::new(
+                "develop",
+                ["api-design"],
+                common::test_pin(),
+            )],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+
+    let (status, _) = h.send(delete("/v1/skills/api-design")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    h.store
+        .end_goal(&goal.id, GoalStatus::Completed)
+        .await
+        .unwrap();
+
     let (status, _) = h.send(delete("/v1/skills/api-design")).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (status, _) = h.send(get("/v1/skills/api-design")).await;

@@ -288,16 +288,20 @@ impl Store {
         Ok(skill)
     }
 
-    /// Delete a skill; refused while any staffed agent still loads it, any
-    /// workflow's columns still name it, or any goal's snapshot of its
-    /// columns still does, and refused for a built-in, which is reset rather
-    /// than removed.
+    /// Delete a skill; refused while any staffed agent of a nonterminal goal
+    /// still loads it, any goal's snapshot of its columns still names it
+    /// while that goal has not yet ended, any workflow's columns still name
+    /// it, and refused for a built-in, which is reset rather than removed.
     ///
     /// A workflow document is checked for a skill at save time, but that
     /// proves nothing of a skill deleted afterward: a goal staffs a task
     /// from its own snapshot of the columns it started with, not the
     /// catalog's document, so even editing every workflow clean would not
-    /// reach a goal already running on the deleted skill.
+    /// reach a goal already running on the deleted skill. That snapshot, and
+    /// the agents staffed from it, stop mattering once the goal they belong
+    /// to is `completed` or `cancelled`: nothing more will staff from it, so
+    /// a skill named only by terminal goals is free to delete. A workflow
+    /// column names a skill unconditionally, with no goal to go terminal.
     pub async fn delete_skill(&self, name: &str) -> Result<()> {
         let skill = self.get_skill(name).await?;
         if skill.is_builtin() {
@@ -310,11 +314,16 @@ impl Store {
         // connection, and the single writer serializes the two rather than
         // letting a save between this check and this delete go unseen.
         let mut tx = self.w().begin().await?;
-        let agents: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM task_agent_skills WHERE skill_name = ?")
-                .bind(name)
-                .fetch_one(&mut *tx)
-                .await?;
+        let agents: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_agent_skills tas
+             JOIN task_agents ta ON ta.id = tas.agent_id
+             JOIN tasks t ON t.id = ta.task_id
+             JOIN goals g ON g.id = t.goal_id
+             WHERE tas.skill_name = ? AND g.status NOT IN ('completed', 'cancelled')",
+        )
+        .bind(name)
+        .fetch_one(&mut *tx)
+        .await?;
         if agents > 0 {
             let plural = if agents == 1 { "agent" } else { "agents" };
             return Err(StoreError::Conflict(format!(
@@ -322,8 +331,10 @@ impl Store {
             )));
         }
         let goals: i64 = sqlx::query_scalar(
-            "SELECT COUNT(DISTINCT goal_id) FROM goal_steps
-             WHERE EXISTS (SELECT 1 FROM json_each(skills) WHERE value = ?)",
+            "SELECT COUNT(DISTINCT gs.goal_id) FROM goal_steps gs
+             JOIN goals g ON g.id = gs.goal_id
+             WHERE EXISTS (SELECT 1 FROM json_each(gs.skills) WHERE value = ?)
+             AND g.status NOT IN ('completed', 'cancelled')",
         )
         .bind(name)
         .fetch_one(&mut *tx)

@@ -6,10 +6,37 @@ use axum::http::StatusCode;
 use ariadne_api::stream::DomainEvent;
 use ariadne_api::workflows::{ParsedWorkflowDto, WorkflowDto};
 
+use ariadne_api::goals::GoalDto;
+use ariadne_api::repositories::RepositoryDto;
+
 use crate::common;
-use common::{delete, get, harness, next_event, post_json, put_json};
+use common::{Harness, delete, get, harness, next_event, post, post_json, put_json};
 
 const DOC: &str = "workflow api-design\n  build[Build]\n    Do the work.\n    skills: coding\n";
+
+/// A goal in `planning`, on a workflow named by the caller, on a freshly
+/// registered repository.
+async fn goal_on(h: &Harness, workflow: &str) -> GoalDto {
+    let repo = h.git_repo("goal-on-workflow");
+    let registered: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string(), "base_branch": "main"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    h.json(
+        post_json(
+            "/v1/goals",
+            serde_json::json!({"title": "Ship it", "repository_ids": [registered.id],
+                               "model": "stub:test-model", "workflow": workflow}),
+        ),
+        StatusCode::CREATED,
+    )
+    .await
+}
 
 #[tokio::test]
 async fn every_route_round_trips_and_emits_one_fat_event_per_write() {
@@ -112,6 +139,35 @@ async fn a_taken_name_is_a_409_and_a_built_in_refuses_delete_and_a_user_one_refu
         ))
         .await;
     assert_eq!(status, StatusCode::CONFLICT);
+}
+
+/// A goal naming a workflow blocks its delete with `workflow_in_use` while
+/// the goal is running, and stops blocking it once the goal ends: nothing
+/// more will ever staff from it.
+#[tokio::test]
+async fn a_workflow_is_freed_for_deletion_once_the_goal_naming_it_ends() {
+    let h = harness().await;
+    h.send(post_json(
+        "/v1/workflows",
+        serde_json::json!({"name": "api-design", "document": DOC}),
+    ))
+    .await;
+    let goal = goal_on(&h, "api-design").await;
+
+    let err = h
+        .error(delete("/v1/workflows/api-design"), StatusCode::CONFLICT)
+        .await;
+    assert_eq!(err.error.code, "workflow_in_use");
+
+    let _goal: GoalDto = h
+        .json(
+            post(&format!("/v1/goals/{}/cancel", goal.id)),
+            StatusCode::OK,
+        )
+        .await;
+
+    let (status, _) = h.send(delete("/v1/workflows/api-design")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
