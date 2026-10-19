@@ -6,6 +6,10 @@ areas: [store, daemon, api, cli, docs, ui]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/dashboards.rs
+  - ui/src/routes/stats.test.tsx
+  - ui/src/features/dashboard/new-dashboard-dialog.test.tsx
+  - ui/src/features/dashboard/rename-dashboard-dialog.test.tsx
+  - ui/src/features/dashboard/document.test.ts
 ---
 
 # Dashboards
@@ -35,6 +39,17 @@ Dashboard documents are editable Perses resources. The desktop renderer is out o
 9. A total over the selected range reads `[$__range] @ end()`, so every step
    of the range query shows the whole range and a series with nothing in
    it drops out instead of showing a count from before the range.
+10. The Stats screen's header offers New dashboard, Rename and Delete beside
+    the picker and Reset. New dashboard asks for a name and a starting
+    point — Empty (a valid, empty Perses dashboard) or Copy of the picked
+    one (its panels, layouts, variables and time settings, under the new
+    name). Rename creates the picked dashboard's document under the new
+    name and then deletes the old one, so a name already taken, or a
+    validation error, leaves the old dashboard untouched. Delete asks for
+    confirmation first. Rename and Delete are out of reach for the
+    built-in dashboard, which rule 3's `DELETE` refuses. Each action
+    leaves the picker on the dashboard it names: the new one after a
+    create or a rename, and a remaining one after a delete.
 
 ## Acceptance criteria
 
@@ -42,6 +57,17 @@ Dashboard documents are editable Perses resources. The desktop renderer is out o
 2. `ui/dashboard/src/shipped-dashboard.test.ts` passes the shipped document
    through the installed Perses layout converter, lays out every panel
    once, and names only declared or built-in variables.
+3. `ui/src/routes/stats.test.tsx` proves New dashboard, Rename and Delete
+   each leave the picker on the right dashboard, and that Rename and
+   Delete are disabled for the built-in dashboard.
+4. `ui/src/features/dashboard/new-dashboard-dialog.test.tsx` and
+   `rename-dashboard-dialog.test.tsx` prove the Empty and Copy starting
+   points, the create-then-delete order a rename sends its two requests
+   in, and that a name conflict or a validation error is shown on the
+   dialog rather than losing what was typed.
+5. `ui/src/features/dashboard/document.test.ts` proves a copy carries its
+   source's panels, layouts, variables and time settings under the new
+   name, without mutating the source.
 
 ## Sources
 

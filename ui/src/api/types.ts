@@ -88,6 +88,7 @@ export type LearnedPermissionDto = Schemas["LearnedPermissionDto"]
 export type UpdateLearnedPermissionRequest = Schemas["UpdateLearnedPermissionRequest"]
 
 export type DashboardDto = Schemas["DashboardDto"]
+export type CreateDashboardRequest = Schemas["CreateDashboardRequest"]
 
 /**
  * Every domain event carried by `GET /v1/events/stream`, as a tagged union.

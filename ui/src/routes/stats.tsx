@@ -4,8 +4,11 @@
  * and the build that feeds `/dashboard/`).
  *
  * The header holds a picker over every dashboard the daemon knows
- * (`GET /v1/dashboards`) and a Reset action, disabled while the picked one is
- * already the shipped document; the iframe fills the rest of the screen.
+ * (`GET /v1/dashboards`), New dashboard (create empty or copy the picked
+ * one), Reset (disabled while the picked one is already the shipped
+ * document), and Rename and Delete — both disabled for the built-in
+ * dashboard, which the daemon refuses to delete (409 `dashboard_builtin`).
+ * The iframe fills the rest of the screen.
  *
  * The iframe is handed `daemon`, `dashboard` and `theme` on its own query
  * string, which is all it reads to open — see `ui/dashboard/src/page.tsx`.
@@ -29,7 +32,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { Undo2Icon } from "lucide-react"
+import { PencilIcon, PlusIcon, Trash2Icon, Undo2Icon } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
@@ -47,7 +50,14 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { dashboardsQueryOptions, useResetDashboard } from "@/features/dashboard/queries"
+import { NewDashboardDialog } from "@/features/dashboard/new-dashboard-dialog"
+import {
+  dashboardsQueryOptions,
+  useDeleteDashboard,
+  useResetDashboard,
+} from "@/features/dashboard/queries"
+import { RenameDashboardDialog } from "@/features/dashboard/rename-dashboard-dialog"
+import { cn } from "@/lib/format"
 import { DASHBOARD_PARAM } from "@/routes/paths"
 import { useBaseUrl } from "@/stores/settings"
 
@@ -64,7 +74,11 @@ export function StatsPage() {
   const theme = resolvedTheme ?? "light"
   const dashboards = useQuery(dashboardsQueryOptions())
   const reset = useResetDashboard()
+  const deleteDashboard = useDeleteDashboard()
   const [confirmReset, setConfirmReset] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [newOpen, setNewOpen] = useState(false)
+  const [renameOpen, setRenameOpen] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
   const selectedName = search.get(DASHBOARD_PARAM) ?? dashboards.data?.[0]?.name
@@ -124,6 +138,10 @@ export function StatsPage() {
                 ))}
               </SelectContent>
             </Select>
+            <Button variant="outline" onClick={() => setNewOpen(true)}>
+              <PlusIcon />
+              New dashboard
+            </Button>
             <Button
               variant="outline"
               disabled={!selected || selected.document_is_default || reset.isPending}
@@ -131,6 +149,23 @@ export function StatsPage() {
             >
               <Undo2Icon />
               Reset
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!selected || selected.builtin}
+              onClick={() => setRenameOpen(true)}
+            >
+              <PencilIcon />
+              Rename
+            </Button>
+            <Button
+              variant="outline"
+              className={cn("text-destructive")}
+              disabled={!selected || selected.builtin}
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2Icon />
+              Delete
             </Button>
           </>
         }
@@ -166,6 +201,41 @@ export function StatsPage() {
           selected && reset.mutate(selected.name, { onSuccess: () => setConfirmReset(false) })
         }
       />
+      <ConfirmDialog
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title={selected ? `Delete ${selected.name}?` : "Delete?"}
+        description="This is permanent. There is no undo."
+        confirmLabel="Delete"
+        destructive
+        pending={deleteDashboard.isPending}
+        error={deleteDashboard.error}
+        onConfirm={() => {
+          if (!selected) return
+          const deletedName = selected.name
+          const remaining = (dashboards.data ?? []).find((one) => one.name !== deletedName)
+          deleteDashboard.mutate(deletedName, {
+            onSuccess: () => {
+              setConfirmDelete(false)
+              if (remaining) select(remaining.name)
+            },
+          })
+        }}
+      />
+      <NewDashboardDialog
+        open={newOpen}
+        onOpenChange={setNewOpen}
+        current={selected}
+        onCreated={(dashboard) => select(dashboard.name)}
+      />
+      {selected ? (
+        <RenameDashboardDialog
+          dashboard={selected}
+          open={renameOpen}
+          onOpenChange={setRenameOpen}
+          onRenamed={(dashboard) => select(dashboard.name)}
+        />
+      ) : null}
     </div>
   )
 }
