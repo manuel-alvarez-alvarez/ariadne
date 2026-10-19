@@ -93,10 +93,12 @@ not accept keeps the code, with a reply that says why. It **resolves no
 thread**: resolving a thread, once its reply satisfies you, is yours to
 do. Before it runs the affected checks, it integrates a moved base branch
 as the repository's history rules require. Where those rules require a
-linear history, it rebases and pushes with `--force-with-lease`; otherwise
-it merges where those rules allow it. It keeps every commit others added,
-never uses an unguarded force push, and never amends a pushed commit outside
-that rebase. It reports the request ready once every required approval and
+linear history, it rebases; otherwise it merges where those rules allow it.
+After either path, it pushes only when the update fast-forwards; otherwise
+the rejected push follows the normal retry flow. It keeps every commit others
+added, never force-pushes any branch or remote (including with
+`--force-with-lease`), and never amends a pushed commit outside that rebase.
+It reports the request ready once every required approval and
 check reads green, and takes the readiness back down the moment a later
 change turns one back. Once you merge the request, the agent brings the base
 branch up to date and completes the column, which finishes the task when

@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-10-15
+updated: 2026-10-19
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -74,10 +74,12 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    the column's skills unless the task names others. For each column it
    takes a model at one of
    the ranks in the column's capability band (030) — a band naming more than
-   one rank lets it pick any rank in it — and it states a reason for each
-   step up. Where a column names no ranks, it takes the lowest rank and
-   effort that finish the work. `local` is staffed only where the user
-   names it.
+   one rank lets it pick any rank in it. It assesses each task's scope and
+   complexity case by case: for routine or uncertain work it chooses the
+   smallest capable model and effort; it chooses a more powerful eligible
+   model only where the task demands justify it, and states why. Where a
+   column names no ranks, it takes the lowest rank and effort that finish the
+   work. `local` is staffed only where the user names it.
    A task's coding and review columns take models of different ACP agents
    (011 rule 12) where an eligible one stands at one of the review column's
    ranks. With none eligible, the review column takes its normal rank-based
@@ -149,8 +151,10 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 - Each ticket carries one objective, the interfaces from other tasks, the
   boundaries and what to report, and no pasted history
   (`defaults.rs::the_orchestration_skill_names_what_a_ticket_carries`).
-- The playbook takes a model at one of each column's ranks, and states a
-  reason for each step up
+- The playbook keeps each choice within its column's ranks, assesses scope
+  and complexity case by case, chooses the smallest capable model and effort
+  for routine or uncertain work, and states why a more powerful eligible
+  model is necessary
   (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`).
 - The playbook gives a task's coding and review columns different ACP
   agents where one is eligible, falls back to the review column's normal

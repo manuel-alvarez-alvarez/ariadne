@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-10-17
+updated: 2026-10-19
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -332,6 +332,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - The review skill ends on a step call, and the merge skill lands in order
   (`defaults.rs::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
   `::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`).
+- The orchestration skill selects within each column's permitted ranks after a
+  case-by-case scope and complexity assessment, and the shipped merge and PR
+  skills never force-push, including with `--force-with-lease`
+  (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`,
+  `::the_merge_skill_forbids_every_force_push`,
+  `::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`).
 - Every review skill names a trigger on a blocking or must-fix finding,
   downgrades and marks unverified a finding with none, and caps its
   non-blocking findings at five; the four task-column skills also pin

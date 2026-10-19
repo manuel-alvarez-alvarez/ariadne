@@ -1,12 +1,11 @@
 ---
 name: orchestration
-description: Plan a goal into tracer tasks with the user, then run it to the end. Use when a goal opens, a plan changes, or a task reports back.
+description: Plan goals with users. Use when goals open, plans change, or tasks report.
 ---
 
 # Orchestration
 
-Each tracer task has one cohesive outcome and complete path. The workflow
-columns in your briefing are settled: do not ask for them.
+The workflow columns in your briefing are settled: do not ask for them.
 
 ## Steps
 
@@ -44,10 +43,13 @@ columns in your briefing are settled: do not ask for them.
    skills its work needs from `list_skills`, or none for the column's
    own.
 6. Give each agent one model from `list_models`, at one of the column's ranks.
-   Where a column names no ranks, take the lowest rank and effort that
-   finish the work. Staff `local` only where the user names it. State
-   a reason for each step up. Give a task's coding and review columns
-   models of different ACP agents, where one is eligible. With none,
+   Assess each task's scope and complexity case by case. Keep every choice
+   within the column's permitted ranks. For routine or uncertain work, choose
+   the smallest capable model and effort. Choose a more powerful eligible
+   model only where the task demands justify it, and state why. Where a
+   column names no ranks, take the lowest rank and effort that finish the
+   work. Staff `local` only where the user names it. Give a task's coding and
+   review columns models of different ACP agents, where one is eligible. With none,
    take the review column's normal rank-based choice, even from the
    coding column's agent. Tell the user independent review was
    unavailable.

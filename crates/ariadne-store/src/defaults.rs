@@ -1301,8 +1301,8 @@ mod tests {
         );
     }
 
-    /// The merge column's skill runs its steps in order — fetch, rebase,
-    /// squash, guard, push, fast-forward, the step call — and
+    /// The merge column's skill runs its steps in order — fetch, rebase on
+    /// the current upstream, squash, guard, push, fast-forward, the step call — and
     /// a human merges every request: no skill names the command that would
     /// let an agent merge one itself, on either forge.
     #[test]
@@ -1313,7 +1313,8 @@ mod tests {
         for step in [
             "`<upstream>` is `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.",
             "Where a remote exists, run `git fetch <remote> <base>`.",
-            "Rebase the task branch onto `<upstream>`.",
+            "Rebase the task branch onto the current `<upstream>`.",
+            "Only after that rebase, squash the branch into one commit.",
             "git reset --soft \"$(git merge-base <upstream> HEAD)\" && git commit",
             "git diff --stat <upstream> HEAD",
             "git push <remote> HEAD:<base>",
@@ -1353,6 +1354,20 @@ mod tests {
                 "the {name} names gh pr merge"
             );
         }
+    }
+
+    /// A force push can replace any branch on any remote. The merge skill
+    /// names both the general prohibition and force-with-lease, which also
+    /// rewrites remote history.
+    #[test]
+    fn the_merge_skill_forbids_every_force_push() {
+        let text = unwrapped(default_skill_document("merge").unwrap());
+        assert!(
+            text.contains(
+                "Never force-push any branch or remote, including with `--force-with-lease`."
+            ),
+            "the merge skill does not forbid every force push"
+        );
     }
 
     /// The `pr` column's agent is fed by the daemon (026, 030), so its skill
@@ -1401,7 +1416,9 @@ mod tests {
             "Group related accepted changes and failed-check fixes in one coherent commit per batch; keep unrelated changes separate.",
             "Run the checks the batch affects, then push once.",
             "Never amend a pushed commit outside this rebase.",
-            "Never force an unguarded push or discard one.",
+            "After either integration, push only a fast-forward update.",
+            "If either update cannot fast-forward, do not push and report the rejection.",
+            "Never force-push any branch or remote, including with `--force-with-lease`.",
             "Call `report_pull_request` only when readiness changes:",
             "`ready: true` with the `head_sha`",
             "`ready: false` when one goes back",
@@ -1856,9 +1873,11 @@ mod tests {
         );
     }
 
-    /// The orchestrator staffs each column on one of the ranks its
-    /// capability band allows, and where a column names none, the lowest
-    /// rank and the lowest effort that finish the work.
+    /// The orchestrator assesses each task's scope and complexity before
+    /// staffing within its column's capability band. Routine or uncertain
+    /// work gets the smallest capable model and effort; a more powerful
+    /// eligible choice must be justified. Where a column names no ranks, it
+    /// gets the lowest rank and effort that finish the work.
     ///
     /// A model description says what a model can do and nothing about what it
     /// costs, so an orchestrator sized on the description alone staffed a
@@ -1872,9 +1891,12 @@ mod tests {
         let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
         for sentence in [
             "Give each agent one model from `list_models`, at one of the column's ranks.",
+            "Assess each task's scope and complexity case by case.",
+            "Keep every choice within the column's permitted ranks.",
+            "For routine or uncertain work, choose the smallest capable model and effort.",
+            "Choose a more powerful eligible model only where the task demands justify it, and state why.",
             "Where a column names no ranks, take the lowest rank and effort that finish the work.",
             "Staff `local` only where the user names it.",
-            "State a reason for each step up.",
         ] {
             assert!(
                 prompt.contains(sentence),

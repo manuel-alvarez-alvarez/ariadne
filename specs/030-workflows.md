@@ -122,8 +122,9 @@ every other kebab-case word in it; the wire spells the same gate
    `develop-review-pr` stages it.
 4. The `merge` skill is shipped alongside the two workflows
    (`crates/ariadne-store/skills/merge/SKILL.md`): fetch the base where a
-   remote exists, rebase the task branch onto the upstream base, squash onto
-   the merge base, check `git diff --stat`, push where a remote exists, then
+   remote exists, rebase the task branch onto the current upstream base before
+   creating its squash commit onto the merge base, check `git diff --stat`,
+   push where a remote exists, then
    fast-forward the base branch in the primary checkout — the `Repo:` path
    of the briefing — and call `complete_step` with the column report and
    the base branch's sha as `merge_commit`. The repository's hooks run the
@@ -131,8 +132,10 @@ every other kebab-case word in it; the wire spells the same gate
    no remote, the agent runs the checks the repository names for a landing. The
    squash goes onto the merge base rather than the base branch's name,
    since the base can move while the push runs; a `git diff --stat` that
-   lists a file the task did not touch, or a fast-forward that fails, says
-   the base moved, and the agent starts again from the fetch. No skill
+   lists a file the task did not touch, a rejected push, or a fast-forward
+   that fails, says the base moved, and the agent starts again from the
+   fetch. It never force-pushes any branch or remote, including with
+   `--force-with-lease`. No skill
    merges a request: a human does. It obeys the STE rules and size caps of
    006 and the shipped-skill tests of `defaults.rs`, the same as every
    other skill in the catalog.
@@ -309,10 +312,11 @@ every other kebab-case word in it; the wire spells the same gate
     it fails to compile or pass; one it does not accept keeps the code,
     with a reason. Repository history rules choose its branch update, done
     before the batch's checks run: where they require linear history it
-    rebases and makes a guarded `--force-with-lease` push, otherwise it
-    uses a merge only where those rules allow one. Before a guarded push
-    it retains commits others added to the remote branch; it never makes
-    an unguarded force push or amends a pushed commit outside that rebase. A rebase can replace commit ids,
+    rebases; otherwise it merges where those rules allow it. After either
+    path, it pushes only when the update fast-forwards; otherwise the rejected
+    push follows the normal retry flow. It never force-pushes any branch or
+    remote, including with `--force-with-lease`, or amends a pushed
+    commit outside that rebase. A rebase can replace commit ids,
     so a reviewer uses incremental scope only while its previous reviewed
     commit remains an ancestor; otherwise it reviews the full current
     diff and does not reuse check evidence that no longer covers it. On

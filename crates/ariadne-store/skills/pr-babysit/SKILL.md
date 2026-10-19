@@ -31,10 +31,10 @@ Then end your turn.
    base and task branch, then integrate before the checks. Where
    merges are allowed, run `git merge --no-edit <remote>/<base>`. A
    linear-history rule requires `git rebase <remote>/<base>`. Run the
-   checks the batch affects, then push once. Push a merge plainly, or a
-   rebase with `git push --force-with-lease`. Keep every commit others
-   added. Never force an
-   unguarded push or discard one. Never amend a pushed commit outside
+   checks the batch affects, then push once. After either integration, push
+   only a fast-forward update. If either update cannot fast-forward, do not
+   push and report the rejection. Keep every commit others added. Never force-push any branch or remote,
+   including with `--force-with-lease`. Never amend a pushed commit outside
    this rebase. A rejected request or a question keeps its step 3
    reply. Reply once to each comment whose accepted change or
    suggestion the batch includes: `Fixed in <sha>: <what changed>.`

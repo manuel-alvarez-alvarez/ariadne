@@ -1,6 +1,6 @@
 ---
 name: merge
-description: Land a reviewed task on the base branch. Rebase, squash, push and fast-forward.
+description: Land a reviewed task. Rebase, squash, push and fast-forward.
 ---
 
 # Merge
@@ -11,9 +11,9 @@ The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
 ## Steps
 
 1. Where a remote exists, run `git fetch <remote> <base>`.
-2. Rebase the task branch onto `<upstream>`. Resolve every conflict
-   yourself.
-3. Squash the branch into one commit. Give it a Conventional Commits subject:
+2. Rebase the task branch onto the current `<upstream>`. Resolve every
+   conflict yourself.
+3. Only after that rebase, squash the branch into one commit. Give it a Conventional Commits subject:
    `git reset --soft "$(git merge-base <upstream> HEAD)" && git commit`.
 4. Run `git diff --stat <upstream> HEAD`. It names only files of the task.
    Done when the list holds no other file.
@@ -38,7 +38,7 @@ The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
   again from step 1.
 - A failed fast-forward means the base moved. Start again from step 1.
 - Never push the task branch by its name.
-- Never force a push to `<base>`.
+- Never force-push any branch or remote, including with `--force-with-lease`.
 
 ## Done
 
