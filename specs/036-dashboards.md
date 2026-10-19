@@ -35,13 +35,20 @@ Dashboard documents are editable Perses resources. The desktop renderer is out o
 9. A total over the selected range reads `[$__range] @ end()`, so every step
    of the range query shows the whole range and a series with nothing in
    it drops out instead of showing a count from before the range.
+10. A legend shows a value where one helps the reader: each pie chart's
+    legend is a table with the last value of its slice; the per-bucket
+    time series (tasks, tokens, turns and attention over time) show the
+    sum of each series; the lead-time trend shows the mean and the max of
+    each series. The daemon-health charts keep a plain list legend, with no
+    values.
 
 ## Acceptance criteria
 
 1. `dashboards.rs` proves CRUD, validation, reset safety and the fat events.
 2. `ui/dashboard/src/shipped-dashboard.test.ts` passes the shipped document
    through the installed Perses layout converter, lays out every panel
-   once, and names only declared or built-in variables.
+   once, names only declared or built-in variables, and proves the legend
+   values of rule 10.
 
 ## Sources
 
