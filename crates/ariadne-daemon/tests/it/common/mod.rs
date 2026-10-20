@@ -354,7 +354,8 @@ impl HarnessBuilder {
             }
         };
         let mut config = Config::load(Some(home)).unwrap();
-        ariadne_daemon::agents::sync_skills(&store, &config.skills_dir)
+        config.native_home = dir.path().join("native-home");
+        ariadne_daemon::agents::sync_skills(&store, &config.skills_dir, &config.native_home)
             .await
             .unwrap();
         // The model seams are the daemon's own settings rather than keys of
@@ -1470,9 +1471,13 @@ impl Harness {
         .execute(&self.db)
         .await
         .unwrap();
-        ariadne_daemon::agents::sync_skills(&self.store, &self.launcher.cfg.skills_dir)
-            .await
-            .unwrap();
+        ariadne_daemon::agents::sync_skills(
+            &self.store,
+            &self.launcher.cfg.skills_dir,
+            &self.launcher.cfg.native_home,
+        )
+        .await
+        .unwrap();
     }
 
     /// Export every metric now, off this test's runtime thread: a flush

@@ -74,9 +74,13 @@ pub(super) async fn create(
             document: req.document,
         })
         .await?;
-    crate::agents::sync_skills(&state.store, &state.launcher.cfg.skills_dir)
-        .await
-        .map_err(sync_error)?;
+    crate::agents::sync_skills(
+        &state.store,
+        &state.launcher.cfg.skills_dir,
+        &state.launcher.cfg.native_home,
+    )
+    .await
+    .map_err(sync_error)?;
     Ok((StatusCode::CREATED, Json(skill_dto(skill))))
 }
 
@@ -114,9 +118,13 @@ pub(super) async fn update(
         Some(document) => state.store.set_skill_document(&name, &document).await?,
         None => state.store.get_skill(&name).await?,
     };
-    crate::agents::sync_skills(&state.store, &state.launcher.cfg.skills_dir)
-        .await
-        .map_err(sync_error)?;
+    crate::agents::sync_skills(
+        &state.store,
+        &state.launcher.cfg.skills_dir,
+        &state.launcher.cfg.native_home,
+    )
+    .await
+    .map_err(sync_error)?;
     Ok(Json(skill_dto(skill)))
 }
 
@@ -130,9 +138,13 @@ pub(super) async fn delete(
 ) -> ApiResult<StatusCode> {
     let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
     state.store.delete_skill(&name).await?;
-    crate::agents::sync_skills(&state.store, &state.launcher.cfg.skills_dir)
-        .await
-        .map_err(sync_error)?;
+    crate::agents::sync_skills(
+        &state.store,
+        &state.launcher.cfg.skills_dir,
+        &state.launcher.cfg.native_home,
+    )
+    .await
+    .map_err(sync_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -146,8 +158,12 @@ pub(super) async fn reset_document(
 ) -> ApiResult<Json<SkillDto>> {
     let _guard = crate::agents::SKILLS_SYNC_LOCK.lock().await;
     let skill = state.store.reset_skill(&name).await?;
-    crate::agents::sync_skills(&state.store, &state.launcher.cfg.skills_dir)
-        .await
-        .map_err(sync_error)?;
+    crate::agents::sync_skills(
+        &state.store,
+        &state.launcher.cfg.skills_dir,
+        &state.launcher.cfg.native_home,
+    )
+    .await
+    .map_err(sync_error)?;
     Ok(Json(skill_dto(skill)))
 }

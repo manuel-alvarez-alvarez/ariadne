@@ -178,7 +178,7 @@ pub static SKILLS_SYNC_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
 /// A directory under `skills_dir` belongs to a skill only when its name is in
 /// the store. Files directly under the root are left alone, and the root
 /// itself is never removed.
-pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
+pub async fn sync_skills(store: &Store, skills_dir: &Path, native_home: &Path) -> Result<()> {
     let skills = store.list_skills().await?;
     std::fs::create_dir_all(skills_dir)
         .with_context(|| format!("creating {}", skills_dir.display()))?;
@@ -218,7 +218,7 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
     // is read as "every skill here is on disk", by the HTTP route's own
     // caller as much as by a later run of this same function.
     let mut failed = Vec::new();
-    for skill in skills {
+    for skill in &skills {
         if let Some(reason) = skill_name_rejection(&skill.name, &canonical_skills_dir) {
             tracing::error!(name = %skill.name, reason, "a stored skill name is invalid; not writing it");
             continue;
@@ -227,7 +227,7 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
             symlink_safe::write_skill(&canonical_skills_dir, &skill.name, skill.document_text())
         {
             tracing::error!(name = %skill.name, error = %error, "writing the skill failed");
-            failed.push(skill.name);
+            failed.push(skill.name.clone());
         }
     }
     if !failed.is_empty() {
@@ -236,7 +236,74 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path) -> Result<()> {
             failed.join(", ")
         );
     }
+    sync_native_skills(&skills, &canonical_skills_dir, native_home)?;
     Ok(())
+}
+
+/// Link each shared skill into the directories the native agent tools scan.
+///
+/// Only a symlink whose target is under `skills_dir` is Ariadne's to replace
+/// or remove. This deliberately leaves a user's same-named file, directory,
+/// or unrelated link in place and keeps that skill available through its index.
+fn sync_native_skills(
+    skills: &[ariadne_store::Skill],
+    skills_dir: &Path,
+    native_home: &Path,
+) -> Result<()> {
+    let names: std::collections::HashSet<_> =
+        skills.iter().map(|skill| skill.name.as_str()).collect();
+    for relative_dir in [".claude/skills", ".agents/skills"] {
+        let native_dir = native_home.join(relative_dir);
+        std::fs::create_dir_all(&native_dir)
+            .with_context(|| format!("creating {}", native_dir.display()))?;
+
+        for entry in std::fs::read_dir(&native_dir)
+            .with_context(|| format!("reading {}", native_dir.display()))?
+        {
+            let entry = entry.with_context(|| format!("reading {}", native_dir.display()))?;
+            if !names.contains(entry.file_name().to_string_lossy().as_ref())
+                && is_ariadne_skill_link(&entry.path(), skills_dir)
+            {
+                std::fs::remove_file(entry.path())
+                    .with_context(|| format!("removing {}", entry.path().display()))?;
+            }
+        }
+
+        for skill in skills {
+            let link = native_dir.join(&skill.name);
+            let target = skills_dir.join(&skill.name);
+            if link.exists() || std::fs::symlink_metadata(&link).is_ok() {
+                if is_ariadne_skill_link(&link, skills_dir) {
+                    std::fs::remove_file(&link)
+                        .with_context(|| format!("removing {}", link.display()))?;
+                } else {
+                    tracing::error!(name = %skill.name, path = %link.display(), "native skill path collides with a user entry");
+                    continue;
+                }
+            }
+            link_native_skill(&target, &link)
+                .with_context(|| format!("linking {} to {}", link.display(), target.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn is_ariadne_skill_link(path: &Path, skills_dir: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+        && std::fs::read_link(path).is_ok_and(|target| {
+            target.starts_with(skills_dir)
+                || std::fs::canonicalize(path).is_ok_and(|target| target.starts_with(skills_dir))
+        })
+}
+
+#[cfg(unix)]
+fn link_native_skill(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn link_native_skill(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(target, link)
 }
 
 /// Create and write a skill's directory and `SKILL.md`, a symlink at either

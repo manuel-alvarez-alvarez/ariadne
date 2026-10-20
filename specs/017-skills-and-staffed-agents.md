@@ -236,6 +236,19 @@ written into the system prompt (006), and the lifecycle the seats sit in
     naming every skill it could not write, rather than reporting success
     with one skill's document stale or missing.
 
+    Each successful sync also links every skill folder, one link per name,
+    into `<native-home>/.claude/skills` for Claude Code and OpenCode and
+    `<native-home>/.agents/skills` for Codex and OpenCode. Missing native
+    directories are created. A native entry is Ariadne's only when it is a
+    symlink whose target is under the canonical shared skills directory; a
+    link for a name no longer in the store is removed, while every other
+    entry is left alone. A file, directory, or other symlink at a current
+    skill name is a collision: the sync logs an error naming the skill and
+    path, leaves it untouched, and continues with the other links. The
+    daemon takes `native-home` from `HOME`, falling back to the platform
+    account home as it does for other home-derived paths; tests inject a
+    temporary native home rather than writing the account's real one.
+
 ## Acceptance criteria
 
 - A fresh database carries every shipped skill, each on its own text
@@ -373,6 +386,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - The home copy starts with every skill's current document, follows creates,
   edits and resets, and removes deleted and stale folders while retaining the
   other skill folders (`home_skills.rs::the_home_skill_copy_tracks_the_catalog_and_its_documents`).
+- Every shared skill is linked into both native agent directories, stale
+  Ariadne links are removed without touching a user's neighboring entry, and
+  a user collision is logged and left untouched while the other directory
+  continues syncing (`home_skills.rs::the_home_skill_copy_tracks_the_catalog_and_its_documents`,
+  `::a_user_native_skill_collision_is_logged_and_left_untouched`).
 
 ## Sources
 

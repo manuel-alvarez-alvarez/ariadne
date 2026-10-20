@@ -33,6 +33,8 @@ pub struct Config {
     pub worktree_root: PathBuf,
     pub run_dir: PathBuf,
     pub skills_dir: PathBuf,
+    /// The native home where coding agents discover their own skills.
+    pub native_home: PathBuf,
     pub pid_file: PathBuf,
     pub tcp_listen: Option<SocketAddr>,
     pub tcp_allowed_origins: Vec<String>,
@@ -106,6 +108,13 @@ impl Config {
     pub fn load(home_override: Option<PathBuf>) -> Result<Self> {
         let root = endpoint::home(home_override)
             .context("cannot determine home directory; pass --home")?;
+        // Match the daemon's other home-derived paths: an explicit HOME
+        // wins, then the platform account directory answers as a fallback.
+        let native_home = std::env::var_os("HOME")
+            .filter(|home| !home.is_empty())
+            .map(PathBuf::from)
+            .or_else(dirs::home_dir)
+            .context("cannot determine native home directory")?;
 
         // The strict reading of `config.toml` lives beside the socket
         // resolution it shares a file with, so `ariadne doctor` reports on
@@ -127,6 +136,7 @@ impl Config {
             worktree_root: file.worktree_root.unwrap_or_else(|| root.join("worktrees")),
             run_dir: file.run_dir.unwrap_or_else(|| root.join("run")),
             skills_dir: file.skills_dir.unwrap_or_else(|| root.join("skills")),
+            native_home,
             pid_file: endpoint::pid_file(&root),
             tcp_listen: file.tcp_listen,
             tcp_allowed_origins: file.tcp_allowed_origins,

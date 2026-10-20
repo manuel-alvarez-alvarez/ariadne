@@ -371,7 +371,7 @@ async fn a_symlinked_skills_root_still_syncs_through_its_target() {
     let link = real_skills_dir.parent().unwrap().join("skills-link");
     std::os::unix::fs::symlink(&real_skills_dir, &link).unwrap();
 
-    ariadne_daemon::agents::sync_skills(&h.store, &link)
+    ariadne_daemon::agents::sync_skills(&h.store, &link, &h.launcher.cfg.native_home)
         .await
         .unwrap();
 
@@ -407,7 +407,9 @@ async fn sync_skills_reports_a_persistently_failing_write() {
 
     let dir = skills_dir.join("broken");
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
-    let result = ariadne_daemon::agents::sync_skills(&h.store, &skills_dir).await;
+    let result =
+        ariadne_daemon::agents::sync_skills(&h.store, &skills_dir, &h.launcher.cfg.native_home)
+            .await;
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
 
     assert!(
@@ -485,9 +487,13 @@ async fn an_edited_orchestration_skill_reaches_the_next_launch() {
     // A direct store edit, unlike the `PUT /v1/skills/:name` route, does not
     // sync the home copy itself; the daemon call it bypasses is what a real
     // edit goes through.
-    ariadne_daemon::agents::sync_skills(&h.store, &h.launcher.cfg.skills_dir)
-        .await
-        .unwrap();
+    ariadne_daemon::agents::sync_skills(
+        &h.store,
+        &h.launcher.cfg.skills_dir,
+        &h.launcher.cfg.native_home,
+    )
+    .await
+    .unwrap();
 
     let first_document = h
         .launcher

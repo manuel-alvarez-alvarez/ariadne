@@ -89,6 +89,13 @@ id. See [Installing Ariadne](install.md) for how the daemon discovers and
 probes agents, and [Permission modes](permissions.md) to choose, per
 repository, how it handles tool requests.
 
+The daemon keeps the synchronized skill documents in `skills_dir`. It also
+links each individual skill folder into `~/.claude/skills` for Claude Code
+and OpenCode, and `~/.agents/skills` for Codex and OpenCode. Those native
+directories are created when absent. An existing file, folder, or unrelated
+link with the same skill name is left untouched and reported in the daemon
+log; the skill remains available through Ariadne's normal index path.
+
 `POST /v1/acp-agents/refresh` downloads the index from `acp_registry_url`,
 then searches `PATH` again and probes every agent. The download has a
 30-second timeout. The database keeps the last accepted document, its URL,

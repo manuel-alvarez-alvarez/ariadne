@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
     let store = ariadne_store::Store::open(&config.db_path)
         .await
         .with_context(|| format!("opening database {}", config.db_path.display()))?;
-    ariadne_daemon::agents::sync_skills(&store, &config.skills_dir).await?;
+    ariadne_daemon::agents::sync_skills(&store, &config.skills_dir, &config.native_home).await?;
 
     // The daemon's own `PATH`, which is the one its agents are started from:
     // a service carries the `PATH` its service file was written with, not the
