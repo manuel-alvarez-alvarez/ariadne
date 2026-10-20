@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-10-13
+updated: 2026-10-21
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -177,9 +177,15 @@ skill says (017).
    Every `codex-acp` process also carries `INITIAL_AGENT_MODE` set to
    `agent-full-access`, so its sessions never hand an approval to Codex's
    guardian sub-agent. The setting applies to that process only and does not
-   edit the user's Codex configuration. A loose session carries only `ARIADNE_SESSION_ID`
-   and `ARIADNE_LAUNCH_ID`, while a pull-request session carries `ARIADNE_PULL_REQUEST_ID`
-   and no goal id.
+   edit the user's Codex configuration. Every staffed `opencode` and legacy
+   `opencode-acp` process also carries `OPENCODE_CONFIG_CONTENT`. Its JSON has
+   one `mcp.ariadne` local entry; its command array holds the launch file's
+   command and arguments, and its environment equals that MCP server's
+   environment. Spawn and resume use the same launch plan, and other agents
+   do not receive this variable. The setting applies to that process and does
+   not edit the user's OpenCode configuration. A loose session carries only
+   `ARIADNE_SESSION_ID` and `ARIADNE_LAUNCH_ID`, while a pull-request session
+   carries `ARIADNE_PULL_REQUEST_ID` and no goal id.
 11. The launch id is fresh for every process started under a session row,
     and the row is told it before the process starts. That is what tells the
     events of a replaced agent from those of the agent that replaces it.
@@ -188,7 +194,8 @@ skill says (017).
     resumes, and one MCP server, `ariadne` — the `ariadne` CLI with the
     arguments `mcp serve` and the session context as its environment. The
     runtime sends the agent exactly what this file says. A loose launch writes no
-    `acp.json` and starts no MCP server.
+    `acp.json` and starts no MCP server. OpenCode's process setting derives
+    from this launch record.
 13. Orchestrator and loose spawns carry their briefing as the first prompt; a column-agent spawn has no initial prompt and receives its column prompt afterwards. A resume names the agent session it continues and carries its
     instruction once, as the next prompt; an empty instruction resumes an
     agent that is told nothing.
@@ -216,6 +223,10 @@ skill says (017).
     what it does next moves its session as any other work does.
 
 ## Acceptance criteria
+
+- OpenCode gets one process MCP entry equal to the ACP server on spawn and
+  resume, and other agents get no such setting
+  (`acp.rs::opencode_config_content_matches_the_acp_mcp_entry`).
 
 - Refresh downloads the configured index and registers its installed agent
   (`acp_discovery.rs::refresh_downloads_the_configured_index_and_registers_its_installed_agent`).

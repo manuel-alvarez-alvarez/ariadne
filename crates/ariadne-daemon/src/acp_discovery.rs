@@ -764,7 +764,7 @@ async fn probe(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    apply_agent_launch_environment(&mut command, &entry.id);
+    apply_agent_launch_environment(&mut command, &entry.id, None);
     let child = command.spawn();
     let mut child = match child {
         Ok(child) => child,
@@ -989,7 +989,7 @@ async fn read_catalog(
 /// Whether `id` names OpenCode: the shipped registry id, or the legacy
 /// `opencode-acp` a configured agent may still carry over from before the
 /// rename.
-fn is_opencode(id: &str) -> bool {
+pub(crate) fn is_opencode(id: &str) -> bool {
     id == "opencode" || id == "opencode-acp"
 }
 
@@ -1008,7 +1008,7 @@ async fn delete_opencode_catalog_session(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    apply_agent_launch_environment(&mut command, &entry.id);
+    apply_agent_launch_environment(&mut command, &entry.id, None);
     match tokio::time::timeout(timeout, command.status()).await {
         Ok(Ok(status)) if status.success() => {}
         Ok(Ok(status)) => {
@@ -1063,7 +1063,7 @@ async fn list_stored_sessions(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    apply_agent_launch_environment(&mut command, &agent.id);
+    apply_agent_launch_environment(&mut command, &agent.id, None);
     let mut child = command
         .spawn()
         .with_context(|| format!("starting `{}`", agent.command.join(" ")))?;

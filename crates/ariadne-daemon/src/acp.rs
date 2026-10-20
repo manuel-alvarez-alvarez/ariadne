@@ -88,9 +88,37 @@ const CODEX_AGENT_ID: &str = "codex-acp";
 const CODEX_INITIAL_AGENT_MODE: &str = "agent-full-access";
 
 /// Apply the environment Ariadne owns for one registry agent process.
-pub(crate) fn apply_agent_launch_environment(command: &mut Command, agent_id: &str) {
+pub(crate) fn apply_agent_launch_environment(
+    command: &mut Command,
+    agent_id: &str,
+    config: Option<&LaunchConfig>,
+) {
     if agent_id == CODEX_AGENT_ID {
         command.env("INITIAL_AGENT_MODE", CODEX_INITIAL_AGENT_MODE);
+    }
+    if crate::acp_discovery::is_opencode(agent_id)
+        && let Some(server) = config.and_then(|config| config.mcp_servers.first())
+    {
+        let mut command_args = vec![server.command.clone()];
+        command_args.extend(server.args.iter().cloned());
+        let environment: serde_json::Map<String, Value> = server
+            .env
+            .iter()
+            .map(|variable| (variable.name.clone(), Value::String(variable.value.clone())))
+            .collect();
+        command.env(
+            "OPENCODE_CONFIG_CONTENT",
+            json!({
+                "mcp": {
+                    "ariadne": {
+                        "type": "local",
+                        "command": command_args,
+                        "environment": environment,
+                    }
+                }
+            })
+            .to_string(),
+        );
     }
 }
 
@@ -1021,7 +1049,7 @@ impl AcpRuntime {
             .stderr(Stdio::piped())
             .process_group(0)
             .kill_on_drop(true);
-        apply_agent_launch_environment(&mut command, &launch.agent_id);
+        apply_agent_launch_environment(&mut command, &launch.agent_id, Some(&launch.config));
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
@@ -3426,12 +3454,88 @@ fn permission_answer(option_id: Option<&str>, label: Option<&str>, params: &Valu
 #[cfg(test)]
 mod tests {
     use super::{
-        acp_error_detail, approved_option, completed_tool_payload, exhausted_reason,
-        permission_signature, usage_for_prompt_response,
+        acp_error_detail, apply_agent_launch_environment, approved_option, completed_tool_payload,
+        exhausted_reason, permission_signature, usage_for_prompt_response,
     };
 
-    use ariadne_core::TokenUsage;
+    use ariadne_core::{Seat, TokenUsage};
     use serde_json::json;
+
+    #[test]
+    fn opencode_config_content_matches_the_acp_mcp_entry() {
+        for (agent_id, resume) in [("opencode", false), ("opencode-acp", true)] {
+            let dir = tempfile::tempdir().unwrap();
+            let ctx = crate::agents::SpawnCtx {
+                session_id: "01sessionxxxxxxxxxxxxxxxxx".into(),
+                launch_id: "01launchxxxxxxxxxxxxxxxxxx".into(),
+                goal_id: Some("01goalxxxxxxxxxxxxxxxxxxxx".into()),
+                task_id: Some("01taskxxxxxxxxxxxxxxxxxxxx".into()),
+                pull_request_id: None,
+                seat: Seat::Agent,
+                run_dir: dir.path().into(),
+                cwd: std::path::PathBuf::from("/tmp/worktree"),
+                socket_path: std::path::PathBuf::from("/tmp/ariadne.sock"),
+                cli_bin: "/usr/local/bin/ariadne".into(),
+                system_prompt: "SYSTEM PROMPT".into(),
+                skill_index: "SKILL INDEX".into(),
+                skills_dir: None,
+                initial_prompt: "DO THE TASK".into(),
+                model: "test-model".into(),
+                effort: None,
+                extra_flags: Vec::new(),
+            };
+            let plan = if resume {
+                crate::agents::plan_resume(&ctx, "acp-session-1", "continue").unwrap()
+            } else {
+                crate::agents::plan_spawn(&ctx).unwrap()
+            };
+            let launch: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(dir.path().join("acp.json")).unwrap(),
+            )
+            .unwrap();
+            let server = &launch["mcpServers"][0];
+            let mut command = tokio::process::Command::new("ignored");
+            apply_agent_launch_environment(&mut command, agent_id, Some(&plan.config));
+            let content = command
+                .as_std()
+                .get_envs()
+                .find(|(name, _)| *name == "OPENCODE_CONFIG_CONTENT")
+                .and_then(|(_, value)| value)
+                .expect("OpenCode config environment")
+                .to_string_lossy();
+            let content: serde_json::Value = serde_json::from_str(&content).unwrap();
+            let expected_environment: serde_json::Map<String, serde_json::Value> = server["env"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|variable| {
+                    (
+                        variable["name"].as_str().unwrap().into(),
+                        variable["value"].clone(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                content,
+                json!({
+                    "mcp": { "ariadne": {
+                        "type": "local",
+                        "command": [server["command"].clone(), "mcp", "serve"],
+                        "environment": expected_environment,
+                    }}
+                })
+            );
+        }
+
+        let mut command = tokio::process::Command::new("ignored");
+        apply_agent_launch_environment(&mut command, "stub", None);
+        assert!(
+            command
+                .as_std()
+                .get_envs()
+                .all(|(name, _)| name != "OPENCODE_CONFIG_CONTENT")
+        );
+    }
 
     #[test]
     fn exhaustion_signals_are_classified_and_a_plain_error_is_not() {

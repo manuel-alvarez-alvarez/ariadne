@@ -40,6 +40,7 @@ fn plan(
     resume_session_id: Option<&str>,
     initial_prompt: Option<&str>,
 ) -> Result<SpawnPlan> {
+    let mcp_environment = mcp_env(ctx);
     let config = LaunchConfig {
         version: acp::VERSION,
         system_prompt: ctx.system_prompt.clone(),
@@ -51,7 +52,7 @@ fn plan(
             name: "ariadne".into(),
             command: ctx.cli_bin.clone(),
             args: vec!["mcp".into(), "serve".into()],
-            env: mcp_env(ctx)
+            env: mcp_environment
                 .into_iter()
                 .map(|(name, value)| EnvVariable { name, value })
                 .collect(),
