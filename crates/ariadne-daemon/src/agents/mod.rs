@@ -219,14 +219,15 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path, native_home: &Path) -
     // caller as much as by a later run of this same function.
     let mut failed = Vec::new();
     for skill in &skills {
+        let path = canonical_skills_dir.join(&skill.name);
         if let Some(reason) = skill_name_rejection(&skill.name, &canonical_skills_dir) {
-            tracing::error!(name = %skill.name, reason, "a stored skill name is invalid; not writing it");
+            tracing::error!(name = %skill.name, path = %path.display(), reason, "a stored skill name is invalid; not writing it");
             continue;
         }
         if let Err(error) =
             symlink_safe::write_skill(&canonical_skills_dir, &skill.name, skill.document_text())
         {
-            tracing::error!(name = %skill.name, error = %error, "writing the skill failed");
+            tracing::error!(name = %skill.name, path = %path.display(), error = %error, "writing the skill failed");
             failed.push(skill.name.clone());
         }
     }
@@ -272,12 +273,19 @@ fn sync_native_skills(
         for skill in skills {
             let link = native_dir.join(&skill.name);
             let target = skills_dir.join(&skill.name);
-            if link.exists() || std::fs::symlink_metadata(&link).is_ok() {
+            if let Ok(metadata) = std::fs::symlink_metadata(&link) {
                 if is_ariadne_skill_link(&link, skills_dir) {
                     std::fs::remove_file(&link)
                         .with_context(|| format!("removing {}", link.display()))?;
                 } else {
-                    tracing::error!(name = %skill.name, path = %link.display(), "native skill path collides with a user entry");
+                    tracing::error!(
+                        name = %skill.name,
+                        shared_path = %target.display(),
+                        native_path = %link.display(),
+                        entry_kind = entry_kind(&metadata),
+                        outcome = "left_untouched",
+                        "native skill path collides with a user entry",
+                    );
                     continue;
                 }
             }
@@ -286,6 +294,20 @@ fn sync_native_skills(
         }
     }
     Ok(())
+}
+
+/// The kind of entry a collision found at a native skill path, named for
+/// the log record rather than for any further handling: every kind here
+/// is left untouched the same way.
+fn entry_kind(metadata: &std::fs::Metadata) -> &'static str {
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        "symlink"
+    } else if file_type.is_dir() {
+        "directory"
+    } else {
+        "file"
+    }
 }
 
 fn is_ariadne_skill_link(path: &Path, skills_dir: &Path) -> bool {

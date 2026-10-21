@@ -103,6 +103,7 @@ async fn the_home_skill_copy_tracks_the_catalog_and_its_documents() {
 #[tokio::test]
 async fn a_user_native_skill_collision_is_logged_and_left_untouched() {
     let h = harness().await;
+    let skills_dir = h.launcher.cfg.skills_dir.clone();
     let collision = h.launcher.cfg.native_home.join(".claude/skills/coding");
     std::fs::remove_file(&collision).unwrap();
     std::fs::create_dir_all(&collision).unwrap();
@@ -140,9 +141,18 @@ async fn a_user_native_skill_collision_is_logged_and_left_untouched() {
             line.message
                 .contains("native skill path collides with a user entry")
                 && line.message.contains("name=coding")
+                && line.message.contains(&format!(
+                    "shared_path={}",
+                    std::fs::canonicalize(&skills_dir)
+                        .unwrap()
+                        .join("coding")
+                        .display()
+                ))
                 && line
                     .message
-                    .contains(&format!("path={}", collision.display()))
+                    .contains(&format!("native_path={}", collision.display()))
+                && line.message.contains("entry_kind=directory")
+                && line.message.contains("outcome=left_untouched")
         })
     })
     .await;

@@ -1,7 +1,7 @@
 ---
 id: telemetry-query
 status: current
-updated: 2026-10-19
+updated: 2026-10-21
 areas: [daemon, cli, docs, specs]
 commits: []
 tests:
@@ -141,7 +141,13 @@ Out: recording metrics (the exporter is 033's), the stats ledger and
 15. A Loki stream has the labels `service`, `level` (the severity text in
     lower case), `scope` and `target`; an empty one is left out. A
     `streams` answer carries each line's nanosecond timestamp as a string
-    and the record's body as the line.
+    and the record's rendered message as the line: the body, then every
+    attribute appended as ` key=value` (`ariadne_api::logs::render_message`,
+    033 rule on `/v1/logs`), so a diagnostic field a `tracing` event carries
+    — such as a native skill collision's `name`, `shared_path`,
+    `native_path`, `entry_kind` and `outcome` (017) — reads in a Loki line
+    the same way it reads in `/v1/logs`. A line filter matches against that
+    same rendered text.
 16. The subset is: a stream selector over those labels with `=`, `!=`,
     `=~` and `!~` (anchored); the line filters `|=`, `!=`, `|~` and `!~`
     (not anchored); a label filter such as `| level="error"`; and
@@ -241,6 +247,10 @@ Out: recording metrics (the exporter is 033's), the stats ledger and
   (`telemetry_query.rs::loki_streams_carry_nanosecond_times_and_filtered_lines`).
   A bound 1ns past a stored line decides it exactly
   (`telemetry_query.rs::loki_bounds_keep_their_nanoseconds`).
+- A record's attributes render into its Loki line the same ` key=value`
+  pairs `/v1/logs` renders, so a diagnostic field survives into a line
+  filter and a reader's eyes alike
+  (`telemetry_query.rs::loki_lines_carry_attributes_as_key_value_pairs`).
 - LogQL selectors take the four matchers, anchored
   (`logql.rs::tests::selectors_take_the_four_matchers`); line and label
   filters narrow the lines

@@ -384,6 +384,54 @@ async fn loki_streams_carry_nanosecond_times_and_filtered_lines() {
     assert!(String::from_utf8_lossy(&body).contains("json"));
 }
 
+/// A record's attributes are diagnostic fields a reader of the raw Loki
+/// line needs as much as a reader of `/v1/logs` does: both render the same
+/// way, so a line filter and a human reading the stream see the same text.
+#[tokio::test]
+async fn loki_lines_carry_attributes_as_key_value_pairs() {
+    let h = harness().await;
+    h.telemetry_store
+        .write_logs(&[NewLogRecord {
+            ts: at(-60),
+            observed_ts: at(-60),
+            severity_number: None,
+            severity_text: Some("ERROR".into()),
+            body: Some("native skill path collides with a user entry".into()),
+            service: Some("ariadned".into()),
+            scope: Some("ariadne_daemon".into()),
+            target: Some("agents".into()),
+            attributes: json!({"name": "coding", "entry_kind": "directory"}),
+            trace_id: None,
+            span_id: None,
+        }])
+        .await
+        .unwrap();
+
+    let (start, end) = ((T - 3600).to_string(), T.to_string());
+    let data = ok(
+        &h,
+        get(&uri(
+            "/loki/api/v1/query_range",
+            &[
+                ("query", r#"{service="ariadned"} |= "name=coding""#),
+                ("start", &start),
+                ("end", &end),
+            ],
+        )),
+    )
+    .await;
+    assert_eq!(
+        data["result"],
+        json!([{
+            "stream": {"service": "ariadned", "level": "error", "scope": "ariadne_daemon", "target": "agents"},
+            "values": [[
+                format!("{}000000000", T - 60),
+                "native skill path collides with a user entry name=coding entry_kind=directory",
+            ]],
+        }])
+    );
+}
+
 #[tokio::test]
 async fn the_tcp_router_serves_the_query_routes_with_cors() {
     let h = harness().await;

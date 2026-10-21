@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-10-19
+updated: 2026-10-21
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -243,11 +243,17 @@ written into the system prompt (006), and the lifecycle the seats sit in
     symlink whose target is under the canonical shared skills directory; a
     link for a name no longer in the store is removed, while every other
     entry is left alone. A file, directory, or other symlink at a current
-    skill name is a collision: the sync logs an error naming the skill and
-    path, leaves it untouched, and continues with the other links. The
-    daemon takes `native-home` from `HOME`, falling back to the platform
-    account home as it does for other home-derived paths; tests inject a
-    temporary native home rather than writing the account's real one.
+    skill name is a collision: the sync logs an error naming the skill
+    (`name`), the shared source path (`shared_path`), the native path
+    (`native_path`), the kind of entry found there — `file`, `directory` or
+    `symlink` (`entry_kind`) — and the safe outcome (`outcome`, always
+    `left_untouched`), leaves it untouched, and continues with the other
+    links. An invalid stored skill name or a failed document write is
+    likewise logged with the skill's name (`name`) and the path it would
+    have written (`path`). The daemon takes `native-home` from `HOME`,
+    falling back to the platform account home as it does for other
+    home-derived paths; tests inject a temporary native home rather than
+    writing the account's real one.
 
 ## Acceptance criteria
 
@@ -388,7 +394,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
   other skill folders (`home_skills.rs::the_home_skill_copy_tracks_the_catalog_and_its_documents`).
 - Every shared skill is linked into both native agent directories, stale
   Ariadne links are removed without touching a user's neighboring entry, and
-  a user collision is logged and left untouched while the other directory
+  a user collision is logged with the skill, both paths, the entry kind and
+  the outcome, and left untouched while the other directory
   continues syncing (`home_skills.rs::the_home_skill_copy_tracks_the_catalog_and_its_documents`,
   `::a_user_native_skill_collision_is_logged_and_left_untouched`).
 

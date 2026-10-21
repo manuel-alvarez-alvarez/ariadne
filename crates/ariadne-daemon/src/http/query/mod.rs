@@ -551,7 +551,7 @@ async fn read_lines(
             continue;
         }
         let labels = stream_labels(&record);
-        let line = record.body.unwrap_or_default();
+        let line = ariadne_api::logs::render_message(record.body.as_deref(), &record.attributes);
         if keep(&labels, &line) {
             lines.push(logql::Line { ns, labels, line });
         }
