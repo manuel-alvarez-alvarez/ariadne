@@ -1,12 +1,13 @@
 ---
 id: 036
 status: current
-updated: 2026-10-19
+updated: 2026-10-21
 areas: [store, daemon, api, cli, docs, ui]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/dashboards.rs
   - ui/dashboard/src/format-value.test.ts
+  - ui/dashboard/src/shipped-dashboard.test.ts
 ---
 
 # Dashboards
@@ -65,6 +66,9 @@ message protocol are spec 015's.
     the one function every panel kind formats its numbers through, is
     patched in `@perses-dev/components` to answer a `NaN` with "No data"
     before any unit formatter sees it.
+13. The Logs section's shipped table selects every available app service
+    and level. A saved override keeps its existing table until reset restores
+    the current shipped document.
 
 ## Acceptance criteria
 
@@ -94,6 +98,9 @@ message protocol are spec 015's.
    every counter held flat rather than absent, and proves none answers
    `NaN`. `ui/dashboard/src/format-value.test.ts` proves the patched
    `formatValue` of rule 12 answers a `NaN` with "No data".
+6. `ui/dashboard/src/shipped-dashboard.test.ts::shows every service and level in its operational log table`
+   proves rule 13's shipped query. `dashboards.rs::resetting_a_built_in_dashboard_restores_its_shipped_document`
+   proves reset restores the shipped document.
 
 ## Sources
 

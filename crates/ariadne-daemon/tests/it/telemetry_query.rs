@@ -433,6 +433,53 @@ async fn loki_lines_carry_attributes_as_key_value_pairs() {
 }
 
 #[tokio::test]
+async fn loki_lines_include_message_and_diagnostic_fields() {
+    let h = harness().await;
+    h.telemetry_store
+        .write_logs(&[NewLogRecord {
+            ts: at(-30),
+            observed_ts: at(-30),
+            severity_number: Some(17),
+            severity_text: Some("ERROR".into()),
+            body: Some("push failed".into()),
+            service: Some("ariadne-cli".into()),
+            scope: Some("ariadne-cli".into()),
+            target: Some("ariadne_cli::forge".into()),
+            attributes: json!({"repository": "example", "attempt": 2}),
+            trace_id: None,
+            span_id: None,
+        }])
+        .await
+        .unwrap();
+    let data = ok(
+        &h,
+        get(&uri(
+            "/loki/api/v1/query_range",
+            &[
+                (
+                    "query",
+                    r#"{service="ariadne-cli"} |= "repository=example""#,
+                ),
+                ("start", &(T - 3600).to_string()),
+                ("end", &T.to_string()),
+            ],
+        )),
+    )
+    .await;
+    assert_eq!(
+        data["result"][0]["stream"],
+        json!({
+            "service": "ariadne-cli", "level": "error", "scope": "ariadne-cli",
+            "target": "ariadne_cli::forge",
+        })
+    );
+    let line = data["result"][0]["values"][0][1].as_str().unwrap();
+    assert!(line.starts_with("push failed "));
+    assert!(line.contains("repository=example"));
+    assert!(line.contains("attempt=2"));
+}
+
+#[tokio::test]
 async fn the_tcp_router_serves_the_query_routes_with_cors() {
     let h = harness().await;
     let app = http::tcp_router(h.state.clone(), &["http://perses.localhost:8080".into()]);

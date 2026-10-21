@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-10-19
+updated: 2026-10-21
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -13,6 +13,8 @@ tests:
   - ui/src/hooks/**/*.test.tsx
   - ui/src/lib/**/*.test.ts
   - ui/src/lib/tauri-config.test.ts
+  - ui/src/telemetry/provider.test.tsx
+  - ui/src/telemetry/telemetry.test.ts
   - ui/dashboard/src/**/*.test.ts
   - ui/dashboard/src/**/*.test.tsx
   - ui/dashboard/scripts/**/*.test.mjs
@@ -182,6 +184,9 @@ Out: the daemon endpoints themselves (012).
    never request paths or bodies. It also counts stream reconnects and route
    navigations. Console warnings, errors, browser errors, and unhandled
    rejections become log records without request or response bodies.
+   Native shell log events at the shell's configured level also reach the
+   desktop resource when diagnostics are on. Their target is `tauri`.
+   Development event payload debug lines are outside telemetry.
 7. Query keys follow one convention, so an event knows which caches it
    invalidates.
 7. The Tauri shell is deliberately empty — no commands — and `ui/src-tauri` is
@@ -715,6 +720,9 @@ Out: the daemon endpoints themselves (012).
 
 ## Acceptance criteria
 
+- Enabled desktop diagnostics export native shell events at their severity
+  with a `tauri` target (`ui/src/telemetry/provider.test.tsx::forwards native shell logs at their level when diagnostics are enabled`,
+  `ui/src/telemetry/telemetry.test.ts::exports operational info with its target and fields`).
 - The workflow editor completes each comma-separated `ranks:` segment with
   every rank absent from its unordered capability band. The preview identifies
   every listed rank as an eligible model capability

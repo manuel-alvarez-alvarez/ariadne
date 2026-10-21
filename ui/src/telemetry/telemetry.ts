@@ -14,7 +14,16 @@ const EXPORT_INTERVAL_MS = 5_000
 
 let diagnosticsLoggerInstalled = false
 
-type LogSeverity = "warn" | "error"
+type LogSeverity = "trace" | "debug" | "info" | "warn" | "error"
+type LogContext = string | Record<string, string | number>
+
+const SEVERITY: Record<LogSeverity, SeverityNumber> = {
+  trace: SeverityNumber.TRACE,
+  debug: SeverityNumber.DEBUG,
+  info: SeverityNumber.INFO,
+  warn: SeverityNumber.WARN,
+  error: SeverityNumber.ERROR,
+}
 
 interface TelemetryOptions {
   baseUrl: string
@@ -64,12 +73,19 @@ class Telemetry {
     this.#navigations = meter.createCounter("ariadne.ui.navigations")
   }
 
-  log(severity: LogSeverity, message: string, stack?: string): void {
-    this.#logger?.emit({
-      severityNumber: severity === "warn" ? SeverityNumber.WARN : SeverityNumber.ERROR,
+  log(severity: LogSeverity, message: string, contextValue?: LogContext): void {
+    const attributes =
+      typeof contextValue === "string" ? { "exception.stacktrace": contextValue } : contextValue
+    const target = typeof contextValue === "object" ? contextValue.target : undefined
+    const logger =
+      target && this.#loggerProvider
+        ? this.#loggerProvider.getLogger(String(target), version)
+        : this.#logger
+    logger?.emit({
+      severityNumber: SEVERITY[severity],
       severityText: severity.toUpperCase(),
       body: message,
-      attributes: stack ? { "exception.stacktrace": stack } : undefined,
+      attributes,
       context: context.active(),
     })
   }
@@ -135,8 +151,8 @@ export function recordNavigation(route: string): void {
   telemetry.navigation(route)
 }
 
-export function recordLog(severity: LogSeverity, message: string, stack?: string): void {
-  telemetry.log(severity, message, stack)
+export function recordLog(severity: LogSeverity, message: string, contextValue?: LogContext): void {
+  telemetry.log(severity, message, contextValue)
 }
 
 function otlpUrl(baseUrl: string, signal: "logs" | "metrics"): string {

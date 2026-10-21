@@ -1,3 +1,5 @@
+import { isTauri } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 import { type ReactNode, useEffect } from "react"
 
 import { useBaseUrl, useDiagnosticsEnabled } from "@/stores/settings"
@@ -39,6 +41,25 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
       console.error = error
       window.removeEventListener("error", onError)
       window.removeEventListener("unhandledrejection", onRejection)
+    }
+  }, [enabled])
+
+  useEffect(() => {
+    if (!enabled || !isTauri()) return
+    let active = true
+    let unlisten: (() => void) | undefined
+    void listen<{ level: number; message: string }>("log://log", ({ payload }) => {
+      const severity = ({ 1: "trace", 2: "debug", 3: "info", 4: "warn", 5: "error" } as const)[
+        payload.level as 1 | 2 | 3 | 4 | 5
+      ]
+      if (severity) recordLog(severity, payload.message, { target: "tauri" })
+    }).then((stop) => {
+      if (active) unlisten = stop
+      else stop()
+    })
+    return () => {
+      active = false
+      unlisten?.()
     }
   }, [enabled])
 

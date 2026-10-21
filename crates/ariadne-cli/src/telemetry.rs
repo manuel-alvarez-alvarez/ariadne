@@ -17,6 +17,7 @@ use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider, Temporality};
 use prost::Message;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -66,11 +67,9 @@ impl Telemetry {
             .with_unit("s")
             .build();
 
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
         tracing_subscriber::registry()
-            .with(
-                OpenTelemetryTracingBridge::new(&logs)
-                    .with_filter(tracing_subscriber::filter::LevelFilter::WARN),
-            )
+            .with(OpenTelemetryTracingBridge::new(&logs).with_filter(filter))
             .try_init()
             .ok()?;
 
@@ -83,6 +82,12 @@ impl Telemetry {
     }
 
     pub(crate) fn command(&self, command: &str, outcome: &str, elapsed: Duration) {
+        tracing::info!(
+            command,
+            outcome,
+            elapsed_ms = elapsed.as_millis(),
+            "command finished"
+        );
         self.commands.add(
             1,
             &[
@@ -249,7 +254,7 @@ mod tests {
     use super::*;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn command_and_warning_reach_the_otlp_stub() {
+    async fn enabled_command_logs_keep_levels_targets_and_fields() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let app = Router::new()
             .route("/otlp/v1/{signal}", post(receive))
@@ -264,13 +269,44 @@ mod tests {
 
         let telemetry = Telemetry::enabled(Arc::new(Client::tcp(format!("http://{address}"))))
             .expect("telemetry starts");
-        tracing::warn!("a warning for the stub");
+        tracing::warn!(attempt = 2, "a warning for the stub");
         telemetry.command("task ls", "ok", Duration::from_millis(12));
         telemetry.flush().await;
 
         let mut signals = Vec::new();
-        while let Ok(signal) = receiver.try_recv() {
-            signals.push(signal);
+        while let Ok((signal, body)) = receiver.try_recv() {
+            signals.push(signal.clone());
+            if signal == "logs" {
+                let logs = ExportLogsServiceRequest::decode(body.as_ref()).unwrap();
+                let records: Vec<_> = logs.resource_logs[0]
+                    .scope_logs
+                    .iter()
+                    .flat_map(|scope| &scope.log_records)
+                    .collect();
+                assert!(records.iter().any(|record| {
+                    record.severity_text == "INFO"
+                        && record
+                            .body
+                            .as_ref()
+                            .is_some_and(|body| format!("{body:?}").contains("command finished"))
+                }));
+                let warning = records
+                    .iter()
+                    .find(|record| record.severity_text == "WARN")
+                    .unwrap();
+                assert!(
+                    warning
+                        .attributes
+                        .iter()
+                        .any(|field| field.key == "attempt")
+                );
+                assert!(logs.resource_logs[0].scope_logs.iter().any(|scope| {
+                    scope
+                        .scope
+                        .as_ref()
+                        .is_some_and(|scope| scope.name.contains("telemetry"))
+                }));
+            }
         }
         server.abort();
 
@@ -280,10 +316,10 @@ mod tests {
 
     async fn receive(
         Path(signal): Path<String>,
-        State(sender): State<mpsc::UnboundedSender<String>>,
-        _body: Bytes,
+        State(sender): State<mpsc::UnboundedSender<(String, Bytes)>>,
+        body: Bytes,
     ) {
-        sender.send(signal).expect("test receiver open");
+        sender.send((signal, body)).expect("test receiver open");
     }
 
     #[test]

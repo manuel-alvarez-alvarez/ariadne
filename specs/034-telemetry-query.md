@@ -245,6 +245,8 @@ Out: recording metrics (the exporter is 033's), the stats ledger and
   `count_over_time` answers a matrix; labels, values, series and the two
   index routes answer; a parser stage refuses
   (`telemetry_query.rs::loki_streams_carry_nanosecond_times_and_filtered_lines`).
+  A line keeps diagnostic attributes and filters can match them
+  (`telemetry_query.rs::loki_lines_include_message_and_diagnostic_fields`).
   A bound 1ns past a stored line decides it exactly
   (`telemetry_query.rs::loki_bounds_keep_their_nanoseconds`).
 - A record's attributes render into its Loki line the same ` key=value`

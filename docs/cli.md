@@ -5,7 +5,8 @@ console. `ariadne --help` is the complete command reference.
 
 ## Command telemetry
 
-The CLI sends a command count, duration, warnings, and errors to its daemon.
+The CLI sends a command count, duration, and operational logs at `info` and
+above to its daemon. Set `RUST_LOG` to select other tracing levels or targets.
 Set `ARIADNE_TELEMETRY=off` to disable this for one command or shell session.
 The CLI does not send prompt or message text.
 

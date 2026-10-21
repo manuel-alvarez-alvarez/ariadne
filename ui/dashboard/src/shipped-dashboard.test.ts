@@ -24,6 +24,11 @@ function legendOf(panel: string): { mode?: string; values?: string[] } | undefin
 }
 
 describe("the shipped default dashboard", () => {
+  it("shows every service and level in its operational log table", () => {
+    const panel = shippedDefault.spec.panels["warnings-and-errors"]
+    const query = panel?.spec.queries?.[0]?.spec.plugin.spec as { query: string } | undefined
+    expect(query?.query).toBe('{service=~".+"}')
+  })
   it("uses Default as its display name while retaining default as its metadata name", () => {
     expect(shippedDefault.metadata.name).toBe("default")
     expect(shippedDefault.spec.display?.name).toBe("Default")

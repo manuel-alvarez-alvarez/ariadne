@@ -12,8 +12,7 @@ every task, goal and session query reads.
 Every `tracing` event the daemon emits — the same lines that used to live
 only in a bounded in-memory ring — becomes a log record: a timestamp, a
 level, the module it came from, its message, and the service that wrote it
-(`ariadned` today; `ariadne-desktop` and `ariadne-cli` once they report
-through the same pipeline). Nothing is dropped to make room for a newer
+(`ariadned`, `ariadne-desktop`, or `ariadne-cli`). Nothing is dropped to make room for a newer
 line, the way the old ring buffer dropped its oldest; retention (below)
 is what eventually removes a record, on its own schedule.
 
@@ -78,6 +77,22 @@ beside `ariadne events` and the session/task transcript logs, and
 app's logs drawer carries the same two filters, as selects beside the
 drawer's title.
 
+The daemon sends tracing events at levels selected by `log_filter` or
+`RUST_LOG`. The CLI sends operational tracing logs at `info` and above by
+default. `RUST_LOG` changes its filter, and `ARIADNE_TELEMETRY=off` stops its
+exports. The desktop sends browser warnings, errors, uncaught failures, and
+native shell log events while **Send app diagnostics to the daemon** is on.
+The native shell records `info` and above. The desktop does not export the
+development console's event payload debug lines, agent events, prompts, or
+transcripts.
+
+The log database keeps each record's service, level, target, message, and
+attributes. Loki exposes service, level, scope, and target as stream labels.
+Its readable line appends diagnostic fields after the message. The log drawer
+remains a focused operational view. The shipped dashboard's **App logs** table
+shows all available services and levels in the selected time range. The
+daemon deletes log records after `telemetry_logs_days` (14 days by default).
+
 ## Querying metrics and logs
 
 The daemon answers two standard query APIs over the telemetry store, so a
@@ -119,8 +134,8 @@ stored by an older daemon, before it kept the service name, shows
 `ariadned`.
 
 A Loki stream has four labels: `service`, `level` (the severity text in
-lower case), `scope` and `target`. Each line is the record's body, with a
-nanosecond timestamp.
+lower case), `scope` and `target`. Each line is the record's body followed
+by diagnostic fields, with a nanosecond timestamp.
 
 ### The supported PromQL
 

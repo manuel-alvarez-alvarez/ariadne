@@ -1,7 +1,7 @@
 ---
 id: telemetry
 status: current
-updated: 2026-10-19
+updated: 2026-10-21
 areas: [store, daemon, cli, ui, scripts]
 commits: []
 tests:
@@ -20,10 +20,9 @@ tests:
 
 # Telemetry
 
-One telemetry store, apart from `ariadne.db`, holds every log record and
-metric sample the daemon's `tracing` events and recorded metrics produce,
-through an OpenTelemetry pipeline, with its own retention and its own
-daemon-log read routes.
+One telemetry store, apart from `ariadne.db`, holds operational logs and
+metric samples from the daemon, CLI, and desktop through OpenTelemetry.
+It has its own retention and daemon-log read routes.
 
 ## Scope
 
@@ -32,7 +31,7 @@ the OpenTelemetry SDK pipeline that feeds it from the daemon's own
 `tracing` events and metrics, hourly rollup and retention, and
 `GET /v1/logs` / `GET /v1/logs/stream` read from it.
 
-Out: OTLP ingest from another process (a later task writes through the API
+Out: OTLP ingest implementation (a separate task writes through the API
 here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
 (a later task reads through the API here); any metric instrument beyond
 `ariadne.telemetry.records`; any change to the `ariadne.db` schema.
@@ -159,6 +158,13 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
    `ariadne-desktop`, `ariadne-cli`) and a level filter (all, trace, debug,
    info, warn, error), as two selects beside the drawer's title; picking
    either reopens the stream on the new filter, replacing what was shown.
+10. The CLI exports operational tracing logs at `info` and above by default.
+    `RUST_LOG` selects its tracing levels and targets, and
+    `ARIADNE_TELEMETRY=off` disables its exports. When desktop diagnostics
+    are enabled, native shell log events join browser failures and warnings
+    under `ariadne-desktop`, with target `tauri`. The shell records `info`
+    and above in release builds too. Agent events and transcripts remain
+    outside telemetry.
 
 ## Acceptance criteria
 
@@ -256,6 +262,11 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
   `daemon-log-stream.test.ts::daemonLogStreamUrl > carries a service and level filter as query parameters`,
   `::leaves the query string off when the filter picks everything`,
   `daemon-logs-drawer.test.tsx::reconnects with a service and level filter when one is picked`.
+- CLI info and warning records retain level, scope, and attributes in OTLP
+  (`ariadne-cli::telemetry::tests::enabled_command_logs_keep_levels_targets_and_fields`).
+  The desktop records native log messages with context when enabled
+  (`ui/src/telemetry/provider.test.tsx::forwards native shell logs at their level when diagnostics are enabled`,
+  `ui/src/telemetry/telemetry.test.ts::exports operational info with its target and fields`).
 
 ## Sources
 

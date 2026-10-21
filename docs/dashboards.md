@@ -58,6 +58,12 @@ to — and it asks before it acts, since there is no undo. A dashboard that is
 entirely your own has no shipped document behind it, so there is nothing to
 reset it to.
 
+The shipped **Default** dashboard has an **App logs** table in its collapsed
+Logs section. It shows every available app service and log level. A saved edit
+to Default is an override, so it keeps its existing table until you click
+**Reset**. Reset replaces the whole saved dashboard with the current shipped
+document. Copy any custom panels first if you want to keep them.
+
 ## From the CLI
 
 `ariadne dashboard` lists and shows the daemon's dashboards from the

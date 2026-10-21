@@ -57,6 +57,22 @@ describe("Telemetry", () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it("exports operational info with its target and fields", async () => {
+    daemonFetch.mockResolvedValue(new Response(null, { status: 200 }))
+    configureTelemetry({ baseUrl: "http://daemon.test", enabled: true })
+
+    recordLog("info", "native window ready", { target: "tauri", window: "main" })
+    await flushTelemetry()
+
+    const request = daemonFetch.mock.calls
+      .map(([input, init]) => (input instanceof Request ? input : new Request(String(input), init)))
+      .find((request) => request.url.endsWith("/otlp/v1/logs"))
+    const body = await request?.text()
+    expect(body).toContain("native window ready")
+    expect(body).toContain("tauri")
+    expect(body).toContain("window")
+  })
+
   it("prints one debug line when a background metric export fails", async () => {
     vi.useFakeTimers()
     const debug = vi.spyOn(console, "debug").mockImplementation(() => {})

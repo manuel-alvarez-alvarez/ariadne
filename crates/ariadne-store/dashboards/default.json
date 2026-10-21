@@ -2590,8 +2590,8 @@
         "kind": "Panel",
         "spec": {
           "display": {
-            "name": "Warnings and errors",
-            "description": "Recent daemon warnings and errors."
+            "name": "App logs",
+            "description": "Operational logs from every available app service and level."
           },
           "plugin": {
             "kind": "LogsTable",
@@ -2608,7 +2608,7 @@
                 "plugin": {
                   "kind": "LokiLogQuery",
                   "spec": {
-                    "query": "{service=\"ariadned\", level=~\"warn|error\"}"
+                    "query": "{service=~\".+\"}"
                   }
                 }
               }
