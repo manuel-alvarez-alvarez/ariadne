@@ -130,7 +130,7 @@ impl Config {
             telemetry_db_path: file
                 .telemetry_db_path
                 .unwrap_or_else(|| root.join("telemetry.db")),
-            telemetry_samples_days: file.telemetry_samples_days.unwrap_or(30),
+            telemetry_samples_days: file.telemetry_samples_days.unwrap_or(7),
             telemetry_logs_days: file.telemetry_logs_days.unwrap_or(14),
             telemetry_rollups_days: file.telemetry_rollups_days.unwrap_or(365),
             worktree_root: file.worktree_root.unwrap_or_else(|| root.join("worktrees")),
@@ -307,7 +307,7 @@ mod tests {
             config.telemetry_db_path,
             dir.path().join("home/telemetry.db")
         );
-        assert_eq!(config.telemetry_samples_days, 30);
+        assert_eq!(config.telemetry_samples_days, 7);
         assert_eq!(config.telemetry_logs_days, 14);
         assert_eq!(config.telemetry_rollups_days, 365);
         assert_eq!(config.exhausted_patterns, default_exhausted_patterns());

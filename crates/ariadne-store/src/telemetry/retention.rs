@@ -67,6 +67,18 @@ impl TelemetryStore {
                 .execute(&mut *connection)
                 .await?
                 .rows_affected();
+            sqlx::query(
+                "DELETE FROM metric_series
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM metric_samples WHERE metric_samples.series_id = metric_series.id
+                 ) AND NOT EXISTS (
+                     SELECT 1 FROM metric_rollups_1h
+                     WHERE metric_rollups_1h.series_id = metric_series.id
+                 )",
+            )
+            .execute(&mut *connection)
+            .await?
+            .rows_affected();
             Ok(RetentionReport {
                 rolled_up_samples,
                 deleted_samples,
@@ -199,6 +211,53 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn retention_removes_series_only_after_raw_and_hourly_data_expire() {
+        let (_dir, store) = store().await;
+        store
+            .write_metrics(&[
+                MetricPoint {
+                    name: "expired".to_string(),
+                    kind: MetricKind::Gauge,
+                    unit: None,
+                    description: None,
+                    labels: json!({}),
+                    timestamp: "2026-01-01T10:10:00Z".to_string(),
+                    value: 1.0,
+                },
+                MetricPoint {
+                    name: "rollup_only".to_string(),
+                    kind: MetricKind::Gauge,
+                    unit: None,
+                    description: None,
+                    labels: json!({}),
+                    timestamp: "2026-01-02T10:10:00Z".to_string(),
+                    value: 2.0,
+                },
+            ])
+            .await
+            .unwrap();
+
+        store
+            .enforce_retention(
+                "2026-02-01T00:00:00Z",
+                "2026-01-03T00:00:00Z",
+                "2026-01-03T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+            )
+            .await
+            .unwrap();
+
+        let remaining: Vec<_> = store
+            .list_series(&[])
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|series| series.name)
+            .collect();
+        assert_eq!(remaining, ["rollup_only"]);
     }
 
     #[tokio::test]

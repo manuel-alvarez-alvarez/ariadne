@@ -91,10 +91,13 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
    raw sample as represented. A repeated rollup ignores represented samples,
    while a late sample merges with the preserved hourly summary. Raw samples
    remain until it deletes samples older than
-   `telemetry_samples_days` (default 30), log records older than
+   `telemetry_samples_days` (default 7), log records older than
    `telemetry_logs_days` (default 14), and rollups older than
-   `telemetry_rollups_days` (default 365). It then checkpoints the
-   telemetry file the way `crate::checkpoint` does for `ariadne.db`. All
+   `telemetry_rollups_days` (default 365). It removes series metadata only
+   when neither raw samples nor hourly summaries refer to the series. It
+   then checkpoints the telemetry file the way `crate::checkpoint` does for
+   `ariadne.db`. SQLite can reuse freed pages for later writes without
+   reducing the file's allocated size. All
    three retention keys must be a positive number of days; a non-positive
    one is refused at startup and by `ariadned --check-config`, by name.
 
@@ -194,7 +197,8 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
   queryable as raw data until its configured cutoff:
   `ariadne-store::telemetry::retention::tests::one_pass_rolls_up_and_then_deletes_raw_samples_past_retention`,
   `::a_two_hour_old_sample_survives_a_thirty_day_raw_retention_window`,
-  `::rollups_keep_expired_history_and_merge_late_samples`.
+  `::rollups_keep_expired_history_and_merge_late_samples`,
+  `::retention_removes_series_only_after_raw_and_hourly_data_expire`.
 - The daemon's own hourly job rolls up metrics and deletes what is past its
   cutoff, logs and metrics alike, in one pass:
   `ariadne-daemon::telemetry::retention::tests::one_tick_rolls_up_metrics_and_deletes_what_is_past_its_cutoff`.

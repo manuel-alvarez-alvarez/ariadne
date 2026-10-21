@@ -41,7 +41,7 @@ rolls every raw metric sample older than an hour into an hourly summary
 (min, max, sum, count, first, last). It keeps the raw samples too, and only
 deletes each kind of record once its own cutoff has passed:
 
-- `telemetry_samples_days` (default 30) — raw metric samples, including
+- `telemetry_samples_days` (default 7) — raw metric samples, including
   samples already represented in an hourly rollup.
 - `telemetry_logs_days` (default 14) — log records.
 - `telemetry_rollups_days` (default 365) — hourly metric rollups.
@@ -50,6 +50,10 @@ All three have to be a positive number of days; `ariadned --check-config`
 reports a non-positive one by name, the same way it reports a bad
 `tcp_listen`. The same job also folds the telemetry file's write-ahead log
 back in afterward, the way `checkpoint.rs` does for `ariadne.db`.
+
+Retention removes a series' metadata only after no raw sample or hourly
+summary refers to it. SQLite can reuse pages freed by deletion for later
+writes, but the telemetry file can keep its allocated size.
 
 ## Reading the logs
 

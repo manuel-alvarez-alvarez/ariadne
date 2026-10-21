@@ -7,7 +7,7 @@ socket_path = "/Users/me/.ariadne/ariadne.sock"   # (default: <home>/ariadne.soc
 db_path = "/Users/me/.ariadne/ariadne.db"         # (default: <home>/ariadne.db)
 telemetry_db_path = "/Users/me/.ariadne/telemetry.db"
                                    # (default: <home>/telemetry.db); see Telemetry
-telemetry_samples_days = 30       # days a raw metric sample is kept before
+telemetry_samples_days = 7        # days a raw metric sample is kept before
                                    # retention deletes it (default shown)
 telemetry_logs_days = 14          # days a log record is kept before retention
                                    # deletes it (default shown)
