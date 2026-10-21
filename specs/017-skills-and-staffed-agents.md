@@ -239,11 +239,14 @@ written into the system prompt (006), and the lifecycle the seats sit in
     Each successful sync also links every skill folder, one link per name,
     into `<native-home>/.claude/skills` for Claude Code and OpenCode and
     `<native-home>/.agents/skills` for Codex and OpenCode. Missing native
-    directories are created. A native entry is Ariadne's only when it is a
-    symlink whose target is under the canonical shared skills directory; a
-    link for a name no longer in the store is removed, while every other
-    entry is left alone. A file, directory, or other symlink at a current
-    skill name is a collision: the sync logs an error naming the skill
+    directories are created. A native entry is Ariadne's to replace or
+    remove when it is a symlink that resolves under the canonical shared
+    skills directory, or that resolves nowhere at all — broken, wherever it
+    once pointed, so nothing of the user's is lost by clearing it; a link
+    for a name no longer in the store is removed the same way, while every
+    other entry is left alone. A file, directory, or a symlink that still
+    resolves somewhere else is a collision: the sync logs an error naming
+    the skill
     (`name`), the shared source path (`shared_path`), the native path
     (`native_path`), the kind of entry found there — `file`, `directory` or
     `symlink` (`entry_kind`) — and the safe outcome (`outcome`, always
@@ -398,6 +401,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
   the outcome, and left untouched while the other directory
   continues syncing (`home_skills.rs::the_home_skill_copy_tracks_the_catalog_and_its_documents`,
   `::a_user_native_skill_collision_is_logged_and_left_untouched`).
+- A broken native link, and one that resolves into the shared skill folder
+  through another link rather than naming it directly, are both replaced
+  with no collision logged; a working link to somewhere else of the user's
+  own still logs the collision and keeps its target
+  (`home_skills.rs::a_broken_native_skill_link_is_replaced_without_a_log`,
+  `::a_native_skill_link_resolving_into_the_shared_folder_is_replaced_without_a_log`,
+  `::a_working_unrelated_native_skill_link_is_logged_and_left_untouched`).
 
 ## Sources
 

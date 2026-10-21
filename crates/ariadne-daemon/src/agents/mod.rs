@@ -243,9 +243,11 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path, native_home: &Path) -
 
 /// Link each shared skill into the directories the native agent tools scan.
 ///
-/// Only a symlink whose target is under `skills_dir` is Ariadne's to replace
-/// or remove. This deliberately leaves a user's same-named file, directory,
-/// or unrelated link in place and keeps that skill available through its index.
+/// A symlink is Ariadne's to replace or remove when it resolves under
+/// `skills_dir`, or when it resolves nowhere at all — broken, wherever it
+/// once pointed, so nothing of the user's is lost by clearing it. This
+/// deliberately leaves a user's same-named file, directory, or working
+/// unrelated link in place and keeps that skill available through its index.
 fn sync_native_skills(
     skills: &[ariadne_store::Skill],
     skills_dir: &Path,
@@ -310,12 +312,19 @@ fn entry_kind(metadata: &std::fs::Metadata) -> &'static str {
     }
 }
 
+/// A broken symlink answers `NotFound` here, the same `canonicalize` gives a
+/// name that was never there: nothing live sits at either, so both are
+/// Ariadne's to clear. Anything else at the name — a real file, a real
+/// directory, or a symlink that still resolves outside `skills_dir` — keeps
+/// its answer, `false`, and is left for the collision log.
 fn is_ariadne_skill_link(path: &Path, skills_dir: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
-        && std::fs::read_link(path).is_ok_and(|target| {
-            target.starts_with(skills_dir)
-                || std::fs::canonicalize(path).is_ok_and(|target| target.starts_with(skills_dir))
-        })
+    if !std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return false;
+    }
+    match std::fs::canonicalize(path) {
+        Ok(target) => target.starts_with(skills_dir),
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+    }
 }
 
 #[cfg(unix)]

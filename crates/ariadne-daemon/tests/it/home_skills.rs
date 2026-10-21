@@ -157,3 +157,141 @@ async fn a_user_native_skill_collision_is_logged_and_left_untouched() {
     })
     .await;
 }
+
+/// A native skill path can hold a symlink left over from a shared skill
+/// folder that moved or was torn down since — the daemon's own home changed,
+/// or, as in a test, the folder was a temporary directory now gone. Nothing
+/// of the user's own is lost by replacing it: there is nothing live at the
+/// far end to keep.
+#[tokio::test]
+async fn a_broken_native_skill_link_is_replaced_without_a_log() {
+    let h = harness().await;
+    let skills_dir = h.launcher.cfg.skills_dir.clone();
+    let link = h.launcher.cfg.native_home.join(".claude/skills/coding");
+    std::fs::remove_file(&link).unwrap();
+    let gone = h.launcher.cfg.native_home.join("gone/skills/coding");
+    std::os::unix::fs::symlink(&gone, &link).unwrap();
+
+    {
+        let _guard = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(h.telemetry.log_layer()),
+        );
+        ariadne_daemon::agents::sync_skills(
+            &h.store,
+            &h.launcher.cfg.skills_dir,
+            &h.launcher.cfg.native_home,
+        )
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(
+        std::fs::canonicalize(&link).unwrap(),
+        std::fs::canonicalize(skills_dir.join("coding")).unwrap(),
+        "a broken link must be replaced with a fresh one into the shared skill"
+    );
+
+    h.telemetry.flush();
+    let logs: LogSnapshotResponse = h.get("/v1/logs?level=error").await;
+    assert!(
+        logs.lines.iter().all(|line| !line
+            .message
+            .contains("native skill path collides with a user entry")),
+        "a broken link is not a collision: {:?}",
+        logs.lines
+    );
+}
+
+/// A symlink at a native skill path need not name the shared folder
+/// directly: one hop through another link that itself lands under
+/// `skills_dir` is still Ariadne's own to replace, with no collision logged.
+#[tokio::test]
+async fn a_native_skill_link_resolving_into_the_shared_folder_is_replaced_without_a_log() {
+    let h = harness().await;
+    let skills_dir = h.launcher.cfg.skills_dir.clone();
+    let link = h.launcher.cfg.native_home.join(".claude/skills/coding");
+    std::fs::remove_file(&link).unwrap();
+    let indirection = h.launcher.cfg.native_home.join("indirection");
+    std::os::unix::fs::symlink(skills_dir.join("coding"), &indirection).unwrap();
+    std::os::unix::fs::symlink(&indirection, &link).unwrap();
+
+    {
+        let _guard = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(h.telemetry.log_layer()),
+        );
+        ariadne_daemon::agents::sync_skills(
+            &h.store,
+            &h.launcher.cfg.skills_dir,
+            &h.launcher.cfg.native_home,
+        )
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(
+        std::fs::canonicalize(&link).unwrap(),
+        std::fs::canonicalize(skills_dir.join("coding")).unwrap(),
+        "a link resolving into the shared folder must be replaced with a direct one"
+    );
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        std::fs::canonicalize(&skills_dir).unwrap().join("coding"),
+        "the replacement must link straight to the shared skill, not through another hop"
+    );
+
+    h.telemetry.flush();
+    let logs: LogSnapshotResponse = h.get("/v1/logs?level=error").await;
+    assert!(
+        logs.lines.iter().all(|line| !line
+            .message
+            .contains("native skill path collides with a user entry")),
+        "a link that resolves into the shared folder is not a collision: {:?}",
+        logs.lines
+    );
+}
+
+/// A working symlink to somewhere of the user's own — not under
+/// `skills_dir` at all — is exactly the collision this sync must not touch,
+/// the same as a real file or folder at the name.
+#[tokio::test]
+async fn a_working_unrelated_native_skill_link_is_logged_and_left_untouched() {
+    let h = harness().await;
+    let link = h.launcher.cfg.native_home.join(".claude/skills/coding");
+    std::fs::remove_file(&link).unwrap();
+    let elsewhere = h.launcher.cfg.native_home.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("keep"), "ours").unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+
+    {
+        let _guard = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(h.telemetry.log_layer()),
+        );
+        ariadne_daemon::agents::sync_skills(
+            &h.store,
+            &h.launcher.cfg.skills_dir,
+            &h.launcher.cfg.native_home,
+        )
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        elsewhere,
+        "a working link to the user's own folder must stay exactly as it was"
+    );
+
+    h.telemetry.flush();
+    eventually(TIMEOUT, "the native collision error", || async {
+        let logs: LogSnapshotResponse = h.get("/v1/logs?level=error").await;
+        logs.lines.iter().any(|line| {
+            line.message
+                .contains("native skill path collides with a user entry")
+                && line.message.contains("name=coding")
+                && line.message.contains("entry_kind=symlink")
+                && line.message.contains("outcome=left_untouched")
+        })
+    })
+    .await;
+}
