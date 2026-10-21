@@ -713,11 +713,11 @@ async fn an_agent_run_counts_its_launch_turns_tools_and_permission() {
     let mut scripted = script();
     scripted["prompts"] = json!([{
         "updates": [
-            {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "Read",
-             "kind": "read", "status": "pending"},
+            {"sessionUpdate": "tool_call", "toolCallId": "call-1", "name": "Read",
+             "title": "Read Cargo.toml", "kind": "read", "status": "pending"},
         ],
         "permission": {
-            "toolCall": {"toolCallId": "call-2", "name": "Write", "kind": "write"},
+            "toolCall": {"toolCallId": "call-2", "title": "Write Cargo.toml", "kind": "write"},
             "options": [
                 {"optionId": "no", "name": "Reject", "kind": "reject_once"},
                 {"optionId": "yes", "name": "Allow", "kind": "allow_once"},
@@ -769,7 +769,11 @@ async fn an_agent_run_counts_its_launch_turns_tools_and_permission() {
         h.metric("ariadne.turns", &agent).await >= 1.0
             && h.metric(
                 "ariadne.permissions",
-                &[("decided_by", "console"), ("answer", "allow")],
+                &[
+                    ("decided_by", "console"),
+                    ("answer", "allow"),
+                    ("tool_name", "write"),
+                ],
             )
             .await
                 == 1.0

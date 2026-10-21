@@ -9,6 +9,13 @@ No metric names a goal, a task, a session, a launch or a path. A repository
 is its name, the last part of its checkout path. A model is its catalog id,
 `<agent>:<model>`. A value that is absent reads `none`.
 
+Tool-call and permission metrics use the provider's stable tool name. If the
+provider does not send one, they use the ACP tool category (`kind`), then
+`unknown`. They never use a display title, a call id or tool input, although
+the transcript still shows its detailed title. This only changes labels on
+new observations; existing metric names, labels and stored values remain as
+they are.
+
 ## Names
 
 Each metric is recorded under a dotted name, such as `ariadne.tasks.ended`.

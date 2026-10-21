@@ -2339,7 +2339,7 @@ impl RuntimeIncoming {
         crate::metrics::record_permission(
             decided_by,
             permission_answer(reply.option_id.as_deref(), reply.label.as_deref(), params),
-            &signature.tool_name,
+            metric_tool_name_of(&params["toolCall"]),
             requested_at.elapsed().as_secs_f64(),
         );
         self.sink.emit("permission.replied", json!(reply)).await;
@@ -3235,6 +3235,7 @@ fn tool_payload(session_id: Value, call: &Value) -> Value {
     json!({
         "session_id": session_id,
         "tool_name": name,
+        "metric_tool_name": metric_tool_name_of(call),
         "tool_input": call.get("rawInput").cloned().unwrap_or_default(),
         "acp": call,
     })
@@ -3290,6 +3291,23 @@ pub(crate) fn tool_name_of(tool_call: &Value) -> String {
     .find_map(|pointer| tool_call.pointer(pointer).and_then(Value::as_str))
     .unwrap_or("ACP tool")
     .to_string()
+}
+
+/// The bounded identity metric labels use: an agent-provided tool name, the
+/// ACP tool category, or `unknown`. Titles and call ids describe individual
+/// calls, so they remain transcript-only fields.
+fn metric_tool_name_of(tool_call: &Value) -> &str {
+    ["/name", "/_meta/claudeCode/toolName"]
+        .into_iter()
+        .find_map(|pointer| tool_call.pointer(pointer).and_then(Value::as_str))
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            tool_call
+                .get("kind")
+                .and_then(Value::as_str)
+                .filter(|kind| !kind.is_empty())
+        })
+        .unwrap_or("unknown")
 }
 
 /// The option that approves a permission request: the first the agent marks
@@ -3455,7 +3473,7 @@ fn permission_answer(option_id: Option<&str>, label: Option<&str>, params: &Valu
 mod tests {
     use super::{
         acp_error_detail, apply_agent_launch_environment, approved_option, completed_tool_payload,
-        exhausted_reason, permission_signature, usage_for_prompt_response,
+        exhausted_reason, metric_tool_name_of, permission_signature, usage_for_prompt_response,
     };
 
     use ariadne_core::{Seat, TokenUsage};
@@ -3616,6 +3634,32 @@ mod tests {
         assert_eq!(name(json!({"name": null, "title": "ls"})), "ls");
         assert_eq!(name(json!({"toolCallId": "call-1"})), "call-1");
         assert_eq!(name(json!({})), "ACP tool");
+    }
+
+    /// Metric labels identify a provider tool or its category, never a title,
+    /// call id, or request input that would create one series per call.
+    #[test]
+    fn metric_tool_names_do_not_fall_back_to_call_details() {
+        assert_eq!(
+            metric_tool_name_of(&json!({
+                "name": "Read", "title": "Read Cargo.toml", "toolCallId": "call-1",
+                "rawInput": {"path": "Cargo.toml"}, "kind": "read",
+            })),
+            "Read"
+        );
+        assert_eq!(
+            metric_tool_name_of(&json!({
+                "title": "Read Cargo.toml", "toolCallId": "call-2", "kind": "read",
+            })),
+            "read"
+        );
+        assert_eq!(
+            metric_tool_name_of(&json!({
+                "title": "Read Cargo.toml", "toolCallId": "call-3",
+                "rawInput": {"path": "Cargo.toml"},
+            })),
+            "unknown"
+        );
     }
 
     /// Empty content does not replace the raw output a finished call needs.

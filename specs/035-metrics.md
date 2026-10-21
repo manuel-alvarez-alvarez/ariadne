@@ -1,7 +1,7 @@
 ---
 id: metrics
 status: current
-updated: 2026-10-19
+updated: 2026-10-21
 areas: [daemon, store, docs]
 commits: []
 tests:
@@ -38,6 +38,11 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
    or a path. `repo` is the last part of the repository's checkout path, the
    name the `repo ls` path ends in. `model` is the catalog id,
    `<agent>:<model>`. No instrument has an `agent` attribute.
+   The `tool_name` label of tool-call and permission metrics is the stable
+   provider tool name where ACP supplies one, else its standard `kind`, else
+   `unknown`. It never uses a display title, tool-call id or tool input.
+   Those call details remain in the transcript. Existing metric names and
+   labels remain unchanged; this rule applies to newly recorded points.
 3. An absent value is the label `none`: a session with no seat, a task with
    no column, a flag that is not raised, a goal over several repositories.
 4. A counter is monotonic. A histogram is in seconds, with explicit buckets
@@ -90,7 +95,7 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 | `ariadne.tokens` | counter | | `kind` (`input`, `cached_input`, `output`), `model`, `seat`, `repo`, `step` | each usage write, ACP and ingestion, by the delta it adds |
 | `ariadne.switches` | counter | | `reason`, `automatic`, `same_agent`, `from_model`, `to_model` | `Launcher::switch_session`, before the pin moves |
 | `ariadne.messages` | counter | | `kind`, `from_actor`, `to_actor` | each stored message of the channel |
-| `ariadne.permissions` | counter | | `decided_by`, `answer`, `tool_name` | each ACP permission answer |
+| `ariadne.permissions` | counter | | `decided_by`, `answer`, `tool_name` | each ACP permission answer, by its stable tool identity |
 | `ariadne.permission.wait` | histogram | s | `decided_by` | the same, from the request to the answer |
 | `ariadne.attention.raised` | counter | | `reason` | change hook, a flag raised |
 | `ariadne.attention.cleared` | counter | | `reason` | change hook, a flag cleared or replaced |
@@ -154,7 +159,7 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 | --- | --- | --- | --- | --- |
 | `ariadne.turns` | counter | | `seat`, `model`, `step` | each stored `stop` |
 | `ariadne.turn.duration` | histogram | s | `seat`, `model`, `step` | the same, from its `user_prompt_submit` |
-| `ariadne.tool_calls` | counter | | `tool_name`, `model` | each stored `pre_tool_use` |
+| `ariadne.tool_calls` | counter | | `tool_name`, `model` | each stored `pre_tool_use`, by its stable tool identity |
 | `ariadne.ai_permissions.decisions` | counter | | `verdict` (`allow`, `deny`, `ask`, `unanswered`) | each decision of the AI permission model (022) |
 | `ariadne.ai_permissions.latency` | histogram | s | | the same |
 
@@ -224,8 +229,8 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
 - Each AI permission decision is counted by verdict and timed
   (`ai_permissions_decisions.rs::a_test_request_scores_the_same_model_state_without_publishing_or_learning`).
 - An agent run counts its ready launch and its launch time, its turns and
-  their durations, its tool call by name, and a console permission answer
-  with its wait
+  their durations, its tool call and console permission answer by stable
+  provider name (or category where unnamed), with its permission wait
   (`metrics.rs::an_agent_run_counts_its_launch_turns_tools_and_permission`).
 - A requested cross-agent switch counts the models left and entered
   (`metrics.rs::a_requested_switch_counts_the_models_left_and_entered`).

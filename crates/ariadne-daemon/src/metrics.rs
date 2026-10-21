@@ -576,7 +576,7 @@ pub async fn record_agent_activity(
         }
     } else {
         let name = payload
-            .get("tool_name")
+            .get("metric_tool_name")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("unknown");
         counter("ariadne.tool_calls").add(1, &[kv("tool_name", name), attrs[1].clone()]);
