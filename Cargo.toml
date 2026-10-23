@@ -150,7 +150,7 @@ base64 = "0.22"
 # 4.26x, and the tree already carried flate2. zstd packs it 4.80x and faster,
 # and is a C library this build would be the first to want.
 flate2 = "1"
-dirs = "6"
+dirs = "7"
 # Sleep inhibition: keepawake wraps the macOS and Windows power APIs, zbus
 # talks to systemd-logind on Linux.
 keepawake = { version = "0.6", default-features = false }
