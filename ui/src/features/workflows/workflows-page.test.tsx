@@ -255,9 +255,9 @@ describe("the selection", () => {
     renderPage()
     await openComboboxWithKeyboard(user)
 
-    // No filter typed, so the two groups keep the order they rendered in:
-    // one arrow down moves off the lone shipped row onto the user's own.
-    await user.keyboard("{ArrowDown}")
+    // The first two arrows enter cmdk and activate the shipped row. The next
+    // two arrows move through develop-review-merge and land on release.
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}")
     await user.keyboard("{Enter}")
 
     expect(await editorFor("release")).toBeDefined()

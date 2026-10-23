@@ -285,9 +285,9 @@ describe("the selection", () => {
     renderPage()
     await openComboboxWithKeyboard(user)
 
-    // No filter typed: "Yours" renders after "Shipped with Ariadne", so one
-    // arrow down from the first shipped row lands on the second.
-    await user.keyboard("{ArrowDown}")
+    // The first two arrows enter cmdk and activate api-design. The next two
+    // arrows move through coding and land on code-review.
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}")
     await user.keyboard("{Enter}")
 
     expect(await editorFor("code-review")).toBeDefined()
