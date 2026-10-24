@@ -257,6 +257,16 @@ impl AriadneMcp {
     ) -> Result<serde_json::Value, McpError> {
         self.client.post_json(path, body).await.map_err(to_mcp_err)
     }
+
+    /// `POST` a route whose success is a `204`: the daemon's withdrawal
+    /// route, for one, which has nothing to hand back once it has withdrawn
+    /// the request.
+    async fn post_no_content(&self, path: &str) -> Result<(), McpError> {
+        self.client
+            .send_no_content::<()>(http::Method::POST, path, None)
+            .await
+            .map_err(to_mcp_err)
+    }
 }
 
 /// The daemon's refusal, as the agent reads it.
@@ -1391,6 +1401,13 @@ pub(crate) mod tests {
         answers: Vec<String>,
     ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
         recording_daemon_with_answers("200 OK", answers, false).await
+    }
+
+    /// A daemon answering every call `204 No Content` with no body: what the
+    /// withdrawal route sends back once it has withdrawn the request.
+    pub(crate) async fn recording_no_content_daemon()
+    -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
+        recording_daemon_with_answers("204 No Content", vec![String::new()], true).await
     }
 
     async fn recording_daemon_with_answers(

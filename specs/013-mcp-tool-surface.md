@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-10-17
+updated: 2026-10-24
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -60,7 +60,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     into the call. A turn that ends without `wait_for_user` ends the wait;
     repeating its hint keeps the same request, while console input answers
     every pending request of that session (031 rule 12).
-    `withdraw_wait_for_user` takes the flag down again.
+    `withdraw_wait_for_user` takes the flag down again. The daemon answers a
+    withdrawal `204`, with no body, and the tool reads that as success
+    rather than a decoding failure (014).
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees. There are four seats
    (`McpSeat`): `Orchestrator`, `Agent`, `PullRequestReviewer` and
@@ -300,6 +302,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   question, not to poll `read_messages`, and that Ariadne delivers the
   answer as a new turn
   (`tools.rs::send_message_tells_agents_to_end_the_turn_after_a_question`).
+- `withdraw_wait_for_user` reads the daemon's bodyless `204` as success
+  (`tools.rs::withdraw_wait_for_user_reads_a_204_as_success`).
 
 ## Sources
 

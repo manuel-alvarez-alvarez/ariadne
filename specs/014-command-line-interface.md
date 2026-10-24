@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-10-18
+updated: 2026-10-24
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -123,6 +123,13 @@ same binary also serves (013).
    recovery commands in the rendered hint on that same line. `--format json`
    prints the daemon's envelope instead, so a script keeps the status and code
    the human line drops.
+13a. A route whose contract carries no body on success — a `204`, or a `200`
+   answered empty — is read as success without decoding anything:
+   `Client::send_no_content` reads the status alone and never asks the body
+   to parse. A route that does return JSON still reports a malformed or
+   missing body as a decode error, since that path is never touched by the
+   bodyless one. A failed call keeps the daemon's own error envelope either
+   way, decided from the status before either path looks at the body.
 14. The exit code says what kind of failure it was, and every kind has one of
    its own; it is documented in `ariadne --help`.
 15. Completions are generated for bash and zsh and complete against live data:
@@ -517,6 +524,14 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   --permission-mode ai` alike
   (`commands/permissions.rs::refresh_keeps_the_daemons_message_and_adds_the_hint_on_ai_disabled`,
   `ariadne-client/src/lib.rs::an_ai_refusal_carries_the_command_that_answers_it`).
+- A bodyless route's `204`, and a `200` with an empty body alike, read as
+  success with nothing decoded; a JSON route's malformed body still reads as
+  a decode error; and a bodyless route that fails keeps the daemon's error
+  envelope
+  (`ariadne-client/src/lib.rs::a_204_with_no_body_is_a_bodyless_success`,
+  `::a_200_with_an_empty_body_is_a_bodyless_success_too`,
+  `::a_malformed_body_on_a_json_operation_is_a_decode_error`,
+  `::a_failed_bodyless_operation_keeps_the_daemons_error`).
 - A git below the floor is a warning that names what it cannot do, and a
   version line is read down to its major and minor
   (`checks.rs::a_git_below_the_floor_is_a_warning_about_repositories_with_no_commits`,

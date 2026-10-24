@@ -467,21 +467,18 @@ impl Client {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
-    /// Send a request and ignore the (possibly empty) response body.
+    /// Send a request whose successful answer carries no body a caller
+    /// reads — a `204`, or a `200` with nothing in it. The body is never
+    /// decoded, so a malformed one on a genuinely JSON-returning endpoint
+    /// stays [`ClientError::Decode`] from [`Client::request`], never this.
     pub async fn send_no_content<B: Serialize>(
         &self,
         method: Method,
         path: &str,
         body: Option<&B>,
     ) -> Result<(), ClientError> {
-        match self
-            .request::<serde_json::Value, B>(method, path, body)
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(ClientError::Decode(_)) => Ok(()), // 2xx with empty body
-            Err(e) => Err(e),
-        }
+        self.request_raw(method, path, body).await?;
+        Ok(())
     }
 
     // ---- plumbing --------------------------------------------------------
@@ -971,6 +968,90 @@ mod tests {
         assert_eq!(
             Client::socket_path(Some(dir.path().to_path_buf())),
             dir.path().join("ariadne.sock")
+        );
+    }
+
+    /// A TCP daemon stub that answers every request the same way, so a test
+    /// can see what the client makes of one wire answer without a real
+    /// `ariadned`.
+    async fn stub_daemon(
+        status: &'static str,
+        body: &'static str,
+    ) -> (Client, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let endpoint = format!("http://{}", listener.local_addr().expect("addr"));
+        let handle = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let response = format!(
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+        (Client::tcp(endpoint), handle)
+    }
+
+    /// A `204` with no body is the contract a bodyless operation documents,
+    /// not a decoding failure: nothing is ever asked to parse it.
+    #[tokio::test]
+    async fn a_204_with_no_body_is_a_bodyless_success() {
+        let (client, _server) = stub_daemon("204 No Content", "").await;
+        client
+            .send_no_content::<()>(Method::POST, "/v1/widgets/1", None)
+            .await
+            .expect("a 204 with no body is success");
+    }
+
+    /// A `200` whose body is empty too (rather than `204`) is the same
+    /// bodyless success, since the contract is "no body a caller reads", not
+    /// one status code.
+    #[tokio::test]
+    async fn a_200_with_an_empty_body_is_a_bodyless_success_too() {
+        let (client, _server) = stub_daemon("200 OK", "").await;
+        client
+            .send_no_content::<()>(Method::DELETE, "/v1/widgets/1", None)
+            .await
+            .expect("a 200 with an empty body is success");
+    }
+
+    /// A JSON-returning operation still reports a malformed body as
+    /// [`ClientError::Decode`]: the bodyless path never swallows a decoding
+    /// failure of its own operations, and this is the plain one of those,
+    /// unmediated by [`Client::send_no_content`].
+    #[tokio::test]
+    async fn a_malformed_body_on_a_json_operation_is_a_decode_error() {
+        let (client, _server) = stub_daemon("200 OK", "not json").await;
+        let err = client
+            .get_json::<serde_json::Value>("/v1/widgets/1")
+            .await
+            .expect_err("malformed JSON is a decode error");
+        assert!(matches!(err, ClientError::Decode(_)), "{err:?}");
+    }
+
+    /// A failed bodyless operation keeps the daemon's own error envelope: a
+    /// `404` still reads as [`ClientError::Api`], never papered over as
+    /// success because the operation ignores a successful body.
+    #[tokio::test]
+    async fn a_failed_bodyless_operation_keeps_the_daemons_error() {
+        let (client, _server) = stub_daemon(
+            "404 Not Found",
+            r#"{"error":{"code":"not_found","message":"no such widget"}}"#,
+        )
+        .await;
+        let err = client
+            .send_no_content::<()>(Method::DELETE, "/v1/widgets/1", None)
+            .await
+            .expect_err("a 404 is still an error");
+        assert!(
+            matches!(&err, ClientError::Api { code, .. } if code == "not_found"),
+            "{err:?}"
         );
     }
 }

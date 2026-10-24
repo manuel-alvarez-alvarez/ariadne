@@ -458,16 +458,12 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<WithdrawWaitForUserReq>,
     ) -> Result<CallToolResult, McpError> {
-        json_result(
-            self.post(
-                &format!(
-                    "/v1/sessions/{}/agent-requests/{}",
-                    self.session_id, req.request_id
-                ),
-                &serde_json::json!({}),
-            )
-            .await?,
-        )
+        self.post_no_content(&format!(
+            "/v1/sessions/{}/agent-requests/{}",
+            self.session_id, req.request_id
+        ))
+        .await?;
+        json_result(serde_json::json!({"withdrawn": true}))
     }
     #[tool(
         description = "Read a task: its column, status, branch, dependencies and agents. Each agent gives its column and skills. The goal columns give each one's ranks and gate."
@@ -1090,7 +1086,8 @@ mod tests {
 
     use crate::commands::mcp::McpSeat;
     use crate::commands::mcp::tests::{
-        recording_daemon, recording_daemon_answering, recording_daemon_answering_in_turn, server_at,
+        recording_daemon, recording_daemon_answering, recording_daemon_answering_in_turn,
+        recording_no_content_daemon, server_at,
     };
 
     /// The request tools of a column's agent reach the routes of the request
@@ -1185,6 +1182,27 @@ mod tests {
             report,
             serde_json::json!({"ready": true, "head_sha": "abc", "reviewed_sha": null})
         );
+    }
+
+    /// The daemon withdraws a request with a bare `204`, and the tool reads
+    /// that as success rather than a decoding failure.
+    #[tokio::test]
+    async fn withdraw_wait_for_user_reads_a_204_as_success() {
+        let (endpoint, seen) = recording_no_content_daemon().await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.withdraw_wait_for_user(Parameters(WithdrawWaitForUserReq {
+            request_id: "01REQ".into(),
+        }))
+        .await
+        .expect("a 204 withdrawal is success");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(seen[0].path, "/v1/sessions/01SESSION/agent-requests/01REQ");
     }
 
     #[tokio::test]
