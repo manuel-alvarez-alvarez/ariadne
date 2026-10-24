@@ -322,7 +322,7 @@ replacement draws plain instead.
 | ↑, ↓, or 1 to 9 during a question | Chooses a permission option instead of moving through input or history |
 | Ctrl-O | Toggles the pane between folded and whole; works during a question too |
 | Tab, Shift-Tab | While the session has subagents, shows the next or the previous view of the bar; while the slash-command list is open, Tab completes instead |
-| Escape | Cancels the running turn; in a subagent's view, goes back to the session's own view |
+| Escape | Cancels the running turn; in a subagent's view, cancels that subagent's turn where it can be, or goes back to the session's own view otherwise |
 | Ctrl-C twice, Ctrl-D | Leaves the console; the session keeps running, and the console says how to attach again |
 
 Pasting puts the text into the input box where the cursor is, line breaks
@@ -378,10 +378,21 @@ with how long it ran:
 What a subagent writes and runs is not in the `main` view. Press Tab to read
 it in the subagent's own view. That view shows the subagent's transcript
 alone, and is read-only: it has no input box, and the footer starts with
-`read-only`. Ctrl-O folds and unfolds as in the `main` view, and Escape goes
-back to the `main` view. A permission question from a subagent is asked in
-the `main` view, since the session answers it, and names the subagent:
-`Bash · asked by subagent explorer`.
+`read-only`. Ctrl-O folds and unfolds as in the `main` view. A permission
+question from a subagent is asked in the `main` view, since the session
+answers it, and names the subagent: `Bash · asked by subagent explorer`.
+
+Escape's footer hint says what it does in that view: `esc cancel` where the
+agent said the subagent may be cancelled, and `esc back` otherwise. Not every
+agent says so — codex-acp and claude-agent-acp announce none today — so a
+subagent's own view usually goes back to `main` on Escape rather than
+cancelling.
+
+Over HTTP, `POST /v1/sessions/{id}/console/cancel` takes the same body either
+way: omitted, or `{}`, cancels the session's own running turn, and
+`{"subagent_id": "<id>"}` cancels that subagent's turn instead, leaving the
+session's own turn untouched. It answers `409` for a subagent that is
+unknown, has already ended, or was never said to be cancellable.
 
 With stdin or stdout redirected there is no pane to draw: `ariadne attach`
 then prints one `kind · summary` line per event and numbered options for a

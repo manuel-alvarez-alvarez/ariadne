@@ -35,6 +35,9 @@ pub(super) struct Subagent {
     /// `running`, `completed`, `failed` or `cancelled`, or none where the
     /// agent said none.
     pub(super) state: Option<String>,
+    /// Whether the client may cancel this child now, as its latest update
+    /// said (021).
+    cancel: bool,
     /// When it was announced: what an end counts its time from.
     announced_at: String,
     /// The child's own transcript. Empty while it is the view on the
@@ -66,6 +69,7 @@ pub(super) fn child_at(subagents: &mut Vec<Subagent>, event: &AgentEventDto, id:
         id: id.to_string(),
         title: title_of(&event.payload, id),
         state: None,
+        cancel: false,
         announced_at: event.created_at.clone(),
         items: Vec::new(),
     });
@@ -96,6 +100,11 @@ pub(super) fn follow(
     let at = child_at(subagents, event, id);
     let child = &mut subagents[at];
     child.title = title_of(&event.payload, id);
+    child.cancel = event
+        .payload
+        .pointer("/capabilities/cancel")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let state = event
         .payload
         .get("state")
@@ -207,12 +216,22 @@ impl Console {
     }
 
     /// The keys of the bar: Tab to the next view and Shift-Tab to the one
-    /// before, in bar order, and Esc from a child's view to the parent's.
-    /// `None` for any other key, and while the session has no child.
+    /// before, in bar order; Esc from a child's view to the parent's, or, for
+    /// a child that advertises the capability, a cancel of that child's turn
+    /// instead (021). `None` for any other key, and while the session has no
+    /// child.
     pub(super) fn view_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Action> {
         use crossterm::event::{KeyCode, KeyModifiers};
         if self.subagents.is_empty() {
             return None;
+        }
+        if key.code == KeyCode::Esc && self.in_child() {
+            let child = &self.subagents[self.view - 1];
+            if child.cancel {
+                return Some(Action::CancelSubagent(child.id.clone()));
+            }
+            self.switch(0);
+            return Some(Action::Switch);
         }
         let views = self.subagents.len() + 1;
         let back = key.code == KeyCode::BackTab
@@ -220,11 +239,16 @@ impl Console {
         let to = match key.code {
             KeyCode::Tab | KeyCode::BackTab if back => (self.view + views - 1) % views,
             KeyCode::Tab => (self.view + 1) % views,
-            KeyCode::Esc if self.in_child() => 0,
             _ => return None,
         };
         self.switch(to);
         Some(Action::Switch)
+    }
+
+    /// Whether the child view on the screen may be cancelled now, as its
+    /// latest update said (021). `false` outside a child's view.
+    pub(super) fn shown_child_cancellable(&self) -> bool {
+        self.in_child() && self.subagents[self.view - 1].cancel
     }
 
     /// Put view `to` on the screen: the one shown goes back where it is
@@ -313,6 +337,18 @@ mod tests {
                    "subagent": {"id": id, "title": title, "description": task},
                    "state": state, "capabilities": {"cancel": false}}),
             at,
+        )
+    }
+
+    /// A running `subagent_update` whose `capabilities.cancel` is `cancel`.
+    fn update_with_cancel(id: &str, title: &str, cancel: bool) -> AgentEventDto {
+        event_at(
+            "subagent_update",
+            &format!("{id} running"),
+            json!({"session_id": "stub-session",
+                   "subagent": {"id": id, "title": title, "description": ""},
+                   "state": "running", "capabilities": {"cancel": cancel}}),
+            AT,
         )
     }
 
@@ -488,6 +524,7 @@ mod tests {
         let footer = shown.lines().last().unwrap_or_default().to_string();
         assert!(footer.starts_with(" read-only"), "{footer:?}");
         assert!(footer.contains("ctrl-o unfold"), "{footer:?}");
+        assert!(footer.contains("esc back"), "{footer:?}");
 
         console.key(ctrl('o'));
         let folded = drawn(&mut console);
@@ -500,6 +537,30 @@ mod tests {
         let shown = drawn(&mut console);
         assert!(shown.contains("parent words"), "{shown}");
         assert!(shown.contains("Tell the agent"), "{shown}");
+    }
+
+    /// A child that advertised `cancel` has Esc cancel its turn instead of
+    /// switching back, and the footer names the key for it.
+    #[test]
+    fn esc_cancels_a_child_that_advertises_it_instead_of_switching_back() {
+        let mut console = Console::new(header());
+        console.snapshot(&[update_with_cancel("c1", "explorer", true)]);
+        tab(&mut console);
+
+        let shown = drawn(&mut console);
+        let footer = shown.lines().last().unwrap_or_default().to_string();
+        assert!(footer.contains("esc cancel"), "{footer:?}");
+
+        assert_eq!(
+            esc(&mut console),
+            Action::CancelSubagent("c1".into()),
+            "Esc cancels rather than switching"
+        );
+        let shown = drawn(&mut console);
+        assert!(
+            shown.contains("read-only"),
+            "the view stayed on the child: {shown}"
+        );
     }
 
     /// The parent's view gives each child one line as it is announced,
@@ -682,5 +743,42 @@ mod tests {
         assert!(child.contains("read-only"), "{child}");
         assert!(parent.contains("parent words"), "{parent}");
         assert!(!parent.contains("explorer words"), "{parent}");
+    }
+
+    /// Esc in a cancellable child's view posts the cancel through the sink,
+    /// as the drive loop wires `Action::CancelSubagent` (021).
+    #[tokio::test(start_paused = true)]
+    async fn esc_posts_a_subagent_cancel_through_the_sink() {
+        let window = Window::new(72, 40);
+        let mut terminal = open(|| AnsiBackend::new(Tap::default(), window.clone())).unwrap();
+        let mut console = Console::new(header());
+        let mut stub = Stub::new(vec![update_with_cancel("c1", "explorer", true)]);
+        let source = stub.source();
+        let (typing, typed) = tokio::sync::mpsc::unbounded_channel();
+        let keys = stream::unfold(typed, |mut typed| async move {
+            typed.recv().await.map(|key| (Ok(key), typed))
+        });
+        let script = async {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            typing.send(key(KeyCode::Tab)).unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            typing.send(key(KeyCode::Esc)).unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            typing.send(TermEvent::Key(ctrl('c'))).unwrap();
+            typing.send(TermEvent::Key(ctrl('c'))).unwrap();
+        };
+        let (outcome, ()) = tokio::join!(
+            drive(
+                &mut terminal,
+                source,
+                &mut stub,
+                Box::pin(keys),
+                &mut console
+            ),
+            script
+        );
+        outcome.unwrap();
+
+        assert_eq!(stub.subagent_cancels(), ["c1"]);
     }
 }

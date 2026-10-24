@@ -326,6 +326,12 @@ impl Sink for Posts {
         // cancel, and says so with a conflict: not a failure of the console.
         let _ = console::cancel_turn(&self.state, &self.id).await;
     }
+
+    async fn cancel_subagent(&mut self, id: &str) {
+        // A child that ended, or lost the capability, between the key and
+        // the cancel has nothing to cancel either, for the same reason.
+        let _ = console::cancel_subagent_turn(&self.state, &self.id, id).await;
+    }
 }
 
 /// Where the source stands, between one frame and the next.

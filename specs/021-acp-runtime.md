@@ -387,6 +387,16 @@ outside half) opens no session either: it asks only `initialize` and
     list. An update under any other session id is
     the parent's own, and an unknown kind is still let by. A child's event
     never sets the row's agent session id.
+16. A child the agent announced may be cancelled by its own session id,
+    independently of the parent's own turn: ACP `session/cancel`, sent with
+    the child's id rather than read off the parent's running turn (008
+    rule 36). It is refused where `subagent_id` names a child the agent
+    never announced, where the registry's latest update for it is
+    `completed`, `failed` or `cancelled`, or where that update's
+    capabilities never held a `cancel` object. The registry a cancel
+    reads is the same one rule 15 folds updates into, so a later
+    announcement's capabilities or state apply at once. The parent's own
+    turn, running or not, is untouched either way.
 
 ## Acceptance criteria
 
@@ -616,6 +626,9 @@ outside half) opens no session either: it asks only `initialize` and
   the work ended, and a `cancel` capability reads as true
   (`subagents.rs::a_draft_subagent_update_patches_what_it_names`,
   `ariadne-daemon::acp_subagents::tests::an_idle_child_reads_as_how_its_work_ended`).
+- A later announcement's concrete `capabilities` object replaces the
+  earlier one, even to clear a `cancel` the child had advertised
+  (`ariadne-daemon::acp_subagents::tests::a_later_concrete_capabilities_object_replaces_an_earlier_cancel`).
 - A child's command list reaches the console stream named, is not
   stored, and leaves the session's own list in the snapshot
   (`subagents.rs::a_childs_commands_reach_the_console_named_and_leave_the_parents_alone`).
@@ -624,6 +637,15 @@ outside half) opens no session either: it asks only `initialize` and
   own, and an unknown kind is let by
   (`subagents.rs::an_agent_that_announces_nothing_stores_what_it_did_before`,
   `ariadne-daemon::acp_subagents::tests::only_an_announced_child_is_tagged`).
+- Cancelling an announced, cancellable child sends `session/cancel` with
+  the child's own id and leaves the session's own turn, already ended, as
+  it is (`acp_console.rs::cancelling_an_announced_subagent_sends_session_cancel_with_its_own_id`).
+- Cancelling an unknown child, one whose work already ended, or one that
+  never advertised `cancel`, is refused and sends nothing
+  (`acp_console.rs::cancelling_an_unknown_subagent_is_refused`,
+  `::cancelling_an_ended_subagent_is_refused`,
+  `::cancelling_a_subagent_that_does_not_advertise_cancel_is_refused`,
+  `ariadne-daemon::acp_subagents::tests::a_child_may_be_cancelled_only_while_running_and_advertising_it`).
 
 ## Known gap
 

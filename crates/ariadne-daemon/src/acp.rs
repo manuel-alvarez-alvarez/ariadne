@@ -40,7 +40,7 @@ use ariadne_core::{PermissionMode, TokenUsage};
 use ariadne_store::{PullRequestTold, Store};
 
 use crate::acp_calls::PromptTurn;
-use crate::acp_subagents::{SUBAGENT_UPDATE, Subagents};
+use crate::acp_subagents::{CancelEligibility, SUBAGENT_UPDATE, Subagents};
 use crate::acp_transport::{PromptWrites, witnessed_pipes};
 use crate::ai_permissions::AiPermissions;
 use crate::ai_permissions::decide::{Decision, decide, prepare};
@@ -498,6 +498,9 @@ struct RunningAgent {
     task_id: Option<String>,
     /// The notification path into the agent, for `session/cancel`.
     outbound: Outbound,
+    /// The children this launch's agent has announced, for the console's
+    /// cancel route (021): the same registry the driver folds updates into.
+    subagents: Subagents,
     /// This launch's turn reports, for [`AcpRuntime::turn_reports`].
     reports: Followers,
     /// Closes once the driver has killed and reaped the child: what a
@@ -549,6 +552,21 @@ impl Outbound {
         connection.send_notification(v1::CancelNotification::new(agent_session))?;
         Ok(true)
     }
+
+    /// Cancel the session `agent_session_id` names directly: a child's own
+    /// id, named by the console's cancel route rather than read off the
+    /// parent's turn. The same lock as [`Self::cancel`] and every
+    /// `session/prompt` serializes this against them, so it is never written
+    /// between a turn being seen running and the moment its own cancel or
+    /// its successor's prompt goes out.
+    async fn cancel_session(&self, agent_session_id: &str) -> Result<()> {
+        let _sending = self.sending.lock().await;
+        let Some(connection) = self.connection.get() else {
+            bail!("the agent is not connected");
+        };
+        connection.send_notification(v1::CancelNotification::new(agent_session_id.to_string()))?;
+        Ok(())
+    }
 }
 
 /// The transport, the permission reply slot, the turn and the report channel
@@ -560,6 +578,7 @@ struct DriverIo {
     permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     turn: Arc<tokio::sync::Mutex<Turn>>,
     task_id: Option<String>,
+    subagents: Subagents,
     reports: Followers,
     ready: Option<oneshot::Sender<()>>,
 }
@@ -964,6 +983,34 @@ impl AcpRuntime {
         self.cancel_turn(session_id, None).await
     }
 
+    /// Cancel one child the session's agent announced: ACP `session/cancel`,
+    /// sent with the child's own session id rather than the parent's (021).
+    ///
+    /// Errs where there is nothing to cancel: no agent runs for this
+    /// session, or `subagent_id` names a child that is unknown, has already
+    /// ended, or never advertised the capability. The parent's own turn is
+    /// untouched either way.
+    pub(crate) async fn cancel_subagent(&self, session_id: &str, subagent_id: &str) -> Result<()> {
+        let (outbound, subagents) = {
+            let running = self.inner.running.lock().expect("acp registry lock");
+            let agent = running
+                .get(session_id)
+                .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?;
+            (agent.outbound.clone(), agent.subagents.clone())
+        };
+        match subagents.cancel_eligibility(subagent_id) {
+            CancelEligibility::Unknown => {
+                bail!("{subagent_id} is not a subagent of session {session_id}")
+            }
+            CancelEligibility::Ended => bail!("subagent {subagent_id} has already ended"),
+            CancelEligibility::NotAdvertised => {
+                bail!("subagent {subagent_id} does not advertise cancel")
+            }
+            CancelEligibility::Ready => {}
+        }
+        outbound.cancel_session(subagent_id).await
+    }
+
     /// Follow the turn reports of the session's agent, as long as it still
     /// runs under `launch_id`: the reports of that launch and no other, from
     /// this moment on, every one of them — the channel is unbounded, so a
@@ -1117,6 +1164,7 @@ impl AcpRuntime {
         let loose = session.seat.is_none();
         let task_id = session.task_id;
         let outbound = Outbound::default();
+        let subagents = Subagents::default();
         self.inner
             .running
             .lock()
@@ -1133,6 +1181,7 @@ impl AcpRuntime {
                     turn: turn.clone(),
                     task_id: task_id.clone(),
                     outbound: outbound.clone(),
+                    subagents: subagents.clone(),
                     reports: reports.clone(),
                     ended: ended.shared(),
                 },
@@ -1152,6 +1201,7 @@ impl AcpRuntime {
                         permission,
                         turn,
                         task_id,
+                        subagents,
                         reports,
                         ready: loose.then_some(ready),
                     },
@@ -1349,7 +1399,7 @@ impl AcpRuntime {
             branch: self.branch_of(&launch.session_id),
             pending_permission: permission.clone(),
             reports: io.reports.clone(),
-            subagents: Subagents::default(),
+            subagents: io.subagents.clone(),
         };
         // The protocol's own outcome, set inside the connection: the
         // connection future answers for the link, not for the conversation.

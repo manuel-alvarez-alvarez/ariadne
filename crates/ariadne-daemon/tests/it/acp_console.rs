@@ -2246,6 +2246,128 @@ async fn the_cancel_endpoint_is_in_the_openapi_document() {
     assert!(doc["paths"]["/v1/sessions/{id}/console/input"]["post"].is_object());
 }
 
+/// A session whose one turn sends `updates`, then ends normally. Whatever
+/// child it announces stays known to the session's agent for as long as the
+/// agent process runs, which is what lets the cancel route reach it after
+/// the turn that announced it has already ended.
+async fn subagent_session(
+    updates: Vec<serde_json::Value>,
+) -> (
+    Harness,
+    ariadne_store::AgentSession,
+    StubAcpAgent,
+    tempfile::TempDir,
+) {
+    let mut scripted = script();
+    scripted["prompts"] = json!([{"updates": updates}]);
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+    (h, session, stub, agent_dir)
+}
+
+/// Cancelling an announced, still-running, cancellable subagent sends
+/// `session/cancel` with the child's own session id (021), and the
+/// session's own turn — already ended — is left exactly as it is.
+#[tokio::test]
+async fn cancelling_an_announced_subagent_sends_session_cancel_with_its_own_id() {
+    let (h, session, stub, _agent_dir) = subagent_session(vec![json!({
+        "sessionUpdate": "subagent_spawned", "subagentSessionId": "c1",
+        "name": "explorer", "task": "Look around", "capabilities": {"cancel": {}},
+    })])
+    .await;
+
+    let (status, _) = h
+        .send(post_json(
+            &format!("/v1/sessions/{}/console/cancel", session.id),
+            json!({"subagent_id": "c1"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    eventually(TIMEOUT, "the agent to read the cancel", || async {
+        !stub.calls_of("session/cancel").is_empty()
+    })
+    .await;
+    assert_eq!(
+        stub.calls_of("session/cancel"),
+        vec![json!({"sessionId": "c1"})]
+    );
+    assert_eq!(h.session_status(&session).await, SessionStatus::Idle);
+}
+
+/// A `subagent_id` that names no child the agent ever announced is refused,
+/// and nothing is sent to the agent.
+#[tokio::test]
+async fn cancelling_an_unknown_subagent_is_refused() {
+    let (h, session, stub, _agent_dir) = subagent_session(vec![json!({
+        "sessionUpdate": "subagent_spawned", "subagentSessionId": "c1",
+        "name": "explorer", "task": "Look around", "capabilities": {"cancel": {}},
+    })])
+    .await;
+
+    let error = h
+        .error(
+            post_json(
+                &format!("/v1/sessions/{}/console/cancel", session.id),
+                json!({"subagent_id": "no-such-child"}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert_eq!(error.error.code, "conflict");
+    assert!(stub.calls_of("session/cancel").is_empty());
+}
+
+/// A child whose work already ended cannot be cancelled again.
+#[tokio::test]
+async fn cancelling_an_ended_subagent_is_refused() {
+    let (h, session, stub, _agent_dir) = subagent_session(vec![
+        json!({"sessionUpdate": "subagent_spawned", "subagentSessionId": "c1",
+               "name": "explorer", "task": "Look around", "capabilities": {"cancel": {}}}),
+        json!({"sessionUpdate": "subagent_state_update", "subagentSessionId": "c1",
+               "state": "completed"}),
+    ])
+    .await;
+
+    let error = h
+        .error(
+            post_json(
+                &format!("/v1/sessions/{}/console/cancel", session.id),
+                json!({"subagent_id": "c1"}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert_eq!(error.error.code, "conflict");
+    assert!(stub.calls_of("session/cancel").is_empty());
+}
+
+/// A child whose announcement never advertised `cancel` cannot be
+/// cancelled, as codex-acp and claude-agent-acp announce theirs today.
+#[tokio::test]
+async fn cancelling_a_subagent_that_does_not_advertise_cancel_is_refused() {
+    let (h, session, stub, _agent_dir) = subagent_session(vec![json!({
+        "sessionUpdate": "subagent_spawned", "subagentSessionId": "c1",
+        "name": "explorer", "task": "Look around", "capabilities": {},
+    })])
+    .await;
+
+    let error = h
+        .error(
+            post_json(
+                &format!("/v1/sessions/{}/console/cancel", session.id),
+                json!({"subagent_id": "c1"}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert_eq!(error.error.code, "conflict");
+    assert!(stub.calls_of("session/cancel").is_empty());
+}
+
 /// A console client that falls behind on the stored events is told to
 /// resync, and the connection closes right after — the live half does not
 /// keep it open on a transcript with holes in it.

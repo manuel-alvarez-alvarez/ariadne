@@ -33,7 +33,7 @@ use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 use ariadne_api::events::AgentEventDto;
-use ariadne_api::sessions::ConsoleInputRequest;
+use ariadne_api::sessions::{ConsoleCancelRequest, ConsoleInputRequest};
 use ariadne_api::stream::ResyncDto;
 use ariadne_store::{AgentEvent, EventFilter, EventOrder, Store, StoreError};
 
@@ -645,23 +645,35 @@ pub(super) async fn take_input(state: &AppState, id: &str, text: String) -> ApiR
     Ok(())
 }
 
-/// Cancel the turn a session is running.
+/// Cancel the turn a session is running, or one subagent of it.
 ///
-/// Sends ACP `session/cancel` to the agent while its `session/prompt` is
+/// With no body, or a body naming no `subagent_id`, sends ACP
+/// `session/cancel` for the session's own turn while its `session/prompt` is
 /// still in flight. The turn then ends as any other does — the text so far
 /// stored, then a `stop` whose `stop_reason` is `cancelled`. A session that
 /// is not live, one whose agent process is gone, and one between turns all
 /// have nothing to cancel, and say so with `409`.
+///
+/// Naming a `subagent_id` (021) sends `session/cancel` with that child's own
+/// session id instead, and leaves the session's own turn as it is. It is
+/// refused with `409` where the child is unknown, has already ended, or
+/// never advertised the capability in its announcement.
 #[utoipa::path(post, path = "/v1/sessions/{id}/console/cancel", tag = "sessions",
     operation_id = "console_cancel",
     params(("id" = String, Path, description = "session id")),
-    responses((status = 204, description = "The running turn was told to cancel"),
+    request_body(content = Option<ConsoleCancelRequest>,
+        description = "omitted, or `subagent_id` omitted, cancels the session's own turn"),
+    responses((status = 204, description = "The turn, or the named subagent, was told to cancel"),
         (status = 404), (status = 409)))]
 pub(super) async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    body: Option<Json<ConsoleCancelRequest>>,
 ) -> ApiResult<StatusCode> {
-    cancel_turn(&state, &id).await?;
+    match body.and_then(|Json(req)| req.subagent_id) {
+        Some(subagent_id) => cancel_subagent_turn(&state, &id, &subagent_id).await?,
+        None => cancel_turn(&state, &id).await?,
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -679,6 +691,30 @@ pub(super) async fn cancel_turn(state: &AppState, id: &str) -> ApiResult<()> {
         .launcher
         .acp
         .cancel(id)
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+    Ok(())
+}
+
+/// What a `subagent_id` on `POST /console/cancel` does, for the HTTP handler
+/// and the terminal console alike (021): the session's own turn is left
+/// alone either way.
+pub(super) async fn cancel_subagent_turn(
+    state: &AppState,
+    id: &str,
+    subagent_id: &str,
+) -> ApiResult<()> {
+    let session = state.store.get_session(id).await?;
+    if !session.status().is_live() {
+        return Err(ApiError::conflict(format!(
+            "session {id} is {} and has no subagent to cancel",
+            session.status
+        )));
+    }
+    state
+        .launcher
+        .acp
+        .cancel_subagent(id, subagent_id)
         .await
         .map_err(|e| ApiError::conflict(e.to_string()))?;
     Ok(())

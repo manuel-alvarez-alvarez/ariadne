@@ -349,7 +349,10 @@ impl Console {
         let views = !self.subagents.is_empty();
         let base: &[&str] = match (self.armed, self.question().is_some(), self.turn.running()) {
             (true, _, _) => &["ctrl-c again to leave"],
-            _ if self.in_child() => &["read-only", "tab next view", "esc main"],
+            _ if self.in_child() && self.shown_child_cancellable() => {
+                &["read-only", "tab next view", "esc cancel"]
+            }
+            _ if self.in_child() => &["read-only", "tab next view", "esc back"],
             (_, true, _) => &["up/down or 1-9 choose", "enter answer"],
             (_, _, true) => &[
                 "enter send",

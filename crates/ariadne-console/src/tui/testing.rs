@@ -85,6 +85,8 @@ pub(super) struct Stub {
     inbox: Option<mpsc::UnboundedReceiver<Result<Frame>>>,
     prompts: Vec<String>,
     cancels: usize,
+    /// The subagent id of every `cancel_subagent` post, in order.
+    subagent_cancels: Vec<String>,
     /// A session that will take no more input, which is the `409` a
     /// finished one gives.
     refuses: bool,
@@ -103,8 +105,14 @@ impl Stub {
             inbox: Some(inbox),
             prompts: Vec::new(),
             cancels: 0,
+            subagent_cancels: Vec::new(),
             refuses: false,
         }
+    }
+
+    /// The subagent id of every `cancel_subagent` post, in order.
+    pub(super) fn subagent_cancels(&self) -> &[String] {
+        &self.subagent_cancels
     }
 
     pub(super) fn refuses(mut self) -> Self {
@@ -169,6 +177,10 @@ impl Sink for Stub {
         for event in &self.on_cancel {
             let _ = self.outbox.send(Ok(Frame::Event(event.clone())));
         }
+    }
+
+    async fn cancel_subagent(&mut self, id: &str) {
+        self.subagent_cancels.push(id.to_string());
     }
 }
 

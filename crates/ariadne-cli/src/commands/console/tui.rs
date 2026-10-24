@@ -23,7 +23,7 @@ use tokio::time::{Instant, sleep_until};
 
 use ariadne_api::goals::GoalDto;
 use ariadne_api::repositories::RepositoryDto;
-use ariadne_api::sessions::{ConsoleInputRequest, SessionDto};
+use ariadne_api::sessions::{ConsoleCancelRequest, ConsoleInputRequest, SessionDto};
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, SseEvent, SseStream};
 use ariadne_console::{Console, Frame, Header, Sink, drive, open};
@@ -229,6 +229,21 @@ impl Sink for Posts<'_> {
             )
             .await;
     }
+
+    async fn cancel_subagent(&mut self, id: &str) {
+        // A child that ended, or lost the capability, between the key and
+        // the post has nothing to cancel either, for the same reason.
+        let _ = self
+            .client
+            .send_no_content(
+                http::Method::POST,
+                &format!("/v1/sessions/{}/console/cancel", self.id),
+                Some(&ConsoleCancelRequest {
+                    subagent_id: Some(id.to_string()),
+                }),
+            )
+            .await;
+    }
 }
 
 /// What the console takes from the terminal on the way in, and gives back on
@@ -361,6 +376,9 @@ mod tests {
         stays_open: bool,
         prompts: Arc<Mutex<Vec<String>>>,
         cancels: Arc<AtomicUsize>,
+        /// The `subagent_id` of every `/console/cancel` post, `None` for the
+        /// session's own.
+        subagent_cancels: Arc<Mutex<Vec<Option<String>>>>,
         /// A session that will take no more input, which is the `409` a
         /// finished one gives.
         refuses: bool,
@@ -393,8 +411,15 @@ mod tests {
         }
     }
 
-    async fn cancel(State(stub): State<Stub>) -> StatusCode {
+    async fn cancel(
+        State(stub): State<Stub>,
+        body: Option<Json<ConsoleCancelRequest>>,
+    ) -> StatusCode {
         stub.cancels.fetch_add(1, Ordering::SeqCst);
+        stub.subagent_cancels
+            .lock()
+            .unwrap()
+            .push(body.and_then(|Json(req)| req.subagent_id));
         StatusCode::NO_CONTENT
     }
 
@@ -438,6 +463,7 @@ mod tests {
             stays_open,
             prompts: Arc::new(Mutex::new(Vec::new())),
             cancels: Arc::new(AtomicUsize::new(0)),
+            subagent_cancels: Arc::new(Mutex::new(Vec::new())),
             refuses,
         }
     }
@@ -571,9 +597,14 @@ mod tests {
 
         assert_eq!(posts.send("hi".into()).await, Ok(()));
         posts.cancel().await;
+        posts.cancel_subagent("c1").await;
         server.abort();
         assert_eq!(*taking.prompts.lock().unwrap(), ["hi"]);
-        assert_eq!(taking.cancels.load(Ordering::SeqCst), 1);
+        assert_eq!(taking.cancels.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            *taking.subagent_cancels.lock().unwrap(),
+            [None, Some("c1".into())]
+        );
 
         let (client, server) = serve(stub(true, true)).await;
         let mut refused = Posts {
@@ -597,6 +628,8 @@ mod tests {
         }
 
         async fn cancel(&mut self) {}
+
+        async fn cancel_subagent(&mut self, _: &str) {}
     }
 
     fn silence() -> impl Stream<Item = Result<Frame>> {

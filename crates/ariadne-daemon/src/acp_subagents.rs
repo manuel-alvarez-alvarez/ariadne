@@ -97,6 +97,35 @@ impl Subagents {
         let child = children.get(id)?;
         Some(json!({"id": id, "title": child.title}))
     }
+
+    /// Whether `id` may be cancelled now: announced, not ended, and
+    /// advertising the capability, as its latest update said.
+    pub(crate) fn cancel_eligibility(&self, id: &str) -> CancelEligibility {
+        let children = self.0.lock().expect("subagents lock");
+        let Some(child) = children.get(id) else {
+            return CancelEligibility::Unknown;
+        };
+        if matches!(child.state, Some("completed" | "failed" | "cancelled")) {
+            return CancelEligibility::Ended;
+        }
+        match child.cancel {
+            true => CancelEligibility::Ready,
+            false => CancelEligibility::NotAdvertised,
+        }
+    }
+}
+
+/// Whether a child may be cancelled now, and why not where it may not
+/// (021): the route's `409` names one of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CancelEligibility {
+    /// No child of this id was ever announced.
+    Unknown,
+    /// The child's work already ended.
+    Ended,
+    /// The child never said it could be cancelled.
+    NotAdvertised,
+    Ready,
 }
 
 /// Whether a child's capabilities let the client cancel it: a `cancel`
@@ -137,7 +166,7 @@ fn word_state(state: &str) -> Option<&'static str> {
 mod tests {
     use serde_json::json;
 
-    use super::Subagents;
+    use super::{CancelEligibility, Subagents};
 
     /// A draft idle state names why the work stopped, and the stored word
     /// follows it.
@@ -189,5 +218,72 @@ mod tests {
             Some(json!({"id": "c", "title": "explorer"}))
         );
         assert_eq!(subagents.tag(&json!("p")), None);
+    }
+
+    /// A later announcement with a concrete `capabilities` object replaces
+    /// the value, even to clear a `cancel` the child had advertised before.
+    #[test]
+    fn a_later_concrete_capabilities_object_replaces_an_earlier_cancel() {
+        let subagents = Subagents::default();
+        let first = subagents
+            .fold(
+                &json!("p"),
+                &json!({"sessionUpdate": "subagent_update", "sessionId": "c", "title": "x",
+                        "capabilities": {"cancel": {}}}),
+            )
+            .unwrap();
+        assert_eq!(first["capabilities"], json!({"cancel": true}));
+
+        let second = subagents
+            .fold(
+                &json!("p"),
+                &json!({"sessionUpdate": "subagent_update", "sessionId": "c",
+                        "capabilities": {}}),
+            )
+            .unwrap();
+        assert_eq!(
+            second["capabilities"],
+            json!({"cancel": false}),
+            "a concrete object with no cancel key clears the earlier value"
+        );
+        assert_eq!(
+            subagents.cancel_eligibility("c"),
+            CancelEligibility::NotAdvertised
+        );
+    }
+
+    /// A child may be cancelled only once it is announced, while it still
+    /// runs, and only where it advertised the capability.
+    #[test]
+    fn a_child_may_be_cancelled_only_while_running_and_advertising_it() {
+        let subagents = Subagents::default();
+        assert_eq!(
+            subagents.cancel_eligibility("c"),
+            CancelEligibility::Unknown
+        );
+
+        subagents.fold(
+            &json!("p"),
+            &json!({"sessionUpdate": "subagent_update", "sessionId": "c", "title": "x",
+                    "capabilities": {"cancel": {}}}),
+        );
+        assert_eq!(subagents.cancel_eligibility("c"), CancelEligibility::Ready);
+
+        subagents.fold(
+            &json!("p"),
+            &json!({"sessionUpdate": "subagent_update", "sessionId": "c",
+                    "state": {"state": "idle", "stopReason": "end_turn"}}),
+        );
+        assert_eq!(subagents.cancel_eligibility("c"), CancelEligibility::Ended);
+
+        subagents.fold(
+            &json!("p"),
+            &json!({"sessionUpdate": "subagent_update", "sessionId": "d", "title": "y",
+                    "capabilities": {}}),
+        );
+        assert_eq!(
+            subagents.cancel_eligibility("d"),
+            CancelEligibility::NotAdvertised
+        );
     }
 }

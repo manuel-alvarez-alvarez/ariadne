@@ -2,7 +2,7 @@
 //! JSON body extractor that answers in it.
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRequest, Request};
+use axum::extract::{FromRequest, OptionalFromRequest, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
@@ -106,7 +106,7 @@ where
     type Rejection = ApiError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        match axum::Json::<T>::from_request(req, state).await {
+        match <axum::Json<T> as FromRequest<S>>::from_request(req, state).await {
             Ok(axum::Json(body)) => Ok(Self(body)),
             Err(rejection) => Err(refused(&rejection)),
         }
@@ -116,6 +116,25 @@ where
 impl<T: Serialize> IntoResponse for Json<T> {
     fn into_response(self) -> Response {
         axum::Json(self.0).into_response()
+    }
+}
+
+/// `Option<Json<T>>` for a route whose body is optional: `None` where the
+/// request carries no `Content-Type` at all, as a client that sends nothing
+/// does, and the same refusal as [`FromRequest`] otherwise.
+impl<T, S> OptionalFromRequest<S> for Json<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Option<Self>, Self::Rejection> {
+        match <axum::Json<T> as OptionalFromRequest<S>>::from_request(req, state).await {
+            Ok(Some(axum::Json(body))) => Ok(Some(Self(body))),
+            Ok(None) => Ok(None),
+            Err(rejection) => Err(refused(&rejection)),
+        }
     }
 }
 

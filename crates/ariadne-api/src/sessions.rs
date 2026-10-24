@@ -256,6 +256,17 @@ pub struct ConsoleInputRequest {
     pub text: String,
 }
 
+/// Body of `POST /v1/sessions/{id}/console/cancel`. Omitted, or omitting
+/// `subagent_id`, cancels the session's own running turn, as before (021).
+/// Naming a child cancels that child's turn instead, and is refused with
+/// `409` where the child is unknown, has already ended, or never advertised
+/// the capability.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConsoleCancelRequest {
+    pub subagent_id: Option<String>,
+}
+
 /// What a client sends over `GET /v1/sessions/{id}/console/terminal`, the
 /// session's console as a terminal: one of these per JSON text frame.
 ///

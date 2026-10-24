@@ -84,6 +84,10 @@ pub enum Action {
     Send(String),
     /// Cancel the running turn.
     Cancel,
+    /// Cancel this subagent's turn (021): the child advertised the
+    /// capability, so Esc in its view asks for this instead of switching
+    /// back to the parent's.
+    CancelSubagent(String),
     /// Another view is on the screen: clear the terminal and draw it whole.
     Switch,
     /// Leave the console. The session stays alive.
@@ -1295,6 +1299,11 @@ pub trait Sink {
     /// Cancel the running turn. A turn that ended between the key and the
     /// post has nothing to cancel, and that is not a failure of the console.
     fn cancel(&mut self) -> impl Future<Output = ()> + Send;
+
+    /// Cancel one subagent's turn by its id (021). A child that ended, or
+    /// lost the capability, between the key and the post has nothing to
+    /// cancel either, and that is not a failure of the console.
+    fn cancel_subagent(&mut self, id: &str) -> impl Future<Output = ()> + Send;
 }
 
 /// One turn of the loop: whichever of the things the console waits on
@@ -1383,6 +1392,7 @@ where
                     }
                 }
                 Action::Cancel => sink.cancel().await,
+                Action::CancelSubagent(id) => sink.cancel_subagent(&id).await,
                 Action::Switch => console.redraw(terminal)?,
             },
             Step::Key(TermEvent::Paste(text)) => console.paste(&text),
