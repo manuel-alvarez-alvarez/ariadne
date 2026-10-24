@@ -63,14 +63,12 @@ else
             ui)
                 run_ui=1
                 rel="${f#ui/}"
-                # `biome.json` ignores these two generated files; an
-                # explicit check of a path list biome ignores whole is
-                # itself an error ("No files were processed"), not a pass,
-                # so they are left for `npm run typecheck` alone, same as
-                # a commit that touches no other `ui/` file leaves biome
-                # uncalled entirely.
+                # Biome ignores generated files and npm's lockfile; an
+                # explicit check of paths biome ignores is itself an error
+                # ("No files were processed"), not a pass, so leave them
+                # for `npm run typecheck` alone.
                 case "$rel" in
-                    openapi.json | src/api/schema.d.ts) ;;
+                    openapi.json | package-lock.json | src/api/schema.d.ts) ;;
                     *) ui_files[${#ui_files[@]}]="$rel" ;;
                 esac
                 ;;

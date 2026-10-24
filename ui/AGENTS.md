@@ -35,10 +35,12 @@ Adjust the relative import for another directory. The marker retries twice,
 then fails under its original test name. Follow the evidence rule in the root
 [`AGENTS.md`](../AGENTS.md#intermittent-tests) before adding one.
 
-The pre-commit hook (`.githooks/pre-commit`) runs, for a staged file under
-`ui/` (outside `ui/src-tauri` and `ui/dashboard`): `npx biome check <staged
-files>` and `npm run typecheck`, both from inside `ui/` (`npm ci` first when
-`ui/node_modules` is missing). For a staged file under `ui/src-tauri`: `cargo
+The pre-commit hook (`.githooks/pre-commit`) runs, for a staged source file
+under `ui/` (outside `ui/src-tauri` and `ui/dashboard`): `npx biome check
+<staged files>` and `npm run typecheck`, both from inside `ui/` (`npm ci` first
+when `ui/node_modules` is missing). It runs typecheck alone for a staged
+`package-lock.json`, `openapi.json` or `src/api/schema.d.ts`. For a staged
+file under `ui/src-tauri`: `cargo
 fmt --all -- --check` from inside `ui/src-tauri`. For a staged file under
 `ui/dashboard`: the same two commands, from inside `ui/dashboard` (`npm ci`
 first when `ui/dashboard/node_modules` is missing).

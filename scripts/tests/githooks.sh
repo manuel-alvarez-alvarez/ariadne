@@ -111,6 +111,14 @@ case "$test_case" in
         grep -Fx 'npm run typecheck' "$TEST_ROOT/commands"
         no_command_matching cargo
         ;;
+    ui-lock-commit)
+        setup_repo
+        printf '{"lockfileVersion":3}\n' > "$TEST_ROOT/repo/ui/package-lock.json"
+        git -C "$TEST_ROOT/repo" add ui/package-lock.json
+        rm -f "$TEST_ROOT/commands"
+        "$TEST_ROOT/repo/.githooks/pre-commit" > "$TEST_ROOT/output" 2>&1
+        assert_commands 'npm run typecheck'
+        ;;
     unicode-commit)
         setup_repo
         printf 'export const seeded = 2\n' > "$TEST_ROOT/repo/ui/src/café.ts"
