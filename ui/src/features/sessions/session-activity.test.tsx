@@ -174,3 +174,116 @@ it("folds seven consecutive Read calls to one row with ×7", async () => {
     expect(screen.getByText(`Read /file${i}.ts`)).toBeDefined()
   }
 })
+
+it("names subagent updates by their first and completed state", async () => {
+  const child = { id: "readiness-review", title: "readiness review" }
+  daemonFetch.mockImplementation(async () =>
+    jsonResponse([
+      anAgentEvent({
+        id: "01JEVENTSUBAGENT0000000001",
+        kind: "subagent_update",
+        summary: "",
+        payload: {
+          session_id: EVENT.session_id,
+          subagent: child,
+          state: "running",
+          capabilities: { cancel: true },
+        },
+      }),
+      anAgentEvent({
+        id: "01JEVENTSUBAGENT0000000002",
+        kind: "subagent_update",
+        summary: "",
+        payload: {
+          session_id: EVENT.session_id,
+          subagent: child,
+          state: "completed",
+          capabilities: { cancel: true },
+        },
+      }),
+      anAgentEvent({
+        id: "01JEVENTSUBAGENT0000000003",
+        kind: "subagent_update",
+        summary: "",
+        payload: {
+          session_id: EVENT.session_id,
+          subagent: { id: "unnamed-child", title: "" },
+          state: "running",
+          capabilities: { cancel: true },
+        },
+      }),
+    ]),
+  )
+
+  renderActivity()
+
+  expect(await screen.findByText("Subagent started · readiness review")).toBeDefined()
+  expect(screen.getByText("Subagent completed · readiness review")).toBeDefined()
+  expect(screen.getByText("Subagent started · unnamed-child")).toBeDefined()
+})
+
+it("prefixes child events and keeps their folds separate from other children", async () => {
+  daemonFetch.mockImplementation(async () =>
+    jsonResponse([
+      anAgentEvent({
+        id: "01JEVENTCHILD00000000000001",
+        kind: "pre_tool_use",
+        summary: "",
+        payload: { tool_name: "Bash", tool_input: "cargo test" },
+        subagent: { id: "readiness-review", title: "readiness review" },
+      }),
+      anAgentEvent({
+        id: "01JEVENTCHILD00000000000002",
+        kind: "pre_tool_use",
+        summary: "",
+        payload: { tool_name: "Bash", tool_input: "cargo test" },
+        subagent: { id: "release-review", title: "release review" },
+      }),
+      anAgentEvent({
+        id: "01JEVENTPARENT0000000000003",
+        kind: "pre_tool_use",
+        summary: "",
+        payload: { tool_name: "Bash", tool_input: "cargo test" },
+      }),
+    ]),
+  )
+
+  renderActivity()
+
+  expect(await screen.findByText("readiness review · Tool call")).toBeDefined()
+  expect(screen.getByText("release review · Tool call")).toBeDefined()
+  expect(screen.getByText("Tool call")).toBeDefined()
+  expect(screen.queryByText(/×[23]/)).toBeNull()
+})
+
+it("colors running, completed, and failed subagents from their states", async () => {
+  const stateEvent = (id: string, state: "running" | "completed" | "failed") =>
+    anAgentEvent({
+      id,
+      kind: "subagent_update",
+      summary: "",
+      payload: {
+        session_id: EVENT.session_id,
+        subagent: { id: `${state}-child`, title: `${state} child` },
+        state,
+        capabilities: { cancel: true },
+      },
+    })
+  daemonFetch.mockImplementation(async () =>
+    jsonResponse([
+      stateEvent("01JEVENTRUNNING000000000001", "running"),
+      stateEvent("01JEVENTCOMPLETED0000000001", "completed"),
+      stateEvent("01JEVENTFAILED0000000000001", "failed"),
+    ]),
+  )
+
+  renderActivity()
+
+  const dotColor = (label: string) => row(label).querySelectorAll("svg")[1]?.getAttribute("style")
+  expect(
+    (await screen.findByText("Subagent started · running child")).closest("button"),
+  ).toBeDefined()
+  expect(dotColor("Subagent started · running child")).toContain("var(--color-status-pending)")
+  expect(dotColor("Subagent started · completed child")).toContain("var(--color-status-active)")
+  expect(dotColor("Subagent started · failed child")).toContain("var(--color-status-danger)")
+})

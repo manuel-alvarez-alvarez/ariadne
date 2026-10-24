@@ -38,7 +38,63 @@ interface Tail {
   events: AgentEventDto[]
 }
 
-function eventLabel(kind: string): string {
+type SubagentState = "running" | "completed" | "failed" | "cancelled"
+
+interface StoredSubagent {
+  id: string
+  title?: string | null
+}
+
+type StoredAgentEvent = AgentEventDto & { subagent?: StoredSubagent | null }
+
+function subagentFrom(value: unknown): StoredSubagent | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const { id, title } = value as Record<string, unknown>
+  if (typeof id !== "string") return undefined
+  return { id, title: typeof title === "string" ? title : undefined }
+}
+
+function subagentOf(event: StoredAgentEvent): StoredSubagent | undefined {
+  const stored = subagentFrom(event.subagent)
+  if (stored) return stored
+  if (
+    event.kind !== "subagent_update" ||
+    typeof event.payload !== "object" ||
+    event.payload === null
+  ) {
+    return undefined
+  }
+  return subagentFrom((event.payload as Record<string, unknown>).subagent)
+}
+
+function subagentStateOf(event: StoredAgentEvent): SubagentState | undefined {
+  if (
+    event.kind !== "subagent_update" ||
+    typeof event.payload !== "object" ||
+    event.payload === null
+  ) {
+    return undefined
+  }
+  const state = (event.payload as Record<string, unknown>).state
+  return state === "running" || state === "completed" || state === "failed" || state === "cancelled"
+    ? state
+    : undefined
+}
+
+function subagentTitle(subagent: StoredSubagent): string {
+  return subagent.title || subagent.id
+}
+
+function eventLabel(event: StoredAgentEvent, startsSubagent: boolean): string {
+  if (event.kind === "subagent_update") {
+    const subagent = subagentOf(event)
+    if (subagent) {
+      if (startsSubagent) return `Subagent started · ${subagentTitle(subagent)}`
+      const state = subagentStateOf(event)
+      return `Subagent ${state ?? "updated"} · ${subagentTitle(subagent)}`
+    }
+  }
+
   const labels: Record<string, string> = {
     pre_tool_use: "Tool call",
     post_tool_use: "Tool result",
@@ -57,10 +113,15 @@ function eventLabel(kind: string): string {
     stop: "Stopped",
     plan: "Plan",
   }
-  return labels[kind] ?? kind
+  return labels[event.kind] ?? event.kind
 }
 
-function eventColor(kind: string): string {
+function eventColor(event: StoredAgentEvent): string {
+  const subagentState = subagentStateOf(event)
+  if (subagentState === "completed") return "var(--color-status-active)"
+  if (subagentState === "failed") return "var(--color-status-danger)"
+
+  const { kind } = event
   if (
     kind === "permission_request" ||
     kind === "permission.replied" ||
@@ -130,23 +191,29 @@ interface FoldedRow {
   kind: string
   tool: string
   count: number
-  events: AgentEventDto[]
+  events: StoredAgentEvent[]
 }
 
-function foldEvents(events: AgentEventDto[]): (AgentEventDto | FoldedRow)[] {
-  const result: (AgentEventDto | FoldedRow)[] = []
+function foldEvents(events: StoredAgentEvent[]): (StoredAgentEvent | FoldedRow)[] {
+  const result: (StoredAgentEvent | FoldedRow)[] = []
 
   for (let i = 0; i < events.length; i++) {
     const event = events[i]
     if (!event) continue
 
     const toolName = extractToolName(event.payload) || ""
-    const run: AgentEventDto[] = [event]
+    const run: StoredAgentEvent[] = [event]
 
     let j = i + 1
     while (j < events.length) {
       const next = events[j]
-      if (!next || next.kind !== event.kind || (extractToolName(next.payload) || "") !== toolName) {
+      if (
+        !next ||
+        next.kind !== event.kind ||
+        (extractToolName(next.payload) || "") !== toolName ||
+        subagentOf(next)?.id !== subagentOf(event)?.id ||
+        subagentStateOf(next) !== subagentStateOf(event)
+      ) {
         break
       }
       run.push(next)
@@ -170,7 +237,7 @@ function foldEvents(events: AgentEventDto[]): (AgentEventDto | FoldedRow)[] {
   return result
 }
 
-function isFoldedRow(row: AgentEventDto | FoldedRow): row is FoldedRow {
+function isFoldedRow(row: StoredAgentEvent | FoldedRow): row is FoldedRow {
   return "count" in row
 }
 
@@ -254,26 +321,56 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
   // A diagnosis (024) carries no row of its own: it reads as a note on the
   // `session.error` it names, by id, so it never drifts apart from that
   // error — not into its own row, and not behind a later event.
-  const notes = diagnosisNotes(data)
-  const visible = data.filter((event) => event.kind !== "session.diagnosis")
+  const events = data as StoredAgentEvent[]
+  const notes = diagnosisNotes(events)
+  const visible = events.filter((event) => event.kind !== "session.diagnosis")
+  const seenSubagents = new Set<string>()
+  const firstSubagentUpdates = new Set<string>()
+  for (const event of visible) {
+    if (event.kind !== "subagent_update") continue
+    const subagent = subagentOf(event)
+    if (subagent && !seenSubagents.has(subagent.id)) {
+      seenSubagents.add(subagent.id)
+      firstSubagentUpdates.add(event.id)
+    }
+  }
   const folded = foldEvents([...visible].reverse())
 
   return (
     <ol className="divide-y">
       {folded.map((row) =>
         isFoldedRow(row) ? (
-          <FoldedActivityRow key={`folded-${row.events[0]?.id}`} row={row} />
+          <FoldedActivityRow
+            key={`folded-${row.events[0]?.id}`}
+            row={row}
+            firstSubagentUpdates={firstSubagentUpdates}
+          />
         ) : (
-          <ActivityRow key={row.id} event={row} note={notes.get(row.id)} />
+          <ActivityRow
+            key={row.id}
+            event={row}
+            note={notes.get(row.id)}
+            startsSubagent={firstSubagentUpdates.has(row.id)}
+          />
         ),
       )}
     </ol>
   )
 }
 
-function ActivityRow({ event, note }: { event: AgentEventDto; note?: string }) {
+function ActivityRow({
+  event,
+  note,
+  startsSubagent,
+}: {
+  event: StoredAgentEvent
+  note?: string
+  startsSubagent: boolean
+}) {
   const [open, setOpen] = useState(false)
   const summary = deriveSummary(event)
+  const label = eventLabel(event, startsSubagent)
+  const subagent = event.kind === "subagent_update" ? undefined : subagentFrom(event.subagent)
 
   return (
     <li className="py-1.5">
@@ -289,12 +386,9 @@ function ActivityRow({ event, note }: { event: AgentEventDto; note?: string }) {
             open && "rotate-90",
           )}
         />
-        <DotIcon
-          className="size-2 shrink-0 fill-current"
-          style={{ color: eventColor(event.kind) }}
-        />
-        <span className="text-xs font-medium" style={{ color: eventColor(event.kind) }}>
-          {eventLabel(event.kind)}
+        <DotIcon className="size-2 shrink-0 fill-current" style={{ color: eventColor(event) }} />
+        <span className="text-xs font-medium" style={{ color: eventColor(event) }}>
+          {subagent ? `${subagentTitle(subagent)} · ${label}` : label}
         </span>
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
           {summary}
@@ -325,11 +419,20 @@ function ActivityRow({ event, note }: { event: AgentEventDto; note?: string }) {
   )
 }
 
-function FoldedActivityRow({ row }: { row: FoldedRow }) {
+function FoldedActivityRow({
+  row,
+  firstSubagentUpdates,
+}: {
+  row: FoldedRow
+  firstSubagentUpdates: Set<string>
+}) {
   const [open, setOpen] = useState(false)
   const firstEvent = row.events[0]
   if (!firstEvent) return null
   const summary = deriveSummary(firstEvent)
+  const label = eventLabel(firstEvent, firstSubagentUpdates.has(firstEvent.id))
+  const subagent =
+    firstEvent.kind === "subagent_update" ? undefined : subagentFrom(firstEvent.subagent)
 
   return (
     <li className="py-1.5">
@@ -345,9 +448,12 @@ function FoldedActivityRow({ row }: { row: FoldedRow }) {
             open && "rotate-90",
           )}
         />
-        <DotIcon className="size-2 shrink-0 fill-current" style={{ color: eventColor(row.kind) }} />
-        <span className="text-xs font-medium" style={{ color: eventColor(row.kind) }}>
-          {eventLabel(row.kind)}
+        <DotIcon
+          className="size-2 shrink-0 fill-current"
+          style={{ color: eventColor(firstEvent) }}
+        />
+        <span className="text-xs font-medium" style={{ color: eventColor(firstEvent) }}>
+          {subagent ? `${subagentTitle(subagent)} · ${label}` : label}
         </span>
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
           {summary} ×{row.count}
@@ -366,7 +472,7 @@ function FoldedActivityRow({ row }: { row: FoldedRow }) {
   )
 }
 
-function ExpandableEventPayload({ event }: { event: AgentEventDto }) {
+function ExpandableEventPayload({ event }: { event: StoredAgentEvent }) {
   const [open, setOpen] = useState(false)
   const summary = deriveSummary(event)
 

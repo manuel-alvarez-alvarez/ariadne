@@ -227,7 +227,10 @@ function aPage(sessions: SessionEntryDto[], page: Partial<SessionPageDto>): Sess
   }
 }
 
-export function anAgentEvent(overrides: Partial<AgentEventDto> = {}): AgentEventDto {
+type StoredSubagent = { id: string; title?: string | null }
+type StoredAgentEventDto = AgentEventDto & { subagent?: StoredSubagent | null }
+
+export function anAgentEvent(overrides: Partial<StoredAgentEventDto> = {}): StoredAgentEventDto {
   return {
     id: "01JEVENT000000000000000001",
     session_id: SESSION_ID,

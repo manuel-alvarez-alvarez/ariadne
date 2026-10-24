@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-10-21
+updated: 2026-10-24
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -238,8 +238,14 @@ Out: the daemon endpoints themselves (012).
     plain words. The summary is the daemon's one-line gist, or derived from the
     payload when empty: the tool name and its first argument, showing `Read
     /tmp/x.png` or `Bash git status`. Consecutive rows of the same kind and the
-    same tool fold into one, such as `Tool call · Read /file ×7`, which expands
-    to the individual rows. Each row still expands to its raw payload.
+    same tool and child fold into one, such as `Tool call · Read /file ×7`,
+    which expands to the individual rows. A child's stored event prefixes its
+    kind with the child's title (or id), such as `readiness_review · Tool call
+    · Bash cargo test`; it never folds with a parent or another child. Its
+    first `subagent_update` reads `Subagent started · <title>` and a later
+    terminal update reads `Subagent <state> · <title>`, using its id where the
+    title is empty. A running child has a pending dot, a completed one active,
+    and a failed one danger. Each row still expands to its raw payload.
 19. The sessions screen lists both kinds of session in one table, newest
     activity first: the title, the status, the work — in one column, the
     seat a session holds as a badge, the goal it is under and the task under
@@ -962,8 +968,12 @@ Out: the daemon endpoints themselves (012).
   `::takes free text for a model of a known agent the catalog does not list`,
   `::takes free text for a model nothing has discovered`).
 - The agent activity feed shows the daemon's summary and opens and closes the
-  raw payload under its row
-  (`ui/src/features/sessions/session-activity.test.tsx`).
+  raw payload under its row. It names a child start and terminal state, prefixes
+  a child's stored events, keeps child and parent folds apart, and colors a
+  running, completed, or failed child by state
+  (`ui/src/features/sessions/session-activity.test.tsx::names subagent updates by their first and completed state`,
+  `::prefixes child events and keeps their folds separate from other children`,
+  `::colors running, completed, and failed subagents from their states`).
 - `qk.outsideSessions` refetches on `session_created`, since a resume may
   move one of its rows into the Ariadne half, and leaves it alone on
   `session_updated`
