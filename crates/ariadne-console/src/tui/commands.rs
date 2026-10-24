@@ -99,7 +99,10 @@ impl Console {
         if event.kind != LISTED {
             return false;
         }
-        self.commands = listed(event);
+        // A subagent's list (021) is the child's, not the session's.
+        if super::subagents::child_of(event).is_none() {
+            self.commands = listed(event);
+        }
         true
     }
 
@@ -107,8 +110,12 @@ impl Console {
     /// lists some, the box starts with `/`, no white space is before the
     /// cursor, no permission question waits, and no Escape closed it since
     /// the box was last empty.
-    fn suggestions(&self) -> Option<Vec<&Command>> {
-        if self.commands.is_empty() || self.dismissed || self.question().is_some() {
+    pub(super) fn suggestions(&self) -> Option<Vec<&Command>> {
+        if self.commands.is_empty()
+            || self.dismissed
+            || self.question().is_some()
+            || self.in_child()
+        {
             return None;
         }
         let word = self.input.leading_word()?;

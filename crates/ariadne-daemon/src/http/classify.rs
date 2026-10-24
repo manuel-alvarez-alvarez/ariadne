@@ -139,6 +139,9 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
     if kind == "session.pin_fallback" {
         return finish(&pin_fallback_summary(payload));
     }
+    if kind == "subagent_update" {
+        return finish(&subagent_summary(payload));
+    }
     // An agent's flag that it waits for the user (031): the hint it gave,
     // the one line the Needs attention list shows for it.
     if kind == super::agent_requests::AGENT_REQUEST_EVENT
@@ -208,6 +211,18 @@ fn pin_fallback_summary(payload: &serde_json::Value) -> String {
     match non_empty_str(payload.get("running")) {
         Some(running) => format!("{option} {asked} did not land, running on {running}"),
         None => format!("{option} {asked} did not land, running on the agent's own"),
+    }
+}
+
+/// A `subagent_update` event's one line (021): the child's title and its
+/// state, `subagent explorer · running`.
+fn subagent_summary(payload: &serde_json::Value) -> String {
+    let title = non_empty_str(payload.pointer("/subagent/title"))
+        .or_else(|| non_empty_str(payload.pointer("/subagent/id")))
+        .unwrap_or("…");
+    match non_empty_str(payload.get("state")) {
+        Some(state) => format!("subagent {title} · {state}"),
+        None => format!("subagent {title}"),
     }
 }
 
@@ -375,6 +390,22 @@ mod tests {
     /// A `session.diagnosis` is an advisory, read well after the session's
     /// own lifecycle: it moves neither the status nor the attention flag,
     /// whatever its category (024).
+    #[test]
+    fn a_subagent_update_reads_as_the_child_and_its_state() {
+        let update = |state: serde_json::Value| {
+            json!({"session_id": "stub-session", "state": state,
+                   "subagent": {"id": "c1", "title": "explorer", "description": "Look"}})
+        };
+        assert_eq!(
+            summarize("subagent_update", &update(json!("running"))),
+            "subagent explorer · running"
+        );
+        assert_eq!(
+            summarize("subagent_update", &update(json!(null))),
+            "subagent explorer"
+        );
+    }
+
     #[test]
     fn a_diagnosis_event_moves_neither_status_nor_attention() {
         let payload = json!({"error_event_id": "01EV", "category": "exhausted"});

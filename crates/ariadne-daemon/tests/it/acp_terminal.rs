@@ -594,6 +594,59 @@ async fn a_resize_redraws_at_the_new_size() {
         .await;
 }
 
+/// A session whose agent runs a subagent (021) shows the bar, and Tab
+/// clears the terminal and draws the child's view whole: the child's words,
+/// read-only, and none of the parent's. Esc draws the parent's view again.
+#[tokio::test]
+async fn tab_switches_the_terminal_to_a_subagents_view_and_esc_back() {
+    let chunk = |text: &str| json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}});
+    let mut child_chunk = chunk("child words");
+    child_chunk["as_session"] = json!("c1");
+    let mut scripted = script();
+    scripted["prompts"] = json!([{"updates": [
+        chunk("parent words"),
+        {"sessionUpdate": "subagent_spawned", "subagentSessionId": "c1",
+         "name": "explorer", "task": "Look around", "capabilities": {}},
+        child_chunk,
+    ]}]);
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+    let address = serve(&h).await;
+    let mut client = Client::open(address, &session.id, 100, 30).await;
+    client
+        .read_until("the bar", |screen| {
+            screen.contains("parent words") && screen.contains("● explorer")
+        })
+        .await;
+    assert!(
+        !client.screen().contains("child words"),
+        "{}",
+        client.screen()
+    );
+
+    client.key(TerminalKey::Tab).await;
+    client
+        .read_until("the child's view", |screen| {
+            screen.contains("child words") && screen.contains("read-only")
+        })
+        .await;
+    assert!(
+        !client.screen().contains("parent words"),
+        "the switch cleared the terminal:\n{}",
+        client.screen()
+    );
+
+    client.key(TerminalKey::Esc).await;
+    client
+        .read_until("the parent's view", |screen| {
+            screen.contains("parent words") && !screen.contains("child words")
+        })
+        .await;
+}
+
 /// An id that names no session is refused as any other read of it is, before
 /// any upgrade.
 #[tokio::test]

@@ -366,9 +366,16 @@ impl From<&AgentEventDto> for TranscriptItem {
             },
             "permission_request" => {
                 let tool = Tool::from_payload(&event.payload, &event.summary);
+                // A subagent's question (021) names the child that asks.
+                let question = match string_at(&event.payload, "/subagent/title")
+                    .or_else(|| string_at(&event.payload, "/subagent/id"))
+                {
+                    Some(child) => format!("{} · asked by subagent {child}", tool.name),
+                    None => tool.name.clone(),
+                };
                 Self::PermissionQuestion {
                     meta,
-                    question: tool.name.clone(),
+                    question,
                     tool,
                     options: permission_options(&event.payload),
                     answer: None,
@@ -1052,6 +1059,23 @@ mod tests {
             ),
         ]);
         assert_eq!(kept_answer(&cancelled), "cancelled");
+    }
+
+    /// A permission question from a subagent names the child that asks.
+    #[test]
+    fn a_subagents_question_names_the_child() {
+        let asked = |payload| fold(&[event("ask", "permission_request", payload)]);
+        let question = |items: Vec<TranscriptItem>| match &items[0] {
+            TranscriptItem::PermissionQuestion { question, .. } => question.clone(),
+            other => panic!("{other:?}"),
+        };
+
+        assert_eq!(
+            question(asked(json!({"tool_name": "Bash",
+                                  "subagent": {"id": "task-1", "title": "Explore the repo"}}))),
+            "Bash · asked by subagent Explore the repo"
+        );
+        assert_eq!(question(asked(json!({"tool_name": "Bash"}))), "Bash");
     }
 
     #[test]

@@ -125,7 +125,9 @@ pub async fn ingest_event(
     }
 
     // Capture the agent-internal session id as soon as an event carries it.
+    // A subagent's event (021) names the child's session, never this one's.
     if session.internal_session_id.is_none()
+        && req.payload.get("subagent").is_none()
         && let Some(internal) = extract_internal_id(&req.payload)
     {
         tracing::info!(session = %session.id, internal, "captured internal session id");

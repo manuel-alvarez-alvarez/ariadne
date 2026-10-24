@@ -13,7 +13,9 @@
 //! turn's usage, unless `ignore_cancel` says otherwise, and during which
 //! `updates_when` sends more updates once a file exists, `new_updates` sends
 //! after `session/new`, and `between_turn_updates` sends once a test creates
-//! its marker file — and the stored sessions a load or resume finds, which
+//! its marker file — an update that names `as_session` goes out under that
+//! session id, a subagent's, `updates_first` goes out before the turn's
+//! permission request, and `permission_session` names the session that asks — and the stored sessions a load or resume finds, which
 //! `session/list` answers whole, or `session_page_size` at a time behind a `nextCursor` — and never
 //! answers a page from `session_list_stall_from` on, nor any before the file
 //! `session_list_wait_for` names exists, and how long the agent
@@ -554,9 +556,14 @@ def cancelled_meanwhile():
 
 
 def send_updates(session, updates):
+    # An update that names `as_session` goes out under that session id: a
+    # child session an agent announced, as codex-acp and claude-agent-acp
+    # send their subagents' updates.
     for update in updates:
+        update = dict(update)
+        under = update.pop("as_session", session)
         send({"jsonrpc": "2.0", "method": "session/update",
-              "params": {"sessionId": session, "update": update}})
+              "params": {"sessionId": under, "update": update}})
 
 
 def send_between_turn_updates():
@@ -632,10 +639,13 @@ def respond(request):
         if "error" in turn:
             error = turn["error"]
             raise Failure(error["code"], error["message"], error.get("data"))
+        # What the turn says before its permission request: a subagent
+        # announced before the child asks.
+        send_updates(sid, turn.get("updates_first", []))
         if "permission" in turn:
             permissions += 1
             request_permission = dict(turn["permission"])
-            request_permission["sessionId"] = sid
+            request_permission["sessionId"] = turn.get("permission_session", sid)
             send({"jsonrpc": "2.0", "id": "permission-%d" % permissions,
                   "method": "session/request_permission",
                   "params": request_permission})

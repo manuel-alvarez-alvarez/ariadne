@@ -40,6 +40,7 @@ use ariadne_core::{PermissionMode, TokenUsage};
 use ariadne_store::{PullRequestTold, Store};
 
 use crate::acp_calls::PromptTurn;
+use crate::acp_subagents::{SUBAGENT_UPDATE, Subagents};
 use crate::acp_transport::{PromptWrites, witnessed_pipes};
 use crate::ai_permissions::AiPermissions;
 use crate::ai_permissions::decide::{Decision, decide, prepare};
@@ -350,15 +351,20 @@ struct Run {
     kind: &'static str,
     /// The ACP `messageId` its chunks carry, where they carry one.
     message_id: Option<String>,
+    /// The announced child that writes it, `{id, title}`, or none for the
+    /// session's own agent.
+    subagent: Option<Value>,
     text: String,
 }
 
 impl Run {
-    /// Whether a chunk of this kind and message goes on with this run. A
-    /// chunk that names no message, or a run that named none, cannot be told
-    /// apart, and goes on with it.
-    fn continues(&self, kind: &str, message_id: Option<&str>) -> bool {
+    /// Whether a chunk of this kind and message, from this child or the
+    /// session's own agent, goes on with this run. A chunk that names no
+    /// message, or a run that named none, cannot be told apart, and goes on
+    /// with it.
+    fn continues(&self, kind: &str, message_id: Option<&str>, subagent: Option<&Value>) -> bool {
         self.kind == kind
+            && self.subagent.as_ref() == subagent
             && match (self.message_id.as_deref(), message_id) {
                 (Some(run), Some(chunk)) => run == chunk,
                 _ => true,
@@ -401,7 +407,10 @@ impl Turn {
                 session_id,
                 task_id.clone(),
                 &format!("{}_chunk", run.kind),
-                json!({"session_id": self.agent_session, "text": run.text}),
+                tagged(
+                    json!({"session_id": self.agent_session, "text": run.text}),
+                    run.subagent.as_ref(),
+                ),
             ));
         }
         if let Some(commands) = &self.available_commands {
@@ -435,14 +444,31 @@ impl Turn {
     /// store: `agent_thought` or `agent_message`, `{session_id, text}`. Text
     /// that came between turns belongs to no turn and is dropped.
     fn end_text(&mut self) -> Option<(&'static str, Value)> {
-        let Run { kind, text, .. } = self.text.take()?;
+        let Run {
+            kind,
+            text,
+            subagent,
+            ..
+        } = self.text.take()?;
         (self.running && !text.is_empty()).then(|| {
             (
                 kind,
-                json!({"session_id": self.agent_session, "text": text}),
+                tagged(
+                    json!({"session_id": self.agent_session, "text": text}),
+                    subagent.as_ref(),
+                ),
             )
         })
     }
+}
+
+/// `payload` with the `subagent` field of the announced child it is from,
+/// where it is from one (021).
+fn tagged(mut payload: Value, subagent: Option<&Value>) -> Value {
+    if let Some(subagent) = subagent {
+        payload["subagent"] = subagent.clone();
+    }
+    payload
 }
 
 struct RunningAgent {
@@ -1323,6 +1349,7 @@ impl AcpRuntime {
             branch: self.branch_of(&launch.session_id),
             pending_permission: permission.clone(),
             reports: io.reports.clone(),
+            subagents: Subagents::default(),
         };
         // The protocol's own outcome, set inside the connection: the
         // connection future answers for the link, not for the conversation.
@@ -1894,6 +1921,8 @@ struct RuntimeIncoming {
     branch: SessionBranch,
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     reports: Followers,
+    /// The children the agent announced this launch.
+    subagents: Subagents,
 }
 
 impl RuntimeIncoming {
@@ -1906,6 +1935,35 @@ impl RuntimeIncoming {
         {
             return Ok(());
         }
+        if let Some(payload) = self.subagents.fold(&session_id, &update) {
+            self.end_text().await;
+            self.sink.emit(SUBAGENT_UPDATE, payload).await;
+            return Ok(());
+        }
+        // An update under an announced child's session id is the child's,
+        // stored on this session and named for it. The session's context
+        // window is its own agent's alone, and so is the command list a
+        // console snapshot carries: a child's list goes live, named, and
+        // replaces nothing.
+        let subagent = self.subagents.tag(&session_id);
+        if subagent.is_some() && update_kind == Some("usage_update") {
+            return Ok(());
+        }
+        if subagent.is_some() && update_kind == Some("available_commands_update") {
+            let commands = update.get("availableCommands").cloned();
+            self.sink
+                .emit_live(
+                    "available_commands_update",
+                    tagged(
+                        json!({"session_id": session_id,
+                               "available_commands": commands.unwrap_or_else(|| json!([]))}),
+                        subagent.as_ref(),
+                    ),
+                )
+                .await;
+            return Ok(());
+        }
+        let subagent = subagent.as_ref();
         match update_kind {
             // The text so far is appended and its chunk published under the
             // one lock, so a console opening mid-turn reads a text that ends
@@ -1928,19 +1986,23 @@ impl RuntimeIncoming {
                     if turn
                         .text
                         .as_ref()
-                        .is_some_and(|run| !run.continues(whole, message_id))
+                        .is_some_and(|run| !run.continues(whole, message_id, subagent))
                     {
                         self.store_text(&mut turn).await;
                     }
                     let run = turn.text.get_or_insert_with(|| Run {
                         kind: whole,
                         message_id: None,
+                        subagent: subagent.cloned(),
                         text: String::new(),
                     });
                     run.message_id = run.message_id.take().or(message_id.map(str::to_string));
                     run.text.push_str(text);
                     self.sink
-                        .emit_live(kind, json!({"session_id": session_id, "text": text}))
+                        .emit_live(
+                            kind,
+                            tagged(json!({"session_id": session_id, "text": text}), subagent),
+                        )
                         .await;
                 }
             }
@@ -1949,7 +2011,10 @@ impl RuntimeIncoming {
                 self.sink
                     .emit(
                         "plan",
-                        json!({"session_id": session_id, "entries": update.get("entries")}),
+                        tagged(
+                            json!({"session_id": session_id, "entries": update.get("entries")}),
+                            subagent,
+                        ),
                     )
                     .await;
             }
@@ -1960,20 +2025,24 @@ impl RuntimeIncoming {
                     .lock()
                     .await
                     .tools
-                    .insert(id, OpenToolCall { call: call.clone() });
+                    .insert(tool_key(&id, subagent), OpenToolCall { call: call.clone() });
                 self.sink
-                    .emit("pre_tool_use", tool_payload(session_id, &call))
+                    .emit(
+                        "pre_tool_use",
+                        tagged(tool_payload(session_id, &call), subagent),
+                    )
                     .await;
             }
             Some("tool_call_update") => {
                 self.end_text().await;
                 let (id, update) = tool_call_of(&update);
                 let terminal = terminal_tool_status(&update);
+                let key = tool_key(&id, subagent);
                 let merged = {
                     let mut turn = self.turn.lock().await;
                     let call = turn
                         .tools
-                        .entry(id.clone())
+                        .entry(key.clone())
                         .or_insert_with(|| OpenToolCall {
                             call: json!({"toolCallId": id}),
                         });
@@ -1981,7 +2050,7 @@ impl RuntimeIncoming {
                     match terminal {
                         true => turn
                             .tools
-                            .remove(&id)
+                            .remove(&key)
                             .unwrap_or(OpenToolCall { call: Value::Null }),
                         false => OpenToolCall {
                             call: call.call.clone(),
@@ -1989,7 +2058,8 @@ impl RuntimeIncoming {
                     }
                 };
                 if terminal {
-                    let payload = completed_tool_payload(session_id, &merged.call);
+                    let payload =
+                        tagged(completed_tool_payload(session_id, &merged.call), subagent);
                     let name = payload["tool_name"]
                         .as_str()
                         .unwrap_or_default()
@@ -2000,7 +2070,10 @@ impl RuntimeIncoming {
                     self.sink
                         .emit_live(
                             "tool_call_update",
-                            json!({"session_id": session_id, "tool_call_id": id, "acp": merged.call}),
+                            tagged(
+                                json!({"session_id": session_id, "tool_call_id": id, "acp": merged.call}),
+                                subagent,
+                            ),
                         )
                         .await;
                 }
@@ -2059,7 +2132,10 @@ impl RuntimeIncoming {
     async fn handle_permission(&mut self, params: &Value) -> Result<Value> {
         let requested_at = Instant::now();
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
-        let mut payload = tool_payload(session_id.clone(), &params["toolCall"]);
+        let mut payload = tagged(
+            tool_payload(session_id.clone(), &params["toolCall"]),
+            self.subagents.tag(&session_id).as_ref(),
+        );
         payload["options"] = params.get("options").cloned().unwrap_or_default();
         let signature = permission_signature(&params["toolCall"]);
         // The learned row's key and the request's risk tags. The model reads
@@ -2692,22 +2768,37 @@ impl MessageInFlight {
 /// runs no terminal for it. The one session extension it uses is the config
 /// options that carry the model and effort pins.
 ///
+/// It understands subagents (021): `subagents: {}` asks the agent to
+/// announce each child and send the child's updates under the child's own
+/// session id. The SDK models that field only behind its
+/// `unstable_subagents` feature, so it is added to the request's JSON.
+///
 /// Compaction is not among them. An agent compacts its own conversation near
 /// the context limit and carries on, and the daemon asks for none — so there
 /// is nothing it would do with the report that the agent's own next event
 /// does not already do.
-fn initialize() -> v1::InitializeRequest {
+fn initialize() -> RawInitialize {
     let capabilities = v1::ClientCapabilities::new().terminal(false).session(
         v1::ClientSessionCapabilities::new()
             .config_options(v1::SessionConfigOptionsCapabilities::new()),
     );
-    v1::InitializeRequest::new(ProtocolVersion::V1)
+    let request = v1::InitializeRequest::new(ProtocolVersion::V1)
         .client_capabilities(capabilities)
         .client_info(v1::Implementation::new(
             "ariadne",
             env!("CARGO_PKG_VERSION"),
-        ))
+        ));
+    let mut params = serde_json::to_value(request).expect("an initialize request is JSON");
+    params["clientCapabilities"]["subagents"] = json!({});
+    RawInitialize(params)
 }
+
+/// `initialize`, as the JSON [`initialize`] builds, answered with the SDK's
+/// typed response.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[request(method = "initialize", response = v1::InitializeResponse)]
+#[serde(transparent)]
+struct RawInitialize(Value);
 
 /// One typed ACP request as the `params` object the transport sends.
 ///
@@ -3199,6 +3290,15 @@ fn adapter_usage(usage: &Value, read_field: &str) -> Option<TokenUsage> {
 /// A tool call update's id, and the update as a record of the call: what it
 /// says about the call, without the `sessionUpdate` that said which kind of
 /// message it came in.
+/// Where an open call is kept in the turn: by its `toolCallId`, under the
+/// child's id for a child's call, so that two agents' ids never meet.
+fn tool_key(id: &str, subagent: Option<&Value>) -> String {
+    match subagent.and_then(|subagent| subagent["id"].as_str()) {
+        Some(child) => format!("{child}/{id}"),
+        None => id.to_string(),
+    }
+}
+
 fn tool_call_of(update: &Value) -> (String, Value) {
     let id = update
         .get("toolCallId")
@@ -3790,6 +3890,11 @@ mod tests {
             "the daemon reads and writes the worktree itself: {capabilities}"
         );
         assert_eq!(capabilities["terminal"], json!(false));
+        assert_eq!(
+            capabilities["subagents"],
+            json!({}),
+            "the agent announces its children and sends their updates: {capabilities}"
+        );
         assert!(
             capabilities["session"]["configOptions"].is_object(),
             "config options carry the model and effort pins: {capabilities}"

@@ -56,6 +56,7 @@ mod skill_documents;
 mod stored_conversations;
 mod stored_conversations_opencode;
 mod stub_lifetime;
+mod subagents;
 mod switch;
 mod task_branches;
 mod task_failure;

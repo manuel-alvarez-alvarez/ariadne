@@ -7,6 +7,7 @@ pub mod acp_discovery;
 mod acp_index;
 mod acp_schema;
 pub mod acp_sessions;
+pub(crate) mod acp_subagents;
 mod acp_transport;
 pub mod agents;
 pub mod ai_permissions;

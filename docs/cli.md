@@ -321,7 +321,8 @@ replacement draws plain instead.
 | Alt+←, Alt+→ | Moves back or forward one word (Alt-B and Alt-F do the same) |
 | ↑, ↓, or 1 to 9 during a question | Chooses a permission option instead of moving through input or history |
 | Ctrl-O | Toggles the pane between folded and whole; works during a question too |
-| Escape | Cancels the running turn |
+| Tab, Shift-Tab | While the session has subagents, shows the next or the previous view of the bar; while the slash-command list is open, Tab completes instead |
+| Escape | Cancels the running turn; in a subagent's view, goes back to the session's own view |
 | Ctrl-C twice, Ctrl-D | Leaves the console; the session keeps running, and the console says how to attach again |
 
 Pasting puts the text into the input box where the cursor is, line breaks
@@ -339,6 +340,48 @@ session ends, the console closes and says how to revive the session with
 `ariadne session resume`. If the daemon's stream
 drops, the status row says "reconnecting" until it is back, and nothing
 already on screen is printed twice.
+
+### Subagents
+
+Some agents start subagents: child agents that do part of the turn, such as
+an explorer that reads the repository. Codex ACP and Claude ACP announce
+them; OpenCode does not. While the session has at least one subagent, a bar
+sits above the status row:
+
+```
+  main   ● explorer ?   ✓ reviewer
+ agent · develop · claude:opus · running   ⠹ thinking 12s   ⠹ running 1 subagent
+```
+
+The bar lists the session's own view, `main`, and then each subagent in the
+order the agent started it. The mark before a subagent's title is its state:
+`●` running, `✓` completed, `✗` failed, `⊘` cancelled, and `◇` where the
+agent has not said. A `?` after a title means that subagent asks a permission
+question. The view on the screen is drawn reversed. While any subagent runs,
+the status row says `running N subagents`. A session without a subagent has
+no bar, and Tab works as before.
+
+Tab shows the next view and Shift-Tab the previous one, in bar order. Each
+switch clears the terminal, its scrollback too where the terminal allows,
+and draws the chosen view from its start. In the CLI that also clears what
+your shell printed above the console.
+
+The `main` view is the session's own conversation. It shows one line when a
+subagent starts, with its title and its task, and one line when it ends,
+with how long it ran:
+
+```
+  ◇ subagent explorer · Find the config loader
+  ✓ subagent explorer completed · 1m 04s
+```
+
+What a subagent writes and runs is not in the `main` view. Press Tab to read
+it in the subagent's own view. That view shows the subagent's transcript
+alone, and is read-only: it has no input box, and the footer starts with
+`read-only`. Ctrl-O folds and unfolds as in the `main` view, and Escape goes
+back to the `main` view. A permission question from a subagent is asked in
+the `main` view, since the session answers it, and names the subagent:
+`Bash · asked by subagent explorer`.
 
 With stdin or stdout redirected there is no pane to draw: `ariadne attach`
 then prints one `kind · summary` line per event and numbered options for a

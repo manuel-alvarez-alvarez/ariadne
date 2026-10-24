@@ -51,6 +51,7 @@ mod chrome;
 mod commands;
 mod input;
 mod picker;
+mod subagents;
 mod viewport;
 
 #[cfg(test)]
@@ -63,6 +64,7 @@ pub use viewport::{Anchored, Screen, open};
 use blocks::block;
 use commands::Command;
 use input::Input;
+use subagents::{SUBAGENT_UPDATE, Subagent, child_at, child_of};
 
 /// How often the spinner turns while a turn runs.
 const TICK: Duration = Duration::from_millis(120);
@@ -82,6 +84,8 @@ pub enum Action {
     Send(String),
     /// Cancel the running turn.
     Cancel,
+    /// Another view is on the screen: clear the terminal and draw it whole.
+    Switch,
     /// Leave the console. The session stays alive.
     Quit,
 }
@@ -241,6 +245,16 @@ pub struct Console {
     blocks: RefCell<BlockCache>,
     /// The pending question found for the current transcript state.
     asking: Cell<Option<Option<usize>>>,
+    /// The children the agent announced, in that order (021): the bar's
+    /// views after the parent's.
+    subagents: Vec<Subagent>,
+    /// The view on the screen: 0 for the session's own, `n` for the
+    /// child at `n - 1`. `items` holds that view's blocks.
+    view: usize,
+    /// The parent's blocks while a child's view is on the screen.
+    parked: Vec<TranscriptItem>,
+    /// The child whose permission question waits, where one does.
+    asking_child: Option<String>,
 }
 
 #[derive(Default)]
@@ -294,6 +308,10 @@ impl Console {
             dismissed: false,
             blocks: RefCell::new(BlockCache::default()),
             asking: Cell::new(None),
+            subagents: Vec::new(),
+            view: 0,
+            parked: Vec::new(),
+            asking_child: None,
         }
     }
 
@@ -395,19 +413,47 @@ impl Console {
         // the clock follows: a turn that was running before the stream
         // dropped counts from its own prompt again, and a turn that began
         // while the stream was down counts from its prompt, not the old one.
-        let finished = self.settled();
-        let mut items = Vec::new();
+        let mut finished = self.settled();
+        let mut parent = Vec::new();
+        let mut children = Vec::new();
         self.commands = Vec::new();
+        self.asking_child = None;
         for event in events {
             if self.follow_commands(event) {
                 continue;
             }
-            absorb(&mut items, event);
+            if event.kind == SUBAGENT_UPDATE {
+                subagents::follow(&mut children, &mut parent, event);
+                continue;
+            }
+            if let Some(id) = child_of(event)
+                && !asked_of_the_session(event)
+            {
+                let at = child_at(&mut children, event, id);
+                absorb(&mut children[at].items, event);
+                continue;
+            }
+            self.follow_asking(event);
+            absorb(&mut parent, event);
             self.follow_turn(event, now);
             self.follow_usage(event);
         }
+        // The view on the screen keeps what it drew. A child the snapshot
+        // no longer holds leaves the parent's view drawn from its start.
+        if self.view > children.len() {
+            self.view = 0;
+            self.committed = 0;
+            self.head.clear();
+            finished = 0;
+        }
+        let fresh = match self.view {
+            0 => std::mem::take(&mut parent),
+            view => std::mem::take(&mut children[view - 1].items),
+        };
         self.items.truncate(finished);
-        self.items.extend(items.into_iter().skip(finished));
+        self.items.extend(fresh.into_iter().skip(finished));
+        self.parked = parent;
+        self.subagents = children;
         self.pending.clear();
     }
 
@@ -424,6 +470,31 @@ impl Console {
         if self.follow_commands(event) {
             return;
         }
+        if event.kind == SUBAGENT_UPDATE {
+            self.follow_subagent(event);
+            return;
+        }
+        if let Some(id) = child_of(event)
+            && !asked_of_the_session(event)
+        {
+            self.follow_child(event, id);
+            return;
+        }
+        self.follow_asking(event);
+        // The parent's own event folds into the parent's blocks, wherever
+        // they are kept while a child's view is on the screen.
+        let parked = self.in_child();
+        if parked {
+            std::mem::swap(&mut self.items, &mut self.parked);
+        }
+        self.apply_own(event, now);
+        if parked {
+            std::mem::swap(&mut self.items, &mut self.parked);
+        }
+    }
+
+    /// Fold one event of the session's own agent into the blocks in `items`.
+    fn apply_own(&mut self, event: &AgentEventDto, now: chrono::DateTime<chrono::Utc>) {
         self.follow_turn(event, now);
         self.follow_usage(event);
         // A daemon that predates `source` and `text` (021) names neither.
@@ -666,6 +737,16 @@ impl Console {
             self.invalidate_blocks();
             return Action::None;
         }
+        // Tab and Shift-Tab switch views, unless the suggestion list is
+        // open, where Tab completes. A child's view is read-only.
+        if self.suggestions().is_none()
+            && let Some(action) = self.view_key(key)
+        {
+            return action;
+        }
+        if self.in_child() {
+            return Action::None;
+        }
 
         if let Some(at) = self.question() {
             let count = self.options(at).len();
@@ -774,13 +855,13 @@ impl Console {
     /// It never goes backwards: what is in the scrollback is in the
     /// scrollback, whatever a fresh snapshot makes of the items around it.
     fn settled(&self) -> usize {
-        let writing = self.turn.running()
+        let writing = self.view_running()
             || self
                 .items
                 .last()
                 .is_some_and(|last| is_open(last, true) || is_open(last, false));
         let mut end = self.items.len().saturating_sub(usize::from(writing));
-        if let Some(pending) = self.pending.front() {
+        if let Some(pending) = self.pending.front().filter(|_| !self.in_child()) {
             // The turn a queued prompt waits behind is still writing the
             // block before the prompt, chunk by chunk: that block is the one
             // being written, not the prompt.
@@ -792,7 +873,7 @@ impl Console {
             let open = match item {
                 TranscriptItem::PermissionQuestion { answer, .. } => answer.is_none(),
                 TranscriptItem::ToolCall { tool, .. } => {
-                    self.turn.running() && !transcript::tool_is_terminal(tool.status.as_deref())
+                    self.view_running() && !transcript::tool_is_terminal(tool.status.as_deref())
                 }
                 _ => false,
             };
@@ -1065,6 +1146,16 @@ fn instant_of(created_at: &str, now: chrono::DateTime<chrono::Utc>) -> Instant {
         .unwrap_or(anchor)
 }
 
+/// Whether a child's event is asked of the session itself: its permission
+/// question and the answer, which the parent view holds, since the session
+/// answers them.
+fn asked_of_the_session(event: &AgentEventDto) -> bool {
+    matches!(
+        event.kind.as_str(),
+        "permission_request" | "permission.replied"
+    )
+}
+
 /// Fold one event into a live transcript.
 ///
 /// [`transcript::fold_into`] does everything a snapshot needs; a live console
@@ -1292,6 +1383,7 @@ where
                     }
                 }
                 Action::Cancel => sink.cancel().await,
+                Action::Switch => console.redraw(terminal)?,
             },
             Step::Key(TermEvent::Paste(text)) => console.paste(&text),
             // A resize is a turn of the loop: the loop fits the pane to the

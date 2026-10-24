@@ -89,10 +89,23 @@ fn spans(parts: Vec<Part>) -> Vec<Span<'static>> {
 }
 
 impl Console {
-    /// The rows under the live area: the status row, the input box with its
-    /// borders, and the footer. They grow only as the box does.
+    /// The rows under the live area: the bar while the session has a child,
+    /// the status row, the input box with its borders, and the footer. They
+    /// grow only as the box does. A child's view is read-only, and has no
+    /// box.
     pub fn pinned_rows(&self, width: u16) -> u16 {
-        STATUS_ROWS + self.input.height(width) + FOOTER_ROWS
+        self.bar_rows() + STATUS_ROWS + self.input_rows(width) + FOOTER_ROWS
+    }
+
+    fn bar_rows(&self) -> u16 {
+        u16::from(self.bar().is_some())
+    }
+
+    fn input_rows(&self, width: u16) -> u16 {
+        match self.in_child() {
+            true => 0,
+            false => self.input.height(width),
+        }
     }
 
     /// Draw the viewport: what is being written, the status row, the
@@ -119,7 +132,8 @@ impl Console {
             Constraint::Length(self.pinned_rows(area.width) + suggested),
         ])
         .areas(area);
-        let [status, suggestions, input, footer] = Layout::vertical([
+        let [bar, status, suggestions, input, footer] = Layout::vertical([
+            Constraint::Length(self.bar_rows()),
             Constraint::Length(STATUS_ROWS),
             Constraint::Length(suggested),
             Constraint::Min(0),
@@ -128,9 +142,14 @@ impl Console {
         .areas(pinned);
 
         self.draw_live(frame, live, asking);
+        if let Some(line) = self.bar() {
+            frame.render_widget(Paragraph::new(line), bar);
+        }
         self.draw_status(frame, status, now);
         self.draw_suggestions(frame, suggestions);
-        self.input.draw(frame, input, self.hint());
+        if !self.in_child() {
+            self.input.draw(frame, input, self.hint());
+        }
         self.draw_footer(frame, footer);
     }
 
@@ -176,7 +195,8 @@ impl Console {
             if Some(at) == asking {
                 continue;
             }
-            blocks.push(self.block(at, item, block_width, self.pending.contains(&at)));
+            let queued = !self.in_child() && self.pending.contains(&at);
+            blocks.push(self.block(at, item, block_width, queued));
         }
         // The picker is what the keys act on, so it is drawn last, above the
         // box, whatever came after it — a snapshot taken mid-turn ends on the
@@ -281,6 +301,22 @@ impl Console {
                 )],
             ));
         }
+        let running = self.running_subagents();
+        if running > 0 {
+            let noun = if running == 1 {
+                "subagent"
+            } else {
+                "subagents"
+            };
+            parts.push(Part::new(
+                4,
+                GAP,
+                vec![
+                    Span::styled(format!("{} ", self.spinner()), AGENT),
+                    Span::styled(format!("running {running} {noun}"), DIM),
+                ],
+            ));
+        }
         parts
     }
 
@@ -310,8 +346,10 @@ impl Console {
     /// `ctrl-o unfold` or `ctrl-o fold` — is one more hint, after every
     /// other, so it is the first dropped on a narrow pane.
     fn hints(&self) -> Vec<Part> {
+        let views = !self.subagents.is_empty();
         let base: &[&str] = match (self.armed, self.question().is_some(), self.turn.running()) {
             (true, _, _) => &["ctrl-c again to leave"],
+            _ if self.in_child() => &["read-only", "tab next view", "esc main"],
             (_, true, _) => &["up/down or 1-9 choose", "enter answer"],
             (_, _, true) => &[
                 "enter send",
@@ -326,8 +364,12 @@ impl Console {
         } else {
             "ctrl-o unfold"
         };
+        // While the session has a child, the parent's view names the key
+        // that reaches it.
+        let tab = (views && !self.in_child() && !self.armed).then_some("tab views");
         base.iter()
             .copied()
+            .chain(tab)
             .chain(std::iter::once(fold))
             .enumerate()
             .map(|(at, hint)| {
@@ -431,7 +473,7 @@ fn compact(count: u64) -> String {
 
 /// How long the turn has run, in whole seconds: `12s`, or `1m 04s` past a
 /// minute.
-fn clock(elapsed: Duration) -> String {
+pub(super) fn clock(elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
     if seconds < 60 {
         format!("{seconds}s")

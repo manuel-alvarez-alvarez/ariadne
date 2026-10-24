@@ -1,11 +1,13 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-10-16
+updated: 2026-10-24
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
+  - crates/ariadne-daemon/tests/it/subagents.rs
+  - crates/ariadne-daemon/src/acp_subagents.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/src/acp.rs
@@ -354,6 +356,37 @@ outside half) opens no session either: it asks only `initialize` and
     keeps every other data key. For data that is not an object, it also
     keeps the original value in `data.details`. An error without data and
     one with a non-empty string `data.message` stay unchanged.
+15. The runtime understands subagents: `initialize` advertises
+    `clientCapabilities.subagents: {}`, read and written as raw JSON, since
+    the SDK keeps the draft behind its `unstable_subagents` feature. An agent
+    announces a child on its own session and sends the child's updates under
+    the child's session id. Three shapes announce one: the draft protocol's
+    `subagent_update` (the child is `sessionId`; `title`, `description`,
+    `capabilities` and `state` are patches, and an omitted one keeps its
+    value), and the adapters' `subagent_spawned` (`subagentSessionId`,
+    `name`, `task`, `capabilities`) and `subagent_state_update`
+    (`subagentSessionId`, `state`), which codex-acp and claude-agent-acp
+    send. Each folds into one stored event, `subagent_update`, on the
+    parent session: `session_id` (the session it came on), `subagent {id,
+    title, description}`, `state` and `capabilities {cancel}`. `state` is
+    `running`, `completed`, `failed`, `cancelled` or null: a draft idle
+    state is `cancelled` on a `cancelled` stop reason, `failed` on a
+    `refusal` or an `error`, and `completed` otherwise; a draft
+    `requires_action` is `running`; an adapter's `disconnected` is
+    `failed`; anything else is null. `cancel` is true only where the child's
+    capabilities hold a `cancel` object. The first stored update for a
+    child id is its announcement. An update under an announced child's
+    session id is stored on the parent session under its own kind, with a
+    `subagent {id, title}` field; so is the live chunk or tool update it
+    sends, and a permission request the child asks. A child's text is a run
+    of its own (rule 6), and its tool calls are merged apart from the
+    parent's (rule 7). A child's `usage_update` is dropped: the window is
+    the session's own agent's. A child's `available_commands_update` goes
+    live to the console as `available_commands_update` with the `subagent`
+    field, is never stored (rule 5), and never replaces the session's own
+    list. An update under any other session id is
+    the parent's own, and an unknown kind is still let by. A child's event
+    never sets the row's agent session id.
 
 ## Acceptance criteria
 
@@ -568,6 +601,29 @@ outside half) opens no session either: it asks only `initialize` and
 - An option is found by its category, or by its id or name where no option
   has the category — the lookup the runtime shares with discovery
   (`acp_discovery.rs::model_and_effort_name_fallbacks_enter_the_discovered_catalog`).
+- `initialize` advertises `subagents: {}`
+  (`ariadne-daemon::acp::tests::initialize_tells_the_agent_what_the_daemon_supports`,
+  `subagents.rs::a_codex_child_is_folded_onto_the_parent_session`).
+- codex-acp's shape: the announcement and the end fold into
+  `subagent_update`, and the child's text and tool calls are stored on the
+  parent with the child named, its text a run apart from the parent's
+  (`subagents.rs::a_codex_child_is_folded_onto_the_parent_session`).
+- claude-agent-acp's shape: a child's permission request carries the
+  child, a child announced on a child's session names that session, and a
+  cancelled end folds as `cancelled`
+  (`subagents.rs::a_claude_child_asks_for_permission_under_its_own_name`).
+- The draft shape: a patch keeps what it omits, an idle state reads as how
+  the work ended, and a `cancel` capability reads as true
+  (`subagents.rs::a_draft_subagent_update_patches_what_it_names`,
+  `ariadne-daemon::acp_subagents::tests::an_idle_child_reads_as_how_its_work_ended`).
+- A child's command list reaches the console stream named, is not
+  stored, and leaves the session's own list in the snapshot
+  (`subagents.rs::a_childs_commands_reach_the_console_named_and_leave_the_parents_alone`).
+- An agent that announces nothing stores no `subagent_update` and no
+  `subagent` field, an update under an unknown session id is the parent's
+  own, and an unknown kind is let by
+  (`subagents.rs::an_agent_that_announces_nothing_stores_what_it_did_before`,
+  `ariadne-daemon::acp_subagents::tests::only_an_announced_child_is_tagged`).
 
 ## Known gap
 
@@ -583,7 +639,8 @@ option is proven only by the refused pin, which takes the same path.
 `crates/ariadne-daemon/src/acp_transport.rs` (the agent's pipes as the SDK's
 transport), `crates/ariadne-daemon/src/acp_calls.rs` (the methods it calls),
 `crates/ariadne-daemon/src/acp_schema.rs` (Ariadne's launch types as the
-SDK's),
+SDK's), `crates/ariadne-daemon/src/acp_subagents.rs` (the subagent
+updates),
 `crates/ariadne-daemon/src/transcript.rs` (the transcript reader),
 `crates/ariadne-daemon/src/launcher.rs` (the launch, liveness and kill),
 `crates/ariadne-daemon/src/learned_key.rs` (the learned key and family),
