@@ -571,7 +571,6 @@ not only the scaffolding CLI.
 | `@perses-dev/client` | `zod` → `^4.6.6` | GHSA-mrhx-c7xc-m3w5 | client depends on zod 3.x, which is vulnerable to memory exhaustion; override upgrades to 4.6.6+ |
 | `@perses-dev/plugin-system` | `zod` → `^4.6.6` | GHSA-mrhx-c7xc-m3w5 | same as client |
 | `@perses-dev/spec` | `zod` → `^4.6.6` | GHSA-mrhx-c7xc-m3w5 | same as client |
-| `@perses-dev/components` | `echarts` → `^6.1.0` | GHSA-fgmj-fm8m-jvvx | components bundles echarts < 6.1.0, which has XSS; override upgrades transitive echarts |
 
 ## The dashboard package
 

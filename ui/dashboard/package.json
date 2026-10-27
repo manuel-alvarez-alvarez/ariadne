@@ -81,9 +81,6 @@
     },
     "@perses-dev/spec": {
       "zod": "^4.6.6"
-    },
-    "@perses-dev/components": {
-      "echarts": "^6.1.0"
     }
   }
 }
