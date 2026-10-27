@@ -281,6 +281,7 @@ dependencies = [
  "serde_urlencoded",
  "sha2 0.11.1",
  "socket2 0.5.10",
+ "socket2 0.6.5",
  "sqlx",
  "tempfile",
  "tokio",
