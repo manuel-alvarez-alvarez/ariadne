@@ -1468,7 +1468,7 @@ pub(crate) mod tests {
                     false => answers.pop_front().unwrap_or_else(|| "{}".into()),
                 };
                 let response = format!(
-                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{answer}",
+                    "HTTP/1.1 {status}\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{answer}",
                     answer.len()
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
