@@ -561,6 +561,18 @@ or delete it.
 `src/index.css` imports `shadcn/tailwind.css`, so it is a runtime dependency and
 not only the scaffolding CLI.
 
+### The dashboard package overrides
+
+`ui/dashboard/package.json` has nested overrides to fix high-severity advisories in transitive dependencies:
+
+| Package | Override | Advisory IDs | Reason |
+| --- | --- | --- | --- |
+| `@module-federation/dts-plugin` | `undici` → `^7.30.1` | GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685, GHSA-f72v-6w45-q472 | `dts-plugin` pins undici to 7.29.1; override forces 7.30.1 in that chain only; `jsdom`'s undici stays on 8.x |
+| `@perses-dev/client` | `zod` → `^4.6.6` | GHSA-mrhx-c7xc-m3w5 | client depends on zod 3.x, which is vulnerable to memory exhaustion; override upgrades to 4.6.6+ |
+| `@perses-dev/plugin-system` | `zod` → `^4.6.6` | GHSA-mrhx-c7xc-m3w5 | same as client |
+| `@perses-dev/spec` | `zod` → `^4.6.6` | GHSA-mrhx-c7xc-m3w5 | same as client |
+| `@perses-dev/components` | `echarts` → `^6.1.0` | GHSA-fgmj-fm8m-jvvx | components bundles echarts < 6.1.0, which has XSS; override upgrades transitive echarts |
+
 ## The dashboard package
 
 `ui/dashboard/` is the Perses dashboard the Dashboards screen opens in an iframe
