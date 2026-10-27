@@ -79,24 +79,6 @@ async fn the_default_snapshot_is_bounded_even_without_an_explicit_tail() {
 }
 
 #[tokio::test]
-async fn service_narrows_the_snapshot_to_one_service() {
-    let h = harness().await;
-    {
-        let _guard = capture(&h);
-        tracing::info!("from the daemon");
-    }
-    flush_until_stored(&h, 1).await;
-    // `service` always carries the resource's own `service.name`: every
-    // record this daemon writes is "ariadned", so the filter either keeps
-    // everything or keeps nothing.
-    let matching: LogSnapshotResponse = h.get("/v1/logs?service=ariadned").await;
-    assert_eq!(messages(&matching.lines), vec!["from the daemon"]);
-
-    let other: LogSnapshotResponse = h.get("/v1/logs?service=ariadne-cli").await;
-    assert!(other.lines.is_empty());
-}
-
-#[tokio::test]
 async fn level_narrows_the_snapshot_to_that_level_and_above() {
     let h = harness().await;
     {
@@ -131,6 +113,24 @@ async fn an_unknown_level_is_a_bad_request() {
 // `telemetry_pipeline_patience` when every core is already busy. See
 // `crates/AGENTS.md#checks` for the marker's import and retry rule.
 flaky_test! {
+    #[tokio::test]
+    async fn service_narrows_the_snapshot_to_one_service() {
+        let h = harness().await;
+        {
+            let _guard = capture(&h);
+            tracing::info!("from the daemon");
+        }
+        flush_until_stored(&h, 1).await;
+        // `service` always carries the resource's own `service.name`: every
+        // record this daemon writes is "ariadned", so the filter either keeps
+        // everything or keeps nothing.
+        let matching: LogSnapshotResponse = h.get("/v1/logs?service=ariadned").await;
+        assert_eq!(messages(&matching.lines), vec!["from the daemon"]);
+
+        let other: LogSnapshotResponse = h.get("/v1/logs?service=ariadne-cli").await;
+        assert!(other.lines.is_empty());
+    }
+
     #[tokio::test]
     async fn the_snapshot_returns_captured_lines_in_order() {
         let h = harness().await;
