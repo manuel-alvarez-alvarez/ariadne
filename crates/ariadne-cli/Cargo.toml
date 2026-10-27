@@ -32,10 +32,10 @@ dirs = { workspace = true }
 # event stream in one `select!`.
 futures-util = { workspace = true }
 http = { workspace = true }
-opentelemetry = "0.33"
-opentelemetry-appender-tracing = "0.31"
-opentelemetry-proto = { version = "0.31", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "with-serde"] }
-opentelemetry_sdk = "0.31"
+opentelemetry = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
+opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "with-serde"] }
+opentelemetry_sdk = { workspace = true }
 prost = "0.14"
 ratatui = { workspace = true }
 rmcp = { version = "3", features = ["server", "transport-io", "macros"] }

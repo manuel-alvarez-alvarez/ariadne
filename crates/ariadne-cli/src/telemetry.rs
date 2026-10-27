@@ -147,7 +147,7 @@ impl LogExporter for LogExporterImpl {
         let request = ExportLogsServiceRequest {
             resource_logs:
                 opentelemetry_proto::transform::logs::tonic::group_logs_by_resource_and_scope(
-                    batch,
+                    &batch,
                     &ResourceAttributesWithSchema::from(
                         &*self.resource.lock().expect("telemetry resource lock"),
                     ),
