@@ -27,7 +27,7 @@ getrandom = { workspace = true }
 localtunnel-client = { workspace = true }
 # `localtunnel-client` sets TCP keepalive retries, which socket2 0.5 offers
 # only with its `all` feature, and the client does not ask for it.
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 agent-client-protocol = { workspace = true }
 tokio-util = { workspace = true }
 ariadne-core = { workspace = true }
