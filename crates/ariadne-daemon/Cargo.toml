@@ -26,8 +26,10 @@ hex = { workspace = true }
 getrandom = { workspace = true }
 localtunnel-client = { workspace = true }
 # `localtunnel-client` sets TCP keepalive retries, which socket2 0.5 offers
-# only with its `all` feature, and the client does not ask for it.
+# only with its `all` feature. Keep its separate 0.5 dependency enabled while
+# the daemon uses socket2 0.6.
 socket2 = { version = "0.6", features = ["all"] }
+socket2_05 = { package = "socket2", version = "0.5", features = ["all"] }
 agent-client-protocol = { workspace = true }
 tokio-util = { workspace = true }
 ariadne-core = { workspace = true }
@@ -95,8 +97,8 @@ tower = { workspace = true }
 vt100 = { workspace = true }
 
 [package.metadata.cargo-machete]
-# Named only for its `all` feature, which `localtunnel-client` needs.
-ignored = ["socket2"]
+# Named only for their `all` features, which `localtunnel-client` needs.
+ignored = ["socket2", "socket2_05"]
 
 [lints]
 workspace = true
