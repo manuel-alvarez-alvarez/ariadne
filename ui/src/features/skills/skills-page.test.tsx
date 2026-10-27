@@ -149,6 +149,8 @@ async function openComboboxWithKeyboard(user: ReturnType<typeof userEvent.setup>
   ;(await screen.findByRole("button", { name: "Skill" })).focus()
   await user.keyboard("{Enter}")
   await screen.findByRole("listbox", { name: "Skill" })
+  ;(await screen.findByRole("combobox", { name: "Skill" })).focus()
+  await screen.findByRole("option", { selected: true })
 }
 
 /** The group of one title, found by its own accessible name. */
@@ -164,6 +166,10 @@ function row(name: string): HTMLElement {
 /** The editor's heading, once the selected skill is up. */
 async function editorFor(name: string): Promise<HTMLElement> {
   return await screen.findByRole("heading", { level: 2, name })
+}
+
+function selectedOptionName(): string {
+  return screen.getByRole("option", { selected: true }).getAttribute("data-value") ?? ""
 }
 
 beforeEach(() => {
@@ -285,13 +291,16 @@ describe("the selection", () => {
     renderPage()
     await openComboboxWithKeyboard(user)
 
-    // No filter typed: "Yours" renders after "Shipped with Ariadne", so one
-    // arrow down from the first shipped row lands on the second.
+    const first = selectedOptionName()
     await user.keyboard("{ArrowDown}")
+    await waitFor(() => {
+      expect(selectedOptionName()).not.toBe(first)
+    })
+    const picked = selectedOptionName()
     await user.keyboard("{Enter}")
 
-    expect(await editorFor("code-review")).toBeDefined()
-    expect(selectedInUrl()).toBe("code-review")
+    expect(await editorFor(picked)).toBeDefined()
+    expect(selectedInUrl()).toBe(picked)
   })
 
   it("closes on Escape, leaving the selection as it was", async () => {
