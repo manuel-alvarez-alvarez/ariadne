@@ -154,7 +154,7 @@ dirs = "7"
 # Sleep inhibition: keepawake wraps the macOS and Windows power APIs, zbus
 # talks to systemd-logind on Linux.
 keepawake = { version = "0.6", default-features = false }
-zbus = "5"
+zbus = "6"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
