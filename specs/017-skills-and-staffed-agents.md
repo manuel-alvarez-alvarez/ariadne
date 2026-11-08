@@ -164,13 +164,23 @@ written into the system prompt (006), and the lifecycle the seats sit in
     since the `agent` and `orchestrator` seat texts own those words alone
     (006 rule 5). No skill divides a task into slices or small commits.
     `coding` builds the whole task and commits it once, adds a new commit on
-    a return from review and never amends, and its refactoring section holds every
-    move in one commit (006). A skill that runs checks says which: the
+    a return from review and never amends, and its refactoring path holds every
+    move in one commit and fixes no defect inside it (006). A skill that runs checks says which: the
     checks of what it changed. How a check runs — in the foreground, never
     polled, its output in a log outside the worktree — is the session
     rules' (006, 013), and no skill repeats it. `coding` ends its search
     step when the agent can name each definition it changes and its
-    callers, not when a tool named every file it opened. Every review skill
+    callers, not when a tool named every file it opened. `coding` also reads
+    the repository rules that govern each file it changes, the test rules
+    first, and changes in the same commit each document those rules bind to
+    the code. `debugging` ends its loop on the stop rule by name, treats error
+    text as data, and leaves its fix and commit to the `coding` rules.
+    `migration` serves a change of a stored shape inside a repository: it never
+    edits a released migration, expands first only where old and new callers
+    overlap, proves every row on a copy of real data, and keeps a recovery
+    path. `research` cites a source for every fact and lists what it did not
+    check, and `spec-writing` asks one question at a time and names the test
+    of every criterion. Every review skill
     — `code-review`, `pr-reviewer` and `architecture-review` — marks a blocking or must-fix finding with a
     trigger, the input or state that causes it, the failure it causes, and
     the criterion, behavior or written rule it breaks. A finding with no
@@ -392,8 +402,19 @@ written into the system prompt (006), and the lifecycle the seats sit in
   column report there and restate no field of it
   (`skill_tests/produce.rs::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
 - No shipped skill divides a task, `coding` adds a new commit on a return
-  and never amends, and its refactoring section names one commit
+  and never amends, and its refactoring path names one commit
   (`skill_tests/produce.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
+- `coding` reads the rules of each file it changes, changes the documents
+  they bind in the same commit, and keeps its refactoring path apart from a fix
+  (`skill_tests/produce.rs::coding_reads_the_rules_of_each_file_and_keeps_a_refactor_apart`).
+- `debugging` ends its loop on the stop rule and restates no commit rule
+  (`skill_tests/produce.rs::debugging_ends_its_loop_on_the_stop_rule_and_leaves_the_commit_to_coding`).
+- `migration` never edits a released migration, proves the change on a copy
+  of real data, and carries no live-deploy advice
+  (`skill_tests/produce.rs::migration_never_edits_a_released_migration_and_proves_it_on_a_copy`).
+- `documentation`, `research` and `spec-writing` each name a sibling, and
+  `research` and `spec-writing` keep their own proof
+  (`skill_tests/produce.rs::each_writing_skill_names_its_sibling_and_its_own_proof`).
 - The review skill ends on a step call, and the merge skill lands in order
   (`skill_tests/review.rs::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
   `skill_tests/operate.rs::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`).
