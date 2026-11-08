@@ -28,12 +28,12 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   release's own current body, and writes the result back with `gh release
   edit --notes-file`, so the Release page gets install steps and an asset
   table in front of the changelog release-please wrote.
-- [`dependabot.yml`](dependabot.yml) — a weekly check of four ecosystems:
+- [`dependabot.yml`](dependabot.yml) — a weekly check of five entries:
   `cargo` at the repository root, `cargo` in `ui/src-tauri` (its own
-  workspace, outside the root one), `npm` in both `ui/` and `ui/dashboard/`
-  (one entry, two directories), and `github-actions` at the root. Each
-  ecosystem groups its own minor and patch bumps into one pull request and
-  its own major bumps into a second, so a family that moves in lockstep
+  workspace, outside the root one), `npm` in `ui/` and a separate `npm` in
+  `ui/dashboard/` (each its own package, so separate pull requests), and
+  `github-actions` at the root. Each entry groups its own minor and patch
+  bumps into one pull request and its own major bumps into a second, so a family that moves in lockstep
   (OpenTelemetry, Tauri) lands together; security updates stay ungrouped,
   one pull request per advisory. Every commit carries the `chore(deps)`
   prefix, so release-please ignores it the same as any other `chore` commit (root

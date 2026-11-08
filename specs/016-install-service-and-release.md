@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-11-08
+updated: 2026-11-09
 areas: [daemon, install, scripts, store, workflows]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
@@ -219,11 +219,12 @@ Out: what the daemon does once running (009, 012).
     greater than every migration `main` already ships and than every other
     new one in the same change. Pull-request CI and the pre-push hook run
     the identical command.
-17. `.github/dependabot.yml` checks four ecosystems weekly: `cargo` at the
-    repository root, `cargo` in `ui/src-tauri`, `npm` in `ui/` and
-    `ui/dashboard/` from one entry, and `github-actions` at the root, each
-    grouping its own minor and patch bumps into one pull request and its
-    own major bumps into a second. Security updates are not grouped: each
+17. `.github/dependabot.yml` checks five entries weekly: `cargo` at the
+    repository root, `cargo` in `ui/src-tauri`, `npm` in `ui/`, a second
+    `npm` in `ui/dashboard/` (so the two packages open separate pull
+    requests), and `github-actions` at the root. Each entry groups its own
+    minor and patch bumps into one pull request and its own major bumps
+    into a second. Security updates are not grouped: each
     advisory opens its own pull request. Every commit it writes carries the
     `chore(deps)` prefix, which rule 6 above already hides from the release
     notes and keeps from moving the version, so a dependency bump alone
@@ -308,12 +309,13 @@ Out: what the daemon does once running (009, 012).
   macOS signing certificate`; `Delete the temporary macOS signing keychain`
   runs right after `Verify the signed macOS assets`, before staging,
   attesting or uploading any asset (`.github/workflows/release.yml`).
-- `.github/dependabot.yml` defines exactly four `updates` entries —
-  `cargo` at `/`, `cargo` at `/ui/src-tauri`, `npm` at `directories`
-  `/ui` and `/ui/dashboard`, and `github-actions` at `/` — each weekly,
-  each with one `groups` entry covering `minor` and `patch` update types
-  and one covering `major`, none with `applies-to`, and each with a
-  `commit-message.prefix` of `chore(deps)` (`.github/dependabot.yml`).
+- `.github/dependabot.yml` defines exactly five `updates` entries —
+  `cargo` at `/`, `cargo` at `/ui/src-tauri`, `npm` at `/ui`, `npm` at
+  `/ui/dashboard`, and `github-actions` at `/` — each with one `directory`
+  (not `directories`), each weekly, each with one `groups` entry covering
+  `minor` and `patch` update types and one covering `major`, none with
+  `applies-to`, and each with a `commit-message.prefix` of `chore(deps)`
+  (`.github/dependabot.yml`).
 - `release-please-config.json` defines ✨ Features, 🐛 Bug fixes, ⚡
   Performance, and ⏪ Reverts in that order. It hides the other allowed
   commit types from release notes. The pre-commit hook runs its section test

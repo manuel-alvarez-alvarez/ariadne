@@ -2,10 +2,11 @@
 # `ci.yml`'s `cargo audit` and `npm run check:audit` are what fail a build on
 # an advisory (.github/AGENTS.md, specs/016-install-service-and-release.md).
 #
-# Four ecosystems, at most two weekly pull requests each: one for every minor
+# Five entries, at most two weekly pull requests each: one for every minor
 # and patch bump together, and one for every major bump together, so a family
 # that moves in lockstep (OpenTelemetry, Tauri) lands in one pull request
-# instead of one per package. Security updates are left ungrouped, one pull
+# instead of one per package. `ui/` and `ui/dashboard/` get separate pull
+# requests, one npm entry each. Security updates are left ungrouped, one pull
 # request per advisory, so each fix can land without waiting on the week.
 # Every commit Dependabot writes carries the `chore(deps)` prefix, which
 # release-please ignores the same as any other `chore` commit (root
@@ -38,16 +39,28 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
-  # `ui/dashboard` is its own npm package with its own lockfile; one entry
-  # covers both, so their bumps share the weekly pull requests.
+  # `ui/` and `ui/dashboard/` are separate npm packages with their own
+  # lockfiles, so each gets its own entry and its own weekly pull requests.
   - package-ecosystem: "npm"
-    directories: ["/ui", "/ui/dashboard"]
+    directory: "/ui"
     schedule:
       interval: "weekly"
     groups:
-      npm-minor-patch:
+      ui-npm-minor-patch:
         update-types: ["minor", "patch"]
-      npm-major:
+      ui-npm-major:
+        update-types: ["major"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "npm"
+    directory: "/ui/dashboard"
+    schedule:
+      interval: "weekly"
+    groups:
+      dashboard-npm-minor-patch:
+        update-types: ["minor", "patch"]
+      dashboard-npm-major:
         update-types: ["major"]
     commit-message:
       prefix: "chore(deps)"
