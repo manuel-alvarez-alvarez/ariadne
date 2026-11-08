@@ -114,10 +114,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
    skill that does its work now, and an agent staffed on both keeps one row.
    A row still on the shipped text holds nothing of anybody's and goes. A row
    somebody wrote a document over keeps their text and becomes a skill of
-   their own, theirs to delete and no longer resettable. A row a staffed
-   agent still loads stays a built-in, so an old task still reads as the
-   skills it ran on; it has no text behind it and reads as empty, and it
-   goes on the open after the last task naming it is deleted.
+   their own, theirs to delete and no longer resettable. A row an agent of
+   a goal not yet `completed` or `cancelled` still loads stays a built-in,
+   so that task still reads as the skills it runs on; it has no text behind
+   it and reads as empty. An ended goal's staffing on a dropped skill is
+   taken out on the same open, since nothing staffs off that goal again
+   (rule 9), so the row goes on the first open after the last goal naming
+   it ends.
 8. A skill Ariadne ships is reset, never deleted. A skill of the user's own is
    deleted, never reset: nothing ships under its name to go back to.
 9. A skill a staffed agent still loads, or a goal's own snapshot still names
@@ -336,8 +339,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
   `::a_user_skill_under_a_shipped_name_becomes_a_built_in_on_its_own_text`).
 - A dropped shipped skill leaves an existing database on its next open,
   except where a document was written over it, which becomes a skill of the
-  user's own, or a staffed agent still loads it, which holds the row in place
+  user's own, or an agent of an open goal still loads it, which holds the row
+  in place
   (`store.rs::a_dropped_shipped_skill_leaves_an_existing_database_on_reopen`).
+  A staffing of an ended goal holds nothing in place: it goes on that open,
+  the row with it, and the task keeps its other skills
+  (`store.rs::a_dropped_skill_only_an_ended_goal_names_leaves_on_reopen`).
 - A merged skill hands its staffings to the skill that absorbed it
   (`store.rs::a_merged_skill_hands_its_staffings_to_the_skill_that_absorbed_it`).
 - An orchestrator session indexes `orchestration` and holds its document in

@@ -2945,6 +2945,64 @@ async fn an_old_staffing_on_pull_request_keeps_its_row_and_reads_as_empty() {
     );
 }
 
+/// Once the goal of the last task naming a dropped skill has ended, nothing
+/// staffs off it again, so the next open drops that staffing and the row with
+/// it, rather than keep an empty skill for good. The task's other skills stay.
+#[tokio::test]
+async fn a_dropped_skill_only_an_ended_goal_names_leaves_on_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let store = Store::open(&path).await.unwrap();
+    let (goal, repo) = seed_goal(&store).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    drop(store);
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+         VALUES ('pull-request', NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
+         SELECT id, 'pull-request', 1 FROM task_agents
+          WHERE task_id = ? AND step = 'develop'",
+    )
+    .bind(&task.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE goals SET status = 'completed' WHERE id = ?")
+        .bind(&goal.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    assert!(
+        matches!(
+            store.get_skill("pull-request").await,
+            Err(StoreError::NotFound { .. })
+        ),
+        "a dropped skill only an ended goal names is taken out"
+    );
+    let author = agent_of(&store, &task, "develop").await;
+    let names: Vec<String> = store
+        .agent_skills(&author.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(names, ["coding"], "the task keeps its other skills");
+}
+
 /// A skill that merged into another takes its staffings with it: the rows
 /// that named it name the skill that does its work now, so a task staffed
 /// before the merge still reads as the work it did. An agent staffed on both
