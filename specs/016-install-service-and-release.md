@@ -103,9 +103,12 @@ Out: what the daemon does once running (009, 012).
    ✨ Features, 🐛 Bug fixes, ⚡ Performance, and ⏪ Reverts. It hides `docs`,
    `refactor`, `test`, `chore`, `style`, `build`, and `ci` from the notes.
 7. `feat!:` does not jump to 1.0.0 while the project is pre-1.0.
-8. History is linear: no merge commits. A task branch lands on its base by
-   squash or fast-forward, and the commit that lands carries a conventional
-   subject of its own.
+8. Only main requires linear history. Each task or PR lands as one squashed Conventional Commit.
+   Direct pushes are permitted. Never force-push main or rewrite existing main history.
+   Merge main into published PR branches and push normally.
+   The commit hook exempts actual merges. The reusable subject validator never exempts titles.
+   Main pushes check the outgoing commit in an isolated checkout with the full host-platform check set.
+   Other branch pushes retain scoped checks. Require GitHub CI before GitHub squash merges.
 9. The schema is one squashed init migration, `0001`. A database whose
    `_sqlx_migrations` records a version or a checksum this release does not
    ship is refused at open, with a sentence naming the file to delete: Ariadne
@@ -372,3 +375,7 @@ fails the service step`).
 `crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-daemon/src/resource.rs`, `crates/ariadne-daemon/src/main.rs`,
 `crates/ariadne-cli/src/commands/daemon.rs`.
+
+Local landing acceptance: `scripts/tests/githooks.sh main-push` proves full checks, candidate isolation, and failure rejection.
+`subject-validator` proves shared subject rules. `merge-message` proves the merge exception.
+`main-merge` rejects main merge commits. Scoped push cases prove task-branch behavior.

@@ -380,7 +380,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
   case-by-case scope and complexity assessment, the shipped merge skill never
   force-pushes, including with `--force-with-lease`, and the PR skill
   force-pushes only its own task branch, with a lease pinned to the tip it
-  fetched, after a rebase
+  fetched, after a rebase explicitly required and permitted by task-branch policy
   (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`,
   `::the_merge_skill_forbids_every_force_push`,
   `::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`).
@@ -435,3 +435,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
 `crates/ariadne-store/src/entities.rs`
 (`Skill::seat`), `crates/ariadne-daemon/src/launcher.rs` (the orchestrator's
 skill), `crates/ariadne-core/src/lib.rs` (`Seat`).
+
+For Ariadne, only main requires linear history. Merge main into published PR branches and push normally.
+Never rebase published Ariadne PR commits. Never force-push main.
+Require GitHub CI on the current PR head before a GitHub squash merge.
+Other repositories retain their explicit direct-landing and PR policies.

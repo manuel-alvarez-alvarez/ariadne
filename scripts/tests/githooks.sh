@@ -21,7 +21,7 @@ export PATH="$TEST_ROOT/bin:$PATH"
 # A synthetic repository with one file per area, and the hooks under test
 # copied in from the real repository.
 setup_repo() {
-    mkdir -p "$TEST_ROOT/repo"/{.githooks,scripts/tests,crates/ariadne-core/src,ui/src,ui/src-tauri,docs,ui/node_modules}
+    mkdir -p "$TEST_ROOT/repo"/{.githooks,scripts/tests,crates/ariadne-core/src,ui/src,ui/src-tauri,ui/dashboard,docs,ui/node_modules}
     git -C "$TEST_ROOT/repo" init -q -b main
     git -C "$TEST_ROOT/repo" config user.email test@example.com
     git -C "$TEST_ROOT/repo" config user.name "Test"
@@ -29,6 +29,7 @@ setup_repo() {
         "$REPO_DIR/.githooks/commit-msg" "$REPO_DIR/.githooks/lib.sh" \
         "$TEST_ROOT/repo/.githooks/"
     chmod 755 "$TEST_ROOT/repo/.githooks/"*
+    cp "$REPO_DIR/scripts/check-commit-subject.sh" "$TEST_ROOT/repo/scripts/"
     cp "$REPO_DIR/scripts/install-githooks.sh" "$TEST_ROOT/repo/scripts/"
     cp "$REPO_DIR/scripts/tests/release-please-config.sh" "$TEST_ROOT/repo/scripts/tests/"
     chmod 755 "$TEST_ROOT/repo/scripts/install-githooks.sh"
@@ -39,6 +40,7 @@ setup_repo() {
     printf 'pub fn seeded() {}\n' > "$TEST_ROOT/repo/crates/ariadne-core/src/lib.rs"
     printf 'export const seeded = 1\n' > "$TEST_ROOT/repo/ui/src/seeded.ts"
     printf 'fn seeded() {}\n' > "$TEST_ROOT/repo/ui/src-tauri/seeded.rs"
+    printf 'dashboard\n' > "$TEST_ROOT/repo/ui/dashboard/package.json"
     printf '# seeded\n' > "$TEST_ROOT/repo/docs/seeded.md"
     cat > "$TEST_ROOT/repo/release-please-config.json" <<'EOF'
 {"changelog-sections":[{"type":"perf","section":"⚡ Performance","hidden":false},{"type":"ci","section":"Continuous integration","hidden":true}]}
@@ -165,6 +167,64 @@ case "$test_case" in
         fi
         "$TEST_ROOT/repo/.githooks/commit-msg" "$TEST_ROOT/good-msg"
         ;;
+    main-push)
+        setup_repo
+        base="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
+        printf '# candidate\n' > "$TEST_ROOT/repo/docs/candidate.md"
+        git -C "$TEST_ROOT/repo" add -A
+        git -C "$TEST_ROOT/repo" commit -q -m 'docs: add candidate'
+        head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
+        git -C "$TEST_ROOT/repo" checkout -q --detach "$base"
+        export TEST_CANDIDATE=1
+        printf 'HEAD %s refs/heads/main %s\n' "$head" "$base" |
+            "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
+        grep -Fx 'cargo nextest run --workspace --profile ci' "$TEST_ROOT/commands"
+        [ "$(grep -c '^npm test$' "$TEST_ROOT/commands")" = 2 ]
+        [ "$(git -C "$TEST_ROOT/repo" rev-parse HEAD)" = "$base" ]
+        export TEST_FAIL='npm test'
+        if printf 'HEAD %s refs/heads/main %s\n' "$head" "$base" |
+            "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1; then
+            exit 1
+        fi
+        ;;
+    main-merge)
+        setup_repo
+        base="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
+        git -C "$TEST_ROOT/repo" checkout -q -b topic
+        printf 'topic\n' > "$TEST_ROOT/repo/topic"
+        git -C "$TEST_ROOT/repo" add topic
+        git -C "$TEST_ROOT/repo" commit -q -m 'feat: add topic'
+        git -C "$TEST_ROOT/repo" checkout -q main
+        git -C "$TEST_ROOT/repo" merge --no-ff --no-edit topic > "$TEST_ROOT/output" 2>&1
+        head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
+        if printf 'HEAD %s refs/heads/main %s\n' "$head" "$base" |
+            "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1; then
+            exit 1
+        fi
+        grep -F 'Refuse merge commits on main' "$TEST_ROOT/output"
+        ;;
+    subject-validator)
+        setup_repo
+        validator="$TEST_ROOT/repo/scripts/check-commit-subject.sh"
+        "$validator" 'feat(core)!: change behavior'
+        "$validator" 'docs: describe landing'
+        for subject in 'Merge branch main' 'feat(unknown): add' 'Fix: add' 'feat: '; do
+            if "$validator" "$subject" > "$TEST_ROOT/output" 2>&1; then exit 1; fi
+        done
+        ;;
+    merge-message)
+        setup_repo
+        git -C "$TEST_ROOT/repo" checkout -q -b topic
+        printf 'topic\n' > "$TEST_ROOT/repo/topic"
+        git -C "$TEST_ROOT/repo" add topic
+        git -C "$TEST_ROOT/repo" commit -q -m 'feat: add topic'
+        git -C "$TEST_ROOT/repo" checkout -q main
+        printf 'base\n' > "$TEST_ROOT/repo/base"
+        git -C "$TEST_ROOT/repo" add base
+        git -C "$TEST_ROOT/repo" commit -q -m 'feat: add base'
+        git -C "$TEST_ROOT/repo" config core.hooksPath .githooks
+        git -C "$TEST_ROOT/repo" merge --no-edit topic > "$TEST_ROOT/output" 2>&1
+        ;;
     rust-push)
         setup_repo
         base="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
@@ -173,7 +233,7 @@ case "$test_case" in
         git -C "$TEST_ROOT/repo" commit -q -m "feat(core): change"
         head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
         rm -f "$TEST_ROOT/commands"
-        printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$base" \
+        printf 'refs/heads/topic %s refs/heads/topic %s\n' "$head" "$base" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
         assert_commands 'cargo machete .' 'cargo audit' \
             'cargo build --locked --workspace --bins' \
@@ -217,7 +277,7 @@ case "$test_case" in
         unreachable_sha="1111111111111111111111111111111111111111"
         head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
         rm -f "$TEST_ROOT/commands"
-        printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$unreachable_sha" \
+        printf 'refs/heads/topic %s refs/heads/topic %s\n' "$head" "$unreachable_sha" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
         assert_commands 'cargo machete .' 'cargo audit' \
             'cargo build --locked --workspace --bins' \
@@ -225,7 +285,9 @@ case "$test_case" in
             'cargo clippy --workspace --all-targets -- -D warnings' \
             'cargo fmt --all -- --check' 'check-unused-rust' 'check-migrations.sh' \
             'npm run check:audit' 'npm run lint' 'npm run typecheck' \
-            'npm run check:unused' 'cargo fmt --all -- --check' 'cargo check'
+            'npm run check:unused' 'npm ci' 'npm run check:audit' \
+            'npm run lint' 'npm run typecheck' 'npm run check:unused' \
+            'cargo fmt --all -- --check' 'cargo check'
         ;;
     ui-push)
         setup_repo
@@ -235,7 +297,7 @@ case "$test_case" in
         git -C "$TEST_ROOT/repo" commit -q -m "feat(ui): change"
         head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
         rm -f "$TEST_ROOT/commands"
-        printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$base" \
+        printf 'refs/heads/topic %s refs/heads/topic %s\n' "$head" "$base" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
         assert_commands 'npm run check:audit' 'npm run lint' 'npm run typecheck' \
             'npm run check:unused'
@@ -248,7 +310,7 @@ case "$test_case" in
         git -C "$TEST_ROOT/repo" commit -q -m "feat(ui): change Tauri"
         head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
         rm -f "$TEST_ROOT/commands"
-        printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$base" \
+        printf 'refs/heads/topic %s refs/heads/topic %s\n' "$head" "$base" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
         assert_commands 'cargo machete .' 'cargo fmt --all -- --check' 'cargo check'
         ;;
@@ -260,7 +322,7 @@ case "$test_case" in
         git -C "$TEST_ROOT/repo" commit -q -m "feat(ui): add a unicode file"
         head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
         rm -f "$TEST_ROOT/commands"
-        printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$base" \
+        printf 'refs/heads/topic %s refs/heads/topic %s\n' "$head" "$base" \
             | "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
         assert_commands 'npm run check:audit' 'npm run lint' 'npm run typecheck' \
             'npm run check:unused'
@@ -275,7 +337,9 @@ case "$test_case" in
             'cargo clippy --workspace --all-targets -- -D warnings' \
             'cargo fmt --all -- --check' 'check-unused-rust' 'check-migrations.sh' \
             'npm run check:audit' 'npm run lint' 'npm run typecheck' \
-            'npm run check:unused' 'cargo fmt --all -- --check' 'cargo check'
+            'npm run check:unused' 'npm ci' 'npm run check:audit' \
+            'npm run lint' 'npm run typecheck' 'npm run check:unused' \
+            'cargo fmt --all -- --check' 'cargo check'
         ;;
     fail)
         setup_repo

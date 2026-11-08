@@ -69,10 +69,9 @@ Run a hook by hand with `.githooks/pre-push --all`. Never pass `--no-verify`
 or `-n` to `git commit` or `git push`. A hook that refuses a commit or a push
 names the fix; make it, and commit again.
 
-The hook leaves out the two slow test suites; CI alone runs them. Run either
-by hand before a push when the change warrants it: `cargo nextest run
---workspace --profile ci` for the Rust workspace, `npm test` under `ui/` for
-the desktop app.
+Main pushes run the complete host-platform check set against the outgoing commit.
+Other branch pushes retain scoped checks and omit the slow test suites.
+Run `.githooks/pre-push --full` to run full checks manually.
 
 What each hook runs for an area is in that area's own file:
 [`crates/AGENTS.md`](crates/AGENTS.md) for Rust, and
@@ -127,8 +126,12 @@ moves the version.
 
 ## History
 
-Never create merge commits — history is linear. Land a task branch on its base
-by squash or fast-forward, and give the commit that lands a conventional
-subject of its own.
+Only main requires linear history. Land each task or PR as one squashed Conventional Commit.
+Direct pushes to main are permitted. Never force-push main or rewrite its existing history.
+Merge main into Ariadne PR branches. Push normally. Never rebase published Ariadne PR commits.
+Actual merge commits receive a commit-message exception. Authored commits retain the types and scopes above.
+The reusable `scripts/check-commit-subject.sh SUBJECT` validator has no merge exception.
+Before a GitHub squash merge, require every GitHub CI check on the current PR head to pass.
+Use a validated Conventional Commit PR title as the squash subject.
 
 The full release loop is in [`.github/RELEASING.md`](.github/RELEASING.md).

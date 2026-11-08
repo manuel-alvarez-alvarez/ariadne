@@ -45,12 +45,11 @@ fmt --all -- --check` from inside `ui/src-tauri`. For a staged file under
 `ui/dashboard`: the same two commands, from inside `ui/dashboard` (`npm ci`
 first when `ui/dashboard/node_modules` is missing).
 
-The pre-push hook (`.githooks/pre-push`) runs the whole suite but the test
+For task branches, the pre-push hook runs checks without the test
 suite, for a push that touches `ui/` (outside `ui/dashboard`): `npm run
 check:audit`, `npm run lint`, `npm run typecheck` and `npm run check:unused`,
 each in `ui/` (`npm ci` first when `ui/node_modules` is missing). `npm test`
-takes about a minute, so the hook leaves it to CI; run it by hand before a
-push when the change warrants it. For a push that touches `ui/src-tauri`:
+runs automatically for main pushes. Run it manually for task branches when the change warrants it. For a push that touches `ui/src-tauri`:
 `cargo fmt --all -- --check` and `cargo check`, both from inside
 `ui/src-tauri`. For a push that touches `ui/dashboard`: the same four `npm
 run` commands as `ui/`'s own, from inside `ui/dashboard` instead.
@@ -687,3 +686,10 @@ message updated `dashboardResource` as a prop into the same `ViewDashboard`
 instance, which only ever reads it once, as its internal store's initial
 value, and so never picked up the fresh document. `key={version}`, bumped on
 every successful load, is what makes a reload remount the component instead.
+
+Main pushes run full checks against the outgoing commit in an isolated checkout.
+This includes `cargo nextest run --workspace --profile ci`, doctests, both `npm test` suites, and `npm run build`.
+Run the frontend build from `ui/`; it also builds the dashboard.
+Include audits, lint, unused checks, Rust builds, and Tauri formatting and compilation.
+Other branch pushes retain scoped checks. Only those pushes omit the slow test suites.
+Require GitHub CI on the current PR head before GitHub squash merges.

@@ -92,12 +92,10 @@ given, and rewritten only where it fails to compile or pass; one it does
 not accept keeps the code, with a reply that says why. It **resolves no
 thread**: resolving a thread, once its reply satisfies you, is yours to
 do. Before it runs the affected checks, it integrates a moved base branch
-as the repository's history rules require. Where those rules require a
-linear history, it rebases; otherwise it merges where those rules allow it.
-After either path, it pushes only when the update fast-forwards; otherwise
-the rejected push follows the normal retry flow. It keeps every commit others
-added, never force-pushes any branch or remote (including with
-`--force-with-lease`), and never amends a pushed commit outside that rebase.
+as the repository's history rules require. Where those rules explicitly require a
+linear task-branch history, it rebases; otherwise it merges where those rules allow it.
+After a merge, it pushes normally. A repository that explicitly requires task-branch rebases can permit a pinned lease push.
+It keeps every commit others added. It never force-pushes main.
 It reports the request ready once every required approval and
 check reads green, and takes the readiness back down the moment a later
 change turns one back. Once you merge the request, the agent brings the base
@@ -465,3 +463,8 @@ enabled on that repository row, commonly the same checkout registered a
 second time under another base branch. Disable the integration there first,
 or work from that row instead of registering a second one: one forge
 repository is enabled on one row at a time.
+
+For Ariadne, only main requires linear history. Merge main into published PR branches and push normally.
+Never rebase published Ariadne PR commits. Never force-push main.
+Require GitHub CI on the current PR head before a GitHub squash merge.
+Other repositories retain their explicit direct-landing and PR policies.

@@ -22,3 +22,7 @@ if [ "${TEST_GIT_PROBE:-}" = 1 ] && [ "$tool" = cargo ]; then
     git -C "$TEST_ROOT/foreign" read-tree --empty
     git -C "$TEST_ROOT/foreign" checkout -q --detach
 fi
+
+if [ "${TEST_CANDIDATE:-}" = 1 ]; then
+    [ -f "$(git rev-parse --show-toplevel)/docs/candidate.md" ]
+fi

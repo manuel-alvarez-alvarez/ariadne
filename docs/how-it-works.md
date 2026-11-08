@@ -98,3 +98,9 @@ agent, and the reason it carries, whichever way it ended.
 Any column's agent can fail the task with a reason instead of moving it.
 Ariadne keeps that reason with the task so the orchestrator and user can
 decide whether to retry, change the task, or cancel it.
+
+For Ariadne, direct landing squashes each task into one Conventional Commit on main.
+Only main requires linear history. Direct pushes remain permitted.
+Merge main into published PR branches and push normally. Never rebase their published commits.
+Never force-push main. Require current GitHub CI before a GitHub squash merge.
+Other repositories retain their explicit landing policies.

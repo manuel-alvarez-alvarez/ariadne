@@ -176,8 +176,8 @@ scripts/check-unused-rust
 scripts/check-migrations.sh
 ```
 
-`cargo nextest run --workspace --profile ci` takes minutes, so the hook
-leaves it to CI. Run it by hand before a push when the change warrants it.
+`cargo nextest run --workspace --profile ci` runs for main pushes.
+Run it manually for task branches when the change warrants it.
 
 `cargo build --workspace --bins` links every shipped binary.
 `ariadne-daemon` sets `test = false` on its `[[bin]]`, so nextest never
@@ -235,3 +235,10 @@ and no debug information for dependencies; change it only in a separate branch.
 
 Use `cargo test` only for doctests, because nextest runs normal test binaries
 faster; CI runs `cargo test --doc --workspace`.
+
+Main pushes run full checks against the outgoing commit in an isolated checkout.
+This includes `cargo nextest run --workspace --profile ci`, doctests, both `npm test` suites, and `npm run build`.
+Run the frontend build from `ui/`; it also builds the dashboard.
+Include audits, lint, unused checks, Rust builds, and Tauri formatting and compilation.
+Other branch pushes retain scoped checks. Only those pushes omit the slow test suites.
+Require GitHub CI on the current PR head before GitHub squash merges.

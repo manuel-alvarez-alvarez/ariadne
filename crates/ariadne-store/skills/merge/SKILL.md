@@ -8,12 +8,19 @@ description: Land a reviewed task. Rebase, squash, push and fast-forward.
 The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
 `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.
 
+Read the repository policy first. Distinguish base history from task history.
+For Ariadne, direct landing permits the sequence below on an unpublished task branch.
+For a published Ariadne branch, merge the base instead of rebasing published commits.
+Squash the final result before pushing to main. Never rewrite main.
+Keep generic direct landing available where the repository permits it.
+
 ## Steps
 
 1. Where a remote exists, run `git fetch <remote> <base>`.
-2. Rebase the task branch onto the current `<upstream>`. Resolve every
+2. For an unpublished branch, rebase the task branch onto the current `<upstream>`. Resolve every
    conflict yourself.
-3. Only after that rebase, squash the branch into one commit. Give it a Conventional Commits subject:
+3. Only after that rebase, squash the branch into one commit.
+   For a published Ariadne branch, merge `<upstream>` first, then squash for direct landing. Give it a Conventional Commits subject:
    `git reset --soft "$(git merge-base <upstream> HEAD)" && git commit`.
 4. Run `git diff --stat <upstream> HEAD`. It names only files of the task.
    Done when the list holds no other file.
