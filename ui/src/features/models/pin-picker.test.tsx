@@ -178,22 +178,48 @@ it("offers only concrete catalog models, grouped by agent", async () => {
   expect(ids.at(-1)).toContain("Other")
 })
 
-/** A model turned off for automatic staffing remains a manual choice. */
-it("offers a turned-off model as manual-only", async () => {
+/** A model turned off for automatic staffing remains a manual choice, after the rest. */
+it("puts turned-off models after a separator, under manual-only headings", async () => {
   const user = userEvent.setup()
-  const off = CATALOG.map((model) =>
-    model.id === "claude-agent-acp:claude-sonnet-5" ? { ...model, enabled: false } : model,
-  )
-  function Host({ model }: { model: string }) {
-    return <PinPicker label={LABEL} model={model} effort="" onChange={() => {}} models={off} />
-  }
+  const model = (id: string, enabled: boolean) =>
+    aModel({ id, agent_id: id.split(":")[0] ?? "", enabled })
+  // One agent holds both kinds, interleaved, so each group's own order shows.
+  const mixed = [
+    model("alpha:a1", true),
+    model("alpha:a2", false),
+    model("beta:b1", false),
+    model("alpha:a3", true),
+    model("alpha:a4", false),
+    model("beta:b2", false),
+    model("gamma:g1", true),
+  ]
 
-  const view = render(<Host model="" />)
+  render(<PinPicker label={LABEL} model="" effort="" onChange={() => {}} models={mixed} />)
   await openPicker(user)
-  expect(within(await listbox()).getByText("claude-agent-acp:claude-sonnet-5")).toBeDefined()
-  expect(within(await listbox()).getByText("Manual only")).toBeDefined()
-  expect(within(await listbox()).getByText("claude-agent-acp:claude-haiku-4-5")).toBeDefined()
-  view.unmount()
+  const list = await listbox()
+
+  const layout = [
+    ...list.querySelectorAll("[cmdk-group-heading], [cmdk-separator], [cmdk-item]"),
+  ].map((node) =>
+    node.hasAttribute("cmdk-separator")
+      ? "---"
+      : (node.textContent ?? "").replace(/Other.*/, "Other"),
+  )
+  expect(layout).toEqual([
+    "alpha",
+    "alpha:a1",
+    "alpha:a3",
+    "gamma",
+    "gamma:g1",
+    "---",
+    "alpha — manual only",
+    "alpha:a2",
+    "alpha:a4",
+    "beta — manual only",
+    "beta:b1",
+    "beta:b2",
+    "Other",
+  ])
 })
 
 it("shows a model's id and what its agent said about it, and nothing else", async () => {

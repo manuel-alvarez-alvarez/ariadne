@@ -46,6 +46,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandSeparator,
 } from "@/components/ui/command"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/format"
@@ -109,18 +110,23 @@ export function PinPicker({
 
   /**
    * The catalog under one heading per agent, in the order the catalog lists
-   * them.
+   * them: the turned-on models first, then the turned-off ones.
    *
-   * A model turned off on the models screen remains a manual choice. The
-   * marker distinguishes it from models automatic staffing can choose.
+   * A model turned off on the models screen remains a manual choice. Its
+   * groups follow a separator and say so in their headings, which keeps them
+   * apart from the models automatic staffing can choose.
    */
-  const groups = useMemo(() => {
+  const { onGroups, offGroups } = useMemo(() => {
     const offered = models ?? []
-    const agents = [...new Set(offered.map((entry) => entry.agent_id))]
-    return agents.map((agent) => ({
-      agent,
-      models: offered.filter((entry) => entry.agent_id === agent),
-    }))
+    const split = (enabled: boolean) => {
+      const part = offered.filter((entry) => entry.enabled === enabled)
+      const agents = [...new Set(part.map((entry) => entry.agent_id))]
+      return agents.map((agent) => ({
+        agent,
+        models: part.filter((entry) => entry.agent_id === agent),
+      }))
+    }
+    return { onGroups: split(true), offGroups: split(false) }
   }, [models])
 
   // An effort belongs to the model it runs at, so a model moved out from under
@@ -170,6 +176,29 @@ export function PinPicker({
   /** What the "Other…" row would pin, and why the daemon would refuse it. */
   const typed = search.trim()
   const typedError = modelRefError(typed)
+
+  function renderModel(entry: ModelDto) {
+    return (
+      <CommandItem
+        key={entry.id}
+        value={entry.id}
+        keywords={modelKeywords(entry)}
+        data-checked={entry.id === pinned ? "true" : "false"}
+        onSelect={pick}
+      >
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate font-mono text-[13px]">{entry.id}</span>
+          {entry.description ? (
+            // Two lines, so a long blurb is readable without
+            // one option taking over the list.
+            <span className="line-clamp-2 text-xs leading-snug text-muted-foreground">
+              {entry.description}
+            </span>
+          ) : null}
+        </span>
+      </CommandItem>
+    )
+  }
 
   return (
     <Popover.Root
@@ -223,33 +252,15 @@ export function PinPicker({
                 onMouseDown={(event) => event.preventDefault()}
               >
                 <CommandEmpty>Nothing in the catalog matches.</CommandEmpty>
-                {groups.map((group) => (
+                {onGroups.map((group) => (
                   <CommandGroup key={group.agent} heading={group.agent}>
-                    {group.models.map((entry) => (
-                      <CommandItem
-                        key={entry.id}
-                        value={entry.id}
-                        keywords={modelKeywords(entry)}
-                        data-checked={entry.id === pinned ? "true" : "false"}
-                        onSelect={pick}
-                      >
-                        <span className="flex min-w-0 flex-col">
-                          <span className="truncate font-mono text-[13px]">{entry.id}</span>
-                          {entry.description ? (
-                            // Two lines, so a long blurb is readable without
-                            // one option taking over the list.
-                            <span className="line-clamp-2 text-xs leading-snug text-muted-foreground">
-                              {entry.description}
-                            </span>
-                          ) : null}
-                          {!entry.enabled ? (
-                            <span className="text-xs leading-snug text-muted-foreground">
-                              Manual only
-                            </span>
-                          ) : null}
-                        </span>
-                      </CommandItem>
-                    ))}
+                    {group.models.map(renderModel)}
+                  </CommandGroup>
+                ))}
+                {onGroups.length > 0 && offGroups.length > 0 ? <CommandSeparator /> : null}
+                {offGroups.map((group) => (
+                  <CommandGroup key={`off:${group.agent}`} heading={`${group.agent} — manual only`}>
+                    {group.models.map(renderModel)}
                   </CommandGroup>
                 ))}
                 {allowCustom ? (

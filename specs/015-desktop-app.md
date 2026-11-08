@@ -947,6 +947,7 @@ Out: the daemon endpoints themselves (012).
   `::refuses a trailing colon, which names no model`).
 - The picker lists only concrete model ids, grouped by agent
   (`ui/src/features/models/pin-picker.test.tsx::offers only concrete catalog models, grouped by agent`).
+  The order of turned-on and turned-off models in it is spec 011's rule.
 - A pin is checked by its shape alone and split at its first `:`
   (`ui/src/features/models/model-ref.test.ts::takes any agent and any model, one colon apart`,
   `::refuses one half on its own by showing where the other goes`,

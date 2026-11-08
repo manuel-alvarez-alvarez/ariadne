@@ -225,9 +225,11 @@ orchestrator decides (003).
   (`agents-page.test.tsx::puts each model in the tab of the agent that runs it`,
   `::sends the id in the body, so a model named with a slash still travels`,
   `::says why, where the daemon refuses to turn a model off`); the picker
-  marks each disabled entry manual-only, and takes free
+  lists the turned-on models first, one group for each agent in catalog order,
+  then a separator, then the disabled ones in the same way under headings that
+  name the agent and say "manual only", with "Other…" last, and takes free
   text for a model the catalog does not list
-  (`pin-picker.test.tsx::offers a turned-off model as manual-only`,
+  (`pin-picker.test.tsx::puts turned-off models after a separator, under manual-only headings`,
   `::takes free text for a model of a known agent the catalog does not list`);
   and the pin's shape is checked on the field
   (`model-ref.test.ts::refuses one half on its own by showing where the other goes`).
