@@ -511,14 +511,14 @@ impl super::Scheduler {
 /// Why a task waiting on a dependency that ended is ending too: which
 /// dependency it was, and how it ended.
 /// The report of the column before `step`, as the last forward move into
-/// `step` carried it: what a fresh session that goes back to a column it saw
+/// `step` carried it (the entry itself, where the task came forward): what a fresh session that goes back to a column it saw
 /// before has as `Previous:`. Empty when no column came before it.
 fn previous_report<'a>(
     transitions: &'a [ariadne_store::TaskTransition],
     steps: &[ariadne_store::GoalStep],
     step: &ariadne_store::GoalStep,
 ) -> &'a str {
-    transitions[..transitions.len().saturating_sub(1)]
+    transitions
         .iter()
         .rev()
         .find(|t| {
@@ -603,6 +603,15 @@ mod tests {
             move_to(Some("review"), "develop", "Fix it."),
             move_to(Some("develop"), "review", "Second report."),
             move_to(Some("review"), "develop", "Fix it again."),
+        ];
+        assert_eq!(
+            previous_report(&transitions, &steps, &steps[1]),
+            "Second report."
+        );
+        let transitions = [
+            move_to(Some("develop"), "review", "First report."),
+            move_to(Some("review"), "develop", "Fix it."),
+            move_to(Some("develop"), "review", "Second report."),
         ];
         assert_eq!(
             previous_report(&transitions, &steps, &steps[1]),

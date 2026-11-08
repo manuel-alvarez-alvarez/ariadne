@@ -293,12 +293,18 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`prompts.rs::a_return_says_its_direction_in_a_sentence_and_its_reason_on_a_line`,
   `it/prompts.rs::a_return_and_a_nudge_assemble_word_for_word`,
   `workflow_steps.rs`, the three directions through a real task). A fresh
-  session that goes back to a column it saw before is briefed with the
-  report of the column before it as `Previous:`, and the return reason is
-  said once, in the return part
-  (`tasks.rs::the_previous_report_is_the_last_forward_move_into_the_column`).
-  The orchestrator's `brief` follows only a prompt that holds the full
-  step briefing: the first one, and the one for a fresh session.
+  session that goes back to a column it saw before is briefed in full: the
+  report of the column before it as `Previous:` (`none` for the first
+  column), then the return, with the return reason said once
+  (`it/prompts.rs::a_fresh_session_back_in_a_column_gets_the_full_briefing_and_the_return_once`,
+  `::a_fresh_session_back_in_a_later_column_has_the_previous_report`;
+  `tasks.rs::the_previous_report_is_the_last_forward_move_into_the_column`
+  for the choice of report). The orchestrator's `brief` follows only a
+  prompt that holds the full step briefing: it ends the first prompt and the
+  one for a fresh session, and a return to a session that already read it
+  does not repeat it
+  (`it/prompts.rs::a_return_to_a_session_that_read_the_briefing_does_not_repeat_the_brief`,
+  and the two tests above for the fresh session).
 - The orchestrator's briefing shows each repository's id where the goal has
   more than one repository
   (`prompts.rs::the_orchestrator_sees_repository_ids_only_when_there_are_several`).
