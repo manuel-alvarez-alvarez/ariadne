@@ -69,11 +69,11 @@ else
                 exit 1
             fi
             if [ "$remote_sha" = "$ZERO_SHA" ]; then
-                merge_range="$local_sha"
+                new_merges="$(git rev-list --merges "$local_sha" --not --remotes="$remote_name")"
             else
-                merge_range="$remote_sha..$local_sha"
+                new_merges="$(git rev-list --merges "$remote_sha..$local_sha")"
             fi
-            if [ -n "$(git rev-list --merges "$merge_range")" ]; then
+            if [ -n "$new_merges" ]; then
                 echo 'Refuse merge commits on main.' >&2
                 exit 1
             fi
@@ -81,7 +81,9 @@ else
             candidate="$(mktemp -d)"
             rmdir "$candidate"
             git worktree add --quiet --detach "$candidate" "$local_sha"
-            if ! GITHOOKS_CANDIDATE_ROOT="$candidate" "$HOOK_DIR/pre-push" --full; then
+            # Share the primary target dir: the candidate path is temporary.
+            if ! CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$(cd "$HOOK_DIR/.." && pwd)/target}" \
+                GITHOOKS_CANDIDATE_ROOT="$candidate" "$HOOK_DIR/pre-push" --full < /dev/null; then
                 git worktree remove --force "$candidate"
                 exit 1
             fi
