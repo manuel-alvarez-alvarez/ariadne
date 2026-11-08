@@ -137,8 +137,16 @@ outside half) opens no session either: it asks only `initialize` and
    `console` for console input (008), `daemon` for everything the daemon
    itself says. A daemon prompt that is a lifecycle kind, such as a resume
    nudge, also carries its `prompt_kind` (`agent_resume`,
-   `orchestrator_resume`); the others carry none
-   (`handoff.rs::resume_nudges_are_left_out_by_their_prompt_kind`).
+   `orchestrator_resume`); the others carry none.
+   The handoff of a model switch (006 rules 14–15) leaves out the session's
+   first daemon prompt, which the new session reads in full in its own
+   briefing
+   (`handoff.rs::the_first_daemon_briefing_is_left_out_and_a_later_daemon_prompt_stays`);
+   every prompt whose `prompt_kind` is `agent_resume` or
+   `orchestrator_resume`, never found by its text
+   (`handoff.rs::resume_nudges_are_left_out_by_their_prompt_kind`); and
+   every `session.error` but the last, which it cuts to its first line
+   (`handoff.rs::only_the_last_error_stays_and_it_is_cut_to_its_first_line`).
 5. What the agent does becomes agent events on the ingestion path (012):
    `session_start` with the agent's own session id, `user_prompt_submit`,
    tool calls as `pre_tool_use` and `post_tool_use`, `plan` with the entries

@@ -222,11 +222,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     `permission.replied` as one line, the head of the call and the option
     chosen; and a `session.error` as one line, its first line.
     `agent_thought`, `stop`, `session_start` and `session_end` are left out.
-    Three more are left out of the history: the session's first daemon
-    prompt, which the new session reads in full in its own briefing; a
-    resume nudge, found by its `prompt_kind` (`agent_resume` or
-    `orchestrator_resume`, 021) and never by its text; and every
-    `session.error` but the last.
+    What the history leaves out beyond these is stated once, in 021 rule 4.
 16. Every entry is fenced in a character reserved to the fence alone, and
     stripped from the entry's own text first, so nothing a tool's output or
     a diff carries can forge the fence and close the block early.
@@ -380,12 +376,6 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`handoff.rs::a_console_prompt_renders_whole_and_a_daemon_prompt_folds_to_six_lines_with_a_count`),
   and an agent message renders whole
   (`::an_agent_message_renders_whole`).
-- The first daemon prompt is left out of the handoff and a later one stays
-  (`handoff.rs::the_first_daemon_briefing_is_left_out_and_a_later_daemon_prompt_stays`).
-- A resume nudge is left out by its prompt kind
-  (`handoff.rs::resume_nudges_are_left_out_by_their_prompt_kind`).
-- Only the last error stays, cut to its first line
-  (`handoff.rs::only_the_last_error_stays_and_it_is_cut_to_its_first_line`).
 - A thought is left out of the handoff
   (`handoff.rs::a_thought_is_left_out`), and so are `stop`, `session_start`
   and `session_end`
