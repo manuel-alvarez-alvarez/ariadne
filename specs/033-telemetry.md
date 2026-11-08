@@ -1,7 +1,7 @@
 ---
 id: telemetry
 status: current
-updated: 2026-10-21
+updated: 2026-11-08
 areas: [store, daemon, cli, ui, scripts]
 commits: []
 tests:
@@ -223,7 +223,7 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
   `::tail_limits_the_snapshot_to_the_last_n_lines`,
   `logs.rs::the_default_snapshot_is_bounded_even_without_an_explicit_tail`,
   `::service_narrows_the_snapshot_to_one_service`,
-  `::level_narrows_the_snapshot_to_that_level_and_above`,
+  `logs.rs::flaky::level_narrows_the_snapshot_to_that_level_and_above`,
   `::an_unknown_level_is_a_bad_request`,
   `logs.rs::flaky::the_stream_opens_with_a_snapshot_then_follows_with_deltas`,
   `ariadne_daemon::http::logs::tests::an_export_during_stream_initialization_is_in_the_snapshot`,
@@ -235,13 +235,13 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
   under `Timeouts::telemetry_pipeline_patience`. They report the first failed
   wait without retrying the test:
   `logs.rs::the_default_snapshot_is_bounded_even_without_an_explicit_tail`,
-  `::service_narrows_the_snapshot_to_one_service`,
-  `::level_narrows_the_snapshot_to_that_level_and_above`.
-- Six of those waits still starved past their patience under the full
+  `::service_narrows_the_snapshot_to_one_service`.
+- Seven of those waits still starved past their patience under the full
   suite's load on every core at once, each observed failing and passing on
   one unchanged revision: `flaky_test!` bounds them to two retries
   (`crates/AGENTS.md#checks`):
   `logs.rs::flaky::the_snapshot_returns_captured_lines_in_order`,
+  `::level_narrows_the_snapshot_to_that_level_and_above`,
   `::tail_limits_the_snapshot_to_the_last_n_lines`,
   `::level_narrows_the_stream_snapshot_and_its_deltas`,
   `::the_stream_opens_with_a_snapshot_then_follows_with_deltas`,
