@@ -1,5 +1,6 @@
 //! Test doubles and helpers the modules of the pane share.
 
+use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex};
 
 use futures_util::stream;
@@ -30,10 +31,28 @@ impl std::io::Write for Tap {
     }
 }
 
+/// A terminal emulator of `rows` by `cols`, which keeps `back` rows of
+/// scrollback.
+pub(crate) fn emulator(rows: u16, cols: u16, back: usize) -> vt100::Parser {
+    let (rows, cols) = size(rows, cols);
+    vt100::Parser::new(rows, cols, back)
+}
+
+/// Resize `emulator` to `rows` by `cols`.
+pub(crate) fn resize(emulator: &mut vt100::Parser, rows: u16, cols: u16) {
+    let (rows, cols) = size(rows, cols);
+    emulator.screen_mut().set_size(rows, cols);
+}
+
+fn size(rows: u16, cols: u16) -> (NonZeroU16, NonZeroU16) {
+    let nonzero = |n| NonZeroU16::new(n).expect("a terminal has rows and columns");
+    (nonzero(rows), nonzero(cols))
+}
+
 impl Tap {
     /// Every row a terminal of 72 by 40 shows after reading the bytes.
     pub(crate) fn screen(&self) -> Vec<String> {
-        let mut parser = vt100::Parser::new(40, 72, 0);
+        let mut parser = emulator(40, 72, 0);
         parser.process(&self.0.lock().unwrap());
         parser
             .screen()
@@ -50,7 +69,7 @@ impl Tap {
     /// Read the terminal rows at `window`'s size and scrollback position.
     pub(crate) fn screen_at(&self, window: &Window, back: usize) -> Vec<String> {
         let size = window.size();
-        let mut parser = vt100::Parser::new(size.height, size.width, back);
+        let mut parser = emulator(size.height, size.width, back);
         parser.process(&self.0.lock().unwrap());
         parser.screen_mut().set_scrollback(back);
         parser
@@ -63,7 +82,7 @@ impl Tap {
 
     pub(crate) fn cursor(&self, window: &Window) -> Position {
         let size = window.size();
-        let mut parser = vt100::Parser::new(size.height, size.width, 0);
+        let mut parser = emulator(size.height, size.width, 0);
         parser.process(&self.0.lock().unwrap());
         let (y, x) = parser.screen().cursor_position();
         Position { x, y }

@@ -439,7 +439,7 @@ mod tests {
 
         // vt100 keeps one intensity per cell, the last one said, so the
         // cells set to both read as dim; the cells after them are the claim.
-        let mut parser = vt100::Parser::new(2, 8, 0);
+        let mut parser = crate::tui::testing::emulator(2, 8, 0);
         parser.process(&tap.0.lock().unwrap());
         let screen = parser.screen();
         let attributes: Vec<(bool, bool)> = (1..5)
@@ -569,7 +569,7 @@ mod tests {
             test.scroll_region_down(region, 1).unwrap();
         }
 
-        let mut parser = vt100::Parser::new(4, 8, 10);
+        let mut parser = crate::tui::testing::emulator(4, 8, 10);
         parser.process(&tap.0.lock().unwrap());
         let screen: Vec<String> = parser
             .screen()

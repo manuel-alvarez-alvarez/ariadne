@@ -914,6 +914,7 @@ mod tests {
     /// screen.
     fn everything(emulator: &mut vt100::Parser) -> Vec<String> {
         let (height, width) = emulator.screen().size();
+        let (height, width) = (height.get(), width.get());
         emulator.screen_mut().set_scrollback(usize::MAX);
         // A page of the scrollback at a time: scrolled back by `back` rows,
         // the screen's first row is the scrollback's row `back` from its end.
@@ -973,7 +974,7 @@ mod tests {
             test.scroll_region_down(region, 1).unwrap();
         }
 
-        let mut emulator = vt100::Parser::new(4, 8, 10);
+        let mut emulator = crate::tui::testing::emulator(4, 8, 10);
         emulator.process(&tap.0.lock().unwrap());
         let shown = everything(&mut emulator);
         let (scrollback, screen) = shown.split_at(shown.len() - 4);
@@ -1067,7 +1068,7 @@ mod tests {
             &event("agent_message", "done", json!({"text": "done"})),
             now,
         );
-        let mut emulator = vt100::Parser::new(40, 72, 200);
+        let mut emulator = crate::tui::testing::emulator(40, 72, 200);
         emulator.process(tap.take().as_bytes());
 
         // The next block of the same turn: the one before it is finished,
@@ -1179,7 +1180,7 @@ mod tests {
             .windows(clear.len())
             .rposition(|bytes| bytes == clear)
             .expect("the resize cleared the terminal, scrollback included");
-        let mut emulator = vt100::Parser::new(40, 60, 200);
+        let mut emulator = crate::tui::testing::emulator(40, 60, 200);
         emulator.process(&written[at..]);
         let shown = everything(&mut emulator).join("\n");
         for once in [
@@ -1241,7 +1242,7 @@ mod tests {
             !written.contains(&" ".repeat(20)),
             "no row is padded with spaces: {written:?}"
         );
-        let mut emulator = vt100::Parser::new(40, 72, 200);
+        let mut emulator = crate::tui::testing::emulator(40, 72, 200);
         emulator.process(written.as_bytes());
         let shown = everything(&mut emulator);
         let screen = &shown[shown.len() - 40..];
@@ -1277,7 +1278,7 @@ mod tests {
         let rendered_at = Instant::now();
         on_ansi.show_at(&mut terminal, rendered_at).unwrap();
         on_test.show_at(&mut test, rendered_at).unwrap();
-        let mut emulator = vt100::Parser::new(40, 72, 200);
+        let mut emulator = crate::tui::testing::emulator(40, 72, 200);
         emulator.process(tap.take().as_bytes());
 
         for (width, height, what) in [
@@ -1287,7 +1288,7 @@ mod tests {
             (100, 40, "wider"),
         ] {
             window.set(width, height);
-            emulator.screen_mut().set_size(height, width);
+            crate::tui::testing::resize(&mut emulator, height, width);
             test.backend_mut().under_mut().resize(width, height);
             let rendered_at = Instant::now();
             on_ansi.show_at(&mut terminal, rendered_at).unwrap();
