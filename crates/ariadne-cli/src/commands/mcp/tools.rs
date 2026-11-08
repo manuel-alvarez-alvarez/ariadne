@@ -161,7 +161,7 @@ pub(super) struct SendMessageReq {
     /// Who to write to: a column id from `get_task`, which names the agent
     /// that staffs it, or `orchestrator`.
     pub to: String,
-    /// What it needs from you, whole. Nobody answers it.
+    /// The whole message. Write it so that the recipient needs no follow-up question.
     // `message` is taken too: an agent that spells the field that way writes
     // the message it meant to, instead of reading a refusal and spending a
     // turn on the same call again.
@@ -254,7 +254,7 @@ impl ReviewEvent {
     }
 }
 
-/// How much a finding costs.
+/// The severity: P0 is a critical risk, P1 is a proven defect, P2 is optional.
 #[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) enum Priority {
@@ -285,7 +285,7 @@ pub(super) struct ReviewFinding {
 pub(super) struct SubmitReviewReq {
     /// `request_changes` while a P0 or P1 finding is open. Else `comment`.
     pub event: ReviewEvent,
-    /// Kept for compatibility. New reviews do not publish a summary.
+    /// Leave it empty.
     #[serde(default)]
     pub body: String,
     /// One inline comment per new finding, on the line of the defect. Leave
@@ -534,7 +534,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the agents and models a slot can run on. Each entry gives:\n- its `id`, `<agent>:<model>`, and the description its agent gave\n- `efforts`, each an id and what it buys, one `default`\n- `rank`, the standing the user set: `frontier`, `balanced`, `fast`, `local` or `null`, a ladder from `fast` up"
+        description = "List the agents and models an agent can run on. Each entry gives:\n- its `id`, `<agent>:<model>`, and the description its agent gave\n- `efforts`, each an id and what it buys, one `default`\n- `rank`, the standing the user set: `frontier`, `balanced`, `fast`, `local` or `null`, a ladder from `fast` up"
     )]
     async fn list_models(
         &self,
@@ -584,7 +584,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List every task of the goal, with each task and agent column. The goal columns give each one's ranks and gate. This shows where the goal stands."
+        description = "List every task of the goal, with the columns and agents of each task. The goal columns give each one's ranks and gate. This shows where the goal stands."
     )]
     async fn list_tasks(
         &self,
@@ -684,7 +684,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Open the pull or merge request your task lands by. Ariadne runs the forge CLI and answers the URL. A second call on the same task answers that URL again and opens nothing."
+        description = "Open the pull or merge request your task lands by. Ariadne runs the forge CLI and returns the URL. A second call on the same task returns that URL again and opens nothing."
     )]
     async fn open_pull_request(
         &self,
@@ -834,7 +834,9 @@ impl AriadneMcp {
         )
     }
 
-    #[tool(description = "Report your pull request.")]
+    #[tool(
+        description = "Tell Ariadne the state of your request. Set `ready` when readiness changes. Set `reviewed_sha` after a review round."
+    )]
     async fn report_pull_request(
         &self,
         Parameters(req): Parameters<ReportPullRequestReq>,
@@ -847,7 +849,7 @@ impl AriadneMcp {
         }
         if req.ready == Some(true) && req.head_sha.is_none() {
             return Err(McpError::invalid_params(
-                "`ready: true` names the head you confirmed it on, as `head_sha`",
+                "Pass `head_sha` with `ready: true`: the head you checked.",
                 None,
             ));
         }
@@ -1299,6 +1301,10 @@ mod tests {
             }))
             .await
             .expect_err("ready with no head_sha");
+        assert_eq!(
+            err.message,
+            "Pass `head_sha` with `ready: true`: the head you checked."
+        );
         texts.push((
             "report_pull_request's head_sha refusal",
             err.message.to_string(),
