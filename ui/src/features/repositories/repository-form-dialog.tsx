@@ -14,8 +14,7 @@
  * daemon leaves alone. Registering
  * probes `POST /v1/forge/detect` itself, off the path field, and sends it
  * only once that probe actually found one; a checkout with no such remote
- * shows neither there nor once registered. "Supervise posts" sits right
- * below the switch and only while it is on, in both forms.
+ * shows neither there nor once registered.
  *
  * The client only catches what it can know on its own: a missing or relative
  * path. Everything else is the daemon's to say — it opens the checkout and
