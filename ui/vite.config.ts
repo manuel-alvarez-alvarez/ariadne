@@ -2,12 +2,28 @@ import { fileURLToPath, URL } from "node:url"
 
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
-import { defineConfig } from "vitest/config"
+import { defineConfig, type Plugin } from "vitest/config"
+
+// Vitest puts `node` first in the `client` conditions its jsdom tests resolve
+// with. The shipped app runs in a webview, so drop it there.
+function browserConditions(): Plugin {
+  return {
+    name: "ariadne:browser-conditions",
+    configEnvironment: {
+      order: "post",
+      handler(name, config) {
+        if (name !== "client" || !process.env.VITEST) return
+        config.resolve ??= {}
+        config.resolve.conditions = config.resolve.conditions?.filter((c) => c !== "node")
+      },
+    },
+  }
+}
 
 // The dev server is what `tauri dev` points its webview at, so the port is
 // fixed and failing to get it must be an error rather than a silent fallback.
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), browserConditions()],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -43,6 +59,12 @@ export default defineConfig({
     // package's own (React 18, v4) — silently, since nothing here excludes
     // a sibling directory by default the way `node_modules` is.
     include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.mjs"],
+    // OpenTelemetry picks its browser or Node.js exporter through a
+    // `#platform` import. Node.js itself would load the Node.js one, which
+    // posts over `http` and misses the stubbed `fetch`; inlined, Vite
+    // resolves it with the client conditions `browserConditions` leaves, as
+    // the shipped app does.
+    server: { deps: { inline: [/@opentelemetry\//] } },
     // The daemon stub and the jsdom shims have to be in place before a test
     // module — and so `@/api` — is imported. Which environment a file runs in
     // is still the file's own `@vitest-environment` docblock: most of them are
