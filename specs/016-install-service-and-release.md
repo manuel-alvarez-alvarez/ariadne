@@ -131,17 +131,10 @@ Out: what the daemon does once running (009, 012).
    database written anywhere on that chain, or on the chain before it, is
    refused the same way, and that loss is accepted. From this reset on,
    every schema change adds a new migration file: `0001` is not edited
-   again, with one named exception. Narrowing the forge integration to
-   GitHub alone (025) tightened `forge_integrations.kind`'s `CHECK` to
-   `('github')` from a wider set of accepted kinds, in place, on `0001`
-   itself.
-   `scripts/check-migrations.sh` pins that edit's exact old and new git
-   blob, so it is the one transition of the one file this rule ever lets
-   through a second time; every other edit of `0001`, or of any other
-   migration already shipped, still fails the guard the same as before. A
-   database whose recorded checksum for version 1 is the pre-edit blob is
-   refused at open the same way, naming the file to delete; that loss,
-   too, is accepted.
+   again. The guard pins this final squash by the exact old directory tree
+   and the exact new `0001` blob. It also retains the older pinned edit
+   that narrowed `forge_integrations.kind` to GitHub alone (025).
+   The 1.0 freeze task removes both pins. No later squash is permitted.
 10. `ariadne doctor` is the only thing still running when that happens, so it
     is what explains it (014).
 11. At startup, the daemon raises its soft open-file limit towards the hard
@@ -365,15 +358,14 @@ Out: what the daemon does once running (009, 012).
   (`scripts/tests/check-migrations.sh`: `accept-approved-edit`,
   `reject-near-miss-edit`).
 
+- The final squash preserves the nine-file schema and accepts only the pinned transition
+  (`scripts/tests/check-migrations.sh`: `squash-schema`, `accept-approved-squash`,
+  `reject-near-miss-squash`, `reject-wrong-source-squash`).
+
 ## Known gap
 
-The squash this reset performed invalidated every existing database, and the
-built-in advice was to delete it. That was cheap for a fresh install and
-expensive for a machine holding real goal history, which is why rule 9 now
-retires squashing for good: every later schema change adds a new migration
-file instead of touching `0001` again. Teaching `doctor` to repair the
-checksum in place is not implemented, and rule 9 ending future squashes
-removes most of the reason to build it.
+This final squash invalidates existing databases. Delete the named database to recreate it.
+No in-place repair is implemented. Every later schema change adds a migration.
 
 The installer fails late and unprompted on an unsupported OS, showing the log
 tail. No script test covers that path; it is proven only by the commits that

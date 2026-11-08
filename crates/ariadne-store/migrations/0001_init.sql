@@ -117,9 +117,6 @@ CREATE TABLE repositories (
     permission_mode TEXT NOT NULL DEFAULT 'auto'
                     CHECK (permission_mode IN ('auto', 'ask', 'learn', 'ai')),
     default_workflow TEXT NOT NULL DEFAULT 'develop-review-merge' REFERENCES workflows (name),
-    -- Whether this repository's agents hold what they post to the forge for
-    -- a person's approval, pull requests opened as drafts included (002, 026).
-    supervise_posts INTEGER NOT NULL DEFAULT 1 CHECK (supervise_posts IN (0, 1)),
     -- The same checkout can be registered once per base branch.
     UNIQUE (path, base_branch)
 );
@@ -190,7 +187,7 @@ CREATE TABLE goals (
     issue_url    TEXT,
     -- The workflow every task of the goal runs on. Chosen once, when the goal
     -- is created; its columns are snapshotted into `goal_steps`.
-    workflow     TEXT NOT NULL REFERENCES workflows (name),
+    workflow     TEXT NOT NULL,
     -- The goal's failed and stalled task ids, each with the `updated_at`
     -- its failure carried at the moment the orchestrator's own
     -- `session/prompt` turn naming them actually returned (a JSON array
@@ -220,7 +217,12 @@ CREATE TABLE goals (
     -- jump straight past the flag threshold to the relaunch one and give
     -- up without ever raising it, so the flag is not reliable evidence of
     -- which give-up this was.
-    orchestrator_given_up_wedged INTEGER NOT NULL DEFAULT 0
+    orchestrator_given_up_wedged INTEGER NOT NULL DEFAULT 0,
+    pr_operation TEXT
+    CHECK (pr_operation IN ('review', 'babysit')),
+    pr_repository_id TEXT,
+    pr_number INTEGER,
+    pr_url TEXT
 );
 
 -- Which repositories a goal works in, by reference.
@@ -242,7 +244,7 @@ CREATE TABLE goal_steps (
     title       TEXT NOT NULL,
     description TEXT NOT NULL,
     skills      TEXT NOT NULL CHECK (json_valid(skills)),
-    rank        TEXT,
+    ranks       TEXT NOT NULL CHECK (json_valid(ranks)),
     gate        TEXT,
     PRIMARY KEY (goal_id, ordinal),
     UNIQUE (goal_id, id)
@@ -346,6 +348,8 @@ CREATE TABLE pull_requests (
     -- own spawn-retry exhaustion — the same distinction, and for the same
     -- reason, as `goals.orchestrator_given_up_wedged`.
     reviewer_given_up_wedged INTEGER NOT NULL DEFAULT 0,
+    keeper_given_up_at TEXT,
+    keeper_given_up_wedged INTEGER NOT NULL DEFAULT 0,
     UNIQUE (repository_id, number)
 );
 
@@ -356,11 +360,6 @@ CREATE TABLE pull_request_comment_marks (
     forge_id        TEXT NOT NULL,
     told_at         TEXT,
     from_review     INTEGER NOT NULL DEFAULT 0 CHECK (from_review IN (0, 1)),
-    -- Whether a comment's reply is held, unposted, in the user's own forge
-    -- drafts (026 rule 24): a one-way local mark, never read back off the
-    -- forge, so a draft deleted there before the user publishes it leaves
-    -- the comment answered all the same.
-    pending_reply   INTEGER NOT NULL DEFAULT 0 CHECK (pending_reply IN (0, 1)),
     PRIMARY KEY (pull_request_id, forge_id)
 );
 
@@ -448,7 +447,7 @@ CREATE INDEX idx_task_agents_task ON task_agents (task_id);
 -- The skills an agent loads, in the order they are listed to it.
 CREATE TABLE task_agent_skills (
     agent_id   TEXT NOT NULL REFERENCES task_agents (id) ON DELETE CASCADE,
-    skill_name TEXT NOT NULL REFERENCES skills (name),
+    skill_name TEXT NOT NULL,
     ordinal    INTEGER NOT NULL,
     PRIMARY KEY (agent_id, skill_name)
 );
@@ -540,7 +539,8 @@ CREATE TABLE agent_requests (
     session_id  TEXT NOT NULL REFERENCES agent_sessions (id) ON DELETE CASCADE,
     summary     TEXT NOT NULL,
     created_at  TEXT NOT NULL,
-    answered_at TEXT
+    answered_at TEXT,
+    last_raised_turn_id TEXT
 );
 CREATE INDEX idx_agent_requests_pending ON agent_requests (session_id, answered_at);
 CREATE UNIQUE INDEX idx_agent_requests_pending_summary
@@ -638,30 +638,6 @@ CREATE TABLE task_transitions (
 );
 CREATE INDEX idx_transitions_task ON task_transitions (task_id, id);
 
--- The stats ledger: one row per thing that happened which tells how the tool
--- and the models perform. Append-only, and the only table a stats read
--- touches, so a stat never scans `agent_events`. `kind` names the fact
--- (`session_ended`, ...), `data` is its JSON object, and `skills` the JSON
--- array of the skills the agent behind it loaded.
---
--- No foreign keys: a fact outlives the goal, the task and the session it is
--- about, and the ids are kept as they were when it was written.
-CREATE TABLE stat_facts (
-    id         TEXT PRIMARY KEY,
-    kind       TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    repo_id    TEXT,
-    goal_id    TEXT,
-    task_id    TEXT,
-    session_id TEXT,
-    launch_id  TEXT,
-    seat       TEXT,
-    model      TEXT,
-    effort     TEXT,
-    skills     TEXT,
-    data       TEXT NOT NULL
-);
-CREATE INDEX idx_stat_facts_kind ON stat_facts (kind, created_at);
 
 -- The two workflows Ariadne ships: a request lands by `develop-review-pr`,
 -- everything else by `develop-review-merge`.
@@ -670,3 +646,16 @@ VALUES ('develop-review-merge', NULL, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
         strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
        ('develop-review-pr', NULL, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+CREATE UNIQUE INDEX idx_goals_pr_operation_active
+    ON goals (pr_repository_id, pr_number, pr_operation)
+    WHERE pr_operation IS NOT NULL AND status IN ('planning', 'active');
+
+CREATE TABLE dashboards (
+    name TEXT PRIMARY KEY,
+    document TEXT,
+    builtin INTEGER NOT NULL DEFAULT 0 CHECK (builtin IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (builtin = 1 OR document IS NOT NULL)
+);

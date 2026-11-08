@@ -195,3 +195,7 @@ Run `bash scripts/tests/githooks.sh CASE` for the landing boundary cases:
 `main-push` checks an unrelated checkout, that the dashboard `npm ci` runs
 before `npm run build`, and a failed test command.
 Use `scripts/check-commit-subject.sh SUBJECT` for authored subjects and future PR titles.
+
+The final pre-1.0 squash has four boundary cases in `tests/check-migrations.sh`:
+`accept-approved-squash`, `reject-near-miss-squash`, `reject-wrong-source-squash`, and `squash-schema`.
+They prove the exact pin and compare the fresh schema with the old nine-file chain.

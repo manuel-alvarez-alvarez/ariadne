@@ -302,13 +302,7 @@ every other kebab-case word in it; the wire spells the same gate
    author/reviewer/landing pipeline this spec replaced included — is
    refused at open with the pre-squash message, naming the file to delete:
    Ariadne is pre-1.0, so such a database is recreated rather than migrated
-   (016 rule 9). `goal_steps.ranks` (`NOT NULL`, a JSON array, added by
-   migration `0002`) replaced the single, nullable `goal_steps.rank`: a
-   snapshotted column's one-time single rank cannot become a nonempty
-   capability band without guessing, so `ariadne_store::Store::open` checks
-   for the superseded `rank` column before any migration runs and refuses
-   such a database the same way, naming the file to delete, rather than
-   letting a migration rebuild the table out from under it.
+   (016 rule 9). `goal_steps.ranks` is a non-null JSON array.
 10. The `pr` column of `develop-review-pr` stages `pr-babysit`. Its agent
     pushes the branch and opens the request through `open_pull_request`
     once; a repeat returns the same URL, and a session that starts with
@@ -532,11 +526,6 @@ every other kebab-case word in it; the wire spells the same gate
   (`store.rs::invalid_stored_column_skills_refuse_staffing_without_writing_a_task`,
   `workflow_steps.rs::an_invalid_stored_gate_refuses_completion_without_moving_the_task`,
   `::invalid_stored_columns_return_goal_errors`).
-- A database whose `goal_steps` still carries the single `rank` column is
-  refused at open with a message naming the file to delete, and `doctor`
-  reports it the same way
-  (`store.rs::a_database_that_still_carries_the_single_rank_column_is_refused_with_a_reset_message`,
-  `checks.rs::a_pre_ranks_database_fails_the_check`).
 - The orchestrator briefing names the workflow and one line per column
   (`prompts.rs::the_orchestrator_is_briefed_with_the_workflow_and_its_columns`,
   `defaults.rs::the_orchestrator_briefing_names_the_workflow_and_its_columns`).
@@ -570,11 +559,9 @@ every other kebab-case word in it; the wire spells the same gate
 `crates/ariadne-daemon/src/scheduler/tasks.rs`,
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
 `crates/ariadne-daemon/src/launcher.rs`,
-`crates/ariadne-store/src/lib.rs` (`pre_ranks_database`),
 `crates/ariadne-cli/src/commands/doctor/checks.rs`,
 `crates/ariadne-daemon/src/agents/prompts.rs`,
-`crates/ariadne-store/migrations/0001_init.sql`,
-`crates/ariadne-store/migrations/0002_workflow_rank_bands.sql`.
+`crates/ariadne-store/migrations/0001_init.sql`.
 
 For Ariadne, only main requires linear history. Merge main into published PR branches and push normally.
 Never rebase published Ariadne PR commits. Never force-push main.

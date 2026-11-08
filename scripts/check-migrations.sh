@@ -49,10 +49,24 @@ if git rev-parse --verify -q origin/main >/dev/null; then
     base_ref="origin/main"
 fi
 
+# Final squash before 1.0: pin both complete directory trees.
+APPROVED_SQUASH_FROM="ff3db5383225fb809f9c6f16683d5c91f5a717c7"
+APPROVED_SQUASH_TO="100644 blob fffe55b9d2aada12f21427f2ab40c9f75d66806a"
+
+is_approved_squash() {
+    [ "$1" = "crates/ariadne-store/migrations" ] || return 1
+    [ "$(git rev-parse "$base_ref:$1")" = "$APPROVED_SQUASH_FROM" ] || return 1
+    [ "$(git ls-tree HEAD -- "$1/0001_init.sql" | cut -f1)" = "$APPROVED_SQUASH_TO" ] || return 1
+    [ "$(git ls-tree --name-only "HEAD:$1")" = "0001_init.sql" ]
+}
+
 status=0
 
 check_dir() {
     migrations_dir="$1"
+    if is_approved_squash "$migrations_dir"; then
+        return
+    fi
     protected_max=0
 
     protected_paths="$(mktemp)"
