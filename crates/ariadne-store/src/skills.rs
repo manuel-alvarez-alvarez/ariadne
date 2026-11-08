@@ -140,6 +140,46 @@ impl Store {
                 .execute(&mut *tx)
                 .await?;
         }
+        self.apply_skill_merges_to_documents(tx).await
+    }
+
+    /// Rewrite the skill names that workflow documents and goal columns hold
+    /// to the names that do their work now. Both are read before the prune,
+    /// so a workflow or an active goal never names a skill the prune deletes.
+    async fn apply_skill_merges_to_documents(&self, tx: &mut sqlx::SqliteConnection) -> Result<()> {
+        let workflows: Vec<(String, String)> =
+            sqlx::query_as("SELECT name, document FROM workflows WHERE document IS NOT NULL")
+                .fetch_all(&mut *tx)
+                .await?;
+        for (name, document) in workflows {
+            if let Some(absorbed) = absorb_workflow_skills(&document) {
+                sqlx::query("UPDATE workflows SET document = ? WHERE name = ?")
+                    .bind(absorbed)
+                    .bind(name)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+
+        let steps: Vec<(String, i64, String)> =
+            sqlx::query_as("SELECT goal_id, ordinal, skills FROM goal_steps")
+                .fetch_all(&mut *tx)
+                .await?;
+        for (goal_id, ordinal, skills) in steps {
+            let Ok(names) = serde_json::from_str::<Vec<String>>(&skills) else {
+                continue;
+            };
+            if names.iter().all(|n| absorbing_name(n) == n) {
+                continue;
+            }
+            let absorbed = absorbed_names(names.iter().map(String::as_str));
+            sqlx::query("UPDATE goal_steps SET skills = ? WHERE goal_id = ? AND ordinal = ?")
+                .bind(serde_json::to_string(&absorbed).expect("skills serialize"))
+                .bind(goal_id)
+                .bind(ordinal)
+                .execute(&mut *tx)
+                .await?;
+        }
         Ok(())
     }
 
@@ -396,6 +436,60 @@ fn taken(e: sqlx::Error, name: &str) -> StoreError {
         }
         other => StoreError::Db(other),
     }
+}
+
+/// The name that does a skill's work now: the absorbing skill of a merged
+/// one, or the name itself where nothing merged into another.
+fn absorbing_name(name: &str) -> &str {
+    MERGED_SKILLS
+        .iter()
+        .find(|(merged, _)| *merged == name)
+        .map_or(name, |(_, into)| into)
+}
+
+/// The skill names of a list, each brought to the name that does its work
+/// now. A name the list already holds is dropped, so a column that named
+/// both the merged skill and its absorbing one names the absorbing one once.
+fn absorbed_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in names {
+        let name = absorbing_name(name);
+        if !out.iter().any(|held| held == name) {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+/// A workflow document with each `skills:` line brought to the names that do
+/// the work now, or `None` where no line names a merged skill. Every other
+/// line stays as it was, indentation included.
+fn absorb_workflow_skills(document: &str) -> Option<String> {
+    let mut changed = false;
+    let lines: Vec<String> = document
+        .split('\n')
+        .map(|line| {
+            let indent = line.len() - line.trim_start().len();
+            let Some(value) = line.trim_start().strip_prefix("skills:") else {
+                return line.to_string();
+            };
+            let names: Vec<&str> = value
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect();
+            if names.iter().all(|n| absorbing_name(n) == *n) {
+                return line.to_string();
+            }
+            changed = true;
+            format!(
+                "{}skills: {}",
+                &line[..indent],
+                absorbed_names(names).join(", ")
+            )
+        })
+        .collect();
+    changed.then(|| lines.join("\n"))
 }
 
 /// "2 goals, 1 agent session": the non-zero holders, counted and named. What
