@@ -85,7 +85,7 @@ workflow develop-review-pr
   pr[Pull request]
     Push the branch, open the request and keep it until it merges or closes.
     skills: pr-babysit
-    ranks: fast, balanced
+    ranks: balanced, frontier
     gate: request-merged
 ```
 
@@ -145,7 +145,7 @@ workflow pr-babysit
   babysit[Babysit]
     Keep the request until it merges or closes.
     skills: pr-babysit
-    ranks: fast, balanced
+    ranks: balanced, frontier
 ```
 
 It shows in the catalog and is edited like `pr-review`: you can change the

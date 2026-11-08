@@ -885,7 +885,7 @@ async fn a_second_ask_that_moves_the_pin_restarts_the_live_keeper() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     h.store
-        .set_model_ranks(&[(PIN2, Some(ariadne_core::models::ModelRank::Fast))])
+        .set_model_ranks(&[(PIN2, Some(ariadne_core::models::ModelRank::Frontier))])
         .await
         .unwrap();
     let (path, head) = checkout(&h);
@@ -1764,10 +1764,7 @@ async fn a_babysit_refuses_a_model_outside_the_workflow_band() {
     })
     .await;
     h.store
-        .set_model_ranks(&[(
-            "stub:strong",
-            Some(ariadne_core::models::ModelRank::Frontier),
-        )])
+        .set_model_ranks(&[("stub:strong", Some(ariadne_core::models::ModelRank::Fast))])
         .await
         .unwrap();
     for model in ["stub:strong", "stub:unranked"] {
@@ -1778,7 +1775,7 @@ async fn a_babysit_refuses_a_model_outside_the_workflow_band() {
             )
             .await;
         assert!(
-            error.error.message.contains("fast and balanced"),
+            error.error.message.contains("balanced and frontier"),
             "{}",
             error.error.message
         );

@@ -6758,7 +6758,7 @@ async fn a_babysit_start_makes_one_active_goal_with_one_staffed_task() {
     assert_eq!(skills, ["pr-babysit", "research"]);
     let steps = store.goal_steps(&owner.goal.id).await.unwrap();
     assert_eq!(steps.len(), 1);
-    assert_eq!(steps[0].ranks, r#"["fast","balanced"]"#);
+    assert_eq!(steps[0].ranks, r#"["balanced","frontier"]"#);
 
     let (review, _) = store
         .start_pr_operation(review_start(&repo.id, "stub:one", &[]))
@@ -6860,8 +6860,8 @@ async fn the_babysit_workflow_is_edited_within_its_shape_and_no_ordinary_goal_us
             "pr-babysit",
         ),
         (
-            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: frontier\n",
-            "fast and balanced",
+            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: fast\n",
+            "balanced and frontier",
         ),
         (
             "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: fast\n    gate: request-merged\n",
@@ -6872,7 +6872,7 @@ async fn the_babysit_workflow_is_edited_within_its_shape_and_no_ordinary_goal_us
             "exactly one column",
         ),
         (
-            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit, pr-reviewer\n    ranks: fast\n",
+            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit, pr-reviewer\n    ranks: balanced\n",
             "pr-reviewer",
         ),
     ] {

@@ -315,15 +315,15 @@ async fn the_pr_babysit_workflow_is_listed_edited_in_its_shape_and_closed_to_ord
     assert_eq!(
         babysit.steps[0].ranks,
         [
-            ariadne_core::models::ModelRank::Fast,
-            ariadne_core::models::ModelRank::Balanced
+            ariadne_core::models::ModelRank::Balanced,
+            ariadne_core::models::ModelRank::Frontier
         ]
     );
 
     for document in [
-        "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: coding\n    ranks: fast\n",
-        "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: pr-babysit\n    ranks: frontier\n",
-        "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: pr-babysit\n    ranks: fast\n    gate: request-merged\n",
+        "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: coding\n    ranks: balanced\n",
+        "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: pr-babysit\n    ranks: fast\n",
+        "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: pr-babysit\n    ranks: balanced\n    gate: request-merged\n",
     ] {
         let (status, _) = h
             .send(put_json(

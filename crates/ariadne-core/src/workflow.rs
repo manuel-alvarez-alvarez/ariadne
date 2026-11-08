@@ -393,7 +393,7 @@ mod tests {
   pr[Pull request]
     Keep the task's request until it merges or closes.
     skills: pr-babysit
-    ranks: fast, balanced
+    ranks: balanced, frontier
     gate: request-merged
 "#;
         let workflow = parse(text).unwrap();
@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(pr.title, "Pull request");
         assert_eq!(pr.gate, Some(StepGate::RequestMerged));
         assert_eq!(pr.skills, vec!["pr-babysit".to_string()]);
-        assert_eq!(pr.ranks, vec![ModelRank::Fast, ModelRank::Balanced]);
+        assert_eq!(pr.ranks, vec![ModelRank::Balanced, ModelRank::Frontier]);
     }
 
     #[test]

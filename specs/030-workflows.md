@@ -113,14 +113,14 @@ every other kebab-case word in it; the wire spells the same gate
    `frontier`; `committed`), `review` (`balanced`, `frontier`; no gate), and
    `merge` (`fast`, `balanced`; `merged`) columns, and `develop-review-pr`
    with the same `develop` and `review` bands and gates, then `pr[Pull request]`
-   (`fast`, `balanced`; `request-merged`). `merge` stages `merge`, `pr` stages
+   (`balanced`, `frontier`; `request-merged`). `merge` stages `merge`, `pr` stages
    `pr-babysit`, and `develop-review-merge` is the default of every repository
    that names none (`DEFAULT_WORKFLOW`). A third workflow, `pr-review`, is
    the review operation's (rule 11 below): one `review[Review]` column that
    stages `pr-reviewer`, with the `balanced` and `frontier` ranks and no
    gate. A fourth, `pr-babysit`, is the babysit operation's: one
-   `babysit[Babysit]` column that stages `pr-babysit`, with the `fast` and
-   `balanced` ranks and no gate. The orchestrator assesses each task
+   `babysit[Babysit]` column that stages `pr-babysit`, with the `balanced` and
+   `frontier` ranks and no gate. The orchestrator assesses each task
    case by case, chooses the smallest capable eligible model, and chooses a
    more powerful eligible model only where the task demands justify it.
 3. A save — a create or a document write — parses the document and refuses a

@@ -233,8 +233,8 @@ pub fn pr_operation_shape_error(
         PrOperation::Babysit => (
             "babysit",
             PR_BABYSIT_SKILL,
-            [ModelRank::Fast, ModelRank::Balanced],
-            "fast and balanced",
+            [ModelRank::Balanced, ModelRank::Frontier],
+            "balanced and frontier",
         ),
     };
     let [step] = workflow.steps.as_slice() else {
@@ -1333,7 +1333,7 @@ pub(crate) mod tests {
                 vec![
                     vec![ModelRank::Fast, ModelRank::Balanced, ModelRank::Frontier],
                     vec![ModelRank::Balanced, ModelRank::Frontier],
-                    vec![ModelRank::Fast, ModelRank::Balanced],
+                    vec![ModelRank::Balanced, ModelRank::Frontier],
                 ],
             ),
             (
@@ -1342,7 +1342,7 @@ pub(crate) mod tests {
             ),
             (
                 PR_BABYSIT_WORKFLOW,
-                vec![vec![ModelRank::Fast, ModelRank::Balanced]],
+                vec![vec![ModelRank::Balanced, ModelRank::Frontier]],
             ),
         ];
 
@@ -1446,12 +1446,12 @@ pub(crate) mod tests {
                 "must load pr-babysit",
             ),
             (
-                "workflow pr-babysit\n babysit[B]\n skills: pr-babysit\n ranks: frontier\n",
-                "fast and balanced",
+                "workflow pr-babysit\n babysit[B]\n skills: pr-babysit\n ranks: fast\n",
+                "balanced and frontier",
             ),
             (
                 "workflow pr-babysit\n babysit[B]\n skills: pr-babysit\n",
-                "fast and balanced",
+                "balanced and frontier",
             ),
         ] {
             let error = pr_operation_shape_error(PrOperation::Babysit, &parse(document))

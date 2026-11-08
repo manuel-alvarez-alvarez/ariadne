@@ -11,5 +11,5 @@ workflow develop-review-pr
   pr[Pull request]
     Keep the task's request until it merges or closes.
     skills: pr-babysit
-    ranks: fast, balanced
+    ranks: balanced, frontier
     gate: request-merged
