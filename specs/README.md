@@ -28,7 +28,7 @@ test that proves it. Conventions for writing and changing one are in
 | 014 | [Command-line interface](014-command-line-interface.md) | the command tree, flags, failures, completions, `doctor` |
 | 015 | [Desktop app](015-desktop-app.md) | Ariadne Desktop, and its parity with the CLI |
 | 016 | [Install, service and release](016-install-service-and-release.md) | the installer, the service, release-please, Dependabot, CI build caches, the migration policy |
-| 017 | [Skills and staffed agents](017-skills-and-staffed-agents.md) | the one agent type, the skill catalog, and the agent of each column |
+| 017 | [Skills and staffed agents](017-skills-and-staffed-agents.md) | the one agent type, the skill catalog, and the agent of each column; thirteen skills and one document template |
 | 018 | [Agent messages](018-agent-messages.md) | the one channel the agents talk on, one kind, and how a message reaches its recipient |
 | 020 | [Outside session resume](020-session-adoption.md) | discover outside conversations and resume them without a task |
 | 021 | [ACP runtime](021-acp-runtime.md) | the daemon-owned ACP agent: child process, protocol, events, kill |

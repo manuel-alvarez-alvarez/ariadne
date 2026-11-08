@@ -400,3 +400,6 @@ impl Store {
         &self.read
     }
 }
+
+#[cfg(test)]
+mod skill_tests;

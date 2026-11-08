@@ -242,3 +242,5 @@ Run the frontend build from `ui/`; it also builds the dashboard.
 Include audits, lint, unused checks, Rust builds, and Tauri formatting and compilation.
 Other branch pushes retain scoped checks. Only those pushes omit the slow test suites.
 Require GitHub CI on the current PR head before GitHub squash merges.
+
+For a shipped skill document change, follow the template in [spec 017, rule 16](../specs/017-skills-and-staffed-agents.md).

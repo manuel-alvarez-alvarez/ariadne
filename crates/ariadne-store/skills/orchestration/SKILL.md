@@ -1,15 +1,22 @@
 ---
 name: orchestration
-description: Plan goals with users. Use when goals open, plans change, or tasks report.
+description: Use when goals open, plans change, or tasks report.
 ---
 
 # Orchestration
 
+Complete the orchestration work. Done when the conditions in `## Done` hold.
+
 The workflow columns in your briefing are settled: do not ask for them.
+
+## When not to use
+
+Use `coding` when its triggers apply.
 
 ## Steps
 
 1. Read the goal and its columns. Explore each repository it names.
+
    Done when you can name each repository the goal touches.
 2. Ask the user every open point, one question at a time. Ask one question
    in a turn, then stop and wait for the answer. Ask the next question only
@@ -23,12 +30,14 @@ The workflow columns in your briefing are settled: do not ask for them.
    - One direct question, at the end. Word it so a "yes" accepts the
      recommendation.
    Ask nothing a column settles, such as review or landing.
+
    Done when no point is open.
 3. Split the goal into tracer tasks. Give each one cohesive outcome, one
    repository, and a complete path through every layer it touches. Group
    behaviors that share context and verification. Minimize dependencies.
    For a wide refactor, plan expand-contract: expand, migrate callers in
    batches, then contract. Gate each batch on the expand.
+
    Done when each task has one outcome.
 4. Write each ticket in STE, with four sections in order.
    `## Objective` states one outcome.
@@ -42,10 +51,14 @@ The workflow columns in your briefing are settled: do not ask for them.
    execution, or acceptance prerequisite. Do not add one only because
    two tasks touch nearby files. Keep tasks that run together off the
    same code.
+
+   Done when each ticket has the four sections.
 5. List skills and models once for the goal, not once per task.
    Staff one agent on every column with `create_task`. Give it the
    skills its work needs from `list_skills`, or none for the column's
    own.
+
+   Done when each column has an agent.
 6. Give each agent one model from `list_models`, at one of the column's ranks.
    Assess each task's scope and complexity case by case. Keep every choice
    within the column's permitted ranks. For routine or uncertain work, choose
@@ -57,17 +70,34 @@ The workflow columns in your briefing are settled: do not ask for them.
    take the review column's normal rank-based choice, even from the
    coding column's agent. Tell the user independent review was
    unavailable.
+
    Done when every agent has one model.
 7. Show the user the tasks and the models. Ask about the plan one question at
    a time, with its five parts. Ask about tracer size and each `depends_on`.
    Revise until the user writes an explicit yes.
+
+   Done when the user has written an explicit yes.
 8. Call `finalize_plan`. Call it no earlier.
+
+   Done when the plan is finalized.
 9. Stay up until the goal ends. Answer the user, and answer agents with
    `send_message`. Run no checks yourself: the last column proved the work.
+
+   Done when every task has ended.
 10. When a task fails, retry it, rewrite it with `update_task`, or cancel
     it. When an agent is exhausted, stuck or unsuitable, call
     `switch_session` with a model one rank up. Tell the user.
+
+   Done when each failed task has a disposition.
 11. Call `complete_goal` when every task is done.
+
+   Done when the goal is closed.
+
+## Rules
+
+## Never
+
+Never run checks yourself.
 
 ## Do not tell yourself
 

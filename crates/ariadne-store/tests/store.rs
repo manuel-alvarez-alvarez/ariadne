@@ -3009,65 +3009,76 @@ async fn a_dropped_skill_only_an_ended_goal_names_leaves_on_reopen() {
 /// keeps one row, not two.
 #[tokio::test]
 async fn a_merged_skill_hands_its_staffings_to_the_skill_that_absorbed_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("test.db");
+    for (old, absorbing) in [
+        ("testing", "coding"),
+        ("refactoring", "coding"),
+        ("spec-review", "code-review"),
+        ("performance-review", "code-review"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
 
-    let store = Store::open(&path).await.unwrap();
-    let (goal, repo) = seed_goal(&store).await;
-    let both = seed_task(&store, &goal, &repo, vec![]).await;
-    let alone = seed_task(&store, &goal, &repo, vec![]).await;
-    drop(store);
+        let store = Store::open(&path).await.unwrap();
+        let (goal, repo) = seed_goal(&store).await;
+        let both = seed_task(&store, &goal, &repo, vec![]).await;
+        let alone = seed_task(&store, &goal, &repo, vec![]).await;
+        drop(store);
 
-    // The era before the merge, reproduced: `testing` staffed beside `coding`
-    // on one task's first agent, and on its own on the other's.
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        // Reproduce both a duplicate staffing and a staffing of the old skill alone.
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+         VALUES (?, NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(old)
+        .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(
-        "INSERT INTO skills (name, document, builtin, created_at, updated_at)
-         VALUES ('testing', NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
-         SELECT id, 'testing', 1 FROM task_agents WHERE task_id = ? AND step = 'develop'",
-    )
-    .bind(&both.id)
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "UPDATE task_agent_skills SET skill_name = 'testing'
+        sqlx::query(
+            "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
+         SELECT id, ?, 1 FROM task_agents WHERE task_id = ? AND step = 'develop'",
+        )
+        .bind(old)
+        .bind(&both.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE task_agent_skills SET skill_name = ?
           WHERE skill_name = 'coding'
             AND agent_id IN (SELECT id FROM task_agents WHERE task_id = ?)",
-    )
-    .bind(&alone.id)
-    .execute(&pool)
-    .await
-    .unwrap();
-    pool.close().await;
-
-    let store = Store::open(&path).await.unwrap();
-    for task in [&both, &alone] {
-        let author = agent_of(&store, task, "develop").await;
-        let names: Vec<String> = store
-            .agent_skills(&author.id)
+        )
+        .bind(old)
+        .bind(&alone.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE task_agent_skills SET skill_name = ? WHERE skill_name = 'coding'")
+            .bind(absorbing)
+            .execute(&pool)
             .await
-            .unwrap()
-            .into_iter()
-            .map(|s| s.name)
-            .collect();
-        assert_eq!(names, ["coding"], "the staffing reads as the merged skill");
+            .unwrap();
+        pool.close().await;
+
+        let store = Store::open(&path).await.unwrap();
+        for task in [&both, &alone] {
+            let author = agent_of(&store, task, "develop").await;
+            let names: Vec<String> = store
+                .agent_skills(&author.id)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|s| s.name)
+                .collect();
+            assert_eq!(names, [absorbing], "the staffing reads as the merged skill");
+        }
+        assert!(
+            matches!(store.get_skill(old).await, Err(StoreError::NotFound { .. })),
+            "and nothing holds the merged skill's row in place any more"
+        );
     }
-    assert!(
-        matches!(
-            store.get_skill("testing").await,
-            Err(StoreError::NotFound { .. })
-        ),
-        "and nothing holds the merged skill's row in place any more"
-    );
 }
 
 /// A database from before a release can hold a skill of the user's own under

@@ -1,40 +1,57 @@
 ---
 name: debugging
-description: For a failing test or broken build, finds the cause with a loop that goes red.
+description: Use when a test fails or a build breaks.
 ---
 
 # Debugging
 
+Complete the debugging work. Done when the conditions in `## Done` hold.
+
+## When not to use
+
+Use `coding` when its triggers apply.
+
 ## Steps
 
 1. Reproduce the defect. Write down the exact steps and output.
+
    Done when you saw the failure yourself.
 2. Build the loop: one command that goes red on this bug and green once it
    is fixed. Make it assert the exact symptom, give one verdict every run,
    and finish in seconds.
    A flaky defect gets a raised rate first: loop the trigger, add load,
    narrow the timing window.
+
    Done when you ran the command once and watched it go red.
 3. Minimize the repro. Cut input, config and code one piece at a time, and
    run the loop after each cut.
+
    Done when a cut of any part left turns the loop green.
 4. Rank three to five falsifiable hypotheses before you test one. Write each
    prediction: "if X is the cause, then Y turns the loop green."
+
    Done when the list is ranked and each entry has a prediction.
 5. Test the top hypothesis with one probe. Change one variable at a time.
    Tag every debug log with one prefix, such as `[DBG-1]`.
+
    Done when the loop's verdict confirms or kills the hypothesis.
 6. Fix the cause, not the symptom. Turn the minimized repro into a
    regression test.
    Run the checks of what you changed.
+
    Done when the test fails without the fix and passes with it. The tests
    of the crate you changed are green.
 7. Clean up. Grep the debug prefix away and delete the throwaway harness.
    Name the confirmed cause in the commit body.
+
    Done when the grep finds nothing.
 8. Call `complete_step` with the column report.
 
+   Done when the report has been submitted.
+
 ## Rules
+
+### Rules
 
 - On a performance defect, measure first. The loop is a timed baseline, and
   red is a number over it.
@@ -43,6 +60,10 @@ description: For a failing test or broken build, finds the cause with a loop tha
 - Keep the fix narrow. A refactor hides its risk.
 - A killed hypothesis sends you to the next ranked one. The stop rule ends
   a loop that does not resolve.
+
+## Never
+
+Never change work outside the task.
 
 ## Do not tell yourself
 

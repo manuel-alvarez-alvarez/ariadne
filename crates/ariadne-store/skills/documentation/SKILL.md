@@ -1,28 +1,47 @@
 ---
 name: documentation
-description: When a feature lands or a page drifts, writes the manual, README, changelog, or reference.
+description: Use when a feature lands or a page drifts.
 ---
 
 # Documentation
 
+Complete the documentation work. Done when the conditions in `## Done` hold.
+
 Write for the reader who has the problem, not for the author who has the
 code.
+
+## When not to use
+
+Use `spec-writing` when its triggers apply.
 
 ## Steps
 
 1. Name the reader and what they came to do.
+
    Done when you can state both in one sentence.
 2. Answer that first. Put the common case at the top.
+
+   Done when the common case comes first.
 3. Show a working example before the options.
+
    Done when you have run the example yourself.
 4. Say what a thing is for before you say what it takes.
+
+   Done when each item states its purpose.
 5. Match the format and the tone of the documents already there.
+
+   Done when the document matches its neighbors.
 6. Link the page where the reader looks for it: the index, the README, or
    the page above it.
+
    Done when a reader reaches the page without a search.
 7. Call `complete_step` with the column report.
 
+   Done when the report has been submitted.
+
 ## Rules
+
+### Rules
 
 - Describe what the software does now. Delete what is no longer true.
 - Describe only features that exist. A promised feature belongs in a plan,
@@ -32,6 +51,10 @@ code.
 - Cut every sentence that carries no information for the reader.
 - Write the page in the same change as the code it describes. A page
   written later describes what the author remembers, not what landed.
+
+## Never
+
+Never change work outside the task.
 
 ## Do not tell yourself
 

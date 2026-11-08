@@ -6,6 +6,10 @@ areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
   - crates/ariadne-store/src/defaults.rs
+  - crates/ariadne-store/src/skill_tests/template.rs
+  - crates/ariadne-store/src/skill_tests/produce.rs
+  - crates/ariadne-store/src/skill_tests/review.rs
+  - crates/ariadne-store/src/skill_tests/operate.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/src/agents/handoff.rs
@@ -144,14 +148,14 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    repository-rule enforcement. What a blocking or must-fix finding must
    name, and the cap on the rest, is 017 rule 11's to state, for all five
    review skills alike. Each other produce skill that ends its own column —
-   `debugging`, `refactoring`, `migration`, `conflict-resolution`,
+   `debugging`, `migration`, `conflict-resolution`,
    `documentation`, `research`, `spec-writing` — calls `complete_step` with
    the column report the same way, naming it and restating none of its
    fields. `debugging`'s own hypothesis loop ends on the stop rule by name,
    not a count of its own.
 7. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
-   amends nothing, since the merge column squashes. `refactoring` commits
+   amends nothing, since the merge column squashes. The refactoring section of `coding` commits
    the moves it made, and `pr-babysit` never amends a pushed request. No
    skill divides a task into slices or small commits.
 8. The lifecycle briefings are Ariadne's own constants, read from the code on
@@ -287,7 +291,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 - The seat texts and the briefings the agreed text gives ship word for word
   (`defaults.rs::the_agreed_texts_ship_word_for_word`).
 - A rule is stated in exactly one briefing
-  (`defaults.rs::each_rule_is_stated_in_exactly_one_briefing`,
+  (`skill_tests/template.rs::each_rule_is_stated_in_exactly_one_briefing`,
   `::a_seat_rule_is_stated_in_its_own_prompt_alone`), and no default repeats
   what the MCP server already tells every session
   (`::no_default_repeats_what_every_session_is_told_by_the_mcp_server`). The
@@ -297,9 +301,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 - Each rule of rule 5 is written in its owner alone
   (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`), no skill
   repeats how a check runs
-  (`defaults.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`),
+  (`skill_tests/template.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`),
   and no skill names a timer or a poll
-  (`defaults.rs::no_skill_names_a_timer_or_a_poll`).
+  (`skill_tests/template.rs::no_skill_names_a_timer_or_a_poll`).
 - Each seat's MCP instructions hold its seat text and its skill index after
   the session rules
   (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`).
@@ -319,22 +323,22 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   evidence and runs missing, outdated or insufficient required checks.
   Evidence does not replace its code inspection, acceptance review or
   repository-rule enforcement
-  (`defaults.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`,
-  `::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
+  (`skill_tests/produce.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`,
+  `skill_tests/review.rs::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
   `tools.rs::complete_step_and_fail_step_define_their_reports`).
   No shipped skill names a whole suite.
   Every other produce skill that ends its own column names the column
   report the same way, restating none of its fields
-  (`defaults.rs::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
+  (`skill_tests/produce.rs::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
   The merge skill pushes before it fast-forwards, with a squash onto the
   merge base and a guard before the push
-  (`::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
-  `::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`).
+  (`skill_tests/operate.rs::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
+  `skill_tests/operate.rs::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`).
 - The `agent` seat text names what the three task calls are for, bans
   `--no-verify` and `-n`, states the stop rule once, and names no end of a
   turn (`defaults.rs::the_agent_seat_text_moves_the_task_with_the_two_step_calls`).
   No skill repeats any of it
-  (`defaults.rs::each_rule_is_stated_in_exactly_one_briefing`).
+  (`skill_tests/template.rs::each_rule_is_stated_in_exactly_one_briefing`).
 - The quiet nudge says this is not a new request, to check whether the work
   is done, to make the call that ends the column or go on, and to write no
   reply about the nudge; the stop rule has the agent seat text as its one
@@ -342,7 +346,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`defaults.rs::the_quiet_nudge_says_four_things_and_the_stop_rule_has_one_owner`).
 - `coding` adds a new commit on a return and amends nothing, and no skill
   divides a task
-  (`defaults.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
+  (`skill_tests/produce.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
 - Every default names only placeholders its kind can fill in
   (`defaults.rs::every_default_names_only_placeholders_its_kind_can_fill_in`),
   and every allowed placeholder is one a builder actually passes
@@ -358,12 +362,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 - The orchestrator system prompt holds no playbook step; the phases and their
   order are the `orchestration` skill's
   (`defaults.rs::the_orchestrator_seat_text_holds_no_playbook_step`,
-  `::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
+  `skill_tests/operate.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
   and an orchestrator session indexes that skill
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`).
 - The index adds one line per skill, and the path it names holds the document
   (`prompts.rs::a_started_column_agent_is_briefed_from_the_builtin_template`).
-- Every shipped skill document is within its cap (`defaults.rs::skill_size_caps_hold`).
+- Every shipped skill document is within its cap (`skill_tests/template.rs::skill_size_caps_hold`).
 - Every session is told to load a deferred tool before it calls it
   (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
 - A console-sourced prompt renders whole and a daemon-sourced one folds to

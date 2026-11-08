@@ -7,6 +7,10 @@ commits: [03f9c8b7, 29e6d84e]
 tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
+  - crates/ariadne-store/src/skill_tests/template.rs
+  - crates/ariadne-store/src/skill_tests/produce.rs
+  - crates/ariadne-store/src/skill_tests/review.rs
+  - crates/ariadne-store/src/skill_tests/operate.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-daemon/src/agents/mod.rs
@@ -74,11 +78,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
    is the column's position in the task's staffing list. Whether a task is
    reviewed, and how it lands, is the workflow's to say, so the orchestrator
    asks the user neither (003).
-4. Ariadne ships a catalog of sixteen skills, in four scopes:
+4. Ariadne ships a catalog of thirteen skills, in four scopes:
    - **orchestrate** — `orchestration`, the orchestrator's own playbook;
-   - **produce** — `spec-writing`, `coding`, `debugging`, `refactoring`,
+   - **produce** — `spec-writing`, `coding`, `debugging`,
      `documentation`, `research`;
-   - **review** — `code-review`, `spec-review`, `performance-review`,
+   - **review** — `code-review`,
      `architecture-review`, `pr-reviewer`;
    - **operate** — `migration`, `conflict-resolution`, `merge`,
      `pr-babysit`.
@@ -97,6 +101,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
    merged into `coding`: 92 of its 96 staffings sat on an agent that held
    `coding` too. `coding` states both, and the orchestrator makes one
    decision where it made two.
+
+   Three more merges use staffing counts from the user's database over 98 goals.
+   `refactoring` merged into `coding`: all 7 staffings sat beside `coding`.
+   `spec-review` merged into `code-review`: all 8 staffings sat beside `code-review`.
+   `performance-review` merged into `code-review`: all 7 staffings sat beside `code-review`.
+   The absorbing documents keep the procedures in their own sections.
 5. Each shipped document lives in the code
    (`crates/ariadne-store/skills/<name>/SKILL.md`) and is seeded with a `NULL`
    document. So a reworded skill reaches every database without a migration,
@@ -154,21 +164,20 @@ written into the system prompt (006), and the lifecycle the seats sit in
     since the `agent` and `orchestrator` seat texts own those words alone
     (006 rule 5). No skill divides a task into slices or small commits.
     `coding` builds the whole task and commits it once, adds a new commit on
-    a return from review and never amends, and `refactoring` holds every
+    a return from review and never amends, and its refactoring section holds every
     move in one commit (006). A skill that runs checks says which: the
     checks of what it changed. How a check runs — in the foreground, never
     polled, its output in a log outside the worktree — is the session
     rules' (006, 013), and no skill repeats it. `coding` ends its search
     step when the agent can name each definition it changes and its
     callers, not when a tool named every file it opened. Every review skill
-    — `code-review`, `pr-reviewer`, `spec-review`, `architecture-review` and
-    `performance-review` — marks a blocking or must-fix finding with a
+    — `code-review`, `pr-reviewer` and `architecture-review` — marks a blocking or must-fix finding with a
     trigger, the input or state that causes it, the failure it causes, and
     the criterion, behavior or written rule it breaks. A finding with no
     nameable trigger is downgraded to its non-blocking weight and marked
     unverified, and every non-blocking finding of one review is capped at
     five. Each scopes its reading to the change under review, reuses
-    evidence that already covers it — the column report's, for the four
+    evidence that already covers it — the column report's, for the two
     task-column skills, and its own prior round's, for `pr-reviewer` —
     rather than re-deriving it, and reads further only to judge a risk it
     can name. Each writes its verdict first, with no preamble, no process
@@ -178,7 +187,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `merge` and `pr-babysit` name their own report only as "the column
     report", never a field of it (006 rule 5) — `merge` alongside the base
     branch's sha, `pr-babysit` on a merge; every other produce skill that
-    ends its own column — `debugging`, `refactoring`, `migration`,
+    ends its own column — `debugging`, `migration`,
     `conflict-resolution`, `documentation`, `research`, `spec-writing` —
     calls `complete_step` with the column report the same way; each other
     review skill fails it on a blocking finding.
@@ -266,6 +275,19 @@ written into the system prompt (006), and the lifecycle the seats sit in
     home-derived paths; tests inject a temporary native home rather than
     writing the account's real one.
 
+16. Every shipped skill follows this template, in order:
+    frontmatter with `name` and `description`; a title; one outcome line ending with a `Done when` condition;
+    `## When not to use`; `## Steps`; optional `## Rules`; `## Never`;
+    `## Do not tell yourself`; `## Done`.
+    The name matches the directory.
+    The description uses the third person, opens with "Use when", and names triggers alone.
+    The exclusion section names a sibling skill where one exists.
+    Steps are numbered and bounded. Each step ends with a `Done when` condition.
+    The Never section states what the skill never mutates or calls.
+    Lens and procedure subsections retain their original words.
+    The body stays under 500 lines.
+    `skill_tests/template.rs::every_skill_obeys_the_template` proves the structure.
+
 ## Acceptance criteria
 
 - A fresh database carries every shipped skill, each on its own text
@@ -326,12 +348,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - The `pr` column's agent indexes `pr-babysit`
   (`workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`),
   and the skill opens the request and ends on the merge or the close
-  (`defaults.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`).
+  (`skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`).
 - A review session is staffed on the review pin and indexes
   `pr-reviewer`
   (`pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`),
   and the skill ranks its findings and never approves
-  (`defaults.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`).
+  (`skill_tests/review.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`).
 - A new shipped skill reaches an existing database on its next open, and
   nothing the database held is touched
   (`store.rs::a_new_shipped_skill_reaches_an_existing_database_on_reopen`,
@@ -353,42 +375,40 @@ written into the system prompt (006), and the lifecycle the seats sit in
   and an edit of it reaches the existing and next launches
   (`skill_documents.rs::an_edited_orchestration_skill_reaches_the_next_launch`).
 - The playbook staffs one agent per column and asks no reviewer question
-  (`defaults.rs::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`).
+  (`skill_tests/operate.rs::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`).
 - The playbook switches a struggling agent's session to a model one rank
   up, and tells the user
-  (`defaults.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
+  (`skill_tests/operate.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
 - Every shipped skill is named once and describes itself
-  (`defaults.rs::every_shipped_skill_is_named_once_and_describes_itself`),
-  every document is within its cap (`defaults.rs::skill_size_caps_hold`),
+  (`skill_tests/template.rs::every_shipped_skill_is_named_once_and_describes_itself`),
+  every document is within its cap (`skill_tests/template.rs::skill_size_caps_hold`),
   and every shipped workflow stages shipped skills
   (`::every_shipped_workflow_parses_and_stages_shipped_skills`).
 - No skill repeats how a check runs: that is the session rules'
-  (`defaults.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`,
+  (`skill_tests/template.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`,
   `mcp.rs::each_shared_rule_is_written_in_its_owner_alone`).
-- `coding` ends its search step on what the agent knows
-  (`::the_coding_search_step_ends_on_what_the_agent_knows`).
 - `coding` and the other produce skills that end their own column name the
   column report there and restate no field of it
-  (`::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
+  (`skill_tests/produce.rs::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
 - No shipped skill divides a task, `coding` adds a new commit on a return
-  and never amends, and `refactoring` names one commit
-  (`defaults.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
+  and never amends, and its refactoring section names one commit
+  (`skill_tests/produce.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
 - The review skill ends on a step call, and the merge skill lands in order
-  (`defaults.rs::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
-  `::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`).
+  (`skill_tests/review.rs::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
+  `skill_tests/operate.rs::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`).
 - The orchestration skill selects within each column's permitted ranks after a
   case-by-case scope and complexity assessment, the shipped merge skill never
   force-pushes, including with `--force-with-lease`, and the PR skill
   force-pushes only its own task branch, with a lease pinned to the tip it
   fetched, after a rebase explicitly required and permitted by task-branch policy
-  (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`,
-  `::the_merge_skill_forbids_every_force_push`,
-  `::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`).
+  (`skill_tests/operate.rs::the_orchestrator_staffs_each_column_on_its_rank`,
+  `skill_tests/operate.rs::the_merge_skill_forbids_every_force_push`,
+  `skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`).
 - Every review skill names a trigger on a blocking or must-fix finding,
   downgrades and marks unverified a finding with none, and caps its
-  non-blocking findings at five; the four task-column skills also pin
+  non-blocking findings at five; the two task-column skills also pin
   their reading to the diff and reuse the column report's evidence
-  (`defaults.rs::every_review_skill_names_a_trigger_and_caps_its_optional_findings`).
+  (`skill_tests/review.rs::every_review_skill_names_a_trigger_and_caps_its_optional_findings`).
 - An agent is written on the pin it was given, whole
   (`store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`), and no
   table names an agent by anything but the registry id at the head of its
