@@ -184,12 +184,14 @@ put them on `PATH` for the tools they stand in for.
 
 Main pushes run full checks against the outgoing commit in an isolated checkout.
 This includes `cargo nextest run --workspace --profile ci`, doctests, both `npm test` suites, and `npm run build`.
-Run the frontend build from `ui/`; it also builds the dashboard.
+Run the frontend build from `ui/`; it also builds the dashboard, so the hook
+runs `npm ci` in `ui/dashboard` first when `ui/dashboard/node_modules` is missing.
 Include audits, lint, unused checks, Rust builds, and Tauri formatting and compilation.
 Other branch pushes retain scoped checks. Only those pushes omit the slow test suites.
 Require GitHub CI on the current PR head before GitHub squash merges.
 
 Run `bash scripts/tests/githooks.sh CASE` for the landing boundary cases:
 `main-push`, `main-merge`, `merge-message`, and `subject-validator`.
-`main-push` checks an unrelated checkout and a failed test command.
+`main-push` checks an unrelated checkout, that the dashboard `npm ci` runs
+before `npm run build`, and a failed test command.
 Use `scripts/check-commit-subject.sh SUBJECT` for authored subjects and future PR titles.

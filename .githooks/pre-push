@@ -144,6 +144,10 @@ if [ "$run_ui" = 1 ]; then
     (cd ui && githooks_run npm run check:unused)
     if [ "$full" = 1 ]; then
         (cd ui && githooks_run npm test)
+        # The ui build also builds the dashboard, so install its dependencies first.
+        if [ ! -d ui/dashboard/node_modules ]; then
+            (cd ui/dashboard && githooks_run npm ci)
+        fi
         (cd ui && githooks_run npm run build)
     fi
 fi

@@ -180,6 +180,9 @@ case "$test_case" in
             "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1
         grep -Fx 'cargo nextest run --workspace --profile ci' "$TEST_ROOT/commands"
         [ "$(grep -c '^npm test$' "$TEST_ROOT/commands")" = 2 ]
+        # The ui build also builds the dashboard: the candidate has neither
+        # node_modules, so both npm ci runs must come before it.
+        [ "$(sed '/^npm run build$/q' "$TEST_ROOT/commands" | grep -cFx 'npm ci')" = 2 ]
         [ "$(git -C "$TEST_ROOT/repo" rev-parse HEAD)" = "$base" ]
         export TEST_FAIL='npm test'
         if printf 'HEAD %s refs/heads/main %s\n' "$head" "$base" |
