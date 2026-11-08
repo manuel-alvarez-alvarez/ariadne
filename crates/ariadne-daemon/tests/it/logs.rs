@@ -79,27 +79,6 @@ async fn the_default_snapshot_is_bounded_even_without_an_explicit_tail() {
 }
 
 #[tokio::test]
-async fn level_narrows_the_snapshot_to_that_level_and_above() {
-    let h = harness().await;
-    {
-        let _guard = capture(&h);
-        tracing::info!("routine");
-        tracing::warn!("worth a look");
-        tracing::error!("on fire");
-    }
-    flush_until_stored(&h, 3).await;
-
-    let at_or_above_warn: LogSnapshotResponse = h.get("/v1/logs?level=warn").await;
-    assert_eq!(
-        messages(&at_or_above_warn.lines),
-        vec!["worth a look", "on fire"]
-    );
-
-    let at_or_above_error: LogSnapshotResponse = h.get("/v1/logs?level=error").await;
-    assert_eq!(messages(&at_or_above_error.lines), vec!["on fire"]);
-}
-
-#[tokio::test]
 async fn an_unknown_level_is_a_bad_request() {
     let h = harness().await;
     let response = h.response(get("/v1/logs?level=deafening")).await;
@@ -187,6 +166,27 @@ flaky_test! {
             5,
             "a tail longer than what was written is a no-op"
         );
+    }
+
+    #[tokio::test]
+    async fn level_narrows_the_snapshot_to_that_level_and_above() {
+        let h = harness().await;
+        {
+            let _guard = capture(&h);
+            tracing::info!("routine");
+            tracing::warn!("worth a look");
+            tracing::error!("on fire");
+        }
+        flush_until_stored(&h, 3).await;
+
+        let at_or_above_warn: LogSnapshotResponse = h.get("/v1/logs?level=warn").await;
+        assert_eq!(
+            messages(&at_or_above_warn.lines),
+            vec!["worth a look", "on fire"]
+        );
+
+        let at_or_above_error: LogSnapshotResponse = h.get("/v1/logs?level=error").await;
+        assert_eq!(messages(&at_or_above_error.lines), vec!["on fire"]);
     }
 
     #[tokio::test]
