@@ -1,8 +1,9 @@
 # Versioning, changelog and GitHub Releases, driven by conventional commits.
 #
 # On every push to `main` release-please recomputes the pending release from
-# the commits since the last tag and keeps a single "chore(main): release
-# X.Y.Z" pull request open. Merging that PR bumps every version location
+# the commits since the last tag and keeps a single "chore: release X.Y.Z"
+# pull request open, titled by `pull-request-title-pattern` so it passes the
+# same title check as every other pull request. Merging that PR bumps every version location
 # listed in `release-please-config.json`, writes `CHANGELOG.md`, tags `vX.Y.Z`
 # and publishes the matching GitHub Release. The assets that hang off that
 # Release are built by a second workflow, `.github/workflows/release.yml`,

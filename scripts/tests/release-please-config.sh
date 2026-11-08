@@ -16,6 +16,12 @@ const sections = new Map(
     { section, hidden },
   ]),
 )
+const title = config["pull-request-title-pattern"]
+  .replace("${component}", "")
+  .replace("${version}", "1.2.3")
+if (title !== "chore: release 1.2.3") {
+  throw new Error(`unexpected release pull request title: ${title}`)
+}
 const messages = [
   "perf: reduce release-note generation time",
   "ci: run the release verification",
