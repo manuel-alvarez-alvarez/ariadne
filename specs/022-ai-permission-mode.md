@@ -1,7 +1,7 @@
 ---
 id: ai-permission-mode
 status: current
-updated: 2026-10-16
+updated: 2026-11-08
 areas: [core, api, store, daemon, ui]
 commits: []
 tests:
@@ -310,7 +310,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   than reporting that unsupported pair
   (`ai_permissions_flavours.rs::a_16gb_linux_box_that_cannot_run_4b_keeps_its_device_unset`).
 - Each flavour and device installs with its own run, flavour and device in
-  the installer environment, and the release names them
+  the installer environment, and the release names them. The test holds each
+  installer until it observes `installing`, then releases it and checks `ready`
   (`ai_permissions.rs::the_install_gets_the_run_flavour_and_device_of_each_choice`).
 - The Linux `cpu` pip call takes PyTorch from the CPU index and the `cuda`
   call does not; a change of device uninstalls PyTorch first
