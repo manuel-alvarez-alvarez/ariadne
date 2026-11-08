@@ -44,7 +44,6 @@ Use `research` when the goal asks which option to pick.
 ## Rules
 
 - State each claim once. A claim in two places goes stale in one of them.
-- Write what holds now, not what is planned.
 - Give every number a reason. An unexplained limit is one nobody can change
   safely.
 - Cut a claim no test can check. It is an opinion.

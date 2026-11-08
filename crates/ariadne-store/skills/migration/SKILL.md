@@ -26,18 +26,18 @@ two branches ship one migration number.
    overlaps, change the shape in one step.
 
    Done when each overlap is named, or none is shown.
-4. Write the recovery path: a reverse migration, or the old shape kept
-   until the contract.
+4. Write the recovery path: a reverse migration. Where callers overlap,
+   keep the old shape until the contract.
 
    Done when the path restores the copy of step 5.
 5. Run the whole sequence on a copy of real data. Count the rows and compare
    the required values before and after.
 
    Done when the copy keeps every row and its required values.
-6. Leave the contract to a later task. Call `complete_step` with the column
-   report, naming the deferred work.
+6. Where callers overlap, leave the contract to a later task. Call
+   `complete_step` with the column report. With no overlap, name that in it.
 
-   Done when the report names the deferred work.
+   Done when the report names the deferred work, or states no overlap.
 
 ## Rules
 
@@ -46,19 +46,18 @@ two branches ship one migration number.
 ## Never
 
 Never edit a released migration. Never drop or rename a shape that a caller
-still reads. Never run a migration on the only copy of real data.
+still reads. Never migrate the only copy of real data.
 
 ## Do not tell yourself
 
 - "I will fix the released migration in place." -> A database that ran it
   keeps its record. Add a new migration.
 - "One rename is safe." -> A caller you did not find still reads the old
-  name. Expand first.
-- "The copy ran clean, so every row survived." -> Count the rows.
+  name. Search for callers first.
 - "Old callers are gone." -> Prove no caller remains with search and usage.
 
 ## Done
 
 A new migration holds the change, and no released migration changed. Every
 row of the copy of real data survived with its values. A recovery path
-restored the copy. The contract is deferred and named.
+restored the copy. Where callers overlap, the contract is deferred and named.

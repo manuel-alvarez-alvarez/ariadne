@@ -187,7 +187,10 @@ fn migration_never_edits_a_released_migration_and_proves_it_on_a_copy() {
         "Where old and new callers overlap, expand first.",
         "Where no caller overlaps, change the shape in one step.",
         "Run the whole sequence on a copy of real data.",
-        "Write the recovery path",
+        "Write the recovery path: a reverse migration.",
+        "Where callers overlap, leave the contract to a later task.",
+        "With no overlap, name that in it.",
+        "Where callers overlap, the contract is deferred and named.",
     ] {
         assert!(
             migration.contains(phrase),
