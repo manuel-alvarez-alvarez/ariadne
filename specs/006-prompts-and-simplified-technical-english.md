@@ -294,8 +294,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   `it/prompts.rs::a_return_and_a_nudge_assemble_word_for_word`,
   `workflow_steps.rs`, the three directions through a real task). A fresh
   session that goes back to a column it saw before is briefed in full: the
-  report of the column before it as `Previous:` (`none` for the first
-  column), then the return, with the return reason said once
+  report of the column before it, from a move earlier than the return, as
+  `Previous:` (`none` where there is none), then the return, with the
+  return reason said once
   (`it/prompts.rs::a_fresh_session_back_in_a_column_gets_the_full_briefing_and_the_return_once`,
   `::a_fresh_session_back_in_a_later_column_has_the_previous_report`;
   `tasks.rs::the_previous_report_is_the_last_forward_move_into_the_column`

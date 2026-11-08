@@ -509,8 +509,9 @@ async fn a_fresh_session_back_in_a_column_gets_the_full_briefing_and_the_return_
     assert!(prompt.ends_with(BRIEF), "{prompt}");
 }
 
-/// A fresh session that comes back to a later column has the report of the
-/// column before it as `Previous:`, and the orchestrator's brief once.
+/// A fresh session that comes back to a later column has the earlier report
+/// of the column before it as `Previous:`. The report that brought the task
+/// forward is the return reason, said once, and the brief comes once.
 #[tokio::test]
 async fn a_fresh_session_back_in_a_later_column_has_the_previous_report() {
     let h = harness().scheduler().await;
@@ -556,9 +557,10 @@ async fn a_fresh_session_back_in_a_later_column_has_the_previous_report() {
         .unwrap();
     let prompt = h.prompted(&fresh);
     assert!(
-        prompt.contains("Previous: <<<untrusted>>>Second report.<<<end untrusted>>>"),
+        prompt.contains("Previous: <<<untrusted>>>First report.<<<end untrusted>>>"),
         "{prompt}"
     );
+    assert_eq!(prompt.matches("Second report.").count(), 1, "{prompt}");
     assert!(
         prompt.contains(
             "Resume \"task\" at Review. The column before this one finished again.\nReason:"
