@@ -30,14 +30,15 @@ Then end your turn.
 6. The repository's history rules choose the branch update. Fetch the
    base and task branch, then integrate before the checks. Where
    merges are allowed, run `git merge --no-edit <remote>/<base>`. A
-   linear-history rule requires `git rebase <remote>/<base>`. Run the
-   checks the batch affects, then push once. After either integration, push
-   only a fast-forward update. If either update cannot fast-forward, do not
-   push and report the rejection. Keep every commit others added. Never force-push any branch or remote,
-   including with `--force-with-lease`. Never amend a pushed commit outside
-   this rebase. A rejected request or a question keeps its step 3
-   reply. Reply once to each comment whose accepted change or
-   suggestion the batch includes: `Fixed in <sha>: <what changed>.`
+   linear-history rule requires `git rebase <remote>/<base>`. Keep every
+   commit others added. Run the checks the batch affects, then push once.
+   After a merge, push only a fast-forward. After a rebase, run
+   `git push --force-with-lease=<branch>:<sha> <remote> HEAD:<branch>`, with
+   `<sha>` the fetched tip. Report a refused push; do not push again.
+   Force-push no other way or branch. Never amend a pushed commit outside
+   this rebase. A rejected request or a question keeps its step 3 reply.
+   Reply once to each comment whose accepted change or suggestion the batch
+   includes: `Fixed in <sha>: <what changed>.`
 7. Call `report_pull_request` only when readiness changes:
    - `ready: true` with the `head_sha` you read once every approval and
      check is green

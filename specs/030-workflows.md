@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-10-19
+updated: 2026-11-08
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
@@ -319,10 +319,13 @@ every other kebab-case word in it; the wire spells the same gate
     it fails to compile or pass; one it does not accept keeps the code,
     with a reason. Repository history rules choose its branch update, done
     before the batch's checks run: where they require linear history it
-    rebases; otherwise it merges where those rules allow it. After either
-    path, it pushes only when the update fast-forwards; otherwise the rejected
-    push follows the normal retry flow. It never force-pushes any branch or
-    remote, including with `--force-with-lease`, or amends a pushed
+    rebases; otherwise it merges where those rules allow it. After a
+    merge, it pushes only when the update fast-forwards. A rebase replaces
+    the task branch's pushed commits, so after one it pushes the task
+    branch alone with `--force-with-lease` pinned to the tip it fetched;
+    it first takes in every commit others pushed there, and a lease that
+    fails, like any rejected push, follows the normal retry flow. It never
+    force-pushes another way or another branch, or amends a pushed
     commit outside that rebase. A rebase can replace commit ids,
     so a reviewer uses incremental scope only while its previous reviewed
     commit remains an ancestor; otherwise it reviews the full current

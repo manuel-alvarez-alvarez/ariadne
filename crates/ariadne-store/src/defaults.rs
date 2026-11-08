@@ -1417,9 +1417,11 @@ mod tests {
             "Group related accepted changes and failed-check fixes in one coherent commit per batch; keep unrelated changes separate.",
             "Run the checks the batch affects, then push once.",
             "Never amend a pushed commit outside this rebase.",
-            "After either integration, push only a fast-forward update.",
-            "If either update cannot fast-forward, do not push and report the rejection.",
-            "Never force-push any branch or remote, including with `--force-with-lease`.",
+            "Keep every commit others added.",
+            "After a merge, push only a fast-forward.",
+            "After a rebase, run `git push --force-with-lease=<branch>:<sha> <remote> HEAD:<branch>`, with `<sha>` the fetched tip.",
+            "Report a refused push; do not push again.",
+            "Force-push no other way or branch.",
             "Call `report_pull_request` only when readiness changes:",
             "`ready: true` with the `head_sha`",
             "`ready: false` when one goes back",
@@ -1434,6 +1436,10 @@ mod tests {
         assert!(
             doc.find("integrate before the checks") < doc.find("Run the checks the batch affects"),
             "the pr-babysit skill checks the batch before it integrates the base"
+        );
+        assert!(
+            !doc.contains("--force ") && !doc.contains("push -f"),
+            "the pr-babysit skill names a force push without a lease"
         );
         assert_eq!(SkillSeat::of(PR_BABYSIT_SKILL), SkillSeat::PullRequest);
     }
