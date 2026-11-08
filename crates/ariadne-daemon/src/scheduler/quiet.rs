@@ -7,7 +7,7 @@
 
 use tracing::{info, warn};
 
-use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, AttentionReason, PromptKind, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{AgentSession, Store};
 
 use super::{QUIET_FLAG_SECS, QUIET_NUDGE_SECS, QUIET_RELAUNCH_SECS, SPAWN_RETRY_BUDGET};
@@ -62,6 +62,7 @@ impl super::Scheduler {
         session: &AgentSession,
         situation: String,
         resume: &str,
+        kind: Option<PromptKind>,
     ) -> anyhow::Result<()> {
         if !matches!(
             session.status(),
@@ -138,7 +139,10 @@ impl super::Scheduler {
         // agent runs for the session — is given back by `hand_prompt`, so
         // the next pass over this session sends it again.
         self.quiet.entry(session.id.clone()).or_default().nudged = true;
-        self.hand_prompt(session, resume.to_string());
+        match kind {
+            Some(kind) => self.hand_nudge(session, resume.to_string(), kind),
+            None => self.hand_prompt(session, resume.to_string()),
+        };
         Ok(())
     }
 

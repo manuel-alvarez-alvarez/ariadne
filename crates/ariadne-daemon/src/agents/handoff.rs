@@ -9,6 +9,7 @@
 use serde_json::Value;
 
 use ariadne_console::transcript::{PlanEntry, Tool, TranscriptItem, fold, tool_is_terminal};
+use ariadne_core::PromptKind;
 use ariadne_store::AgentEvent;
 
 use crate::http::convert::event_dto;
@@ -36,9 +37,20 @@ const INTRO: &str =
 /// conversation it cannot resume, kept under `budget` characters.
 pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize) -> String {
     let dtos: Vec<_> = events.iter().cloned().map(event_dto).collect();
-    let entries: Vec<_> = fold(&dtos)
+    let items = fold(&dtos);
+    let first_briefing = items.iter().position(is_daemon_prompt);
+    let last_error = items
         .iter()
-        .filter_map(|item| {
+        .rposition(|item| matches!(item, TranscriptItem::Error { .. }));
+    let entries: Vec<_> = items
+        .iter()
+        .enumerate()
+        .filter(|(index, item)| {
+            Some(*index) != first_briefing
+                && !is_resume_nudge(item)
+                && (!matches!(item, TranscriptItem::Error { .. }) || Some(*index) == last_error)
+        })
+        .filter_map(|(_, item)| {
             render_entry(item).map(|text| RankedEntry {
                 priority: priority(item, &text),
                 text,
@@ -46,6 +58,20 @@ pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize) -> String {
         })
         .collect();
     apply_budget(entries, budget)
+}
+
+/// A prompt the daemon sent, not the user.
+fn is_daemon_prompt(item: &TranscriptItem) -> bool {
+    matches!(item, TranscriptItem::UserPrompt { source, .. } if source.as_deref() == Some("daemon"))
+}
+
+/// A nudge that woke a quiet agent, found by the prompt kind the runtime
+/// recorded and never by its text.
+fn is_resume_nudge(item: &TranscriptItem) -> bool {
+    matches!(item, TranscriptItem::UserPrompt { prompt_kind: Some(kind), .. }
+        if [PromptKind::AgentResume, PromptKind::OrchestratorResume]
+            .iter()
+            .any(|nudge| nudge.as_str() == kind))
 }
 
 /// A rendered block and the priority that its genuine transcript role and
@@ -134,7 +160,9 @@ fn render_entry(item: &TranscriptItem) -> Option<String> {
         TranscriptItem::PermissionQuestion { tool, answer, .. } => {
             permission_body(tool, answer.as_deref())
         }
-        TranscriptItem::Error { text, .. } => format!("error\n{text}"),
+        TranscriptItem::Error { text, .. } => {
+            format!("error\n{}", text.lines().next().unwrap_or_default())
+        }
         TranscriptItem::SystemNote { .. } | TranscriptItem::Raw { .. } => return None,
     };
     Some(fenced(body))
@@ -481,6 +509,7 @@ mod tests {
         let daemon_lines: Vec<String> = (1..=9).map(|n| format!("daemon line {n}")).collect();
         let daemon_text = daemon_lines.join("\n");
         let events = [
+            daemon_prompt("briefing", "the first briefing", None),
             event(
                 "a",
                 "user_prompt_submit",
@@ -640,6 +669,64 @@ mod tests {
         let out = handoff_text(&events, 10_000);
 
         assert!(out.contains("the agent process crashed"), "{out}");
+    }
+
+    fn daemon_prompt(id: &str, text: &str, kind: Option<&str>) -> AgentEvent {
+        event(
+            id,
+            "user_prompt_submit",
+            json!({"text": text, "source": "daemon", "prompt_kind": kind}),
+        )
+    }
+
+    #[test]
+    fn the_first_daemon_briefing_is_left_out_and_a_later_daemon_prompt_stays() {
+        let events = [
+            daemon_prompt("a", "the opening briefing", None),
+            daemon_prompt("b", "a later daemon message", None),
+        ];
+
+        let out = handoff_text(&events, 10_000);
+
+        assert!(!out.contains("the opening briefing"), "{out}");
+        assert!(out.contains("a later daemon message"), "{out}");
+    }
+
+    #[test]
+    fn resume_nudges_are_left_out_by_their_prompt_kind() {
+        let events = [
+            daemon_prompt("a", "briefing", None),
+            daemon_prompt("b", "wake up, agent", Some("agent_resume")),
+            daemon_prompt("c", "wake up, orchestrator", Some("orchestrator_resume")),
+            daemon_prompt("d", "goal needs you", Some("goal_attention")),
+        ];
+
+        let out = handoff_text(&events, 10_000);
+
+        assert!(!out.contains("wake up"), "{out}");
+        assert!(out.contains("goal needs you"), "{out}");
+    }
+
+    #[test]
+    fn only_the_last_error_stays_and_it_is_cut_to_its_first_line() {
+        let events = [
+            event(
+                "e1",
+                "session.error",
+                json!({"error": {"message": "first failure"}}),
+            ),
+            event(
+                "e2",
+                "session.error",
+                json!({"error": {"message": "last failure\nstack frame one\nstack frame two"}}),
+            ),
+        ];
+
+        let out = handoff_text(&events, 10_000);
+
+        assert!(!out.contains("first failure"), "{out}");
+        assert!(out.contains("last failure"), "{out}");
+        assert!(!out.contains("stack frame"), "{out}");
     }
 
     #[test]

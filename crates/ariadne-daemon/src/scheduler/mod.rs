@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use ariadne_core::{GoalStatus, Seat};
+use ariadne_core::{GoalStatus, PromptKind, Seat};
 use ariadne_store::{AgentSession, SessionFilter, Store, TaskFilter};
 
 use crate::launcher::Launcher;
@@ -343,6 +343,16 @@ impl Scheduler {
     /// on it back, so the next pass over this session sends it again.
     fn hand_prompt(&mut self, session: &AgentSession, text: String) -> bool {
         let handed = self.launcher.acp.send_prompt(&session.id, text);
+        self.handed(session, handed)
+    }
+
+    /// [`Self::hand_prompt`] for a resume nudge, recorded with its prompt
+    /// `kind` so the handoff of a switch can leave it out.
+    fn hand_nudge(&mut self, session: &AgentSession, text: String, kind: PromptKind) -> bool {
+        let handed = self
+            .launcher
+            .acp
+            .send_prompt_of_kind(&session.id, text, kind);
         self.handed(session, handed)
     }
 

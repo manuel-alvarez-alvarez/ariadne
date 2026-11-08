@@ -135,7 +135,10 @@ outside half) opens no session either: it asks only `initialize` and
    the one its launch file carries, if any. `user_prompt_submit`
    carries the whole as `prompt`, the text alone as `text`, and a `source`:
    `console` for console input (008), `daemon` for everything the daemon
-   itself says.
+   itself says. A daemon prompt that is a lifecycle kind, such as a resume
+   nudge, also carries its `prompt_kind` (`agent_resume`,
+   `orchestrator_resume`); the others carry none
+   (`handoff.rs::resume_nudges_are_left_out_by_their_prompt_kind`).
 5. What the agent does becomes agent events on the ingestion path (012):
    `session_start` with the agent's own session id, `user_prompt_submit`,
    tool calls as `pre_tool_use` and `post_tool_use`, `plan` with the entries

@@ -40,7 +40,9 @@ pub(crate) mod render {
 
     fn block(item: &TranscriptItem, width: Option<usize>, color: bool) -> String {
         match item {
-            TranscriptItem::UserPrompt { meta, text, source } => {
+            TranscriptItem::UserPrompt {
+                meta, text, source, ..
+            } => {
                 let label = source
                     .as_deref()
                     .filter(|source| *source != "console")
