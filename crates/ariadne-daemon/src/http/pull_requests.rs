@@ -1418,7 +1418,12 @@ pub(super) async fn mark_ready_for_review(
     let allowed = match session.seat() {
         Some(ariadne_core::Seat::Keeper) => session.pull_request_id.as_deref() == Some(&id),
         Some(ariadne_core::Seat::Agent) => match row.origin_task_id.as_deref() {
-            Some(task) => state.store.get_task(task).await?.step.as_deref() == Some("pr"),
+            Some(task) => {
+                let task = state.store.get_task(task).await?;
+                let ctx = call_ctx(&state.store, &headers).await?;
+                super::steps::current_agent(&state, &ctx, &task).await?;
+                task.step.as_deref() == Some("pr")
+            }
             None => false,
         },
         _ => false,

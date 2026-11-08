@@ -291,6 +291,12 @@ A row and the panel link to the request's session. The panel shows the failed ch
 A session with a `pull_request_id` shows the request's title and a link to its URL in the sessions table Context column and the session panel.
 `ariadne session ls` titles such a session with the request's title and URL, read off the forge. `session inspect` prints its `pull request`.
 
+27. `POST /v1/pull-requests/{id}/ready-for-review` takes `head_sha`, a hex sha.
+    It reads the current head from the forge. A different head returns 409 before any mutation.
+    A non-draft returns its current DTO without a mutation.
+    GitHub uses `markPullRequestReadyForReview` and returns the request with `draft: false`.
+    The daemon never calls this route itself. Spec 032 rule 17 defines its seat gate.
+
 ## Acceptance criteria
 
 - URL variants share one identity and foreign repositories fail:
@@ -546,6 +552,11 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 GitHub's `reviewRequests` names a team by a slug or a name, never a login.
 A review asked of a team the user belongs to is read as asking nobody, so it
 raises no row and starts no session (029).
+
+- Draft readiness checks the head and uses the GitHub mutation:
+  `workflow_pull_request.rs::only_the_pr_agent_can_mark_its_current_draft_ready`.
+- A non-draft makes no mutation:
+  `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`.
 
 ## Sources
 
