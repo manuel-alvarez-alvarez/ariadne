@@ -16,14 +16,13 @@ Use `code-review` when the diff is a task branch and no forge request.
 1. Pin the scope to the diff. Call `get_pull_request` and `get_diff`. On a
    later round, use `since` only if the old revision remains an ancestor.
    If `get_diff` refuses `since`, review the full diff and reuse no old
-   evidence. Read `supervise_posts` before you post or resolve a thread.
+   evidence.
 
-   Done when the current diff and supervision mode are known.
+   Done when the current diff is known.
 2. On a later round, call `list_comments` first. For each thread you
    opened:
    - Verify a claimed fix at the current head.
-   - Outside supervised mode, call `resolve_thread` without a reply.
-   - In supervised mode, leave a fixed thread for the user.
+   - Call `resolve_thread` without a reply after you verify the fix.
    - When a claimed fix fails, reply once with `Still there: <why>.` Do
      not reply again in that thread.
    - On `Not changed:` or another unfixed answer, post nothing.
@@ -76,13 +75,6 @@ Use `code-review` when the diff is a task branch and no forge request.
 - Resolve only a thread you opened.
 - Never post a summary, status comment, summary draft or resolution draft.
 - A tool failure posts nothing another way. Say what failed.
-
-### Supervised repositories
-
-When the user asks to change a pending post, call `edit_pending_comment`,
-`delete_pending_comment` or `edit_pending_review_body` instead of
-`submit_review` or `resolve_thread`. Read `list_comments` for the pending
-finding's forge id first.
 
 ## Never
 

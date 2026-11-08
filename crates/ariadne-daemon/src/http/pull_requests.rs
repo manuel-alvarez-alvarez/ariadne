@@ -949,8 +949,7 @@ pub(super) async fn submit_review(
     let pull = read_held(&state, row).await?;
     // A finding sits on a line the change shows, on its new side: a forge
     // takes an inline comment nowhere else — GitHub refuses it on a
-    // submitted review, and on a pending one answers success with no
-    // thread, which would end the round half held. Checked against the
+    // submitted review. Checked against the
     // same diff `get_diff` answers, before anything reaches the forge, so
     // the reviewer learns which line to correct; a session with no
     // worktree left has no diff to check against and goes on unchecked.

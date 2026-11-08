@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-10-24
+updated: 2026-11-08
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -95,11 +95,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `unanswered_only` narrows it to the threads that wait on the login),
      `get_comment` (one `comment_id`, read off the forge at the call),
      `reply_comment` (one `comment_id` and a `body`; the daemon posts it),
-     `edit_pending_comment`, `delete_pending_comment` and
-     `edit_pending_review_body` (one of its own posts still pending in the
-     user's forge drafts, found by the forge id it was posted under; rule 13)
      and `report_pull_request` (`ready`) — `send_message` and
-     `read_messages`. Eighteen tools. It works one workflow column on its
+     `read_messages`. Fifteen tools. It works one workflow column on its
      task, and its instructions name the task and the column.
      `complete_step` moves to the next column, or ends the task from the
      last; `fail_step` moves to the previous column, or fails the task
@@ -121,13 +118,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      set and seat `reviewer` (029): `get_pull_request`, `get_diff` (on a
      request it reads `/v1/pull-requests/{id}/diff`, and `since` narrows it
      to the commits after that sha), `list_comments`, `get_comment`,
-     `reply_comment`, `edit_pending_comment`, `delete_pending_comment`,
-     `edit_pending_review_body` (rule 13), `submit_review` (one round: an
+     `reply_comment`, `submit_review` (one round: an
      `event` of `request_changes` or `comment`, and the round's new inline
      `comments` of `path`, `line`, `body` and a `priority` of
      `P0`, `P1` or `P2`), `resolve_thread` (one `comment_id` of a thread it
      opened, once a push fixed it) and `report_pull_request` (which takes
-     `reviewed_sha` beside `ready` and `state`). Thirteen tools, and no
+     `reviewed_sha` beside `ready` and `state`). Ten tools, and no
      task tool and no message tool: the task a review operation's goal
      gives the session is the daemon's (029 rule 10b), so the session has
      no step or task to write to, and the user reaches it through its
@@ -139,10 +135,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    - **pull request keeper** — a session with `ARIADNE_PULL_REQUEST_ID`
      set and seat `keeper` (032), on a request of the user's own asked for
      by hand: `get_pull_request`, `get_diff`, `list_comments`,
-     `get_comment`, `reply_comment`, `edit_pending_comment`,
-     `delete_pending_comment`, `edit_pending_review_body` (rule 13) and
-     `report_pull_request` — the same nine request tools the agent seat
-     has — beside `wait_for_user` and `withdraw_wait_for_user`. Eleven
+     `get_comment`, `reply_comment` and
+     `report_pull_request` — the same six request tools the agent seat
+     has — beside `wait_for_user` and `withdraw_wait_for_user`. Eight
      tools, and no task tool and no message tool, the same as the
      reviewer's: it has no goal, task or staffed agent to write to, and
      the user reaches it through its console. It resolves no thread and
@@ -185,19 +180,6 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     reads is derived from the parameter types, and the value it sends back is
     deserialized from them, so a spelling set on one of the two alone offers
     a word and then refuses it.
-13. `edit_pending_comment`, `delete_pending_comment` and
-    `edit_pending_review_body` (rule 13) are on the agent, pull request
-    reviewer and pull request keeper seats alike: whichever session posted
-    the pending item, every session of the request may change or remove
-    it, since all three post under the one integration login (026 rule
-    24). `edit_pending_comment` takes `forge_id` and `body`;
-    `delete_pending_comment` takes `forge_id` alone;
-    `edit_pending_review_body` takes `body` alone. Each
-    answers 409 once its target is no longer pending — the user already
-    submitted the review it was in. Use
-    these tools only on a user's ask in the console for a change; no skill
-    calls them on its own.
-
 ## Acceptance criteria
 
 - Every launch hands the agent the `ariadne mcp serve` server and the
@@ -221,7 +203,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::a_workflow_task_staffs_one_agent_for_each_column`,
   `::a_created_task_is_pinned_to_what_the_orchestrator_named`,
   `::an_edit_takes_default_for_the_effort_and_refuses_it_as_a_model`).
-- The agent seat lists its eighteen step tools and nothing of a review
+- The agent seat lists its fifteen step tools and nothing of a review
   (`mcp.rs::the_agent_seat_lists_its_step_tools_and_nothing_of_a_review`).
 - Step calls post their bodies to the complete and fail routes
   (`tools.rs::step_tools_post_their_bodies_to_the_step_routes`).
@@ -261,7 +243,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::the_agents_request_tools_call_the_routes_of_the_request_its_task_opened`),
   and say to open one where there is none
   (`tools.rs::an_agent_with_no_request_is_told_to_open_one`).
-- The pull request reviewer seat lists its thirteen tools and no task or
+- The pull request reviewer seat lists its ten tools and no task or
   message tool
   (`mcp.rs::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`);
   its diff, review and report call the routes of the session's request
@@ -269,14 +251,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - A review session's MCP server is told the request, and the seat decides
   its tools: a goal and task in its environment give it no task tool
   (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
-- The pull request keeper seat lists its nine request tools beside
+- The pull request keeper seat lists its six request tools beside
   `wait_for_user` and no task or message tool (032)
   (`mcp.rs::the_pull_request_keeper_seat_lists_its_tools_and_no_task_or_message_tool`).
-- `edit_pending_comment`, `delete_pending_comment` and
-  `edit_pending_review_body` are on the agent, pull request reviewer and
-  pull request keeper seats alike, each calling its own route of the
-  session's request with the body the agent gave it (rule 13)
-  (`tools.rs::the_pending_edit_tools_call_the_routes_of_the_sessions_request`).
 - A refused call reaches the agent in the daemon's words
   (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`), and the
   refusal naming a tool outside the seat's list is itself Simplified

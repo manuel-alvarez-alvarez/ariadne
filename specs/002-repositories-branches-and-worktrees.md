@@ -1,7 +1,7 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-10-16
+updated: 2026-11-08
 areas: [store, api, daemon, cli, ui]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:

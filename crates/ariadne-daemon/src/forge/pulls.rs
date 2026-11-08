@@ -99,8 +99,7 @@ pub struct DraftComment {
 /// line of a hunk that is added or kept, numbered as the new file numbers
 /// it, and none of the removed ones, which have no number there. A forge
 /// takes an inline comment on these lines alone: GitHub refuses any other
-/// outright on a submitted review, and on a pending one answers success
-/// with no thread at all, so a finding is checked here before it goes.
+/// outright, so a finding is checked here before it goes.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct ShownLines {
     /// Each path's hunks as `(first, last)` on the new side, inclusive.

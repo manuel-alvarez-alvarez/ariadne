@@ -11,7 +11,6 @@ tests:
   - crates/ariadne-daemon/src/forge/pulls.rs
   - crates/ariadne-daemon/src/forge/poll.rs
   - crates/ariadne-daemon/src/forge/github/pulls.rs
-  - crates/ariadne-daemon/src/forge/github/comments.rs
   - crates/ariadne-daemon/src/forge/github/reviews.rs
   - crates/ariadne-daemon/src/forge/github/details.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
@@ -112,7 +111,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    `Mode::WakeOnly` has no timer fetches; only explicit wakes fetch.
    Enabled integrations start with one immediate fetch.
    [027](027-webhooks-and-tunnel.md) chooses `WakeOnly` for a live hook and `Timer` otherwise.
-   Enabling starts one immediate fetch; disabling cancels its worker and wakes the scheduler for each row of the repository (rule 24).
+   Enabling starts one immediate fetch; disabling cancels its worker and wakes the scheduler for each row of the repository (rule 20).
    Daemon startup fetches every enabled integration once.
 7. `unanswered_comments` counts unresolved threads whose last comment is by the other side: a login other than the integration login, or, on a request of the user's own, an Ariadne review (029).
    A thread answered last by the integration login's own side counts zero. A resolved thread counts zero.
@@ -141,7 +140,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     A fetch skips the detail read of a request whose list read moves nothing a detail read would also show: the held read has details and `evidence_ok`, its `updated_at`, `head_sha`, `checks`, `review_decision`, `mergeable`, `draft`, `title` and `state` all equal the list's own read, its `LivePulls::generation` still equals the read's snapshot, no comment Ariadne posted is still unconfirmed by a detail read, and the details are less than 15 minutes old (`forge::live::Live::unmoved`). The held details stand in place of a fresh read.
     A skipped read also leaves `behind_base` as its held detail value, and does not see a changed set of failed check names where normalized `checks` remains `failure`; the corresponding rule 12 news waits for the next detail read. At 15 minutes, the next fetch reads the details even where every list field still matches. The five-minute fallback timer permits at most two unchanged skips before that refresh.
     A thread a human resolves on the forge does not move `updated_at`; its resolved state is read by that forced refresh when no earlier request move reads it.
-    The detail read drops the viewer's own pending review from the conversation outright, its body, its inline comments and its replies alike, and never analyzes, tells or wakes a session for any of them: GitHub's `pulls/{number}/comments` is undocumented for whether it also answers a pending review's own inline comments and replies, and it does — the shape a pull request on this very repository once showed waking a reviewer and a keeping agent, both — so each is dropped by its own `pull_request_review_id` against the ids of every review `pulls/{number}/reviews` already lists with no `submitted_at`, or a `state` still `PENDING` (`forge/github/details.rs::pending_review_ids`). A review thread left with no comment once its only ones were pending has nothing in the list to carry it, so it never surfaces either. A comment Ariadne itself posted into the pending review (rule 24) is tracked apart from this filter, in memory alone, and is never fed through it either (rule 10). A webhook delivery (027) wakes no agent over pending content on its own: it only calls `ForgePoll::wake`, which runs this same detail read, so the filter above is the whole of its proof too. The detail read also answers whether the viewer's own pending review is still open at all (`ForgeDetails::has_pending_posts`): whether `pulls/{number}/reviews` still lists one with no `submitted_at`, or a `state` still `PENDING`. While it holds, `merge_fresh_details` carries a review's own finding posted into that pending set past every poll before the viewer publishes, not only the one poll of grace any other local addition gets (rule 25).
+    The detail read drops the viewer's own pending review from the conversation outright, its body, its inline comments and its replies alike, and never analyzes, tells or wakes a session for any of them: GitHub's `pulls/{number}/comments` is undocumented for whether it also answers a pending review's own inline comments and replies, and it does — the shape a pull request on this very repository once showed waking a reviewer and a keeping agent, both — so each is dropped by its own `pull_request_review_id` against the ids of every review `pulls/{number}/reviews` already lists with no `submitted_at`, or a `state` still `PENDING` (`forge/github/details.rs::pending_review_ids`). A review thread left with no comment once its only ones were pending has nothing in the list to carry it, so it never surfaces either. A webhook delivery (027) wakes no agent over pending content on its own: it only calls `ForgePoll::wake`, which runs this same detail read, so the filter above is the whole of its proof too.
 10. A comment is the forge's, and its id is the forge's: `rc-<n>`, `ic-<n>`, `rv-<n>` or `note-<n>`.
     `kind` is `review_comment`, `issue_comment` or `review`. A review with no body is no comment.
     Comments on the conversation and review bodies share one thread, `conversation`.
@@ -174,7 +173,7 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
 15. The agent seat lists `get_pull_request`, `list_comments`, `get_comment`, `reply_comment` and `report_pull_request` beside its task tools (013).
     `get_pull_request`, `list_comments` and `get_comment` read the forge at the call: what a session works from is never an earlier read.
     Each finds the request its task opened through `GET /v1/pull-requests?task=<id>&role=author`; with none, it says to call `open_pull_request` first.
-    The task agent has no thread-resolution tool. Outside a supervised repository, a review session resolves a thread it opened once a push fixed it (029). In a supervised repository, the user resolves that thread, as every other thread.
+    The task agent has no thread-resolution tool. A review session resolves a thread it opened once a push fixed it (029).
 16. A reply posts through the forge CLI: `gh api .../pulls/<n>/comments/<id>/replies` on the thread's first review comment, else `gh pr comment`.
     A review session's reply is marked `from_review`. The repository is fetched again, which reads the reply back.
     The current column agent's `reply_comment` answers an inline review comment, the thread of the defect. In the conversation, it answers a comment of the other side once. It may not answer a comment of its own side. A `from_review` comment, a review's own summary, is one of those. It may not answer a comment that its own side already answered in the conversation. The daemon reads the seat (`Seat::Agent`), as for rule 17. A review session is never this seat. The daemon refuses any other conversation reply of the agent with 400, and makes no forge call. A review session keeps its wider reach, into the conversation and a defect's thread alike (029).
@@ -202,17 +201,10 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     A task's row stays, and the next fetch with the integration on reads it again.
 21. Nothing adds or removes a request by hand, from the desktop or the CLI: Ariadne starts and stops working on requests on its own.
 22. `open_pull_request`'s body fills the repository's own pull request template where the repository has one. Where it has none, the body carries three sections, Why, What changed and How to test, each written from the task and its diff rather than one line. The title still follows the repository's commit conventions (030 rule 10).
-23. A repository that supervises its posts ([002](002-repositories-branches-and-worktrees.md) rule 13) opens every pull request a task's `pr` column requests as a draft, whatever the agent's own `draft` asked: a person reviews it before it is real to anyone else. A repository that does not leaves the agent's own value through unchanged.
-24. A repository that supervises its posts holds every reply this way too: `POST .../reply` calls `ForgeClient::reply_pending` instead of `ForgeClient::reply`, posting nothing to the forge directly, and answers `{pending: true, id}` in place of a comment, `id` the pending item's own forge id. A review holds its inline findings this way. A reviewer leaves thread resolution to the user.
-    GitHub finds or creates the viewer's one pending review per request (`Github::pending_review`; GitHub allows only one, so it is reused). One it creates carries the hidden verdict mark, `<!-- ariadne:pending-review-verdict -->`, as its whole body: GitHub refuses to edit a review it holds with no body at all, through either API, and every later change of the pending review is an edit of its body. One it finds with no body — an earlier Ariadne's, or one begun by hand on the forge — is deleted and made again with the mark where it holds no draft comment, and is otherwise the user's to submit or discard first: the post is refused saying so, and nothing of theirs is deleted. A reply to an inline review comment joins the pending review's own thread, `addPullRequestReviewThreadReply`, answering the new draft comment's id. A reply to a top-level conversation comment has no pending form of its own, so the pending review's body gains it instead, led by a quote of the comment it answers and a link to it (`Github::append_to_pending_review`), answering the pending review's own id.
-    The comment this answers is marked `pending_reply` (`pull_request_comment_marks`), a one-way local record never read back off the forge: it counts answered from here on (`forge::live::answered`), so it does not wake the keeping agent again, whatever becomes of the forge's own pending item — a draft deleted there before the user publishes it leaves the mark, and the comment, as they are. Since the mark adds no later comment of its own for `answered` to find, it stands at its own comment's place in the thread instead: every earlier comment of that thread reads answered too, the same as a real reply there would show, and a later one stays open. A repository that does not supervise its posts posts the reply as before, under rule 16.
-    The mark lives in the store alone, on no field a forge fetch ever reads back, so the route announces the request changed (`events.pull_requests_changed`) and wakes the scheduler itself: nothing else could tell a watcher the comment now reads answered.
-    The agent's own `reply_comment` tool reads a `pending` answer and says, in its own words, that the reply waits in the user's forge drafts and that the agent goes on, rather than handing back the pending shape as though it were the posted comment rule 15 otherwise answers with.
-25. Whichever session posted a pending item under rule 24, every session of the request may edit or delete it, since every pending post goes under the one integration login: `POST /v1/pull-requests/{id}/comments/edit` (`{forge_id, body}`), `POST /v1/pull-requests/{id}/comments/delete` (`{forge_id}`), and `POST /v1/pull-requests/{id}/pending-review/body` (`{body}`), which replaces the pending review's own body outright. The user asking for a change in the console is what calls these, never a round of `reply_comment`, `submit_review` or `resolve_thread` on its own.
-    Each is refused with 409 once its target is no longer pending — the user already submitted the review it was in, or there never was one:
-    - GitHub: `edit_pending_comment` and `delete_pending_comment` read the viewer's still-pending review (rule 24's own finder, split from its create-if-missing form so a caller that means only to look never brings one into existence), then look up the comment's GraphQL node id among that review's own comments — `updatePullRequestReviewComment` and `deletePullRequestReviewComment` take a node id, never the database id `addPullRequestReviewThread` answers. A comment the lookup does not find, because its round was since submitted, answers 409 the same as no pending review at all. `edit_pending_review_body` overwrites the pending review's body through the same `updatePullRequestReview` mutation rule 24 already uses, refused with 409 where there is no pending review to find.
-    The three tools are `edit_pending_comment`, `delete_pending_comment` and `edit_pending_review_body` (013), on the agent, pull request reviewer and pull request keeper seats alike.
-    A successful edit or delete also writes Ariadne's own held comments at once (`live::LivePulls::edit_comment`, `::remove_comment`): rule 9 already drops the pending review from every detail read of its own, so no detail fetch ever reads either change back on its own while the post stays unpublished. Without this, `list_comments` would answer the body a finding was posted with forever, and a deleted finding would stay in `merge_fresh_details`'s own carry-forward for as long as it remained unconfirmed by a fresh read — read by `submit_review`'s own `open_p0` check as a P0 still open.
+23. Every pull request opened by a task's `pr` column is a draft.
+    `open_pull_request` has no `draft` field.
+24. Replies post to the forge immediately under rule 16. Reviews post their inline findings (029).
+
 26. A request's title, URL, head branch, base branch, head sha and
     reviewed sha each reach a briefing or a news prompt fenced as data,
     never as an instruction (006 rule 18): the reviewer's own briefing
@@ -264,11 +256,8 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `POST /v1/pull-requests/refresh?repo=` | Wake one repository or every enabled repository. Return 202. |
 | `GET /v1/pull-requests/{id}/comments?unanswered_only=` | The comments, read off the forge now, with their marks; or the threads that wait on the login. |
 | `GET /v1/pull-requests/{id}/comments/{comment_id}` | One comment, read off the forge now. |
-| `POST /v1/pull-requests/{id}/comments/{comment_id}/reply` | Post a reply through the forge CLI. Return 201. A repository that supervises its posts holds it in the user's own forge drafts instead, answering `{pending: true, id}` (rule 24). |
-| `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` | Resolve, from the review session, a thread it opened (029). Return 200. In a supervised repository, leave it for the user. |
-| `POST /v1/pull-requests/{id}/comments/edit` | Take `{forge_id, body}`: edit one of the viewer's own pending posts. Return `{id, changed}`. 409 once it is no longer pending (rule 25). |
-| `POST /v1/pull-requests/{id}/comments/delete` | Take `{forge_id}`: delete one of the viewer's own pending posts. Return `{id, changed}`. 409 once it is no longer pending (rule 25). |
-| `POST /v1/pull-requests/{id}/pending-review/body` | Take `{body}`: replace the viewer's pending review body outright. 409 with no pending review (rule 25). |
+| `POST /v1/pull-requests/{id}/comments/{comment_id}/reply` | Post a reply through the forge CLI. Return 201. |
+| `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` | Resolve, from the review session, a thread it opened (029). Return 200. |
 | `POST /v1/pull-requests/{id}/report` | Take `ready`, `head_sha` (required with `ready: true`), and `reviewed_sha` (029), from the request's own session. |
 | `GET /v1/sessions?pull_request=` | List the sessions of one request (012). |
 
@@ -336,23 +325,6 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `::a_fetch_whose_list_read_field_moved_runs_the_detail_read`,
   `::a_fetch_after_ariadne_posts_a_comment_runs_the_detail_read`,
   `::a_fetch_after_a_failed_detail_read_runs_the_detail_read_again`.
-- A detail read drops the viewer's own pending review from the conversation
-  outright — its own inline comment and a reply to it, both naming it by
-  `pull_request_review_id`, give no entry of the list's own, so neither
-  ever reaches `list_comments` nor wakes the agent that owns the request —
-  while a submitted review's own comment stays:
-  `forge/github/details.rs::tests::a_pending_reviews_body_comments_and_replies_are_dropped`,
-  proved end to end through a real fetch in
-  `pull_requests.rs::a_fetch_drops_the_viewers_own_pending_review_and_its_comments`,
-  `kept_requests.rs::a_pending_reviews_comments_give_no_live_view_comment_and_no_news`.
-- `has_pending_posts` says whether the viewer's own pending review is still
-  open, so `merge_fresh_details` carries a review's own finding posted into
-  that pending set past every poll until the viewer publishes, not only the
-  one poll of grace any other local addition gets:
-  `forge/github/details.rs::tests::a_pending_reviews_body_comments_and_replies_are_dropped`
-  (`has_pending_posts` true while the review stays pending),
-  `forge/live.rs::tests::a_pending_reviews_finding_survives_a_poll_while_the_review_is_still_pending`,
-  `::a_pending_reviews_finding_is_dropped_once_the_pending_review_is_gone`.
 - Two reads of the list and of the search after one fetch make no further `pr list` call, a repository with no fetch yet lists empty with 200 and a disabled one still answers 409, the single-request route answers the held read with no `details()` call, and the panel route still reads live:
   `pull_request_lists.rs::two_reads_after_one_fetch_run_no_further_pr_list_call`,
   `::a_repository_with_no_fetch_yet_lists_empty_and_a_disabled_one_is_refused`,
@@ -468,109 +440,18 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `kept_requests.rs::the_pr_agent_replies_and_reports_and_no_other_session_may`.
 - The keeping agent replies once to a conversation comment of the other side. A second reply to it gets 400 and makes no forge call. A reply to a comment of its own side also gets 400 and makes no forge call:
   `kept_requests.rs::the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side`.
+- The posting API exposes no supervision controls or pending-post routes:
+  `kept_requests.rs::the_posting_api_has_no_supervision_controls`.
+- A user's unsubmitted review stays outside the comments and agent news:
+  `forge/github/details.rs::tests::a_pending_reviews_body_comments_and_replies_are_dropped`,
+  `kept_requests.rs::a_pending_reviews_comments_give_no_live_view_comment_and_no_news`.
+- Every task request opens as a draft:
+  `kept_requests.rs::open_pull_request_always_opens_a_draft`.
+- Repositories and comment marks have no supervision columns:
+  `store.rs::repositories_and_comment_marks_have_no_post_supervision_columns`.
+
 - A trailer is stripped from the body of `open_pull_request`:
   `kept_requests.rs::open_pull_request_strips_a_trailing_trailer_from_the_body`.
-- A repository that supervises its posts forces every opened request to a
-  draft, whatever the agent asked, and one that does not leaves the agent's
-  own value through unchanged:
-  `kept_requests.rs::open_pull_request_forces_a_draft_when_the_repository_supervises_posts`,
-  `::open_pull_request_leaves_the_agents_draft_value_unchanged_when_supervision_is_off`.
-- A repository that supervises its posts holds a reply back: the route
-  answers `pending: true` with the pending item's forge id, posts nothing to
-  the forge, and the comment counts answered with no further reply taken;
-  a repository that does not posts the reply as before:
-  `kept_requests.rs::the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_posts`,
-  `::the_pr_agent_replies_and_reports_and_no_other_session_may`,
-  `::the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side`.
-- A reply to an inline review comment finds or creates the viewer's one
-  pending review — created with the hidden verdict mark as its body — and
-  joins its thread, reusing the same review on a second reply rather than
-  creating another:
-  `github/comments.rs::tests::a_pending_review_comment_reply_creates_a_pending_review_and_joins_its_thread`,
-  `::a_second_pending_reply_reuses_the_same_pending_review`.
-- A pending review found with no body, which GitHub refuses to edit, is
-  deleted and made again with the hidden mark where it holds no draft
-  comment, and is otherwise left to the user, the post refused saying so:
-  `github/comments.rs::tests::a_bodiless_pending_review_holding_no_draft_is_deleted_and_made_again`,
-  `::a_bodiless_pending_review_holding_drafts_is_the_users_to_settle`.
-  `replace_pending_review_body` (rule 25) recovers the same bodiless
-  review the same way, before replacing it with the caller's own new
-  body outright, never left for GitHub to refuse the edit over:
-  `github/comments.rs::tests::replace_pending_review_body_recovers_an_older_bodiless_review`.
-- A reply to a top-level conversation comment quotes it, with a link to it,
-  into the pending review's own body:
-  `github/comments.rs::tests::a_pending_conversation_reply_quotes_the_comment_and_appends_to_the_pending_review`.
-- A comment marked pending reads answered with no later comment on the
-  forge to find it by:
-  `live.rs::tests::a_pending_reply_marks_its_comment_answered_with_no_later_comment_on_the_forge`.
-- A pending reply to one comment of a thread answers every earlier comment
-  there too, and leaves a later one open:
-  `live.rs::tests::a_pending_reply_answers_earlier_comments_of_its_thread_and_leaves_a_later_one_open`.
-- The reply route announces the pending mark itself, since no forge fetch
-  ever reads it back:
-  `kept_requests.rs::the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_posts`.
-- The pending mark is written once and kept beside a mark of another kind
-  on the same row:
-  `store.rs::a_pending_reply_mark_is_written_once_and_kept_beside_others`.
-- `reply_comment` tells the agent a pending reply waits in the user's forge
-  drafts and to go on, rather than handing back the raw pending shape:
-  `tools.rs::tests::a_pending_reply_tells_the_agent_to_continue_rather_than_the_raw_answer`.
-- A supervised review holds new inline findings for the user to publish,
-  while a supervised resolve is refused so the user resolves the fixed thread:
-  `github/reviews.rs::tests::submit_review_pending_adds_each_finding_without_changing_the_body`,
-  `pull_request_reviews.rs::a_review_resolves_its_own_fixed_finding_only_when_posts_are_not_supervised`,
-  `tools.rs::tests::a_pending_review_tells_the_agent_to_continue_rather_than_the_raw_answer`.
-- `edit_pending_comment` and `delete_pending_comment` change and remove a
-  comment still in the viewer's own pending review, by its node id, and
-  refuse one the review no longer holds; `replace_pending_review_body`
-  overwrites the pending review's body outright, and refuses with no
-  pending review (rule 25):
-  `github/comments.rs::tests::edit_pending_comment_edits_a_comment_still_in_the_viewers_pending_review`,
-  `::edit_pending_comment_refuses_with_no_pending_review`,
-  `::edit_pending_comment_refuses_a_comment_the_pending_review_no_longer_holds`,
-  `::delete_pending_comment_deletes_a_comment_still_in_the_viewers_pending_review`,
-  `::replace_pending_review_body_replaces_the_whole_body_outright`,
-  `::replace_pending_review_body_refuses_with_no_pending_review`.
-- The three routes answer 409 with no pending review to
-  edit, and `edit_pending_review_body` replaces the pending review's body
-  outright through the same mutation a reply's own write reuses (rule 25):
-  `kept_requests.rs::pending_edit_routes_answer_409_with_no_pending_review`,
-  `::edit_pending_review_body_replaces_the_pending_reviews_body`.
-- Editing or deleting a held pending finding updates `list_comments` at
-  once, never waiting on a detail fetch that would never read either
-  change back on its own:
-  `kept_requests.rs::editing_and_deleting_a_held_pending_finding_updates_list_comments_at_once`.
-- A review GitHub creates fresh holds the hidden verdict mark as its body,
-  never an empty one, so `edit_pending_review_body` can replace it right
-  after without GitHub refusing the edit of a review it holds with no
-  body at all:
-  `github/comments.rs::tests::a_freshly_created_pending_review_is_editable_right_after`.
-- A reply that folds its text into the pending review's body, rather than
-  posting a comment of its own, brings `list_comments`'
-  own copy of that body current too, read fresh off the forge right after
-  (rule 25): neither folds its own answer back, so without this a later
-  read would still answer the body the review held before either changed
-  it:
-  `github/comments.rs::tests::pending_review_body_reads_what_a_conversation_reply_just_folded_into_it`.
-- A pending review past its first hundred comments still has a later one
-  found: the node lookup `edit_pending_comment` and `delete_pending_comment`
-  share pages the same way a request's threads do:
-  `github/comments.rs::tests::edit_pending_comment_finds_a_comment_past_the_first_hundred`.
-- A reply that folds into a pending review holding no comment of its own yet
-  — no round of `submit_review_pending` ever posted one —
-  still has `list_comments` answer its body right after: held through
-  `add_comments`, which holds one whether or not it was already there,
-  never `edit_comment`, which only changes one already held (rule 25).
-  Marked `from_review`, the same mark `hold_review_comments` forces on
-  `submit_review_pending`'s own first post of it, so the pending set it
-  belongs to carries it past a poll the same way:
-  `kept_requests.rs::a_reply_holds_the_pending_reviews_body_even_with_no_review_post_of_its_own`.
-- A `forge_id` naming no comment of any shape — the
-  caller's own mistake, not the forge's — answers 400, never the 409 a
-  merely-submitted one does, nor the 502 a real forge
-  refusal does (rule 25):
-  `github/comments.rs::tests::edit_pending_comment_refuses_a_forge_id_of_the_wrong_shape`,
-  `kept_requests.rs::pending_edit_routes_answer_400_with_a_malformed_forge_id`.
 - A trailing trailer and the blank line before it are stripped, and text with no trailer is left whole:
   `forge/pulls.rs::tests::strip_trailers_takes_off_a_trailing_trailer_and_the_blank_line_before_it`,
   `::strip_trailers_leaves_text_with_no_trailer_whole`.

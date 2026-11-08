@@ -81,15 +81,6 @@ Use `merge` when the workflow lands the task with no request.
 
    Done when the merge or close has its disposition.
 
-### Supervised repositories
-
-A supervised repository holds your reply in the user's forge drafts.
-`pending: true` means waiting, not failed. Go on.
-
-Call `edit_pending_comment`, `delete_pending_comment` or
-`edit_pending_review_body` for a user-asked change. Never post a new reply
-instead.
-
 ## Never
 
 Never merge the request. Leave every thread open. Never run
