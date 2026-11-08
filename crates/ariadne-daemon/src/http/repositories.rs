@@ -52,7 +52,6 @@ pub(super) async fn create(
                 base_branch,
                 description: req.description,
                 permission_mode: req.permission_mode,
-                supervise_posts: req.supervise_posts,
             },
             row,
         )
@@ -136,7 +135,6 @@ pub(super) async fn update(
                     false => Some(d),
                 }),
                 permission_mode: req.permission_mode,
-                supervise_posts: req.supervise_posts,
             },
             write,
         )

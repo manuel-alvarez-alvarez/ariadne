@@ -335,7 +335,6 @@ mod tests {
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
-                supervise_posts: None,
             })
             .await
             .unwrap();

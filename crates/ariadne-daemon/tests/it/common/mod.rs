@@ -1181,7 +1181,6 @@ impl Harness {
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
-                supervise_posts: None,
             })
             .await
             .unwrap()
@@ -1194,21 +1193,6 @@ impl Harness {
                 &repo.id,
                 RepositoryUpdate {
                     permission_mode: Some(mode),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-    }
-
-    /// Set whether a repository's agents hold what they post to the forge
-    /// for a person's approval.
-    pub(crate) async fn set_supervise_posts(&self, repo: &Repository, supervise: bool) {
-        self.store
-            .update_repository(
-                &repo.id,
-                RepositoryUpdate {
-                    supervise_posts: Some(supervise),
                     ..Default::default()
                 },
             )

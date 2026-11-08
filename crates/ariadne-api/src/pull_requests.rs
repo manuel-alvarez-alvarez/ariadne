@@ -86,9 +86,6 @@ pub struct PullRequestDto {
     /// session (029, 032), or the author of the task that opened it (005).
     #[serde(default)]
     pub session_id: Option<String>,
-    /// Whether this repository holds agent posts for human review.
-    #[serde(default)]
-    pub supervise_posts: bool,
     /// The open goals of Ariadne's operations on this request, one per
     /// operation (029): what Forge reads to link the goal and its task.
     #[serde(default)]
@@ -145,29 +142,6 @@ pub struct PullRequestCommentDto {
     pub from_review: bool,
 }
 
-/// What the reply route answers instead of a posted comment, where the
-/// repository holds agent posts for the user's approval (002, 026 rule 24):
-/// the reply waits, unposted, as a pending review in the user's own forge
-/// drafts, until the user publishes it there.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PendingReplyDto {
-    /// Always true: a posted reply never takes this shape.
-    pub pending: bool,
-    /// The forge id of the pending item: the pending review's own id for a
-    /// reply to a top-level conversation comment, the new draft comment's
-    /// for a reply inside a review thread.
-    pub id: String,
-}
-
-/// What `POST .../reply` answers: the posted comment, or, where the
-/// repository holds posts back, [`PendingReplyDto`] in its place.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum ReplyAnswerDto {
-    Posted(Box<PullRequestCommentDto>),
-    Pending(PendingReplyDto),
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize, IntoParams)]
 pub struct PullRequestCommentQuery {
     /// Only the threads that wait on an answer from the integration login.
@@ -179,43 +153,6 @@ pub struct PullRequestCommentQuery {
 #[serde(deny_unknown_fields)]
 pub struct ReplyCommentRequest {
     pub body: String,
-}
-
-/// Body of `POST /v1/pull-requests/{id}/comments/edit` (026 rule 25): change the
-/// body of one of the viewer's own pending forge posts — a pending review
-/// comment — while it still waits in the user's forge drafts.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EditPendingCommentRequest {
-    /// The forge id of the pending comment, as `reply_comment` or
-    /// `submit_review` answered it.
-    pub forge_id: String,
-    pub body: String,
-}
-
-/// Body of `POST /v1/pull-requests/{id}/comments/delete` (026 rule 25).
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DeletePendingCommentRequest {
-    pub forge_id: String,
-}
-
-/// Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25).
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EditPendingReviewBodyRequest {
-    pub body: String,
-}
-
-/// What editing, deleting or replacing a pending forge post answers (026 rule 25):
-/// which forge item changed, in words that name the forge.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PendingEditDto {
-    /// The forge id of the item that changed.
-    pub id: String,
-    /// What changed: "the pending GitHub review comment" or "the GitHub
-    /// pending review body".
-    pub changed: String,
 }
 
 /// Body of `POST /v1/pull-requests/{id}/report`: what the request's session
@@ -244,25 +181,6 @@ pub struct ReportPullRequestRequest {
 pub struct PullRequestDiffQuery {
     /// Read the diff from this sha to the head, not from the base.
     pub since: Option<String>,
-}
-
-/// What `POST .../reviews` answers where the repository holds posts back
-/// (026 rule 24 / 029 rule 13a): the review's findings wait, unposted, in
-/// the viewer's own pending review, in place of the posted comments the
-/// route otherwise answers with.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PendingReviewDto {
-    /// Always true: a posted review never takes this shape.
-    pub pending: bool,
-}
-
-/// What `POST .../reviews` answers: the posted comments, or, where the
-/// repository holds posts back, [`PendingReviewDto`] in their place.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum SubmitReviewAnswerDto {
-    Posted(Vec<PullRequestCommentDto>),
-    Pending(PendingReviewDto),
 }
 
 /// Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted
