@@ -38,7 +38,10 @@ const INTRO: &str =
 pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize) -> String {
     let dtos: Vec<_> = events.iter().cloned().map(event_dto).collect();
     let items = fold(&dtos);
-    let first_briefing = items.iter().position(is_daemon_prompt);
+    let first_briefing = items
+        .iter()
+        .position(is_daemon_prompt)
+        .filter(|index| !carries_handoff(&items[*index]));
     let last_error = items
         .iter()
         .rposition(|item| matches!(item, TranscriptItem::Error { .. }));
@@ -63,6 +66,12 @@ pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize) -> String {
 /// A prompt the daemon sent, not the user.
 fn is_daemon_prompt(item: &TranscriptItem) -> bool {
     matches!(item, TranscriptItem::UserPrompt { source, .. } if source.as_deref() == Some("daemon"))
+}
+
+/// A prompt that holds the handoff of an earlier switch: the first prompt of
+/// a switched session. Its history is not in any briefing, so it stays.
+fn carries_handoff(item: &TranscriptItem) -> bool {
+    matches!(item, TranscriptItem::UserPrompt { text, .. } if text.contains(INTRO.trim_end()))
 }
 
 /// A nudge that woke a quiet agent, found by the prompt kind the runtime
@@ -690,6 +699,16 @@ mod tests {
 
         assert!(!out.contains("the opening briefing"), "{out}");
         assert!(out.contains("a later daemon message"), "{out}");
+    }
+
+    #[test]
+    fn the_first_prompt_of_a_switched_session_stays_with_its_earlier_history() {
+        let first = format!("briefing\n\n{INTRO}⟪earlier history⟫\n\nresume");
+        let events = [daemon_prompt("a", &first, None)];
+
+        let out = handoff_text(&events, 10_000);
+
+        assert!(out.contains("earlier history"), "{out}");
     }
 
     #[test]
