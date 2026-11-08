@@ -89,6 +89,18 @@ pub struct PullRequestDto {
     /// Whether this repository holds agent posts for human review.
     #[serde(default)]
     pub supervise_posts: bool,
+    /// The open goals of Ariadne's operations on this request, one per
+    /// operation (029): what Forge reads to link the goal and its task.
+    #[serde(default)]
+    pub operations: Vec<PullRequestOperationRefDto>,
+}
+
+/// An open operation goal on a request, with its one task.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PullRequestOperationRefDto {
+    pub operation: ariadne_core::workflow::PrOperation,
+    pub goal_id: String,
+    pub task_id: Option<String>,
 }
 
 /// One check that failed on a request's head.

@@ -17,9 +17,11 @@ use ariadne_api::pull_requests::{
     PullRequestListQuery, PullRequestMatchDto, ReplyAnswerDto, ReplyCommentRequest,
     ReportPullRequestRequest, SubmitReviewAnswerDto, SubmitReviewRequest,
 };
+use ariadne_core::models::ModelRank;
+use ariadne_core::workflow::PrOperation;
 use ariadne_store::{
-    AgentSession, ForgeIntegration, PullRequest, PullRequestComment, PullRequestFilter,
-    PullRequestRow,
+    AgentSession, ForgeIntegration, PrOperationEnd, PullRequest, PullRequestComment,
+    PullRequestFilter, PullRequestRow, StartPrOperation,
 };
 use axum::{
     extract::{Path, Query, State},
@@ -1354,10 +1356,15 @@ async fn hold_review_comments(
 
 /// Ask Ariadne to review any open request on the model the user picks,
 /// or stop asking (029). Authorship and GitHub review assignments do not
-/// restrict the ask. The session waits while the request is a draft.
-/// A review of the user's own request posts as a comment; other reviews
-/// may request changes. Stopping ends only the reviewer session, keeping
-/// any task or keeper that also works on the request.
+/// restrict the ask. Asking starts one active goal for the review, with one
+/// staffed task and no orchestrator, on the `pr-review` workflow: the model
+/// must be ranked inside that workflow's band, else 400. Asking again keeps
+/// the open goal and moves its pin and skills. The session waits while the
+/// request is a draft. A review of the user's own request posts as a
+/// comment; other reviews may request changes. The goal completes when the
+/// request merges or closes. Stopping cancels the goal and its task and ends
+/// only the reviewer session, keeping any task or keeper that also works on
+/// the request.
 #[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-review", tag = "pull-requests",
     params(("id" = String, Path), ("number" = i64, Path)),
     request_body = AskReviewRequest,
@@ -1378,6 +1385,9 @@ pub(super) async fn ask_review(
         ));
     }
     let role = pulls::role(&pull.author_login, &forge);
+    // One start or stop at a time on a request, and no scheduler pass reads
+    // the half of one (029).
+    let _operation = state.store.pr_operation_lock(&id, number).await;
     let row = state.store.pull_request_by_number(&id, number).await?;
     let pin = match req.asked {
         false => None,
@@ -1400,6 +1410,7 @@ pub(super) async fn ask_review(
                 req.effort.as_deref(),
             )
             .await?;
+            check_review_band(&state, &id, number, &pin.model).await?;
             // Each a skill a task agent is staffed on (017); `pr-reviewer`
             // is loaded anyway, so it is not stored twice.
             let mut skills: Vec<String> = Vec::new();
@@ -1427,18 +1438,46 @@ pub(super) async fn ask_review(
                 .map_err(forge_error)?
                 .0
         }
-        // Nothing works on it, so there is no asking to stop.
+        // Nothing works on it, so there is no asking to stop; a review goal
+        // a stop left open is ended all the same.
         (None, None) => {
+            end_review_goal(&state, &id, number).await?;
             return Ok(Json(forge_pull_dto(&id, pull, role, false)));
         }
     };
-    let row = state
-        .store
-        .set_pull_request_review_asked(
-            &row.id,
-            pin.as_ref().map(|(pin, skills)| (pin, skills.as_slice())),
-        )
-        .await?;
+    // The review is a goal of its own with one staffed task (029). Starting
+    // keeps the open goal where one is, so a repeat only moves its pin and
+    // skills; the goal exists before the ask is written, so a scheduler pass
+    // that reads the ask finds its owner. A stop writes the ask first, so no
+    // pass starts a session for a review that is going away.
+    let row = match &pin {
+        Some((pin, skills)) => {
+            state
+                .store
+                .start_pr_operation(StartPrOperation {
+                    operation: PrOperation::Review,
+                    repository_id: id.clone(),
+                    number,
+                    url: pull.url.clone(),
+                    title: pull.title.clone(),
+                    pin: pin.clone(),
+                    skills: skills.clone(),
+                })
+                .await?;
+            state
+                .store
+                .set_pull_request_review_asked(&row.id, Some((pin, skills.as_slice())))
+                .await?
+        }
+        None => {
+            let row = state
+                .store
+                .set_pull_request_review_asked(&row.id, None)
+                .await?;
+            end_review_goal(&state, &id, number).await?;
+            row
+        }
+    };
     // Starting a session does not assign a review on the forge. Preserve
     // the last observed assignment until the next fetch confirms it.
     let review_requested = state
@@ -1456,6 +1495,67 @@ pub(super) async fn ask_review(
     state.notify_scheduler_pull_request(&row.id);
     let view = read_held(&state, row).await?;
     Ok(Json(pull_request_dto_of(&state.store, view).await?))
+}
+
+/// Cancel the open review goal of a request, with its task, where the user
+/// stopped the review.
+async fn end_review_goal(state: &AppState, repository_id: &str, number: i64) -> ApiResult<()> {
+    state
+        .store
+        .end_pr_operation(
+            repository_id,
+            number,
+            PrOperation::Review,
+            PrOperationEnd::Cancelled,
+            "the user stopped the review",
+        )
+        .await?;
+    Ok(())
+}
+
+/// Refuse a model outside the capability band of the review column: the
+/// band of the open goal's snapshot, else of the workflow as it stands. A
+/// model the user has not ranked has no band to be in.
+async fn check_review_band(
+    state: &AppState,
+    repository_id: &str,
+    number: i64,
+    model: &str,
+) -> ApiResult<()> {
+    let band: Vec<ModelRank> = match state
+        .store
+        .active_pr_goal(repository_id, number, PrOperation::Review)
+        .await?
+    {
+        Some(goal) => state
+            .store
+            .goal_steps(&goal.id)
+            .await?
+            .first()
+            .and_then(|step| serde_json::from_str(&step.ranks).ok())
+            .unwrap_or_default(),
+        None => state
+            .store
+            .get_workflow(ariadne_store::defaults::PR_REVIEW_WORKFLOW)
+            .await?
+            .steps()
+            .into_iter()
+            .next()
+            .map(|step| step.ranks)
+            .unwrap_or_default(),
+    };
+    let ranks = state.store.model_ranks().await?;
+    let rank = ranks.get(model).copied();
+    if band.is_empty() || rank.is_some_and(|rank| band.contains(&rank)) {
+        return Ok(());
+    }
+    let allowed: Vec<&str> = band.iter().map(|rank| rank.as_str()).collect();
+    Err(ApiError::bad_request(format!(
+        "model {model} is {}: the {} workflow allows {} for a review",
+        rank.map_or("unranked", |rank| rank.as_str()),
+        ariadne_store::defaults::PR_REVIEW_WORKFLOW,
+        allowed.join(" and ")
+    )))
 }
 
 /// Ask Ariadne to keep any open request by hand on the model the user

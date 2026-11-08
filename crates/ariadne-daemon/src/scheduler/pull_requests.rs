@@ -15,11 +15,11 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use tracing::{info, warn};
 
-use ariadne_core::workflow::StepGate;
+use ariadne_core::workflow::{PrOperation, StepGate};
 use ariadne_core::{Actor, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{
-    AgentPin, AgentSession, PullRequest, PullRequestAsks, PullRequestFilter, SessionFilter,
-    StoreError, Task,
+    AgentPin, AgentSession, PrOperationEnd, PrOperationOwner, PullRequest, PullRequestAsks,
+    PullRequestFilter, SessionFilter, StoreError, Task,
 };
 
 use crate::acp::NewsDelivery;
@@ -88,6 +88,20 @@ impl super::Scheduler {
         id: &str,
         tick_now: Option<Instant>,
     ) -> anyhow::Result<()> {
+        let named = match self.store.get_pull_request(id).await {
+            Ok(row) => row,
+            Err(StoreError::NotFound { .. }) => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        // What follows acts on the review goal and its session: it holds the
+        // request's operation lock, and reads the row again under it, so it
+        // never sees a start or a stop the HTTP route has half written
+        // (029). The lock is let go before the keeper and the keeping pass,
+        // which touch no operation goal.
+        let operation_lock = self
+            .store
+            .pr_operation_lock(&named.repository_id, named.number)
+            .await;
         let row = match self.store.get_pull_request(id).await {
             Ok(row) => row,
             Err(StoreError::NotFound { .. }) => return Ok(()),
@@ -105,6 +119,14 @@ impl super::Scheduler {
             self.launcher
                 .end_pull_request_sessions(&row.id, &row.repository_id, None)
                 .await?;
+            self.store
+                .stop_pr_operation(
+                    &row.repository_id,
+                    row.number,
+                    PrOperation::Review,
+                    "the forge integration is off",
+                )
+                .await?;
             if row.origin_task_id.is_none() {
                 self.stop_working(&row.id, (&row).into()).await?;
             }
@@ -116,14 +138,22 @@ impl super::Scheduler {
         else {
             return Ok(());
         };
+        // The review goal follows the request: it ends with it, or with the
+        // ask. What stays open is the owner of the review session.
+        let owner = match self.settle_review_operation(&pull).await? {
+            Settled::Owner(owner) => owner.map(|owner| *owner),
+            // The ask went with the goal: the next pass ends the session.
+            Settled::Stopped => return Ok(()),
+        };
         // Review and keeper sessions follow their own explicit asks,
         // independently of who authored the request (029, 032).
         if pull.review_asked
             || self.launcher.pull_request_worktree_exists(&pull.id)
             || !self.live_reviewer_sessions(&pull.id).await?.is_empty()
         {
-            self.review_pass(&pull).await?;
+            self.review_pass(&pull, owner.as_ref()).await?;
         }
+        drop(operation_lock);
         if pull.babysit_asked
             || self.launcher.keeper_worktree_exists(&pull.id)
             || !self.live_keeper_sessions(&pull.id).await?.is_empty()
@@ -140,6 +170,53 @@ impl super::Scheduler {
             return self.stop_working(&pull.id, (&pull).into()).await;
         }
         self.keep_pass(&pull, tick_now).await
+    }
+
+    /// The goal of the review operation on a request, held to the request
+    /// (029): it completes when the request merges or closes, and cancels
+    /// where the ask is gone — a stop whose own write did not finish — or
+    /// where its task was ended by hand, which also takes the ask down.
+    /// Answers the open goal's owner, where one stays open. A review asked
+    /// before goals existed has none and runs as it did. The caller holds
+    /// the request's operation lock.
+    async fn settle_review_operation(&mut self, pull: &PullRequest) -> anyhow::Result<Settled> {
+        let Some(goal) = self
+            .store
+            .active_pr_goal(&pull.repository_id, pull.number, PrOperation::Review)
+            .await?
+        else {
+            return Ok(Settled::Owner(None));
+        };
+        let owner = self.store.pr_operation_owner(&goal).await?;
+        let task_over = owner.as_ref().is_some_and(|o| {
+            o.task.status().is_terminal() || o.task.status() == TaskStatus::Failed
+        });
+        if pull.state != "open" {
+            info!(pull_request = %pull.id, goal = %goal.id, state = %pull.state, "completing the review goal");
+            self.store
+                .end_pr_operation(
+                    &pull.repository_id,
+                    pull.number,
+                    PrOperation::Review,
+                    PrOperationEnd::Completed,
+                    &format!("the request {}", pull.state),
+                )
+                .await?;
+            return Ok(Settled::Owner(None));
+        }
+        if !pull.review_asked || task_over {
+            info!(pull_request = %pull.id, goal = %goal.id, "cancelling the review goal, its ask is gone");
+            self.store
+                .stop_pr_operation(
+                    &pull.repository_id,
+                    pull.number,
+                    PrOperation::Review,
+                    "the review was stopped",
+                )
+                .await?;
+            return Ok(Settled::Stopped);
+        }
+        Ok(Settled::Owner(owner.map(Box::new)))
     }
 
     /// The request `pull` as the forge reads it now, where that is merged
@@ -462,6 +539,7 @@ impl super::Scheduler {
         &mut self,
         pull: &PullRequest,
         pin: AgentPin,
+        owner: Option<&PrOperationOwner>,
     ) -> anyhow::Result<()> {
         let last = self.last_session_of(&pull.id, Seat::Reviewer).await?;
         if let Some(last) = &last
@@ -481,7 +559,11 @@ impl super::Scheduler {
                 .await;
             return Ok(());
         }
-        match self.launcher.resume_pull_request_session(pull, pin).await {
+        match self
+            .launcher
+            .resume_pull_request_session(pull, pin, owner)
+            .await
+        {
             Ok(session) => {
                 info!(pull_request = %pull.id, session = %session.id, "the request's session is up");
                 let _ = self
@@ -552,6 +634,13 @@ impl super::Scheduler {
     /// cleanup took its worktree and its branch.
     async fn end_kept_request(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
         info!(pull_request = %pull.id, state = %pull.state, "the request ended, taking its work down");
+        // The review goal ends with the request, before its row goes.
+        let operation_lock = self
+            .store
+            .pr_operation_lock(&pull.repository_id, pull.number)
+            .await;
+        self.settle_review_operation(pull).await?;
+        drop(operation_lock);
         // Done only once its sessions and worktree are gone: until then the
         // row stays, so a restart owes it the same. A cleanup that failed is
         // tried again, on the next change of the request at once and on the
@@ -573,7 +662,11 @@ impl super::Scheduler {
     /// A manually asked review (029): one live reviewer session while the
     /// request is open and out of draft; its session and worktree taken
     /// down otherwise.
-    async fn review_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
+    async fn review_pass(
+        &mut self,
+        pull: &PullRequest,
+        owner: Option<&PrOperationOwner>,
+    ) -> anyhow::Result<()> {
         let integration = self.store.forge_integration(&pull.repository_id).await?;
         let live = self.live_reviewer_sessions(&pull.id).await?;
         let login = integration
@@ -619,7 +712,7 @@ impl super::Scheduler {
             self.store
                 .set_pull_request_told_head(&pull.id, &pull.head_sha)
                 .await?;
-            return self.start_pull_request_session(pull, pin).await;
+            return self.start_pull_request_session(pull, pin, owner).await;
         };
         // A push moves the worktree under the agent, so it waits for the
         // turn on the old head to end.
@@ -896,6 +989,15 @@ impl super::Scheduler {
             .filter(|s| s.seat() == Some(Seat::Keeper))
             .collect())
     }
+}
+
+/// What settling a request's review goal leaves the pass to do.
+enum Settled {
+    /// The goal that stays open and owns the session, or none for a review
+    /// from before goals and for one whose goal just completed.
+    Owner(Option<Box<PrOperationOwner>>),
+    /// The goal was cancelled and the ask cleared; nothing more to do now.
+    Stopped,
 }
 
 /// Whether a task is done with its request: finished, cancelled, or failed.

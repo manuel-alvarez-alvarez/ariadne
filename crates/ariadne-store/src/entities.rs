@@ -459,6 +459,20 @@ pub struct Goal {
     /// `orchestrator_could_not_start`'s (one that never got off the
     /// ground). Meaningless while `orchestrator_given_up_at` is `None`.
     pub orchestrator_given_up_wedged: bool,
+    /// The pull request operation this goal runs (029): `review` or
+    /// `babysit`, with the three columns after it naming the request by
+    /// value. None on an ordinary goal.
+    pub pr_operation: Option<String>,
+    pub pr_repository_id: Option<String>,
+    pub pr_number: Option<i64>,
+    pub pr_url: Option<String>,
+}
+
+impl Goal {
+    /// The pull request operation this goal runs, where it runs one.
+    pub fn pull_request_operation(&self) -> Option<ariadne_core::workflow::PrOperation> {
+        self.pr_operation.as_deref().and_then(|s| s.parse().ok())
+    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

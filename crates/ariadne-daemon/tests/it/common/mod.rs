@@ -327,6 +327,21 @@ impl HarnessBuilder {
         let db_path = dir.path().join("test.db");
         std::fs::copy(template_db().await, &db_path).unwrap();
         let store = Store::open(&db_path).await.unwrap();
+        // The model every review test asks on is balanced, a rank the
+        // `pr-review` workflow allows (029).
+        store
+            .set_model_ranks(&[
+                (
+                    "stub:review-model",
+                    Some(ariadne_core::models::ModelRank::Balanced),
+                ),
+                (
+                    "stub:babysit-model",
+                    Some(ariadne_core::models::ModelRank::Balanced),
+                ),
+            ])
+            .await
+            .unwrap();
         let agent_dir = dir.path().join("agent");
         std::fs::create_dir_all(&agent_dir).unwrap();
         let agent = acp::stub_acp_agent(&agent_dir, default_script());

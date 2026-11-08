@@ -6463,3 +6463,256 @@ async fn invalid_stored_column_skills_refuse_staffing_without_writing_a_task() {
             .is_empty()
     );
 }
+
+fn review_start(repository_id: &str, model: &str, skills: &[&str]) -> StartPrOperation {
+    StartPrOperation {
+        operation: ariadne_core::workflow::PrOperation::Review,
+        repository_id: repository_id.into(),
+        number: 7,
+        url: "https://github.com/acme/widgets/pull/7".into(),
+        title: "Add widgets".into(),
+        pin: pin(model),
+        skills: skills.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+/// A review start makes one active goal with no orchestrator, on a snapshot
+/// of the `pr-review` column, and one task already in that column with one
+/// agent that loads `pr-reviewer` and the picked skills.
+#[tokio::test]
+async fn a_review_start_makes_one_active_goal_with_one_staffed_task() {
+    use ariadne_core::workflow::PrOperation;
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    let (owner, created) = store
+        .start_pr_operation(review_start(&repo.id, "stub:one", &["research"]))
+        .await
+        .unwrap();
+    assert!(created);
+    assert_eq!(owner.goal.status(), GoalStatus::Active);
+    assert!(!owner.goal.orchestrated);
+    assert_eq!(owner.goal.workflow, "pr-review");
+    assert_eq!(
+        owner.goal.pull_request_operation(),
+        Some(PrOperation::Review)
+    );
+    assert_eq!(owner.goal.pr_number, Some(7));
+    assert_eq!(owner.task.status(), TaskStatus::InProgress);
+    assert_eq!(owner.task.step.as_deref(), Some("review"));
+    assert_eq!(owner.agent.step, "review");
+    let skills: Vec<String> = store
+        .agent_skills(&owner.agent.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(skills, ["pr-reviewer", "research"]);
+    let steps = store.goal_steps(&owner.goal.id).await.unwrap();
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].ranks, r#"["balanced","frontier"]"#);
+}
+
+/// Starting again keeps the open goal and task and moves the pin and skills
+/// onto the same agent; two starts at once make one goal between them.
+#[tokio::test]
+async fn a_repeated_review_start_keeps_the_open_goal_and_moves_its_pin() {
+    use ariadne_core::workflow::PrOperation;
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    let (first, _) = store
+        .start_pr_operation(review_start(&repo.id, "stub:one", &[]))
+        .await
+        .unwrap();
+    let (second, created) = store
+        .start_pr_operation(review_start(&repo.id, "stub:two", &["research"]))
+        .await
+        .unwrap();
+    assert!(!created);
+    assert_eq!(second.goal.id, first.goal.id);
+    assert_eq!(second.task.id, first.task.id);
+    assert_eq!(second.agent.id, first.agent.id);
+    assert_eq!(second.agent.model, "stub:two");
+    let skills: Vec<String> = store
+        .agent_skills(&second.agent.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(skills, ["pr-reviewer", "research"]);
+
+    let other = review_start(&repo.id, "stub:one", &[]);
+    let other = StartPrOperation { number: 8, ..other };
+    let (a, b) = tokio::join!(
+        store.start_pr_operation(other.clone()),
+        store.start_pr_operation(other)
+    );
+    let (a, b) = (a.unwrap().0, b.unwrap().0);
+    assert_eq!(a.goal.id, b.goal.id);
+    assert_eq!(a.task.id, b.task.id);
+    assert_eq!(
+        store
+            .list_tasks(TaskFilter {
+                goal_id: Some(a.goal.id),
+                status: None
+            })
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        store
+            .active_pr_goal(&repo.id, 7, PrOperation::Review)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+/// An end completes or cancels the task and the goal together, is safe to
+/// repeat, and leaves the next start a new goal while the old one stays as
+/// history.
+#[tokio::test]
+async fn ending_a_review_closes_its_task_and_goal_and_the_next_start_is_new() {
+    use ariadne_core::workflow::PrOperation;
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    let (first, _) = store
+        .start_pr_operation(review_start(&repo.id, "stub:one", &[]))
+        .await
+        .unwrap();
+    let ended = store
+        .end_pr_operation(
+            &repo.id,
+            7,
+            PrOperation::Review,
+            PrOperationEnd::Completed,
+            "merged",
+        )
+        .await
+        .unwrap()
+        .expect("the open goal");
+    assert_eq!(ended.status(), GoalStatus::Completed);
+    assert_eq!(
+        store.get_task(&first.task.id).await.unwrap().status(),
+        TaskStatus::Finished
+    );
+    assert!(
+        store
+            .end_pr_operation(
+                &repo.id,
+                7,
+                PrOperation::Review,
+                PrOperationEnd::Cancelled,
+                "again"
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let (second, created) = store
+        .start_pr_operation(review_start(&repo.id, "stub:one", &[]))
+        .await
+        .unwrap();
+    assert!(created);
+    assert_ne!(second.goal.id, first.goal.id);
+    store
+        .end_pr_operation(
+            &repo.id,
+            7,
+            PrOperation::Review,
+            PrOperationEnd::Cancelled,
+            "stop",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_task(&second.task.id).await.unwrap().status(),
+        TaskStatus::Cancelled
+    );
+    assert_eq!(
+        store.get_goal(&second.goal.id).await.unwrap().status(),
+        GoalStatus::Cancelled
+    );
+    assert_eq!(
+        store.get_goal(&first.goal.id).await.unwrap().status(),
+        GoalStatus::Completed
+    );
+}
+
+/// The `pr-review` workflow is no ordinary workflow: no goal and no
+/// repository default can name it, and an edit keeps its shape — one
+/// `review` column that loads `pr-reviewer`, with no gate and only the
+/// balanced and frontier ranks — while its title, description, extra skills
+/// and band stay editable.
+#[tokio::test]
+async fn the_review_workflow_is_edited_within_its_shape_and_no_ordinary_goal_uses_it() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    let goal = store
+        .create_goal(NewGoal {
+            workflow: Some("pr-review".into()),
+            title: "A goal".into(),
+            description: "d".into(),
+            issue_url: None,
+            repository_ids: vec![repo.id.clone()],
+            pin: default_pin(),
+        })
+        .await;
+    assert!(
+        format!("{:?}", goal.expect_err("an ordinary goal")).contains("pr-review"),
+        "names the workflow"
+    );
+    let default = store
+        .update_repository(
+            &repo.id,
+            RepositoryUpdate {
+                default_workflow: Some("pr-review".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(default.is_err());
+
+    for (document, reason) in [
+        (
+            "workflow pr-review\n  review[Review]\n    skills: coding\n    ranks: balanced\n",
+            "pr-reviewer",
+        ),
+        (
+            "workflow pr-review\n  review[Review]\n    skills: pr-reviewer\n    ranks: fast\n",
+            "balanced and frontier",
+        ),
+        (
+            "workflow pr-review\n  review[Review]\n    skills: pr-reviewer\n    ranks: balanced\n    gate: committed\n",
+            "no gate",
+        ),
+        (
+            "workflow pr-review\n  review[Review]\n    skills: pr-reviewer\n    ranks: balanced\n  more[More]\n    skills: coding\n",
+            "exactly one column",
+        ),
+    ] {
+        let refused = store.set_workflow_document("pr-review", document).await;
+        let message = format!("{:?}", refused.expect_err("a broken shape"));
+        assert!(message.contains(reason), "{message}");
+    }
+    let edited = store
+        .set_workflow_document(
+            "pr-review",
+            "workflow pr-review\n  review[Look]\n    Look hard.\n    skills: pr-reviewer, research\n    ranks: frontier\n",
+        )
+        .await
+        .unwrap();
+    assert!(edited.document_text().contains("Look hard."));
+    let (owner, _) = store
+        .start_pr_operation(review_start(&repo.id, "stub:one", &[]))
+        .await
+        .unwrap();
+    let steps = store.goal_steps(&owner.goal.id).await.unwrap();
+    assert_eq!(steps[0].title, "Look");
+    assert_eq!(steps[0].ranks, r#"["frontier"]"#);
+    store.reset_workflow("pr-review").await.unwrap();
+}

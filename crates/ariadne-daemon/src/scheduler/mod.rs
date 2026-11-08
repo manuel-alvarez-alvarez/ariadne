@@ -557,9 +557,11 @@ impl Scheduler {
         }
         self.auto_switch_exhausted(&session).await;
         match (&session.task_id, &session.goal_id, &session.pull_request_id) {
-            (Some(task), _, _) => self.reconcile(Target::Task(task)).await,
-            (None, Some(goal_id), _) => self.reconcile(Target::Goal(goal_id)).await,
-            (None, None, Some(pull_request)) => self.reconcile_pull_request(pull_request).await,
+            // A request's own session is the request's to reconcile, even
+            // where an operation's goal and task stand behind it (029).
+            (_, _, Some(pull_request)) => self.reconcile_pull_request(pull_request).await,
+            (Some(task), _, None) => self.reconcile(Target::Task(task)).await,
+            (None, Some(goal_id), None) => self.reconcile(Target::Goal(goal_id)).await,
             (None, None, None) => {}
         }
     }

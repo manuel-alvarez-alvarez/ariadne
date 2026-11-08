@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use ariadne_api::dashboards::DashboardDto;
 use ariadne_api::events::AgentEventDto;
-use ariadne_api::goals::{GoalDto, GoalUsageDto};
+use ariadne_api::goals::{GoalDto, GoalUsageDto, PullRequestOperationDto};
 use ariadne_api::messages::MessageDto;
 use ariadne_api::permissions::{
     LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
@@ -72,6 +72,7 @@ dto! {
     pub(crate) fn workflow_dto(w: store::Workflow) -> WorkflowDto {
         document: w.document_text().to_string(),
         builtin: w.is_builtin(),
+        operation: store::defaults::pr_operation_of(&w.name),
         steps: w.steps().into_iter().map(workflow_step_dto).collect(),
         .. name, created_at, updated_at
     }
@@ -108,6 +109,7 @@ dto! {
         steps: Vec<WorkflowStepDto>,
     ) -> GoalDto {
         status: g.status(),
+        pull_request: pull_request_operation_dto(&g),
         steps: steps,
         repos: repos,
         usage: usage,
@@ -139,8 +141,10 @@ dto! {
         depends_on: Vec<String>,
         usage: TaskUsageDto,
         reason: Option<String>,
+        operation: Option<ariadne_core::workflow::PrOperation>,
     ) -> TaskDto {
         status: t.status(),
+        operation: operation,
         stalled: t.is_stalled(),
         agents: agents
             .into_iter()
@@ -238,6 +242,16 @@ pub(crate) fn event_dto(e: store::AgentEvent) -> AgentEventDto {
     }
 }
 
+/// The request an operation goal works on, where the goal runs one.
+fn pull_request_operation_dto(goal: &store::Goal) -> Option<PullRequestOperationDto> {
+    Some(PullRequestOperationDto {
+        operation: goal.pull_request_operation()?,
+        repository_id: goal.pr_repository_id.clone()?,
+        number: goal.pr_number?,
+        url: goal.pr_url.clone()?,
+    })
+}
+
 /// The names of the skills an agent loads, in the order they reach it.
 ///
 /// An agent has no name of its own, so this is what a reader identifies it
@@ -280,7 +294,13 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
     let depends_on = store.list_task_dependencies(&task.id).await?;
     let usage = task_usage(store, &task.id, &agents).await?;
     let reason = store.ended_reason(&task).await?;
-    Ok(task_dto(task, agents, sessions, depends_on, usage, reason))
+    let operation = store
+        .get_goal(&task.goal_id)
+        .await?
+        .pull_request_operation();
+    Ok(task_dto(
+        task, agents, sessions, depends_on, usage, reason, operation,
+    ))
 }
 
 /// [`session_dto`] with what the session has spent, and the column its
@@ -567,7 +587,26 @@ pub(crate) async fn pull_request_dto_of(
         .get_repository(&row.repository_id)
         .await?
         .supervise_posts();
-    Ok(pull_request_dto(row, session_id, supervise_posts))
+    let mut operations = Vec::new();
+    for operation in ariadne_core::workflow::PrOperation::ALL {
+        if let Some(goal) = store
+            .active_pr_goal(&row.repository_id, row.number, operation)
+            .await?
+        {
+            let task_id = store
+                .pr_operation_owner(&goal)
+                .await?
+                .map(|owner| owner.task.id);
+            operations.push(ariadne_api::pull_requests::PullRequestOperationRefDto {
+                operation,
+                goal_id: goal.id,
+                task_id,
+            });
+        }
+    }
+    let mut dto = pull_request_dto(row, session_id, supervise_posts);
+    dto.operations = operations;
+    Ok(dto)
 }
 
 /// A request Ariadne works on as the API answers it: its live read and
@@ -613,6 +652,7 @@ pub(crate) fn pull_request_dto(
         role: pull.role,
         ready: pull.ready,
         supervise_posts,
+        operations: Vec::new(),
     }
 }
 
@@ -659,6 +699,7 @@ pub(crate) fn forge_pull_dto(
         babysit_skills: Vec::new(),
         session_id: None,
         supervise_posts: false,
+        operations: Vec::new(),
     }
 }
 

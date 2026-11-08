@@ -214,6 +214,17 @@ impl Store {
         agent_id: &str,
         skills: &[String],
     ) -> Result<()> {
+        // The goal of a review operation staffs `pr-reviewer` on its one
+        // agent (029); no other goal does.
+        let operation: Option<String> = sqlx::query_scalar(
+            "SELECT g.pr_operation FROM task_agents a
+               JOIN tasks t ON t.id = a.task_id JOIN goals g ON g.id = t.goal_id
+              WHERE a.id = ?",
+        )
+        .bind(agent_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .flatten();
         for (ordinal, name) in skills.iter().enumerate() {
             // The orchestrator's skill is nobody's to staff: its seat is a
             // fact of the name, so the refusal reads it the same way the
@@ -227,6 +238,9 @@ impl Store {
                 // The `pr` column stages `pr-babysit` (030); `pr-reviewer`
                 // is the daemon's own, loaded onto a review session (029).
                 SkillSeat::PullRequest if name == PR_BABYSIT_SKILL => {}
+                SkillSeat::PullRequest
+                    if name == crate::defaults::PR_REVIEWER_SKILL
+                        && operation.as_deref() == Some("review") => {}
                 SkillSeat::PullRequest => {
                     return Err(StoreError::Conflict(format!(
                         "skill {name} is loaded by Ariadne itself, where a request is reviewed; \

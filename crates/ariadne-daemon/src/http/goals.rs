@@ -136,7 +136,44 @@ pub(super) async fn cancel(
             goal.status
         )));
     }
-    let goal = state.store.end_goal(&id, GoalStatus::Cancelled).await?;
+    // The goal of a pull request operation is stopped as its own control
+    // stops it: the ask on the request goes before the goal, or the next
+    // pass would start a session for an ask nobody owns (029).
+    let goal = match (
+        goal.pull_request_operation(),
+        &goal.pr_repository_id,
+        goal.pr_number,
+    ) {
+        (Some(operation), Some(repository_id), Some(number)) => {
+            let _operation = state.store.pr_operation_lock(repository_id, number).await;
+            // The goal was read before the lock: a stop and a start may
+            // have replaced it since, and the stop below addresses the
+            // request's open goal, not this one. Read it again, and refuse
+            // where this goal has ended.
+            if state.store.get_goal(&id).await?.status().is_terminal() {
+                return Err(ApiError::conflict("goal is already ended"));
+            }
+            let stopped = state
+                .store
+                .stop_pr_operation(
+                    repository_id,
+                    number,
+                    operation,
+                    "the user cancelled the goal",
+                )
+                .await?
+                .ok_or_else(|| ApiError::conflict("goal is already ended"))?;
+            if let Some(row) = state
+                .store
+                .pull_request_by_number(repository_id, number)
+                .await?
+            {
+                state.notify_scheduler_pull_request(&row.id);
+            }
+            stopped
+        }
+        _ => state.store.end_goal(&id, GoalStatus::Cancelled).await?,
+    };
     // Only the ending that landed gets here: a racing one is a conflict.
     crate::metrics::record_goal_ended(&state.store, &goal).await;
     // The scheduler tears down sessions/worktrees of cancelled goals.

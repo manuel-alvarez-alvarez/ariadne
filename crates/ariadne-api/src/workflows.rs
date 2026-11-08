@@ -1,7 +1,7 @@
 //! Workflow DTOs.
 
 use ariadne_core::models::ModelRank;
-use ariadne_core::workflow::StepGate;
+use ariadne_core::workflow::{PrOperation, StepGate};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -35,6 +35,12 @@ pub struct WorkflowDto {
     /// Whether Ariadne ships this workflow. A built-in is reset rather than
     /// deleted; a workflow of the user's own is deleted rather than reset.
     pub builtin: bool,
+    /// The pull request operation this workflow serves (029), or null for an
+    /// ordinary workflow. An operation workflow keeps the shape its
+    /// operation reads, and no ordinary goal or repository default can name
+    /// it.
+    #[serde(default)]
+    pub operation: Option<PrOperation>,
     /// `document`, parsed into its columns.
     pub steps: Vec<WorkflowStepDto>,
     pub created_at: String,

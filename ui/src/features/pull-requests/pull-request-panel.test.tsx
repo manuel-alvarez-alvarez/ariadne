@@ -208,6 +208,17 @@ it("offers a manual Start review on every request that asks for my review", asyn
   expect(screen.getByRole("button", { name: "Start review" })).toBeTruthy()
 })
 
+it("links the goal of a review to the Goals board", async () => {
+  daemon(() => ({
+    ...pull,
+    review_asked: true,
+    operations: [{ operation: "review", goal_id: "01GOAL", task_id: "01TASK" }],
+  }))
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  const link = await screen.findByRole("link", { name: "Review goal" })
+  expect(link.getAttribute("href")).toContain("goal=01GOAL")
+})
+
 it("opens the console of a review resumed on the same session", async () => {
   const user = userEvent.setup()
   let row: PullRequestDto = {

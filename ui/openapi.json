@@ -2480,7 +2480,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to review any open request on the model the user picks,\nor stop asking (029). Authorship and GitHub review assignments do not\nrestrict the ask. The session waits while the request is a draft.\nA review of the user's own request posts as a comment; other reviews\nmay request changes. Stopping ends only the reviewer session, keeping\nany task or keeper that also works on the request.",
+        "summary": "Ask Ariadne to review any open request on the model the user picks,\nor stop asking (029). Authorship and GitHub review assignments do not\nrestrict the ask. Asking starts one active goal for the review, with one\nstaffed task and no orchestrator, on the `pr-review` workflow: the model\nmust be ranked inside that workflow's band, else 400. Asking again keeps\nthe open goal and moves its pin and skills. The session waits while the\nrequest is a draft. A review of the user's own request posts as a\ncomment; other reviews may request changes. The goal completes when the\nrequest merges or closes. Stopping cancels the goal and its task and ends\nonly the reviewer session, keeping any task or keeper that also works on\nthe request.",
         "operationId": "ask_review",
         "parameters": [
           {
@@ -6501,6 +6501,17 @@
             "type": "boolean",
             "description": "Whether this goal has an orchestrator for its lifetime."
           },
+          "pull_request": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PullRequestOperationDto",
+                "description": "The pull request and operation this goal runs (029), or null for an\nordinary goal. One open goal exists per request and operation."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "repos": {
             "type": "array",
             "items": {
@@ -7719,6 +7730,13 @@
           "opened_at": {
             "type": "string"
           },
+          "operations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PullRequestOperationRefDto"
+            },
+            "description": "The open goals of Ariadne's operations on this request, one per\noperation (029): what Forge reads to link the goal and its task."
+          },
           "origin_task_id": {
             "type": [
               "string",
@@ -8912,6 +8930,17 @@
             ],
             "description": "The commit the task landed as, where its last column reported one."
           },
+          "operation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrOperation",
+                "description": "The pull request operation the task's goal runs (029), or null for an\nordinary task."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pr_url": {
             "type": [
               "string",
@@ -9700,6 +9729,17 @@
             "description": "Kebab-case; named on the document's first line.",
             "example": "develop-review-merge"
           },
+          "operation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrOperation",
+                "description": "The pull request operation this workflow serves (029), or null for an\nordinary workflow. An operation workflow keeps the shape its\noperation reads, and no ordinary goal or repository default can name\nit."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "steps": {
             "type": "array",
             "items": {
@@ -9762,6 +9802,61 @@
             "example": "Develop"
           }
         }
+      },
+      "PullRequestOperationDto": {
+        "type": "object",
+        "description": "The pull request an operation goal works on, named by value: the request's\nown row goes when Ariadne stops working on it, and the goal stays.",
+        "required": [
+          "operation",
+          "repository_id",
+          "number",
+          "url"
+        ],
+        "properties": {
+          "number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/PrOperation"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "PullRequestOperationRefDto": {
+        "type": "object",
+        "description": "An open operation goal on a request, with its one task.",
+        "required": [
+          "operation",
+          "goal_id"
+        ],
+        "properties": {
+          "goal_id": {
+            "type": "string"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/PrOperation"
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PrOperation": {
+        "type": "string",
+        "description": "The work Ariadne does on one pull request as a goal of its own: one active\ngoal per request and operation, staffed by one task whose single column\nruns on a workflow only that operation reads (029, 030).",
+        "enum": [
+          "review",
+          "babysit"
+        ]
       }
     }
   },

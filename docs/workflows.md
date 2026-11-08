@@ -4,7 +4,9 @@ A workflow is a linear kanban of columns. Every goal runs on one: each task
 of the goal is staffed one agent per column, and it walks the columns on one
 branch, in one worktree, until the last column's gate lets it finish.
 
-Ariadne ships two workflows, `develop-review-merge` and `develop-review-pr`.
+Ariadne ships three workflows, `develop-review-merge`, `develop-review-pr`
+and `pr-review`. The first two are for goals; `pr-review` is for [reviewing a
+pull request](#the-pr-review-workflow).
 `ariadne workflow` manages the catalog the way `ariadne skill` manages
 skills: a shipped workflow is reset rather than deleted, and one of your own
 is deleted rather than reset.
@@ -57,7 +59,7 @@ workflow develop-review-merge
 6. A document that breaks one of these rules is refused, naming the line
    it broke on and what went wrong.
 
-## The two shipped workflows
+## The two workflows for goals
 
 `develop-review-merge` — the document shown above — lands a task on the
 base branch itself: its `merge` column rebases the task, squashes,
@@ -88,6 +90,44 @@ workflow develop-review-pr
 
 `develop-review-merge` is the default workflow of a repository that names
 none.
+
+## The `pr-review` workflow
+
+`pr-review` runs a review of one pull request: when you press **Start
+review** on a request, or run `ariadne pr review`, Ariadne makes one active
+goal on it with one task and no orchestrator. The task has one agent, on the
+one column below, and that agent reviews the request and each later push
+until the request merges or closes. You see the goal on the Goals board like
+any other, with its task, session, history and usage.
+
+```
+workflow pr-review
+  review[Review]
+    Review the request and each later push until it merges or closes.
+    skills: pr-reviewer
+    ranks: balanced, frontier
+```
+
+The workflow shows in the catalog and is edited like any other: you can
+change the column's title, its description, the skills beside `pr-reviewer`
+and its ranks. Its shape stays fixed, and a save that breaks it is refused
+with a 400 that names the rule:
+
+- exactly one column, `review`;
+- no gate;
+- `pr-reviewer` among the column's skills;
+- `ranks` of `balanced`, `frontier` or both.
+
+The ranks decide which models a review accepts. A model you ranked outside
+the band, or never ranked, is refused with a 400 that names the band; rank a
+model on the Agents screen or with `ariadne models rank` first. A goal
+already open keeps the band it started with.
+
+No goal you create, and no repository default, can use `pr-review`: the
+goal and repository pickers leave it out, and the daemon refuses it. Asking
+for a review again on a request that has one open keeps the same goal and
+moves the model and skills onto its agent. A merge or a close completes the
+goal; **Stop review** cancels it, and the next ask makes a new goal.
 
 ## Gates
 

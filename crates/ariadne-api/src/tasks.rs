@@ -13,6 +13,10 @@ pub struct TaskDto {
     pub step: Option<String>,
     pub id: String,
     pub goal_id: String,
+    /// The pull request operation the task's goal runs (029), or null for an
+    /// ordinary task.
+    #[serde(default)]
+    pub operation: Option<ariadne_core::workflow::PrOperation>,
     /// Id of the repository the task works in, one of its goal's.
     pub repo_id: String,
     pub title: String,

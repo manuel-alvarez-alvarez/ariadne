@@ -219,8 +219,9 @@ request ([006](006-prompts-and-simplified-technical-english.md) rule 5).
     and news, and the keeper's (032 rule 5). None of this is the user's
     or the orchestrator's own text, so 006 rule 19's plain-text
     treatment of a task's or a user-typed goal's title never reaches a
-    reviewer or a keeper session either: both carry no task and no
-    goal, and every field this rule names is the forge's own
+    reviewer or a keeper session either: a keeper carries no task and no
+    goal, a reviewer's task belongs to the daemon (029 rule 10b), and every
+    field this rule names is the forge's own
     regardless. A comment's id, author, path and first line, as rule
     12's news computes it, are each fenced
     the same way — a path crafted with the closing marker cannot read as
@@ -258,7 +259,7 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 | `GET /v1/pull-requests/{id}` | A request Ariadne works on, as the last fetch found it, or read off the forge now where nothing has read it yet. |
 | `GET /v1/repositories/{id}/pull-requests/{number}` | One request of a repository, read off the forge now with its checks and comments, joined to its row where there is one. What the desktop's panel reads. |
 | `GET /v1/repositories/{id}/pull-requests/search?q=` | Search the repository's last fetched list by number, title, or author, the user's own left out. Each match says with `tracked` whether Ariadne works on it. A repository with no fetch yet matches nothing. |
-| `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review` | Take `{asked}`: ask Ariadne to review any open request, which starts its work on it, or stop asking (029). |
+| `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-review` | Take `{asked}`: ask Ariadne to review any open request, which starts its work on it and makes the review goal and task, or stop asking, which cancels them (029). |
 | `PUT /v1/repositories/{id}/pull-requests/{number}/ariadne-babysit` | Take `{asked}`: ask Ariadne to keep any open request, opened by no task, by hand, which starts its work on it, or stop asking (032). |
 | `POST /v1/pull-requests/refresh?repo=` | Wake one repository or every enabled repository. Return 202. |
 | `GET /v1/pull-requests/{id}/comments?unanswered_only=` | The comments, read off the forge now, with their marks; or the threads that wait on the login. |

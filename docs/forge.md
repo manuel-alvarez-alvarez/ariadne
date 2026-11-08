@@ -142,7 +142,12 @@ request it hears of pushes and replies — and its review is always posted
 as a comment where the request is your own, since no forge takes a change
 request from a request's own author. Starting it closes the dialog and,
 once the daemon has the agent up, opens that session's console in the
-panel. **Stop review** takes it down. The panel's Sessions tab lists the
+panel. **Stop review** takes it down. Starting a review makes a goal of its
+own on the `pr-review` workflow, with one task whose agent is that session:
+the panel links it as **Review goal**, and it shows on the Goals board like
+any other goal. It completes when the request merges or closes, and **Stop
+review** cancels it; see [the `pr-review` workflow](workflows.md#the-pr-review-workflow).
+The model must have a rank that workflow allows. The panel's Sessions tab lists the
 review session, and the task's keeping agent where a task opened the
 request; picking one opens its console in the panel.
 

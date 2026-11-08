@@ -1089,10 +1089,15 @@ export interface paths {
         /**
          * Ask Ariadne to review any open request on the model the user picks,
          *     or stop asking (029). Authorship and GitHub review assignments do not
-         *     restrict the ask. The session waits while the request is a draft.
-         *     A review of the user's own request posts as a comment; other reviews
-         *     may request changes. Stopping ends only the reviewer session, keeping
-         *     any task or keeper that also works on the request.
+         *     restrict the ask. Asking starts one active goal for the review, with one
+         *     staffed task and no orchestrator, on the `pr-review` workflow: the model
+         *     must be ranked inside that workflow's band, else 400. Asking again keeps
+         *     the open goal and moves its pin and skills. The session waits while the
+         *     request is a draft. A review of the user's own request posts as a
+         *     comment; other reviews may request changes. The goal completes when the
+         *     request merges or closes. Stopping cancels the goal and its task and ends
+         *     only the reviewer session, keeping any task or keeper that also works on
+         *     the request.
          */
         put: operations["pull-requests_ask_review"];
         post?: never;
@@ -2777,6 +2782,11 @@ export interface components {
             /** @description Whether this goal has an orchestrator for its lifetime. */
             orchestrated: boolean;
             /**
+             * @description The pull request and operation this goal runs (029), or null for an
+             *     ordinary goal. One open goal exists per request and operation.
+             */
+            pull_request?: components["schemas"]["PullRequestOperationDto"] | null;
+            /**
              * @description The registered repositories the goal works in, as they stand now: a
              *     goal references them, so an edit to one shows up here.
              */
@@ -3272,6 +3282,13 @@ export interface components {
             total_secs: number;
         };
         /**
+         * @description The work Ariadne does on one pull request as a goal of its own: one active
+         *     goal per request and operation, staffed by one task whose single column
+         *     runs on a workflow only that operation reads (029, 030).
+         * @enum {string}
+         */
+        PrOperation: "review" | "babysit";
+        /**
          * @description One comment on a request, as the forge holds it now, read live (026),
          *     with the marks Ariadne keeps of it.
          */
@@ -3350,6 +3367,11 @@ export interface components {
             /** Format: int64 */
             number: number;
             opened_at: string;
+            /**
+             * @description The open goals of Ariadne's operations on this request, one per
+             *     operation (029): what Forge reads to link the goal and its task.
+             */
+            operations?: components["schemas"]["PullRequestOperationRefDto"][];
             /** @description The task that opened the request: its author keeps it (005). */
             origin_task_id?: string | null;
             /** @description Whether the request's session reported it ready to merge. */
@@ -3400,6 +3422,23 @@ export interface components {
             /** @description Whether Ariadne works on it. */
             tracked: boolean;
             url: string;
+        };
+        /**
+         * @description The pull request an operation goal works on, named by value: the request's
+         *     own row goes when Ariadne stops working on it, and the goal stays.
+         */
+        PullRequestOperationDto: {
+            /** Format: int64 */
+            number: number;
+            operation: components["schemas"]["PrOperation"];
+            repository_id: string;
+            url: string;
+        };
+        /** @description An open operation goal on a request, with its one task. */
+        PullRequestOperationRefDto: {
+            goal_id: string;
+            operation: components["schemas"]["PrOperation"];
+            task_id?: string | null;
         };
         /** @description Payload of `pull_requests_changed`: the repository whose requests moved. */
         PullRequestsChangedDto: {
@@ -3923,6 +3962,11 @@ export interface components {
             /** @description The commit the task landed as, where its last column reported one. */
             merge_commit?: string | null;
             /**
+             * @description The pull request operation the task's goal runs (029), or null for an
+             *     ordinary task.
+             */
+            operation?: components["schemas"]["PrOperation"] | null;
+            /**
              * @description URL of the pull or merge request the task's `pr` column opened, once
              *     it has; null for a task landed directly.
              */
@@ -4304,6 +4348,13 @@ export interface components {
              * @example develop-review-merge
              */
             name: string;
+            /**
+             * @description The pull request operation this workflow serves (029), or null for an
+             *     ordinary workflow. An operation workflow keeps the shape its
+             *     operation reads, and no ordinary goal or repository default can name
+             *     it.
+             */
+            operation?: components["schemas"]["PrOperation"] | null;
             /** @description `document`, parsed into its columns. */
             steps: components["schemas"]["WorkflowStepDto"][];
             updated_at: string;

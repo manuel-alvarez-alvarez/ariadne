@@ -128,8 +128,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `P0`, `P1` or `P2`), `resolve_thread` (one `comment_id` of a thread it
      opened, once a push fixed it) and `report_pull_request` (which takes
      `reviewed_sha` beside `ready` and `state`). Thirteen tools, and no
-     task tool and no message tool: a review session has no goal, task or
-     staffed agent to write to, and the user reaches it through its
+     task tool and no message tool: the task a review operation's goal
+     gives the session is the daemon's (029 rule 10b), so the session has
+     no step or task to write to, and the user reaches it through its
      console. No tool approves or merges: the user does. A tool is added
      to the seat by naming it in `McpSeat::PullRequestReviewer`'s list
      beside its `#[tool]` in `tools.rs`; each one calls a route under
@@ -265,7 +266,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`);
   its diff, review and report call the routes of the session's request
   (`tools.rs::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`).
-- A review session's MCP server is told the request and no goal or task
+- A review session's MCP server is told the request, and the seat decides
+  its tools: a goal and task in its environment give it no task tool
   (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
 - The pull request keeper seat lists its nine request tools beside
   `wait_for_user` and no task or message tool (032)

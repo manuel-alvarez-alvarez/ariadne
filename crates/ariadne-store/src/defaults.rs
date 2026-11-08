@@ -180,9 +180,56 @@ pub const DEFAULT_WORKFLOW: &str = "develop-review-merge";
 /// The workflow that lands a task by a request a human merges or closes.
 pub const PULL_REQUEST_WORKFLOW: &str = "develop-review-pr";
 
-/// The two workflows Ariadne ships: one that lands a task on the base branch
+/// The workflow of a live pull request review (029): one `review` column, run
+/// by one task of a goal that no orchestrator plans. Only that operation reads
+/// it, and a goal made the ordinary way refuses it.
+pub const PR_REVIEW_WORKFLOW: &str = "pr-review";
+
+/// The pull request operation a workflow serves, read off its name, where it
+/// serves one. Such a workflow is edited like any other, but its shape is
+/// fixed by [`pr_review_shape_error`], and no ordinary goal or repository
+/// default can name it.
+pub fn pr_operation_of(name: &str) -> Option<ariadne_core::workflow::PrOperation> {
+    match name {
+        PR_REVIEW_WORKFLOW => Some(ariadne_core::workflow::PrOperation::Review),
+        _ => None,
+    }
+}
+
+/// Why `workflow` cannot serve the review operation, where it cannot: it
+/// keeps exactly one `review` column with no gate, that column loads
+/// `pr-reviewer`, and its band names only `balanced` and `frontier`. The
+/// column's title, description, extra skills and band stay editable.
+pub fn pr_review_shape_error(workflow: &ariadne_core::workflow::Workflow) -> Option<String> {
+    use ariadne_core::models::ModelRank;
+    let [step] = workflow.steps.as_slice() else {
+        return Some(format!(
+            "workflow {PR_REVIEW_WORKFLOW} keeps exactly one column, review"
+        ));
+    };
+    if step.id != "review" {
+        return Some(format!("the one column of {PR_REVIEW_WORKFLOW} is review"));
+    }
+    if step.gate.is_some() {
+        return Some("the review column has no gate".into());
+    }
+    if !step.skills.iter().any(|skill| skill == PR_REVIEWER_SKILL) {
+        return Some(format!("the review column must load {PR_REVIEWER_SKILL}"));
+    }
+    if step.ranks.is_empty()
+        || step
+            .ranks
+            .iter()
+            .any(|rank| !matches!(rank, ModelRank::Balanced | ModelRank::Frontier))
+    {
+        return Some("the review column allows the balanced and frontier ranks only".into());
+    }
+    None
+}
+
+/// The three workflows Ariadne ships: one that lands a task on the base branch
 /// itself, and one that lands it by a request a human merges or closes.
-pub const BUILTIN_WORKFLOWS: [BuiltinWorkflow; 2] = [
+pub const BUILTIN_WORKFLOWS: [BuiltinWorkflow; 3] = [
     builtin_workflow(
         DEFAULT_WORKFLOW,
         include_str!("../workflows/develop-review-merge.workflow"),
@@ -190,6 +237,10 @@ pub const BUILTIN_WORKFLOWS: [BuiltinWorkflow; 2] = [
     builtin_workflow(
         PULL_REQUEST_WORKFLOW,
         include_str!("../workflows/develop-review-pr.workflow"),
+    ),
+    builtin_workflow(
+        PR_REVIEW_WORKFLOW,
+        include_str!("../workflows/pr-review.workflow"),
     ),
 ];
 
@@ -1201,6 +1252,7 @@ pub(crate) mod tests {
         );
         assert!(names.contains(&DEFAULT_WORKFLOW));
         assert!(names.contains(&PULL_REQUEST_WORKFLOW));
+        assert!(names.contains(&PR_REVIEW_WORKFLOW));
         for workflow in &BUILTIN_WORKFLOWS {
             let parsed = ariadne_core::workflow::parse(workflow.document)
                 .unwrap_or_else(|e| panic!("{} does not parse: {e}", workflow.name));
@@ -1213,7 +1265,12 @@ pub(crate) mod tests {
                         workflow.name
                     );
                     assert_ne!(SkillSeat::of(skill), SkillSeat::Orchestrator);
-                    assert_ne!(skill, PR_REVIEWER_SKILL);
+                    // Only the review operation's own workflow loads it.
+                    assert!(
+                        skill != PR_REVIEWER_SKILL || workflow.name == PR_REVIEW_WORKFLOW,
+                        "{} stages {skill}",
+                        workflow.name
+                    );
                 }
             }
         }
@@ -1241,6 +1298,10 @@ pub(crate) mod tests {
                     vec![ModelRank::Fast, ModelRank::Balanced],
                 ],
             ),
+            (
+                PR_REVIEW_WORKFLOW,
+                vec![vec![ModelRank::Balanced, ModelRank::Frontier]],
+            ),
         ];
 
         for (name, bands) in expected {
@@ -1256,6 +1317,53 @@ pub(crate) mod tests {
                 "{name} rank bands"
             );
         }
+    }
+
+    /// The shipped review workflow is the shape its operation requires, and
+    /// a document that breaks the shape is named.
+    #[test]
+    fn the_shipped_review_workflow_has_the_shape_its_operation_requires() {
+        let parse = |doc: &str| ariadne_core::workflow::parse(doc).unwrap();
+        let shipped = parse(default_workflow_document(PR_REVIEW_WORKFLOW).unwrap());
+        assert_eq!(pr_review_shape_error(&shipped), None);
+        assert_eq!(
+            pr_operation_of(PR_REVIEW_WORKFLOW),
+            Some(ariadne_core::workflow::PrOperation::Review)
+        );
+        assert_eq!(pr_operation_of(DEFAULT_WORKFLOW), None);
+        for (document, reason) in [
+            (
+                "workflow pr-review\n a[A]\n skills: pr-reviewer\n ranks: balanced\n b[B]\n skills: coding\n",
+                "exactly one column",
+            ),
+            (
+                "workflow pr-review\n look[Look]\n skills: pr-reviewer\n ranks: balanced\n",
+                "is review",
+            ),
+            (
+                "workflow pr-review\n review[Review]\n skills: pr-reviewer\n ranks: balanced\n gate: committed\n",
+                "no gate",
+            ),
+            (
+                "workflow pr-review\n review[Review]\n skills: coding\n ranks: balanced\n",
+                "must load pr-reviewer",
+            ),
+            (
+                "workflow pr-review\n review[Review]\n skills: pr-reviewer\n ranks: fast\n",
+                "balanced and frontier",
+            ),
+            (
+                "workflow pr-review\n review[Review]\n skills: pr-reviewer\n",
+                "balanced and frontier",
+            ),
+        ] {
+            let error = pr_review_shape_error(&parse(document)).unwrap_or_default();
+            assert!(error.contains(reason), "{document}: {error}");
+        }
+        let edited = parse(
+            "workflow pr-review\n review[Look hard]\n Read it twice.\n skills: pr-reviewer, research\n ranks: frontier\n",
+        );
+        assert_eq!(pr_review_shape_error(&edited), None);
     }
 
     #[test]

@@ -143,11 +143,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
    to.
 10. A skill has a seat, read off its name and stored in no column
     (`Skill::seat`): `orchestration` is the orchestrator's, `pr-reviewer` is
-    loaded by the daemon itself for a review session, and every other skill
+    the review operation's — the `pr-review` workflow stages it (030) and
+    the daemon loads it for a review session — and every other skill
     is a column agent's — `pr-babysit` included, which the `pr` column of
     `develop-review-pr` stages (030) and which the daemon also loads for a
     keeper session on a request asked for by hand (032). The store refuses
-    a task agent staffed on `orchestration` or `pr-reviewer`, and
+    a task agent staffed on `orchestration`, and on `pr-reviewer` unless
+    the agent belongs to a review operation goal (029), and
     `list_skills` lists neither (013). Nor does it list a skill with no
     document, shipped or written, or one of blank space only: a dropped
     skill such as `pull-request` (rule 7) keeps its row for an old staffing,
@@ -241,10 +243,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
     fail.
 13. Every user-facing skill action exists in both the CLI (`ariadne skill`)
     and the desktop app, per the parity rule of spec 015.
-14. A review session (029) is staffed by the daemon on the pin asked
-    directly on the request's own row — there is no repository pin (025) —
-    and loads `pr-reviewer` the way a column agent loads its skills; no
-    orchestrator staffs it.
+14. A review session (029) is the session of the one agent of a review
+    operation goal's task. The daemon staffs that agent on the pin asked
+    directly on the request — there is no repository pin (025) — with the
+    skills of the `pr-review` column and the ones the user picked, and the
+    session loads what the agent was staffed with; no orchestrator staffs
+    it. A review from before such goals loads `pr-reviewer` and the skills
+    stored on its request row.
 15. The daemon keeps one shared copy of every store skill under
     `<home>/skills` by default, or `skills_dir` when configured. Every sync
     writes each document as `<skills_dir>/<name>/SKILL.md`, including

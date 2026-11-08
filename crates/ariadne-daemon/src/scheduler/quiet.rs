@@ -207,7 +207,14 @@ impl super::Scheduler {
         let spent = done.relaunches;
         if spent >= SPAWN_RETRY_BUDGET {
             warn!(session = %session.id, seat = ?session.seat, relaunches = spent - 1, "the agent went quiet again after every relaunch");
-            let Some(task_id) = session.task_id.clone() else {
+            // A request's own session has no task to fail even where an
+            // operation's task stands behind it: the request carries the
+            // give-up (029).
+            let Some(task_id) = session
+                .task_id
+                .clone()
+                .filter(|_| session.pull_request_id.is_none())
+            else {
                 // A taskless session — an orchestrator's, a reviewer's —
                 // has no task to fail instead: this exhausted-relaunch
                 // decision is its own give-up, the same evidence the

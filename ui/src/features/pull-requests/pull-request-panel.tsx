@@ -48,7 +48,7 @@ import { isLiveStatus } from "@/features/sessions/session-display"
 import { SessionsList } from "@/features/sessions/sessions-list"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { shortId, shortSha } from "@/lib/format"
-import { usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
+import { paths, usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
 
 import { pullRequestByKeyQueryOptions, useAskBabysit, useAskReview } from "./queries"
 import { StartBabysitDialog } from "./start-babysit-dialog"
@@ -229,6 +229,8 @@ function PullRequestHeader({
   const checks = CHECKS[pull.checks]
   const review = REVIEW[pull.review_decision]
   const babysittable = pull.origin_task_id == null
+  // The review is a goal of its own, on the Goals board like any other (029).
+  const reviewGoal = pull.operations?.find((operation) => operation.operation === "review")
   return (
     <>
       <PanelHeader
@@ -299,6 +301,11 @@ function PullRequestHeader({
             {review ? <StatusBadge label={review.label} tone={review.tone} /> : null}
             {pull.review_asked ? (
               <StatusBadge label={ARIADNE_REVIEWING.label} tone={ARIADNE_REVIEWING.tone} />
+            ) : null}
+            {reviewGoal ? (
+              <Link className="text-xs underline" to={paths.goal(reviewGoal.goal_id)}>
+                Review goal
+              </Link>
             ) : null}
             {pull.babysit_asked ? (
               <StatusBadge label={ARIADNE_BABYSITTING.label} tone={ARIADNE_BABYSITTING.tone} />

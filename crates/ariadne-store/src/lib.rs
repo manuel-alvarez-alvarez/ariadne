@@ -21,6 +21,7 @@ mod goals;
 mod messages;
 mod models;
 mod permissions;
+mod pr_operations;
 mod pull_request_comments;
 mod pull_requests;
 mod query;
@@ -42,9 +43,10 @@ pub use entities::*;
 pub use events::{EventFilter, EventOrder, NewAgentEvent};
 pub use forge::{ForgeWrite, SetForgeIntegration};
 pub use goal_parts::{GoalParts, TaskParts};
-pub use goals::NewGoal;
+pub use goals::{NewGoal, NewPrGoal};
 pub use messages::{MessageFilter, NewMessage};
 pub use permissions::NewLearnedPermission;
+pub use pr_operations::{PrOperationEnd, PrOperationOwner, StartPrOperation};
 pub use pull_request_comments::NewPullRequestComment;
 pub use pull_requests::{NewPullRequest, PullRequestFilter, PullRequestTold};
 pub use repositories::{NewRepository, RepositoryUpdate};
@@ -234,6 +236,11 @@ pub struct Store {
     /// generator — the live events of the console — so they keep that order
     /// too.
     event_order: Arc<tokio::sync::Mutex<()>>,
+    /// One lock per request (`repository#number`): what starts, stops and
+    /// reconciles the operation goals of a request holds, so a pass never
+    /// reads the half of a start the route has not finished (029). Shared by
+    /// every clone.
+    pr_locks: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<pr_operations::PrLock>>>>,
 }
 
 impl Store {
@@ -312,6 +319,7 @@ impl Store {
             read,
             changes: Arc::default(),
             event_order: Arc::default(),
+            pr_locks: Arc::default(),
         };
         store.seed_builtin_skills().await?;
         store.seed_builtin_workflows().await?;
@@ -339,6 +347,7 @@ impl Store {
             read,
             changes: Arc::default(),
             event_order: Arc::default(),
+            pr_locks: Arc::default(),
         })
     }
 

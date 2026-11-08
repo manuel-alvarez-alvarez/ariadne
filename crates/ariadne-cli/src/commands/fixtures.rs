@@ -37,6 +37,7 @@ pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
         description: String::new(),
         status: GoalStatus::Active,
         orchestrated: true,
+        pull_request: None,
         model: "stub:test-model".into(),
         effort: None,
         repos: Vec::new(),
@@ -51,6 +52,7 @@ pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
 pub(crate) fn task(id: &str, goal_id: &str) -> TaskDto {
     TaskDto {
         step: None,
+        operation: None,
         id: id.into(),
         goal_id: goal_id.into(),
         repo_id: "01REPO".into(),
@@ -139,6 +141,7 @@ pub(crate) fn workflow(name: &str) -> WorkflowDto {
         name: name.into(),
         document: format!("workflow {name}\n"),
         builtin: true,
+        operation: None,
         steps: Vec::new(),
         created_at: "2026-08-17T08:00:00Z".into(),
         updated_at: "2026-08-17T09:00:00Z".into(),

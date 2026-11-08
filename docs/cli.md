@@ -628,7 +628,10 @@ list.
 `ariadne pr review <repo> <number> --model AGENT:MODEL [--effort E] [--skill
 S]... [--attach]` asks Ariadne to review a request of your own (029):
 `--model` is required with no `--stop`, since there is no repository
-setting to fall back to. `--skill` loads another skill beside `pr-reviewer`, which
+setting to fall back to, and the model must be ranked `balanced` or
+`frontier`, the band of the [`pr-review` workflow](workflows.md#the-pr-review-workflow).
+The ask makes one goal with one task; `pr show` prints its id as `review
+goal`. `--skill` loads another skill beside `pr-reviewer`, which
 every review loads anyway; repeat it for more than one. `--attach` waits for
 the review session to start and opens its console, the way `session new
 --attach` does. `ariadne pr review <repo> <number> --stop` stops Ariadne's

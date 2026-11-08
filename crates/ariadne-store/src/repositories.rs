@@ -37,6 +37,18 @@ pub struct RepositoryUpdate {
 }
 
 impl Store {
+    /// A repository default is a workflow of the catalog that ordinary goals
+    /// run on: one that serves a pull request operation is not (029).
+    async fn check_default_workflow(&self, name: &str) -> Result<()> {
+        self.get_workflow(name).await?;
+        if crate::defaults::pr_operation_of(name).is_some() {
+            return Err(StoreError::Invalid(format!(
+                "workflow {name} runs a pull request operation; it cannot be a repository default"
+            )));
+        }
+        Ok(())
+    }
+
     pub async fn create_repository(&self, new: NewRepository) -> Result<Repository> {
         self.create_repository_with_forge(new, None).await
     }
@@ -52,7 +64,7 @@ impl Store {
         let default_workflow = new
             .default_workflow
             .unwrap_or_else(|| DEFAULT_WORKFLOW.to_string());
-        self.get_workflow(&default_workflow).await?;
+        self.check_default_workflow(&default_workflow).await?;
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
@@ -131,7 +143,7 @@ impl Store {
             .permission_mode
             .unwrap_or_else(|| current.permission_mode());
         let default_workflow = update.default_workflow.unwrap_or(current.default_workflow);
-        self.get_workflow(&default_workflow).await?;
+        self.check_default_workflow(&default_workflow).await?;
         let path = update.path.unwrap_or(current.path);
         let base_branch = update.base_branch.unwrap_or(current.base_branch);
         let description = update.description.unwrap_or(current.description);

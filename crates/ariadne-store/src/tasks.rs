@@ -646,7 +646,7 @@ impl Store {
     /// side-column updates, and write the audit row — the shared body of every
     /// status change, inside the caller's transaction. Returns the audit row
     /// so callers can attach it to the change notification.
-    async fn transition_in_tx(
+    pub(crate) async fn transition_in_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         task: &Task,
         to: TaskStatus,

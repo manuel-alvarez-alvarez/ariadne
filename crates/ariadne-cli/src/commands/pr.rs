@@ -217,6 +217,15 @@ fn inspect_rows(row: &PullRequestDto) -> Vec<(&'static str, Kv)> {
             row.unanswered_comments.to_string().into(),
         ),
         ("ariadne review", yes_no(row.review_asked, "no").into()),
+        (
+            "review goal",
+            Kv::id(dash(
+                row.operations
+                    .iter()
+                    .find(|o| o.operation == ariadne_core::workflow::PrOperation::Review)
+                    .map(|o| o.goal_id.as_str()),
+            )),
+        ),
         ("review model", dash(row.review_model.as_deref()).into()),
         (
             "review skills",
@@ -1125,6 +1134,7 @@ mod tests {
                 "review decision",
                 "unanswered comments",
                 "ariadne review",
+                "review goal",
                 "review model",
                 "review skills",
                 "ariadne babysit",

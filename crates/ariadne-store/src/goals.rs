@@ -2,6 +2,7 @@
 
 use ariadne_core::GoalStatus;
 use ariadne_core::id::new_id;
+use ariadne_core::workflow::PrOperation;
 
 use crate::{AgentPin, Change, Goal, Repository, Result, Store, StoreError, not_found, now};
 
@@ -22,6 +23,17 @@ pub struct NewGoal {
     pub pin: AgentPin,
 }
 
+/// The pull request an operation goal works on (029): named by value, since
+/// the request's own row goes when Ariadne stops working on it and the goal
+/// stays as history.
+#[derive(Debug, Clone)]
+pub struct NewPrGoal {
+    pub operation: PrOperation,
+    pub repository_id: String,
+    pub number: i64,
+    pub url: String,
+}
+
 /// The workflow a new goal gets: its creator's choice or the default of the
 /// first repository in the order goals show.
 fn goal_workflow(requested: Option<String>, repositories: &[Repository]) -> Result<String> {
@@ -37,7 +49,16 @@ fn goal_workflow(requested: Option<String>, repositories: &[Repository]) -> Resu
 
 impl Store {
     pub async fn create_goal(&self, new: NewGoal) -> Result<Goal> {
-        self.create_goal_as(new, GoalStatus::Planning, true).await
+        self.create_goal_as(new, GoalStatus::Planning, true, None)
+            .await
+    }
+
+    /// Create the goal of one pull request operation: active at once, with
+    /// no orchestrator, on the workflow that operation reads. A conflict
+    /// means the request already has an open goal for the operation.
+    pub(crate) async fn create_pr_goal(&self, new: NewGoal, pr: NewPrGoal) -> Result<Goal> {
+        self.create_goal_as(new, GoalStatus::Active, false, Some(pr))
+            .await
     }
 
     async fn create_goal_as(
@@ -45,6 +66,7 @@ impl Store {
         new: NewGoal,
         status: GoalStatus,
         orchestrated: bool,
+        pr: Option<NewPrGoal>,
     ) -> Result<Goal> {
         if new.repository_ids.is_empty() {
             return Err(StoreError::Invalid("a goal needs at least one repo".into()));
@@ -61,6 +83,23 @@ impl Store {
             }
         }
         let workflow_name = goal_workflow(new.workflow, &repositories)?;
+        // A pull request workflow belongs to its operation: an ordinary goal
+        // never runs on one, and an operation goal runs on its own alone.
+        let wanted = crate::defaults::pr_operation_of(&workflow_name);
+        match (&pr, wanted) {
+            (None, Some(_)) => {
+                return Err(StoreError::Invalid(format!(
+                    "workflow {workflow_name} runs a pull request operation; a goal cannot use it"
+                )));
+            }
+            (Some(pr), wanted) if wanted != Some(pr.operation) => {
+                return Err(StoreError::Invalid(format!(
+                    "workflow {workflow_name} does not run the {} operation",
+                    pr.operation.as_str()
+                )));
+            }
+            _ => {}
+        }
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
@@ -81,8 +120,9 @@ impl Store {
         let (model, effort) = AgentPin::columns(&new.pin);
         sqlx::query(
             "INSERT INTO goals (id, title, description, issue_url, status,
-                                orchestrated, model, effort, workflow, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                orchestrated, model, effort, workflow, created_at, updated_at,
+                                pr_operation, pr_repository_id, pr_number, pr_url)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
@@ -95,8 +135,18 @@ impl Store {
         .bind(&workflow_name)
         .bind(&ts)
         .bind(&ts)
+        .bind(pr.as_ref().map(|p| p.operation.as_str()))
+        .bind(pr.as_ref().map(|p| p.repository_id.clone()))
+        .bind(pr.as_ref().map(|p| p.number))
+        .bind(pr.as_ref().map(|p| p.url.clone()))
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::Database(ref db) if db.is_unique_violation() => StoreError::Conflict(
+                "the request already has an open goal for this operation".into(),
+            ),
+            other => StoreError::Db(other),
+        })?;
         for (ordinal, step) in steps.iter().enumerate() {
             let ranks: Vec<&str> = step.ranks.iter().map(|r| r.as_str()).collect();
             sqlx::query("INSERT INTO goal_steps (goal_id, ordinal, id, title, description, skills, ranks, gate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")

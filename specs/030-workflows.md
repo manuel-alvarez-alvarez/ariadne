@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-store/src/skill_tests/template.rs
   - crates/ariadne-store/src/skill_tests/operate.rs
+  - crates/ariadne-daemon/tests/it/pull_request_reviews.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/workflows.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
@@ -114,7 +115,10 @@ every other kebab-case word in it; the wire spells the same gate
    with the same `develop` and `review` bands and gates, then `pr[Pull request]`
    (`fast`, `balanced`; `request-merged`). `merge` stages `merge`, `pr` stages
    `pr-babysit`, and `develop-review-merge` is the default of every repository
-   that names none (`DEFAULT_WORKFLOW`). The orchestrator assesses each task
+   that names none (`DEFAULT_WORKFLOW`). A third workflow, `pr-review`, is
+   the review operation's (rule 11 below): one `review[Review]` column that
+   stages `pr-reviewer`, with the `balanced` and `frontier` ranks and no
+   gate. The orchestrator assesses each task
    case by case, chooses the smallest capable eligible model, and chooses a
    more powerful eligible model only where the task demands justify it.
 3. A save — a create or a document write — parses the document and refuses a
@@ -124,7 +128,8 @@ every other kebab-case word in it; the wire spells the same gate
    orchestrator's skill (`orchestration`) or the one a reviewer pull request
    session loads (`pr-reviewer`) — neither staffs a task agent, which is
    what a workflow column does. `pr-babysit` is allowed: the `pr` column of
-   `develop-review-pr` stages it.
+   `develop-review-pr` stages it. `pr-reviewer` is allowed in `pr-review`
+   alone, where rule 11 requires it.
 4. The `merge` skill is shipped alongside the two workflows
    (`crates/ariadne-store/skills/merge/SKILL.md`): fetch the base where a
    remote exists, integrate the upstream base according to repository policy before
@@ -165,6 +170,9 @@ every other kebab-case word in it; the wire spells the same gate
    - `POST /v1/workflows/parse` — parse a document without saving it
      anywhere; 200 with its name and steps, or 400 `workflow_invalid` with
      `details.line` and the message.
+
+   `WorkflowDto.operation` is `review` for `pr-review`, and null for every
+   other workflow.
 
    `WorkflowDto.document` is the effective text: the override, or the
    shipped one. Every write publishes a fat domain event —
@@ -345,6 +353,18 @@ every other kebab-case word in it; the wire spells the same gate
     removes the worktree and branch, and removes the request row and its
     marks.
 
+11. A workflow that serves a pull request operation is named by the
+    operation (`defaults::pr_operation_of`); `pr-review` serves `review`.
+    Its definition shows in the catalog and is edited like any other, and
+    its shape is checked at every save (`defaults::pr_review_shape_error`):
+    exactly one column, `review`, with no gate, that loads `pr-reviewer`,
+    and whose `ranks` name `balanced`, `frontier` or both. The column's
+    title, description, extra skills and band stay editable; a save that
+    breaks the shape answers 400 naming the rule. No ordinary goal and no
+    repository default can name an operation workflow: a goal create or a
+    repository write that does answers 400. A goal of the operation, and
+    its one task, are 029's to start and to end.
+
 ## Acceptance criteria
 
 - The parser accepts the two shipped documents and refuses a document with
@@ -389,6 +409,12 @@ every other kebab-case word in it; the wire spells the same gate
   `::a_missing_workflow_is_a_404_naming_workflow_not_found`,
   `::a_taken_name_is_a_409_and_a_built_in_refuses_delete_and_a_user_one_refuses_reset`,
   `::resetting_a_built_in_drops_the_override`).
+- The `pr-review` workflow is shipped with its one column, its shape is
+  checked at every save, and it is closed to ordinary goals and repository
+  defaults while its definition shows in the catalog
+  (`defaults.rs::the_shipped_review_workflow_has_the_shape_its_operation_requires`,
+  `store.rs::the_review_workflow_is_edited_within_its_shape_and_no_ordinary_goal_uses_it`,
+  `tests/it/workflows.rs::the_pr_review_workflow_is_listed_edited_in_its_shape_and_closed_to_ordinary_goals`).
 - Every shipped workflow parses, stages shipped skills, and carries its
   approved rank bands. The `merge` skill passes the shipped-skill tests:
   named once, describes itself, STE, within its cap, lands in order and merges
@@ -513,6 +539,7 @@ every other kebab-case word in it; the wire spells the same gate
 `crates/ariadne-core/src/workflow.rs` (`Workflow`, `WorkflowStep`, `StepGate`,
 `WorkflowParseError`, `parse`), `crates/ariadne-core/src/state_machine.rs`,
 `crates/ariadne-store/workflows/` (the shipped documents),
+`crates/ariadne-store/src/pr_operations.rs`,
 `crates/ariadne-store/skills/merge/SKILL.md`,
 `crates/ariadne-store/skills/pr-babysit/SKILL.md`,
 `crates/ariadne-store/src/workflows.rs`, `crates/ariadne-store/src/defaults.rs`

@@ -9,8 +9,11 @@ use axum::http::{Request, StatusCode};
 use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
-use crate::common::{Harness, QUIET, TIMEOUT, as_session, eventually, harness, post_json, sh};
+use crate::common::{
+    Harness, QUIET, TIMEOUT, as_session, eventually, harness, next_event, post_json, sh,
+};
 use ariadne_api::SESSION_HEADER;
+use ariadne_api::stream::DomainEvent;
 use ariadne_core::SessionStatus;
 use ariadne_daemon::forge::poll::Mode;
 use ariadne_store::{AgentSession, SessionFilter};
@@ -333,8 +336,16 @@ async fn an_open_request_i_review_gets_one_session_detached_at_its_head() {
 
     assert_eq!(session.model, PIN);
     assert_eq!(session.seat.as_deref(), Some("reviewer"));
-    assert_eq!(session.goal_id, None);
-    assert_eq!(session.task_id, None);
+    // The review is the one task of an operation goal (029).
+    let goal = h
+        .store
+        .active_pr_goal(&repo, 1, ariadne_core::workflow::PrOperation::Review)
+        .await
+        .unwrap()
+        .expect("the review's goal");
+    assert_eq!(session.goal_id.as_deref(), Some(goal.id.as_str()));
+    assert!(session.task_id.is_some());
+    assert!(session.task_agent_id.is_some());
     let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
     assert!(worktree.ends_with(format!("pr-{id}")));
     assert_eq!(sh(&worktree, "git rev-parse HEAD"), head);
@@ -1458,6 +1469,13 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
     );
 
     // Asked again on another model, the review is a fresh session on it.
+    h.store
+        .set_model_ranks(&[(
+            "stub:new-model",
+            Some(ariadne_core::models::ModelRank::Frontier),
+        )])
+        .await
+        .unwrap();
     let again = axum::http::Request::builder()
         .method("PUT")
         .uri(format!(
@@ -1634,4 +1652,505 @@ async fn a_detail_read_before_any_fetch_keeps_a_review_request_asking() {
     }));
     fetch_again(&h, &stub, &repo).await;
     assert!(no_rows(&h).await, "a confirmed withdrawal removes the row");
+}
+
+fn put_review(repo: &str, body: Value) -> Request<Body> {
+    Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "/v1/repositories/{repo}/pull-requests/1/ariadne-review"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// Asking for a review makes one active goal with no orchestrator and one
+/// staffed task, and the review session is that task's agent: the goal, the
+/// task and the request's own DTO name each other, and the Goals board reads
+/// the goal like any other. A repeated ask keeps the goal and its task, and
+/// a new pin is a fresh session on the same task.
+#[tokio::test]
+async fn a_review_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it() {
+    use ariadne_core::workflow::PrOperation;
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    let session = idle_session(&h, &id).await;
+
+    let goal = h
+        .store
+        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .await
+        .unwrap()
+        .expect("the review's goal");
+    let goal_dto: Value = h.get(&format!("/v1/goals/{}", goal.id)).await;
+    assert_eq!(goal_dto["status"], "active");
+    assert_eq!(goal_dto["orchestrated"], false);
+    assert_eq!(goal_dto["workflow"], "pr-review");
+    assert_eq!(goal_dto["pull_request"]["operation"], "review");
+    assert_eq!(goal_dto["pull_request"]["number"], 1);
+    assert_eq!(goal_dto["steps"].as_array().unwrap().len(), 1);
+    assert!(
+        h.sessions_of_goal(&goal.id)
+            .await
+            .iter()
+            .all(|s| s.seat.as_deref() == Some("reviewer")),
+        "no orchestrator plans it"
+    );
+    let tasks = h
+        .store
+        .list_tasks(ariadne_store::TaskFilter {
+            goal_id: Some(goal.id.clone()),
+            status: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(tasks.len(), 1);
+    let task: Value = h.get(&format!("/v1/tasks/{}", tasks[0].id)).await;
+    assert_eq!(task["status"], "in_progress");
+    assert_eq!(task["step"], "review");
+    assert_eq!(task["operation"], "review");
+    assert_eq!(task["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(task["agents"][0]["skills"], json!(["pr-reviewer"]));
+    assert_eq!(task["agents"][0]["session_id"], session.id);
+    let row: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert_eq!(row["operations"][0]["operation"], "review");
+    assert_eq!(row["operations"][0]["goal_id"], goal.id);
+    assert_eq!(row["operations"][0]["task_id"], tasks[0].id);
+
+    h.store
+        .set_model_ranks(&[(
+            "stub:new-model",
+            Some(ariadne_core::models::ModelRank::Frontier),
+        )])
+        .await
+        .unwrap();
+    // Asked again on another pin: the goal, its task and its agent stay,
+    // the pin moves onto the agent, and the live session runs on.
+    let _: Value = h
+        .json(
+            put_review(&repo, json!({"asked": true, "model": "stub:new-model"})),
+            StatusCode::OK,
+        )
+        .await;
+    h.flush_scheduler().await;
+    let again = h
+        .store
+        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(again.id, goal.id);
+    assert_eq!(h.store.list_goals(&[]).await.unwrap().len(), 1);
+    assert!(h.session_status(&session).await.is_live());
+    assert_eq!(sessions(&h, &id).await.len(), 1);
+    let agent = &h.store.list_task_agents(&tasks[0].id).await.unwrap()[0];
+    assert_eq!(agent.model, "stub:new-model");
+}
+
+/// Stopping a review cancels its task and goal; the request's next ask is a
+/// new goal, and the old goal stays as history with its session.
+#[tokio::test]
+async fn stopping_a_review_cancels_its_goal_and_the_next_ask_starts_a_new_one() {
+    use ariadne_core::workflow::PrOperation;
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    let session = idle_session(&h, &id).await;
+    let first = h
+        .store
+        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let _: Value = h
+        .json(put_review(&repo, json!({"asked": false})), StatusCode::OK)
+        .await;
+    assert_eq!(
+        h.store.get_goal(&first.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Cancelled
+    );
+    let task = &h.sessions_of_goal(&first.id).await[0];
+    assert_eq!(
+        h.status(task.task_id.as_deref().unwrap()).await,
+        ariadne_core::TaskStatus::Cancelled
+    );
+    eventually(TIMEOUT, "the review session to end", async || {
+        !h.session_status(&session).await.is_live()
+    })
+    .await;
+    assert!(
+        h.store
+            .active_pr_goal(&repo, 1, PrOperation::Review)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let id = the_request(&h).await;
+    let _: Value = h
+        .json(
+            put_review(&repo, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let second = h
+        .store
+        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .await
+        .unwrap()
+        .expect("a new goal");
+    assert_ne!(second.id, first.id);
+    eventually(TIMEOUT, "a session on the new goal", async || {
+        h.flush_scheduler().await;
+        h.sessions_of_goal(&second.id)
+            .await
+            .iter()
+            .any(|s| s.status().is_live())
+    })
+    .await;
+    assert_eq!(
+        h.store.get_goal(&first.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Cancelled
+    );
+    let _ = id;
+}
+
+/// A request that merges completes the review's task and goal.
+#[tokio::test]
+async fn a_merged_request_completes_its_review_goal_and_task() {
+    use ariadne_core::workflow::PrOperation;
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    eventually(
+        TIMEOUT,
+        "the repository's first fetch to finish",
+        async || stub.fetches() >= 1,
+    )
+    .await;
+    let before = stub.fetches();
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let session = idle_session(&h, &id).await;
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before
+    })
+    .await;
+    let goal = h
+        .store
+        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .await
+        .unwrap()
+        .unwrap();
+    let task_id = session.task_id.clone().unwrap();
+
+    stub.reprogram(script(&Shown {
+        state: "MERGED",
+        ..Shown::open(&head)
+    }));
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "the goal and task to complete", async || {
+        h.flush_scheduler().await;
+        h.store.get_goal(&goal.id).await.unwrap().status() == ariadne_core::GoalStatus::Completed
+    })
+    .await;
+    assert_eq!(h.status(&task_id).await, ariadne_core::TaskStatus::Finished);
+    eventually(TIMEOUT, "the session to end", async || {
+        !h.session_status(&session).await.is_live()
+    })
+    .await;
+}
+
+/// The review column's band decides which models a review accepts: a model
+/// the user ranked outside it, or never ranked, is refused and starts no
+/// goal.
+#[tokio::test]
+async fn a_review_refuses_a_model_outside_the_workflow_band() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let _ = the_request(&h).await;
+    h.store
+        .set_model_ranks(&[("stub:quick", Some(ariadne_core::models::ModelRank::Fast))])
+        .await
+        .unwrap();
+    for model in ["stub:quick", "stub:unranked"] {
+        let error = h
+            .error(
+                put_review(&repo, json!({"asked": true, "model": model})),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert!(
+            error.error.message.contains("balanced and frontier"),
+            "{}",
+            error.error.message
+        );
+    }
+    assert!(h.store.list_goals(&[]).await.unwrap().is_empty());
+}
+
+/// Cancelling the review's goal from the Goals board stops the review: the
+/// ask on the request goes with it, so no later pass starts a session for a
+/// review nobody owns, and Forge shows the review stopped.
+#[tokio::test]
+async fn cancelling_the_review_goal_stops_the_review_and_it_stays_stopped() {
+    use ariadne_core::workflow::PrOperation;
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    let session = idle_session(&h, &id).await;
+    let goal = h
+        .store
+        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut events = h.bus.subscribe();
+    let session_created = |event: &ariadne_daemon::bus::BusEvent| {
+        matches!(&event.event, DomainEvent::SessionCreated(_))
+    };
+    let cancelled: Value = h
+        .json(
+            post_json(&format!("/v1/goals/{}/cancel", goal.id), json!({})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(cancelled["status"], "cancelled");
+    eventually(TIMEOUT, "the review session to end", async || {
+        !h.session_status(&session).await.is_live()
+    })
+    .await;
+    h.flush_scheduler().await;
+    assert!(
+        tokio::time::timeout(QUIET, next_event(&mut events, session_created))
+            .await
+            .is_err(),
+        "no ownerless session starts"
+    );
+    assert!(
+        !sessions(&h, &id).await.iter().any(|s| s.status().is_live()),
+        "no ownerless session starts"
+    );
+    assert_eq!(sessions(&h, &id).await.len(), 1);
+    if let Ok(row) = h.store.get_pull_request(&id).await {
+        assert!(!row.review_asked, "the ask went with the goal");
+    }
+    assert_eq!(
+        h.store.get_goal(&goal.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Cancelled
+    );
+}
+
+/// A scheduler pass that comes while a start is half written — the goal
+/// made, the ask not yet — waits for it, then sees the whole of it: the new
+/// goal is not cancelled as an ask that is gone, and the session it starts
+/// belongs to that goal.
+#[tokio::test]
+async fn a_pass_between_the_goal_and_the_ask_of_a_start_waits_for_the_start() {
+    use ariadne_core::workflow::PrOperation;
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    eventually(TIMEOUT, "the request's live details", async || {
+        h.launcher.live.get(&id).is_some_and(|l| l.evidence_ok)
+    })
+    .await;
+
+    let held = h.store.pr_operation_lock(&repo, 1).await;
+    let pin = ariadne_store::AgentPin {
+        model: PIN.into(),
+        effort: None,
+    };
+    let (owner, _) = h
+        .store
+        .start_pr_operation(ariadne_store::StartPrOperation {
+            operation: PrOperation::Review,
+            repository_id: repo.clone(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            title: "Add widgets".into(),
+            pin: pin.clone(),
+            skills: Vec::new(),
+        })
+        .await
+        .unwrap();
+    // The fetch wakes the scheduler's pass on the request; it waits on the
+    // lock the start holds.
+    let before = stub.fetches();
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "the fetch", async || stub.fetches() > before).await;
+    // The pass is on the lock the start holds, so it cannot have acted yet.
+    eventually(TIMEOUT, "the pass to reach the lock", async || {
+        h.store.pr_operation_waiters(&repo, 1) > 0
+    })
+    .await;
+    assert_eq!(
+        h.store.get_goal(&owner.goal.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Active,
+        "the pass waits, it does not cancel the half-made start"
+    );
+    h.store
+        .set_pull_request_review_asked(&id, Some((&pin, &[])))
+        .await
+        .unwrap();
+    drop(held);
+    let session = idle_session(&h, &id).await;
+    assert_eq!(session.goal_id.as_deref(), Some(owner.goal.id.as_str()));
+    assert_eq!(session.task_id.as_deref(), Some(owner.task.id.as_str()));
+    assert_eq!(
+        h.store.get_goal(&owner.goal.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Active
+    );
+}
+
+/// A stop and a start of the same request at once end in one of two whole
+/// states: asked, with an open goal that owns the session, or stopped, with
+/// no open goal and no live session. Never an ask with no goal behind it.
+#[tokio::test]
+async fn a_stop_and_a_start_at_once_leave_one_whole_state() {
+    use ariadne_core::workflow::PrOperation;
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    idle_session(&h, &id).await;
+
+    let (stopped, started) = tokio::join!(
+        h.send(put_review(&repo, json!({"asked": false}))),
+        h.send(put_review(&repo, json!({"asked": true, "model": PIN}))),
+    );
+    assert_eq!(stopped.0, StatusCode::OK);
+    assert!(
+        started.0 == StatusCode::OK || started.0 == StatusCode::NOT_FOUND,
+        "{}",
+        started.0
+    );
+    h.flush_scheduler().await;
+    let goal = h
+        .store
+        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .await
+        .unwrap();
+    let asked = h
+        .store
+        .pull_request_by_number(&repo, 1)
+        .await
+        .unwrap()
+        .is_some_and(|row| row.review_asked);
+    assert_eq!(goal.is_some(), asked, "an ask and its goal stand together");
+    if let Some(goal) = goal {
+        eventually(TIMEOUT, "the session of the open goal", async || {
+            h.flush_scheduler().await;
+            h.sessions_of_goal(&goal.id)
+                .await
+                .iter()
+                .any(|s| s.status().is_live())
+        })
+        .await;
+    }
+}
+
+/// Cancelling a goal that a stop and a new start replaced while the cancel
+/// waited for the request's lock cancels nothing: the request names the old
+/// goal, and the new one is another goal's.
+#[tokio::test]
+async fn cancelling_a_replaced_review_goal_leaves_its_replacement_alone() {
+    use ariadne_core::workflow::PrOperation;
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    idle_session(&h, &id).await;
+    let old = h
+        .store
+        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let held = h.store.pr_operation_lock(&repo, 1).await;
+    let pin = ariadne_store::AgentPin {
+        model: PIN.into(),
+        effort: None,
+    };
+    let cancel = h.send(post_json(
+        &format!("/v1/goals/{}/cancel", old.id),
+        json!({}),
+    ));
+    let replace = async {
+        // The cancel has read its goal and waits for the lock.
+        eventually(TIMEOUT, "the cancel to reach the lock", async || {
+            h.store.pr_operation_waiters(&repo, 1) > 0
+        })
+        .await;
+        h.store
+            .stop_pr_operation(&repo, 1, PrOperation::Review, "stopped")
+            .await
+            .unwrap();
+        let (owner, _) = h
+            .store
+            .start_pr_operation(ariadne_store::StartPrOperation {
+                operation: PrOperation::Review,
+                repository_id: repo.clone(),
+                number: 1,
+                url: "https://github.com/acme/widgets/pull/1".into(),
+                title: "Add widgets".into(),
+                pin: pin.clone(),
+                skills: Vec::new(),
+            })
+            .await
+            .unwrap();
+        h.store
+            .set_pull_request_review_asked(&id, Some((&pin, &[])))
+            .await
+            .unwrap();
+        drop(held);
+        owner
+    };
+    let ((status, _), replacement) = tokio::join!(cancel, replace);
+    assert_eq!(status, StatusCode::CONFLICT, "the old goal has ended");
+    assert_ne!(replacement.goal.id, old.id);
+    assert_eq!(
+        h.store
+            .get_goal(&replacement.goal.id)
+            .await
+            .unwrap()
+            .status(),
+        ariadne_core::GoalStatus::Active
+    );
+    assert!(
+        h.store.get_pull_request(&id).await.unwrap().review_asked,
+        "the replacement's ask stands"
+    );
 }

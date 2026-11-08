@@ -319,7 +319,7 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
      answers `false` for any reason: closed, no longer asking, back to
      draft, or never asked for directly on its own row — so a request that
      stopped asking does not carry a stale blocker for work nothing is
-     trying any more): a reviewer session sits on no task either, and
+     trying any more): a reviewer session's task is the review goal's, not a task that fails, and
      carries the same `disconnected` false-positive risk the
      orchestrator's own mark exists to avoid. `reviewer_given_up_items`
      gives it its own item, targeting the request itself, with the same

@@ -63,4 +63,25 @@ describe("WorkflowSelect", () => {
     expect(screen.getByRole("option", { name: "Repository default" })).toBeDefined()
     expect(screen.queryByRole("option", { name: /no workflow/i })).toBeNull()
   })
+
+  it("leaves out a workflow that serves a pull request operation", async () => {
+    const user = userEvent.setup()
+    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      const { pathname } = new URL(request.url)
+      if (pathname === "/v1/workflows") {
+        return jsonResponse([
+          aWorkflow({ name: "build" }),
+          aWorkflow({ name: "pr-review", operation: "review" }),
+        ])
+      }
+      return new Response("not found", { status: 404 })
+    })
+    renderScreen(<Harness />)
+
+    await user.click(screen.getByRole("combobox"))
+
+    expect(await screen.findByRole("option", { name: "build" })).toBeDefined()
+    expect(screen.queryByRole("option", { name: "pr-review" })).toBeNull()
+  })
 })

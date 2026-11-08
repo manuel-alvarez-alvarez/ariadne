@@ -21,6 +21,12 @@ impl super::Scheduler {
         if goal.status() != GoalStatus::Active {
             return Ok(());
         }
+        // The task of a pull request operation has no branch, no worktree
+        // of its own and no column to walk: the request's pass owns its
+        // session and its ending (029).
+        if goal.pull_request_operation().is_some() {
+            return Ok(());
+        }
         // The branch is only followed while somebody is working on it.
         // Finished and cancelled tasks are let go by the cleanup below, but a
         // failed one keeps its worktree — a user can retry it — and until one

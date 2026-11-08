@@ -50,6 +50,24 @@ impl StepGate {
     }
 }
 
+/// The work Ariadne does on one pull request as a goal of its own: one active
+/// goal per request and operation, staffed by one task whose single column
+/// runs on a workflow only that operation reads (029, 030).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum PrOperation {
+    /// A live review of the request (029).
+    Review,
+    /// Keeping the request until it merges or closes (032).
+    Babysit,
+}
+
+crate::wire_enum! { PrOperation, "pull request operation", [
+    Review = "review",
+    Babysit = "babysit",
+]}
+
 /// One column of a workflow: a step an author or reviewer works through on
 /// the way to the next.
 #[derive(Debug, Clone, PartialEq, Eq)]
