@@ -30,6 +30,9 @@ in the root [`AGENTS.md`](../AGENTS.md).
   `main`, and checks that a new one is a correctly numbered regular file,
   each directory numbered from its own 0001; see
   [`crates/AGENTS.md`](../crates/AGENTS.md).
+- `github-settings.sh` — `apply` or `verify` the GitHub settings kept under
+  `.github/settings/`, as `.github/AGENTS.md` describes. Tested by
+  `bash scripts/tests/github-settings.sh`, which runs against a stand-in `gh`.
 - `install-githooks.sh` — sets `core.hooksPath` to `.githooks` from the
   repository root, so the hooks under `.githooks/` run; a repeat run that
   finds the setting already there changes nothing. See the root

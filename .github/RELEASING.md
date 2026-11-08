@@ -8,7 +8,7 @@ does all three from the commit history.
 
 1. You merge commits into `main`.
 2. `.github/workflows/release-please.yml` runs and keeps one open pull request,
-   `chore(main): release X.Y.Z`, holding the version bump and the changelog
+   `chore: release X.Y.Z`, holding the version bump and the changelog
    entry for everything released since the last tag. It is rewritten on every
    push, so it is always the current pending release.
 3. Merging that PR makes release-please tag `vX.Y.Z` and publish a GitHub
@@ -27,6 +27,10 @@ does all three from the commit history.
 4. Not merging it costs nothing — commits accumulate into the same PR.
 
 ## Commit messages
+
+Release-please titles its pull request `chore: release X.Y.Z` through
+`pull-request-title-pattern`, so the title passes the same check as any other
+(see [`AGENTS.md`](AGENTS.md#github-settings)).
 
 Only [conventional commits](https://www.conventionalcommits.org) are seen by
 release-please. Everything else is silently ignored: it neither appears in the

@@ -19,10 +19,12 @@ tests:
   - scripts/tests/release-please-config.sh
   - scripts/tests/release-notes.sh
   - scripts/tests/githooks.sh
+  - scripts/tests/github-settings.sh
   - scripts/tests/check-migrations.sh
   - .github/workflows/ci.yml
   - .github/workflows/release-please.yml
   - .github/workflows/release.yml
+  - .github/workflows/pr-title.yml
   - .github/dependabot.yml
 ---
 
@@ -84,7 +86,7 @@ Out: what the daemon does once running (009, 012).
    `~/.ariadne/install.log` and are shown only when a step fails. `--verbose`
    streams them instead.
 5. Releases are automated end to end: release-please keeps one open
-   `chore(main): release X.Y.Z` pull request holding the version bump and the
+   `chore: release X.Y.Z` pull request holding the version bump and the
    changelog entry, and merging it tags the version and publishes the release.
    The asset workflow runs on the **tag**, which is what makes the provenance
    attestation name the tag as the origin of the assets. On macOS, `npm ci`,
@@ -109,6 +111,14 @@ Out: what the daemon does once running (009, 012).
    The commit hook exempts actual merges. The reusable subject validator never exempts titles.
    Main pushes check the outgoing commit in an isolated checkout with the full host-platform check set.
    Other branch pushes retain scoped checks. Require GitHub CI before GitHub squash merges.
+   GitHub settings are versioned in `.github/settings/`. Only squash merging
+   is on, with the PR title as the squash subject, and merged remote branches
+   are deleted. The `main` ruleset forbids deletion, non-fast-forward updates
+   and merge commits, has no bypass, and requires no PR or status check.
+   `scripts/github-settings.sh apply` writes only managed fields. `verify`
+   reads and reports differences. The `PR title` workflow validates every
+   title, edits included, with `scripts/check-commit-subject.sh`.
+   Release-please titles its PR `chore: release X.Y.Z`.
 9. The schema is one squashed init migration, `0001`. A database whose
    `_sqlx_migrations` records a version or a checksum this release does not
    ship is refused at open, with a sentence naming the file to delete: Ariadne
@@ -317,6 +327,13 @@ Out: what the daemon does once running (009, 012).
   commit types from release notes. The pre-commit hook runs its section test
   when the config changes (`scripts/tests/release-please-config.sh`,
   `scripts/tests/githooks.sh`: `release-please-config-commit`).
+- `scripts/github-settings.sh verify` reports drift and writes nothing;
+  `apply` writes only the managed fields and the `main` ruleset, and creates
+  the ruleset when missing (`scripts/tests/github-settings.sh`).
+- `.github/workflows/pr-title.yml` runs on `edited` as well as `opened`, and
+  validates the title from the base checkout. `release-please-config.json`
+  sets `pull-request-title-pattern` to `chore: release${component} ${version}`
+  (`scripts/tests/release-please-config.sh`).
 - `scripts/release-notes.sh` turns a plain changelog body into one with an
   install section and an asset table ahead of it, and a re-run on a body
   that already carries the markers replaces the generated part without
@@ -368,6 +385,8 @@ fails the service step`).
 `scripts/make-signing-cert.sh`, `scripts/release-notes.sh`,
 `scripts/check-migrations.sh`, `scripts/tests/check-migrations.sh`,
 `scripts/tests/release-please-config.sh`,
+`scripts/github-settings.sh`, `scripts/tests/github-settings.sh`,
+`.github/settings/`, `.github/workflows/pr-title.yml`,
 `.github/workflows/release.yml`, `.github/RELEASING.md`,
 `.github/workflows/ci.yml`,
 `.github/dependabot.yml`,

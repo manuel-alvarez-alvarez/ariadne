@@ -60,6 +60,7 @@
   ],
   "include-component-in-tag": false,
   "bump-minor-pre-major": true,
+  "pull-request-title-pattern": "chore: release${component} ${version}",
   "packages": {
     ".": {
       "changelog-path": "CHANGELOG.md",
