@@ -214,9 +214,6 @@ pub struct OpenPullRequestRequest {
     pub title: String,
     /// Filled from the repository's own request template.
     pub body: String,
-    /// Opens the request as a draft. Defaults to false.
-    #[serde(default)]
-    pub draft: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

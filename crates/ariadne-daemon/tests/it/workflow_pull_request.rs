@@ -341,8 +341,7 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
             "feat: add widgets",
             "--body",
             "## Summary\nAdd widgets.",
-            // The repository supervises its posts by default (002, 026
-            // rule 23), so the request opens as a draft.
+            // Every task request opens as a draft (026 rule 23).
             "--draft"
         ]
     );
@@ -413,10 +412,6 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
         forge.fetches() > before_second_wake
     })
     .await;
-    // Not about the supervised path (026 rule 24 covers that separately):
-    // the reply below posts directly, as it did before that rule existed.
-    let repository = h.store.get_repository(&task.repo_id).await.unwrap();
-    h.set_supervise_posts(&repository, false).await;
     let before_reply = forge.fetches();
     let reply: Value = h
         .json(

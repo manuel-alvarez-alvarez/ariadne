@@ -185,10 +185,6 @@ reads behind them ([026](026-pull-requests.md)).
     way it accepts a task's column agent: a request a task keeps is
     refused the ask (rule 1), so no row ever carries both, and the seat
     alone tells the two apart.
-    A repository that supervises its posts holds the keeper's reply back
-    the same way (026 rule 24): nothing posts to the forge directly, the
-    route answers `pending: true`, and the comment counts answered from
-    then on, so a later poll hands the keeper no further news of it.
 14. `report_pull_request` takes `ready` with `head_sha`, on a row this
     keeper answers for, by the same rule a task's column agent reports
     under (029 rule 15): a `ready: true` report with no `head_sha`, or one
@@ -233,13 +229,6 @@ reads behind them ([026](026-pull-requests.md)).
   by another login reaches it once; its `ready` report is accepted; and the
   merge ends it, with its worktree and its branch gone and the row gone:
   `pull_request_babysit.rs::asking_keeps_a_dependabot_request_until_the_merge`.
-- Where the repository supervises its posts, the keeper's reply to a
-  conversation comment answers `pending: true` with the pending review's
-  own id, posts no `gh pr comment`, announces the request changed so a
-  watcher learns of it without a poll, leaves the comment answered with no
-  further reply taken, is refused a second reply to it, and a later poll
-  hands the keeper no further news of it:
-  `pull_request_babysit.rs::a_keeper_holds_its_reply_pending_when_the_repository_supervises_posts`.
 - A babysit ask makes one active goal with no orchestrator, on a snapshot of
   `pr-babysit`, with one task in its `babysit` column and one agent whose
   session is the keeper; a repeated ask keeps them, and two asks at once

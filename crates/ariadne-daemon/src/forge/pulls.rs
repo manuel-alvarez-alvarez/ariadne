@@ -61,15 +61,6 @@ pub struct ForgeDetails {
     pub comments: Vec<NewPullRequestComment>,
     pub failed_checks: Vec<FailedCheck>,
     pub behind_base: bool,
-    /// Whether this same read still finds a pending review of the viewer's
-    /// own: internal bookkeeping for
-    /// `forge::live::merge_fresh_details` alone, never shown to a user or
-    /// exposed as an attention item — the filter above already drops a
-    /// pending post from `comments` outright. Without this, a review's
-    /// own finding held in the pending set could never be told apart from
-    /// one a forge user genuinely deleted, since both are equally absent
-    /// from a fresh read while the finding stays unconfirmed.
-    pub has_pending_posts: bool,
 }
 
 /// One check that failed on a request's head, as `pull_requests.failed_checks`
@@ -108,8 +99,7 @@ pub struct DraftComment {
 /// line of a hunk that is added or kept, numbered as the new file numbers
 /// it, and none of the removed ones, which have no number there. A forge
 /// takes an inline comment on these lines alone: GitHub refuses any other
-/// outright on a submitted review, and on a pending one answers success
-/// with no thread at all, so a finding is checked here before it goes.
+/// outright, so a finding is checked here before it goes.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct ShownLines {
     /// Each path's hunks as `(first, last)` on the new side, inclusive.

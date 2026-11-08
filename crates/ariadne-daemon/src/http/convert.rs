@@ -83,7 +83,7 @@ dto! {
 
     pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         permission_mode: r.permission_mode(),
-        supervise_posts: r.supervise_posts(),
+
         forge: r.forge.map(forge_dto),
         .. id, path, base_branch, description, default_workflow, created_at, updated_at
     }
@@ -583,10 +583,6 @@ pub(crate) async fn pull_request_dto_of(
             _ => true,
         })
         .map(|session| session.id);
-    let supervise_posts = store
-        .get_repository(&row.repository_id)
-        .await?
-        .supervise_posts();
     let mut operations = Vec::new();
     for operation in ariadne_core::workflow::PrOperation::ALL {
         if let Some(goal) = store
@@ -604,7 +600,7 @@ pub(crate) async fn pull_request_dto_of(
             });
         }
     }
-    let mut dto = pull_request_dto(row, session_id, supervise_posts);
+    let mut dto = pull_request_dto(row, session_id);
     dto.operations = operations;
     Ok(dto)
 }
@@ -614,7 +610,6 @@ pub(crate) async fn pull_request_dto_of(
 pub(crate) fn pull_request_dto(
     pull: ariadne_store::PullRequest,
     session_id: Option<String>,
-    supervise_posts: bool,
 ) -> ariadne_api::pull_requests::PullRequestDto {
     ariadne_api::pull_requests::PullRequestDto {
         failed_checks: serde_json::from_str(&pull.failed_checks).unwrap_or_default(),
@@ -651,7 +646,6 @@ pub(crate) fn pull_request_dto(
         updated_at: pull.forge_updated_at,
         role: pull.role,
         ready: pull.ready,
-        supervise_posts,
         operations: Vec::new(),
     }
 }
@@ -698,7 +692,7 @@ pub(crate) fn forge_pull_dto(
         babysit_effort: None,
         babysit_skills: Vec::new(),
         session_id: None,
-        supervise_posts: false,
+
         operations: Vec::new(),
     }
 }

@@ -19,9 +19,6 @@ pub struct NewRepository {
     pub description: Option<String>,
     /// None = `auto`.
     pub permission_mode: Option<PermissionMode>,
-    /// Whether this repository's agents hold what they post to the forge for
-    /// a person's approval. None = `true`.
-    pub supervise_posts: Option<bool>,
 }
 
 /// Partial update; `None` leaves a field alone.
@@ -33,7 +30,6 @@ pub struct RepositoryUpdate {
     /// Some(None) clears the description.
     pub description: Option<Option<String>>,
     pub permission_mode: Option<PermissionMode>,
-    pub supervise_posts: Option<bool>,
 }
 
 impl Store {
@@ -70,15 +66,14 @@ impl Store {
         let mut tx = self.w().begin().await?;
         sqlx::query(
             "INSERT INTO repositories (id, path, base_branch, description, permission_mode,
-                                       supervise_posts, default_workflow, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                       default_workflow, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.path)
         .bind(&new.base_branch)
         .bind(&new.description)
         .bind(new.permission_mode.unwrap_or(PermissionMode::Auto).as_str())
-        .bind(new.supervise_posts.unwrap_or(true))
         .bind(&default_workflow)
         .bind(&ts)
         .bind(&ts)
@@ -147,11 +142,10 @@ impl Store {
         let path = update.path.unwrap_or(current.path);
         let base_branch = update.base_branch.unwrap_or(current.base_branch);
         let description = update.description.unwrap_or(current.description);
-        let supervise_posts = update.supervise_posts.unwrap_or(current.supervise_posts);
         let mut tx = self.w().begin().await?;
         sqlx::query(
             "UPDATE repositories SET path = ?, base_branch = ?, description = ?,
-                                     permission_mode = ?, supervise_posts = ?,
+                                     permission_mode = ?,
                                      default_workflow = ?, updated_at = ?
              WHERE id = ?",
         )
@@ -159,7 +153,6 @@ impl Store {
         .bind(&base_branch)
         .bind(&description)
         .bind(permission_mode.as_str())
-        .bind(supervise_posts)
         .bind(&default_workflow)
         .bind(now())
         .bind(id)

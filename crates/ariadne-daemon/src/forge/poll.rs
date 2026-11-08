@@ -757,7 +757,6 @@ async fn read_row(
                     failed_checks: details.failed_checks,
                     behind_base: details.behind_base,
                     head_sha,
-                    has_pending_posts: details.has_pending_posts,
                 },
             );
             Ok(())

@@ -211,7 +211,6 @@ struct ReadyToOpen {
     stub: StubForgeCli,
     task: Task,
     agent: AgentSession,
-    repo: String,
 }
 
 async fn ready_to_open(script: Value) -> ReadyToOpen {
@@ -242,13 +241,11 @@ async fn ready_to_open(script: Value) -> ReadyToOpen {
         .await;
     let agent = h.step_session(&task, "pr").await;
     sh(&worktree, "git push -q origin HEAD");
-    let repo = cast.repo.id.clone();
     ReadyToOpen {
         h,
         stub,
         task,
         agent,
-        repo,
     }
 }
 
@@ -613,9 +610,6 @@ async fn a_pending_reviews_comments_give_no_live_view_comment_and_no_news() {
 /// own evidence against the claim instead. Any other session is refused,
 /// and so is a call that comes from no session.
 ///
-/// The repository does not supervise its posts here, so the reply posts
-/// directly, as it always has (026 rule 24 covers the supervised case
-/// separately, below).
 #[tokio::test]
 async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
     let comments = [review_comment(101, "alice", None, "2026-10-02T00:00:00Z")];
@@ -627,8 +621,6 @@ async fn the_pr_agent_replies_and_reports_and_no_other_session_may() {
         repo,
         ..
     } = kept_request_running(script("OPEN", &comments, json!([]))).await;
-    let repository = h.store.get_repository(&repo).await.unwrap();
-    h.set_supervise_posts(&repository, false).await;
     fetch_again(&h, &stub, &repo).await;
     let mut stored: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "the comment to be told", async || {
@@ -838,10 +830,9 @@ async fn open_pull_request_strips_a_trailing_trailer_from_the_body() {
     assert_eq!(sent, "Fixes widgets.");
 }
 
-/// A repository that supervises its posts (002) opens every request as a
-/// draft, whatever the agent's own `draft` asked (026 rule 23).
+/// Every task request opens as a draft (026 rule 23).
 #[tokio::test]
-async fn open_pull_request_forces_a_draft_when_the_repository_supervises_posts() {
+async fn open_pull_request_always_opens_a_draft() {
     let ReadyToOpen {
         h,
         stub,
@@ -854,7 +845,7 @@ async fn open_pull_request_forces_a_draft_when_the_repository_supervises_posts()
             as_session(
                 &format!("/v1/tasks/{}/pull-request", task.id),
                 &agent.id,
-                json!({"title": "Fix widgets", "body": "Fixes widgets.", "draft": false}),
+                json!({"title": "Fix widgets", "body": "Fixes widgets."}),
             ),
             StatusCode::OK,
         )
@@ -870,48 +861,7 @@ async fn open_pull_request_forces_a_draft_when_the_repository_supervises_posts()
         .expect("the open call");
     assert!(
         call.args.iter().any(|a| a == "--draft"),
-        "the repository supervises its posts, so the request opens as a draft \
-         whatever the agent asked: {:?}",
-        call.args
-    );
-}
-
-/// A repository that does not supervise its posts leaves the agent's own
-/// `draft` value through unchanged (026 rule 23).
-#[tokio::test]
-async fn open_pull_request_leaves_the_agents_draft_value_unchanged_when_supervision_is_off() {
-    let ReadyToOpen {
-        h,
-        stub,
-        task,
-        agent,
-        repo,
-        ..
-    } = ready_to_open(quiet_script()).await;
-    let repository = h.store.get_repository(&repo).await.unwrap();
-    h.set_supervise_posts(&repository, false).await;
-    let opened: TaskDto = h
-        .json(
-            as_session(
-                &format!("/v1/tasks/{}/pull-request", task.id),
-                &agent.id,
-                json!({"title": "Fix widgets", "body": "Fixes widgets.", "draft": false}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(opened.pr_url.as_deref(), Some(URL));
-    let call = stub
-        .invocations()
-        .into_iter()
-        .find(|i| {
-            i.args
-                .starts_with(&["pr".to_string(), "create".to_string()])
-        })
-        .expect("the open call");
-    assert!(
-        !call.args.iter().any(|a| a == "--draft"),
-        "supervision is off, so the agent's own draft: false goes through: {:?}",
+        "the request opens as a draft: {:?}",
         call.args
     );
 }
@@ -922,8 +872,6 @@ async fn open_pull_request_leaves_the_agents_draft_value_unchanged_when_supervis
 /// same body, and a reply to a body of the agent's own side, are refused,
 /// and no gh call follows either refusal.
 ///
-/// The repository does not supervise its posts here, so the reply posts
-/// directly (026 rule 24 covers the supervised case separately, below).
 #[tokio::test]
 async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side() {
     let threads =
@@ -943,15 +891,8 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
         &threads.to_string(),
     );
     let Kept {
-        h,
-        stub,
-        agent,
-        id,
-        repo,
-        ..
+        h, stub, agent, id, ..
     } = kept_request(script.clone()).await;
-    let repository = h.store.get_repository(&repo).await.unwrap();
-    h.set_supervise_posts(&repository, false).await;
     let mut stored: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "both review bodies to be stored", async || {
         stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
@@ -1039,382 +980,10 @@ async fn the_pr_agent_replies_once_to_a_conversation_comment_of_the_other_side()
     );
 }
 
-/// Where the repository supervises its posts (002 rule 13), the keeping
-/// agent's reply to a top-level conversation comment holds nothing on the
-/// forge directly: no `gh pr comment` call is made. Instead it quotes the
-/// comment it answers, with a link to it, and appends that to the
-/// viewer's own pending review, answering `pending: true` and the
-/// review's own id (026 rule 24). The comment counts answered from then
-/// on, so a second reply to it is refused the same way an already
-/// answered comment always is.
-#[tokio::test]
-async fn the_pr_agent_holds_its_reply_pending_when_the_repository_supervises_posts() {
-    let threads =
-        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
-    let reviews = json!([
-        {"id": 501, "user": {"login": "alice"}, "body": "Why not here?",
-         "submitted_at": "2026-10-02T00:01:00Z"},
-    ]);
-    let mut script = script_of(
-        pull("OPEN", "abc"),
-        &[],
-        &[],
-        &json!({"check_runs": []}).to_string(),
-        &reviews.to_string(),
-        &threads.to_string(),
-    );
-    // Ahead of the generic reads `script_of` already answers: finding no
-    // pending review of "me" among `reviews` above, the reply creates one
-    // with no body of its own, then appends to it through GraphQL. Each
-    // gets its own entry here, matched before the generic one it would
-    // otherwise fall through to.
-    script.as_array_mut().unwrap().splice(
-        0..0,
-        [
-            answer(
-                &[
-                    "api",
-                    "repos/acme/widgets/pulls/1/reviews",
-                    "--hostname",
-                    "github.com",
-                    "--method",
-                    "POST",
-                ],
-                0,
-                r#"{"id": 9, "node_id": "PR_kwDOx", "state": "PENDING", "body": "",
-                    "user": {"login": "me"}}"#,
-            ),
-            answer(
-                &[
-                    "api",
-                    "graphql",
-                    "--hostname",
-                    "github.com",
-                    "-f",
-                    "query=mutation($id: ID!, $body: String!) { \
-                     updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
-                     pullRequestReview { id } } }",
-                ],
-                0,
-                r#"{"data": {"updatePullRequestReview": {"pullRequestReview": {"id": "PR_kwDOx"}}}}"#,
-            ),
-        ],
-    );
-    let Kept {
-        h,
-        stub,
-        agent,
-        id,
-        repo,
-        ..
-    } = kept_request(script).await;
-    let mut stored: Vec<Value> = Vec::new();
-    eventually(TIMEOUT, "alice's comment to be stored", async || {
-        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
-        stored.iter().any(|c| c["author_login"] == "alice")
-    })
-    .await;
-    let other_side = stored
-        .iter()
-        .find(|c| c["author_login"] == "alice")
-        .unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let before = stub.invocations().len();
-    // The mark lives in the store alone, on no field a forge fetch ever
-    // reads back, so the route announces the change itself: a watcher
-    // waiting on `pull_requests_changed` learns of it without a poll.
-    let mut events = h.bus.subscribe();
-    let moved = |event: &ariadne_daemon::bus::BusEvent| matches!(&event.event, ariadne_api::stream::DomainEvent::PullRequestsChanged(p) if p.repository_id == repo);
-    let reply: Value = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
-                &agent.id,
-                json!({"body": "Fixed it."}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    assert_eq!(reply["pending"], true);
-    assert_eq!(reply["id"], "rv-9");
-    next_event(&mut events, moved).await;
-    assert!(
-        !stub.invocations()[before..]
-            .iter()
-            .any(|i| i.args.first().map(String::as_str) == Some("pr")
-                && i.args.get(1).map(String::as_str) == Some("comment")),
-        "no public comment is posted while the repository supervises its posts"
-    );
-
-    // The comment counts answered with no reply visible on the forge.
-    let dto: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
-    assert_eq!(dto["unanswered_comments"], 0);
-
-    // A second reply is refused, the same way a comment the login's own
-    // side already answered always is: the pending mark alone settles it.
-    h.error(
-        as_session(
-            &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
-            &agent.id,
-            json!({"body": "Again."}),
-        ),
-        StatusCode::BAD_REQUEST,
-    )
-    .await;
-}
-
-/// A reply that finds the pending review already there — no `/reviews`
-/// post of this task's own ever ran to hold a comment of it — still has
-/// `list_comments` answer its body right after: the echo this fix added
-/// writes it through `add_comments`, which holds a comment whether or
-/// not one was already there, never through `edit_comment`, which only
-/// ever changes one already held and answers nothing for one it does not
-/// find (026 rule 25).
-#[tokio::test]
-async fn a_reply_holds_the_pending_reviews_body_even_with_no_review_post_of_its_own() {
-    let threads =
-        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
-    let reviews = json!([
-        {"id": 501, "user": {"login": "alice"}, "body": "Why not here?",
-         "submitted_at": "2026-10-02T00:01:00Z"},
-        {"id": 9, "node_id": "PR_kwDOx", "state": "PENDING", "user": {"login": "me"},
-         "body": "<!-- ariadne:pending-review-verdict -->", "submitted_at": null},
-    ]);
-    let mut script = script_of(
-        pull("OPEN", "abc"),
-        &[],
-        &[],
-        &json!({"check_runs": []}).to_string(),
-        &reviews.to_string(),
-        &threads.to_string(),
-    );
-    script.as_array_mut().unwrap().splice(
-        0..0,
-        [answer(
-            &[
-                "api",
-                "graphql",
-                "--hostname",
-                "github.com",
-                "-f",
-                "query=mutation($id: ID!, $body: String!) { \
-                 updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
-                 pullRequestReview { id } } }",
-            ],
-            0,
-            r#"{"data": {"updatePullRequestReview": {"pullRequestReview": {"id": "PR_kwDOx"}}}}"#,
-        )],
-    );
-    // The stub's own tempdir, which its `gh` binary lives under, must
-    // outlive this test: dropping it via `..` deletes the binary mid-test.
-    let Kept {
-        h,
-        stub: _stub,
-        agent,
-        id,
-        ..
-    } = kept_request(script).await;
-    let mut stored: Vec<Value> = Vec::new();
-    eventually(TIMEOUT, "alice's comment to be stored", async || {
-        stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
-        stored.iter().any(|c| c["author_login"] == "alice")
-    })
-    .await;
-    let other_side = stored
-        .iter()
-        .find(|c| c["author_login"] == "alice")
-        .unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let reply: Value = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/comments/{other_side}/reply"),
-                &agent.id,
-                json!({"body": "Fixed it."}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    assert_eq!(reply["pending"], true);
-    assert_eq!(reply["id"], "rv-9");
-    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
-    let review = comments
-        .iter()
-        .find(|c| c["id"] == "rv-9")
-        .expect("the pending review's own body is held, not merely edited in place");
-    assert!(
-        review["body"]
-            .as_str()
-            .unwrap()
-            .contains("ariadne:pending-review-verdict"),
-        "{review:?}"
-    );
-}
-
-/// The three pending-edit routes (026 rule 25) answer 409 with no pending review or
-/// draft note of the viewer's own to edit, making only the one listing call
-/// `quiet_script` already answers empty: there is nothing pending yet.
-#[tokio::test]
-async fn pending_edit_routes_answer_409_with_no_pending_review() {
-    // The stub's own tempdir, which its `gh` binary lives under, must
-    // outlive this test: dropping it via `..` deletes the binary mid-test.
-    let Kept {
-        h,
-        stub: _stub,
-        agent,
-        id,
-        ..
-    } = kept_request(quiet_script()).await;
-    let error = h
-        .error(
-            as_session(
-                &format!("/v1/pull-requests/{id}/comments/edit"),
-                &agent.id,
-                json!({"forge_id": "rc-501", "body": "Fixed."}),
-            ),
-            StatusCode::CONFLICT,
-        )
-        .await;
-    assert_eq!(error.error.code, "conflict");
-    assert!(error.error.message.contains("rc-501"), "{error:?}");
-
-    h.error(
-        as_session(
-            &format!("/v1/pull-requests/{id}/comments/delete"),
-            &agent.id,
-            json!({"forge_id": "rc-501"}),
-        ),
-        StatusCode::CONFLICT,
-    )
-    .await;
-
-    h.error(
-        as_session(
-            &format!("/v1/pull-requests/{id}/pending-review/body"),
-            &agent.id,
-            json!({"body": "New body."}),
-        ),
-        StatusCode::CONFLICT,
-    )
-    .await;
-}
-
-/// A `forge_id` of the wrong shape — naming no comment GitHub ever holds,
-/// whole or pending — is the caller's own mistake, not the forge's: 400,
-/// refused before any forge call and with no pending review needed to tell
-/// it apart from one that is merely gone (026 rule 25).
-#[tokio::test]
-async fn pending_edit_routes_answer_400_with_a_malformed_forge_id() {
-    let Kept {
-        h,
-        stub: _stub,
-        agent,
-        id,
-        ..
-    } = kept_request(quiet_script()).await;
-    let error = h
-        .error(
-            as_session(
-                &format!("/v1/pull-requests/{id}/comments/edit"),
-                &agent.id,
-                json!({"forge_id": "ic-501", "body": "Fixed."}),
-            ),
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
-    assert_eq!(error.error.code, "invalid_request");
-    assert!(error.error.message.contains("ic-501"), "{error:?}");
-
-    let error = h
-        .error(
-            as_session(
-                &format!("/v1/pull-requests/{id}/comments/delete"),
-                &agent.id,
-                json!({"forge_id": "ic-501"}),
-            ),
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
-    assert_eq!(error.error.code, "invalid_request");
-}
-
-/// `edit_pending_review_body` (026 rule 25) replaces the viewer's pending review
-/// body outright, through the same `updatePullRequestReview` mutation
-/// `reply_pending` reuses, answering which forge item changed.
-#[tokio::test]
-async fn edit_pending_review_body_replaces_the_pending_reviews_body() {
-    let threads =
-        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}});
-    let mut script = script_of(
-        pull("OPEN", "abc"),
-        &[],
-        &[],
-        &json!({"check_runs": []}).to_string(),
-        "[]",
-        &threads.to_string(),
-    );
-    script.as_array_mut().unwrap().splice(
-        0..0,
-        [
-            answer(
-                &[
-                    "api",
-                    "repos/acme/widgets/pulls/1/reviews",
-                    "--hostname",
-                    "github.com",
-                ],
-                0,
-                r#"[{"id": 9, "node_id": "PR_kwDOx", "state": "PENDING", "body": "Old note.",
-                    "user": {"login": "me"}}]"#,
-            ),
-            answer(
-                &[
-                    "api",
-                    "graphql",
-                    "--hostname",
-                    "github.com",
-                    "-f",
-                    "query=mutation($id: ID!, $body: String!) { \
-                     updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
-                     pullRequestReview { id } } }",
-                ],
-                0,
-                r#"{"data": {"updatePullRequestReview": {"pullRequestReview": {"id": "PR_kwDOx"}}}}"#,
-            ),
-        ],
-    );
-    let Kept {
-        h,
-        stub: _stub,
-        agent,
-        id,
-        ..
-    } = kept_request(script).await;
-    let answer: Value = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/pending-review/body"),
-                &agent.id,
-                json!({"body": "New body."}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(answer["id"], "rv-9");
-    assert_eq!(answer["changed"], "the GitHub pending review body");
-}
-
 /// Two replies racing for the same conversation body: both pass the once
 /// check before either reaches the forge, but the pull request's reply
 /// lock serializes them, so the second rereads the first's answer instead
 /// of racing it. One `gh pr comment` call posts; the other is refused.
-/// The repository does not supervise its posts: this is about the race,
-/// not about the supervised path (026 rule 24 covers that separately).
 #[tokio::test]
 async fn two_replies_racing_for_one_comment_post_it_once() {
     let threads =
@@ -1441,15 +1010,8 @@ async fn two_replies_racing_for_one_comment_post_it_once() {
         }
     }
     let Kept {
-        h,
-        stub,
-        agent,
-        id,
-        repo,
-        ..
+        h, stub, agent, id, ..
     } = kept_request(script.clone()).await;
-    let repository = h.store.get_repository(&repo).await.unwrap();
-    h.set_supervise_posts(&repository, false).await;
     let mut stored: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "both review bodies to be stored", async || {
         stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
@@ -1516,8 +1078,6 @@ fn conversation_reads(stub: &StubForgeCli) -> usize {
 /// only a local addition newer than the generation the read itself
 /// captured, and the reply is exactly that. The once check still refuses
 /// a second reply to the same comment once the poll's stale read lands.
-/// The repository does not supervise its posts: this is about the race,
-/// not about the supervised path (026 rule 24 covers that separately).
 #[tokio::test]
 async fn a_poll_that_began_before_a_reply_does_not_erase_it() {
     let threads =
@@ -1546,8 +1106,6 @@ async fn a_poll_that_began_before_a_reply_does_not_erase_it() {
         repo,
         ..
     } = kept_request(script.clone()).await;
-    let repository = h.store.get_repository(&repo).await.unwrap();
-    h.set_supervise_posts(&repository, false).await;
     let mut stored: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "both review bodies to be stored", async || {
         stored = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
@@ -2289,10 +1847,6 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
         path,
         ..
     } = kept_request_running(quiet_script()).await;
-    // Not about the supervised path (026 rule 24 covers that separately):
-    // the reply below posts directly, as it did before that rule existed.
-    let repository = h.store.get_repository(&repo).await.unwrap();
-    h.set_supervise_posts(&repository, false).await;
     // The request's head is the task branch, so the review has a commit to
     // be detached at.
     let tip = sh(&path, &format!("git rev-parse {}", task.branch));
@@ -2507,224 +2061,6 @@ async fn an_ariadne_review_of_a_kept_request_reaches_its_pr_agent() {
     assert_eq!(
         dto["unanswered_comments"], 0,
         "the agent's reply answers the finding"
-    );
-}
-
-/// Editing or deleting a held pending finding (026 rule 25) updates
-/// Ariadne's own view of it at once: GitHub never lists a pending review's
-/// own comments among a request's, so a fresh detail read never catches
-/// either change up on its own (`live::LivePulls::edit_comment`,
-/// `::remove_comment`). A stale cache would otherwise read a deleted
-/// finding as still open, which `submit_review`'s own `open_p0` check
-/// reads to require `request_changes` all over again.
-#[tokio::test]
-async fn editing_and_deleting_a_held_pending_finding_updates_list_comments_at_once() {
-    let Kept {
-        h,
-        stub,
-        task,
-        id,
-        repo,
-        path,
-        ..
-    } = kept_request(quiet_script()).await;
-    let tip = sh(&path, &format!("git rev-parse {}", task.branch));
-    let headed = |script: Value| -> Value {
-        serde_json::from_str(
-            &script
-                .to_string()
-                .replace("abc", &tip)
-                .replace("\"fix\"", &format!("\"{}\"", task.branch)),
-        )
-        .unwrap()
-    };
-    let mut script = headed(quiet_script());
-    let entries = script.as_array_mut().unwrap();
-    for entry in [
-        // The viewer's pending review already exists: found, never created.
-        answer(
-            &[
-                "api",
-                "repos/acme/widgets/pulls/1/reviews",
-                "--hostname",
-                "github.com",
-            ],
-            0,
-            r#"[{"id": 9, "node_id": "PR_kwDOx", "state": "PENDING",
-                "body": "<!-- ariadne:pending-review-verdict -->",
-                "user": {"login": "me"}}]"#,
-        ),
-        answer(
-            &[
-                "api",
-                "graphql",
-                "--hostname",
-                "github.com",
-                "-f",
-                "query=mutation($reviewId: ID!, $path: String!, $line: Int!, $body: String!) { \
-                 addPullRequestReviewThread(input: {pullRequestReviewId: $reviewId, path: \
-                 $path, line: $line, side: RIGHT, body: $body}) { thread { comments(first: 1) \
-                 { nodes { databaseId createdAt } } } } }",
-            ],
-            0,
-            r#"{"data":{"addPullRequestReviewThread":{"thread":{"comments":{"nodes":[
-                {"databaseId": 501, "createdAt": "2026-10-02T00:00:00Z"}]}}}}}"#,
-        ),
-        answer(
-            &[
-                "api",
-                "graphql",
-                "--hostname",
-                "github.com",
-                "-f",
-                "query=mutation($id: ID!, $body: String!) { \
-                 updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { \
-                 pullRequestReview { id } } }",
-            ],
-            0,
-            r#"{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
-        ),
-        answer(
-            &[
-                "api",
-                "graphql",
-                "--hostname",
-                "github.com",
-                "--paginate",
-                "-f",
-                "query=query($id: ID!, $endCursor: String) { node(id: $id) { ... on \
-                 PullRequestReview { comments(first: 100, after: $endCursor) { pageInfo { \
-                 hasNextPage endCursor } nodes { id databaseId } } } } }",
-            ],
-            0,
-            r#"{"data":{"node":{"comments":{"nodes":[{"id":"PRRC_1","databaseId":501}]}}}}"#,
-        ),
-        answer(
-            &[
-                "api",
-                "graphql",
-                "--hostname",
-                "github.com",
-                "-f",
-                "query=mutation($id: ID!, $body: String!) { updatePullRequestReviewComment(input: \
-                 {pullRequestReviewCommentId: $id, body: $body}) { pullRequestReviewComment { \
-                 databaseId } } }",
-            ],
-            0,
-            r#"{"data":{"updatePullRequestReviewComment":{"pullRequestReviewComment":{"databaseId":501}}}}"#,
-        ),
-        answer(
-            &[
-                "api",
-                "graphql",
-                "--hostname",
-                "github.com",
-                "-f",
-                "query=mutation($id: ID!) { deletePullRequestReviewComment(input: \
-                 {pullRequestReviewCommentId: $id}) { pullRequestReview { id } } }",
-            ],
-            0,
-            r#"{"data":{"deletePullRequestReviewComment":{"pullRequestReview":{"id":"PR_kwDOx"}}}}"#,
-        ),
-    ] {
-        entries.insert(0, entry);
-    }
-    stub.reprogram(script);
-    h.state.forge_poll.wake(&repo);
-    eventually(
-        TIMEOUT,
-        "the detail fetch to read the new head",
-        async || {
-            h.launcher.live.get(&id).is_some_and(|live| {
-                live.pull.head_sha == tip
-                    && live
-                        .details
-                        .as_ref()
-                        .is_some_and(|details| details.head_sha == tip)
-            })
-        },
-    )
-    .await;
-    h.flush_scheduler().await;
-
-    let ask = Request::builder()
-        .method("PUT")
-        .uri(format!(
-            "/v1/repositories/{repo}/pull-requests/1/ariadne-review"
-        ))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"asked": true, "model": "stub:review-model"}).to_string(),
-        ))
-        .unwrap();
-    let _: Value = h.json(ask, StatusCode::OK).await;
-    let mut review = None;
-    eventually(TIMEOUT, "the review session to be idle", async || {
-        review = h
-            .store
-            .list_sessions(SessionFilter {
-                pull_request_id: Some(id.clone()),
-                ..Default::default()
-            })
-            .await
-            .unwrap()
-            .into_iter()
-            .find(|s| s.status() == SessionStatus::Idle && s.launched_at.is_some());
-        review.is_some()
-    })
-    .await;
-    let review = review.unwrap();
-    let posted: Value = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/reviews"),
-                &review.id,
-                json!({"event": "comment", "body": "One P0.", "comments": [
-                    {"path": "widget", "line": 1, "title": "An empty list panics",
-                     "body": "An empty list panics.", "priority": "P0"}
-                ]}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    assert_eq!(posted, json!({"pending": true}));
-
-    let edited: Value = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/comments/edit"),
-                &review.id,
-                json!({"forge_id": "rc-501", "body": "**[P0] Fixed on review**\n\nActually fine."}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(edited["id"], "rc-501");
-    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
-    let finding = comments
-        .iter()
-        .find(|c| c["id"] == "rc-501")
-        .expect("the edited finding is still held");
-    assert_eq!(
-        finding["body"], "**[P0] Fixed on review**\n\nActually fine.",
-        "list_comments reads the edited body, never the one it was posted with: {comments:?}"
-    );
-
-    let deleted: Value = h
-        .json(
-            as_session(
-                &format!("/v1/pull-requests/{id}/comments/delete"),
-                &review.id,
-                json!({"forge_id": "rc-501"}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(deleted["id"], "rc-501");
-    let comments: Vec<Value> = h.get(&format!("/v1/pull-requests/{id}/comments")).await;
-    assert!(
-        comments.iter().all(|c| c["id"] != "rc-501"),
-        "the deleted finding is gone from list_comments, not merely from the forge: {comments:?}"
     );
 }
 
@@ -3009,4 +2345,34 @@ async fn a_closed_request_i_review_deletes_no_branch() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn the_posting_api_has_no_supervision_controls() {
+    let h = harness().await;
+    let schema: Value = h.get("/api-docs/openapi.json").await;
+    let schemas = &schema["components"]["schemas"];
+    for name in [
+        "RepositoryDto",
+        "CreateRepositoryRequest",
+        "UpdateRepositoryRequest",
+        "PullRequestDto",
+    ] {
+        assert!(
+            schemas[name]["properties"].get("supervise_posts").is_none(),
+            "{name}"
+        );
+    }
+    assert!(
+        schemas["OpenPullRequestRequest"]["properties"]
+            .get("draft")
+            .is_none()
+    );
+    for route in ["comments/edit", "comments/delete", "pending-review/body"] {
+        assert!(
+            schema["paths"]
+                .get(format!("/v1/pull-requests/{{id}}/{route}"))
+                .is_none()
+        );
+    }
 }

@@ -51,7 +51,6 @@ async fn learned_permissions_keep_one_row_per_repository_tool_level_and_key() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
-            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -201,7 +200,6 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
-            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -212,7 +210,6 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
-            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -223,7 +220,6 @@ async fn a_repository_row_wins_over_an_all_row_of_another_repository() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
-            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -496,7 +492,6 @@ async fn seed_repository(store: &Store) -> Repository {
             base_branch: "main".into(),
             description: None,
             permission_mode: None,
-            supervise_posts: None,
         })
         .await
         .unwrap()
@@ -766,7 +761,6 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "main".into(),
             description: Some("the one repo".into()),
             permission_mode: None,
-            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -776,8 +770,6 @@ async fn repository_crud_and_unique_path_branch() {
     // registered without a workflow lands its goals on the base branch.
     assert_eq!(repo.permission_mode(), PermissionMode::Auto);
     assert_eq!(repo.default_workflow, DEFAULT_WORKFLOW);
-    // A repository registered without the flag starts supervised.
-    assert!(repo.supervise_posts());
 
     // The same checkout on another branch is a different repository.
     let other = store
@@ -787,7 +779,6 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "next".into(),
             description: None,
             permission_mode: Some(PermissionMode::Learn),
-            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -806,7 +797,6 @@ async fn repository_crud_and_unique_path_branch() {
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
-                supervise_posts: None,
             })
             .await,
         Err(StoreError::NotFound {
@@ -838,7 +828,6 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "main".into(),
             description: None,
             permission_mode: None,
-            supervise_posts: None,
         })
         .await;
     assert!(matches!(dup, Err(StoreError::Conflict(_))));
@@ -852,7 +841,6 @@ async fn repository_crud_and_unique_path_branch() {
                 base_branch: Some("trunk".into()),
                 description: Some(None),
                 permission_mode: Some(PermissionMode::Ask),
-                supervise_posts: Some(false),
                 default_workflow: Some(PULL_REQUEST_WORKFLOW.into()),
                 ..Default::default()
             },
@@ -864,7 +852,6 @@ async fn repository_crud_and_unique_path_branch() {
     assert!(edited.description.is_none());
     assert_eq!(edited.permission_mode(), PermissionMode::Ask);
     assert_eq!(edited.default_workflow, PULL_REQUEST_WORKFLOW);
-    assert!(!edited.supervise_posts());
 
     // An update that names neither the mode, the flag, nor the workflow
     // keeps them.
@@ -880,7 +867,6 @@ async fn repository_crud_and_unique_path_branch() {
         .unwrap();
     assert_eq!(renamed.permission_mode(), PermissionMode::Ask);
     assert_eq!(renamed.default_workflow, PULL_REQUEST_WORKFLOW);
-    assert!(!renamed.supervise_posts());
 
     // An update onto a taken (path, base_branch) conflicts like a create.
     assert!(matches!(
@@ -923,7 +909,6 @@ async fn a_goal_created_with_no_workflow_takes_its_first_repositorys_default() {
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
-                supervise_posts: None,
             })
             .await
             .unwrap()
@@ -3498,9 +3483,8 @@ async fn the_forge_integrations_kind_check_accepts_github_and_rejects_other_kind
 }
 
 /// A fresh database already carries every column the old incremental chain
-/// used to add after the first squash — pull-request readiness, the
-/// babysitting and asks-revision columns, a repository's `supervise_posts`
-/// default, the `keeper` seat and `agent_requests` — all folded into the one
+/// used to add after the first squash — pull-request readiness,
+/// the `keeper` seat and `agent_requests` — all folded into the one
 /// shipped migration now, so a fresh store needs no later migration to
 /// reach any of them.
 #[tokio::test]
@@ -3510,9 +3494,6 @@ async fn a_fresh_database_already_has_every_column_the_old_chain_added() {
     assert_eq!(pr.ready_head_sha, None);
     assert!(!pr.babysit_asked);
     assert_eq!(pr.asks_revision, 0);
-
-    let repo = store.get_repository(&pr.repository_id).await.unwrap();
-    assert!(repo.supervise_posts());
 
     let session = store
         .create_session(NewSession {
@@ -4996,7 +4977,6 @@ async fn a_checkpoint_folds_the_write_ahead_log_back_in() {
                 base_branch: "main".into(),
                 description: None,
                 permission_mode: None,
-                supervise_posts: None,
             })
             .await
             .unwrap();
@@ -5176,7 +5156,6 @@ async fn a_repository_takes_the_ai_permission_mode() {
             base_branch: "main".into(),
             description: None,
             permission_mode: Some(PermissionMode::Ai),
-            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -5642,7 +5621,6 @@ async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequestR
             base_branch: "main".into(),
             description: None,
             permission_mode: None,
-            supervise_posts: None,
         })
         .await
         .unwrap();
@@ -5764,26 +5742,6 @@ async fn comment_marks_are_claimed_once_released_whole_and_keep_the_review_mark(
             .is_empty(),
         "the marks go with the row"
     );
-}
-
-/// A comment whose reply is held pending in the user's own forge drafts
-/// (026 rule 24) carries the mark once written, beside a mark of another
-/// kind on the same row, and a second mark of the same comment leaves it
-/// as it is rather than erroring: a retried write is not a second row.
-#[tokio::test]
-async fn a_pending_reply_mark_is_written_once_and_kept_beside_others() {
-    let (store, _dir, row) = store_with_my_pull_request().await;
-    store.mark_pending_reply(&row.id, "ic-1").await.unwrap();
-    store
-        .mark_review_comments(&row.id, &["rc-2".into()])
-        .await
-        .unwrap();
-    store.mark_pending_reply(&row.id, "ic-1").await.unwrap();
-    let mut marks = store.pull_request_comment_marks(&row.id).await.unwrap();
-    marks.sort_by(|a, b| a.forge_id.cmp(&b.forge_id));
-    assert_eq!(marks.len(), 2);
-    assert!(marks[0].pending_reply && !marks[0].from_review);
-    assert!(!marks[1].pending_reply && marks[1].from_review);
 }
 
 /// The ready flag a session reports moves the row, and a repeated ready
@@ -6896,4 +6854,27 @@ async fn the_babysit_workflow_is_edited_within_its_shape_and_no_ordinary_goal_us
     assert_eq!(steps[0].title, "Keep");
     assert_eq!(steps[0].ranks, r#"["balanced"]"#);
     store.reset_workflow("pr-babysit").await.unwrap();
+}
+
+#[tokio::test]
+async fn repositories_and_comment_marks_have_no_post_supervision_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("schema.db");
+    drop(Store::open(&path).await.unwrap());
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    for (table, column) in [
+        ("repositories", "supervise_posts"),
+        ("pull_request_comment_marks", "pending_reply"),
+    ] {
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM pragma_table_info(?) WHERE name = ?")
+                .bind(table)
+                .bind(column)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "{table}.{column} must be absent");
+    }
 }

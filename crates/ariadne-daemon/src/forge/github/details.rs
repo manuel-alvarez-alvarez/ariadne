@@ -317,7 +317,6 @@ impl Github {
             comments,
             failed_checks,
             behind_base: compare.behind_by > 0,
-            has_pending_posts: !pending.is_empty(),
         })
     }
 
@@ -540,10 +539,6 @@ sys.exit(1)
             "the pending review's own comment, its reply and its verdict are dropped, \
              so is the odd pending-by-state review's own verdict; \
              the submitted review's comment and its own verdict stay"
-        );
-        assert!(
-            details.has_pending_posts,
-            "the pending set is still open for merge_fresh_details to read"
         );
         assert!(
             details.comments.iter().all(|c| c.thread_id != "RT_1"),

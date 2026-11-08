@@ -21,9 +21,6 @@ pub struct RepositoryDto {
     /// How the ACP permission requests of every session in this checkout are
     /// answered.
     pub permission_mode: PermissionMode,
-    /// Put agent replies, reviews and resolves in your pending GitHub
-    /// review, and open pull requests as drafts.
-    pub supervise_posts: bool,
     /// The forge its remote is on, or null where the checkout has no usable
     /// remote (025).
     pub forge: Option<ForgeDto>,
@@ -147,10 +144,6 @@ pub struct CreateRepositoryRequest {
     /// Omit for `auto`.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
-    /// Put agent replies, reviews and resolves in your pending GitHub
-    /// review, and open pull requests as drafts. Omit for `true`.
-    #[serde(default)]
-    pub supervise_posts: Option<bool>,
     /// The forge integration to set up once the remote is detected.
     #[serde(default)]
     pub forge: Option<ForgeUpdate>,
@@ -170,10 +163,6 @@ pub struct UpdateRepositoryRequest {
     /// Absent = unchanged.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
-    /// Put agent replies, reviews and resolves in your pending GitHub
-    /// review, and open pull requests as drafts. Absent = unchanged.
-    #[serde(default)]
-    pub supervise_posts: Option<bool>,
     /// Absent = unchanged.
     #[serde(default)]
     pub forge: Option<ForgeUpdate>,

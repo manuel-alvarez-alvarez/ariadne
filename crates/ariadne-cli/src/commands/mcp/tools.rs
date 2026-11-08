@@ -16,7 +16,6 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::messages::SendMessageRequest;
 use ariadne_api::pull_requests::{
-    DeletePendingCommentRequest, EditPendingCommentRequest, EditPendingReviewBodyRequest,
     ReplyCommentRequest, ReportPullRequestRequest, ReviewCommentRequest, SubmitReviewRequest,
 };
 use ariadne_api::sessions::SwitchSessionRequest;
@@ -146,9 +145,6 @@ pub(super) struct OpenPullRequestReq {
     /// Filled from the repository's own template, or, with none, three
     /// sections: Why, What changed, How to test.
     pub body: String,
-    /// Opens the request as a draft.
-    #[serde(default)]
-    pub draft: bool,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -218,31 +214,6 @@ pub(super) struct GetCommentReq {
 pub(super) struct ResolveThreadReq {
     /// The `id` of a comment of the thread, as `list_comments` gives it.
     pub comment_id: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub(super) struct EditPendingCommentReq {
-    /// The forge id of your own pending comment, as `reply_comment` or
-    /// `submit_review` answered it.
-    pub forge_id: String,
-    /// The new text.
-    pub body: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub(super) struct DeletePendingCommentReq {
-    /// The forge id of your own pending comment, as `reply_comment` or
-    /// `submit_review` answered it.
-    pub forge_id: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub(super) struct EditPendingReviewBodyReq {
-    /// The new text of the pending review body.
-    pub body: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -719,7 +690,6 @@ impl AriadneMcp {
                 &OpenPullRequestRequest {
                     title: req.title,
                     body: req.body,
-                    draft: req.draft,
                 },
             )
             .await?,
@@ -801,7 +771,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge. A supervised repository holds it in your forge drafts instead."
+        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge."
     )]
     async fn reply_comment(
         &self,
@@ -822,87 +792,11 @@ impl AriadneMcp {
                 },
             )
             .await?;
-        if answer["pending"] == true {
-            return Ok(CallToolResult::success(vec![ContentBlock::text(
-                "The reply is waiting in the user's forge drafts. The user must publish it \
-                 there. Continue your work."
-                    .to_string(),
-            )]));
-        }
         json_result(answer)
     }
 
     #[tool(
-        description = "Edit one of your own pending forge posts. It is a pending review comment or a draft note. Use it only when the user asks for a change in the console. Refused once the user submits or publishes it."
-    )]
-    async fn edit_pending_comment(
-        &self,
-        Parameters(req): Parameters<EditPendingCommentReq>,
-    ) -> Result<CallToolResult, McpError> {
-        let body = req.body.trim();
-        if body.is_empty() {
-            return Err(McpError::invalid_params("an edit needs a body", None));
-        }
-        let path = self.pull_request_path("/comments/edit").await?;
-        json_result(
-            self.post(
-                &path,
-                &EditPendingCommentRequest {
-                    forge_id: req.forge_id,
-                    body: body.to_string(),
-                },
-            )
-            .await?,
-        )
-    }
-
-    #[tool(
-        description = "Delete one of your own pending forge posts. It is a pending review comment or a draft note. Use it only when the user asks for a change in the console. Refused once the user submits or publishes it."
-    )]
-    async fn delete_pending_comment(
-        &self,
-        Parameters(req): Parameters<DeletePendingCommentReq>,
-    ) -> Result<CallToolResult, McpError> {
-        let path = self.pull_request_path("/comments/delete").await?;
-        json_result(
-            self.post(
-                &path,
-                &DeletePendingCommentRequest {
-                    forge_id: req.forge_id,
-                },
-            )
-            .await?,
-        )
-    }
-
-    #[tool(
-        description = "Replace your pending GitHub review body. Use it only when the user asks for a console change. Refused after submission or without a pending review."
-    )]
-    async fn edit_pending_review_body(
-        &self,
-        Parameters(req): Parameters<EditPendingReviewBodyReq>,
-    ) -> Result<CallToolResult, McpError> {
-        let body = req.body.trim();
-        if body.is_empty() {
-            return Err(McpError::invalid_params(
-                "a pending review body needs text",
-                None,
-            ));
-        }
-        let path = self.pull_request_path("/pending-review/body").await?;
-        json_result(
-            self.post(
-                &path,
-                &EditPendingReviewBodyRequest {
-                    body: body.to_string(),
-                },
-            )
-            .await?,
-        )
-    }
-
-    #[tool(
-        description = "Resolve one of your own fixed review threads. Ariadne resolves it on the forge. In a supervised repository, leave it for the user."
+        description = "Resolve one of your own fixed review threads. Ariadne resolves it on the forge."
     )]
     async fn resolve_thread(
         &self,
@@ -946,9 +840,7 @@ impl AriadneMcp {
 
     // ---- pull request reviewer ----
 
-    #[tool(
-        description = "Post new inline findings in the user's name. A supervised repository holds findings in forge drafts."
-    )]
+    #[tool(description = "Post new inline findings in the user's name.")]
     async fn submit_review(
         &self,
         Parameters(req): Parameters<SubmitReviewReq>,
@@ -974,13 +866,6 @@ impl AriadneMcp {
                 },
             )
             .await?;
-        if answer["pending"] == true {
-            return Ok(CallToolResult::success(vec![ContentBlock::text(
-                "The review is waiting in the user's forge drafts. The user must publish it \
-                 there. Continue your work."
-                    .to_string(),
-            )]));
-        }
         json_result(answer)
     }
 
@@ -1205,30 +1090,6 @@ mod tests {
         assert_eq!(seen[0].path, "/v1/sessions/01SESSION/agent-requests/01REQ");
     }
 
-    #[tokio::test]
-    async fn get_pull_request_shows_whether_the_repository_supervises_posts() {
-        let (endpoint, _) = recording_daemon_answering_in_turn(vec![
-            r#"[{"id":"01PR"}]"#.into(),
-            r#"{"id":"01PR","repository_id":"01R","supervise_posts":true}"#.into(),
-            r#"{"id":"01R","path":"/repos/widgets","forge":{"login":"me"}}"#.into(),
-            r#"{"worktree_path":"/wt/task"}"#.into(),
-        ])
-        .await;
-        let mcp = server_at(
-            McpSeat::Agent,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-        let result = mcp
-            .get_pull_request(Parameters(Empty {}))
-            .await
-            .expect("read the request");
-        let ContentBlock::Text(text) = &result.content[0] else {
-            panic!("the request came back as something other than text");
-        };
-        let pull: serde_json::Value = serde_json::from_str(&text.text).expect("json");
-        assert_eq!(pull["supervise_posts"], true);
-    }
-
     /// An agent whose task opened no request yet is told to open one, and
     /// no request route is called.
     #[tokio::test]
@@ -1321,116 +1182,6 @@ mod tests {
         assert_eq!(report["reviewed_sha"], "abc");
     }
 
-    /// The three pending-edit tools (013 rule 13) each call their own route of the
-    /// session's request, with the body the agent gave them.
-    #[tokio::test]
-    async fn the_pending_edit_tools_call_the_routes_of_the_sessions_request() {
-        let (endpoint, seen) = recording_daemon().await;
-        let mcp = server_at(
-            McpSeat::PullRequestReviewer,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-        mcp.edit_pending_comment(Parameters(EditPendingCommentReq {
-            forge_id: "rc-501".into(),
-            body: "Fixed in abc.".into(),
-        }))
-        .await
-        .expect("edit");
-        mcp.delete_pending_comment(Parameters(DeletePendingCommentReq {
-            forge_id: "rc-501".into(),
-        }))
-        .await
-        .expect("delete");
-        mcp.edit_pending_review_body(Parameters(EditPendingReviewBodyReq {
-            body: "Updated review body.".into(),
-        }))
-        .await
-        .expect("edit the review body");
-
-        let seen = seen.lock().expect("lock").clone();
-        let calls: Vec<(String, String)> = seen
-            .iter()
-            .map(|s| (s.method.clone(), s.path.clone()))
-            .collect();
-        assert_eq!(
-            calls,
-            [
-                ("POST".into(), "/v1/pull-requests/01PR/comments/edit".into()),
-                (
-                    "POST".into(),
-                    "/v1/pull-requests/01PR/comments/delete".into()
-                ),
-                (
-                    "POST".into(),
-                    "/v1/pull-requests/01PR/pending-review/body".into()
-                ),
-            ]
-        );
-        let edit: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
-        assert_eq!(
-            edit,
-            serde_json::json!({"forge_id": "rc-501", "body": "Fixed in abc."})
-        );
-        let delete: serde_json::Value = serde_json::from_str(&seen[1].body).expect("json");
-        assert_eq!(delete, serde_json::json!({"forge_id": "rc-501"}));
-        let body: serde_json::Value = serde_json::from_str(&seen[2].body).expect("json");
-        assert_eq!(body, serde_json::json!({"body": "Updated review body."}));
-    }
-
-    /// Where the repository holds posts back, the daemon answers
-    /// `reply_comment` with `pending: true` rather than a posted comment
-    /// (026 rule 24): the tool's own text says the reply waits in the
-    /// user's forge drafts, and that the agent goes on, rather than
-    /// handing back the raw pending shape as though it were the comment.
-    #[tokio::test]
-    async fn a_pending_reply_tells_the_agent_to_continue_rather_than_the_raw_answer() {
-        let (endpoint, _seen) =
-            recording_daemon_answering(r#"{"pending": true, "id": "rv-9"}"#).await;
-        let mcp = server_at(
-            McpSeat::PullRequestKeeper,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-        let answer = mcp
-            .reply_comment(Parameters(ReplyCommentReq {
-                comment_id: "01C".into(),
-                body: "Fixed it.".into(),
-            }))
-            .await
-            .expect("reply");
-        let ContentBlock::Text(text) = &answer.content[0] else {
-            panic!("the answer came back as something other than text");
-        };
-        assert!(text.text.contains("forge drafts"), "{}", text.text);
-        assert!(text.text.contains("Continue"), "{}", text.text);
-    }
-
-    /// Where the repository holds posts back, the daemon answers
-    /// `submit_review` with `pending: true` rather than the posted
-    /// comments (026 rule 24 / 029 rule 13a): the tool's own text says the
-    /// review waits in the user's forge drafts, rather than handing back
-    /// the raw pending shape.
-    #[tokio::test]
-    async fn a_pending_review_tells_the_agent_to_continue_rather_than_the_raw_answer() {
-        let (endpoint, _seen) = recording_daemon_answering(r#"{"pending": true}"#).await;
-        let mcp = server_at(
-            McpSeat::PullRequestReviewer,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-        let answer = mcp
-            .submit_review(Parameters(SubmitReviewReq {
-                event: ReviewEvent::Comment,
-                body: "One P1.".into(),
-                comments: vec![],
-            }))
-            .await
-            .expect("submit_review");
-        let ContentBlock::Text(text) = &answer.content[0] else {
-            panic!("the answer came back as something other than text");
-        };
-        assert!(text.text.contains("forge drafts"), "{}", text.text);
-        assert!(text.text.contains("Continue"), "{}", text.text);
-    }
-
     /// Every refusal a tool builds, and every result string it writes rather
     /// than passing the daemon's own JSON back, is Simplified Technical
     /// English (006 rule 11): the same two rules the session rules and the
@@ -1477,42 +1228,6 @@ mod tests {
             .await
             .expect_err("an empty reply");
         texts.push(("reply_comment's refusal", err.message.to_string()));
-
-        let (endpoint, _seen) = recording_daemon_answering(r#"{"pending": true}"#).await;
-        let answer = server_at(
-            McpSeat::PullRequestKeeper,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        )
-        .reply_comment(Parameters(ReplyCommentReq {
-            comment_id: "01C".into(),
-            body: "Fixed it.".into(),
-        }))
-        .await
-        .expect("a pending reply");
-        let ContentBlock::Text(text) = &answer.content[0] else {
-            panic!("the answer came back as something other than text");
-        };
-        texts.push(("reply_comment's pending result", text.text.clone()));
-
-        let (endpoint, _seen) = recording_daemon().await;
-        let err = agent_at(&endpoint)
-            .edit_pending_comment(Parameters(EditPendingCommentReq {
-                forge_id: "rc-1".into(),
-                body: "".into(),
-            }))
-            .await
-            .expect_err("an empty edit");
-        texts.push(("edit_pending_comment's refusal", err.message.to_string()));
-
-        let (endpoint, _seen) = recording_daemon().await;
-        let err = agent_at(&endpoint)
-            .edit_pending_review_body(Parameters(EditPendingReviewBodyReq { body: "".into() }))
-            .await
-            .expect_err("an empty review body");
-        texts.push((
-            "edit_pending_review_body's refusal",
-            err.message.to_string(),
-        ));
 
         let (endpoint, _seen) = recording_daemon().await;
         let err = agent_at(&endpoint)
@@ -1866,7 +1581,6 @@ mod tests {
         mcp.open_pull_request(Parameters(OpenPullRequestReq {
             title: "feat(cli): add the repo inspect command".into(),
             body: "## Summary\n- adds `ariadne repo inspect`".into(),
-            draft: false,
         }))
         .await
         .expect("open the pull request");
@@ -1881,7 +1595,6 @@ mod tests {
             serde_json::json!({
                 "title": "feat(cli): add the repo inspect command",
                 "body": "## Summary\n- adds `ariadne repo inspect`",
-                "draft": false,
             })
         );
     }

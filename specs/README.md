@@ -36,7 +36,7 @@ test that proves it. Conventions for writing and changing one are in
 | 023 | [Stats](023-stats.md) | superseded by 035 |
 | 024 | [Advisory failure diagnosis](024-advisory-failure-diagnosis.md) | the optional local classifier beside a failed session's error, and why it never changes recovery |
 | 025 | [Forge integration](025-forge-integration.md) | the forge a repository's remote is on, enabling it, and the `gh` client |
-| 026 | [Pull requests](026-pull-requests.md) | request identity, three births, held fetch lists, ledger, the request session and its news, CLI, and screen |
+| 026 | [Pull requests](026-pull-requests.md) | request identity, draft task requests, held fetch lists, ledger, the request session and its news, CLI, and screen |
 | 027 | [Webhooks and tunnel](027-webhooks-and-tunnel.md) | separate signed ingress, hook lifecycle, public URL handle, fetch modes, and the tunnel with its switch |
 | 028 | [Issues and goals](028-issues-and-goals.md) | live forge issues and goals created from them |
 | 029 | [Reviewing a request](029-reviewing-a-request.md) | the reviewer session on any explicitly requested PR, its detached worktree, its news, one review by priority, asking by hand regardless of authorship or review assignment, and no approval |

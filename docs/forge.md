@@ -31,8 +31,7 @@ The desktop app's repository dialog has one switch, "GitHub integration",
 once a remote was detected — while editing, off the repository's own stored
 row, and while registering, off a probe of the path field itself, since
 nothing is stored yet — with the detected repository, the CLI and the
-login beside it. "Supervise posts" sits right below that switch and only
-while it is on, in both dialogs.
+login beside it.
 
 The same checkout — the same host, owner and repository name — can only be
 enabled on one registered repository row at a time, even registered twice
@@ -69,6 +68,8 @@ That column's agent keeps the request until a human merges or closes it,
 with the `pr-babysit` skill the column stages. Opening it needs the
 integration on: with it off, `open_pull_request` is refused with 409
 `forge_disabled`, since nothing would read the request for the agent.
+Every request this column opens starts as a draft. Replies and inline
+review findings post directly to the forge.
 
 The agent never polls: that rule sits in the session rules of its seat, not
 in the skill. The daemon reads the forge and prompts its own session each
@@ -176,7 +177,7 @@ On a later round the reviewer settles each thread it opened before it
 hunts for more. The author answers in one of three ways: `Fixed in <sha>:
 ...`, `Not changed: <why>.`, or a plain answer to a question. Once the
 defect is actually gone at the head, the reviewer resolves the thread without
-a reply. In a supervised repository, the reviewer leaves it for the human.
+a reply.
 Where the
 last reply claims a fix (`Fixed in <sha>: ...`) but the defect is still
 there, the reviewer replies once, `Still there: <why>.`, and never says it

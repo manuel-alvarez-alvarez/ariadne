@@ -148,11 +148,6 @@ pub struct Details {
     /// attention producer must never read as "no open comment" for a head
     /// it was never actually read on.
     pub head_sha: String,
-    /// Whether this same read still finds a pending review of the viewer's
-    /// own (`ForgeDetails::has_pending_posts`): internal bookkeeping for
-    /// `merge_fresh_details` alone, never shown to a user or exposed as an
-    /// attention item.
-    pub has_pending_posts: bool,
 }
 
 /// The last list a fetch read of one repository (026): every open request
@@ -399,50 +394,6 @@ impl LivePulls {
         }
     }
 
-    /// Hold the new body of one of Ariadne's own local additions after a
-    /// successful edit (026 rule 25): the forge call already succeeded, so
-    /// this is an echo of it, the same as `add_comments`'. GitHub never
-    /// lists a pending review's own comments among a request's until the
-    /// user publishes it (`merge_fresh_details`), so no detail fetch ever
-    /// reads this edit back on its own: without this write, the held body
-    /// would stay the one the comment was posted with, forever.
-    pub fn edit_comment(&self, id: &str, forge_id: &str, body: &str) {
-        let mut held = self
-            .rows
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(live) = held.get_mut(id) {
-            live.generation += 1;
-            live.local_additions
-                .insert(forge_id.to_string(), live.generation);
-            if let Some(details) = live.details.as_mut()
-                && let Some(comment) = details.comments.iter_mut().find(|c| c.forge_id == forge_id)
-            {
-                comment.body = body.to_string();
-            }
-        }
-    }
-
-    /// Drop one of Ariadne's own local additions after a successful
-    /// delete (026 rule 25), from both the held comments and
-    /// `local_additions`: a comment gone from `local_additions` is one
-    /// `merge_fresh_details` never carries forward again, whatever a
-    /// pending set still open says of the rest, and dropped from the
-    /// comments a fresh read's own `previous` snapshot carries forward
-    /// from, it cannot be read back from there either.
-    pub fn remove_comment(&self, id: &str, forge_id: &str) {
-        let mut held = self
-            .rows
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(live) = held.get_mut(id) {
-            live.local_additions.remove(forge_id);
-            if let Some(details) = live.details.as_mut() {
-                details.comments.retain(|c| c.forge_id != forge_id);
-            }
-        }
-    }
-
     /// Keep a fresh detail read, its comments carrying forward any this
     /// cache already held that the read's own comments do not, and that
     /// were added after `since` — the generation this cache stood at
@@ -558,28 +509,8 @@ impl LivePulls {
     }
 }
 
-/// A fresh detail read's comments, merged with whatever `previous` already
-/// held: one missing from the fresh read is carried forward where
-/// `previous` marks it added after `since`, the generation the read's own
-/// snapshot started at — `add_comments` wrote it after this read could
-/// have seen it, so its absence here says nothing of the forge deleting
-/// it — or where `local_additions` still names it at all, it is a review's
-/// own finding or verdict, and this same fresh read still finds a pending
-/// review of the viewer's own (`has_pending_posts`): GitHub's own detail
-/// read filters a pending review's own content out of the conversation on
-/// purpose (026 rule 9), so a missing read says nothing of the forge
-/// dropping an unpublished one either, for as long as the pending set it
-/// belongs to is still there. `local_additions` is what tells such an unpublished
-/// one apart from a finding this route once added, long since confirmed
-/// and dropped from it, that a forge user later deleted for real: a
-/// pending set open for another, unrelated round must never resurrect
-/// that one. One missing and none of the above, or confirmed by the fresh
-/// read on its own terms, is a local addition this cache no longer has to
-/// carry: dropped from what is kept, and from what is tracked after the
-/// merge too, the way the review a forge user actually deleted would be.
-/// Answers the merged comments, and the generation and the
-/// still-unconfirmed local additions to carry into the entry this read
-/// writes.
+/// Preserve comments posted after a detail read started.
+/// A later read confirms their presence or removes them.
 fn merge_fresh_details(
     previous: Option<&Live>,
     since: u64,
@@ -589,7 +520,6 @@ fn merge_fresh_details(
         return (details, 0, HashMap::new());
     };
     let mut local_additions = previous.local_additions.clone();
-    let pending_set_still_open = details.has_pending_posts;
     if let Some(prev_details) = previous.details.as_ref() {
         for comment in &prev_details.comments {
             let in_fresh_read = details
@@ -600,13 +530,10 @@ fn merge_fresh_details(
                 local_additions.remove(&comment.forge_id);
                 continue;
             }
-            let locally_added = local_additions.contains_key(&comment.forge_id);
             let added_after_since = local_additions
                 .get(&comment.forge_id)
                 .is_some_and(|&generation| generation > since);
-            let held_by_a_pending_set =
-                locally_added && comment.from_review && pending_set_still_open;
-            match added_after_since || held_by_a_pending_set {
+            match added_after_since {
                 true => details.comments.push(comment.clone()),
                 false => {
                     local_additions.remove(&comment.forge_id);
@@ -691,13 +618,8 @@ pub fn view(row: PullRequestRow, live: &Live, marks: &[CommentMark], login: &str
     )
 }
 
-/// The forge's comments of `row`'s request, with the marks read beside
-/// them, oldest first. A thread is resolved or not as a whole, and a
-/// comment is answered once a later comment of its thread is the login's
-/// own, or once its own reply is held pending in the user's own forge
-/// drafts (026 rule 24): [`answered`] only ever turns this `true`, never
-/// back, so a comment marked pending here reads answered however the rest
-/// of its thread moves.
+/// Join the forge's comments with local marks, oldest first.
+/// Resolution applies to the whole thread.
 pub fn comments(
     pull_request_id: &str,
     forge: &[NewPullRequestComment],
@@ -727,7 +649,7 @@ pub fn comments(
                 line: c.line,
                 in_reply_to: c.in_reply_to.clone(),
                 created_at: c.created_at.clone(),
-                answered: mark.is_some_and(|m| m.pending_reply),
+                answered: false,
                 resolved: resolved.contains(c.thread_id.as_str()),
                 told_at: mark.and_then(|m| m.told_at.clone()),
                 // The review's mark is on the forge with the comment, and
@@ -769,14 +691,7 @@ pub(crate) fn is_review_summary(comment: &PullRequestComment, login: &str) -> bo
         && comment.author_login.eq_ignore_ascii_case(login)
 }
 
-/// The comments with `answered` worked out (026): a later comment of the
-/// same thread on the login's own side answers it, or its own reply is held
-/// pending in the user's own forge drafts (026 rule 24), as [`comments`]
-/// already read onto it. A pending reply adds no later comment of its own
-/// for this to find, so it stands at its own comment's place instead: it
-/// answers every earlier comment of its thread, the same as a real reply
-/// there would, and leaves a later one open, since nothing says the agent
-/// has read that far yet.
+/// A later comment on the login's own side answers earlier comments in its thread (026).
 pub fn answered(
     mut comments: Vec<PullRequestComment>,
     role: &str,
@@ -784,16 +699,14 @@ pub fn answered(
 ) -> Vec<PullRequestComment> {
     let mine: Vec<(String, String, String)> = comments
         .iter()
-        .filter(|c| is_mine(c, role, login) || c.answered)
+        .filter(|c| is_mine(c, role, login))
         .map(|c| (c.thread_id.clone(), c.created_at.clone(), c.id.clone()))
         .collect();
     for comment in &mut comments {
-        comment.answered = comment.answered
-            || mine.iter().any(|(thread, at, id)| {
-                *thread == comment.thread_id
-                    && (at.as_str(), id.as_str())
-                        > (comment.created_at.as_str(), comment.id.as_str())
-            });
+        comment.answered = mine.iter().any(|(thread, at, id)| {
+            *thread == comment.thread_id
+                && (at.as_str(), id.as_str()) > (comment.created_at.as_str(), comment.id.as_str())
+        });
     }
     comments
 }
@@ -961,19 +874,6 @@ mod tests {
             forge_id: forge_id.into(),
             told_at: told.then(|| "2026-10-03T00:00:00Z".into()),
             from_review,
-            pending_reply: false,
-        }
-    }
-
-    /// A mark of a comment whose reply the agent holds, unposted, in the
-    /// user's own forge drafts (026 rule 24).
-    fn pending_mark(forge_id: &str) -> CommentMark {
-        CommentMark {
-            pull_request_id: "p".into(),
-            forge_id: forge_id.into(),
-            told_at: None,
-            from_review: false,
-            pending_reply: true,
         }
     }
 
@@ -1015,40 +915,6 @@ mod tests {
         forge.push(comment("1rr", "t1", "alice", "2026-10-05T00:00:00Z"));
         let reopened = answered(comments("p", &forge, &[]), "author", "me");
         assert_eq!(waiting_threads(&reopened, "author", "me").len(), 1);
-    }
-
-    /// A comment whose reply is held pending in the user's own forge
-    /// drafts (026 rule 24) reads answered, and its thread waits on nobody,
-    /// though the forge shows no later comment of the login's own: the
-    /// mark alone settles it, with no reply ever visible on the forge to
-    /// find.
-    #[test]
-    fn a_pending_reply_marks_its_comment_answered_with_no_later_comment_on_the_forge() {
-        let forge = [comment("1", "t1", "alice", "2026-10-02T00:00:00Z")];
-        let all = answered(comments("p", &forge, &[pending_mark("1")]), "author", "me");
-        assert!(waiting_threads(&all, "author", "me").is_empty());
-        assert!(all[0].answered);
-    }
-
-    /// A pending reply to the second of two comments in one thread answers
-    /// the first too (026 rule 24): the agent read that far to answer the
-    /// second, the same as a real reply there would show. A third comment
-    /// after the pending one stays open, since the mark says nothing of it.
-    #[test]
-    fn a_pending_reply_answers_earlier_comments_of_its_thread_and_leaves_a_later_one_open() {
-        let forge = [
-            comment("1", "t1", "alice", "2026-10-02T00:00:00Z"),
-            comment("2", "t1", "alice", "2026-10-02T01:00:00Z"),
-            comment("3", "t1", "alice", "2026-10-02T02:00:00Z"),
-        ];
-        let all = answered(comments("p", &forge, &[pending_mark("2")]), "author", "me");
-        assert!(all.iter().find(|c| c.id == "1").unwrap().answered);
-        assert!(all.iter().find(|c| c.id == "2").unwrap().answered);
-        assert!(!all.iter().find(|c| c.id == "3").unwrap().answered);
-        // The thread still waits, on "3" alone: a real reply after "2"
-        // would leave it open the same way.
-        assert_eq!(waiting_threads(&all, "author", "me").len(), 1);
-        assert_eq!(ids(&untold(&all, "author", "me", false)), ["3"]);
     }
 
     /// A reviewer session hears of the replies in the threads its login
@@ -1129,7 +995,6 @@ mod tests {
                 failed_checks: Vec::new(),
                 behind_base: false,
                 head_sha: "abc".into(),
-                has_pending_posts: false,
             }),
             details_read_at: Some(Instant::now()),
             evidence_ok,
@@ -1275,131 +1140,5 @@ mod tests {
         let mut live = sample_live(true);
         live.generation = 1;
         assert!(!live.unmoved(&live.pull.clone(), 0, Instant::now()));
-    }
-
-    fn pending_finding() -> NewPullRequestComment {
-        NewPullRequestComment {
-            forge_id: "rc-1".into(),
-            thread_id: "rc-1".into(),
-            kind: "review_comment".into(),
-            author_login: "me".into(),
-            author_is_bot: false,
-            body: "**[P0] Empty list**".into(),
-            path: Some("src/lib.rs".into()),
-            line: Some(3),
-            in_reply_to: None,
-            created_at: "2026-10-13T00:00:00Z".into(),
-            resolved: false,
-            from_review: true,
-        }
-    }
-
-    fn fresh_details(has_pending_posts: bool) -> Details {
-        Details {
-            comments: Vec::new(),
-            failed_checks: Vec::new(),
-            behind_base: false,
-            head_sha: "abc".into(),
-            has_pending_posts,
-        }
-    }
-
-    /// A pending review's own finding, held under `rc-1` where GitHub
-    /// never lists a pending review's comments among a request's own,
-    /// must not vanish the moment a poll runs after it, as long as that
-    /// same poll still finds the pending review itself
-    /// (`has_pending_posts`): its absence from `comments` says nothing of
-    /// the forge dropping it, only that the forge never shows it there
-    /// while it is still pending. `submit_review`'s own validation reads
-    /// this list for an open P0, so losing the finding here would wrongly
-    /// refuse a later round that carries no new one (the bug a review
-    /// caught: 029).
-    #[test]
-    fn a_pending_reviews_finding_survives_a_poll_while_the_review_is_still_pending() {
-        let live = LivePulls::default();
-        live.set("p", sample_live(true));
-        live.add_comments("p", &[pending_finding()]);
-        let since = live.generation("p");
-
-        live.set_details(
-            "p",
-            live.get("p").unwrap().pull,
-            false,
-            since,
-            fresh_details(true),
-        );
-        let after_one_poll = live.get("p").unwrap().details.unwrap().comments;
-        assert_eq!(after_one_poll.len(), 1, "{after_one_poll:?}");
-        assert_eq!(after_one_poll[0].forge_id, "rc-1");
-
-        // A second poll, started after the first already ran, must not
-        // lose it either: nothing about the pending review changed.
-        let since = live.generation("p");
-        live.set_details(
-            "p",
-            live.get("p").unwrap().pull,
-            false,
-            since,
-            fresh_details(true),
-        );
-        let after_two_polls = live.get("p").unwrap().details.unwrap().comments;
-        assert_eq!(after_two_polls.len(), 1, "{after_two_polls:?}");
-    }
-
-    /// Once a poll finds no pending review or draft note left of the
-    /// viewer's own, a finding this cache still held under it is gone for
-    /// real — published into a real comment the next fetch would find
-    /// instead, or discarded outright — so the cache stops carrying it.
-    #[test]
-    fn a_pending_reviews_finding_is_dropped_once_the_pending_review_is_gone() {
-        let live = LivePulls::default();
-        live.set("p", sample_live(true));
-        live.add_comments("p", &[pending_finding()]);
-        let since = live.generation("p");
-
-        live.set_details(
-            "p",
-            live.get("p").unwrap().pull,
-            false,
-            since,
-            fresh_details(false),
-        );
-        let after = live.get("p").unwrap().details.unwrap().comments;
-        assert!(after.is_empty(), "{after:?}");
-    }
-
-    /// A finding this route posted for real, long since confirmed by a
-    /// fresh read and dropped from `local_additions`, that a forge user
-    /// then deletes outright must stay gone even where an unrelated
-    /// pending review or draft note is open at the same time: the pending
-    /// set's own presence says nothing of a finding it never held, so it
-    /// must never resurrect one `local_additions` no longer names (the
-    /// bug a second review round caught: 029).
-    #[test]
-    fn a_published_findings_deletion_survives_an_unrelated_pending_set() {
-        let live = LivePulls::default();
-        live.set("p", sample_live(true));
-        live.add_comments("p", &[pending_finding()]);
-        let since = live.generation("p");
-
-        // Confirmed for real: the fresh read carries the finding on its
-        // own terms, dropping it from `local_additions`.
-        let mut confirmed = fresh_details(false);
-        confirmed.comments.push(pending_finding());
-        live.set_details("p", live.get("p").unwrap().pull, false, since, confirmed);
-        assert!(live.get("p").unwrap().local_additions.is_empty());
-
-        // The forge user deletes it outright, while an unrelated pending
-        // review or draft note happens to be open.
-        let since = live.generation("p");
-        live.set_details(
-            "p",
-            live.get("p").unwrap().pull,
-            false,
-            since,
-            fresh_details(true),
-        );
-        let after = live.get("p").unwrap().details.unwrap().comments;
-        assert!(after.is_empty(), "{after:?}");
     }
 }

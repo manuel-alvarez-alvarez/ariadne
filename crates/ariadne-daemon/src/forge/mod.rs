@@ -411,26 +411,6 @@ impl ForgeClient {
         }
     }
 
-    /// Reply to one stored comment of request `number` with `body`, held
-    /// back, unposted, in the user's own forge drafts rather than posted
-    /// (026 rule 24): a pending review on GitHub, under `login`, which it
-    /// finds or creates. Answers the forge id of the pending item.
-    pub async fn reply_pending(
-        &self,
-        repository: &str,
-        number: i64,
-        login: &str,
-        comment: &ariadne_store::PullRequestComment,
-        body: &str,
-    ) -> Result<String, String> {
-        match self {
-            Self::Github(cli) => {
-                cli.reply_pending(repository, number, login, comment, body)
-                    .await
-            }
-        }
-    }
-
     /// Resolve the thread one stored comment of request `number` is in: a
     /// thread a reviewer session opened, once a push fixed it (029).
     pub async fn resolve(
@@ -456,97 +436,6 @@ impl ForgeClient {
     ) -> Result<Vec<ariadne_store::NewPullRequestComment>, String> {
         match self {
             Self::Github(cli) => cli.submit_review(repository, number, review, login).await,
-        }
-    }
-
-    /// Post one review of request `number` in the name of `login`, held
-    /// unposted in the user's own forge drafts rather than submitted (026
-    /// rule 24 / 029 rule 13a, where the repository holds posts back): each
-    /// inline comment is added to GitHub's one pending review. Nothing here
-    /// submits a review or posts a note outside the user's drafts. Answers
-    /// what it held, as comments of `login`.
-    pub async fn submit_review_pending(
-        &self,
-        repository: &str,
-        number: i64,
-        review: &pulls::ReviewDraft,
-        login: &str,
-    ) -> Result<Vec<ariadne_store::NewPullRequestComment>, String> {
-        match self {
-            Self::Github(cli) => {
-                cli.submit_review_pending(repository, number, review, login)
-                    .await
-            }
-        }
-    }
-
-    /// Edit the body of one of the viewer's own pending forge posts, a
-    /// pending review comment, by its own forge id (026 rule 25). Answers
-    /// the same forge id, or [`PendingEditError::NotPending`] where the user
-    /// already submitted the review it was in.
-    pub(crate) async fn edit_pending_comment(
-        &self,
-        repository: &str,
-        number: i64,
-        login: &str,
-        forge_id: &str,
-        body: &str,
-    ) -> Result<String, PendingEditError> {
-        match self {
-            Self::Github(cli) => {
-                cli.edit_pending_comment(repository, number, login, forge_id, body)
-                    .await
-            }
-        }
-    }
-
-    /// Delete one of the viewer's own pending forge posts, by its own
-    /// forge id (026 rule 25). [`PendingEditError::NotPending`] the same way
-    /// [`Self::edit_pending_comment`] answers it.
-    pub(crate) async fn delete_pending_comment(
-        &self,
-        repository: &str,
-        number: i64,
-        login: &str,
-        forge_id: &str,
-    ) -> Result<(), PendingEditError> {
-        match self {
-            Self::Github(cli) => {
-                cli.delete_pending_comment(repository, number, login, forge_id)
-                    .await
-            }
-        }
-    }
-
-    /// Replace the body of the viewer's own pending review outright (026
-    /// rule 25). Answers the pending review's own forge id, or
-    /// [`PendingEditError::NotPending`] where the user already submitted it,
-    /// or where there is none.
-    pub(crate) async fn edit_pending_review_body(
-        &self,
-        repository: &str,
-        number: i64,
-        login: &str,
-        body: &str,
-    ) -> Result<String, PendingEditError> {
-        match self {
-            Self::Github(cli) => {
-                cli.replace_pending_review_body(repository, number, login, body)
-                    .await
-            }
-        }
-    }
-
-    /// The current body of the viewer's own pending review, with its own
-    /// forge id, read fresh (026 rule 25).
-    pub(crate) async fn pending_review_body(
-        &self,
-        repository: &str,
-        number: i64,
-        login: &str,
-    ) -> Result<Option<(String, String)>, String> {
-        match self {
-            Self::Github(cli) => cli.pending_review_body(repository, number, login).await,
         }
     }
 
@@ -817,25 +706,6 @@ impl Cli {
             executed: true,
             message,
         })
-    }
-}
-
-/// Why editing, deleting or replacing one of the viewer's own pending forge
-/// posts failed (026 rule 25): the target is no longer pending — the user already
-/// submitted the review it was in, or published the draft note, or there
-/// never was one — the forge call itself failed — or `forge_id` itself
-/// names no comment or draft note of any shape, a caller's own mistake
-/// rather than anything the forge said.
-#[derive(Debug)]
-pub(crate) enum PendingEditError {
-    NotPending,
-    Forge(String),
-    BadForgeId(String),
-}
-
-impl From<String> for PendingEditError {
-    fn from(error: String) -> Self {
-        PendingEditError::Forge(error)
     }
 }
 

@@ -174,18 +174,13 @@ fn push(path: &Path) -> String {
     sh(path, "git rev-parse fix")
 }
 
-/// The repository registered with its integration on. `supervise_posts` is
-/// explicitly off: a repository defaults to holding its posts back (026
-/// rule 24), and this file's reviews and resolves are about the forge's
-/// own CLI calls, posted directly, rather than that held-back path
-/// (covered instead by
-/// `github/reviews.rs::tests::submit_review_pending_adds_each_finding_without_changing_the_body`).
+/// Register the repository with its integration enabled.
 async fn repository(h: &Harness, path: &Path) -> String {
     let repo: Value = h
         .json(
             post_json(
                 "/v1/repositories",
-                json!({"path": path, "forge": {"enabled": true}, "supervise_posts": false}),
+                json!({"path": path, "forge": {"enabled": true}}),
             ),
             StatusCode::CREATED,
         )
@@ -919,7 +914,7 @@ async fn a_review_strips_a_trailing_trailer_from_its_findings() {
 /// comment, and the stored thread reads resolved. A thread somebody else
 /// opened is refused, and so is a resolve from any other session.
 #[tokio::test]
-async fn a_review_resolves_its_own_fixed_finding_only_when_posts_are_not_supervised() {
+async fn a_review_resolves_its_own_fixed_finding() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
@@ -977,23 +972,6 @@ async fn a_review_resolves_its_own_fixed_finding_only_when_posts_are_not_supervi
     let stranger = h.lone_session("stranger").await;
     h.error(resolve(&mine, &stranger.id), StatusCode::FORBIDDEN)
         .await;
-
-    let repository = h
-        .store
-        .get_repository(&h.store.get_pull_request(&id).await.unwrap().repository_id)
-        .await
-        .unwrap();
-    h.set_supervise_posts(&repository, true).await;
-    h.error(resolve(&mine, &session.id), StatusCode::CONFLICT)
-        .await;
-    assert!(
-        stub.invocations().iter().all(|call| !call
-            .args
-            .iter()
-            .any(|arg| arg.contains("resolveReviewThread"))),
-        "supervision leaves resolution to the user"
-    );
-    h.set_supervise_posts(&repository, false).await;
 
     let resolved: Value = h.json(resolve(&mine, &session.id), StatusCode::OK).await;
     assert_eq!(resolved["resolved"], true);
