@@ -1,36 +1,34 @@
 ---
 name: merge
-description: Use when a reviewed task needs landing.
+description: Use when a reviewed task needs landing on its base branch.
 ---
 
 # Merge
 
-Complete the merge work. Done when the conditions in `## Done` hold.
+Land the reviewed task on its base branch as one squashed commit. Done when the conditions in `## Done` hold.
 
 ## When not to use
 
-Use `pr-babysit` when its triggers apply.
+Use `pr-babysit` when the task lands through a request.
 
 ## Steps
 
 The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
 `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.
 
-Read the repository policy first. Distinguish base history from task history.
-For Ariadne, direct landing permits the sequence below on an unpublished task branch.
-For a published Ariadne branch, merge the base instead of rebasing published commits.
-Squash the final result before pushing to main. Never rewrite main.
-Keep generic direct landing available where the repository permits it.
+Read the repository policy first. Ariadne permits direct landing of an
+unpublished task branch.
 
 1. Where a remote exists, run `git fetch <remote> <base>`.
 
    Done when the upstream ref is current.
-2. For an unpublished branch, rebase the task branch onto the current `<upstream>`. Resolve every
-   conflict yourself.
+2. For an unpublished branch, rebase the task branch onto the current `<upstream>`.
+   For a published branch, merge `<upstream>` into it instead. Where the
+   rebase stops on a conflict, follow `conflict-resolution`.
 
-   Done when every conflict is resolved.
-3. Only after that rebase, squash the branch into one commit.
-   For a published Ariadne branch, merge `<upstream>` first, then squash for direct landing. Give it a Conventional Commits subject:
+   Done when the branch holds the current `<upstream>`.
+3. Only after that rebase, squash the branch into one commit. Give it a
+   Conventional Commits subject:
    `git reset --soft "$(git merge-base <upstream> HEAD)" && git commit`.
 
    Done when one commit holds the task.
@@ -58,22 +56,19 @@ Keep generic direct landing available where the repository permits it.
 
    Done when the report has been submitted.
 
-## Rules
-
-### Rules
-
-- A refused push or a failed check is a fix on the task branch. Start
-  again from step 1.
-- A failed fast-forward means the base moved. Start again from step 1.
-- Never push the task branch by its name.
+A refused push or a failed check is a fix on the task branch. Start again
+from step 1. A failed fast-forward means the base moved. Start again from
+step 1.
 
 ## Never
 
 Never force-push any branch or remote, including with `--force-with-lease`.
+Never push the task branch by its name.
 
 ## Do not tell yourself
 
 - "The push is enough." -> The base must hold the result.
+- "The base name is a safe squash point." -> The name moves. Squash onto the merge base.
 
 ## Done
 

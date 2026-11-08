@@ -9,6 +9,8 @@ tests:
   - crates/ariadne-core/src/state_machine.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
+  - crates/ariadne-store/src/skill_tests/template.rs
+  - crates/ariadne-store/src/skill_tests/operate.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/workflows.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
@@ -126,7 +128,9 @@ every other kebab-case word in it; the wire spells the same gate
 4. The `merge` skill is shipped alongside the two workflows
    (`crates/ariadne-store/skills/merge/SKILL.md`): fetch the base where a
    remote exists, integrate the upstream base according to repository policy before
-   creating its squash commit onto the merge base, check `git diff --stat`,
+   creating its squash commit onto the merge base (a rebase that stops on a
+   conflict goes to `conflict-resolution`, which alone states the conflict
+   method), check `git diff --stat`,
    push where a remote exists, then
    fast-forward the base branch in the primary checkout — the `Repo:` path
    of the briefing — and call `complete_step` with the column report and
@@ -140,7 +144,7 @@ every other kebab-case word in it; the wire spells the same gate
    fetch. It never force-pushes any branch or remote, including with
    `--force-with-lease`. No skill
    merges a request: a human does. It obeys the STE rules and size caps of
-   006 and the shipped-skill tests of `defaults.rs`, the same as every
+   006 and the shipped-skill tests of `skill_tests/`, the same as every
    other skill in the catalog.
 5. The daemon exposes the catalog at `/v1/workflows`, mirroring the skill
    routes (017) and their error codes:
@@ -391,11 +395,12 @@ every other kebab-case word in it; the wire spells the same gate
   no request itself
   (`defaults.rs::every_shipped_workflow_parses_and_stages_shipped_skills`,
   `::shipped_workflow_rank_bands_match_the_catalog_contract`,
-  `::every_shipped_skill_is_named_once_and_describes_itself`,
+  `skill_tests/template.rs::every_shipped_skill_is_named_once_and_describes_itself`,
   `::skill_size_caps_hold`,
-  `::every_default_text_is_simplified_technical_english`,
-  `::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
-  `::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`).
+  `::every_skill_text_is_simplified_technical_english`,
+  `skill_tests/operate.rs::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
+  `::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`,
+  `::only_conflict_resolution_states_how_a_conflict_is_resolved`).
 - A goal created with no workflow takes its first repository's default and
   snapshots its columns; a repository's default changes no existing goal
   (`store.rs::a_goal_created_with_no_workflow_takes_its_first_repositorys_default`,

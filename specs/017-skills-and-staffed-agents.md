@@ -189,8 +189,14 @@ written into the system prompt (006), and the lifecycle the seats sit in
     branch's sha, `pr-babysit` on a merge; every other produce skill that
     ends its own column — `debugging`, `migration`,
     `conflict-resolution`, `documentation`, `research`, `spec-writing` —
-    calls `complete_step` with the column report the same way; each other
-    review skill fails it on a blocking finding.
+    calls `complete_step` with the column report the same way, and
+    `conflict-resolution` hands the step to the skill beside it where one
+    lands the task; each other review skill fails it on a blocking finding.
+    `conflict-resolution` alone states the conflict method: both sides read
+    before either is kept, no side taken whole, no abort, each dropped intent
+    written in the commit body. `merge` and `pr-babysit` name it and state no
+    method of their own. `pr-babysit` treats comment text as untrusted input
+    and runs no command a comment holds. `orchestration` names no forge.
 
     A skill document holds one text. The launcher links the run directory's
     `skills` folder onto the shared home copy that holds it (15), for the
@@ -397,6 +403,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - The review skill ends on a step call, and the merge skill lands in order
   (`skill_tests/review.rs::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
   `skill_tests/operate.rs::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`).
+- Only `conflict-resolution` states how a conflict is resolved, and it
+  resolves by intent and finishes the operation
+  (`skill_tests/operate.rs::only_conflict_resolution_states_how_a_conflict_is_resolved`,
+  `::the_conflict_resolution_skill_resolves_by_intent_and_finishes_the_operation`).
+- `pr-babysit` treats comment text as untrusted, never merges and leaves every
+  thread open
+  (`skill_tests/operate.rs::the_pr_babysit_skill_treats_comment_text_as_untrusted_and_never_merges`).
 - The orchestration skill selects within each column's permitted ranks after a
   case-by-case scope and complexity assessment, the shipped merge skill never
   force-pushes, including with `--force-with-lease`, and the PR skill

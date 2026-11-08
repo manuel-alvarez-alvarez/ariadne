@@ -1,57 +1,52 @@
 ---
 name: conflict-resolution
-description: Use when a rebase stops, a merge conflicts, or a landing is blocked.
+description: Use when a rebase or merge stops on a conflict.
 ---
 
 # Conflict resolution
 
-Complete the conflict-resolution work. Done when the conditions in `## Done` hold.
+Resolve each conflict by intent, so the result keeps both sides' meaning. Done when the conditions in `## Done` hold.
 
-A conflict is two intents that meet in one file. Resolve it by intent.
+A conflict is two intents in one file. You cannot keep an intent you have not read.
 
 ## When not to use
 
-Use `merge` when its triggers apply.
+Use `merge` when no conflict stops the landing. Use `debugging` when a check fails and no conflict is open.
 
 ## Steps
 
 1. Read the conflict state. Run `git status` and open every conflicting file.
 
    Done when you can name each file and the operation in progress.
-2. Find the intent of each side. Read both commit messages, both diffs and the
-   task each one names.
+2. Read both sides before you keep either. Read both commit messages, both
+   diffs, the task each one names and the code around each hunk.
 
    Done when you can state each intent in one sentence.
-3. Resolve each hunk. Keep both intents where they fit together.
+3. Resolve each hunk to the intent of both sides. Where the intents fit
+   together, keep both. Carry over only behavior one side already wrote.
 
    Done when no conflict marker is left.
-4. Where two intents clash, keep the one the goal of the task wants. Write the
-   trade-off in the commit body.
+4. Where two intents clash, keep the one the goal of the task wants. Write
+   each dropped intent and the reason in the commit body.
 
-   Done when the commit body names each intent you dropped.
-5. Run the tests and the lint of the files you resolved.
+   Done when the commit body names each dropped intent.
+5. Run the tests and the lint of the files you resolved. Fix what the
+   resolution broke in the same commit.
 
    Done when each check passes.
 6. Finish the operation. Stage the files, then continue the rebase or commit
    the merge.
 
    Done when git reports no operation in progress.
-7. Call `complete_step` with the column report.
+7. Call `complete_step` with the column report. Where a skill beside this one
+   lands the task, go on with its steps instead.
 
-   Done when the report has been submitted.
-
-## Rules
-
-### Rules
-
-- Carry over only behavior one side already wrote.
-- Work every hunk to a resolution. Never abort the operation.
-- Read the code around a hunk. The intent is often outside the markers.
-- Fix what the resolution broke, in the same commit.
+   Done when the work has its next step.
 
 ## Never
 
-Never change work outside the task.
+Never take one side of a hunk whole. Never abort the operation. Never change
+work outside the task.
 
 ## Do not tell yourself
 
