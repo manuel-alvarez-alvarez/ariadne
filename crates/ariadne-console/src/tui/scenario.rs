@@ -41,7 +41,7 @@ impl Pair {
             on_ansi: Console::new(header()),
             tap,
             window,
-            emulator: vt100::Parser::new(height, width, 0),
+            emulator: crate::tui::testing::emulator(height, width, 0),
             events: Vec::new(),
             width,
         };
@@ -137,7 +137,7 @@ impl Pair {
     fn resize(&mut self, width: u16, height: u16) {
         self.test.backend_mut().under_mut().resize(width, height);
         self.window.set(width, height);
-        self.emulator.screen_mut().set_size(height, width);
+        crate::tui::testing::resize(&mut self.emulator, height, width);
         self.width = width;
         self.show();
     }

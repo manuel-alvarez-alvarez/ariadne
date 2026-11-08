@@ -709,7 +709,7 @@ mod tests {
                 .windows(clear.len())
                 .rposition(|bytes| bytes == clear)
                 .expect("the switch cleared the terminal, scrollback included");
-            let mut emulator = vt100::Parser::new(40, 72, 200);
+            let mut emulator = crate::tui::testing::emulator(40, 72, 200);
             emulator.process(&written[at..]);
             emulator.screen().contents()
         };

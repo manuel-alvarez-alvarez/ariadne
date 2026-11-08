@@ -11,6 +11,7 @@
 use crate::common;
 
 use std::net::SocketAddr;
+use std::num::NonZeroU16;
 use std::time::{Duration, Instant};
 
 use axum::http::StatusCode;
@@ -144,13 +145,18 @@ struct Client {
     statuses: Vec<SessionStatus>,
 }
 
+/// A terminal size the emulator takes: never zero.
+fn nonzero(n: u16) -> NonZeroU16 {
+    NonZeroU16::new(n).expect("a terminal has rows and columns")
+}
+
 impl Client {
     /// Connect and say the terminal's size, which is the first thing the
     /// daemon waits for.
     async fn open(address: SocketAddr, id: &str, cols: u16, rows: u16) -> Self {
         let mut client = Self {
             socket: connect(address, id).await.unwrap(),
-            parser: vt100::Parser::new(rows, cols, 200),
+            parser: vt100::Parser::new(nonzero(rows), nonzero(cols), 200),
             statuses: Vec::new(),
         };
         client.resize(cols, rows).await;
@@ -165,7 +171,9 @@ impl Client {
     }
 
     async fn resize(&mut self, cols: u16, rows: u16) {
-        self.parser.screen_mut().set_size(rows, cols);
+        self.parser
+            .screen_mut()
+            .set_size(nonzero(rows), nonzero(cols));
         self.send(TerminalClientMessage::Resize { cols, rows })
             .await;
     }
@@ -199,6 +207,7 @@ impl Client {
     fn screen(&self) -> String {
         let mut screen = self.parser.screen().clone();
         let (height, width) = screen.size();
+        let (height, width) = (height.get(), width.get());
         screen.set_scrollback(usize::MAX);
         // A page of the scrollback at a time: scrolled back by `back` rows,
         // the screen's first row is the scrollback's row `back` from its end.
