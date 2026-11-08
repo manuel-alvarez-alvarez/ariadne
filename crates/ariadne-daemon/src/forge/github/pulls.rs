@@ -148,6 +148,35 @@ impl Pull {
     }
 }
 impl Github {
+    pub(crate) async fn mark_ready_for_review(
+        &self,
+        repo: &str,
+        number: i64,
+    ) -> Result<(), String> {
+        let (host, owner, name) = split_slug(repo)?;
+        let output = self
+            .cli
+            .answer(&[
+                "api",
+                &format!("repos/{owner}/{name}/pulls/{number}"),
+                "--hostname",
+                host,
+            ])
+            .await?;
+        let pull: serde_json::Value = serde_json::from_str(&output).map_err(|e| e.to_string())?;
+        let id = pull["node_id"]
+            .as_str()
+            .ok_or("the request has no node id")?;
+        let output = self.cli.answer(&["api", "graphql", "--hostname", host, "-f",
+            "query=mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }",
+            "-f", &format!("id={id}")]).await?;
+        let value: serde_json::Value = serde_json::from_str(&output).map_err(|e| e.to_string())?;
+        if value["data"]["markPullRequestReadyForReview"]["pullRequest"]["isDraft"] != false {
+            return Err("the forge did not mark the request ready".into());
+        }
+        Ok(())
+    }
+
     async fn rows(&self, repo: &str, filter: &[&str]) -> Result<Vec<Pull>, String> {
         // Increase the limit until the complete result fits. `gh pr list` has
         // no page flag; its limit drives the client's GraphQL pagination.

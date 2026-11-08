@@ -337,6 +337,12 @@ pub enum ForgeClient {
 }
 
 impl ForgeClient {
+    pub async fn mark_ready_for_review(&self, repository: &str, number: i64) -> Result<(), String> {
+        match self {
+            Self::Github(cli) => cli.mark_ready_for_review(repository, number).await,
+        }
+    }
+
     /// Every open request of the repository, and which of them ask for
     /// `login`'s review.
     pub async fn list_open_pull_requests(

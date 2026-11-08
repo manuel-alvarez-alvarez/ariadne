@@ -1397,3 +1397,63 @@ pub(super) async fn ask_babysit(
     let view = read_held(&state, row).await?;
     Ok(Json(pull_request_dto_of(&state.store, view).await?))
 }
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub(super) struct MarkReadyRequest {
+    head_sha: String,
+}
+
+/// Mark the current draft ready through its keeping session.
+#[utoipa::path(post, path = "/v1/pull-requests/{id}/ready-for-review", tag = "pull-requests",
+    params(("id" = String, Path)), request_body = MarkReadyRequest,
+    responses((status = 200, body = PullRequestDto), (status = 400), (status = 403), (status = 409)))]
+pub(super) async fn mark_ready_for_review(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<MarkReadyRequest>,
+) -> ApiResult<Json<PullRequestDto>> {
+    let row = state.store.get_pull_request(&id).await?;
+    let session = own_session(&state, &headers, &row).await?;
+    let allowed = match session.seat() {
+        Some(ariadne_core::Seat::Keeper) => session.pull_request_id.as_deref() == Some(&id),
+        Some(ariadne_core::Seat::Agent) => match row.origin_task_id.as_deref() {
+            Some(task) => state.store.get_task(task).await?.step.as_deref() == Some("pr"),
+            None => false,
+        },
+        _ => false,
+    };
+    if !allowed {
+        return Err(ApiError::forbidden(
+            "only the request's keeping session can mark it ready",
+        ));
+    }
+    if !is_sha(&req.head_sha) {
+        return Err(ApiError::bad_request("head_sha must be a hex sha"));
+    }
+    let pull = read_now(&state, row).await?;
+    let forge = integration(&state, &pull.repository_id).await?;
+    if !forge
+        .login
+        .as_deref()
+        .is_some_and(|login| login.eq_ignore_ascii_case(&pull.author_login))
+    {
+        return Err(ApiError::forbidden(
+            "only the integration login's request can be marked ready",
+        ));
+    }
+    if pull.head_sha != req.head_sha {
+        return Err(ApiError::conflict("the request head has changed"));
+    }
+    if !pull.draft {
+        return Ok(Json(pull_request_dto_of(&state.store, pull).await?));
+    }
+    client(&state, &forge)
+        .mark_ready_for_review(&slug(&forge), pull.number)
+        .await
+        .map_err(forge_error)?;
+    let mut pull = pull;
+    pull.draft = false;
+    state.forge_poll.wake(&pull.repository_id);
+    Ok(Json(pull_request_dto_of(&state.store, pull).await?))
+}

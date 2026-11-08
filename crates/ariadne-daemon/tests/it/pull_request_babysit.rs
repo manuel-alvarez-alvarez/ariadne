@@ -276,6 +276,88 @@ async fn keep_until_merge(author: &str) {
         1,
         "exactly one live keeper session, never two on the same request"
     );
+    let ready_path = format!("/v1/pull-requests/{id}/ready-for-review");
+    h.json::<Value>(
+        post_json(&ready_path, json!({"head_sha": head})),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    h.json::<Value>(
+        as_session(&ready_path, &session.id, json!({"head_sha": "bad!"})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    h.json::<Value>(
+        as_session(&ready_path, &session.id, json!({"head_sha": "abcd"})),
+        if author == "me" {
+            StatusCode::CONFLICT
+        } else {
+            StatusCode::FORBIDDEN
+        },
+    )
+    .await;
+    let before = stub
+        .invocations()
+        .iter()
+        .filter(|c| {
+            c.args
+                .iter()
+                .any(|a| a.contains("markPullRequestReadyForReview"))
+        })
+        .count();
+    h.json::<Value>(
+        as_session(&ready_path, &session.id, json!({"head_sha": head})),
+        if author == "me" {
+            StatusCode::OK
+        } else {
+            StatusCode::FORBIDDEN
+        },
+    )
+    .await;
+    assert_eq!(
+        stub.invocations()
+            .iter()
+            .filter(|c| c
+                .args
+                .iter()
+                .any(|a| a.contains("markPullRequestReadyForReview")))
+            .count(),
+        before
+    );
+    if author == "me" {
+        let mut draft_script = script(&shown());
+        for entry in draft_script.as_array_mut().unwrap() {
+            if entry["args"] == json!(["pr", "view"]) {
+                let mut read: Value =
+                    serde_json::from_str(entry["stdout"].as_str().unwrap()).unwrap();
+                read["isDraft"] = json!(true);
+                entry["stdout"] = json!(read.to_string());
+            }
+        }
+        draft_script.as_array_mut().unwrap().insert(
+            0,
+            answer(
+                &["api", "repos/acme/widgets/pulls/1"],
+                0,
+                r#"{"node_id":"PR_one"}"#,
+            ),
+        );
+        draft_script.as_array_mut().unwrap().insert(0, answer(&["api", "graphql", "--hostname", "github.com", "-f", "query=mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"], 0, r#"{"data":{"markPullRequestReadyForReview":{"pullRequest":{"isDraft":false}}}}"#));
+        stub.reprogram(draft_script);
+        let ready: Value = h
+            .json(
+                as_session(&ready_path, &session.id, json!({"head_sha": head})),
+                StatusCode::OK,
+            )
+            .await;
+        assert_eq!(ready["draft"], false);
+        assert!(
+            stub.invocations()
+                .iter()
+                .any(|c| c.args.iter().any(|a| a == "id=PR_one"))
+        );
+        stub.reprogram(script(&shown()));
+    }
     assert_eq!(session.model, PIN);
     let launch = h.launch_file(&session.id).expect("a launch file");
     assert!(
