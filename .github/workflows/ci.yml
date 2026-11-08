@@ -82,7 +82,7 @@ jobs:
       # the environment. The runner gives them to actions only, not to `run`
       # steps, so export them for the steps below.
       - name: Export the cache variables for sccache
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
