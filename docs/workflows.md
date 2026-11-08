@@ -225,3 +225,9 @@ where one is still open on the pin it ran on.
 
 [How Ariadne works](how-it-works.md) follows one task through its columns
 from `pending` to `finished`.
+
+For Ariadne, direct landing squashes each task into one Conventional Commit on main.
+Only main requires linear history. Direct pushes remain permitted.
+Merge main into published PR branches and push normally. Never rebase their published commits.
+Never force-push main. Require current GitHub CI before a GitHub squash merge.
+Other repositories retain their explicit landing policies.

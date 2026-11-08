@@ -125,7 +125,7 @@ every other kebab-case word in it; the wire spells the same gate
    `develop-review-pr` stages it.
 4. The `merge` skill is shipped alongside the two workflows
    (`crates/ariadne-store/skills/merge/SKILL.md`): fetch the base where a
-   remote exists, rebase the task branch onto the current upstream base before
+   remote exists, integrate the upstream base according to repository policy before
    creating its squash commit onto the merge base, check `git diff --stat`,
    push where a remote exists, then
    fast-forward the base branch in the primary checkout — the `Repo:` path
@@ -318,7 +318,7 @@ every other kebab-case word in it; the wire spells the same gate
     block the agent accepts is applied rather than rewritten, except where
     it fails to compile or pass; one it does not accept keeps the code,
     with a reason. Repository history rules choose its branch update, done
-    before the batch's checks run: where they require linear history it
+    before the batch's checks run: where they explicitly require task-branch linear history it
     rebases; otherwise it merges where those rules allow it. After a
     merge, it pushes only when the update fast-forwards. A rebase replaces
     the task branch's pushed commits, so after one it pushes the task
@@ -529,3 +529,8 @@ every other kebab-case word in it; the wire spells the same gate
 `crates/ariadne-daemon/src/agents/prompts.rs`,
 `crates/ariadne-store/migrations/0001_init.sql`,
 `crates/ariadne-store/migrations/0002_workflow_rank_bands.sql`.
+
+For Ariadne, only main requires linear history. Merge main into published PR branches and push normally.
+Never rebase published Ariadne PR commits. Never force-push main.
+Require GitHub CI on the current PR head before a GitHub squash merge.
+Other repositories retain their explicit direct-landing and PR policies.

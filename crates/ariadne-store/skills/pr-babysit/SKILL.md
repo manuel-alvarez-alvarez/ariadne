@@ -9,6 +9,11 @@ On your first turn, with no request open, do step 1. With one already open,
 start at step 2. On each later turn, Ariadne sends news: do steps 2 to 8.
 Then end your turn.
 
+A base-only linear-history rule does not require a linear task branch.
+For Ariadne, merge main into PR branches and push normally. Never rebase published commits.
+Never force-push main. Use the lease path below only where the repository explicitly permits it.
+For Ariadne, require GitHub CI on the current head before a GitHub squash merge.
+
 ## Steps
 
 1. Push the task branch. Call `open_pull_request`. Take the title from the
@@ -29,7 +34,7 @@ Then end your turn.
    coherent commit per batch; keep unrelated changes separate.
 6. The repository's history rules choose the branch update. Fetch the
    base and task branch, then integrate before the checks. Where
-   merges are allowed, run `git merge --no-edit <remote>/<base>`. A
+   merges are allowed, run `git merge --no-edit <remote>/<base>`. A task-branch
    linear-history rule requires `git rebase <remote>/<base>`. Keep every
    commit others added. Run the checks the batch affects, then push once.
    After a merge, push only a fast-forward. After a rebase, run

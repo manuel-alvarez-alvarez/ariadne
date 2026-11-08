@@ -178,3 +178,10 @@ their cases. `tests/githooks.sh`, `tests/release-notes.sh` and
 `tests/install-command.sh`, `tests/make-signing-cert-command.sh` and
 `tests/githooks-command.sh` need no direct invocation; the scenario scripts
 put them on `PATH` for the tools they stand in for.
+
+Main pushes run full checks against the outgoing commit in an isolated checkout.
+This includes `cargo nextest run --workspace --profile ci`, doctests, both `npm test` suites, and `npm run build`.
+Run the frontend build from `ui/`; it also builds the dashboard.
+Include audits, lint, unused checks, Rust builds, and Tauri formatting and compilation.
+Other branch pushes retain scoped checks. Only those pushes omit the slow test suites.
+Require GitHub CI on the current PR head before GitHub squash merges.

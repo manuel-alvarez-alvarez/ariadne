@@ -1409,7 +1409,7 @@ mod tests {
             "`list_comments` with `unanswered_only`",
             "The repository's history rules choose the branch update.",
             "Fetch the base and task branch, then integrate before the checks.",
-            "A linear-history rule requires `git rebase <remote>/<base>`.",
+            "A task-branch linear-history rule requires `git rebase <remote>/<base>`.",
             "Where merges are allowed, run `git merge --no-edit <remote>/<base>`.",
             "Push the task branch. Call `open_pull_request`.",
             "repository's commit conventions",

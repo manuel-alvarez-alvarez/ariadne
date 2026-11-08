@@ -67,12 +67,9 @@ The UI caches npm's downloads through `actions/setup-node`, keyed by
 - Every check `ci.yml` runs matches a command named in
   [`crates/AGENTS.md`](../crates/AGENTS.md) or
   [`ui/AGENTS.md`](../ui/AGENTS.md). A step that runs something neither file
-  names is either undocumented there or redundant here. The pre-push hook
-  runs every check `ci.yml` runs except the Rust test suite (`cargo nextest`)
-  and the UI test suite (`npm test`): those take minutes, so CI alone runs
-  them and a contributor runs either by hand before a push the change
-  warrants it. A check added to `ci.yml` outside those two suites is added to
-  the hook too.
+  names is either undocumented there or redundant here. The pre-push hook runs the complete host-platform set for main updates.
+  Other branch pushes use scoped checks and omit slow test suites.
+  Add new CI checks to the main-push hook in the same change.
 - The project version changes only through `release-please-config.json` (and
   the manifest it points at): nobody edits a version field, `CHANGELOG.md` or
   a tag by hand. See [`RELEASING.md`](RELEASING.md) for what one bump touches.
@@ -98,3 +95,10 @@ The UI caches npm's downloads through `actions/setup-node`, keyed by
 `node-version: '26'`); `release.yml`'s build job installs Node 22
 (`actions/setup-node@820762786026740c76f36085b0efc47a31fe5020`,
 `node-version: 22`). The two should match; nothing today keeps them in sync.
+
+Main pushes run full checks against the outgoing commit in an isolated checkout.
+This includes `cargo nextest run --workspace --profile ci`, doctests, both `npm test` suites, and `npm run build`.
+Run the frontend build from `ui/`; it also builds the dashboard.
+Include audits, lint, unused checks, Rust builds, and Tauri formatting and compilation.
+Other branch pushes retain scoped checks. Only those pushes omit the slow test suites.
+Require GitHub CI on the current PR head before GitHub squash merges.
