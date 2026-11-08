@@ -32,7 +32,7 @@ localtunnel-client = { version = "0.1.8", default-features = false, features = [
 tokio-tungstenite = "0.29"
 # A terminal emulator for the tests: what the console's bytes draw, read
 # back as a screen of text.
-vt100 = "0.16"
+vt100 = "0.18"
 hyper = { version = "1", features = ["http1"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 hyperlocal = "0.9"
