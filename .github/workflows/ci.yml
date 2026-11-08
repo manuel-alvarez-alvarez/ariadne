@@ -70,12 +70,23 @@ jobs:
           components: clippy
 
       # rust-cache keeps dependency artifacts; sccache also reuses unchanged
-      # workspace library compilations after a fresh checkout. Its post step
-      # reports hits and misses so the benefit is visible in the job log.
-      - name: Cache Rust compilation
-        uses: mozilla-actions/sccache-action@v0.0.11
+      # workspace library compilations after a fresh checkout. The last step
+      # of this job prints its hits and misses so the benefit is visible in
+      # the job log.
+      - name: Install sccache
+        uses: taiki-e/install-action@v2
         with:
-          version: v0.16.0
+          tool: sccache@0.16.0
+
+      # The sccache GitHub Actions backend reads the cache URL and token from
+      # the environment. The runner gives them to actions only, not to `run`
+      # steps, so export them for the steps below.
+      - name: Export the cache variables for sccache
+        uses: actions/github-script@v8
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       # nextest's JUnit output is what the report step at the end of this job
       # turns into named annotations; plain `cargo test` has no such report.
@@ -162,6 +173,10 @@ jobs:
           report_paths: 'target/nextest/*/junit.xml'
           check_name: Rust tests (${{ matrix.os }})
           annotate_only: true
+
+      - name: Show sccache statistics
+        if: always()
+        run: sccache --show-stats
 
   ui:
     name: UI
