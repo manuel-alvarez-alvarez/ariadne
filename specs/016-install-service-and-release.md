@@ -218,10 +218,11 @@ Out: what the daemon does once running (009, 012).
     new one in the same change. Pull-request CI and the pre-push hook run
     the identical command.
 17. `.github/dependabot.yml` checks four ecosystems weekly: `cargo` at the
-    repository root, `cargo` in `ui/src-tauri`, `npm` in `ui/`, and
-    `github-actions` at the root, each grouping its own minor and patch
-    bumps into one pull request and leaving a major bump its own,
-    ungrouped, pull request. Every commit it writes carries the
+    repository root, `cargo` in `ui/src-tauri`, `npm` in `ui/` and
+    `ui/dashboard/` from one entry, and `github-actions` at the root, each
+    grouping its own minor and patch bumps into one pull request and its
+    own major bumps into a second. Security updates are not grouped: each
+    advisory opens its own pull request. Every commit it writes carries the
     `chore(deps)` prefix, which rule 6 above already hides from the release
     notes and keeps from moving the version, so a dependency bump alone
     never triggers a release. Dependabot only proposes a bump; `ci.yml`'s
@@ -306,9 +307,10 @@ Out: what the daemon does once running (009, 012).
   runs right after `Verify the signed macOS assets`, before staging,
   attesting or uploading any asset (`.github/workflows/release.yml`).
 - `.github/dependabot.yml` defines exactly four `updates` entries —
-  `cargo` at `/`, `cargo` at `/ui/src-tauri`, `npm` at `/ui`, and
-  `github-actions` at `/` — each weekly, each with a `groups` entry
-  covering `minor` and `patch` update types, and each with a
+  `cargo` at `/`, `cargo` at `/ui/src-tauri`, `npm` at `directories`
+  `/ui` and `/ui/dashboard`, and `github-actions` at `/` — each weekly,
+  each with one `groups` entry covering `minor` and `patch` update types
+  and one covering `major`, none with `applies-to`, and each with a
   `commit-message.prefix` of `chore(deps)` (`.github/dependabot.yml`).
 - `release-please-config.json` defines ✨ Features, 🐛 Bug fixes, ⚡
   Performance, and ⏪ Reverts in that order. It hides the other allowed

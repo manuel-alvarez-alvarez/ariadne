@@ -151,11 +151,12 @@ impl Store {
     /// stays and becomes a skill of their own: theirs to edit and theirs to
     /// delete, with nothing shipped behind it to reset to.
     ///
-    /// The one row that stays a built-in is the one a staffed agent still
-    /// loads, which the foreign key holds so that an old task still reads as
-    /// the skills it ran on. It has no text left behind it and
-    /// [`crate::Skill::document_text`] reads it as empty; deleting the tasks
-    /// that name it lets the next open take it out.
+    /// The one row that stays a built-in is the one an agent of a goal still
+    /// open loads, which the foreign key holds so that its task still reads
+    /// as the skills it runs on. It has no text left behind it and
+    /// [`crate::Skill::document_text`] reads it as empty; the first open
+    /// after the last such goal ends takes it out. An ended goal's staffing
+    /// on it is dropped first, since nothing staffs off that goal again.
     async fn prune_dropped_builtins(
         &self,
         tx: &mut sqlx::SqliteConnection,
@@ -172,6 +173,26 @@ impl Store {
             adopted = adopted.bind(builtin.name);
         }
         adopted.execute(&mut *tx).await?;
+
+        // A task whose goal ended never staffs again (rule 9), so its
+        // staffing on a dropped skill holds the row for a record alone, and
+        // lets it go here rather than keep it, and its shared folder, for
+        // good. A goal still open keeps its staffing until it ends.
+        let mut ended = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM task_agent_skills
+             WHERE skill_name IN (
+                     SELECT name FROM skills
+                      WHERE builtin = 1 AND document IS NULL AND name NOT IN ({shipped}))
+               AND agent_id IN (
+                     SELECT ta.id FROM task_agents ta
+                       JOIN tasks t ON t.id = ta.task_id
+                       JOIN goals g ON g.id = t.goal_id
+                      WHERE g.status IN ('completed', 'cancelled'))"
+        )));
+        for builtin in &BUILTIN_SKILLS {
+            ended = ended.bind(builtin.name);
+        }
+        ended.execute(&mut *tx).await?;
 
         let mut dropped = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM skills
