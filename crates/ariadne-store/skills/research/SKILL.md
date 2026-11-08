@@ -5,24 +5,23 @@ description: Use when a task asks a question or compares options.
 
 # Research
 
-Complete the research work. Done when the conditions in `## Done` hold.
-
-A finding without a source is an opinion.
+Answer the question from evidence, with a recommendation. Done when `## Done` holds.
 
 ## When not to use
 
-Use `spec-writing` when its triggers apply.
+Use `spec-writing` when the answer becomes a spec. Use `coding` when the
+task asks for a change, not an answer.
 
 ## Steps
 
-1. Write the question in one sentence. Confirm it with the orchestrator
-   through `send_message` where the task does not state it.
+1. Write the question in one sentence, with its scope and the evidence that
+   settles it. Confirm it with the orchestrator through `send_message` where
+   the task does not state it.
 
    Done when the task or the orchestrator states the question.
 2. List what an answer needs. Name the sources that can give it.
 
-   Done when answers to every listed need would settle the question, and
-   each need names a source.
+   Done when each need names a source.
 3. Gather the evidence. Record the source of each fact as you find it.
 
    Done when each fact on your list has a source.
@@ -30,28 +29,26 @@ Use `spec-writing` when its triggers apply.
 
    Done when you have hunted the strongest counter-evidence and written
    what you found.
-5. Write the report: question, findings, recommendation, confidence.
+5. Write the report: question, findings, recommendation, confidence, and
+   what you did not check.
 
-   Done when the report has all four parts.
+   Done when the report has all five parts.
 6. Call `complete_step` with the column report.
 
    Done when the report has been submitted.
 
 ## Rules
 
-### Rules
-
 - Cite the source of every fact: a link, a file and line, or a command and
   its output.
 - Separate what you measured from what you inferred.
 - Give the strongest case against your own recommendation.
-- Say what you did not check.
 - Where the evidence does not settle the question, say so. Report the open
   question as the finding.
 
 ## Never
 
-Never change work outside the task.
+Never edit the repository. The report is the product.
 
 ## Do not tell yourself
 
@@ -64,5 +61,6 @@ Never change work outside the task.
 
 ## Done
 
-The report answers the question and names the source of every fact. It
-states a recommendation with its confidence, and lists what would change it.
+The report answers the question and cites a source for every fact. It states
+a recommendation with its confidence, names what would change it, and lists
+what it did not check.
