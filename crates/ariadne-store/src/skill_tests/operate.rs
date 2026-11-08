@@ -114,7 +114,7 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
         "`<upstream>` is `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.",
         "Where a remote exists, run `git fetch <remote> <base>`.",
         "For an unpublished branch, rebase the task branch onto the current `<upstream>`.",
-        "Where the rebase stops on a conflict, follow `conflict-resolution`.",
+        "Where the rebase or the merge stops on a conflict, follow `conflict-resolution`.",
         "Only after that rebase, squash the branch into one commit.",
         "git reset --soft \"$(git merge-base <upstream> HEAD)\" && git commit",
         "git diff --stat <upstream> HEAD",
@@ -213,7 +213,7 @@ fn the_conflict_resolution_skill_resolves_by_intent_and_finishes_the_operation()
         "Write each dropped intent and the reason in the commit body.",
         "Run the tests and the lint of the files you resolved.",
         "Finish the operation. Stage the files, then continue the rebase or commit the merge.",
-        "Call `complete_step` with the column report.",
+        "Call `complete_step` with the column report, unless another skill invoked this one.",
     ] {
         let found = text[at..].find(step).unwrap_or_else(|| {
             panic!("the conflict-resolution skill has no {step} after its last step")
@@ -230,10 +230,8 @@ fn the_conflict_resolution_skill_resolves_by_intent_and_finishes_the_operation()
         );
     }
     assert!(
-        text.contains(
-            "Where a skill beside this one lands the task, go on with its steps instead."
-        ),
-        "the conflict-resolution skill ends the column a landing skill ends"
+        text.contains("Then return to that skill's next step."),
+        "the conflict-resolution skill does not return to the skill that invoked it"
     );
 }
 

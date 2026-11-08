@@ -5,9 +5,9 @@ description: Use when a rebase or merge stops on a conflict.
 
 # Conflict resolution
 
-Resolve each conflict by intent, so the result keeps both sides' meaning. Done when the conditions in `## Done` hold.
+Resolve each conflict by intent, keeping both sides' meaning. Done when the conditions in `## Done` hold.
 
-A conflict is two intents in one file. You cannot keep an intent you have not read.
+A conflict is two intents in one file.
 
 ## When not to use
 
@@ -38,10 +38,10 @@ Use `merge` when no conflict stops the landing. Use `debugging` when a check fai
    the merge.
 
    Done when git reports no operation in progress.
-7. Call `complete_step` with the column report. Where a skill beside this one
-   lands the task, go on with its steps instead.
+7. Call `complete_step` with the column report, unless another skill invoked
+   this one. Then return to that skill's next step.
 
-   Done when the work has its next step.
+   Done when the column is reported or the caller has its next step.
 
 ## Never
 

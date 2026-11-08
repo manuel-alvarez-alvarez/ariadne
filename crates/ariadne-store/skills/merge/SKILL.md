@@ -24,7 +24,7 @@ unpublished task branch.
    Done when the upstream ref is current.
 2. For an unpublished branch, rebase the task branch onto the current `<upstream>`.
    For a published branch, merge `<upstream>` into it instead. Where the
-   rebase stops on a conflict, follow `conflict-resolution`.
+   rebase or the merge stops on a conflict, follow `conflict-resolution`.
 
    Done when the branch holds the current `<upstream>`.
 3. Only after that rebase, squash the branch into one commit. Give it a
