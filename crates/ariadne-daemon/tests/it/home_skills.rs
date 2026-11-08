@@ -202,6 +202,48 @@ async fn a_broken_native_skill_link_is_replaced_without_a_log() {
     );
 }
 
+/// A dropped built-in an old staffing still names keeps its empty shared
+/// folder for that task's run directory, but is never linked into a native
+/// agent directory, where a tool scanning it would offer an empty skill; a
+/// link an earlier sync left there is cleared.
+#[tokio::test]
+async fn a_dropped_skill_kept_for_an_old_staffing_is_not_linked_natively() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    let skills_dir = h.launcher.cfg.skills_dir.clone();
+    let native_homes = [
+        h.launcher.cfg.native_home.join(".claude/skills"),
+        h.launcher.cfg.native_home.join(".agents/skills"),
+    ];
+    std::fs::create_dir_all(skills_dir.join("pull-request")).unwrap();
+    for home in &native_homes {
+        std::os::unix::fs::symlink(skills_dir.join("pull-request"), home.join("pull-request"))
+            .unwrap();
+    }
+
+    h.stage_dropped_skill(&cast.develop().id, "pull-request", 2)
+        .await;
+
+    assert_eq!(
+        std::fs::read_to_string(skills_dir.join("pull-request/SKILL.md")).unwrap(),
+        "",
+        "the old staffing still reads its empty shared copy"
+    );
+    for home in &native_homes {
+        assert!(
+            std::fs::symlink_metadata(home.join("pull-request")).is_err(),
+            "{} still offers the dropped skill",
+            home.display()
+        );
+        assert!(
+            home.join("coding/SKILL.md").exists(),
+            "{} keeps every skill with a document",
+            home.display()
+        );
+    }
+}
+
 /// A symlink at a native skill path need not name the shared folder
 /// directly: one hop through another link that itself lands under
 /// `skills_dir` is still Ariadne's own to replace, with no collision logged.
