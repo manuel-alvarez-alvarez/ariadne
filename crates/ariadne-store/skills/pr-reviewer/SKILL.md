@@ -61,11 +61,11 @@ Use `code-review` when the diff is a task branch and no forge request.
    for an active P0 or P1 finding where the forge permits it. Otherwise
    use `comment`. Do not call `submit_review` with no new findings.
 
-   Done when the review has been submitted when needed.
+   Done when the review is submitted, if needed.
 8. Call `report_pull_request` with `reviewed_sha` set to the revision you
    reviewed.
 
-   Done when the reviewed revision has been reported.
+   Done when the reviewed revision is reported.
 
 ## Rules
 
@@ -74,7 +74,7 @@ Use `code-review` when the diff is a task branch and no forge request.
 - Flag a defect only where it breaks behavior, a test, or a written rule.
 - Never post a second comment for a defect.
 - Resolve only a thread you opened.
-- Never post a summary, status comment or draft.
+- Never post a summary, status comment, summary draft or resolution draft.
 - A tool failure posts nothing another way. Say what failed.
 
 ### Supervised repositories
