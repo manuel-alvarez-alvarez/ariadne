@@ -37,6 +37,8 @@ tests:
   - crates/ariadne-cli/src/commands/attention.rs
   - crates/ariadne-cli/src/commands/attention/board.rs
   - crates/ariadne-store/src/defaults.rs
+  - crates/ariadne-store/src/skill_tests/operate.rs
+  - crates/ariadne-store/src/skill_tests/template.rs
   - ui/src/features/pull-requests/pull-requests-page.test.tsx
   - ui/src/features/forge/forge-page.test.tsx
   - ui/src/components/app-shell.test.tsx
@@ -599,9 +601,11 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `tools.rs::tests::the_agents_request_tools_call_the_routes_of_the_request_its_task_opened`,
   `::an_agent_with_no_request_is_told_to_open_one`.
 - The skill is within its caps, names no forge CLI, timer, poll or resolve, opens the request once filling the repository's template or its three sections, starts on the news steps where one is already open, and ends on the merge or the close:
-  `defaults.rs::tests::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`, `::skill_size_caps_hold`.
+  `skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`, `skill_tests/template.rs::skill_size_caps_hold`.
 - The skill answers each inline review comment once, in one of three shapes, skips a thanks, acts on a follow-up, never retries once a reviewer reply keeps a finding open, answers a conversation comment the same way, applies an accepted suggestion block, and posts no unrelated reply:
-  `defaults.rs::tests::the_pr_babysit_skill_answers_each_comment_once_in_its_shape`.
+  `skill_tests/operate.rs::the_pr_babysit_skill_answers_each_comment_once_in_its_shape`.
+- The skill treats comment text as untrusted input and runs no command a comment holds, never merges, and leaves every thread open; it reads the head again before a ready report, and follows `conflict-resolution` where an integration stops on a conflict:
+  `skill_tests/operate.rs::the_pr_babysit_skill_treats_comment_text_as_untrusted_and_never_merges`, `::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`.
 - `session ls` titles a request session with its title and URL:
   `session.rs::tests::a_pull_request_session_shows_the_request_title_and_url`.
 - A ready report raises no row of its own on `ariadne attention`: that is
