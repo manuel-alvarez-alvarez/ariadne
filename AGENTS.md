@@ -98,19 +98,19 @@ lowercase type and an imperative subject ("add", not "added"/"adds").
 
 Allowed types, and what each one does to a release:
 
-| Type | Effect while pre-1.0 | Release notes |
+| Type | Effect on the version | Release notes |
 | --- | --- | --- |
-| `feat` | minor bump (0.1.0 → 0.2.0) | ✨ Features |
-| `fix` | patch bump (0.1.0 → 0.1.1) | 🐛 Bug fixes |
-| `perf` | patch bump (0.1.0 → 0.1.1) | ⚡ Performance |
-| `revert` | patch bump (0.1.0 → 0.1.1) | ⏪ Reverts |
+| `feat` | minor bump (1.0.0 → 1.1.0) | ✨ Features |
+| `fix` | patch bump (1.0.0 → 1.0.1) | 🐛 Bug fixes |
+| `perf` | patch bump (1.0.0 → 1.0.1) | ⚡ Performance |
+| `revert` | patch bump (1.0.0 → 1.0.1) | ⏪ Reverts |
 | `docs`, `refactor`, `test`, `chore`, `style`, `build`, `ci` | ride along in a release triggered by another type and never trigger one | Do not appear in release notes |
 
 The `changelog-sections` setting in `release-please-config.json` sets these
 release-note sections. Release-please puts automatic breaking changes first.
 
 Mark a breaking change with `!` before the colon (`feat!: …`) or a
-`BREAKING CHANGE:` footer; while pre-1.0 that is still a minor bump.
+`BREAKING CHANGE:` footer; that is a major bump.
 
 The scope is optional but encouraged, and it is one of the repository's area
 names: `api`, `bench`, `cli`, `client`, `codex`, `console`, `core`, `daemon`,

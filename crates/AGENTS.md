@@ -83,7 +83,7 @@ item, or make it private. An item that a derive, serde, utoipa or a public
 signature reaches goes in the script's `IGNORED`, with its reason.
 
 `scripts/check-migrations.sh` guards `ariadne-store`'s migration files. A
-migration already on `main` is immutable once shipped, with the older edit pin and the final squash pin (016, rule 9): its
+migration already on `main` is immutable once shipped, with no exception (016, rule 9): its
 checksum is what `_sqlx_migrations` recorded in every database that has
 already run it, and `ariadne-store` refuses to open a database whose
 recorded checksum disagrees. The script compares
@@ -100,8 +100,7 @@ one in the same change) — which also catches two branches racing to ship
 the same version number under different names. Run it by hand as
 `scripts/check-migrations.sh`; `scripts/tests/check-migrations.sh` proves
 each half, including a migration that landed through a squash after the
-branch forked, and the one named exception's pin accepting exactly its own
-old-to-new blob pair and nothing else.
+branch forked, and that any edit or deletion of a shipped migration fails.
 
 The daemon's integration tests are one test binary, `it`: every file under
 `crates/ariadne-daemon/tests/it/` is a module that `tests/it/main.rs`
@@ -244,7 +243,5 @@ Require GitHub CI on the current PR head before GitHub squash merges.
 
 For a shipped skill document change, follow the template in [spec 017, rule 16](../specs/017-skills-and-staffed-agents.md).
 
-The final squash before 1.0 folds migrations `0001` through `0009` into `0001`.
-The guard pins its exact old directory tree and exact new init blob.
-The 1.0 freeze removes both this pin and the older edit pin.
-Every later schema change adds a migration. No later squash is permitted.
+Shipped migrations never change, and no squash is permitted. Every schema
+change adds a migration.

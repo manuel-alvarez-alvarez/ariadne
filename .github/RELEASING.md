@@ -46,10 +46,10 @@ Features, 🐛 Bug fixes, ⚡ Performance, and ⏪ Reverts.
 It hides `docs`, `refactor`, `test`, `chore`, `style`, `build`, and `ci` from
 the release notes.
 
-One thing here is configuration rather than convention: `feat!:` deliberately
-does not jump to 1.0.0 while the project is pre-1.0, which is what
-`bump-minor-pre-major` in `release-please-config.json` buys — drop it when 1.0
-is the intent.
+`release-please-config.json` has no `bump-minor-pre-major`, so `feat!:` and a
+`BREAKING CHANGE:` footer bump the major version. The first release, 1.0.0,
+was set by a `Release-As: 1.0.0` footer on a landed commit. Shipped migrations
+never change, with no exception.
 
 ## What one bump touches
 

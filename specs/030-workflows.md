@@ -301,7 +301,7 @@ every other kebab-case word in it; the wire spells the same gate
    A database on a schema this release does not ship — the fixed
    author/reviewer/landing pipeline this spec replaced included — is
    refused at open with the pre-squash message, naming the file to delete:
-   Ariadne is pre-1.0, so such a database is recreated rather than migrated
+   Shipped migrations never change, so such a database is recreated rather than edited
    (016 rule 9). `goal_steps.ranks` is a non-null JSON array.
 10. The `pr` column of `develop-review-pr` stages `pr-babysit`. Its agent
     pushes the branch and opens the request through `open_pull_request`

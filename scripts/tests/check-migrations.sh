@@ -30,19 +30,6 @@ run_guard() {
     fi
 }
 
-# A git blob hash is a pure function of its content, never of which
-# repository holds it: writing this real repository's own pre- and
-# post-edit `0001_init.sql` bytes into the throwaway one, verbatim,
-# reproduces the exact same two blobs `check-migrations.sh` pins, so its
-# real, fixed, hardcoded values are what these two cases exercise — no
-# override of any kind, in the script or the environment.
-real_blob() {
-    git -C "$REPO_DIR" cat-file blob "$1" \
-        > "$TEST_ROOT/crates/ariadne-store/migrations/0001_init.sql"
-}
-REAL_EDIT_FROM=f3cd49d06d678e397bd9f5dab62604bf20b8995c
-REAL_EDIT_TO=4c9801a083e435c516fe611df0dcfba5faa889ba
-
 # `main` has moved on since a branch forked from it: set up an `origin`
 # remote whose `main` has already landed a migration (through a squash
 # commit the branch never descends from), and leave the caller on a new
@@ -65,88 +52,10 @@ diverge_after_squash() {
 }
 
 case "$test_case" in
-    accept-approved-squash|reject-near-miss-squash|reject-wrong-source-squash|squash-schema)
-        old_tree=ff3db5383225fb809f9c6f16683d5c91f5a717c7
-        dir=crates/ariadne-store/migrations
-        git -C "$REPO_DIR" archive "$old_tree" | tar -x -C "$TEST_ROOT/$dir"
-        if [ "$test_case" = reject-wrong-source-squash ]; then
-            printf '\n-- changed source\n' >> "$TEST_ROOT/$dir/0002_workflow_rank_bands.sql"
-        fi
-        git -C "$TEST_ROOT" add -A
-        git -C "$TEST_ROOT" commit -q -m "test: ship the old migration chain"
-        git -C "$TEST_ROOT" checkout -q -b change
-        rm "$TEST_ROOT/$dir/"*.sql
-        cp "$REPO_DIR/$dir/0001_init.sql" "$TEST_ROOT/$dir/"
-        if [ "$test_case" = reject-near-miss-squash ]; then
-            printf '\n-- changed destination\n' >> "$TEST_ROOT/$dir/0001_init.sql"
-        fi
-        git -C "$TEST_ROOT" add -A
-        git -C "$TEST_ROOT" commit -q -m "test: squash the chain"
-        case "$test_case" in
-            accept-approved-squash) [ "$(run_guard)" = 0 ] ;;
-            reject-*) [ "$(run_guard)" = 1 ] ;;
-            squash-schema)
-                python3 - "$REPO_DIR" "$old_tree" <<'PYTHON'
-import re, sqlite3, subprocess, sys
-from pathlib import Path
-repo, tree = sys.argv[1:]
-old = sqlite3.connect(':memory:')
-new = sqlite3.connect(':memory:')
-files = subprocess.check_output(['git', '-C', repo, 'ls-tree', '--name-only', tree], text=True).splitlines()
-for name in files:
-    old.executescript(subprocess.check_output(['git', '-C', repo, 'show', tree + ':' + name], text=True))
-new.executescript(Path(repo, 'crates/ariadne-store/migrations/0001_init.sql').read_text())
-def schema(db):
-    objects = db.execute("SELECT type,name,tbl_name FROM sqlite_master ORDER BY type,name").fetchall()
-    result = []
-    for kind, name, table in objects:
-        result.append((kind, name, table))
-        if kind == 'table':
-            sql = db.execute('SELECT sql FROM sqlite_master WHERE name=?', (name,)).fetchone()[0]
-            sql = re.sub(r'--[^\n]*', '', sql)
-            result.append(re.sub(r'[\s"]', '', sql).lower())
-            for pragma in ('table_info', 'foreign_key_list', 'index_list'):
-                result.append(sorted(db.execute(f'PRAGMA {pragma}("{name}")').fetchall()))
-        if kind == 'index':
-            result.append(db.execute(f'PRAGMA index_xinfo("{name}")').fetchall())
-            result.append(db.execute('SELECT sql FROM sqlite_master WHERE name=?', (name,)).fetchone())
-    return result
-assert schema(old) == schema(new), 'squash changed the schema'
-PYTHON
-                ;;
-        esac
-        ;;
     reject-edit)
         git -C "$TEST_ROOT" checkout -q -b change
         printf -- '-- edited\n' >> "$TEST_ROOT/crates/ariadne-store/migrations/0001_init.sql"
         git -C "$TEST_ROOT" commit -q -am "test: edit the shipped migration"
-        [ "$(run_guard)" = 1 ]
-        grep -Fq "0001_init.sql: a migration already on main must not be modified" \
-            "$TEST_ROOT/output"
-        ;;
-    accept-approved-edit)
-        # `main` ships the real pre-edit file, blob for blob, and the
-        # branch makes the real post-edit one, blob for blob: the guard's
-        # own hardcoded pin names exactly this pair, with no override.
-        real_blob "$REAL_EDIT_FROM"
-        git -C "$TEST_ROOT" commit -q -am "test: main ships the real pre-edit 0001_init.sql"
-        git -C "$TEST_ROOT" checkout -q -b change
-        real_blob "$REAL_EDIT_TO"
-        git -C "$TEST_ROOT" commit -q -am "test: make exactly the one approved edit"
-        [ "$(run_guard)" = 0 ]
-        ;;
-    reject-near-miss-edit)
-        # The same real pre-edit file on `main`, but the branch's edit is
-        # the approved one with an extra line, so its blob is neither
-        # pinned blob: a different edit of the same migration still fails,
-        # proving the pin accepts only its one exact pair.
-        real_blob "$REAL_EDIT_FROM"
-        git -C "$TEST_ROOT" commit -q -am "test: main ships the real pre-edit 0001_init.sql"
-        git -C "$TEST_ROOT" checkout -q -b change
-        real_blob "$REAL_EDIT_TO"
-        printf -- '-- a further, unapproved edit\n' \
-            >> "$TEST_ROOT/crates/ariadne-store/migrations/0001_init.sql"
-        git -C "$TEST_ROOT" commit -q -am "test: make a different edit than the one pinned"
         [ "$(run_guard)" = 1 ]
         grep -Fq "0001_init.sql: a migration already on main must not be modified" \
             "$TEST_ROOT/output"
@@ -157,6 +66,14 @@ PYTHON
         git -C "$TEST_ROOT" commit -q -m "test: delete the shipped migration"
         [ "$(run_guard)" = 1 ]
         grep -Fq "0001_init.sql: a migration already on main must not be deleted" \
+            "$TEST_ROOT/output"
+        ;;
+    telemetry-reject-delete)
+        git -C "$TEST_ROOT" checkout -q -b change
+        git -C "$TEST_ROOT" rm -q crates/ariadne-store/telemetry-migrations/0001_init.sql
+        git -C "$TEST_ROOT" commit -q -m "test: delete the shipped telemetry migration"
+        [ "$(run_guard)" = 1 ]
+        grep -Fq "telemetry-migrations/0001_init.sql: a migration already on main must not be deleted" \
             "$TEST_ROOT/output"
         ;;
     accept-add)

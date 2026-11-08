@@ -104,7 +104,9 @@ Out: what the daemon does once running (009, 012).
    Its `changelog-sections` setting in `release-please-config.json` then adds
    ✨ Features, 🐛 Bug fixes, ⚡ Performance, and ⏪ Reverts. It hides `docs`,
    `refactor`, `test`, `chore`, `style`, `build`, and `ci` from the notes.
-7. `feat!:` does not jump to 1.0.0 while the project is pre-1.0.
+7. `feat!:` bumps the major version. The release after this change is 1.0.0,
+   set by a `Release-As: 1.0.0` footer on the landed commit; the config has no
+   `bump-minor-pre-major`.
 8. Only main requires linear history. Each task or PR lands as one squashed Conventional Commit.
    Direct pushes are permitted. Never force-push main or rewrite existing main history.
    Merge main into published PR branches and push normally.
@@ -123,18 +125,13 @@ Out: what the daemon does once running (009, 012).
    Release-please titles its PR `chore: release X.Y.Z`.
 9. The schema is one squashed init migration, `0001`. A database whose
    `_sqlx_migrations` records a version or a checksum this release does not
-   ship is refused at open, with a sentence naming the file to delete: Ariadne
-   is pre-1.0, so a database is recreated rather than migrated. The eight
-   migrations that had accumulated since the previous squash (`0002` through
-   `0009`) were folded back into `0001`, completing the final, one-time
-   squash of that nine-file chain (`0001` through `0009`) before 1.0; a
-   database written anywhere on that chain, or on the chain before it, is
-   refused the same way, and that loss is accepted. From this reset on,
-   every schema change adds a new migration file: `0001` is not edited
-   again. The guard pins this final squash by the exact old directory tree
-   and the exact new `0001` blob. It also retains the older pinned edit
-   that narrowed `forge_integrations.kind` to GitHub alone (025).
-   The 1.0 freeze task removes both pins. No later squash is permitted.
+   ship is refused at open, with a sentence naming the file to delete: shipped
+   migrations never change, so such a database is recreated rather than
+   edited. The migrations that had accumulated earlier were folded into
+   `0001` in one final squash; a database written on that chain is refused
+   the same way, and that loss is accepted. From then on every schema change
+   adds a new migration file. No shipped migration, in either migrations
+   directory, is ever edited or deleted, and the guard has no exception.
 10. `ariadne doctor` is the only thing still running when that happens, so it
     is what explains it (014).
 11. At startup, the daemon raises its soft open-file limit towards the hard
@@ -346,21 +343,10 @@ Out: what the daemon does once running (009, 012).
   (`scripts/tests/check-migrations.sh`: `reject-edit`, `reject-delete`,
   `accept-add`, `reject-low-number`, `reject-bad-name`,
   `reject-symlink-replace`, `reject-new-symlink`,
-  `reject-landed-after-squash`, `reject-version-collision`). The one named
-  exception in rule 9 is pinned by `0001_init.sql`'s exact pre- and
-  post-edit git blob hash in `scripts/check-migrations.sh`'s own fixed
-  `APPROVED_EDIT_FROM`/`APPROVED_EDIT_TO`, read from no environment or
-  argument; a git blob hash is a pure function of its content, never of
-  which repository holds it, so writing this same content, verbatim, into
-  a throwaway repository exercises that real, unmodified pin directly —
-  exactly that pair passes, and the same content with one further edit
-  still fails
-  (`scripts/tests/check-migrations.sh`: `accept-approved-edit`,
-  `reject-near-miss-edit`).
-
-- The final squash preserves the nine-file schema and accepts only the pinned transition
-  (`scripts/tests/check-migrations.sh`: `squash-schema`, `accept-approved-squash`,
-  `reject-near-miss-squash`, `reject-wrong-source-squash`).
+  `reject-landed-after-squash`, `reject-version-collision`). The guard has
+  no exception: an edit or a deletion of a shipped migration fails in both
+  directories (`reject-edit`, `reject-delete`, `telemetry-reject-edit`,
+  `telemetry-reject-delete`).
 
 ## Known gap
 

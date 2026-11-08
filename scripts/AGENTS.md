@@ -135,14 +135,8 @@ in the root [`AGENTS.md`](../AGENTS.md).
   `reject-version-collision` (a branch's own new migration collides with a
   different one `main` shipped under the same version number while the
   branch was forked), `unrelated-change` (a change outside the migrations
-  directory), `accept-approved-edit` and `reject-near-miss-edit` (the one
-  named exception `check-migrations.sh` pins — see below — accepts exactly
-  its own old-to-new blob pair and nothing else; a git blob hash is a pure
-  function of its content, never of which repository holds it, so writing
-  this repository's own pre- and post-edit `0001_init.sql` bytes into the
-  throwaway one, verbatim, reproduces the exact same two blobs the real,
-  fixed pin names, with no override of any kind), `telemetry-reject-edit`
-  and `telemetry-reject-low-number` (the same two refusals, against
+  directory), `telemetry-reject-edit`, `telemetry-reject-delete`
+  and `telemetry-reject-low-number` (the same refusals, against
   `telemetry-migrations/` instead of `migrations/`), and
   `telemetry-accept-add-independent-of-the-other-directory` (a new
   telemetry migration numbered no higher than a version the other
@@ -195,7 +189,3 @@ Run `bash scripts/tests/githooks.sh CASE` for the landing boundary cases:
 `main-push` checks an unrelated checkout, that the dashboard `npm ci` runs
 before `npm run build`, and a failed test command.
 Use `scripts/check-commit-subject.sh SUBJECT` for authored subjects and future PR titles.
-
-The final pre-1.0 squash has four boundary cases in `tests/check-migrations.sh`:
-`accept-approved-squash`, `reject-near-miss-squash`, `reject-wrong-source-squash`, and `squash-schema`.
-They prove the exact pin and compare the fresh schema with the old nine-file chain.

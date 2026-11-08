@@ -163,26 +163,16 @@ flags.
 ## The database of an earlier release
 
 `db_path` has to be deleted before this version is started for the first time.
-This release squashes the eight migrations that had accumulated since the
-previous squash back into the one shipped migration, as a final, one-time
-reset of the pre-1.0 schema: a database written by an earlier release
-records migrations this one no longer ships and cannot be opened. There is
-no upgrade from it — Ariadne is pre-1.0, and a database is recreated rather
-than migrated; that loss of history is accepted. From here on, a schema
-change ships as a new migration file rather than another squash, with one
-named exception — see [Install, service and
-release](../specs/016-install-service-and-release.md), rule 9.
+This release squashed the earlier migrations into one shipped migration: a
+database written by an earlier release records migrations this one no longer
+ships and cannot be opened. There is no upgrade from it, and that loss of
+history is accepted. From here on, shipped migrations never change, with no
+exception, and a schema change ships as a new migration file — see [Install,
+service and release](../specs/016-install-service-and-release.md), rule 9.
 
-That exception is narrowing the forge integration to GitHub alone: it
-tightened the one shipped migration's `kind` check to `github` alone, in
-place, on the migration itself, rather than adding a new one. A database
-written by a release that still shipped the wider check carries a checksum
-this one does not recognize either, and is refused at open the same way, by
-the same rule — every goal, task and
-session it held is lost, the same loss rule 9 already accepts, for the same
-pre-1.0 reason. Delete the old database (with its `-wal` and `-shm` files)
-and the daemon writes a fresh one on its next start; `ariadned` and `ariadne
-doctor` both say so, by name, if it is still there.
+Delete the old database (with its `-wal` and `-shm` files) and the daemon
+writes a fresh one on its next start; `ariadned` and `ariadne doctor` both say
+so, by name, if it is still there.
 
 ## Keys the daemon refuses
 

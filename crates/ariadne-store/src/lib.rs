@@ -164,7 +164,7 @@ fn pre_squash_message(path: &Path) -> String {
         "{path} predates the squashed schema: it was written by a release whose \
          migrations this one no longer ships, and there is no upgrade from it. \
          Delete {path} (and its -wal and -shm files, if any) and start again — \
-         Ariadne is pre-1.0, so a database is recreated rather than migrated."
+         Shipped migrations never change, so a database is recreated rather than edited."
     )
 }
 

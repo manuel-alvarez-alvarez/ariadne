@@ -28,7 +28,7 @@
 #
 # Only conventional-commit subjects reach the notes and move the version:
 # `feat:` (minor), `fix:`/`perf:`/`revert:` (patch), and `feat!:` or a
-# `BREAKING CHANGE:` footer (minor while we are pre-1.0). `chore:`, `docs:`
+# `BREAKING CHANGE:` footer (major). `chore:`, `docs:`
 # and friends ride along in a release but never trigger one; anything that is
 # not a conventional commit is ignored entirely.
 name: release-please
