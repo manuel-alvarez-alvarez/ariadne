@@ -82,6 +82,7 @@ impl McpSeat {
                 "list_comments",
                 "get_comment",
                 "reply_comment",
+                "mark_ready_for_review",
                 "report_pull_request",
                 "send_message",
                 "read_messages",
@@ -113,6 +114,7 @@ impl McpSeat {
                 "list_comments",
                 "get_comment",
                 "reply_comment",
+                "mark_ready_for_review",
                 "report_pull_request",
             ],
         }
@@ -598,6 +600,7 @@ pub(crate) mod tests {
                     "list_comments",
                     "get_comment",
                     "reply_comment",
+                    "mark_ready_for_review",
                     "report_pull_request",
                     "send_message",
                     "read_messages",
@@ -628,6 +631,7 @@ pub(crate) mod tests {
                     "list_comments",
                     "get_comment",
                     "reply_comment",
+                    "mark_ready_for_review",
                     "report_pull_request",
                 ][..],
             ),
@@ -656,6 +660,7 @@ pub(crate) mod tests {
             "open_pull_request",
             "read_messages",
             "reply_comment",
+            "mark_ready_for_review",
             "report_pull_request",
             "resolve_thread",
             "retry_task",
@@ -699,11 +704,12 @@ pub(crate) mod tests {
             McpSeat::Agent,
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
-        assert_eq!(mcp.seat.tools().len(), 15);
+        assert_eq!(mcp.seat.tools().len(), 16);
         for tool in [
             "get_pull_request",
             "list_comments",
             "reply_comment",
+            "mark_ready_for_review",
             "report_pull_request",
             "open_pull_request",
             "complete_step",
@@ -818,6 +824,7 @@ pub(crate) mod tests {
                 "get_diff",
                 "get_pull_request",
                 "list_comments",
+                "mark_ready_for_review",
                 "reply_comment",
                 "report_pull_request",
                 "wait_for_user",
