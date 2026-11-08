@@ -247,7 +247,6 @@ impl PromptKind {
             PromptKind::StepBriefing => &[
                 "task_title",
                 "task_description",
-                "goal_title",
                 "worktree_path",
                 "branch",
                 "base_branch",
@@ -256,7 +255,6 @@ impl PromptKind {
                 "step_title",
                 "step_description",
                 "previous_summary",
-                "dependencies",
             ],
             PromptKind::StepReturn => &["task_title", "step_title", "direction", "reason"],
             PromptKind::AgentResume => &["task_title", "step_title"],
@@ -614,7 +612,7 @@ mod tests {
         assert!(message.contains("step_briefing"), "{message}");
         assert!(message.contains("{task_titel}"), "{message}");
         assert!(message.contains("{task_title}"), "{message}");
-        assert!(message.contains("{dependencies}"), "{message}");
+        assert!(message.contains("{previous_summary}"), "{message}");
     }
 
     /// Every offending token is named, once each: a template is fixed in one

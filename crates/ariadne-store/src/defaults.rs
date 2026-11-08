@@ -383,10 +383,9 @@ pub fn pull_request_news_prompt() -> &'static str {
 /// The placeholders [`pull_request_briefing_prompt`] and
 /// [`pull_request_news_prompt`] are rendered with, by the daemon's
 /// `prompts` builders.
-pub const PULL_REQUEST_PLACEHOLDERS: [&str; 10] = [
+pub const PULL_REQUEST_PLACEHOLDERS: [&str; 9] = [
     "title",
     "url",
-    "repo_path",
     "worktree_path",
     "head_branch",
     "base_branch",
@@ -413,10 +412,9 @@ pub fn pull_request_keeper_briefing_prompt() -> &'static str {
 /// The placeholders [`pull_request_keeper_briefing_prompt`] is rendered
 /// with, by the daemon's `prompts` builders. A keeper session is woken with
 /// news on [`pull_request_news_prompt`], the same text a review session is.
-pub const PULL_REQUEST_KEEPER_PLACEHOLDERS: [&str; 8] = [
+pub const PULL_REQUEST_KEEPER_PLACEHOLDERS: [&str; 7] = [
     "title",
     "url",
-    "repo_path",
     "worktree_path",
     "branch",
     "base_branch",
@@ -449,30 +447,28 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str =
 /// is the session rules'. The stop rule is here too, and nowhere else: a
 /// column's skill can tell an agent how to fix one thing, never how long to
 /// keep trying it.
-const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its branch. Work on your current column alone. Read its skills first.
+const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its branch. Do only the work of your current column. Read its skills first.
 - Call `complete_step` when the column's work is done.
 - Call `fail_step` when the previous column must fix something.
 - Call `fail_task` when nobody can do the task as written.
-- Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again.
+- Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.
 - After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator with `send_message`, or call `fail_task`."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
 /// commands act on, and what the column before it said.
 const STEP_BRIEFING: &str = r#"# {task_title}: {step_title} ({step_id})
 {task_description}
-{step_description}
-Goal: {goal_title}
+Column: {step_description}
 Worktree: {worktree_path}
 Branch: {branch}
 Base: {base_branch}
 Repo: {repo_path}
 Previous: {previous_summary}
-Dependencies: {dependencies}
 Do this column now."#;
 
 /// What a column's agent is briefed with when the task comes back to its
 /// column: which way it came, and why.
-const STEP_RETURN: &str = "Resume {task_title} at {step_title}.\nDirection: {direction}\n{reason}";
+const STEP_RETURN: &str = "Resume \"{task_title}\" at {step_title}. {direction}\nReason: {reason}";
 
 /// What the agent of the current column is nudged with when it has gone
 /// quiet with the task still in front of it.
@@ -482,10 +478,10 @@ const STEP_RETURN: &str = "Resume {task_title} at {step_title}.\nDirection: {dir
 /// done; make the call that ends the column, or go on with the work; and
 /// write no reply about the nudge itself, since a reply over the nudge is a
 /// turn spent on nothing the task needed.
-const AGENT_RESUME: &str = "Not a new request: continue {task_title} at {step_title}. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
+const AGENT_RESUME: &str = "Not a new request: continue \"{task_title}\" at {step_title}. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
 
 /// Seat text of a reviewer pull request session (029).
-const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request where the user is a requested reviewer. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing. Ariadne wakes you with the request and its news. Review it as your skill says. Then end your turn."#;
+const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request where the user is a requested reviewer. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing. Review it as your skill says. Then end your turn."#;
 
 /// Initial briefing of a reviewer pull request session (029).
 const PULL_REQUEST_REVIEW_BRIEFING: &str = r#"# Review pull request: {title}
@@ -493,7 +489,6 @@ const PULL_REQUEST_REVIEW_BRIEFING: &str = r#"# Review pull request: {title}
 {url}
 
 ## Context
-- Repo: {repo_path}
 - Worktree (your cwd): {worktree_path}, at {head_sha}
 - Branch: {head_branch} onto {base_branch}
 - Your login: {login}
@@ -509,7 +504,7 @@ const PULL_REQUEST_NEWS: &str = r#"News on "{title}":
 Handle each item. Then end your turn."#;
 
 /// Seat text of a session that keeps a request asked for by hand (032).
-const PULL_REQUEST_KEEPER_SYSTEM_PROMPT: &str = r#"You keep one open request the user asked you to keep. Work only in your worktree, on its branch. Commit a fix and push it as the briefing says. Ariadne wakes you with the news. It ends you on the merge or the close. Then end your turn."#;
+const PULL_REQUEST_KEEPER_SYSTEM_PROMPT: &str = r#"You keep one open request the user asked you to keep. Work only in your worktree, on its branch. When the request needs a fix, commit it and push it with the briefing's push command. Ariadne ends this session when the request merges or closes."#;
 
 /// Initial briefing of a keeper session (032): the request, the worktree and
 /// branch it works on, and the command that pushes a fix to the request.
@@ -518,7 +513,6 @@ const PULL_REQUEST_KEEPER_BRIEFING: &str = r#"# Keep pull request: {title}
 {url}
 
 ## Context
-- Repo: {repo_path}
 - Worktree (your cwd): {worktree_path}
 - Branch: {branch}, onto {base_branch}
 - Your login: {login}
@@ -560,7 +554,7 @@ Workflow: {workflow}
 /// Once the goal is active the orchestrator is the one agent that outlives
 /// its own hand-off, and what it is woken for is on the tasks: one that
 /// failed, one that has gone quiet, or a goal with nothing left to do.
-const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}" where it stands. Without an explicit yes on the plan, stay in the conversation that gets one. With one, call `finalize_plan`. Once the goal is under way, read `list_tasks`."#;
+const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}" where it stands. When the goal is under way, read `list_tasks`. Before the user writes an explicit yes, continue the plan conversation. After the yes, call `finalize_plan`."#;
 
 /// What the orchestrator of a goal under way is woken with.
 ///
@@ -579,7 +573,7 @@ const GOAL_ATTENTION: &str = r#"The tasks of "{goal_title}" need you:
 
 {tasks}
 
-Read them with `list_tasks`. Retry, rewrite or cancel each one. Call `complete_goal` when every task is done."#;
+Read them with `list_tasks`. Retry, rewrite or cancel each failed task. Send a message to the agent of a quiet task, or switch its model. Call `complete_goal` when every task is done."#;
 
 /// What one agent said to another, as it reaches the recipient's agent.
 ///
@@ -596,7 +590,7 @@ const INCOMING_MESSAGE: &str = r#"Message from {from}:
 
 {body}
 
-Answer only a question{answer_to}. Then go on with your work."#;
+If the message asks a question, answer it{answer_to}. Then go on with your work."#;
 
 /// What the orchestrator is told when an exhausted agent moved to another
 /// model on its own (021): the column, the task, both models, and that the
@@ -1021,7 +1015,7 @@ pub(crate) mod tests {
         let agent = default_system_prompt(Seat::Agent);
         for rule in [
             "Work only in the task's worktree, on its branch.",
-            "Work on your current column alone.",
+            "Do only the work of your current column.",
             "Call `complete_step` when the column's work is done.",
             "Call `fail_step` when the previous column must fix something.",
             "Call `fail_task` when nobody can do the task as written.",
@@ -1057,23 +1051,23 @@ pub(crate) mod tests {
         );
         assert_eq!(
             default_system_prompt(Seat::Agent),
-            "Work only in the task's worktree, on its branch. Work on your current column alone. Read its skills first.\n\
+            "Work only in the task's worktree, on its branch. Do only the work of your current column. Read its skills first.\n\
              - Call `complete_step` when the column's work is done.\n\
              - Call `fail_step` when the previous column must fix something.\n\
              - Call `fail_task` when nobody can do the task as written.\n\
-             - Never pass `--no-verify` or `-n` to git. A refused hook names the fix. Make it and commit again.\n\
+             - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.\n\
              - After three failed attempts at one fix, stop. Send the attempts and the suspected cause to the orchestrator with `send_message`, or call `fail_task`."
         );
         assert!(
             default_prompt_text(PromptKind::StepBriefing)
-                .ends_with("Dependencies: {dependencies}\nDo this column now.")
+                .ends_with("Previous: {previous_summary}\nDo this column now.")
         );
         assert_eq!(
             default_prompt_text(PromptKind::IncomingMessage),
-            "Message from {from}:\n\n{body}\n\nAnswer only a question{answer_to}. Then go on with your work."
+            "Message from {from}:\n\n{body}\n\nIf the message asks a question, answer it{answer_to}. Then go on with your work."
         );
         assert!(default_prompt_text(PromptKind::GoalAttention).ends_with(
-            "Read them with `list_tasks`. Retry, rewrite or cancel each one. Call `complete_goal` when every task is done."
+            "Read them with `list_tasks`. Retry, rewrite or cancel each failed task. Send a message to the agent of a quiet task, or switch its model. Call `complete_goal` when every task is done."
         ));
         assert_eq!(
             exhausted_switch_notice(),
@@ -1181,9 +1175,9 @@ pub(crate) mod tests {
     fn the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way() {
         let resume = default_prompt_text(PromptKind::OrchestratorResume);
         for phase in [
-            "Without an explicit yes on the plan, stay in the conversation that gets one",
-            "With one, call `finalize_plan`",
-            "Once the goal is under way, read `list_tasks`",
+            "When the goal is under way, read `list_tasks`",
+            "Before the user writes an explicit yes, continue the plan conversation",
+            "After the yes, call `finalize_plan`",
         ] {
             assert!(
                 resume.contains(phase),
@@ -1199,7 +1193,8 @@ pub(crate) mod tests {
         let text = default_prompt_text(PromptKind::GoalAttention);
         for rule in [
             "Read them with `list_tasks`.",
-            "Retry, rewrite or cancel each one.",
+            "Retry, rewrite or cancel each failed task.",
+            "Send a message to the agent of a quiet task, or switch its model.",
             "Call `complete_goal` when every task is done.",
         ] {
             assert!(text.contains(rule), "the goal attention and \"{rule}\"");

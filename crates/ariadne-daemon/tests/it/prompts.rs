@@ -248,7 +248,6 @@ async fn a_started_column_agent_is_briefed_from_the_builtin_template() {
         &[
             ("task_title", &task.title),
             ("task_description", &task.description),
-            ("goal_title", &cast.goal.title),
             ("worktree_path", task.worktree_path.as_deref().unwrap()),
             ("branch", &task.branch),
             ("base_branch", &cast.repo.base_branch),
@@ -256,10 +255,8 @@ async fn a_started_column_agent_is_briefed_from_the_builtin_template() {
             ("step_id", &step.id),
             ("step_title", &step.title),
             ("step_description", &step.description),
-            // A first column has nothing before it, and this task waits on
-            // nothing.
-            ("previous_summary", ""),
-            ("dependencies", ""),
+            // A first column has nothing before it.
+            ("previous_summary", "none"),
         ],
     );
     // The stub keeps no MCP instructions anyone proved, so the first prompt
@@ -440,7 +437,7 @@ async fn a_return_and_a_nudge_assemble_word_for_word() {
         &[
             ("task_title", &cast.task.title),
             ("step_title", "Develop"),
-            ("direction", "back"),
+            ("direction", "A later column sent the task back."),
             ("reason", &fence(REASON)),
         ],
     );

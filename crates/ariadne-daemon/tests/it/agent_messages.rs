@@ -169,7 +169,7 @@ async fn a_message_is_handed_to_the_agent_it_was_sent_to() {
         pasted.contains(&format!(
             "Message from the review agent of task {} \"{}\":\n\n\
              <<<untrusted>>>The retry loop has no bound and the caller has one.<<<end untrusted>>>\n\n\
-             Answer only a question, with `send_message` to `review` and task `{}`. \
+             If the message asks a question, answer it, with `send_message` to `review` and task `{}`. \
              Then go on with your work.",
             cast.task.id, cast.task.title, cast.task.id
         )),

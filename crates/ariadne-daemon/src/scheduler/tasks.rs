@@ -271,6 +271,7 @@ impl super::Scheduler {
                     }
                 })
                 .unwrap_or("");
+            let mut full = !seen;
             let mut briefing = if seen {
                 let direction = if retry {
                     "retry"
@@ -299,14 +300,17 @@ impl super::Scheduler {
             // has read nothing: it is briefed on the task first, then told
             // what the return says.
             if seen && launched && !sessions.iter().any(|s| s.id == session.id) {
+                // The return reason is in the return part only.
+                let previous = previous_report(&transitions, &steps, step);
                 briefing = format!(
                     "{}\n\n{briefing}",
                     self.launcher
-                        .step_first_briefing(&task, step, reason)
+                        .step_first_briefing(&task, step, previous)
                         .await?
                 );
+                full = true;
             }
-            if let Some(brief) = &agent.brief {
+            if let Some(brief) = agent.brief.as_ref().filter(|_| full) {
                 briefing.push_str("\n\n");
                 briefing.push_str(brief);
             }
@@ -506,6 +510,30 @@ impl super::Scheduler {
 
 /// Why a task waiting on a dependency that ended is ending too: which
 /// dependency it was, and how it ended.
+/// The report of the column before `step`, as the last forward move into
+/// `step` carried it: what a fresh session that goes back to a column it saw
+/// before has as `Previous:`. Empty when no column came before it.
+fn previous_report<'a>(
+    transitions: &'a [ariadne_store::TaskTransition],
+    steps: &[ariadne_store::GoalStep],
+    step: &ariadne_store::GoalStep,
+) -> &'a str {
+    transitions[..transitions.len().saturating_sub(1)]
+        .iter()
+        .rev()
+        .find(|t| {
+            t.to_status == "in_progress"
+                && t.to_step.as_ref() == Some(&step.id)
+                && t.from_step.as_ref().is_some_and(|id| {
+                    steps
+                        .iter()
+                        .any(|s| &s.id == id && s.ordinal < step.ordinal)
+                })
+        })
+        .and_then(|t| t.reason.as_deref())
+        .unwrap_or("")
+}
+
 fn blocked_reason(dependency: &Task) -> String {
     let ended = match dependency.status() {
         TaskStatus::Cancelled => "was cancelled",
@@ -531,6 +559,56 @@ fn short_id(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn column(id: &str, ordinal: i64) -> ariadne_store::GoalStep {
+        ariadne_store::GoalStep {
+            goal_id: "01goal".into(),
+            ordinal,
+            id: id.into(),
+            title: id.into(),
+            description: String::new(),
+            skills: "[]".into(),
+            ranks: "[]".into(),
+            gate: None,
+        }
+    }
+
+    fn move_to(from: Option<&str>, to: &str, reason: &str) -> ariadne_store::TaskTransition {
+        ariadne_store::TaskTransition {
+            from_step: from.map(str::to_string),
+            to_step: Some(to.to_string()),
+            id: String::new(),
+            task_id: "01task".into(),
+            from_status: "in_progress".into(),
+            to_status: "in_progress".into(),
+            actor: "agent".into(),
+            reason: Some(reason.into()),
+            created_at: String::new(),
+        }
+    }
+
+    /// A return to a column brings the report of the column before it, never
+    /// the reason of the return; with no column before it, the report is empty.
+    #[test]
+    fn the_previous_report_is_the_last_forward_move_into_the_column() {
+        let steps = [column("develop", 0), column("review", 1)];
+        let transitions = [
+            move_to(None, "develop", "start"),
+            move_to(Some("develop"), "review", "The feature is committed."),
+            move_to(Some("review"), "develop", "Fix the edge case."),
+        ];
+        assert_eq!(previous_report(&transitions, &steps, &steps[0]), "");
+        let transitions = [
+            move_to(Some("develop"), "review", "First report."),
+            move_to(Some("review"), "develop", "Fix it."),
+            move_to(Some("develop"), "review", "Second report."),
+            move_to(Some("review"), "develop", "Fix it again."),
+        ];
+        assert_eq!(
+            previous_report(&transitions, &steps, &steps[1]),
+            "Second report."
+        );
+    }
 
     fn dependency(title: &str, id: &str, status: &str) -> Task {
         Task {

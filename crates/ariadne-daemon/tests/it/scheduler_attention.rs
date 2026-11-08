@@ -354,7 +354,7 @@ impl Sched {
 
 /// The agent's resume template, rendered for the world's task on its first
 /// column: the words the daemon nudges an idle column agent with.
-const RESUME: &str = "Not a new request: continue task at Develop. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
+const RESUME: &str = "Not a new request: continue \"task\" at Develop. Check if the work is done. Make the call that ends the column, or go on. Write no reply about this nudge.";
 
 // -- the timeline -----------------------------------------------------------
 
@@ -2496,7 +2496,7 @@ async fn a_second_failure_missed_between_reconciles_is_still_told() {
         w.prompted(&orchestrator).contains("failed")
     })
     .await;
-    let told_once = w.prompted(&orchestrator).matches("failed").count();
+    let told_once = w.prompted(&orchestrator).matches("Read them with").count();
     let first_transition = w
         .store
         .latest_transition_to(&w.task.id, TaskStatus::Failed)
@@ -2545,7 +2545,7 @@ async fn a_second_failure_missed_between_reconciles_is_still_told() {
         "the orchestrator to be woken again for the new failure",
         async || {
             sched.goal(&w.goal);
-            w.prompted(&orchestrator).matches("failed").count() > told_once
+            w.prompted(&orchestrator).matches("Read them with").count() > told_once
         },
     )
     .await;
@@ -2620,7 +2620,7 @@ async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
         sched.flush().await;
     }
     assert_eq!(
-        w.prompted(&orchestrator).matches("failed").count(),
+        w.prompted(&orchestrator).matches("Read them with").count(),
         1,
         "exactly one delivery, once the channel could carry it"
     );

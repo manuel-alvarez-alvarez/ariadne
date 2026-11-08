@@ -895,7 +895,7 @@ async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
         stub.calls_of("session/prompt").iter().any(|prompt| {
             prompt["prompt"][0]["text"]
                 .as_str()
-                .is_some_and(|text| text.contains("Not a new request: continue task at"))
+                .is_some_and(|text| text.contains("Not a new request: continue \"task\" at"))
         })
     })
     .await;

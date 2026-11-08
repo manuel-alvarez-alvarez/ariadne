@@ -678,24 +678,16 @@ impl Launcher {
         &self,
         task: &Task,
         step: &ariadne_store::GoalStep,
-        reason: &str,
+        previous: &str,
     ) -> Result<String> {
         let task = self.store.get_task(&task.id).await?;
-        let goal = self.store.get_goal(&task.goal_id).await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
-        let mut deps = Vec::new();
-        for id in self.store.list_task_dependencies(&task.id).await? {
-            let dep = self.store.get_task(&id).await?;
-            deps.push(dependency_line(&dep.title, &dep.status, &dep.branch));
-        }
         Ok(prompts::step_briefing(
             prompts::template_for(PromptKind::StepBriefing),
             &task,
-            &goal,
             &repo,
             step,
-            reason,
-            &deps.join("\n"),
+            previous,
         ))
     }
 
@@ -1810,7 +1802,6 @@ impl Launcher {
         prompts::pull_request_briefing(
             ariadne_store::defaults::pull_request_briefing_prompt(),
             pull,
-            repo,
             &worktree.display().to_string(),
             &login,
         )
@@ -1945,7 +1936,6 @@ impl Launcher {
         Ok(prompts::pull_request_keeper_briefing(
             ariadne_store::defaults::pull_request_keeper_briefing_prompt(),
             pull,
-            repo,
             &worktree.display().to_string(),
             branch,
             &login,
@@ -2143,34 +2133,6 @@ pub(crate) fn loose_title(prompt: &str) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty())?;
     Some(line.chars().take(TITLE_CHARS).collect())
-}
-
-/// One dependency a step's first briefing names: its title, beside its
-/// status and its branch.
-fn dependency_line(title: &str, status: &str, branch: &str) -> String {
-    format!("{title} ({status}, branch {branch})")
-}
-
-#[cfg(test)]
-mod dependency_line_tests {
-    use super::dependency_line;
-
-    /// The dependency line a step's first briefing names is Simplified
-    /// Technical English (006 rule 11).
-    #[test]
-    fn a_dependency_line_is_simplified_technical_english() {
-        use ariadne_store::defaults::ste;
-
-        let line = dependency_line("Write the parser with care", "in_progress", "parser-fix");
-        for sentence in ste::sentences(&line) {
-            let words = sentence.split_whitespace().count();
-            assert!(
-                words <= ste::MAX_WORDS,
-                "a dependency line runs a sentence of {words} words: {sentence}"
-            );
-        }
-        assert_eq!(ste::banned_word(&line), None, "a dependency line: {line}");
-    }
 }
 
 /// Whether a task's branch is one to follow: there is a worktree to commit in,
