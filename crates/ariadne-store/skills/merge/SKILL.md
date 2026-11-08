@@ -7,15 +7,6 @@ description: Use when a reviewed task needs landing.
 
 Complete the merge work. Done when the conditions in `## Done` hold.
 
-The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
-`<remote>/<base>` where `git remote -v` names a remote, else `<base>`.
-
-Read the repository policy first. Distinguish base history from task history.
-For Ariadne, direct landing permits the sequence below on an unpublished task branch.
-For a published Ariadne branch, merge the base instead of rebasing published commits.
-Squash the final result before pushing to main. Never rewrite main.
-Keep generic direct landing available where the repository permits it.
-
 ## When not to use
 
 Use `pr-babysit` when its triggers apply.
@@ -59,6 +50,15 @@ Use `pr-babysit` when its triggers apply.
    Done when the report has been submitted.
 
 ## Rules
+
+The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
+`<remote>/<base>` where `git remote -v` names a remote, else `<base>`.
+
+Read the repository policy first. Distinguish base history from task history.
+For Ariadne, direct landing permits the sequence below on an unpublished task branch.
+For a published Ariadne branch, merge the base instead of rebasing published commits.
+Squash the final result before pushing to main. Never rewrite main.
+Keep generic direct landing available where the repository permits it.
 
 ### Rules
 

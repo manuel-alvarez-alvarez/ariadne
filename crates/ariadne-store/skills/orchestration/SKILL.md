@@ -93,8 +93,6 @@ Use `coding` when its triggers apply.
 
    Done when the goal is closed.
 
-## Rules
-
 ## Never
 
 Never run checks yourself.

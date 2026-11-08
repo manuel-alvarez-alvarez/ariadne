@@ -146,7 +146,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    for the verdict; the skill never reruns a check only to confirm the
    report. Evidence never replaces code inspection, acceptance review or
    repository-rule enforcement. What a blocking or must-fix finding must
-   name, and the cap on the rest, is 017 rule 11's to state, for all five
+   name, and the cap on the rest, is 017 rule 11's to state, for all three
    review skills alike. Each other produce skill that ends its own column —
    `debugging`, `migration`, `conflict-resolution`,
    `documentation`, `research`, `spec-writing` — calls `complete_step` with

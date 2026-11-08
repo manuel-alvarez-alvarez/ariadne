@@ -87,104 +87,33 @@ fn no_skill_names_a_timer_or_a_poll() {
     }
 }
 
-/// A skill is read on demand rather than on every launch, so it is capped
-/// on its own rather than against the briefings' total. The caps are still
-/// what a rewrite fits in: moving one is a decision, not a way round a
-/// failing assertion.
+/// Each of the thirteen skills has a cap for its procedure and template sections.
+/// A separate total cap prevents growth from consuming another skill's unused budget.
+/// The description cap belongs to the catalog test above.
 ///
-/// This is that decision, taken once for the suite rather than a skill at
-/// a time. The catalog is written to one template — a description that
-/// says when to load the skill as well as what it does, a checkable bound
-/// on every step that can end early, one anchor word carried through the
-/// body, and the two or three excuses the agent talks itself into.
+/// Four merges preserve their procedures in the absorbing documents.
+/// Testing previously merged into coding, whose later pruning left a 3300 budget.
+/// `refactoring` now merges into `coding`, adding its 2000 budget and rounding to 5400.
+/// `spec-review` and `performance-review` now merge into `code-review`.
+/// Their 2320 and 2380 budgets join code review's 3100, rounded to 7900.
+/// The three remaining review skills are code-review, architecture-review, and pr-reviewer.
 ///
-/// Three tiers, by how much procedure the skill carries. `orchestration`
-/// and `debugging` get the most: one runs the ten phases of a whole goal,
-/// the other a feedback loop the agent is talked out of at every step,
-/// and both spend their length on the excuses rather than on the steps.
-/// `coding` and `code-review` get the room of the skills almost every
-/// task loads, and the two whose failure modes are worth spelling out.
-/// Every other skill gets 2400, which is a template document with room
-/// for its rules. The total is the sixteen at their tiers, so a skill
-/// that grows costs a decision here rather than a quiet raid on another
-/// skill's share.
+/// The template adds sibling routing, completion boundaries, and explicit mutation limits.
+/// Orchestration moves from 4650 to 5200 for eleven completion boundaries and routing.
+/// Debugging moves from 2700 to 2900 for routing and limits.
+/// Architecture review moves from 2380 to 2800 for routing, limits, and completion boundaries.
+/// Migration moves from 2000 to 2200 for routing and two completion boundaries.
+/// Conflict resolution, documentation, and research each move from 2000 to 2300.
+/// Their routing, limits, and missing completion boundaries use the extra space.
+/// Specification writing moves from 2000 to 2400 for routing and four missing completion boundaries.
+/// Merge moves from 2300 to 2900 for six completion boundaries and the missing counterexample section.
+/// PR babysit moves from 4300 to 4900; PR reviewer moves from 3750 to 4400.
+/// Each gains eight completion boundaries plus routing and explicit limits.
 ///
-/// `coding` gets 5400, because `testing` merged into it. `orchestration`
-/// gets 4600: it staffs one agent per column on the column's rank, and
-/// staffs a missing column before a retry.
-///
-/// The five review skills were tightened for falsifiable findings, a
-/// cap on the optional ones, and the diff as scope: every blocking or
-/// must-fix finding now names a trigger, a failure and the criterion,
-/// behavior or written rule it breaks; a finding with none is
-/// downgraded and marked unverified; the non-blocking findings are
-/// capped at five; reading outside the diff is bound to a named risk;
-/// and the verdict comes first with no preamble or closing summary.
-/// `code-review` falls from 4100 to 3100: it drops naming the evidence
-/// sources the column report now carries alone, and names the return
-/// report by name instead of restating a field of it. `pr-reviewer`
-/// falls from 6200 to 3750: its own summary paragraph and closing table
-/// were pruned, since the trigger a finding names already answers what
-/// the risk is, and its "Supervised repositories" section keeps only
-/// the routing decision the pending-edit tools do not state themselves.
-/// `architecture-review`, `spec-review` and `performance-review` move
-/// off the shared 2400 onto their own, lower caps — 2380, 2320 and
-/// 2380 — since each now reuses the column report's evidence and
-/// names the trigger a blocking finding carries and the rule it
-/// breaks, which cost more than the shared template budgeted, so a line
-/// restating the same requirement a second time was cut to make room.
-///
-/// The eight produce skills were pruned to findings 1 to 7, past the
-/// restated fields and the named ending, to the generic reasons and
-/// slogans the review found: a description written as an instruction
-/// instead of in the third person, a seat rule a skill repeated in its
-/// own words, and a "Do not tell yourself" entry naming no failure.
-/// Each cap comes down with the text: `coding` drops from 5400 to
-/// 3300, `debugging` from 3400 to 2700, and `refactoring`, `migration`,
-/// `conflict-resolution`, `documentation`, `research` and
-/// `spec-writing` share 2000, down from the default 2400. The total
-/// comes down with them, from 43000 to 40000.
-///
-/// A pass pruned every line of `orchestration`, `merge` and
-/// `pr-babysit` that a tool description, the session rules, a spec or
-/// another skill already said, or that cost nothing to remove.
-/// `orchestration` still grew: its ticket step now names the four
-/// things a ticket carries and bars pasted history, and its question
-/// step words a question so a "yes" accepts the recommendation; its cap
-/// moves from 4600 to 4500, the size the rewrite fits in with the usual
-/// margin. `pr-babysit` lost its restated lead sentence, a log-URL tip
-/// a tool's own response already carries, a redundant push-flag detail,
-/// and a generic "do not tell yourself" entry that only restated the
-/// no-polling session rule; its "Supervised repositories" section no
-/// longer repeats what `edit_pending_comment` and
-/// `delete_pending_comment` already say about when they are refused.
-/// Its cap moves from 4000 to 3800, trading the one-line margin finding
-/// 4 found for one that holds through a small future edit. `merge` lost
-/// only its restated lead sentence, since every rule it states — the
-/// refused push, the failed fast-forward, the forced push it never
-/// makes — is its own case with its own trigger. It gets a cap of its
-/// own, 1700, rather than the 2400 every unlisted skill shares, since a
-/// landing procedure this short does not need a template's room.
-///
-/// The one ticket format lands in three skills at once. `orchestration`
-/// writes the four sections and numbers the criteria in place of its
-/// old one-line summary of what a ticket carries; its cap moves from
-/// 4500 to 4650, the size the new step fits in with the usual margin.
-/// `coding` reads the sections by name and ends its report one line per
-/// criterion, and `code-review` gives one pass or fail line per
-/// criterion and judges the diff against `## Out of scope`; both hold
-/// their 3300 and 3100 caps. The total moves from 40000 to 40200.
-/// The template adds routing, completion boundaries, and explicit mutation limits.
-/// Coding combines its 3300 budget with refactoring's 2000, rounded to 5400.
-/// Code review combines 3100, 2320, and 2380, rounded to 7900.
-/// Orchestration gains 550 for eleven completion boundaries and routing.
-/// Debugging gains 200 for routing and limits.
-/// Architecture review gains 420 for routing, limits, and completion boundaries.
-/// Migration gains 200; conflict resolution, documentation, and research gain 300 each.
-/// Specification writing gains 400 for four missing completion boundaries and routing.
-/// Merge gains 600 for six completion boundaries and the missing counterexample section.
-/// PR babysit gains 600; PR reviewer gains 650 for eight completion boundaries each.
-/// The total moves from 41200 to 45500 for the common template across thirteen documents.
+/// The total moves from 41200 to 45500 for thirteen documents with the common template.
+/// The three merges remove catalog entries but preserve the procedures and their costs.
+/// Routing and completion boundaries consume the additional 4300 characters across the catalog.
+/// The total leaves a small margin beyond the current documents, below the combined individual caps.
 #[test]
 fn skill_size_caps_hold() {
     const TOTAL: usize = 45_500;
@@ -320,6 +249,18 @@ fn every_skill_obeys_the_template() {
         assert_eq!(actual, required, "{}: section order", skill.name);
         if let Some(rules) = headings.iter().position(|line| *line == "## Rules") {
             assert_eq!(rules, 2, "{}: rules follow steps", skill.name);
+            let content = body
+                .split_once("\n## Rules\n")
+                .unwrap()
+                .1
+                .split("\n## ")
+                .next()
+                .unwrap();
+            assert!(
+                !content.trim().is_empty(),
+                "{}: empty Rules section",
+                skill.name
+            );
         }
         let exclusions = body
             .split_once("## When not to use\n")

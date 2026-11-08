@@ -283,6 +283,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     The description uses the third person, opens with "Use when", and names triggers alone.
     The exclusion section names a sibling skill where one exists.
     Steps are numbered and bounded. Each step ends with a `Done when` condition.
+    The optional Rules section has content when present.
     The Never section states what the skill never mutates or calls.
     Lens and procedure subsections retain their original words.
     The body stays under 500 lines.
