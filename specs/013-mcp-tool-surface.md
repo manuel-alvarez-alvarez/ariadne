@@ -32,17 +32,20 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    proxies to the daemon's REST API with a session header, so the daemon
    enforces the scoping itself. A review session (029) or a keeper session
    (032) carries `ARIADNE_PULL_REQUEST_ID` in place of a goal and a task,
-   and its instructions name the request.
+   and tools act on that request.
 2. The server's instructions, which every session receives before its first
-   prompt, say what this session is and carry the session rules that hold for
-   every seat alike (006). After the rules come the seat's own text, picked
+   prompt, open with "Ariadne tools for this {seat} session." and name no
+   session, goal, task, column or pull request id. They carry the session rules
+   that hold for every seat alike (006). After the rules come the seat's own text, picked
    by the seat, and the index of the skills the session loads, which the
    launcher hands the server as `ARIADNE_SKILL_INDEX` (006). A client can
    defer the tools of a server: Claude Code lists only their names until the
    agent loads one with its tool search. So the rules tell every seat, in
    words that name no client, to load the tools it needs in one tool search
-   first. The rules also say how every check runs, and that no text carries
-   a trailer; no skill and no tool description repeats either.
+   first. The rules of the agent, reviewer and keeper seats say how every check
+   runs; the orchestrator's carry no such block. The rules say in one line
+   that STE holds for every text, and that no text carries a trailer; no
+   skill and no tool description repeats any of them.
 3. Whether anyone answers a question is the one rule picked by seat: the
    orchestrator's user answers in the console; a column's agent works alone, and asks only where
    the task cannot go on without the answer, and a pull request reviewer or
@@ -235,6 +238,13 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`),
   and the launcher hands the server the index
   (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
+- The header names the seat and no id, and only the agent, reviewer and
+  keeper seats get the check block
+  (`mcp.rs::the_header_names_no_id_and_only_checking_seats_get_the_check_block`).
+- The tool descriptions and parameter docs of `report_pull_request`,
+  `submit_review`, `send_message`, `list_tasks`, `list_models` and
+  `open_pull_request` read as the spec words them
+  (`mcp.rs::the_tool_texts_read_as_the_spec_words_them`).
 - Asking the user, the end of a turn, the check block and the trailer rule
   are each written in their owner alone
   (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`).
