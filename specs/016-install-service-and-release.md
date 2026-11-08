@@ -375,4 +375,5 @@ fails the service step`).
 `crates/ariadne-cli/src/commands/daemon.rs`.
 
 Local landing acceptance: `scripts/tests/githooks.sh main-push` proves full checks, candidate isolation, and failure rejection.
-`bad-subject` proves subject validation. Scoped push cases prove task-branch behavior.
+`subject-validator` proves shared subject rules. `merge-message` proves the merge exception.
+`main-merge` rejects main merge commits. Scoped push cases prove task-branch behavior.

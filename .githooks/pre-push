@@ -68,6 +68,15 @@ else
                 echo 'Refuse a main history rewrite.' >&2
                 exit 1
             fi
+            if [ "$remote_sha" = "$ZERO_SHA" ]; then
+                merge_range="$local_sha"
+            else
+                merge_range="$remote_sha..$local_sha"
+            fi
+            if [ -n "$(git rev-list --merges "$merge_range")" ]; then
+                echo 'Refuse merge commits on main.' >&2
+                exit 1
+            fi
             # Check the outgoing object, even with a dirty or unrelated checkout.
             candidate="$(mktemp -d)"
             rmdir "$candidate"

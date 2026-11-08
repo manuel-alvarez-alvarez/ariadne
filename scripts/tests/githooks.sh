@@ -187,6 +187,22 @@ case "$test_case" in
             exit 1
         fi
         ;;
+    main-merge)
+        setup_repo
+        base="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
+        git -C "$TEST_ROOT/repo" checkout -q -b topic
+        printf 'topic\n' > "$TEST_ROOT/repo/topic"
+        git -C "$TEST_ROOT/repo" add topic
+        git -C "$TEST_ROOT/repo" commit -q -m 'feat: add topic'
+        git -C "$TEST_ROOT/repo" checkout -q main
+        git -C "$TEST_ROOT/repo" merge --no-ff --no-edit topic > "$TEST_ROOT/output" 2>&1
+        head="$(git -C "$TEST_ROOT/repo" rev-parse HEAD)"
+        if printf 'HEAD %s refs/heads/main %s\n' "$head" "$base" |
+            "$TEST_ROOT/repo/.githooks/pre-push" origin > "$TEST_ROOT/output" 2>&1; then
+            exit 1
+        fi
+        grep -F 'Refuse merge commits on main' "$TEST_ROOT/output"
+        ;;
     subject-validator)
         setup_repo
         validator="$TEST_ROOT/repo/scripts/check-commit-subject.sh"

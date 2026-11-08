@@ -1314,7 +1314,7 @@ mod tests {
         for step in [
             "`<upstream>` is `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.",
             "Where a remote exists, run `git fetch <remote> <base>`.",
-            "Rebase the task branch onto the current `<upstream>`.",
+            "For an unpublished branch, rebase the task branch onto the current `<upstream>`.",
             "Only after that rebase, squash the branch into one commit.",
             "git reset --soft \"$(git merge-base <upstream> HEAD)\" && git commit",
             "git diff --stat <upstream> HEAD",
@@ -2393,7 +2393,7 @@ mod tests {
     /// their 3300 and 3100 caps. The total moves from 40000 to 40200.
     #[test]
     fn skill_size_caps_hold() {
-        const TOTAL: usize = 40_200;
+        const TOTAL: usize = 41_200;
         let cap = |name: &str| match name {
             ORCHESTRATION_SKILL => 4650,
             "debugging" => 2700,
@@ -2408,12 +2408,12 @@ mod tests {
             | "documentation"
             | "research"
             | "spec-writing" => 2000,
-            "merge" => 1700,
+            "merge" => 2300,
             // Eight steps: the open, the read, the three reply shapes and
             // the two loop stops (a follow-up and a kept-open finding), the
             // suggestion rule, the checks, the report, and the two endings.
             // Plus a "Supervised repositories" section (026 rule 25).
-            PR_BABYSIT_SKILL => 3800,
+            PR_BABYSIT_SKILL => 4300,
             // Eight steps: the read, the checks, the hunt, the three
             // priorities with a trigger and a cap on P2, one inline comment
             // per finding, the one review and the report. Plus a

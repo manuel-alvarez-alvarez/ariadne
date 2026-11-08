@@ -185,3 +185,8 @@ Run the frontend build from `ui/`; it also builds the dashboard.
 Include audits, lint, unused checks, Rust builds, and Tauri formatting and compilation.
 Other branch pushes retain scoped checks. Only those pushes omit the slow test suites.
 Require GitHub CI on the current PR head before GitHub squash merges.
+
+Run `bash scripts/tests/githooks.sh CASE` for the landing boundary cases:
+`main-push`, `main-merge`, `merge-message`, and `subject-validator`.
+`main-push` checks an unrelated checkout and a failed test command.
+Use `scripts/check-commit-subject.sh SUBJECT` for authored subjects and future PR titles.
