@@ -224,7 +224,7 @@ here); PromQL evaluation and a `/api/v1/*` or `/loki/api/v1/*` query surface
   `logs.rs::the_default_snapshot_is_bounded_even_without_an_explicit_tail`,
   `::service_narrows_the_snapshot_to_one_service`,
   `logs.rs::flaky::level_narrows_the_snapshot_to_that_level_and_above`,
-  `::an_unknown_level_is_a_bad_request`,
+  `logs.rs::an_unknown_level_is_a_bad_request`,
   `logs.rs::flaky::the_stream_opens_with_a_snapshot_then_follows_with_deltas`,
   `ariadne_daemon::http::logs::tests::an_export_during_stream_initialization_is_in_the_snapshot`,
   `::a_live_since_filter_normalizes_fractional_precision_and_offsets`,
