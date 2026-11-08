@@ -13,6 +13,15 @@ Use `pr-babysit` when its triggers apply.
 
 ## Steps
 
+The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
+`<remote>/<base>` where `git remote -v` names a remote, else `<base>`.
+
+Read the repository policy first. Distinguish base history from task history.
+For Ariadne, direct landing permits the sequence below on an unpublished task branch.
+For a published Ariadne branch, merge the base instead of rebasing published commits.
+Squash the final result before pushing to main. Never rewrite main.
+Keep generic direct landing available where the repository permits it.
+
 1. Where a remote exists, run `git fetch <remote> <base>`.
 
    Done when the upstream ref is current.
@@ -50,15 +59,6 @@ Use `pr-babysit` when its triggers apply.
    Done when the report has been submitted.
 
 ## Rules
-
-The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
-`<remote>/<base>` where `git remote -v` names a remote, else `<base>`.
-
-Read the repository policy first. Distinguish base history from task history.
-For Ariadne, direct landing permits the sequence below on an unpublished task branch.
-For a published Ariadne branch, merge the base instead of rebasing published commits.
-Squash the final result before pushing to main. Never rewrite main.
-Keep generic direct landing available where the repository permits it.
 
 ### Rules
 
