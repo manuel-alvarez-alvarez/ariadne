@@ -60,7 +60,7 @@ Use `code-review` when the question is correctness, tests or conventions.
 
 ## Never
 
-- Edit no file.
+- Never edit a file.
 - Run no command that moves HEAD or a ref: no switch, reset, rebase
   or commit.
 
