@@ -241,10 +241,21 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - The header names the seat and no id, and only the agent, reviewer and
   keeper seats get the check block
   (`mcp.rs::the_header_names_no_id_and_only_checking_seats_get_the_check_block`).
-- The tool descriptions and parameter docs of `report_pull_request`,
-  `submit_review`, `send_message`, `list_tasks`, `list_models` and
-  `open_pull_request` read as the spec words them
-  (`mcp.rs::the_tool_texts_read_as_the_spec_words_them`).
+- The tool texts read exactly so
+  (`mcp.rs::the_tool_texts_read_as_the_spec_words_them`):
+  - `report_pull_request` is "Tell Ariadne the state of your request. Set
+    `ready` when readiness changes. Set `reviewed_sha` after a review round."
+  - `list_tasks` says "with the columns and agents of each task".
+  - `list_models` says "an agent", not "a slot".
+  - `open_pull_request` says it "returns" the URL, not "answers" it.
+  - The `send_message` `body` doc is "The whole message. Write it so that the
+    recipient needs no follow-up question."
+  - The `submit_review` `body` doc is "Leave it empty."
+  - The `Priority` doc is "The severity: P0 is a critical risk, P1 is a
+    proven defect, P2 is optional."
+- `report_pull_request` with `ready: true` and no `head_sha` is refused with
+  "Pass `head_sha` with `ready: true`: the head you checked."
+  (`tools.rs::every_refusal_and_result_string_is_simplified_technical_english`).
 - Asking the user, the end of a turn, the check block and the trailer rule
   are each written in their owner alone
   (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`).
