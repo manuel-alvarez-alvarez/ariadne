@@ -5,23 +5,21 @@ description: Use when a design, component or integration needs review.
 
 # Architecture review
 
-Complete the architecture-review work. Done when the conditions in `## Done` hold.
-
-Judge the change against the system that exists. Write the verdict first.
-No preamble, no narration, no closing summary.
+Judge the change against the system that exists. Done when the conditions in `## Done` hold.
 
 ## When not to use
 
-Use `code-review` when its triggers apply.
+Use `code-review` when the question is correctness, tests or conventions.
 
 ## Steps
 
-1. Pin the scope to the diff. Map the system it touches: modules, owners
-   and dependency directions. Reuse the column report's evidence where it
-   covers this revision.
+1. Pin the scope to the diff. Take the reviewed revision from
+   `git rev-parse HEAD`. Map the system the diff touches: modules, owners
+   and dependency directions. Reuse the column report's evidence only
+   where it covers the reviewed revision.
 
    Done when every changed component has a place on the map.
-2. Place the change on that map. Mark each boundary it crosses. Read code
+2. Mark each boundary the change crosses on that map. Read code
    outside the diff only to judge a risk you can name.
 
    Done when every new dependency has a source and a target.
@@ -29,21 +27,26 @@ Use `code-review` when its triggers apply.
    places.
 
    Done when every changed responsibility has one named owner.
-4. Give each concern its trigger, the future change it blocks, and the
-   rule or pattern it breaks. Price its cost. A concern with no nameable
-   trigger or no rule it breaks is optional. Mark it unverified.
+4. Give each finding its trigger: the input or state that causes it. Name
+   the future change it blocks, its cost and the rule it
+   breaks. A finding with no trigger you can name is optional. Mark it
+   unverified. Cap optional findings at five, the ones you have most
+   conviction in.
 
-   Done when every blocking concern names its trigger, rule and cost.
-5. Write the verdict. Cap optional concerns at five, the ones you have
-   most conviction in.
-
-   Done when the verdict has been written.
-6. Call `fail_step` with the verdict on a blocking finding, else
+   Done when every must-fix finding names its trigger, rule and cost.
+5. Add the findings to the one verdict of the review skill loaded beside
+   this one. Where this is the only review skill loaded, write the
+   verdict. On a must-fix finding, call `fail_step` with it. Else call
    `complete_step`.
 
-   Done when the verdict has been submitted.
+   Done when the findings are in one verdict.
 
 ## Rules
+
+- Write the verdict first. Add no preamble and no closing summary.
+- A must-fix finding breaks a criterion, a written repository rule or a
+  boundary the repository already holds.
+- Prefer the boundary arrangement the repository already uses.
 
 ### What to look for
 
@@ -55,15 +58,11 @@ Use `code-review` when its triggers apply.
 - Coupling: unrelated callers forced through one abstraction.
 - Reversal: a decision that costs much to change later.
 
-### Rules
-
-- Prefer the boundary arrangement the repository already uses.
-- Accept a small inconsistency when a broad abstraction has no current
-  use.
-
 ## Never
 
-Never change work outside the task.
+- Edit no file.
+- Run no command that moves HEAD or a ref: no switch, reset, rebase
+  or commit.
 
 ## Do not tell yourself
 
@@ -71,10 +70,10 @@ Never change work outside the task.
   system that exists.
 - "We might need this abstraction." -> Current callers define its
   boundary.
-- "The review asked for concerns, so I name one." -> A sound boundary
-  gets no invented concern.
+- "The review asked for findings, so I name one." -> A sound boundary
+  gets no invented finding.
 
 ## Done
 
-The report maps every changed component and dependency. Optional
-concerns stay at five or fewer.
+The verdict maps every changed component and dependency. Optional
+findings stay at five or fewer.
