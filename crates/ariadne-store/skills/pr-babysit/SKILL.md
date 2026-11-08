@@ -61,12 +61,11 @@ Use `merge` when the workflow lands the task with no request.
    includes: `Fixed in <sha>: <what changed>.`
 
    Done when the batch is checked and pushed.
-7. Call `report_pull_request` only when readiness changes. Read the head
-   again first. A head other than the one you read or pushed is news: go back to step 2.
-   Call `mark_ready_for_review` with that `head_sha` when
-   every check on that head is green and the request is a draft.
+7. Read the head again first. A head other than the one you read or pushed is news: go back to step 2.
+   Call `mark_ready_for_review` with that `head_sha` only where `get_pull_request` gives `role: author`.
+   Do it when every check on that head is green and the request is a draft.
    Mark it ready before you check approvals.
-
+   Call `report_pull_request` only when readiness changes.
    - `ready: true` with the `head_sha` you read once every approval and
      check is green
    - `ready: false` when one goes back.

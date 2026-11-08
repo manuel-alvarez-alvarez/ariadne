@@ -16,7 +16,7 @@ use ariadne_api::pull_requests::{
     ReplyCommentRequest, ReportPullRequestRequest, SubmitReviewRequest,
 };
 use ariadne_core::models::ModelRank;
-use ariadne_core::workflow::PrOperation;
+use ariadne_core::workflow::{PrOperation, StepGate};
 use ariadne_store::{
     AgentSession, ForgeIntegration, PrOperationEnd, PullRequest, PullRequestComment,
     PullRequestFilter, PullRequestRow, StartPrOperation,
@@ -1398,6 +1398,14 @@ pub(super) async fn ask_babysit(
     Ok(Json(pull_request_dto_of(&state.store, view).await?))
 }
 
+/// Whether `step` names a column of `columns` that waits on the request merge.
+fn is_request_column(columns: &[ariadne_store::GoalStep], step: Option<&str>) -> bool {
+    columns.iter().any(|column| {
+        Some(column.id.as_str()) == step
+            && column.gate.as_deref() == Some(StepGate::RequestMerged.as_str())
+    })
+}
+
 #[derive(Deserialize, utoipa::ToSchema)]
 pub(super) struct MarkReadyRequest {
     head_sha: String,
@@ -1422,7 +1430,8 @@ pub(super) async fn mark_ready_for_review(
                 let task = state.store.get_task(task).await?;
                 let ctx = call_ctx(&state.store, &headers).await?;
                 super::steps::current_agent(&state, &ctx, &task).await?;
-                task.step.as_deref() == Some("pr")
+                let columns = state.store.goal_steps(&task.goal_id).await?;
+                is_request_column(&columns, task.step.as_deref())
             }
             None => false,
         },
@@ -1461,4 +1470,35 @@ pub(super) async fn mark_ready_for_review(
     pull.draft = false;
     state.forge_poll.wake(&pull.repository_id);
     Ok(Json(pull_request_dto_of(&state.store, pull).await?))
+}
+
+#[cfg(test)]
+mod ready_tests {
+    use super::*;
+
+    fn column(id: &str, gate: Option<&str>) -> ariadne_store::GoalStep {
+        ariadne_store::GoalStep {
+            goal_id: "goal".into(),
+            ordinal: 0,
+            id: id.into(),
+            title: id.into(),
+            description: String::new(),
+            skills: "[]".into(),
+            ranks: "[]".into(),
+            gate: gate.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_request_column_is_found_by_its_gate_not_its_id() {
+        let columns = [
+            column("develop", Some("committed")),
+            column("land", Some(StepGate::RequestMerged.as_str())),
+            column("pr", None),
+        ];
+        assert!(is_request_column(&columns, Some("land")));
+        assert!(!is_request_column(&columns, Some("pr")));
+        assert!(!is_request_column(&columns, Some("develop")));
+        assert!(!is_request_column(&columns, None));
+    }
 }
