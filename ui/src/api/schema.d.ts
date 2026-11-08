@@ -1065,10 +1065,15 @@ export interface paths {
         get?: never;
         /**
          * Ask Ariadne to keep any open request by hand on the model the user
-         *     picks, or stop asking (032), regardless of its author. A request a
-         *     task already keeps is refused to avoid competing keepers. Stopping
-         *     ends only the keeper session, preserving an asked review. Pushes use
-         *     the head repository and remain subject to its permissions.
+         *     picks, or stop asking (032), regardless of its author. Asking starts one
+         *     active goal for the babysit, with one staffed task and no orchestrator,
+         *     on the `pr-babysit` workflow: the model must be ranked inside that
+         *     workflow's band, else 400. Asking again keeps the open goal and moves its
+         *     pin and skills. A request a task already keeps is refused to avoid
+         *     competing keepers. The goal completes when the request merges or closes.
+         *     Stopping cancels the goal and its task and ends only the keeper session,
+         *     preserving an asked review. Pushes use the head repository and remain
+         *     subject to its permissions.
          */
         put: operations["pull-requests_ask_babysit"];
         post?: never;

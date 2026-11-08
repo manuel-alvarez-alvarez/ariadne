@@ -157,7 +157,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 10b. A review ask makes one active goal of the review operation, and a
     stop or an end finishes it. The lifecycle is shared by every PR
     operation (`Store::start_pr_operation`, `Store::end_pr_operation`); the
-    babysit operation applies the same one (032).
+    babysit operation applies the same one (032 rule 7b).
     - One open goal exists per request and operation, named by value in
       `goals.pr_operation`, `pr_repository_id`, `pr_number` and `pr_url`: the
       request's own row goes when Ariadne stops working on it, and the goal

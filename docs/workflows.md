@@ -4,9 +4,10 @@ A workflow is a linear kanban of columns. Every goal runs on one: each task
 of the goal is staffed one agent per column, and it walks the columns on one
 branch, in one worktree, until the last column's gate lets it finish.
 
-Ariadne ships three workflows, `develop-review-merge`, `develop-review-pr`
-and `pr-review`. The first two are for goals; `pr-review` is for [reviewing a
-pull request](#the-pr-review-workflow).
+Ariadne ships four workflows, `develop-review-merge`, `develop-review-pr`,
+`pr-review` and `pr-babysit`. The first two are for goals; `pr-review` is for
+[reviewing a pull request](#the-pr-review-workflow) and `pr-babysit` is for
+[keeping one](#the-pr-babysit-workflow).
 `ariadne workflow` manages the catalog the way `ariadne skill` manages
 skills: a shipped workflow is reset rather than deleted, and one of your own
 is deleted rather than reset.
@@ -128,6 +129,47 @@ goal and repository pickers leave it out, and the daemon refuses it. Asking
 for a review again on a request that has one open keeps the same goal and
 moves the model and skills onto its agent. A merge or a close completes the
 goal; **Stop review** cancels it, and the next ask makes a new goal.
+
+## The `pr-babysit` workflow
+
+`pr-babysit` keeps one pull request: when you press **Start babysit** on a
+request, or run `ariadne pr babysit`, Ariadne makes one active goal on it
+with one task and no orchestrator. The task has one agent, on the one column
+below, and that agent keeps the request open — answering comments and fixing
+checks — until it merges or closes. It works in its own worktree and pushes
+to the request's own head branch, as before. You see the goal on the Goals
+board like any other, with its task, session, history and usage.
+
+```
+workflow pr-babysit
+  babysit[Babysit]
+    Keep the request until it merges or closes.
+    skills: pr-babysit
+    ranks: fast, balanced
+```
+
+It shows in the catalog and is edited like `pr-review`: you can change the
+column's title, its description, the skills beside `pr-babysit` and its
+ranks. A save that breaks its shape is refused with a 400 that names the
+rule:
+
+- exactly one column, `babysit`;
+- no gate;
+- `pr-babysit` among the column's skills;
+- `ranks` of `fast`, `balanced` or both.
+
+The ranks decide which models a babysit accepts. A model you ranked outside
+the band, or never ranked, is refused with a 400 that names the band. A goal
+already open keeps the band it started with.
+
+No goal you create, and no repository default, can use `pr-babysit`. Asking
+again on a request that is already babysat keeps the same goal and moves
+the model and skills onto its agent. A merge or a close completes the goal;
+**Stop babysit** cancels it, and the next ask makes a new goal. A request a
+task already keeps is refused with a 409, so one request never has two
+keepers; a review of the same request is independent and has a goal of its
+own. A keeper that ran before goals existed is not moved onto a goal when
+you upgrade: it runs on until you ask again.
 
 ## Gates
 

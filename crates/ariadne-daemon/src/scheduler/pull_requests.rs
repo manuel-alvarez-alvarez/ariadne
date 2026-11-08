@@ -93,11 +93,11 @@ impl super::Scheduler {
             Err(StoreError::NotFound { .. }) => return Ok(()),
             Err(e) => return Err(e.into()),
         };
-        // What follows acts on the review goal and its session: it holds the
-        // request's operation lock, and reads the row again under it, so it
-        // never sees a start or a stop the HTTP route has half written
-        // (029). The lock is let go before the keeper and the keeping pass,
-        // which touch no operation goal.
+        // What follows acts on the operation goals and their sessions: it
+        // holds the request's operation lock, and reads the row again under
+        // it, so it never sees a start or a stop the HTTP route has half
+        // written (029, 032). The lock is let go before the keeping pass,
+        // which touches no operation goal.
         let operation_lock = self
             .store
             .pr_operation_lock(&named.repository_id, named.number)
@@ -119,14 +119,16 @@ impl super::Scheduler {
             self.launcher
                 .end_pull_request_sessions(&row.id, &row.repository_id, None)
                 .await?;
-            self.store
-                .stop_pr_operation(
-                    &row.repository_id,
-                    row.number,
-                    PrOperation::Review,
-                    "the forge integration is off",
-                )
-                .await?;
+            for operation in PrOperation::ALL {
+                self.store
+                    .stop_pr_operation(
+                        &row.repository_id,
+                        row.number,
+                        operation,
+                        "the forge integration is off",
+                    )
+                    .await?;
+            }
             if row.origin_task_id.is_none() {
                 self.stop_working(&row.id, (&row).into()).await?;
             }
@@ -138,11 +140,18 @@ impl super::Scheduler {
         else {
             return Ok(());
         };
-        // The review goal follows the request: it ends with it, or with the
-        // ask. What stays open is the owner of the review session.
-        let owner = match self.settle_review_operation(&pull).await? {
+        // The operation goals follow the request: each ends with it, or with
+        // its ask. What stays open is the owner of the operation's session.
+        let owner = match self.settle_pr_operation(&pull, PrOperation::Review).await? {
             Settled::Owner(owner) => owner.map(|owner| *owner),
             // The ask went with the goal: the next pass ends the session.
+            Settled::Stopped => return Ok(()),
+        };
+        let keeper_owner = match self
+            .settle_pr_operation(&pull, PrOperation::Babysit)
+            .await?
+        {
+            Settled::Owner(owner) => owner.map(|owner| *owner),
             Settled::Stopped => return Ok(()),
         };
         // Review and keeper sessions follow their own explicit asks,
@@ -153,13 +162,13 @@ impl super::Scheduler {
         {
             self.review_pass(&pull, owner.as_ref()).await?;
         }
-        drop(operation_lock);
         if pull.babysit_asked
             || self.launcher.keeper_worktree_exists(&pull.id)
             || !self.live_keeper_sessions(&pull.id).await?.is_empty()
         {
-            self.babysit_pass(&pull).await?;
+            self.babysit_pass(&pull, keeper_owner.as_ref()).await?;
         }
+        drop(operation_lock);
         if pull.origin_task_id.is_none() && !pull.review_asked && !pull.babysit_asked {
             if pull.state == "open" && pull.role == "reviewer" && pull.review_requested {
                 // Keep an unassigned review request visible in attention.
@@ -172,17 +181,21 @@ impl super::Scheduler {
         self.keep_pass(&pull, tick_now).await
     }
 
-    /// The goal of the review operation on a request, held to the request
-    /// (029): it completes when the request merges or closes, and cancels
+    /// The goal of an operation on a request, held to the request (029,
+    /// 032): it completes when the request merges or closes, and cancels
     /// where the ask is gone — a stop whose own write did not finish — or
     /// where its task was ended by hand, which also takes the ask down.
-    /// Answers the open goal's owner, where one stays open. A review asked
+    /// Answers the open goal's owner, where one stays open. An ask made
     /// before goals existed has none and runs as it did. The caller holds
     /// the request's operation lock.
-    async fn settle_review_operation(&mut self, pull: &PullRequest) -> anyhow::Result<Settled> {
+    async fn settle_pr_operation(
+        &mut self,
+        pull: &PullRequest,
+        operation: PrOperation,
+    ) -> anyhow::Result<Settled> {
         let Some(goal) = self
             .store
-            .active_pr_goal(&pull.repository_id, pull.number, PrOperation::Review)
+            .active_pr_goal(&pull.repository_id, pull.number, operation)
             .await?
         else {
             return Ok(Settled::Owner(None));
@@ -192,26 +205,30 @@ impl super::Scheduler {
             o.task.status().is_terminal() || o.task.status() == TaskStatus::Failed
         });
         if pull.state != "open" {
-            info!(pull_request = %pull.id, goal = %goal.id, state = %pull.state, "completing the review goal");
+            info!(pull_request = %pull.id, goal = %goal.id, operation = operation.as_str(), state = %pull.state, "completing the operation goal");
             self.store
                 .end_pr_operation(
                     &pull.repository_id,
                     pull.number,
-                    PrOperation::Review,
+                    operation,
                     PrOperationEnd::Completed,
                     &format!("the request {}", pull.state),
                 )
                 .await?;
             return Ok(Settled::Owner(None));
         }
-        if !pull.review_asked || task_over {
-            info!(pull_request = %pull.id, goal = %goal.id, "cancelling the review goal, its ask is gone");
+        let asked = match operation {
+            PrOperation::Review => pull.review_asked,
+            PrOperation::Babysit => pull.babysit_asked,
+        };
+        if !asked || task_over {
+            info!(pull_request = %pull.id, goal = %goal.id, operation = operation.as_str(), "cancelling the operation goal, its ask is gone");
             self.store
                 .stop_pr_operation(
                     &pull.repository_id,
                     pull.number,
-                    PrOperation::Review,
-                    "the review was stopped",
+                    operation,
+                    &format!("the {} was stopped", operation.as_str()),
                 )
                 .await?;
             return Ok(Settled::Stopped);
@@ -634,12 +651,14 @@ impl super::Scheduler {
     /// cleanup took its worktree and its branch.
     async fn end_kept_request(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
         info!(pull_request = %pull.id, state = %pull.state, "the request ended, taking its work down");
-        // The review goal ends with the request, before its row goes.
+        // The operation goals end with the request, before its row goes.
         let operation_lock = self
             .store
             .pr_operation_lock(&pull.repository_id, pull.number)
             .await;
-        self.settle_review_operation(pull).await?;
+        for operation in PrOperation::ALL {
+            self.settle_pr_operation(pull, operation).await?;
+        }
         drop(operation_lock);
         // Done only once its sessions and worktree are gone: until then the
         // row stays, so a restart owes it the same. A cleanup that failed is
@@ -784,7 +803,11 @@ impl super::Scheduler {
     /// A request the user asked Ariadne to keep by hand (032): one
     /// live keeper session while it is open and still asked for directly on
     /// its own row; its session and worktree taken down otherwise.
-    async fn babysit_pass(&mut self, pull: &PullRequest) -> anyhow::Result<()> {
+    async fn babysit_pass(
+        &mut self,
+        pull: &PullRequest,
+        owner: Option<&PrOperationOwner>,
+    ) -> anyhow::Result<()> {
         let integration = self.store.forge_integration(&pull.repository_id).await?;
         let live = self.live_keeper_sessions(&pull.id).await?;
         let login = integration
@@ -820,7 +843,7 @@ impl super::Scheduler {
         let Some(session) = running else {
             self.keeper_skills_applied
                 .insert(pull.id.clone(), skills.clone());
-            return self.start_babysit_session(pull, pin).await;
+            return self.start_babysit_session(pull, pin, owner).await;
         };
         // A second ask can move the pin or the skills while this session
         // still runs on the old ones (032): kill it and start fresh on the
@@ -834,12 +857,16 @@ impl super::Scheduler {
             .keeper_skills_applied
             .get(&pull.id)
             .is_some_and(|applied| *applied != skills);
-        if session.model != pin.model || session.effort != pin.effort || skills_changed {
-            info!(pull_request = %pull.id, session = %session.id, "the keeper's pin changed, restarting it on the new one");
+        // A keeper from before goals runs on until a new ask makes the goal
+        // and its task: the ask then puts a session under them, which reuses
+        // the worktree and branch, so nothing unpushed is lost (032).
+        let unowned = owner.is_some_and(|o| session.task_id.as_deref() != Some(o.task.id.as_str()));
+        if session.model != pin.model || session.effort != pin.effort || skills_changed || unowned {
+            info!(pull_request = %pull.id, session = %session.id, "the keeper's pin or owner changed, restarting it on the new one");
             self.launcher.kill_session(&session.id).await?;
             self.keeper_skills_applied
                 .insert(pull.id.clone(), skills.clone());
-            return self.start_babysit_session(pull, pin).await;
+            return self.start_babysit_session(pull, pin, owner).await;
         }
         self.keeper_skills_applied.insert(pull.id.clone(), skills);
         if matches!(
@@ -872,6 +899,7 @@ impl super::Scheduler {
         &mut self,
         pull: &PullRequest,
         pin: AgentPin,
+        owner: Option<&PrOperationOwner>,
     ) -> anyhow::Result<()> {
         let budget = format!("{}:keep", pull.id);
         let last = self.last_session_of(&pull.id, Seat::Keeper).await?;
@@ -888,7 +916,7 @@ impl super::Scheduler {
                 .await;
             return Ok(());
         }
-        match self.launcher.resume_keeper_session(pull, pin).await {
+        match self.launcher.resume_keeper_session(pull, pin, owner).await {
             Ok(session) => {
                 info!(pull_request = %pull.id, session = %session.id, "the request's keeper session is up");
                 let _ = self
@@ -991,7 +1019,7 @@ impl super::Scheduler {
     }
 }
 
-/// What settling a request's review goal leaves the pass to do.
+/// What settling a request's operation goal leaves the pass to do.
 enum Settled {
     /// The goal that stays open and owns the session, or none for a review
     /// from before goals and for one whose goal just completed.

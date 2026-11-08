@@ -14,7 +14,7 @@ use ariadne_core::id::new_id;
 use ariadne_core::workflow::PrOperation;
 use ariadne_core::{Actor, GoalStatus, TaskStatus};
 
-use crate::defaults::PR_REVIEW_WORKFLOW;
+use crate::defaults::pr_operation_workflow;
 use crate::goals::{NewGoal, NewPrGoal};
 use crate::tasks::branch_name;
 use crate::{
@@ -75,16 +75,6 @@ pub enum PrOperationEnd {
     Cancelled,
 }
 
-/// The workflow an operation runs on.
-fn operation_workflow(operation: PrOperation) -> Result<&'static str> {
-    match operation {
-        PrOperation::Review => Ok(PR_REVIEW_WORKFLOW),
-        PrOperation::Babysit => Err(StoreError::Invalid(
-            "no workflow serves the babysit operation yet".into(),
-        )),
-    }
-}
-
 impl Store {
     /// The open goal of `operation` on request `number`, where one is.
     pub async fn active_pr_goal(
@@ -134,7 +124,7 @@ impl Store {
         &self,
         new: StartPrOperation,
     ) -> Result<(PrOperationOwner, bool)> {
-        let workflow = operation_workflow(new.operation)?;
+        let workflow = pr_operation_workflow(new.operation);
         let mut created = false;
         let mut goal = match self
             .active_pr_goal(&new.repository_id, new.number, new.operation)

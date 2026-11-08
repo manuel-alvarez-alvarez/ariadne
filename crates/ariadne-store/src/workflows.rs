@@ -2,7 +2,7 @@
 //!
 //! A workflow is a linear kanban of columns, each staffed with one agent,
 //! that a task walks from its first commit to its landing. Every goal runs on
-//! one. Ariadne ships three (`defaults::BUILTIN_WORKFLOWS`) and
+//! one. Ariadne ships four (`defaults::BUILTIN_WORKFLOWS`) and
 //! the user adds and edits their own, the same way a skill is: a built-in is
 //! stored with a `NULL` document while it runs on the text Ariadne ships, and
 //! a reset is a `NULL` rather than a copy of the default.
@@ -16,7 +16,7 @@ use ariadne_core::workflow::{self, WorkflowParseError};
 
 use crate::defaults::{
     BUILTIN_WORKFLOWS, ORCHESTRATION_SKILL, PR_BABYSIT_SKILL, PR_REVIEWER_SKILL, pr_operation_of,
-    pr_review_shape_error,
+    pr_operation_shape_error,
 };
 use crate::query::Filtered;
 use crate::{Change, Result, Store, StoreError, Workflow, not_found, now};
@@ -225,22 +225,22 @@ impl Store {
             )));
         }
         // A pull request workflow keeps the shape its operation reads; the
-        // reviewer skill is that operation's own, so only its workflow loads
-        // it.
+        // operation's own skill is the one only its workflow loads.
         let operation = pr_operation_of(name);
-        if operation == Some(workflow::PrOperation::Review)
-            && let Some(reason) = pr_review_shape_error(&parsed)
+        if let Some(operation) = operation
+            && let Some(reason) = pr_operation_shape_error(operation, &parsed)
         {
             return Err(StoreError::Invalid(reason));
         }
         for step in &parsed.steps {
             for skill in &step.skills {
-                if skill == PR_REVIEWER_SKILL && operation == Some(workflow::PrOperation::Review) {
+                let review = operation == Some(workflow::PrOperation::Review);
+                if skill == PR_REVIEWER_SKILL && review {
                     continue;
                 }
                 if skill == ORCHESTRATION_SKILL
                     || skill == PR_REVIEWER_SKILL
-                    || (operation.is_some() && skill == PR_BABYSIT_SKILL)
+                    || (review && skill == PR_BABYSIT_SKILL)
                 {
                     return Err(StoreError::Conflict(format!(
                         "skill {skill} cannot staff a workflow column"

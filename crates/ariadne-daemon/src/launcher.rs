@@ -135,10 +135,10 @@ impl Launcher {
     async fn skills_of(&self, session: &AgentSession) -> Result<Vec<ariadne_store::Skill>> {
         let seat = session.seat().context("a staffed session needs a seat")?;
         if let Some(pull_request_id) = &session.pull_request_id {
-            // A review staffed as an operation's agent loads what that
-            // agent was staffed with: its column's skills and the ones the
-            // user picked (029).
-            if seat == Seat::Reviewer
+            // A review or a keeper staffed as an operation's agent loads
+            // what that agent was staffed with: its column's skills and the
+            // ones the user picked (029, 032).
+            if matches!(seat, Seat::Reviewer | Seat::Keeper)
                 && let Some(agent_id) = &session.task_agent_id
             {
                 return Ok(self.store.agent_skills(agent_id).await?);
@@ -1825,6 +1825,7 @@ impl Launcher {
         &self,
         pull: &PullRequest,
         pin: AgentPin,
+        owner: Option<&PrOperationOwner>,
     ) -> Result<AgentSession> {
         let seat = Seat::Keeper;
         self.assert_valid_head_branch(pull, seat).await?;
@@ -1835,10 +1836,10 @@ impl Launcher {
         let session = self
             .store
             .create_session(NewSession {
-                goal_id: None,
-                task_id: None,
+                goal_id: owner.map(|o| o.goal.id.clone()),
+                task_id: owner.map(|o| o.task.id.clone()),
                 seat: Some(seat),
-                task_agent_id: None,
+                task_agent_id: owner.map(|o| o.agent.id.clone()),
                 model: pin.model,
                 effort: pin.effort,
                 worktree_path: Some(worktree.display().to_string()),
@@ -1851,7 +1852,10 @@ impl Launcher {
         let briefing = self
             .keeper_briefing_of(pull, &repo, &worktree, &branch)
             .await?;
-        let skills = self.keeper_skills(pull).await?;
+        let skills = match owner {
+            Some(owner) => self.store.agent_skills(&owner.agent.id).await?,
+            None => self.keeper_skills(pull).await?,
+        };
         let ctx = self
             .spawn_ctx_with(&session, worktree, briefing, skills)
             .await?;
@@ -1884,6 +1888,7 @@ impl Launcher {
         &self,
         pull: &PullRequest,
         pin: AgentPin,
+        owner: Option<&PrOperationOwner>,
     ) -> Result<AgentSession> {
         let seat = Seat::Keeper;
         self.assert_valid_head_branch(pull, seat).await?;
@@ -1900,9 +1905,12 @@ impl Launcher {
         let Some((previous, internal)) = previous
             .filter(|s| !s.died_on_arrival())
             .filter(|s| s.model == pin.model && s.effort == pin.effort)
+            // A session belongs to the operation that started it: a new
+            // goal, or a session from before goals, starts a new one.
+            .filter(|s| s.task_id.as_deref() == owner.map(|o| o.task.id.as_str()))
             .and_then(|s| s.internal_session_id.clone().map(|internal| (s, internal)))
         else {
-            return self.spawn_keeper_session(pull, pin).await;
+            return self.spawn_keeper_session(pull, pin, owner).await;
         };
         self.assert_no_live_pull_request_session(&pull.id, seat)
             .await?;

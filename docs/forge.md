@@ -189,13 +189,15 @@ and fixes what needs fixing.
 
 ## What a `pr-babysit` keeper session does
 
-A request of yours that no task opened can be kept by hand: call `PUT
+An open request that no task opened can be kept by hand: call `PUT
 /v1/repositories/<repo-id>/pull-requests/<number>/ariadne-babysit` with
 `{"asked": true, "model": "<agent:model>", "effort": "<effort>", "skills":
 [...]}`, from the CLI as `ariadne pr babysit <repo-id> <number> --model
 <agent:model>`. `--model` is required, the same way `pr review`'s is. A
-request a task opened, or one by another login, cannot be babysat this
-way: asking is refused with 409.
+request a task opened cannot be babysat this way: asking is refused with
+409. The model must have a rank the [`pr-babysit`
+workflow](workflows.md#the-pr-babysit-workflow) allows, else the ask is
+refused with 400.
 
 Ask the same way from the desktop app: open a request of yours that no
 task keeps in the Pull requests tab and press **Start babysit** in its
@@ -205,8 +207,12 @@ playbook, always on; any other skill can join it. Starting it closes the
 dialog and, once the daemon has the keeper session up, opens that
 session's console in the panel, the same way starting a review does. An
 **Ariadne babysitting** pill marks the row and the panel while one runs,
-beside Ariadne reviewing. **Stop babysit** takes it down. The panel's
-Sessions tab lists the keeper session beside a review's.
+beside Ariadne reviewing. **Stop babysit** takes it down. Starting makes a
+goal of its own on the `pr-babysit` workflow, with one task whose agent is
+the keeper session: the panel links it as **Babysit goal**, and it shows on
+the Goals board like any other goal. A merge or a close completes it, and
+**Stop babysit** cancels it. The panel's Sessions tab lists the keeper
+session beside a review's.
 
 The keeper session loads `pr-babysit` — the same skill a task's `pr`
 column stages — and any other skill you pick. Its worktree is a local

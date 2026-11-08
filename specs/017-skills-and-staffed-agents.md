@@ -147,7 +147,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
     the daemon loads it for a review session — and every other skill
     is a column agent's — `pr-babysit` included, which the `pr` column of
     `develop-review-pr` stages (030) and which the daemon also loads for a
-    keeper session on a request asked for by hand (032). The store refuses
+    keeper session on a request asked for by hand (032), where the
+    `pr-babysit` workflow stages it too. The store refuses
     a task agent staffed on `orchestration`, and on `pr-reviewer` unless
     the agent belongs to a review operation goal (029), and
     `list_skills` lists neither (013). Nor does it list a skill with no
@@ -249,7 +250,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
     skills of the `pr-review` column and the ones the user picked, and the
     session loads what the agent was staffed with; no orchestrator staffs
     it. A review from before such goals loads `pr-reviewer` and the skills
-    stored on its request row.
+    stored on its request row. A keeper session (032) is likewise the
+    session of the one agent of a babysit operation goal's task, staffed
+    with the skills of the `pr-babysit` column and the picked ones.
 15. The daemon keeps one shared copy of every store skill under
     `<home>/skills` by default, or `skills_dir` when configured. Every sync
     writes each document as `<skills_dir>/<name>/SKILL.md`, including

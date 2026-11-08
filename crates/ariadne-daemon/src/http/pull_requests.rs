@@ -1410,7 +1410,7 @@ pub(super) async fn ask_review(
                 req.effort.as_deref(),
             )
             .await?;
-            check_review_band(&state, &id, number, &pin.model).await?;
+            check_operation_band(&state, &id, number, PrOperation::Review, &pin.model).await?;
             // Each a skill a task agent is staffed on (017); `pr-reviewer`
             // is loaded anyway, so it is not stored twice.
             let mut skills: Vec<String> = Vec::new();
@@ -1441,7 +1441,7 @@ pub(super) async fn ask_review(
         // Nothing works on it, so there is no asking to stop; a review goal
         // a stop left open is ended all the same.
         (None, None) => {
-            end_review_goal(&state, &id, number).await?;
+            end_operation_goal(&state, &id, number, PrOperation::Review).await?;
             return Ok(Json(forge_pull_dto(&id, pull, role, false)));
         }
     };
@@ -1474,7 +1474,7 @@ pub(super) async fn ask_review(
                 .store
                 .set_pull_request_review_asked(&row.id, None)
                 .await?;
-            end_review_goal(&state, &id, number).await?;
+            end_operation_goal(&state, &id, number, PrOperation::Review).await?;
             row
         }
     };
@@ -1497,34 +1497,41 @@ pub(super) async fn ask_review(
     Ok(Json(pull_request_dto_of(&state.store, view).await?))
 }
 
-/// Cancel the open review goal of a request, with its task, where the user
-/// stopped the review.
-async fn end_review_goal(state: &AppState, repository_id: &str, number: i64) -> ApiResult<()> {
+/// Cancel the open goal of an operation on a request, with its task, where
+/// the user stopped the operation.
+async fn end_operation_goal(
+    state: &AppState,
+    repository_id: &str,
+    number: i64,
+    operation: PrOperation,
+) -> ApiResult<()> {
     state
         .store
         .end_pr_operation(
             repository_id,
             number,
-            PrOperation::Review,
+            operation,
             PrOperationEnd::Cancelled,
-            "the user stopped the review",
+            &format!("the user stopped the {}", operation.as_str()),
         )
         .await?;
     Ok(())
 }
 
-/// Refuse a model outside the capability band of the review column: the
+/// Refuse a model outside the capability band of an operation's column: the
 /// band of the open goal's snapshot, else of the workflow as it stands. A
 /// model the user has not ranked has no band to be in.
-async fn check_review_band(
+async fn check_operation_band(
     state: &AppState,
     repository_id: &str,
     number: i64,
+    operation: PrOperation,
     model: &str,
 ) -> ApiResult<()> {
+    let workflow = ariadne_store::defaults::pr_operation_workflow(operation);
     let band: Vec<ModelRank> = match state
         .store
-        .active_pr_goal(repository_id, number, PrOperation::Review)
+        .active_pr_goal(repository_id, number, operation)
         .await?
     {
         Some(goal) => state
@@ -1536,7 +1543,7 @@ async fn check_review_band(
             .unwrap_or_default(),
         None => state
             .store
-            .get_workflow(ariadne_store::defaults::PR_REVIEW_WORKFLOW)
+            .get_workflow(workflow)
             .await?
             .steps()
             .into_iter()
@@ -1550,19 +1557,27 @@ async fn check_review_band(
         return Ok(());
     }
     let allowed: Vec<&str> = band.iter().map(|rank| rank.as_str()).collect();
+    let verb = match operation {
+        PrOperation::Review => "a review",
+        PrOperation::Babysit => "a babysit",
+    };
     Err(ApiError::bad_request(format!(
-        "model {model} is {}: the {} workflow allows {} for a review",
+        "model {model} is {}: the {workflow} workflow allows {} for {verb}",
         rank.map_or("unranked", |rank| rank.as_str()),
-        ariadne_store::defaults::PR_REVIEW_WORKFLOW,
         allowed.join(" and ")
     )))
 }
 
 /// Ask Ariadne to keep any open request by hand on the model the user
-/// picks, or stop asking (032), regardless of its author. A request a
-/// task already keeps is refused to avoid competing keepers. Stopping
-/// ends only the keeper session, preserving an asked review. Pushes use
-/// the head repository and remain subject to its permissions.
+/// picks, or stop asking (032), regardless of its author. Asking starts one
+/// active goal for the babysit, with one staffed task and no orchestrator,
+/// on the `pr-babysit` workflow: the model must be ranked inside that
+/// workflow's band, else 400. Asking again keeps the open goal and moves its
+/// pin and skills. A request a task already keeps is refused to avoid
+/// competing keepers. The goal completes when the request merges or closes.
+/// Stopping cancels the goal and its task and ends only the keeper session,
+/// preserving an asked review. Pushes use the head repository and remain
+/// subject to its permissions.
 #[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-babysit", tag = "pull-requests",
     params(("id" = String, Path), ("number" = i64, Path)),
     request_body = AskBabysitRequest,
@@ -1583,6 +1598,9 @@ pub(super) async fn ask_babysit(
         ));
     }
     let role = pulls::role(&pull.author_login, &forge);
+    // One start or stop at a time on a request, and no scheduler pass reads
+    // the half of one (032).
+    let _operation = state.store.pr_operation_lock(&id, number).await;
     let row = state.store.pull_request_by_number(&id, number).await?;
     if row.as_ref().is_some_and(|row| row.origin_task_id.is_some()) {
         return Err(ApiError::conflict("a task already keeps this request"));
@@ -1608,6 +1626,7 @@ pub(super) async fn ask_babysit(
                 req.effort.as_deref(),
             )
             .await?;
+            check_operation_band(&state, &id, number, PrOperation::Babysit, &pin.model).await?;
             // Each a skill a task agent is staffed on (017); `pr-babysit`
             // is loaded anyway, so it is not stored twice.
             let mut skills: Vec<String> = Vec::new();
@@ -1635,18 +1654,46 @@ pub(super) async fn ask_babysit(
                 .map_err(forge_error)?
                 .0
         }
-        // Nothing works on it, so there is no asking to stop.
+        // Nothing works on it, so there is no asking to stop; a babysit goal
+        // a stop left open is ended all the same.
         (None, None) => {
+            end_operation_goal(&state, &id, number, PrOperation::Babysit).await?;
             return Ok(Json(forge_pull_dto(&id, pull, role, false)));
         }
     };
-    let row = state
-        .store
-        .set_pull_request_babysit_asked(
-            &row.id,
-            pin.as_ref().map(|(pin, skills)| (pin, skills.as_slice())),
-        )
-        .await?;
+    // The babysit is a goal of its own with one staffed task (032). Starting
+    // keeps the open goal where one is, so a repeat only moves its pin and
+    // skills; the goal exists before the ask is written, so a scheduler pass
+    // that reads the ask finds its owner. A stop writes the ask first, so no
+    // pass starts a session for a babysit that is going away.
+    let row = match &pin {
+        Some((pin, skills)) => {
+            state
+                .store
+                .start_pr_operation(StartPrOperation {
+                    operation: PrOperation::Babysit,
+                    repository_id: id.clone(),
+                    number,
+                    url: pull.url.clone(),
+                    title: pull.title.clone(),
+                    pin: pin.clone(),
+                    skills: skills.clone(),
+                })
+                .await?;
+            state
+                .store
+                .set_pull_request_babysit_asked(&row.id, Some((pin, skills.as_slice())))
+                .await?
+        }
+        None => {
+            let row = state
+                .store
+                .set_pull_request_babysit_asked(&row.id, None)
+                .await?;
+            end_operation_goal(&state, &id, number, PrOperation::Babysit).await?;
+            row
+        }
+    };
     let review_requested = state
         .launcher
         .live

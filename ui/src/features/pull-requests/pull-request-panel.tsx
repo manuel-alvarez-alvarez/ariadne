@@ -229,8 +229,10 @@ function PullRequestHeader({
   const checks = CHECKS[pull.checks]
   const review = REVIEW[pull.review_decision]
   const babysittable = pull.origin_task_id == null
-  // The review is a goal of its own, on the Goals board like any other (029).
+  // The review and the babysit are goals of their own, on the Goals board
+  // like any other (029, 032).
   const reviewGoal = pull.operations?.find((operation) => operation.operation === "review")
+  const babysitGoal = pull.operations?.find((operation) => operation.operation === "babysit")
   return (
     <>
       <PanelHeader
@@ -309,6 +311,11 @@ function PullRequestHeader({
             ) : null}
             {pull.babysit_asked ? (
               <StatusBadge label={ARIADNE_BABYSITTING.label} tone={ARIADNE_BABYSITTING.tone} />
+            ) : null}
+            {babysitGoal ? (
+              <Link className="text-xs underline" to={paths.goal(babysitGoal.goal_id)}>
+                Babysit goal
+              </Link>
             ) : null}
           </>
         }

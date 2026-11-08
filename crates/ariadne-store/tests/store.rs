@@ -6716,3 +6716,184 @@ async fn the_review_workflow_is_edited_within_its_shape_and_no_ordinary_goal_use
     assert_eq!(steps[0].ranks, r#"["frontier"]"#);
     store.reset_workflow("pr-review").await.unwrap();
 }
+
+fn babysit_start(repository_id: &str, model: &str, skills: &[&str]) -> StartPrOperation {
+    StartPrOperation {
+        operation: ariadne_core::workflow::PrOperation::Babysit,
+        ..review_start(repository_id, model, skills)
+    }
+}
+
+/// A babysit start makes one active goal with no orchestrator, on a snapshot
+/// of the `babysit` column, and one task already in that column with one
+/// agent that loads `pr-babysit` and the picked skills. A review of the
+/// same request is a goal of its own.
+#[tokio::test]
+async fn a_babysit_start_makes_one_active_goal_with_one_staffed_task() {
+    use ariadne_core::workflow::PrOperation;
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    let (owner, created) = store
+        .start_pr_operation(babysit_start(&repo.id, "stub:one", &["research"]))
+        .await
+        .unwrap();
+    assert!(created);
+    assert_eq!(owner.goal.status(), GoalStatus::Active);
+    assert!(!owner.goal.orchestrated);
+    assert_eq!(owner.goal.workflow, "pr-babysit");
+    assert_eq!(
+        owner.goal.pull_request_operation(),
+        Some(PrOperation::Babysit)
+    );
+    assert_eq!(owner.task.status(), TaskStatus::InProgress);
+    assert_eq!(owner.task.step.as_deref(), Some("babysit"));
+    assert_eq!(owner.agent.step, "babysit");
+    let skills: Vec<String> = store
+        .agent_skills(&owner.agent.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(skills, ["pr-babysit", "research"]);
+    let steps = store.goal_steps(&owner.goal.id).await.unwrap();
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].ranks, r#"["fast","balanced"]"#);
+
+    let (review, _) = store
+        .start_pr_operation(review_start(&repo.id, "stub:one", &[]))
+        .await
+        .unwrap();
+    assert_ne!(review.goal.id, owner.goal.id);
+}
+
+/// A repeated babysit start keeps the goal, task and agent and moves the pin
+/// and skills; an end completes or cancels both and the next start is new.
+#[tokio::test]
+async fn a_repeated_babysit_start_keeps_its_goal_and_an_end_leaves_the_next_start_new() {
+    use ariadne_core::workflow::PrOperation;
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    let (first, _) = store
+        .start_pr_operation(babysit_start(&repo.id, "stub:one", &[]))
+        .await
+        .unwrap();
+    let (second, created) = store
+        .start_pr_operation(babysit_start(&repo.id, "stub:two", &["research"]))
+        .await
+        .unwrap();
+    assert!(!created);
+    assert_eq!(second.goal.id, first.goal.id);
+    assert_eq!(second.agent.id, first.agent.id);
+    assert_eq!(second.agent.model, "stub:two");
+
+    let ended = store
+        .end_pr_operation(
+            &repo.id,
+            7,
+            PrOperation::Babysit,
+            PrOperationEnd::Completed,
+            "merged",
+        )
+        .await
+        .unwrap()
+        .expect("the open goal");
+    assert_eq!(ended.status(), GoalStatus::Completed);
+    assert_eq!(
+        store.get_task(&first.task.id).await.unwrap().status(),
+        TaskStatus::Finished
+    );
+    let (next, created) = store
+        .start_pr_operation(babysit_start(&repo.id, "stub:one", &[]))
+        .await
+        .unwrap();
+    assert!(created);
+    assert_ne!(next.goal.id, first.goal.id);
+    store
+        .stop_pr_operation(&repo.id, 7, PrOperation::Babysit, "stop")
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_task(&next.task.id).await.unwrap().status(),
+        TaskStatus::Cancelled
+    );
+    assert_eq!(
+        store.get_goal(&next.goal.id).await.unwrap().status(),
+        GoalStatus::Cancelled
+    );
+}
+
+/// The `pr-babysit` workflow is no ordinary workflow: no goal and no
+/// repository default can name it, and an edit keeps its shape — one
+/// `babysit` column that loads `pr-babysit`, with no gate and only the fast
+/// and balanced ranks — while its title, description, extra skills and band
+/// stay editable.
+#[tokio::test]
+async fn the_babysit_workflow_is_edited_within_its_shape_and_no_ordinary_goal_uses_it() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    let goal = store
+        .create_goal(NewGoal {
+            workflow: Some("pr-babysit".into()),
+            title: "A goal".into(),
+            description: "d".into(),
+            issue_url: None,
+            repository_ids: vec![repo.id.clone()],
+            pin: default_pin(),
+        })
+        .await;
+    assert!(format!("{:?}", goal.expect_err("an ordinary goal")).contains("pr-babysit"));
+    let default = store
+        .update_repository(
+            &repo.id,
+            RepositoryUpdate {
+                default_workflow: Some("pr-babysit".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(default.is_err());
+
+    for (document, reason) in [
+        (
+            "workflow pr-babysit\n  babysit[Babysit]\n    skills: coding\n    ranks: fast\n",
+            "pr-babysit",
+        ),
+        (
+            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: frontier\n",
+            "fast and balanced",
+        ),
+        (
+            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: fast\n    gate: request-merged\n",
+            "no gate",
+        ),
+        (
+            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: fast\n  more[More]\n    skills: coding\n",
+            "exactly one column",
+        ),
+        (
+            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit, pr-reviewer\n    ranks: fast\n",
+            "pr-reviewer",
+        ),
+    ] {
+        let refused = store.set_workflow_document("pr-babysit", document).await;
+        let message = format!("{:?}", refused.expect_err("a broken shape"));
+        assert!(message.contains(reason), "{message}");
+    }
+    let edited = store
+        .set_workflow_document(
+            "pr-babysit",
+            "workflow pr-babysit\n  babysit[Keep]\n    Keep it.\n    skills: pr-babysit, research\n    ranks: balanced\n",
+        )
+        .await
+        .unwrap();
+    assert!(edited.document_text().contains("Keep it."));
+    let (owner, _) = store
+        .start_pr_operation(babysit_start(&repo.id, "stub:one", &[]))
+        .await
+        .unwrap();
+    let steps = store.goal_steps(&owner.goal.id).await.unwrap();
+    assert_eq!(steps[0].title, "Keep");
+    assert_eq!(steps[0].ranks, r#"["balanced"]"#);
+    store.reset_workflow("pr-babysit").await.unwrap();
+}

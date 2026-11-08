@@ -219,6 +219,17 @@ it("links the goal of a review to the Goals board", async () => {
   expect(link.getAttribute("href")).toContain("goal=01GOAL")
 })
 
+it("links the goal of a babysit to the Goals board", async () => {
+  daemon(() => ({
+    ...pull,
+    babysit_asked: true,
+    operations: [{ operation: "babysit", goal_id: "01GOAL", task_id: "01TASK" }],
+  }))
+  renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
+  const link = await screen.findByRole("link", { name: "Babysit goal" })
+  expect(link.getAttribute("href")).toContain("goal=01GOAL")
+})
+
 it("opens the console of a review resumed on the same session", async () => {
   const user = userEvent.setup()
   let row: PullRequestDto = {

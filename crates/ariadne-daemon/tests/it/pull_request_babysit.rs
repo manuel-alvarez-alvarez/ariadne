@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 
 use crate::common::forge::{StubForgeCli, answer, stub_forge_cli};
 use crate::common::{
-    Harness, QUIET, RUNS_OUT, TIMEOUT, as_session, eventually, harness, next_event, put_json, sh,
-    with_forge,
+    Harness, QUIET, RUNS_OUT, TIMEOUT, as_session, eventually, harness, next_event, post_json,
+    put_json, sh, with_forge,
 };
 use ariadne_core::{Seat, SessionStatus};
 use ariadne_daemon::forge::poll::Mode;
@@ -884,6 +884,10 @@ async fn a_second_ask_that_moves_the_pin_restarts_the_live_keeper() {
     const PIN2: &str = "stub:babysit-model-2";
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
+    h.store
+        .set_model_ranks(&[(PIN2, Some(ariadne_core::models::ModelRank::Fast))])
+        .await
+        .unwrap();
     let (path, head) = checkout(&h);
     stub.reprogram(script(&Shown::open(&head)));
     let repo = repository(&h, &path).await;
@@ -1552,4 +1556,413 @@ async fn asking_is_refused_with_no_model_an_unknown_one_an_untaskable_skill_or_t
         StatusCode::CONFLICT,
     )
     .await;
+}
+
+/// The open goal of the babysit on request 1.
+async fn babysit_goal(h: &Harness, repo: &str) -> ariadne_store::Goal {
+    h.store
+        .active_pr_goal(repo, 1, ariadne_core::workflow::PrOperation::Babysit)
+        .await
+        .unwrap()
+        .expect("the babysit's goal")
+}
+
+/// Asking Ariadne to babysit makes one active goal with no orchestrator and
+/// one staffed task, and the keeper session is that task's agent: the goal,
+/// the task and the request's own DTO name each other, and the Goals board
+/// reads the goal like any other. A repeated ask keeps the goal and its
+/// task, and a new pin moves onto the same agent.
+#[tokio::test]
+async fn a_babysit_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+    let asked: Value = h
+        .json(
+            babysit(
+                &repo,
+                1,
+                json!({"asked": true, "model": PIN, "skills": ["coding"]}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().expect("a row").to_string();
+    let session = idle_keeper(&h, &id).await;
+
+    let goal = babysit_goal(&h, &repo).await;
+    let goal_dto: Value = h.get(&format!("/v1/goals/{}", goal.id)).await;
+    assert_eq!(goal_dto["status"], "active");
+    assert_eq!(goal_dto["orchestrated"], false);
+    assert_eq!(goal_dto["workflow"], "pr-babysit");
+    assert_eq!(goal_dto["pull_request"]["operation"], "babysit");
+    assert_eq!(goal_dto["pull_request"]["number"], 1);
+    assert_eq!(goal_dto["steps"].as_array().unwrap().len(), 1);
+    assert!(
+        h.sessions_of_goal(&goal.id)
+            .await
+            .iter()
+            .all(|s| s.seat.as_deref() == Some("keeper")),
+        "no orchestrator plans it"
+    );
+    let tasks = h
+        .store
+        .list_tasks(ariadne_store::TaskFilter {
+            goal_id: Some(goal.id.clone()),
+            status: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(tasks.len(), 1);
+    let task: Value = h.get(&format!("/v1/tasks/{}", tasks[0].id)).await;
+    assert_eq!(task["status"], "in_progress");
+    assert_eq!(task["step"], "babysit");
+    assert_eq!(task["operation"], "babysit");
+    assert_eq!(task["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(task["agents"][0]["skills"], json!(["pr-babysit", "coding"]));
+    assert_eq!(task["agents"][0]["session_id"], session.id);
+    assert_eq!(session.task_id.as_deref(), Some(tasks[0].id.as_str()));
+    let row: Value = h.get(&format!("/v1/pull-requests/{id}")).await;
+    assert_eq!(row["operations"][0]["operation"], "babysit");
+    assert_eq!(row["operations"][0]["goal_id"], goal.id);
+    assert_eq!(row["operations"][0]["task_id"], tasks[0].id);
+
+    // Asked again on the same pin: the goal, task and session stay.
+    let _: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    h.flush_scheduler().await;
+    assert_eq!(babysit_goal(&h, &repo).await.id, goal.id);
+    assert_eq!(h.store.list_goals(&[]).await.unwrap().len(), 1);
+    assert!(h.session_status(&session).await.is_live());
+    assert_eq!(sessions(&h, &id).await.len(), 1);
+}
+
+/// Stopping the babysit cancels its task and goal and takes the keeper down;
+/// the request's next ask is a new goal on a new task, and the old goal
+/// stays as history with its session.
+#[tokio::test]
+async fn stopping_a_babysit_cancels_its_goal_and_the_next_ask_starts_a_new_one() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().unwrap().to_string();
+    let session = idle_keeper(&h, &id).await;
+    let first = babysit_goal(&h, &repo).await;
+
+    let _: Value = h
+        .json(babysit(&repo, 1, json!({"asked": false})), StatusCode::OK)
+        .await;
+    assert_eq!(
+        h.store.get_goal(&first.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Cancelled
+    );
+    assert_eq!(
+        h.status(session.task_id.as_deref().unwrap()).await,
+        ariadne_core::TaskStatus::Cancelled
+    );
+    eventually(
+        TIMEOUT,
+        "the keeper session and its request to end",
+        async || {
+            !h.session_status(&session).await.is_live()
+                && h.store.get_pull_request(&id).await.is_err()
+        },
+    )
+    .await;
+
+    let _: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let second = babysit_goal(&h, &repo).await;
+    assert_ne!(second.id, first.id);
+    eventually(TIMEOUT, "a session on the new goal", async || {
+        h.flush_scheduler().await;
+        h.sessions_of_goal(&second.id)
+            .await
+            .iter()
+            .any(|s| s.status().is_live())
+    })
+    .await;
+    assert_eq!(
+        h.store.get_goal(&first.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Cancelled
+    );
+}
+
+/// A request that merges completes the babysit's task and goal, and takes
+/// the keeper down.
+#[tokio::test]
+async fn a_merged_request_completes_its_babysit_goal_and_task() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().unwrap().to_string();
+    let session = idle_keeper(&h, &id).await;
+    let goal = babysit_goal(&h, &repo).await;
+    let task_id = session.task_id.clone().unwrap();
+
+    stub.reprogram(script(&Shown {
+        state: "MERGED",
+        ..Shown::open(&head)
+    }));
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "the goal and task to complete", async || {
+        h.flush_scheduler().await;
+        h.store.get_goal(&goal.id).await.unwrap().status() == ariadne_core::GoalStatus::Completed
+    })
+    .await;
+    assert_eq!(h.status(&task_id).await, ariadne_core::TaskStatus::Finished);
+    eventually(TIMEOUT, "the keeper to end", async || {
+        !h.session_status(&session).await.is_live()
+    })
+    .await;
+}
+
+/// The babysit column's band decides which models a babysit accepts: a model
+/// the user ranked outside it, or never ranked, is refused and starts no
+/// goal.
+#[tokio::test]
+async fn a_babysit_refuses_a_model_outside_the_workflow_band() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    eventually(TIMEOUT, "the first fetch to end", async || {
+        stub.fetches() >= 1
+    })
+    .await;
+    h.store
+        .set_model_ranks(&[(
+            "stub:strong",
+            Some(ariadne_core::models::ModelRank::Frontier),
+        )])
+        .await
+        .unwrap();
+    for model in ["stub:strong", "stub:unranked"] {
+        let error = h
+            .error(
+                babysit(&repo, 1, json!({"asked": true, "model": model})),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert!(
+            error.error.message.contains("fast and balanced"),
+            "{}",
+            error.error.message
+        );
+    }
+    assert!(h.store.list_goals(&[]).await.unwrap().is_empty());
+}
+
+/// Cancelling the babysit's goal from the Goals board stops the babysit: the
+/// ask on the request goes with it, so no later pass starts a session for a
+/// babysit nobody owns.
+#[tokio::test]
+async fn cancelling_the_babysit_goal_stops_the_babysit_and_it_stays_stopped() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().unwrap().to_string();
+    let session = idle_keeper(&h, &id).await;
+    let goal = babysit_goal(&h, &repo).await;
+
+    let cancelled: Value = h
+        .json(
+            post_json(&format!("/v1/goals/{}/cancel", goal.id), json!({})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(cancelled["status"], "cancelled");
+    eventually(TIMEOUT, "the keeper session to end", async || {
+        !h.session_status(&session).await.is_live()
+    })
+    .await;
+    h.flush_scheduler().await;
+    let live = h
+        .store
+        .list_sessions(SessionFilter {
+            live_only: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(live.is_empty(), "no session starts after the cancel");
+    if let Ok(row) = h.store.get_pull_request(&id).await {
+        assert!(!row.babysit_asked, "the ask went with the goal");
+    }
+}
+
+/// A keeper from before goals is not adopted: it runs on with no goal until
+/// the user asks again, and the ask puts a session under the new goal on the
+/// same worktree.
+#[tokio::test]
+async fn a_keeper_from_before_goals_runs_on_until_an_ask_puts_it_under_a_goal() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().unwrap().to_string();
+    let session = idle_keeper(&h, &id).await;
+    let worktree = session.worktree_path.clone().unwrap();
+    // Take the goal away and leave the ask: the row a build without goals
+    // wrote. Under the request's lock, so no pass reads the goal half gone.
+    let held = h.store.pr_operation_lock(&repo, 1).await;
+    h.store
+        .end_pr_operation(
+            &repo,
+            1,
+            ariadne_core::workflow::PrOperation::Babysit,
+            ariadne_store::PrOperationEnd::Cancelled,
+            "as before goals",
+        )
+        .await
+        .unwrap();
+    drop(held);
+    h.flush_scheduler().await;
+    assert!(h.session_status(&session).await.is_live(), "it runs on");
+
+    let _: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let goal = babysit_goal(&h, &repo).await;
+    let mut owned = None;
+    eventually(TIMEOUT, "a keeper under the new goal", async || {
+        h.flush_scheduler().await;
+        owned = h
+            .sessions_of_goal(&goal.id)
+            .await
+            .into_iter()
+            .find(|s| s.status().is_live());
+        owned.is_some()
+    })
+    .await;
+    let owned = owned.unwrap();
+    assert_ne!(owned.id, session.id);
+    assert_eq!(owned.worktree_path.as_deref(), Some(worktree.as_str()));
+    assert!(!h.session_status(&session).await.is_live());
+}
+
+/// Two asks at once make one goal and one task between them.
+#[tokio::test]
+async fn two_babysit_asks_at_once_make_one_goal() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+    let ask = || h.send(babysit(&repo, 1, json!({"asked": true, "model": PIN})));
+    let (a, b) = tokio::join!(ask(), ask());
+    assert_eq!(a.0, StatusCode::OK);
+    assert_eq!(b.0, StatusCode::OK);
+    let goal = babysit_goal(&h, &repo).await;
+    assert_eq!(h.store.list_goals(&[]).await.unwrap().len(), 1);
+    assert_eq!(
+        h.store
+            .list_tasks(ariadne_store::TaskFilter {
+                goal_id: Some(goal.id),
+                status: None
+            })
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// A review of a request is independent of its babysit: each is a goal of
+/// its own on its own task, and stopping one leaves the other open.
+#[tokio::test]
+async fn a_babysit_and_a_review_of_one_request_are_two_goals() {
+    use ariadne_core::workflow::PrOperation;
+    let BothSeats {
+        h,
+        repo,
+        keeper,
+        reviewer,
+        review_route,
+        _stub,
+        ..
+    } = both_seats().await;
+    let babysit = babysit_goal(&h, &repo).await;
+    let review = h
+        .store
+        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .await
+        .unwrap()
+        .expect("the review's goal");
+    assert_ne!(babysit.id, review.id);
+    assert_eq!(keeper.goal_id.as_deref(), Some(babysit.id.as_str()));
+    assert_eq!(reviewer.goal_id.as_deref(), Some(review.id.as_str()));
+    assert_ne!(keeper.task_id, reviewer.task_id);
+
+    let _: Value = h
+        .json(
+            put_json(&review_route, json!({"asked": false})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        h.store.get_goal(&review.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Cancelled
+    );
+    assert_eq!(
+        h.store.get_goal(&babysit.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Active
+    );
 }

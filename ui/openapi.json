@@ -2427,7 +2427,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "Ask Ariadne to keep any open request by hand on the model the user\npicks, or stop asking (032), regardless of its author. A request a\ntask already keeps is refused to avoid competing keepers. Stopping\nends only the keeper session, preserving an asked review. Pushes use\nthe head repository and remain subject to its permissions.",
+        "summary": "Ask Ariadne to keep any open request by hand on the model the user\npicks, or stop asking (032), regardless of its author. Asking starts one\nactive goal for the babysit, with one staffed task and no orchestrator,\non the `pr-babysit` workflow: the model must be ranked inside that\nworkflow's band, else 400. Asking again keeps the open goal and moves its\npin and skills. A request a task already keeps is refused to avoid\ncompeting keepers. The goal completes when the request merges or closes.\nStopping cancels the goal and its task and ends only the keeper session,\npreserving an asked review. Pushes use the head repository and remain\nsubject to its permissions.",
         "operationId": "ask_babysit",
         "parameters": [
           {
