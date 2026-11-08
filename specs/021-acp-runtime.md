@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-10-24
+updated: 2026-11-08
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
@@ -34,6 +34,8 @@ request. The runtime is
 the launch file — is described in 007.
 
 The wire is the `agent-client-protocol` crate's, the protocol's own Rust SDK.
+With SDK v5, runtime and discovery select `Client.v1()`, use
+`v1::ConnectionTo`, and build typed messages from `v1::schema`.
 The daemon owns the process — it spawns it, signals its process group and
 reaps it — and hands the SDK the two pipes and nothing else
 (`acp_transport`). Every request it sends is built from the SDK's typed v1

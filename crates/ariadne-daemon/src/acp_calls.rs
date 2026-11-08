@@ -1,10 +1,11 @@
 //! Sending one ACP call and waiting for the agent's answer.
 //!
-//! Every request is one of the SDK's typed `schema::v1` requests and comes
+//! Every request is one of the SDK's typed `v1::schema` requests and comes
 //! back as the response that request declares, so the shapes on the wire are
 //! the protocol's rather than this crate's idea of them.
 
-use agent_client_protocol::{Agent, ConnectionTo, JsonRpcRequest};
+use agent_client_protocol::v1::ConnectionTo;
+use agent_client_protocol::{Agent, JsonRpcRequest};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

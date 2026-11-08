@@ -7,8 +7,9 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_client_protocol::schema::{ProtocolVersion, v1};
-use agent_client_protocol::{Agent, Client, ConnectionTo};
+use agent_client_protocol::schema::ProtocolVersion;
+use agent_client_protocol::v1::{ConnectionTo, schema as v1};
+use agent_client_protocol::{Agent, Client};
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::future::{BoxFuture, join_all};
 use serde::{Deserialize, Serialize};
@@ -791,7 +792,7 @@ async fn probe(
     let result = tokio::time::timeout(
         timeout,
         Client
-            .builder()
+            .v1()
             .name("ariadne-discovery")
             .connect_with(pipes(stdin, stdout), async |cx| {
                 let shortcut = cached.clone().filter(|_| !reread);
@@ -1072,7 +1073,7 @@ async fn list_stored_sessions(
     };
     let mut listed = None;
     let connected = Client
-        .builder()
+        .v1()
         .name("ariadne-discovery")
         .connect_with(pipes(stdin, stdout), async |cx| {
             listed = Some(sessions_over_rpc(agent, &cx, sessions).await);

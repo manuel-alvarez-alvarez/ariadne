@@ -3,10 +3,10 @@
 //! The daemon owns its own launch file (`ariadne_core::acp::LaunchConfig`),
 //! which is what the launcher writes and the runtime reads back. The wire is
 //! the SDK's: every `session/*` request the runtime sends is built as a
-//! `schema::v1` value here, so a field the protocol renamed is a compile
+//! `v1::schema` value here, so a field the protocol renamed is a compile
 //! error rather than a payload an agent quietly ignores.
 
-use agent_client_protocol::schema::v1;
+use agent_client_protocol::v1::schema as v1;
 use ariadne_core::acp::{EnvVariable, LaunchConfig, McpServer};
 
 /// One Ariadne MCP server as the SDK's stdio transport, which every ACP agent

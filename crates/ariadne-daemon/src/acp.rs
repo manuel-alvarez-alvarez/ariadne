@@ -22,8 +22,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use agent_client_protocol::schema::{ProtocolVersion, v1};
-use agent_client_protocol::{Agent, Client, ConnectionTo, JsonRpcNotification, JsonRpcRequest};
+use agent_client_protocol::schema::ProtocolVersion;
+use agent_client_protocol::v1::{ConnectionTo, schema as v1};
+use agent_client_protocol::{Agent, Client, JsonRpcNotification, JsonRpcRequest};
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::FutureExt;
 use futures_util::future::Shared;
@@ -1406,7 +1407,7 @@ impl AcpRuntime {
         let mut protocol_outcome = None;
         let mut protocol = Box::pin(
             Client
-                .builder()
+                .v1()
                 .name("ariadne")
                 .on_receive_notification(
                     async |update: RawSessionUpdate, _cx| {
@@ -3966,7 +3967,7 @@ mod tests {
     /// difference is a failing test rather than a launch that pins nothing.
     #[test]
     fn a_config_option_is_set_by_its_value_flattened_into_the_request() {
-        use agent_client_protocol::schema::v1::{
+        use agent_client_protocol::v1::schema::{
             SessionConfigOptionValue as Value, SetSessionConfigOptionRequest as Request,
         };
 

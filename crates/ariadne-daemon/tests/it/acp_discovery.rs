@@ -1709,7 +1709,7 @@ async fn real_opencode_metadata_listing_creates_no_session() {
     let listed = tokio::time::timeout(
         TIMEOUT,
         agent_client_protocol::Client
-            .builder()
+            .v1()
             .name("ariadne-discovery-check")
             .connect_with(
                 agent_client_protocol::ByteStreams::new(
@@ -1717,14 +1717,14 @@ async fn real_opencode_metadata_listing_creates_no_session() {
                     tokio_util::compat::TokioAsyncReadCompatExt::compat(stdout),
                 ),
                 async |cx| {
-                    cx.send_request(agent_client_protocol::schema::v1::InitializeRequest::new(
+                    cx.send_request(agent_client_protocol::v1::schema::InitializeRequest::new(
                         agent_client_protocol::schema::ProtocolVersion::V1,
                     ))
                     .block_task()
                     .await
                     .expect("initialize");
                     let listed = cx
-                        .send_request(agent_client_protocol::schema::v1::ListSessionsRequest::new())
+                        .send_request(agent_client_protocol::v1::schema::ListSessionsRequest::new())
                         .block_task()
                         .await
                         .expect("session/list");
