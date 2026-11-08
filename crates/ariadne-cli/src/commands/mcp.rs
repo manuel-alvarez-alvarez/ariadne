@@ -686,7 +686,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// The agent of a column is listed its fifteen tools: the task, the
+    /// The agent of a column is listed its sixteen tools: the task, the
     /// two step calls, the failure, the diff, the request its task opens and
     /// the request's five tools (013), and the two message tools. No seat
     /// word of the old pipeline names a seat, and no seat of a session with
@@ -830,7 +830,7 @@ pub(crate) mod tests {
                 "wait_for_user",
                 "withdraw_wait_for_user",
             ],
-            "the pull request keeper is listed eleven tools, nine of its own"
+            "the pull request keeper is listed nine tools"
         );
         for tool in [
             "get_task",
