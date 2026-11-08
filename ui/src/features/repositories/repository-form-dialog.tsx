@@ -31,7 +31,6 @@ import {
   Controller,
   type FieldError as FormFieldError,
   useForm,
-  useWatch,
 } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
@@ -82,7 +81,6 @@ const formSchema = z.object({
   base_branch: z.string().trim(),
   description: z.string(),
   permission_mode: z.enum(["auto", "ask", "learn", "ai"]),
-  supervise_posts: z.boolean(),
   default_workflow: z.string().min(1, "Pick a workflow."),
   forge_enabled: z.boolean(),
 })
@@ -94,7 +92,6 @@ const EMPTY_VALUES: RepositoryFormValues = {
   base_branch: "",
   description: "",
   permission_mode: "auto",
-  supervise_posts: true,
   default_workflow: "",
   forge_enabled: false,
 }
@@ -120,7 +117,6 @@ export function RepositoryFormDialog({
     defaultValues: EMPTY_VALUES,
   })
   const { control, formState, handleSubmit, register, reset, setError, setValue } = form
-  const forgeEnabled = useWatch({ control, name: "forge_enabled" })
 
   // Registering probes the path itself — nothing is detected server-side
   // until the daemon has opened the checkout. Editing skips this: the
@@ -201,7 +197,6 @@ export function RepositoryFormDialog({
         base_branch: repository.base_branch,
         description: repository.description ?? "",
         permission_mode: repository.permission_mode,
-        supervise_posts: repository.supervise_posts,
         default_workflow: repository.default_workflow ?? "",
         forge_enabled: repository.forge?.enabled ?? false,
       })
@@ -228,7 +223,6 @@ export function RepositoryFormDialog({
             // Empty is how the daemon spells "clear the description".
             description,
             permission_mode: values.permission_mode,
-            supervise_posts: values.supervise_posts,
             default_workflow: workflow,
             ...(forgeMoved ? { forge: { enabled: values.forge_enabled } } : {}),
           },
@@ -241,7 +235,6 @@ export function RepositoryFormDialog({
           base_branch: branch || null,
           description: description || null,
           permission_mode: values.permission_mode,
-          supervise_posts: values.supervise_posts,
           default_workflow: workflow,
           ...(detected ? { forge: { enabled: values.forge_enabled } } : {}),
         })
@@ -429,30 +422,6 @@ export function RepositoryFormDialog({
 
           {forge ? (
             <ForgeSwitch forge={forge} control={control} error={formState.errors.forge_enabled} />
-          ) : null}
-
-          {forge && forgeEnabled ? (
-            <Field>
-              <div className="flex items-center gap-3">
-                <Controller
-                  control={control}
-                  name="supervise_posts"
-                  render={({ field }) => (
-                    <Switch
-                      id="repository-supervise-posts"
-                      aria-label="Supervise posts"
-                      checked={field.value}
-                      onCheckedChange={(checked) => field.onChange(checked)}
-                    />
-                  )}
-                />
-                <FieldLabel htmlFor="repository-supervise-posts">Supervise posts</FieldLabel>
-              </div>
-              <FieldDescription>
-                Put agent replies, reviews and resolves in your pending GitHub review, and open pull
-                requests as drafts.
-              </FieldDescription>
-            </Field>
           ) : null}
         </FormDialogBody>
       </FormDialogContent>

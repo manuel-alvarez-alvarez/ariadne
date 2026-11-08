@@ -750,47 +750,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/pull-requests/{id}/comments/delete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Delete one of the viewer's own pending forge posts, by its own forge id
-         *     (026 rule 25). Refused with 409 once the user submits or publishes it.
-         */
-        post: operations["pull-requests_delete_pending_comment"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/pull-requests/{id}/comments/edit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Edit the body of one of the viewer's own pending forge posts: a pending
-         *     review comment, by its own forge id (026 rule 25). Refused with 409 once
-         *     the user submits or publishes it.
-         */
-        post: operations["pull-requests_edit_pending_comment"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/pull-requests/{id}/comments/{comment_id}": {
         parameters: {
             query?: never;
@@ -820,10 +779,7 @@ export interface paths {
         /**
          * Reply to one comment. The daemon posts the reply through the forge CLI,
          *     marks it the review's where a review session posts it (029), and reads
-         *     the request again. Where the repository holds posts back (002, 026 rule
-         *     24), nothing is posted: the reply waits in the user's own forge drafts,
-         *     and the answer carries `pending: true` with the forge id of the pending
-         *     item instead of the comment the forge would otherwise hold.
+         *     the request again.
          */
         post: operations["pull-requests_reply"];
         delete?: never;
@@ -845,8 +801,7 @@ export interface paths {
          * Resolve the thread of one comment, once a push fixed what it found
          *     (029). Only a review session resolves, and only a thread it opened under
          *     the integration login: the threads of anyone else stay open for the
-         *     person who wrote them. A repository that supervises its posts refuses
-         *     the resolve with 409: the fixed thread stays open for the human author.
+         *     person who wrote them.
          */
         post: operations["pull-requests_resolve"];
         delete?: never;
@@ -871,26 +826,6 @@ export interface paths {
         get: operations["pull-requests_diff"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/pull-requests/{id}/pending-review/body": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Replace the body of the viewer's own pending review outright (026 rule
-         *     25). Refused with 409 once the user submits it, or where there is none.
-         */
-        post: operations["pull-requests_edit_pending_review_body"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1129,7 +1064,7 @@ export interface paths {
          * Start a loose session: a new conversation with an agent, in a directory,
          *     with no goal, task or seat behind it.
          * @description The model is checked as a goal's pin is — a registry agent and a model of
-         *     it, not one the user turned off — and the effort against that model. The
+         *     it, including a user-disabled manual-only model — and the effort against that model. The
          *     directory must be an absolute path to one that exists. The session comes
          *     back live, waiting for the first prompt typed into its console, which
          *     becomes its title.
@@ -1207,12 +1142,18 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Cancel the turn a session is running.
-         * @description Sends ACP `session/cancel` to the agent while its `session/prompt` is
+         * Cancel the turn a session is running, or one subagent of it.
+         * @description With no body, or a body naming no `subagent_id`, sends ACP
+         *     `session/cancel` for the session's own turn while its `session/prompt` is
          *     still in flight. The turn then ends as any other does — the text so far
          *     stored, then a `stop` whose `stop_reason` is `cancelled`. A session that
          *     is not live, one whose agent process is gone, and one between turns all
          *     have nothing to cancel, and say so with `409`.
+         *
+         *     Naming a `subagent_id` (021) sends `session/cancel` with that child's own
+         *     session id instead, and leaves the session's own turn as it is. It is
+         *     refused with `409` where the child is unknown, has already ended, or
+         *     never advertised the capability in its announcement.
          */
         post: operations["sessions_console_cancel"];
         delete?: never;
@@ -1364,8 +1305,9 @@ export interface paths {
         /**
          * Switch a session to another model or agent. A same-agent switch keeps the
          *     session and conversation; another agent starts a new session on the seat.
-         * @description The pin is checked as `POST /v1/sessions` checks it, a model turned off
-         *     included. A session of a cancelled goal is refused.
+         * @description A user may switch manually to a disabled manual-only model. An agent
+         *     session must switch only to a model automatic staffing can use. A session
+         *     of a cancelled goal is refused.
          */
         post: operations["sessions_switch_session"];
         delete?: never;
@@ -1442,86 +1384,6 @@ export interface paths {
         put?: never;
         /** Put a built-in skill back on the document Ariadne ships. */
         post: operations["skills_reset_document"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/stats/attention": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["stats_attention"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/stats/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["stats_models"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/stats/spend": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["stats_spend"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/stats/time": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["stats_time"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/stats/work": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["stats_work"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2091,30 +1953,6 @@ export interface components {
          * @enum {string}
          */
         AttentionCause: "access" | "quota" | "configuration" | "resource" | "unknown";
-        AttentionFlagDto: {
-            /** Format: double */
-            mean_wait_secs: number;
-            /** Format: int64 */
-            raised: number;
-            reason: string;
-        };
-        /**
-         * @description The times a person stepped in: permissions decided at the console,
-         *     questions and stalls. `person_secs` is how long those waited on the
-         *     person.
-         */
-        AttentionInterventionsDto: {
-            /** Format: int64 */
-            permissions: number;
-            /** Format: double */
-            person_secs: number;
-            /** Format: int64 */
-            questions: number;
-            /** Format: int64 */
-            stalls: number;
-            /** Format: int64 */
-            total: number;
-        };
         /** @description One item on the Needs attention list. */
         AttentionItemDto: {
             /**
@@ -2172,44 +2010,6 @@ export interface components {
          * @enum {string}
          */
         AttentionReason: "waiting_permission" | "waiting_input" | "waiting_user" | "agent_error" | "disconnected" | "stalled" | "exhausted";
-        /** @description Response of `GET /v1/stats/attention`: how much did it need me? */
-        AttentionStatsDto: {
-            /**
-             * Format: int64
-             * @default 0
-             */
-            exhaustions: number;
-            /** @default [] */
-            flags: components["schemas"]["AttentionFlagDto"][];
-            /**
-             * @default {
-             *       "permissions": 0,
-             *       "questions": 0,
-             *       "stalls": 0,
-             *       "total": 0,
-             *       "person_secs": 0
-             *     }
-             */
-            interventions: components["schemas"]["AttentionInterventionsDto"];
-            /**
-             * @default {
-             *       "total": 0,
-             *       "person_share": 0,
-             *       "by_decider": []
-             *     }
-             */
-            permissions: components["schemas"]["PermissionStatsDto"];
-            /**
-             * Format: int64
-             * @default 0
-             */
-            sessions_failed: number;
-            /**
-             * Format: int64
-             * @default 0
-             */
-            sessions_stalled: number;
-        };
         /** @description One entity an item's blocker affects. */
         AttentionSubjectDto: {
             id: string;
@@ -2275,12 +2075,6 @@ export interface components {
             version?: string | null;
         };
         /**
-         * @description The step a time axis is drawn at: a bar an hour over a very short span, a
-         *     bar a day over a short one, a bar a week over a long one.
-         * @enum {string}
-         */
-        BucketDto: "hour" | "day" | "week";
-        /**
          * @description Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is
          *     done. Its call, not the user's, and it carries nothing — every task being
          *     finished or cancelled is the whole of the argument, and the daemon checks
@@ -2296,6 +2090,16 @@ export interface components {
             merge_commit?: string | null;
             /** @description What the next column's agent is briefed with. */
             reason: string;
+        };
+        /**
+         * @description Body of `POST /v1/sessions/{id}/console/cancel`. Omitted, or omitting
+         *     `subagent_id`, cancels the session's own running turn, as before (021).
+         *     Naming a child cancels that child's turn instead, and is refused with
+         *     `409` where the child is unknown, has already ended, or never advertised
+         *     the capability.
+         */
+        ConsoleCancelRequest: {
+            subagent_id?: string | null;
         };
         /**
          * @description Body of `POST /v1/sessions/{id}/console/input`.
@@ -2367,11 +2171,6 @@ export interface components {
              */
             path: string;
             permission_mode?: components["schemas"]["PermissionMode"] | null;
-            /**
-             * @description Put agent replies, reviews and resolves in your pending GitHub
-             *     review, and open pull requests as drafts. Omit for `true`.
-             */
-            supervise_posts?: boolean | null;
         };
         CreateSkillRequest: {
             /**
@@ -2449,10 +2248,6 @@ export interface components {
             document_is_default: boolean;
             name: string;
             updated_at: string;
-        };
-        /** @description Body of `POST /v1/pull-requests/{id}/comments/delete` (026 rule 25). */
-        DeletePendingCommentRequest: {
-            forge_id: string;
         };
         /** @description Payload of the deletion events: the id of the gone entity. */
         DeletedDto: {
@@ -2626,23 +2421,6 @@ export interface components {
             event: "pull_requests_changed";
         };
         /**
-         * @description Body of `POST /v1/pull-requests/{id}/comments/edit` (026 rule 25): change the
-         *     body of one of the viewer's own pending forge posts — a pending review
-         *     comment — while it still waits in the user's forge drafts.
-         */
-        EditPendingCommentRequest: {
-            body: string;
-            /**
-             * @description The forge id of the pending comment, as `reply_comment` or
-             *     `submit_review` answered it.
-             */
-            forge_id: string;
-        };
-        /** @description Body of `POST /v1/pull-requests/{id}/pending-review/body` (026 rule 25). */
-        EditPendingReviewBodyRequest: {
-            body: string;
-        };
-        /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
          *     what spending it buys.
          *
@@ -2786,10 +2564,6 @@ export interface components {
             model: string;
             /** @description Whether this goal has an orchestrator for its lifetime. */
             orchestrated: boolean;
-            /**
-             * @description The pull request and operation this goal runs (029), or null for an
-             *     ordinary goal. One open goal exists per request and operation.
-             */
             pull_request?: components["schemas"]["PullRequestOperationDto"] | null;
             /**
              * @description The registered repositories the goal works in, as they stand now: a
@@ -2891,14 +2665,6 @@ export interface components {
         /** @description Payload of `issues_changed`: the repository whose open issues moved. */
         IssuesChangedDto: {
             repository_id: string;
-        };
-        LeadTimeDto: {
-            /** Format: double */
-            mean_secs: number;
-            /** Format: double */
-            median_secs: number;
-            /** Format: double */
-            p90_secs: number;
         };
         /**
          * @description One user choice or denial of an ACP permission request, keyed by the
@@ -3069,60 +2835,6 @@ export interface components {
          * @enum {string}
          */
         ModelRank: "frontier" | "balanced" | "fast" | "local";
-        /** @description What one model spent, every seat that ran on it pooled together. */
-        ModelSpendDto: {
-            /** Format: int64 */
-            cached_input_tokens: number;
-            /** Format: int64 */
-            input_tokens: number;
-            model: string;
-            /** Format: int64 */
-            output_tokens: number;
-            /**
-             * Format: double
-             * @description `input_tokens + output_tokens` over the same total of every model.
-             */
-            share: number;
-        };
-        /** @description What one model did in one seat. */
-        ModelStatDto: {
-            /**
-             * Format: int64
-             * @description Distinct goals with a session of this model in this seat.
-             */
-            goals: number;
-            /**
-             * Format: int64
-             * @description The messages this model sent in this seat.
-             */
-            messages: number;
-            model: string;
-            seat?: string | null;
-            /**
-             * Format: int64
-             * @description Distinct tasks with a session of this model in this seat.
-             */
-            tasks: number;
-            /**
-             * Format: int64
-             * @description The tasks this model's column ended `finished`.
-             */
-            tasks_finished: number;
-            /**
-             * Format: double
-             * @description The sum of the session lifetimes.
-             */
-            time_secs: number;
-            /**
-             * Format: int64
-             * @description Input and output tokens of the ended sessions. Cached tokens are part of input.
-             */
-            tokens: number;
-        };
-        /** @description Models compared within each seat. */
-        ModelStatsDto: {
-            items: components["schemas"]["ModelStatDto"][];
-        };
         /**
          * @description Start a loose session: a new conversation with an agent, in a directory,
          *     with no goal, task or seat behind it.
@@ -3148,8 +2860,6 @@ export interface components {
         OpenPullRequestRequest: {
             /** @description Filled from the repository's own request template. */
             body: string;
-            /** @description Opens the request as a draft. Defaults to false. */
-            draft?: boolean;
             /** @description Titled by the repository's own commit conventions. */
             title: string;
         };
@@ -3176,70 +2886,6 @@ export interface components {
              *     Nothing is written to find out.
              */
             writable: boolean;
-        };
-        /**
-         * @description What editing, deleting or replacing a pending forge post answers (026 rule 25):
-         *     which forge item changed, in words that name the forge.
-         */
-        PendingEditDto: {
-            /**
-             * @description What changed: "the pending GitHub review comment" or "the GitHub
-             *     pending review body".
-             */
-            changed: string;
-            /** @description The forge id of the item that changed. */
-            id: string;
-        };
-        /**
-         * @description What the reply route answers instead of a posted comment, where the
-         *     repository holds agent posts for the user's approval (002, 026 rule 24):
-         *     the reply waits, unposted, as a pending review in the user's own forge
-         *     drafts, until the user publishes it there.
-         */
-        PendingReplyDto: {
-            /**
-             * @description The forge id of the pending item: the pending review's own id for a
-             *     reply to a top-level conversation comment, the new draft comment's
-             *     for a reply inside a review thread.
-             */
-            id: string;
-            /** @description Always true: a posted reply never takes this shape. */
-            pending: boolean;
-        };
-        /**
-         * @description What `POST .../reviews` answers where the repository holds posts back
-         *     (026 rule 24 / 029 rule 13a): the review's findings wait, unposted, in
-         *     the viewer's own pending review, in place of the posted comments the
-         *     route otherwise answers with.
-         */
-        PendingReviewDto: {
-            /** @description Always true: a posted review never takes this shape. */
-            pending: boolean;
-        };
-        /**
-         * @description What a finished task spends, on average: the tokens of every session of a
-         *     task that finished, divided by how many tasks finished. 0 where none.
-         */
-        PerFinishedTaskDto: {
-            /** Format: double */
-            input_tokens: number;
-            /** Format: double */
-            output_tokens: number;
-            /** Format: int64 */
-            tasks: number;
-        };
-        PermissionDeciderDto: {
-            /** Format: int64 */
-            allowed: number;
-            /** Format: int64 */
-            cancelled: number;
-            decided_by: string;
-            /** Format: int64 */
-            denied: number;
-            /** Format: double */
-            mean_wait_ms: number;
-            /** Format: int64 */
-            total: number;
         };
         /**
          * @description How the ACP runtime answers a tool permission request.
@@ -3270,21 +2916,6 @@ export interface components {
             probabilities?: unknown;
             risk_tags?: string[] | null;
             session_id: unknown;
-        };
-        PermissionStatsDto: {
-            by_decider: components["schemas"]["PermissionDeciderDto"][];
-            /** Format: double */
-            person_share: number;
-            /** Format: int64 */
-            total: number;
-        };
-        PersonWaitDto: {
-            /** Format: double */
-            median_secs: number;
-            /** Format: int64 */
-            prompts: number;
-            /** Format: double */
-            total_secs: number;
         };
         /**
          * @description The work Ariadne does on one pull request as a goal of its own: one active
@@ -3404,8 +3035,6 @@ export interface components {
             session_id?: string | null;
             /** @description `open`, `merged` or `closed`. */
             state: string;
-            /** @description Whether this repository holds agent posts for human review. */
-            supervise_posts?: boolean;
             title: string;
             /**
              * Format: int64
@@ -3464,11 +3093,6 @@ export interface components {
              */
             version?: string | null;
         };
-        /**
-         * @description What `POST .../reply` answers: the posted comment, or, where the
-         *     repository holds posts back, [`PendingReplyDto`] in its place.
-         */
-        ReplyAnswerDto: components["schemas"]["PullRequestCommentDto"] | components["schemas"]["PendingReplyDto"];
         /** @description Body of `POST /v1/pull-requests/{id}/comments/{comment_id}/reply`. */
         ReplyCommentRequest: {
             body: string;
@@ -3512,11 +3136,6 @@ export interface components {
              *     answered.
              */
             permission_mode: components["schemas"]["PermissionMode"];
-            /**
-             * @description Put agent replies, reviews and resolves in your pending GitHub
-             *     review, and open pull requests as drafts.
-             */
-            supervise_posts: boolean;
             updated_at: string;
         };
         /** @description Resume a stored conversation without a goal, task or seat. */
@@ -3618,6 +3237,12 @@ export interface components {
             pull_request_id?: string | null;
             seat?: components["schemas"]["Seat"] | null;
             status: components["schemas"]["SessionStatus"];
+            /**
+             * @description The workflow column `task_agent_id` works, where the session still has
+             *     one; null for an orchestrator, a loose session, or an agent its task
+             *     no longer staffs.
+             */
+            step?: string | null;
             /**
              * @description The session this one replaced on its seat, when a switch started it
              *     (`POST /v1/sessions/{id}/switch`); null otherwise.
@@ -3780,92 +3405,12 @@ export interface components {
          * @enum {string}
          */
         SkillSeat: "orchestrator" | "task" | "pull_request";
-        /** @description What was spent in one bucket of the time axis. */
-        SpendBucketDto: {
-            /** Format: int64 */
-            cached_input_tokens: number;
-            /** Format: int64 */
-            input_tokens: number;
-            /** Format: int64 */
-            output_tokens: number;
-            /** @description The RFC 3339 start of the bucket. */
-            start: string;
-        };
-        /**
-         * @description Response of `GET /v1/stats/spend`: what did it spend? Tokens over time, by
-         *     model, and per finished task — never a cost.
-         */
-        SpendStatsDto: {
-            /**
-             * @description The step `buckets` is drawn at.
-             * @default week
-             */
-            bucket: components["schemas"]["BucketDto"];
-            /**
-             * @description One row per bucket from the first fact to the last, zeros included.
-             * @default []
-             */
-            buckets: components["schemas"]["SpendBucketDto"][];
-            /**
-             * @description One row per model, every seat pooled, heaviest first.
-             * @default []
-             */
-            by_model: components["schemas"]["ModelSpendDto"][];
-            /**
-             * @default {
-             *       "tasks": 0,
-             *       "input_tokens": 0,
-             *       "output_tokens": 0
-             *     }
-             */
-            per_finished_task: components["schemas"]["PerFinishedTaskDto"];
-            /**
-             * @default {
-             *       "sessions": 0,
-             *       "input_tokens": 0,
-             *       "cached_input_tokens": 0,
-             *       "output_tokens": 0,
-             *       "cached_share": 0
-             *     }
-             */
-            totals: components["schemas"]["SpendTotalsDto"];
-        };
-        /** @description Tokens spent across every ended session the filter keeps. */
-        SpendTotalsDto: {
-            /** Format: int64 */
-            cached_input_tokens: number;
-            /**
-             * Format: double
-             * @description `cached_input_tokens` over `input_tokens`; 0 where `input_tokens` is 0.
-             */
-            cached_share: number;
-            /** Format: int64 */
-            input_tokens: number;
-            /** Format: int64 */
-            output_tokens: number;
-            /** Format: int64 */
-            sessions: number;
-        };
-        StatusTimeDto: {
-            /** Format: double */
-            median_secs: number;
-            /** Format: double */
-            share: number;
-            status: string;
-            /** Format: double */
-            total_secs: number;
-        };
         /**
          * @description What a step waits for before the next one may start: the author's commit,
          *     a push, a merge onto the base, or a request merged by a human.
          * @enum {string}
          */
         StepGate: "committed" | "pushed" | "merged" | "request_merged";
-        /**
-         * @description What `POST .../reviews` answers: the posted comments, or, where the
-         *     repository holds posts back, [`PendingReviewDto`] in their place.
-         */
-        SubmitReviewAnswerDto: components["schemas"]["PullRequestCommentDto"][] | components["schemas"]["PendingReviewDto"];
         /**
          * @description Body of `POST /v1/pull-requests/{id}/reviews` (029): one review, posted
          *     in the name of the integration login.
@@ -3966,10 +3511,6 @@ export interface components {
             id: string;
             /** @description The commit the task landed as, where its last column reported one. */
             merge_commit?: string | null;
-            /**
-             * @description The pull request operation the task's goal runs (029), or null for an
-             *     ordinary task.
-             */
             operation?: components["schemas"]["PrOperation"] | null;
             /**
              * @description URL of the pull or merge request the task's `pr` column opened, once
@@ -4092,14 +3633,6 @@ export interface components {
             /** @description The ordered risk tags derived from the complete request. */
             risk_tags?: string[] | null;
         };
-        /** @description Response of `GET /v1/stats/time`: how long does finished work take? */
-        TimeStatsDto: {
-            in_status: components["schemas"]["StatusTimeDto"][];
-            lead_time: components["schemas"]["LeadTimeDto"];
-            /** Format: int64 */
-            tasks: number;
-            waiting_on_person: components["schemas"]["PersonWaitDto"];
-        };
         /**
          * @description Tokens spent, as the agents' own transcripts report them.
          *
@@ -4180,11 +3713,6 @@ export interface components {
             forge?: components["schemas"]["ForgeUpdate"] | null;
             path?: string | null;
             permission_mode?: components["schemas"]["PermissionMode"] | null;
-            /**
-             * @description Put agent replies, reviews and resolves in your pending GitHub
-             *     review, and open pull requests as drafts. Absent = unchanged.
-             */
-            supervise_posts?: boolean | null;
         };
         /** @description Partial update; absent fields stay unchanged. */
         UpdateSkillRequest: {
@@ -4234,111 +3762,6 @@ export interface components {
             state: string;
             url?: string | null;
         };
-        /** @description One bucket of the time axis: the counts of the facts that fall in it. */
-        WorkBucketDto: {
-            /**
-             * Format: int64
-             * @default 0
-             */
-            goals_completed: number;
-            /**
-             * Format: int64
-             * @default 0
-             */
-            landed: number;
-            /**
-             * @description The RFC 3339 start of the bucket.
-             * @default
-             */
-            start: string;
-            /**
-             * Format: int64
-             * @default 0
-             */
-            tasks_cancelled: number;
-            /**
-             * Format: int64
-             * @default 0
-             */
-            tasks_failed: number;
-            /**
-             * Format: int64
-             * @default 0
-             */
-            tasks_finished: number;
-        };
-        /** @description Response of `GET /v1/stats/work`: what got done? */
-        WorkStatsDto: {
-            /**
-             * @description `"hour"`, `"day"` or `"week"`: the bucket every
-             *     [`WorkBucketDto::start`] falls on.
-             * @default
-             */
-            bucket: string;
-            /**
-             * @description One row per bucket from the first fact to the last, zeros included.
-             * @default []
-             */
-            buckets: components["schemas"]["WorkBucketDto"][];
-            /**
-             * @default {
-             *       "goals_completed": 0,
-             *       "goals_cancelled": 0,
-             *       "median_goal_lead_time_secs": 0,
-             *       "tasks_finished": 0,
-             *       "tasks_failed": 0,
-             *       "tasks_cancelled": 0,
-             *       "finish_rate": 0,
-             *       "landed": 0
-             *     }
-             */
-            totals: components["schemas"]["WorkTotalsDto"];
-        };
-        /** @description The counts `WorkStatsDto` answers over the whole span a filter keeps. */
-        WorkTotalsDto: {
-            /**
-             * Format: double
-             * @description `tasks_finished` over the three endings; 0 where there are none.
-             * @default 0
-             */
-            finish_rate: number;
-            /**
-             * Format: int64
-             * @default 0
-             */
-            goals_cancelled: number;
-            /**
-             * Format: int64
-             * @default 0
-             */
-            goals_completed: number;
-            /**
-             * Format: int64
-             * @description Finished tasks whose `landing` was `merge` or `pull_request`.
-             * @default 0
-             */
-            landed: number;
-            /**
-             * Format: double
-             * @default 0
-             */
-            median_goal_lead_time_secs: number;
-            /**
-             * Format: int64
-             * @default 0
-             */
-            tasks_cancelled: number;
-            /**
-             * Format: int64
-             * @default 0
-             */
-            tasks_failed: number;
-            /**
-             * Format: int64
-             * @default 0
-             */
-            tasks_finished: number;
-        };
         WorkflowDto: {
             /**
              * @description Whether Ariadne ships this workflow. A built-in is reset rather than
@@ -4353,12 +3776,6 @@ export interface components {
              * @example develop-review-merge
              */
             name: string;
-            /**
-             * @description The pull request operation this workflow serves (029), or null for an
-             *     ordinary workflow. An operation workflow keeps the shape its
-             *     operation reads, and no ordinary goal or repository default can name
-             *     it.
-             */
             operation?: components["schemas"]["PrOperation"] | null;
             /** @description `document`, parsed into its columns. */
             steps: components["schemas"]["WorkflowStepDto"][];
@@ -5767,110 +5184,6 @@ export interface operations {
             };
         };
     };
-    "pull-requests_delete_pending_comment": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DeletePendingCommentRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PendingEditDto"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    "pull-requests_edit_pending_comment": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EditPendingCommentRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PendingEditDto"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     "pull-requests_comment": {
         parameters: {
             query?: never;
@@ -5932,7 +5245,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReplyAnswerDto"];
+                    "application/json": components["schemas"]["PullRequestCommentDto"];
                 };
             };
             403: {
@@ -5978,7 +5291,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReplyAnswerDto"];
+                    "application/json": components["schemas"]["PullRequestCommentDto"];
                 };
             };
             403: {
@@ -6055,61 +5368,6 @@ export interface operations {
             };
         };
     };
-    "pull-requests_edit_pending_review_body": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EditPendingReviewBodyRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PendingEditDto"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     "pull-requests_report": {
         parameters: {
             query?: never;
@@ -6173,7 +5431,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SubmitReviewAnswerDto"];
+                    "application/json": components["schemas"]["PullRequestCommentDto"][];
                 };
             };
             400: {
@@ -6792,9 +6050,14 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description omitted, or `subagent_id` omitted, cancels the session's own turn */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ConsoleCancelRequest"] | null;
+            };
+        };
         responses: {
-            /** @description The running turn was told to cancel */
+            /** @description The turn, or the named subagent, was told to cancel */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -7202,181 +6465,6 @@ export interface operations {
                 content?: never;
             };
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    stats_attention: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Only facts written since then: an RFC 3339 moment, or a span back
-                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
-                 *     Absent is every fact there is.
-                 */
-                since?: string | null;
-                /** @description Only facts about this repository id. */
-                repo?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AttentionStatsDto"];
-                };
-            };
-            /** @description `since` is neither a moment nor a span */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    stats_models: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Only facts written since then: an RFC 3339 moment, or a span back
-                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
-                 *     Absent is every fact there is.
-                 */
-                since?: string | null;
-                /** @description Only facts about this repository id. */
-                repo?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ModelStatsDto"];
-                };
-            };
-            /** @description `since` is neither a moment nor a span */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    stats_spend: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Only facts written since then: an RFC 3339 moment, or a span back
-                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
-                 *     Absent is every fact there is.
-                 */
-                since?: string | null;
-                /** @description Only facts about this repository id. */
-                repo?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SpendStatsDto"];
-                };
-            };
-            /** @description `since` is neither a moment nor a span */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    stats_time: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Only facts written since then: an RFC 3339 moment, or a span back
-                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
-                 *     Absent is every fact there is.
-                 */
-                since?: string | null;
-                /** @description Only facts about this repository id. */
-                repo?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TimeStatsDto"];
-                };
-            };
-            /** @description `since` is neither a moment nor a span */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    stats_work: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Only facts written since then: an RFC 3339 moment, or a span back
-                 *     from now, `<n>m`, `<n>h`, `<n>d` or `<n>w` (`24h`, `7d`, `30d`).
-                 *     Absent is every fact there is.
-                 */
-                since?: string | null;
-                /** @description Only facts about this repository id. */
-                repo?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkStatsDto"];
-                };
-            };
-            /** @description `since` is neither a moment nor a span */
-            400: {
                 headers: {
                     [name: string]: unknown;
                 };

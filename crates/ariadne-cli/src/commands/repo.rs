@@ -76,10 +76,7 @@ pub(crate) enum RepoCommand {
         /// approvals, ai lets the AI permission model decide (default: auto)
         #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
         permission_mode: Option<PermissionMode>,
-        /// Put agent replies, reviews and resolves in your pending GitHub
-        /// review, and open pull requests as drafts (default: on)
-        #[arg(long = "supervise-posts", value_enum)]
-        supervise_posts: Option<Switch>,
+
         /// Run new goals through this workflow by default, where their own
         /// `goal create` line leaves `--workflow` out (default:
         /// develop-review-merge)
@@ -113,10 +110,7 @@ pub(crate) enum RepoCommand {
         /// New permission mode: auto, ask, learn, or ai (the AI permission model decides)
         #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
         permission_mode: Option<PermissionMode>,
-        /// Put agent replies, reviews and resolves in your pending GitHub
-        /// review, and open pull requests as drafts
-        #[arg(long = "supervise-posts", value_enum)]
-        supervise_posts: Option<Switch>,
+
         /// New default workflow for the goals created in it from now on
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::workflow_names))]
         workflow: Option<String>,
@@ -141,7 +135,6 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
             branch,
             description,
             permission_mode,
-            supervise_posts,
             workflow,
             forge,
         } => {
@@ -154,7 +147,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                         base_branch: branch,
                         description,
                         permission_mode,
-                        supervise_posts: supervise_posts.map(|switch| switch == Switch::On),
+
                         forge: forge.update(),
                     },
                 )
@@ -193,7 +186,6 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
             branch,
             description,
             permission_mode,
-            supervise_posts,
             workflow,
             forge,
         } => {
@@ -207,7 +199,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                         base_branch: branch,
                         description,
                         permission_mode,
-                        supervise_posts: supervise_posts.map(|switch| switch == Switch::On),
+
                         forge: forge.update(),
                     },
                 )
@@ -287,12 +279,6 @@ fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'st
         None => rows.push(("forge", "-".into())),
         Some(forge) => {
             rows.push(("forge", forge_label(forge).into()));
-            // `supervise posts` names what Ariadne holds back from the
-            // forge, so it says nothing where there is no forge integration
-            // live to hold it from.
-            if forge.enabled {
-                rows.push(("supervise posts", switch_label(r.supervise_posts).into()));
-            }
             rows.extend([
                 ("webhook state", forge.webhook.state.clone().into()),
                 (
@@ -454,101 +440,6 @@ mod tests {
                 "{argv:?} should be an unknown flag"
             );
         }
-    }
-
-    /// `--supervise-posts` reaches `add` and `update` as a switch, and the
-    /// repository's own value shows in `repo inspect`.
-    #[test]
-    fn repo_add_and_update_take_the_supervise_posts_flag() {
-        #[derive(clap::Parser)]
-        struct Repo {
-            #[command(subcommand)]
-            command: RepoCommand,
-        }
-        let Repo {
-            command: RepoCommand::Add {
-                supervise_posts, ..
-            },
-        } = <Repo as clap::Parser>::try_parse_from([
-            "repo",
-            "add",
-            "/r",
-            "--supervise-posts",
-            "off",
-        ])
-        .expect("parses")
-        else {
-            panic!("repo add")
-        };
-        assert_eq!(supervise_posts, Some(Switch::Off));
-
-        let Repo {
-            command: RepoCommand::Update {
-                supervise_posts, ..
-            },
-        } = <Repo as clap::Parser>::try_parse_from([
-            "repo",
-            "update",
-            "01R",
-            "--supervise-posts",
-            "on",
-        ])
-        .expect("parses")
-        else {
-            panic!("repo update")
-        };
-        assert_eq!(supervise_posts, Some(Switch::On));
-
-        let supervised = RepositoryDto {
-            forge: Some(forge(true, Some("octocat"))),
-            ..fixtures::repository("01A", "/r", "main")
-        };
-        assert!(
-            crate::output::kv_block(
-                &inspect_rows(&supervised, None),
-                &crate::output::View::plain()
-            )
-            .contains("supervise posts")
-        );
-        let unsupervised = RepositoryDto {
-            supervise_posts: false,
-            forge: Some(forge(true, Some("octocat"))),
-            ..fixtures::repository("01A", "/r", "main")
-        };
-        let block = crate::output::kv_block(
-            &inspect_rows(&unsupervised, None),
-            &crate::output::View::plain(),
-        );
-        assert!(
-            block
-                .lines()
-                .any(|l| l.starts_with("supervise posts") && l.trim_end().ends_with("off")),
-            "{block}"
-        );
-
-        // The row names what the forge integration holds back, so it says
-        // nothing where there is no such integration live.
-        let no_forge = fixtures::repository("01A", "/r", "main");
-        assert!(
-            !crate::output::kv_block(
-                &inspect_rows(&no_forge, None),
-                &crate::output::View::plain()
-            )
-            .contains("supervise posts"),
-            "no forge row to hold posts from"
-        );
-        let detected_not_enabled = RepositoryDto {
-            forge: Some(forge(false, None)),
-            ..fixtures::repository("01A", "/r", "main")
-        };
-        assert!(
-            !crate::output::kv_block(
-                &inspect_rows(&detected_not_enabled, None),
-                &crate::output::View::plain()
-            )
-            .contains("supervise posts"),
-            "a detected but disabled forge holds nothing back either"
-        );
     }
 
     /// `--workflow` reaches `add` and `update` the way every other flag of
