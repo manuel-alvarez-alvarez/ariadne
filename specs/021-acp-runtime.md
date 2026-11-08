@@ -143,8 +143,11 @@ outside half) opens no session either: it asks only `initialize` and
    briefing
    (`handoff.rs::the_first_daemon_briefing_is_left_out_and_a_later_daemon_prompt_stays`),
    unless that prompt holds the handoff of an earlier switch, as the first
-   prompt of a switched session does
+   prompt of a switched session does: that prompt stays whole, past the
+   daemon prompt fold
    (`handoff.rs::the_first_prompt_of_a_switched_session_stays_with_its_earlier_history`);
+   a loose session has no briefing, so its first daemon prompt stays too
+   (`handoff.rs::the_first_daemon_prompt_of_a_loose_session_stays`);
    every prompt whose `prompt_kind` is `agent_resume` or
    `orchestrator_resume`, never found by its text
    (`handoff.rs::resume_nudges_are_left_out_by_their_prompt_kind`); and

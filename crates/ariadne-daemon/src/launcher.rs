@@ -1066,7 +1066,7 @@ impl Launcher {
             }
         };
         let events = self.store.list_session_events(&old.id).await?;
-        let handoff = handoff_text(&events, HANDOFF_BUDGET);
+        let handoff = handoff_text(&events, HANDOFF_BUDGET, plan.briefing.is_some());
         let prompt = [plan.briefing, Some(handoff), plan.resume]
             .into_iter()
             .flatten()
