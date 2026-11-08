@@ -30,11 +30,13 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   table in front of the changelog release-please wrote.
 - [`dependabot.yml`](dependabot.yml) — a weekly check of four ecosystems:
   `cargo` at the repository root, `cargo` in `ui/src-tauri` (its own
-  workspace, outside the root one), `npm` in `ui/`, and `github-actions` at
-  the root. Each ecosystem groups its own minor and patch bumps into one
-  pull request; a major bump still opens its own, since those more often
-  need a manual look. Every commit carries the `chore(deps)` prefix, so
-  release-please ignores it the same as any other `chore` commit (root
+  workspace, outside the root one), `npm` in both `ui/` and `ui/dashboard/`
+  (one entry, two directories), and `github-actions` at the root. Each
+  ecosystem groups its own minor and patch bumps into one pull request and
+  its own major bumps into a second, so a family that moves in lockstep
+  (OpenTelemetry, Tauri) lands together; security updates stay ungrouped,
+  one pull request per advisory. Every commit carries the `chore(deps)`
+  prefix, so release-please ignores it the same as any other `chore` commit (root
   [`AGENTS.md`](../AGENTS.md#commit-messages)) and a dependency bump alone
   never triggers a release. Dependabot only proposes; `ci.yml`'s `cargo
   audit` and `npm run check:audit` are what fail a build on an advisory, and
