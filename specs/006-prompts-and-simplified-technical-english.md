@@ -188,8 +188,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     The same two readable rules — the word count and the banned list — hold
     for a line the daemon builds rather than ships as a default, wherever
     that line reaches an agent: the forge's news, a goal's attention line,
-    the handoff's intro and its omission notes, a dependency line in a
-    step's first briefing, the issue goal's `Closes` line, and a tool's
+    the handoff's intro and its omission notes, the issue goal's `Closes` line, and a tool's
     refusal or the result string it writes in place of the daemon's own
     JSON. Each is proven with the `ste` module beside the code that builds
     it, rendered with sample values where the line takes any.
@@ -256,7 +255,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     fenced, since they are the user's own words — unless the goal came
     from an issue, where rule 18 already fences them as the forge's own
     text. A task's title and description are plain the same way,
-    wherever a briefing, a message, a nudge or a dependency line names
+    wherever a briefing, a message or a nudge names
     the task: whoever opens a task is Ariadne's own user or orchestrator,
     never a third party. The orchestrator's own brief for a column's
     agent (`TaskAgent.brief`) is plain too — the orchestrator plans
@@ -278,14 +277,41 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`goals.rs::goal_attention_lines_are_simplified_technical_english`), the
   handoff's intro and its omission notes
   (`handoff.rs::the_intro_and_the_omission_notes_are_simplified_technical_english`),
-  a dependency line in a step's first briefing
-  (`launcher.rs::dependency_line_tests::a_dependency_line_is_simplified_technical_english`),
   the issue goal's `Closes` line
   (`prompts.rs::the_closes_line_is_simplified_technical_english`), and a
   tool's refusal or the result string it writes in place of the daemon's
   own JSON
   (`tools.rs::every_refusal_and_result_string_is_simplified_technical_english`,
   `mcp.rs::the_seat_refusal_is_simplified_technical_english`).
+- A column's first briefing has a `Column:` line, no `Goal:` line and no
+  `Dependencies:` line, and `Previous:` reads `none` where no column came
+  before
+  (`prompts.rs::missing_values_keep_their_fallbacks`,
+  `::every_default_briefing_is_its_template_with_the_values_put_in`).
+- A return reads `Resume "<task>" at <column>. <sentence>` and then
+  `Reason: <reason>`, where the sentence is one of three
+  (`prompts.rs::a_return_says_its_direction_in_a_sentence_and_its_reason_on_a_line`,
+  `it/prompts.rs::a_return_and_a_nudge_assemble_word_for_word`,
+  `workflow_steps.rs`, the three directions through a real task). A fresh
+  session that goes back to a column it saw before is briefed in full: the
+  report of the column before it, from a move earlier than the return, as
+  `Previous:` (`none` where there is none), then the return, with the
+  return reason said once
+  (`it/prompts.rs::a_fresh_session_back_in_a_column_gets_the_full_briefing_and_the_return_once`,
+  `::a_fresh_session_back_in_a_later_column_has_the_previous_report`;
+  `tasks.rs::the_previous_report_is_the_last_forward_move_into_the_column`
+  for the choice of report). The orchestrator's `brief` follows only a
+  prompt that holds the full step briefing: it ends the first prompt and the
+  one for a fresh session, and a return to a session that already read it
+  does not repeat it
+  (`it/prompts.rs::a_return_to_a_session_that_read_the_briefing_does_not_repeat_the_brief`,
+  and the two tests above for the fresh session).
+- The orchestrator's briefing shows each repository's id where the goal has
+  more than one repository
+  (`prompts.rs::the_orchestrator_sees_repository_ids_only_when_there_are_several`).
+  The two request briefings have no `Repo:` line
+  (`prompts.rs::the_pull_request_texts_fill_every_placeholder_they_name`,
+  `::the_keeper_briefing_fills_every_placeholder_it_names`).
 - Every default text is within its cap and the totals
   (`defaults.rs::size_caps_hold`).
 - The seat texts and the briefings the agreed text gives ship word for word
@@ -416,13 +442,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   `::a_goal_from_an_issue_names_the_line_that_closes_it`; end to end,
   `prompts.rs::an_issue_goal_keeps_its_url_and_briefs_the_orchestrator_to_close_it`).
   The same holds everywhere else a goal's title reaches a briefing: the
-  resume nudge, the attention text and a column's first briefing fence
+  resume nudge and the attention text fence
   an issue goal's title and leave a user-typed one plain, the same as
   the orchestrator's own first briefing does
   (`prompts.rs::an_issue_goals_title_stays_fenced_everywhere_it_is_named`,
   `::a_user_typed_goals_title_stays_plain_everywhere_it_is_named`).
-  A task's title and description reach a briefing, a nudge, a relayed
-  message or a dependency line plain, never fenced, proved through the
+  A task's title and description reach a briefing, a nudge or a relayed
+  message plain, never fenced, proved through the
   daemon's own rendering, not a hand-built string
   (`agent_messages.rs::a_message_is_handed_to_the_agent_it_was_sent_to`,
   `::two_tasks_on_the_same_skills_are_named_apart_in_their_relay_to_the_orchestrator`,

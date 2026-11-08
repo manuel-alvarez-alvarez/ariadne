@@ -528,7 +528,7 @@ async fn the_scheduler_relaunches_the_current_columns_agent_in_its_session() {
     assert!(h.prompts_to(&develop).len() > prompts);
     assert!(
         h.prompted(&develop)
-            .contains("Not a new request: continue task at Develop."),
+            .contains("Not a new request: continue \"task\" at Develop."),
         "the relaunched agent is told to go on: {}",
         h.prompted(&develop)
     );

@@ -288,13 +288,19 @@ async fn a_task_walks_develop_review_merge_with_one_agent_per_column() {
         h.prompted(&develop).contains("Fix the edge case.")
     })
     .await;
-    assert!(h.prompted(&develop).contains("Direction: back"));
+    assert!(
+        h.prompted(&develop)
+            .contains("A later column sent the task back.")
+    );
     call(&h, &task, &develop, "complete", "The edge case is fixed.").await;
     eventually(TIMEOUT, "the second review briefing", || async {
         h.prompted(&review).contains("The edge case is fixed.")
     })
     .await;
-    assert!(h.prompted(&review).contains("Direction: forward"));
+    assert!(
+        h.prompted(&review)
+            .contains("The column before this one finished again.")
+    );
     call(&h, &task, &review, "complete", "The change passes review.").await;
     let merge = session_at(&h, &task, "merge").await;
     assert_eq!(merge.worktree_path, develop.worktree_path);
@@ -459,7 +465,8 @@ async fn a_first_column_failure_retries_on_develop_with_the_same_session() {
         )
         .await;
     eventually(TIMEOUT, "the retry briefing", || async {
-        h.prompted(&develop).contains("Direction: retry")
+        h.prompted(&develop)
+            .contains("The orchestrator retried the task.")
     })
     .await;
     assert_eq!(
@@ -755,7 +762,7 @@ async fn only_the_current_column_is_nudged_and_idle_columns_raise_no_attention()
     );
     assert!(
         h.prompted(&review)
-            .contains("Not a new request: continue Build the feature at Review.")
+            .contains("Not a new request: continue \"Build the feature\" at Review.")
     );
     assert!(!ariadne_daemon::attention::work_is_active(&h.store, &develop).await);
     let _: Value = h

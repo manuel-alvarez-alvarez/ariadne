@@ -186,10 +186,15 @@ pub(crate) fn orchestrator_briefing(
     repos: &[Repository],
     steps: &[GoalStep],
 ) -> String {
+    let several = repos.len() > 1;
     let repo_lines = repos
         .iter()
         .map(|r| {
-            let line = format!("- {} (base branch: {})", r.path, r.base_branch);
+            let line = if several {
+                format!("- {}: {} (base branch: {})", r.id, r.path, r.base_branch)
+            } else {
+                format!("- {} (base branch: {})", r.path, r.base_branch)
+            };
             match r.description.as_deref().map(str::trim) {
                 Some(d) if !d.is_empty() => format!("{line} — {d}"),
                 _ => line,
@@ -313,7 +318,6 @@ pub(crate) fn exhausted_switch_notice(
 pub(crate) fn pull_request_briefing(
     template: &str,
     pull: &PullRequest,
-    repo: &Repository,
     worktree: &str,
     login: &str,
 ) -> String {
@@ -326,7 +330,6 @@ pub(crate) fn pull_request_briefing(
         &[
             ("title", &fence(&pull.title)),
             ("url", &fence(&pull.url)),
-            ("repo_path", &repo.path),
             ("worktree_path", worktree),
             ("head_branch", &fence(&pull.head_branch)),
             ("base_branch", &fence(&pull.base_branch)),
@@ -351,7 +354,6 @@ pub(crate) fn pull_request_news(template: &str, pull: &PullRequest, news: &[Stri
 pub(crate) fn pull_request_keeper_briefing(
     template: &str,
     pull: &PullRequest,
-    repo: &Repository,
     worktree: &str,
     branch: &str,
     login: &str,
@@ -362,7 +364,6 @@ pub(crate) fn pull_request_keeper_briefing(
         &[
             ("title", &fence(&pull.title)),
             ("url", &fence(&pull.url)),
-            ("repo_path", &repo.path),
             ("worktree_path", worktree),
             ("branch", branch),
             ("base_branch", &fence(&pull.base_branch)),
@@ -376,18 +377,20 @@ pub(crate) fn pull_request_keeper_briefing(
 pub(crate) fn step_briefing(
     template: &str,
     task: &Task,
-    goal: &Goal,
     repo: &Repository,
     step: &GoalStep,
     previous: &str,
-    dependencies: &str,
 ) -> String {
+    let previous_summary = if previous.is_empty() {
+        "none".to_string()
+    } else {
+        fence(previous)
+    };
     render(
         template,
         &[
             ("task_title", &task.title),
             ("task_description", &task.description),
-            ("goal_title", &goal_title(goal)),
             ("worktree_path", task.worktree_path.as_deref().unwrap_or("")),
             ("branch", &task.branch),
             ("base_branch", &repo.base_branch),
@@ -395,14 +398,14 @@ pub(crate) fn step_briefing(
             ("step_id", &step.id),
             ("step_title", &step.title),
             ("step_description", &step.description),
-            ("previous_summary", &fence(previous)),
-            ("dependencies", dependencies),
+            ("previous_summary", &previous_summary),
         ],
     )
 }
 
 /// What a column's agent is briefed with when the task comes back to its
-/// column: which way it came, and why.
+/// column: which way it came, and why. `direction` is `back`, `forward` or
+/// `retry`, and is written out as one sentence.
 pub(crate) fn step_return(
     template: &str,
     task: &Task,
@@ -415,10 +418,18 @@ pub(crate) fn step_return(
         &[
             ("task_title", &task.title),
             ("step_title", &step.title),
-            ("direction", direction),
+            ("direction", direction_sentence(direction)),
             ("reason", &fence(reason)),
         ],
     )
+}
+
+fn direction_sentence(direction: &str) -> &'static str {
+    match direction {
+        "back" => "A later column sent the task back.",
+        "forward" => "The column before this one finished again.",
+        _ => "The orchestrator retried the task.",
+    }
 }
 
 /// What the agent of the current column is nudged with.
@@ -625,7 +636,7 @@ mod tests {
                 .join("\n");
             let rendered = match kind {
                 PromptKind::StepBriefing => {
-                    step_briefing(&template, &task, &goal, &repo, &steps[0], "summary", "none")
+                    step_briefing(&template, &task, &repo, &steps[0], "summary")
                 }
                 PromptKind::StepReturn => {
                     step_return(&template, &task, &steps[0], "back", "fix it")
@@ -734,14 +745,12 @@ mod tests {
                 reviewed_sha: Some("abd".into()),
                 ..pull.clone()
             },
-            &repo(),
             "/worktrees/pr-01pr",
             "me",
         );
         for value in [
             "Fix widgets",
             "https://github.com/acme/widgets/pull/7",
-            "/repos/ariadne",
             "/worktrees/pr-01pr, at <<<untrusted>>>abc<<<end untrusted>>>",
             "<<<untrusted>>>fix<<<end untrusted>>> onto <<<untrusted>>>main<<<end untrusted>>>",
             "Your login: me",
@@ -834,7 +843,6 @@ mod tests {
         let briefing = pull_request_keeper_briefing(
             template,
             &pull,
-            &repo(),
             "/worktrees/pr-01pr-keep",
             "ariadne/keep-01pr",
             "me",
@@ -843,7 +851,6 @@ mod tests {
         for value in [
             "Fix widgets",
             "https://github.com/acme/widgets/pull/7",
-            "/repos/ariadne",
             "/worktrees/pr-01pr-keep",
             "ariadne/keep-01pr, onto <<<untrusted>>>main<<<end untrusted>>>",
             "Your login: me",
@@ -914,16 +921,13 @@ mod tests {
                 step_briefing(
                     default(PromptKind::StepBriefing),
                     &task,
-                    &goal,
                     &repo,
                     &steps[1],
                     "The change is committed.",
-                    "none",
                 ),
                 vec![
                     ("task_title", &task.title),
                     ("task_description", &task.description),
-                    ("goal_title", &goal.title),
                     ("worktree_path", task.worktree_path.as_deref().unwrap()),
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
@@ -932,7 +936,6 @@ mod tests {
                     ("step_title", "Review"),
                     ("step_description", "Review the change."),
                     ("previous_summary", &fenced_previous),
-                    ("dependencies", "none"),
                 ],
             ),
             (
@@ -947,7 +950,7 @@ mod tests {
                 vec![
                     ("task_title", &task.title),
                     ("step_title", "Develop"),
-                    ("direction", "back"),
+                    ("direction", "A later column sent the task back."),
                     ("reason", &fenced_reason),
                 ],
             ),
@@ -1026,15 +1029,17 @@ mod tests {
             &steps(),
         );
         assert!(
-            briefing.contains("- /repos/ui (base branch: main) — the web client"),
+            briefing.contains(
+                "- 01repoxxxxxxxxxxxxxxxxxxxx: /repos/ui (base branch: main) — the web client"
+            ),
             "{briefing}"
         );
         assert!(
-            briefing.contains("- /repos/api (base branch: main)\n"),
+            briefing.contains("- 01repoxxxxxxxxxxxxxxxxxxxx: /repos/api (base branch: main)\n"),
             "a blank description adds nothing: {briefing}"
         );
         assert!(
-            briefing.contains("- /repos/ariadne (base branch: main)"),
+            briefing.contains("- 01repoxxxxxxxxxxxxxxxxxxxx: /repos/ariadne (base branch: main)"),
             "{briefing}"
         );
     }
@@ -1089,11 +1094,11 @@ mod tests {
             &steps(),
         );
         assert!(
-            briefing.contains("- /repos/ariadne (base branch: main)"),
+            briefing.contains("- 01repoxxxxxxxxxxxxxxxxxxxx: /repos/ariadne (base branch: main)"),
             "{briefing}"
         );
         assert!(
-            briefing.contains("- /repos/web (base branch: trunk)"),
+            briefing.contains("- 01repoxxxxxxxxxxxxxxxxxxxx: /repos/web (base branch: trunk)"),
             "{briefing}"
         );
         assert!(!briefing.contains('{'), "{briefing}");
@@ -1165,18 +1170,6 @@ mod tests {
         let attention =
             goal_attention_briefing(default(PromptKind::GoalAttention), &goal, "- one failed");
         assert!(attention.contains(fenced_title), "{attention}");
-
-        let task = task();
-        let step = step_briefing(
-            default(PromptKind::StepBriefing),
-            &task,
-            &goal,
-            &repo(),
-            &steps()[0],
-            "",
-            "none",
-        );
-        assert!(step.contains(fenced_title), "{step}");
     }
 
     /// A goal the user typed keeps its title plain in the resume nudge and
@@ -1230,7 +1223,7 @@ mod tests {
     /// fallbacks the daemon used to inline are part of the values now.
     #[test]
     fn missing_values_keep_their_fallbacks() {
-        let (goal, repo) = (goal(), repo());
+        let repo = repo();
         let task = Task {
             worktree_path: None,
             ..task()
@@ -1238,14 +1231,60 @@ mod tests {
         let briefing = step_briefing(
             default(PromptKind::StepBriefing),
             &task,
-            &goal,
             &repo,
             &steps()[0],
             "",
-            "none",
         );
         assert!(briefing.contains("Worktree: \n"), "{briefing}");
-        assert!(briefing.contains("Dependencies: none"), "{briefing}");
+        assert!(briefing.contains("Previous: none\n"), "{briefing}");
         assert!(!briefing.contains('{'), "{briefing}");
+    }
+
+    /// A return names its direction as one sentence and its reason on a line
+    /// of its own (006).
+    #[test]
+    fn a_return_says_its_direction_in_a_sentence_and_its_reason_on_a_line() {
+        let (task, steps) = (task(), steps());
+        for (direction, sentence) in [
+            ("back", "A later column sent the task back."),
+            ("forward", "The column before this one finished again."),
+            ("retry", "The orchestrator retried the task."),
+        ] {
+            let text = step_return(
+                default(PromptKind::StepReturn),
+                &task,
+                &steps[0],
+                direction,
+                "Add a test.",
+            );
+            assert_eq!(
+                text,
+                format!(
+                    "Resume \"{}\" at Develop. {sentence}\nReason: <<<untrusted>>>Add a test.<<<end untrusted>>>",
+                    task.title
+                )
+            );
+        }
+    }
+
+    /// The orchestrator sees each repository id when the goal has more than
+    /// one repository, and none when it has one (006).
+    #[test]
+    fn the_orchestrator_sees_repository_ids_only_when_there_are_several() {
+        let (goal, steps, one) = (goal(), steps(), repo());
+        let two = Repository {
+            id: "01other".into(),
+            path: "/repos/other".into(),
+            ..repo()
+        };
+        let template = default(PromptKind::OrchestratorBriefing);
+        let single = orchestrator_briefing(template, &goal, std::slice::from_ref(&one), &steps);
+        assert!(!single.contains(&one.id), "{single}");
+        let many = orchestrator_briefing(template, &goal, &[one.clone(), two], &steps);
+        assert!(
+            many.contains(&format!("- {}: /repos/ariadne", one.id)),
+            "{many}"
+        );
+        assert!(many.contains("- 01other: /repos/other"), "{many}");
     }
 }

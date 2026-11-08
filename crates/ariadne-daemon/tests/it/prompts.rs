@@ -248,7 +248,6 @@ async fn a_started_column_agent_is_briefed_from_the_builtin_template() {
         &[
             ("task_title", &task.title),
             ("task_description", &task.description),
-            ("goal_title", &cast.goal.title),
             ("worktree_path", task.worktree_path.as_deref().unwrap()),
             ("branch", &task.branch),
             ("base_branch", &cast.repo.base_branch),
@@ -256,10 +255,8 @@ async fn a_started_column_agent_is_briefed_from_the_builtin_template() {
             ("step_id", &step.id),
             ("step_title", &step.title),
             ("step_description", &step.description),
-            // A first column has nothing before it, and this task waits on
-            // nothing.
-            ("previous_summary", ""),
-            ("dependencies", ""),
+            // A first column has nothing before it.
+            ("previous_summary", "none"),
         ],
     );
     // The stub keeps no MCP instructions anyone proved, so the first prompt
@@ -420,6 +417,187 @@ async fn an_agents_brief_reaches_it_in_plain_text() {
     assert!(!prompt.contains("<<<untrusted>>>"), "{prompt}");
 }
 
+const BRIEF: &str = "First commit, then merge without review.";
+
+/// A task whose develop agent carries the orchestrator's brief, with its
+/// first column briefed and committed, ready to be completed.
+async fn briefed_task(h: &Harness) -> (ariadne_store::Task, ariadne_store::AgentSession) {
+    h.git_repo("repo");
+    let (goal, repo) = h.goal().await;
+    let steps = h.store.goal_steps(&goal.id).await.unwrap();
+    let agents = steps
+        .into_iter()
+        .map(|step| NewTaskAgent {
+            brief: matches!(step.id.as_str(), "develop" | "review").then(|| BRIEF.to_string()),
+            ..NewTaskAgent::new(step.id, Vec::<String>::new(), test_pin())
+        })
+        .collect();
+    let task = h
+        .store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id,
+            title: "task".into(),
+            description: "do things".into(),
+            agents,
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_goal_status(&goal.id, GoalStatus::Active)
+        .await
+        .unwrap();
+    h.notify(&task.id);
+    let develop = h.step_session(&task, "develop").await;
+    commit_in(develop.worktree_path.as_deref().unwrap());
+    (task, develop)
+}
+
+/// A fresh session that goes back to the first column is briefed in full:
+/// `Previous:` is `none`, the return follows, the return reason is said once,
+/// and the orchestrator's brief comes last, once.
+#[tokio::test]
+async fn a_fresh_session_back_in_a_column_gets_the_full_briefing_and_the_return_once() {
+    let h = harness().scheduler().await;
+    let (task, develop) = briefed_task(&h).await;
+    h.complete_step(&task, &develop, "The feature is committed.")
+        .await;
+    let review = h.step_session(&task, "review").await;
+
+    // A new pin gives the column's next entry a session of its own.
+    let agent = h
+        .store
+        .list_task_agents(&task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|a| a.step == "develop")
+        .unwrap();
+    h.move_agent(&agent.id, "stub:sonnet").await;
+    h.launcher.kill_session(&develop.id).await.unwrap();
+    h.fail_step(&task, &review, "Fix the edge case.").await;
+
+    eventually(TIMEOUT, "a fresh develop session to be briefed", || async {
+        h.sessions_of(&task.id).await.iter().any(|s| {
+            s.task_agent_id.as_ref() == Some(&agent.id)
+                && s.id != develop.id
+                && !h.prompts_to(s).is_empty()
+        })
+    })
+    .await;
+    let fresh = h
+        .sessions_of(&task.id)
+        .await
+        .into_iter()
+        .find(|s| s.task_agent_id.as_ref() == Some(&agent.id) && s.id != develop.id)
+        .unwrap();
+    let prompt = h.prompted(&fresh);
+    assert!(
+        prompt.contains("Previous: none\nDo this column now."),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains(
+            "Resume \"task\" at Develop. A later column sent the task back.\n\
+             Reason: <<<untrusted>>>Fix the edge case.<<<end untrusted>>>"
+        ),
+        "{prompt}"
+    );
+    assert_eq!(prompt.matches("Fix the edge case.").count(), 1, "{prompt}");
+    assert_eq!(prompt.matches(BRIEF).count(), 1, "{prompt}");
+    assert!(prompt.ends_with(BRIEF), "{prompt}");
+}
+
+/// A fresh session that comes back to a later column has the earlier report
+/// of the column before it as `Previous:`. The report that brought the task
+/// forward is the return reason, said once, and the brief comes once.
+#[tokio::test]
+async fn a_fresh_session_back_in_a_later_column_has_the_previous_report() {
+    let h = harness().scheduler().await;
+    let (task, develop) = briefed_task(&h).await;
+    h.complete_step(&task, &develop, "First report.").await;
+    let review = h.step_session(&task, "review").await;
+    h.fail_step(&task, &review, "Fix the edge case.").await;
+    eventually(TIMEOUT, "the develop agent to be told", || async {
+        h.prompted(&develop).contains("Fix the edge case.")
+    })
+    .await;
+
+    let agent = h
+        .store
+        .list_task_agents(&task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|a| a.step == "review")
+        .unwrap();
+    h.move_agent(&agent.id, "stub:sonnet").await;
+    h.launcher.kill_session(&review.id).await.unwrap();
+    sh(
+        std::path::Path::new(develop.worktree_path.as_deref().unwrap()),
+        "echo more > feature2 && git add feature2 && \
+         git -c user.name=Test -c user.email=test@test commit -qm 'fix: edge case'",
+    );
+    h.complete_step(&task, &develop, "Second report.").await;
+
+    eventually(TIMEOUT, "a fresh review session to be briefed", || async {
+        h.sessions_of(&task.id).await.iter().any(|s| {
+            s.task_agent_id.as_ref() == Some(&agent.id)
+                && s.id != review.id
+                && !h.prompts_to(s).is_empty()
+        })
+    })
+    .await;
+    let fresh = h
+        .sessions_of(&task.id)
+        .await
+        .into_iter()
+        .find(|s| s.task_agent_id.as_ref() == Some(&agent.id) && s.id != review.id)
+        .unwrap();
+    let prompt = h.prompted(&fresh);
+    assert!(
+        prompt.contains("Previous: <<<untrusted>>>First report.<<<end untrusted>>>"),
+        "{prompt}"
+    );
+    assert_eq!(prompt.matches("Second report.").count(), 1, "{prompt}");
+    assert!(
+        prompt.contains(
+            "Resume \"task\" at Review. The column before this one finished again.\nReason:"
+        ),
+        "{prompt}"
+    );
+    assert_eq!(prompt.matches(BRIEF).count(), 1, "{prompt}");
+    assert!(prompt.ends_with(BRIEF), "{prompt}");
+}
+
+/// A return to a session that already read the full briefing does not repeat
+/// the orchestrator's brief: it was in the first prompt, and in no other.
+#[tokio::test]
+async fn a_return_to_a_session_that_read_the_briefing_does_not_repeat_the_brief() {
+    let h = harness().scheduler().await;
+    let (task, develop) = briefed_task(&h).await;
+    h.complete_step(&task, &develop, "The feature is committed.")
+        .await;
+    let review = h.step_session(&task, "review").await;
+    h.fail_step(&task, &review, "Fix the edge case.").await;
+
+    eventually(TIMEOUT, "the return briefing", || async {
+        h.prompted(&develop).contains("Fix the edge case.")
+    })
+    .await;
+    let prompts = h.prompts_to(&develop);
+    assert_eq!(
+        prompts.iter().filter(|p| p.contains(BRIEF)).count(),
+        1,
+        "{prompts:?}"
+    );
+    assert!(prompts[0].ends_with(BRIEF), "{}", prompts[0]);
+    let back = prompts.last().unwrap();
+    assert!(back.contains("Fix the edge case."), "{back}");
+    assert!(!back.contains(BRIEF), "{back}");
+}
+
 /// The other two texts a column's agent meets, pinned the same way: what it
 /// is told when the task comes back to its column, and what it is nudged with
 /// when it has gone quiet with the task still in front of it.
@@ -440,7 +618,7 @@ async fn a_return_and_a_nudge_assemble_word_for_word() {
         &[
             ("task_title", &cast.task.title),
             ("step_title", "Develop"),
-            ("direction", "back"),
+            ("direction", "A later column sent the task back."),
             ("reason", &fence(REASON)),
         ],
     );
