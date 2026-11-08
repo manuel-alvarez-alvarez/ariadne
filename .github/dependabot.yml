@@ -2,12 +2,14 @@
 # `ci.yml`'s `cargo audit` and `npm run check:audit` are what fail a build on
 # an advisory (.github/AGENTS.md, specs/016-install-service-and-release.md).
 #
-# Four ecosystems, one weekly pull request each for every minor and patch
-# bump together; a major bump still opens its own pull request, ungrouped,
-# since those more often need a manual look. Every commit Dependabot writes
-# carries the `chore(deps)` prefix, which release-please ignores the same as
-# any other `chore` commit (root AGENTS.md), so a dependency bump alone never
-# triggers a release.
+# Four ecosystems, at most two weekly pull requests each: one for every minor
+# and patch bump together, and one for every major bump together, so a family
+# that moves in lockstep (OpenTelemetry, Tauri) lands in one pull request
+# instead of one per package. Security updates are left ungrouped, one pull
+# request per advisory, so each fix can land without waiting on the week.
+# Every commit Dependabot writes carries the `chore(deps)` prefix, which
+# release-please ignores the same as any other `chore` commit (root
+# AGENTS.md), so a dependency bump alone never triggers a release.
 version: 2
 updates:
   - package-ecosystem: "cargo"
@@ -17,6 +19,8 @@ updates:
     groups:
       cargo-minor-patch:
         update-types: ["minor", "patch"]
+      cargo-major:
+        update-types: ["major"]
     commit-message:
       prefix: "chore(deps)"
 
@@ -29,16 +33,22 @@ updates:
     groups:
       tauri-cargo-minor-patch:
         update-types: ["minor", "patch"]
+      tauri-cargo-major:
+        update-types: ["major"]
     commit-message:
       prefix: "chore(deps)"
 
+  # `ui/dashboard` is its own npm package with its own lockfile; one entry
+  # covers both, so their bumps share the weekly pull requests.
   - package-ecosystem: "npm"
-    directory: "/ui"
+    directories: ["/ui", "/ui/dashboard"]
     schedule:
       interval: "weekly"
     groups:
       npm-minor-patch:
         update-types: ["minor", "patch"]
+      npm-major:
+        update-types: ["major"]
     commit-message:
       prefix: "chore(deps)"
 
@@ -49,5 +59,7 @@ updates:
     groups:
       actions-minor-patch:
         update-types: ["minor", "patch"]
+      actions-major:
+        update-types: ["major"]
     commit-message:
       prefix: "chore(deps)"
