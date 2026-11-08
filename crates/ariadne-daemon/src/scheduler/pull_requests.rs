@@ -755,7 +755,7 @@ impl super::Scheduler {
                 &repo,
                 std::path::Path::new(&worktree),
             );
-            self.check_session_quiet(&session, SITUATION.to_string(), &briefing)
+            self.check_session_quiet(&session, SITUATION.to_string(), &briefing, None)
                 .await?;
         }
         Ok(())
@@ -883,7 +883,7 @@ impl super::Scheduler {
                 .launcher
                 .keeper_briefing_of(pull, &repo, std::path::Path::new(&worktree), &branch)
                 .await?;
-            self.check_session_quiet(&session, SITUATION.to_string(), &briefing)
+            self.check_session_quiet(&session, SITUATION.to_string(), &briefing, None)
                 .await?;
         }
         Ok(())

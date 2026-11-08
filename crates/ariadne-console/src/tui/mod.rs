@@ -827,6 +827,7 @@ impl Console {
             },
             text: text.to_string(),
             source: Some("console".into()),
+            prompt_kind: None,
         });
         // A prompt typed while a turn runs is queued behind it: the status
         // row still says what that turn is doing.

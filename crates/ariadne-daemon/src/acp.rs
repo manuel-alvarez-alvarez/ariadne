@@ -37,7 +37,7 @@ use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use ariadne_api::events::{AgentEventDto, IngestEventRequest, PermissionReplyDto};
 use ariadne_core::acp::LaunchConfig;
 use ariadne_core::id::new_id;
-use ariadne_core::{PermissionMode, TokenUsage};
+use ariadne_core::{PermissionMode, PromptKind, TokenUsage};
 use ariadne_store::{PullRequestTold, Store};
 
 use crate::acp_calls::PromptTurn;
@@ -266,6 +266,9 @@ struct Prompt {
     /// request's news (026). The driver claims it right before the prompt
     /// goes out. A nudge, a briefing and console input carry none.
     delivery: Option<Delivery>,
+    /// The lifecycle kind of a daemon prompt that has one, recorded as
+    /// `prompt_kind` on `user_prompt_submit`.
+    kind: Option<PromptKind>,
 }
 
 /// What a daemon prompt hands over that the store records as handed, claimed
@@ -765,11 +768,27 @@ impl AcpRuntime {
     /// Errs where there is nobody here to hear it: no agent runs for this
     /// session.
     pub(crate) fn send_step(&self, session_id: &str, transition: &str, text: String) -> Result<()> {
-        self.queue_daemon_prompt(session_id, text, Some(Delivery::Step(transition.into())))
+        self.queue_daemon_prompt(
+            session_id,
+            text,
+            Some(Delivery::Step(transition.into())),
+            None,
+        )
     }
 
     pub fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
-        self.queue_daemon_prompt(session_id, text, None)
+        self.queue_daemon_prompt(session_id, text, None, None)
+    }
+
+    /// [`Self::send_prompt`] for a prompt of a lifecycle `kind`, such as a
+    /// resume nudge, which `user_prompt_submit` records as `prompt_kind`.
+    pub(crate) fn send_prompt_of_kind(
+        &self,
+        session_id: &str,
+        text: String,
+        kind: PromptKind,
+    ) -> Result<()> {
+        self.queue_daemon_prompt(session_id, text, None, Some(kind))
     }
 
     /// Hand the running orchestrator a prompt naming its goal's failed and
@@ -789,6 +808,7 @@ impl AcpRuntime {
                 goal_id,
                 failed_tasks,
             }),
+            None,
         )
     }
 
@@ -806,6 +826,7 @@ impl AcpRuntime {
             session_id,
             text,
             Some(Delivery::PullRequestNews(Box::new(news))),
+            None,
         )
     }
 
@@ -826,6 +847,7 @@ impl AcpRuntime {
             session_id,
             text,
             Some(Delivery::Message(message_id.to_string())),
+            None,
         )
     }
 
@@ -834,6 +856,7 @@ impl AcpRuntime {
         session_id: &str,
         text: String,
         delivery: Option<Delivery>,
+        kind: Option<PromptKind>,
     ) -> Result<()> {
         let mut running = self.inner.running.lock().expect("acp registry lock");
         let agent = running
@@ -849,6 +872,7 @@ impl AcpRuntime {
             text,
             source: PromptSource::Daemon,
             delivery,
+            kind,
         });
         if sent.is_err()
             && let Some(key) = &key
@@ -951,6 +975,7 @@ impl AcpRuntime {
                 text,
                 source: PromptSource::Console,
                 delivery: None,
+                kind: None,
             })
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
@@ -2638,6 +2663,7 @@ async fn run_protocol(
             text: prompt.to_string(),
             source: PromptSource::Daemon,
             delivery: None,
+            kind: None,
         };
         prompt_once(rpc, &session_id, &prompt).await?;
     }
@@ -3146,6 +3172,7 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
                 "prompt": full,
                 "text": prompt.text,
                 "source": prompt.source.as_str(),
+                "prompt_kind": prompt.kind.map(|kind| kind.as_str()),
             }),
         )
         .await;

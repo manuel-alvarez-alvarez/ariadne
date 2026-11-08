@@ -219,8 +219,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     their last ten lines with a count of what is hidden; a call with no end
     renders its head alone; a `permission_request` and its
     `permission.replied` as one line, the head of the call and the option
-    chosen; and a `session.error` as one line, its message.
+    chosen; and a `session.error` as one line, its first line.
     `agent_thought`, `stop`, `session_start` and `session_end` are left out.
+    What the history leaves out beyond these is stated once, in 021 rule 4.
 16. Every entry is fenced in a character reserved to the fence alone, and
     stripped from the entry's own text first, so nothing a tool's output or
     a diff carries can forge the fence and close the block early.

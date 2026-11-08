@@ -40,8 +40,13 @@ impl super::Scheduler {
                     }
                     let template = prompts::template_for(PromptKind::OrchestratorResume);
                     let nudge = prompts::orchestrator_resume_briefing(template, &goal);
-                    self.check_session_quiet(&orchestrator, goal.status.clone(), &nudge)
-                        .await?;
+                    self.check_session_quiet(
+                        &orchestrator,
+                        goal.status.clone(),
+                        &nudge,
+                        Some(PromptKind::OrchestratorResume),
+                    )
+                    .await?;
                 }
             }
             // A goal under way wants its orchestrator too. It is the one agent

@@ -255,6 +255,9 @@ pub enum TranscriptItem {
         meta: ItemMeta,
         text: String,
         source: Option<String>,
+        /// The lifecycle kind of a daemon prompt that has one, such as
+        /// `agent_resume` for a resume nudge.
+        prompt_kind: Option<String>,
     },
     AgentText {
         meta: ItemMeta,
@@ -337,6 +340,7 @@ impl From<&AgentEventDto> for TranscriptItem {
                 text: string_at(&event.payload, "/text")
                     .unwrap_or_else(|| UNRECORDED_PROMPT.into()),
                 source: string_at(&event.payload, "/source"),
+                prompt_kind: string_at(&event.payload, "/prompt_kind"),
             },
             "agent_message" | "agent_message_chunk" => Self::AgentText {
                 meta,

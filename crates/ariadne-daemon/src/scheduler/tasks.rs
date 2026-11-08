@@ -329,21 +329,26 @@ impl super::Scheduler {
             // recovery for the agent, and no answer at all to a message
             // still waiting on them.
             self.keep_waiting_user(&session, None).await?;
-            let resume = if sessions.iter().any(|s| s.id == session.id) {
-                resume
+            if sessions.iter().any(|s| s.id == session.id) {
+                self.hand_nudge(&session, resume, PromptKind::AgentResume);
             } else {
-                format!(
+                let resume = format!(
                     "{}\n\n{resume}",
                     self.launcher.step_first_briefing(&task, step, "").await?
-                )
-            };
-            self.hand_prompt(&session, resume);
+                );
+                self.hand_prompt(&session, resume);
+            }
         } else if !(task.pr_url.is_some() && session.status() == SessionStatus::Idle) {
             // An agent that keeps an open request waits on the forge between
             // its news (030): idle there is not quiet, and it is never nudged
             // for it. Only a turn that never ends is watched.
-            self.check_session_quiet(&session, entry.id.clone(), &resume)
-                .await?;
+            self.check_session_quiet(
+                &session,
+                entry.id.clone(),
+                &resume,
+                Some(PromptKind::AgentResume),
+            )
+            .await?;
         }
         Ok(())
     }

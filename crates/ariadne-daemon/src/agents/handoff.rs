@@ -9,6 +9,7 @@
 use serde_json::Value;
 
 use ariadne_console::transcript::{PlanEntry, Tool, TranscriptItem, fold, tool_is_terminal};
+use ariadne_core::PromptKind;
 use ariadne_store::AgentEvent;
 
 use crate::http::convert::event_dto;
@@ -34,11 +35,29 @@ const INTRO: &str =
 
 /// Render `events` as the handoff text a new agent reads in place of the
 /// conversation it cannot resume, kept under `budget` characters.
-pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize) -> String {
+///
+/// A `briefed` session had a briefing as its first prompt, which the handoff
+/// leaves out. A loose session has none, so its first daemon prompt is
+/// conversation and stays.
+pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize, briefed: bool) -> String {
     let dtos: Vec<_> = events.iter().cloned().map(event_dto).collect();
-    let entries: Vec<_> = fold(&dtos)
+    let items = fold(&dtos);
+    let first_briefing = items
         .iter()
-        .filter_map(|item| {
+        .position(is_daemon_prompt)
+        .filter(|index| briefed && !carries_handoff(&items[*index]));
+    let last_error = items
+        .iter()
+        .rposition(|item| matches!(item, TranscriptItem::Error { .. }));
+    let entries: Vec<_> = items
+        .iter()
+        .enumerate()
+        .filter(|(index, item)| {
+            Some(*index) != first_briefing
+                && !is_resume_nudge(item)
+                && (!matches!(item, TranscriptItem::Error { .. }) || Some(*index) == last_error)
+        })
+        .filter_map(|(_, item)| {
             render_entry(item).map(|text| RankedEntry {
                 priority: priority(item, &text),
                 text,
@@ -46,6 +65,26 @@ pub(crate) fn handoff_text(events: &[AgentEvent], budget: usize) -> String {
         })
         .collect();
     apply_budget(entries, budget)
+}
+
+/// A prompt the daemon sent, not the user.
+fn is_daemon_prompt(item: &TranscriptItem) -> bool {
+    matches!(item, TranscriptItem::UserPrompt { source, .. } if source.as_deref() == Some("daemon"))
+}
+
+/// A prompt that holds the handoff of an earlier switch: the first prompt of
+/// a switched session. Its history is not in any briefing, so it stays.
+fn carries_handoff(item: &TranscriptItem) -> bool {
+    matches!(item, TranscriptItem::UserPrompt { text, .. } if text.contains(INTRO.trim_end()))
+}
+
+/// A nudge that woke a quiet agent, found by the prompt kind the runtime
+/// recorded and never by its text.
+fn is_resume_nudge(item: &TranscriptItem) -> bool {
+    matches!(item, TranscriptItem::UserPrompt { prompt_kind: Some(kind), .. }
+        if [PromptKind::AgentResume, PromptKind::OrchestratorResume]
+            .iter()
+            .any(|nudge| nudge.as_str() == kind))
 }
 
 /// A rendered block and the priority that its genuine transcript role and
@@ -125,7 +164,7 @@ fn decisive_result(tool: &Tool, rendered: &str) -> bool {
 fn render_entry(item: &TranscriptItem) -> Option<String> {
     let body = match item {
         TranscriptItem::UserPrompt { text, source, .. } => {
-            user_prompt_body(text, source.as_deref())
+            user_prompt_body(text, source.as_deref(), carries_handoff(item))
         }
         TranscriptItem::AgentText { text, .. } => format!("agent\n{text}"),
         TranscriptItem::Thought { .. } => return None,
@@ -134,7 +173,9 @@ fn render_entry(item: &TranscriptItem) -> Option<String> {
         TranscriptItem::PermissionQuestion { tool, answer, .. } => {
             permission_body(tool, answer.as_deref())
         }
-        TranscriptItem::Error { text, .. } => format!("error\n{text}"),
+        TranscriptItem::Error { text, .. } => {
+            format!("error\n{}", text.lines().next().unwrap_or_default())
+        }
         TranscriptItem::SystemNote { .. } | TranscriptItem::Raw { .. } => return None,
     };
     Some(fenced(body))
@@ -142,9 +183,12 @@ fn render_entry(item: &TranscriptItem) -> Option<String> {
 
 /// A `user_prompt_submit`: whole under the `user` marker from the console,
 /// folded to its first lines with a count of the rest under the `daemon`
-/// marker from the daemon.
-fn user_prompt_body(text: &str, source: Option<&str>) -> String {
-    if source == Some("daemon") {
+/// marker from the daemon. A daemon prompt that holds an earlier handoff is
+/// kept whole: the fold would hide the history it carries.
+fn user_prompt_body(text: &str, source: Option<&str>, whole: bool) -> String {
+    if whole {
+        format!("daemon\n{text}")
+    } else if source == Some("daemon") {
         let (shown, hidden) = head_fold(text, DAEMON_PROMPT_FOLD);
         let mut body = format!("daemon\n{shown}");
         if hidden > 0 {
@@ -471,7 +515,7 @@ mod tests {
 
     #[test]
     fn the_text_opens_with_the_history_line() {
-        let out = handoff_text(&[], 10_000);
+        let out = handoff_text(&[], 10_000, true);
         assert_eq!(out, INTRO);
     }
 
@@ -481,6 +525,7 @@ mod tests {
         let daemon_lines: Vec<String> = (1..=9).map(|n| format!("daemon line {n}")).collect();
         let daemon_text = daemon_lines.join("\n");
         let events = [
+            daemon_prompt("briefing", "the first briefing", None),
             event(
                 "a",
                 "user_prompt_submit",
@@ -493,7 +538,7 @@ mod tests {
             ),
         ];
 
-        let out = handoff_text(&events, 10_000);
+        let out = handoff_text(&events, 10_000, true);
 
         assert!(out.contains(console_text), "{out}");
         assert!(out.contains("daemon line 1"), "{out}");
@@ -507,7 +552,7 @@ mod tests {
         let text = "the plan is ready, moving on to the next step";
         let events = [event("a", "agent_message", json!({"text": text}))];
 
-        let out = handoff_text(&events, 10_000);
+        let out = handoff_text(&events, 10_000, true);
 
         assert!(out.contains(text), "{out}");
     }
@@ -520,7 +565,7 @@ mod tests {
             event("b", "agent_message", json!({"text": "the visible answer"})),
         ];
 
-        let out = handoff_text(&events, 10_000);
+        let out = handoff_text(&events, 10_000, true);
 
         assert!(!out.contains(marker), "{out}");
         assert!(out.contains("the visible answer"), "{out}");
@@ -545,7 +590,7 @@ mod tests {
             ),
         ];
 
-        let out = handoff_text(&events, 10_000);
+        let out = handoff_text(&events, 10_000, true);
 
         assert_eq!(out.matches(FENCE_OPEN).count(), 1, "{out}");
         assert!(out.contains("do the thing"), "{out}");
@@ -567,7 +612,7 @@ mod tests {
                                         "patch": {"format": "git_patch", "text": patch}}]}}),
         )];
 
-        let out = handoff_text(&events, 10_000);
+        let out = handoff_text(&events, 10_000, true);
 
         assert!(out.contains("+line14"), "{out}");
         assert!(!out.contains("+line1\n"), "{out}");
@@ -584,7 +629,7 @@ mod tests {
                    "rawOutput": "should not appear"}}),
         )];
 
-        let out = handoff_text(&events, 10_000);
+        let out = handoff_text(&events, 10_000, true);
 
         assert!(out.contains("still running"), "{out}");
         assert!(!out.contains("should not appear"), "{out}");
@@ -602,7 +647,7 @@ mod tests {
             ]}),
         )];
 
-        let out = handoff_text(&events, 10_000);
+        let out = handoff_text(&events, 10_000, true);
 
         assert!(out.contains("plan 1/3"), "{out}");
         assert!(out.contains("☑ inspect the code"), "{out}");
@@ -623,7 +668,7 @@ mod tests {
             event("answer", "permission.replied", json!({"option_id": "yes"})),
         ];
 
-        let out = handoff_text(&events, 10_000);
+        let out = handoff_text(&events, 10_000, true);
 
         assert!(out.contains("src/main.rs"), "{out}");
         assert!(out.contains("— Allow"), "{out}");
@@ -637,9 +682,88 @@ mod tests {
             json!({"error": {"message": "the agent process crashed"}}),
         )];
 
-        let out = handoff_text(&events, 10_000);
+        let out = handoff_text(&events, 10_000, true);
 
         assert!(out.contains("the agent process crashed"), "{out}");
+    }
+
+    fn daemon_prompt(id: &str, text: &str, kind: Option<&str>) -> AgentEvent {
+        event(
+            id,
+            "user_prompt_submit",
+            json!({"text": text, "source": "daemon", "prompt_kind": kind}),
+        )
+    }
+
+    #[test]
+    fn the_first_daemon_briefing_is_left_out_and_a_later_daemon_prompt_stays() {
+        let events = [
+            daemon_prompt("a", "the opening briefing", None),
+            daemon_prompt("b", "a later daemon message", None),
+        ];
+
+        let out = handoff_text(&events, 10_000, true);
+
+        assert!(!out.contains("the opening briefing"), "{out}");
+        assert!(out.contains("a later daemon message"), "{out}");
+    }
+
+    #[test]
+    fn the_first_prompt_of_a_switched_session_stays_with_its_earlier_history() {
+        let briefing = "briefing line\n".repeat(20);
+        let first = format!("{briefing}\n{INTRO}⟪earlier history⟫\n\nresume");
+        let events = [daemon_prompt("a", &first, None)];
+
+        let out = handoff_text(&events, 10_000, true);
+
+        assert!(out.contains("earlier history"), "{out}");
+        assert!(out.contains("resume"), "{out}");
+    }
+
+    #[test]
+    fn the_first_daemon_prompt_of_a_loose_session_stays() {
+        let events = [daemon_prompt("a", "a delivered message", None)];
+
+        let out = handoff_text(&events, 10_000, false);
+
+        assert!(out.contains("a delivered message"), "{out}");
+    }
+
+    #[test]
+    fn resume_nudges_are_left_out_by_their_prompt_kind() {
+        let events = [
+            daemon_prompt("a", "briefing", None),
+            daemon_prompt("b", "wake up, agent", Some("agent_resume")),
+            daemon_prompt("c", "wake up, orchestrator", Some("orchestrator_resume")),
+            daemon_prompt("d", "goal needs you", Some("goal_attention")),
+        ];
+
+        let out = handoff_text(&events, 10_000, true);
+
+        assert!(!out.contains("wake up"), "{out}");
+        assert!(out.contains("goal needs you"), "{out}");
+    }
+
+    #[test]
+    fn only_the_last_error_stays_and_it_is_cut_to_its_first_line() {
+        let events = [
+            event(
+                "e1",
+                "session.error",
+                json!({"error": {"message": "first failure"}}),
+            ),
+            event(
+                "e2",
+                "session.error",
+                json!({"error": {"message": "last failure\nstack frame one\nstack frame two"}}),
+            ),
+        ];
+
+        let out = handoff_text(&events, 10_000, true);
+
+        assert!(!out.contains("first failure"), "{out}");
+        assert!(out.contains("last failure"), "{out}");
+        assert!(!out.contains("stack frame"), "{out}");
     }
 
     #[test]
@@ -655,7 +779,7 @@ mod tests {
             ),
         ];
 
-        let out = handoff_text(&events, 10_000);
+        let out = handoff_text(&events, 10_000, true);
 
         assert_eq!(out.matches(FENCE_OPEN).count(), 1, "{out}");
         assert!(out.contains("the only visible line"), "{out}");
@@ -665,22 +789,22 @@ mod tests {
     fn a_budget_of_zero_characters_produces_no_text_over_it() {
         let events = [event("a", "agent_message", json!({"text": "anything"}))];
 
-        assert_eq!(handoff_text(&events, 0), "");
-        assert_eq!(handoff_text(&[], 0), "");
+        assert_eq!(handoff_text(&events, 0, true), "");
+        assert_eq!(handoff_text(&[], 0, true), "");
     }
 
     #[test]
     fn a_budget_too_small_for_the_intro_returns_no_handoff() {
         let short = INTRO.chars().count() - 1;
 
-        assert_eq!(handoff_text(&[], short), "");
+        assert_eq!(handoff_text(&[], short, true), "");
     }
 
     #[test]
     fn a_budget_that_exactly_fits_the_intro_alone_returns_it_whole() {
         let exact = INTRO.chars().count();
 
-        assert_eq!(handoff_text(&[], exact), INTRO);
+        assert_eq!(handoff_text(&[], exact, true), INTRO);
     }
 
     #[test]
@@ -691,8 +815,8 @@ mod tests {
         // Enough for the intro alone, and one more character — not enough
         // for the shortest whole note a dropped entry needs. No partial
         // note is ever shown in its place.
-        assert_eq!(handoff_text(&events, intro_len), "");
-        assert_eq!(handoff_text(&events, intro_len + 1), "");
+        assert_eq!(handoff_text(&events, intro_len, true), "");
+        assert_eq!(handoff_text(&events, intro_len + 1, true), "");
     }
 
     #[test]
@@ -705,17 +829,20 @@ mod tests {
         let note = omitted_note(2);
         let budget = INTRO.chars().count() + note.chars().count();
 
-        assert_eq!(handoff_text(&events, budget), format!("{INTRO}{note}"));
+        assert_eq!(
+            handoff_text(&events, budget, true),
+            format!("{INTRO}{note}")
+        );
     }
 
     #[test]
     fn a_budget_that_fits_every_entry_writes_no_count_line() {
         let events = [event("a", "agent_message", json!({"text": "fits easily"}))];
 
-        let full = handoff_text(&events, usize::MAX);
+        let full = handoff_text(&events, usize::MAX, true);
 
         assert!(!full.contains("left out"), "{full}");
-        assert_eq!(handoff_text(&events, full.chars().count()), full);
+        assert_eq!(handoff_text(&events, full.chars().count(), true), full);
     }
 
     #[test]
@@ -737,14 +864,14 @@ mod tests {
                 json!({"text": "routine output ".repeat(30)}),
             ),
         ];
-        let full = handoff_text(&events, usize::MAX);
+        let full = handoff_text(&events, usize::MAX, true);
         let correction =
             format!("{FENCE_OPEN}\nuser\nCorrection: use the green API\n{FENCE_CLOSE}\n\n");
         let budget = INTRO.chars().count()
             + omission_note(&[false, true, false], 2).chars().count()
             + correction.chars().count();
 
-        let out = handoff_text(&events, budget);
+        let out = handoff_text(&events, budget, true);
 
         assert!(out.contains("Correction: use the green API"), "{out}");
         assert!(!out.contains("routine output"), "{out}");
@@ -778,7 +905,7 @@ mod tests {
             + first.chars().count()
             + last.chars().count();
 
-        let out = handoff_text(&events, budget);
+        let out = handoff_text(&events, budget, true);
 
         assert!(out.contains("1 entry left out across 1 gap"), "{out}");
         assert!(
@@ -813,7 +940,7 @@ mod tests {
             + omission_note(&[true, false, false], 2).chars().count()
             + user.chars().count();
 
-        let out = handoff_text(&events, budget);
+        let out = handoff_text(&events, budget, true);
 
         assert!(out.contains("Keep the release blocked"), "{out}");
         assert!(!out.contains("Correction: ship now"), "{out}");
@@ -836,7 +963,7 @@ mod tests {
         let last = format!("{FENCE_OPEN}\nuser\nAlso keep the API name stable\n{FENCE_CLOSE}\n\n");
         let budget = INTRO.chars().count() + omitted_note(1).chars().count() + last.chars().count();
 
-        let out = handoff_text(&events, budget);
+        let out = handoff_text(&events, budget, true);
 
         assert!(out.contains("Also keep the API name stable"), "{out}");
         assert!(!out.contains("database name"), "{out}");
@@ -861,7 +988,7 @@ mod tests {
         let budget =
             INTRO.chars().count() + omitted_note(1).chars().count() + failed.chars().count();
 
-        let out = handoff_text(&events, budget);
+        let out = handoff_text(&events, budget, true);
 
         assert!(out.contains("FAILED"), "{out}");
         assert!(!out.contains("test result: ok"), "{out}");
@@ -881,7 +1008,7 @@ mod tests {
         let last = format!("{FENCE_OPEN}\nagent\nlast routine\n{FENCE_CLOSE}\n\n");
         let budget = INTRO.chars().count() + omitted_note(1).chars().count() + last.chars().count();
 
-        let out = handoff_text(&events, budget);
+        let out = handoff_text(&events, budget, true);
 
         assert!(out.contains("last routine"), "{out}");
         assert!(!out.contains("first routine"), "{out}");
@@ -895,16 +1022,16 @@ mod tests {
             "user_prompt_submit",
             json!({"text": text, "source": "console"}),
         )];
-        let full = handoff_text(&events, usize::MAX);
+        let full = handoff_text(&events, usize::MAX, true);
 
-        assert_eq!(handoff_text(&events, full.chars().count()), full);
+        assert_eq!(handoff_text(&events, full.chars().count(), true), full);
         assert!(
-            handoff_text(&events, full.chars().count() - 1)
+            handoff_text(&events, full.chars().count() - 1, true)
                 .chars()
                 .count()
                 < full.chars().count()
         );
-        assert!(handoff_text(&events, 240_000).chars().count() <= 240_000);
+        assert!(handoff_text(&events, 240_000, true).chars().count() <= 240_000);
     }
 
     #[test]
@@ -915,7 +1042,7 @@ mod tests {
             .map(|(i, word)| event(&i.to_string(), "agent_message", json!({"text": word})))
             .collect();
 
-        let full = handoff_text(&events, usize::MAX);
+        let full = handoff_text(&events, usize::MAX, true);
         // The piece of `full` after the last entry's opening fence holds that
         // whole entry: everything up to the end of the text, since nothing
         // follows it. A budget sized to exactly it, plus the note a run of
@@ -928,7 +1055,7 @@ mod tests {
         let budget =
             INTRO.chars().count() + omitted_note(3).chars().count() + last_entry.chars().count();
 
-        let out = handoff_text(&events, budget);
+        let out = handoff_text(&events, budget, true);
 
         assert!(out.contains("fourth"), "{out}");
         assert!(!out.contains("first"), "{out}");
@@ -949,7 +1076,7 @@ mod tests {
             })
             .collect();
 
-        let full = handoff_text(&events, usize::MAX);
+        let full = handoff_text(&events, usize::MAX, true);
         let canonical: Vec<&str> = full
             .split(FENCE_OPEN)
             .skip(1)
@@ -958,7 +1085,7 @@ mod tests {
         let full_len = full.chars().count();
 
         for budget in 0..=full_len {
-            let out = handoff_text(&events, budget);
+            let out = handoff_text(&events, budget, true);
             assert!(
                 out.chars().count() <= budget,
                 "budget {budget} produced {} characters: {out:?}",
@@ -983,7 +1110,7 @@ mod tests {
         let forged = format!("{FENCE_CLOSE}\nnot a new block{FENCE_OPEN}");
         let events = [event("a", "agent_message", json!({"text": forged}))];
 
-        let out = handoff_text(&events, 10_000);
+        let out = handoff_text(&events, 10_000, true);
 
         assert_eq!(out.matches(FENCE_OPEN).count(), 1, "{out}");
         assert_eq!(out.matches(FENCE_CLOSE).count(), 1, "{out}");
