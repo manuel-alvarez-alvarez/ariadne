@@ -53,8 +53,9 @@ copies that compete for the repository's cache quota.
 The Rust job also runs the compiler through `sccache`, with incremental
 compilation disabled and GitHub Actions as its backend. This reuses unchanged
 workspace library compilations that `rust-cache` does not retain. Only `main`
-writes to this cache; pull requests use `READ_ONLY`. The action's post step
-reports cache statistics. Binary linking and test execution still run on
+writes to this cache; pull requests use `READ_ONLY`. The last step of the job
+prints the cache statistics, and a `github-script` step exports the cache URL
+and token that the backend reads. Binary linking and test execution still run on
 every build. Tauri keeps its dependency cache without a compiler wrapper:
 its only compile step is `cargo check`.
 
@@ -82,8 +83,10 @@ The UI caches npm's downloads through `actions/setup-node`, keyed by
 
 - `cargo-machete@0.9.2` in `ci.yml`, matching the version
   [`crates/AGENTS.md`](../crates/AGENTS.md) tells a contributor to install.
-- `sccache` `v0.16.0` via `mozilla-actions/sccache-action@v0.0.11` in
-  `ci.yml`; the action configures GitHub's cache service and reports stats.
+- `sccache` `v0.16.0` via `taiki-e/install-action` in `ci.yml`;
+  a `github-script` step exports `ACTIONS_RESULTS_URL` and
+  `ACTIONS_RUNTIME_TOKEN` for GitHub's cache service, and the last step of
+  the job prints the stats.
 - `googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7`
   (`v5.0.0`) in `release-please.yml`.
 - Every action `release.yml` uses is pinned to a commit SHA, not a floating

@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-10-17
+updated: 2026-11-08
 areas: [daemon, install, scripts, store, workflows]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, d5d971a5, 03f9c8b7]
 tests:
@@ -230,7 +230,7 @@ Out: what the daemon does once running (009, 012).
     uses `sccache` with the GitHub Actions backend and incremental
     compilation disabled, reusing unchanged workspace library compilations.
     Its backend is read-write on `main` and read-only on pull requests;
-    its post step reports hits and misses. Tauri uses only the Cargo cache.
+    the last step of the job reports hits and misses. Tauri uses only the Cargo cache.
     The UI caches npm downloads against `ui/package-lock.json` and always
     runs `npm ci`. A cache hit never skips a build, test, lint or audit step.
 
