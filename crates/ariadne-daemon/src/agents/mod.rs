@@ -248,11 +248,21 @@ pub async fn sync_skills(store: &Store, skills_dir: &Path, native_home: &Path) -
 /// once pointed, so nothing of the user's is lost by clearing it. This
 /// deliberately leaves a user's same-named file, directory, or working
 /// unrelated link in place and keeps that skill available through its index.
+///
+/// A skill with no document, shipped or written, is never linked: a dropped
+/// built-in an old staffing still names keeps its shared folder for that
+/// task's run directory (017 rule 7), but a native tool scanning these
+/// directories would offer it as an empty skill. A link it already has is
+/// cleared as one for a name the store no longer has.
 fn sync_native_skills(
     skills: &[ariadne_store::Skill],
     skills_dir: &Path,
     native_home: &Path,
 ) -> Result<()> {
+    let skills: Vec<_> = skills
+        .iter()
+        .filter(|skill| !skill.document_text().trim().is_empty())
+        .collect();
     let names: std::collections::HashSet<_> =
         skills.iter().map(|skill| skill.name.as_str()).collect();
     for relative_dir in [".claude/skills", ".agents/skills"] {
@@ -272,7 +282,7 @@ fn sync_native_skills(
             }
         }
 
-        for skill in skills {
+        for skill in &skills {
             let link = native_dir.join(&skill.name);
             let target = skills_dir.join(&skill.name);
             if let Ok(metadata) = std::fs::symlink_metadata(&link) {
