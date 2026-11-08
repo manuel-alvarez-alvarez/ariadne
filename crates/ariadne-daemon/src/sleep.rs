@@ -164,8 +164,7 @@ mod platform {
 /// and released by closing it.
 #[cfg(target_os = "linux")]
 mod platform {
-    use zbus::blocking::Connection;
-    use zbus::zvariant::OwnedFd;
+    use zbus::{Connection, OwnedFd};
 
     /// The slice of `org.freedesktop.login1.Manager` we need.
     #[zbus::proxy(
@@ -187,16 +186,24 @@ mod platform {
     }
 
     pub(super) fn create() -> anyhow::Result<Held> {
+        // zbus 6 has no blocking API: drive the async one on this thread,
+        // which is the inhibitor's own and never a runtime worker.
+        zbus::block_on(acquire())
+    }
+
+    async fn acquire() -> anyhow::Result<Held> {
         // A machine with no logind (or no D-Bus at all) fails here, which the
         // caller turns into one warning and a no-op inhibitor.
-        let conn = Connection::system()?;
-        let manager = ManagerProxyBlocking::new(&conn)?;
+        let conn = Connection::system().await?;
+        let manager = ManagerProxy::new(&conn).await?;
         // One lock for both: "sleep" alone would not stop the idle timer, and
         // "idle" alone would not stop a suspend the system decides on. Mode
         // "block" refuses the sleep outright rather than asking for a delay.
         // "ariadned" is the `who`, which is what `systemd-inhibit --list`
         // shows next to the reason.
-        let lock = manager.inhibit("sleep:idle", "ariadned", super::REASON, "block")?;
+        let lock = manager
+            .inhibit("sleep:idle", "ariadned", super::REASON, "block")
+            .await?;
         Ok(Held {
             _lock: lock,
             _conn: conn,
