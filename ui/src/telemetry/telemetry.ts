@@ -1,10 +1,9 @@
 import { context, DiagLogLevel, diag } from "@opentelemetry/api"
 import { SeverityNumber } from "@opentelemetry/api-logs"
-import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http/build/esm/platform/browser"
-import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http/build/esm/platform/browser"
+import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http"
+import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http"
 import { resourceFromAttributes } from "@opentelemetry/resources"
-import { LoggerProvider } from "@opentelemetry/sdk-logs"
-import { BatchLogRecordProcessor } from "@opentelemetry/sdk-logs/build/esm/platform/browser"
+import { BatchLogRecordProcessor, LoggerProvider } from "@opentelemetry/sdk-logs"
 import { MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics"
 
 import { version } from "../../package.json"

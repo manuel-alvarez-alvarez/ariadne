@@ -36,6 +36,20 @@ export default defineConfig({
   // `tauri dev` sets TAURI_* env vars; expose them alongside VITE_*.
   envPrefix: ["VITE_", "TAURI_"],
   test: {
+    alias: {
+      "@opentelemetry/exporter-logs-otlp-http": fileURLToPath(
+        new URL(
+          "./node_modules/@opentelemetry/exporter-logs-otlp-http/dist/platform/browser/index.mjs",
+          import.meta.url,
+        ),
+      ),
+      "@opentelemetry/exporter-metrics-otlp-http": fileURLToPath(
+        new URL(
+          "./node_modules/@opentelemetry/exporter-metrics-otlp-http/dist/platform/browser/index.mjs",
+          import.meta.url,
+        ),
+      ),
+    },
     // `ui/dashboard` is its own package, with its own vitest config and its
     // own `npm test`; left to its default discovery, this config would also
     // pick up its test files and run them against this package's own
