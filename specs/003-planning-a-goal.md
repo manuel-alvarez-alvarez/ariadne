@@ -1,11 +1,12 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-10-19
+updated: 2026-11-08
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
   - crates/ariadne-store/src/defaults.rs
+  - crates/ariadne-store/src/skill_tests/operate.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/it/plan_finalize.rs
   - crates/ariadne-daemon/tests/it/goal_completion.rs
@@ -147,36 +148,36 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 ## Acceptance criteria
 
 - The playbook asks before it plans and plans before it starts
-  (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
+  (`skill_tests/operate.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
   asks one question at a time and names the parts of a question
   (`::the_orchestration_skill_asks_one_question_at_a_time_with_its_parts`), staffs
   one agent on every column and asks no reviewer question
   (`::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`).
 - Each task has one cohesive outcome and complete affected path, and
   `depends_on` names only a real prerequisite
-  (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`,
+  (`skill_tests/operate.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`,
   `::the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule`).
 - Each ticket is the four sections, in order, with the criteria numbered,
   and carries no pasted history
-  (`defaults.rs::the_orchestration_skill_names_what_a_ticket_carries`). The
+  (`skill_tests/operate.rs::the_orchestration_skill_names_what_a_ticket_carries`). The
   orchestration, coding and code-review skills all name the same format
   (`::the_three_skills_name_the_ticket_format`).
 - The playbook keeps each choice within its column's ranks, assesses scope
   and complexity case by case, chooses the smallest capable model and effort
   for routine or uncertain work, and states why a more powerful eligible
   model is necessary
-  (`defaults.rs::the_orchestrator_staffs_each_column_on_its_rank`).
+  (`skill_tests/operate.rs::the_orchestrator_staffs_each_column_on_its_rank`).
 - The playbook gives a task's coding and review columns different ACP
   agents where one is eligible, falls back to the review column's normal
   choice with none eligible, and tells the user independent review was
   unavailable
-  (`defaults.rs::the_orchestration_skill_requires_independent_providers_for_coding_and_review`).
+  (`skill_tests/operate.rs::the_orchestration_skill_requires_independent_providers_for_coding_and_review`).
 - The orchestrator is briefed to end planning with `finalize_plan` and with no
   other plan call
   (`defaults.rs::the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call`).
 - The playbook switches a struggling agent's session to a model one rank
   up, and tells the user
-  (`defaults.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
+  (`skill_tests/operate.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
 - The nudge fits the conversation and the goal under way
   (`defaults.rs::the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way`),
   and the attention prompt names the three choices for each task and what

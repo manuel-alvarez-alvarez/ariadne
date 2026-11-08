@@ -5,64 +5,59 @@ description: Use when a schema shape changes, data moves, or a caller retires.
 
 # Migration
 
-Complete the migration work. Done when the conditions in `## Done` hold.
-
-Data outlives code. Use the expand-contract sequence to protect each data
-shape.
+Move a stored shape forward and lose no row. Done when `## Done` holds.
 
 ## When not to use
 
-Use `coding` when its triggers apply.
+Use `coding` when no stored shape changes. Use `conflict-resolution` when
+two branches ship one migration number.
 
 ## Steps
 
-1. Write the old shape, new shape and every caller.
+1. Write the old shape, the new shape and every caller.
 
    Done when each caller names the shape it reads and writes.
-2. Write the recovery path before you write any migration.
+2. Read the migration rules. Add a new migration file after the
+   latest one.
 
-   Done when a tested reverse path or a backup is ready.
-3. Rehearse the whole sequence on a copy of real data.
+   Done when no released migration is edited and the new file sorts last.
+3. Where old and new callers overlap, expand first. Add the new shape beside
+   the old one, write both, then switch the callers. Where no caller
+   overlaps, change the shape in one step.
+
+   Done when each overlap is named, or none is shown.
+4. Write the recovery path: a reverse migration. Where callers overlap,
+   keep the old shape until the contract.
+
+   Done when the path restores the copy of step 5.
+5. Run the whole sequence on a copy of real data. Count the rows and compare
+   the required values before and after.
 
    Done when the copy keeps every row and its required values.
-4. Expand first. Add the new shape beside the old shape.
+6. Where callers overlap, leave the contract to a later task. Call
+   `complete_step` with the column report. With no overlap, name that in it.
 
-   Done when old and new callers both run against the expanded shape.
-5. Write both shapes while callers overlap.
-
-   Done when each new write fills both shapes.
-6. Migrate existing data in batches, off the hot path. Record the duration
-   and the resource use at real size.
-
-   Done when every existing row holds the new shape.
-7. Switch callers to read the new shape.
-
-   Done when each caller reads the new shape.
-8. Leave the contract to a later task. Call `complete_step` with the
-   column report, naming the deferred work.
-
-   Done when the report names the deferred work.
+   Done when the report names the deferred work, or states no overlap.
 
 ## Rules
 
-### Rules
-
 - Keep old and new shapes readable while callers overlap.
-- Put destructive contract work in a separate later deploy.
-- Back up before destructive shape work.
-- Never drop or rename a live shape.
 
 ## Never
 
-Never change work outside the task.
+Never edit a released migration. Never drop or rename a shape that a caller
+still reads. Never migrate the only copy of real data.
 
 ## Do not tell yourself
 
-- "One rename is safe." -> Expand first, migrate in batches, then contract.
-- "One update will finish fast." -> Run batches to protect table access.
+- "I will fix the released migration in place." -> A database that ran it
+  keeps its record. Add a new migration.
+- "One rename is safe." -> A caller you did not find still reads the old
+  name. Search for callers first.
 - "Old callers are gone." -> Prove no caller remains with search and usage.
 
 ## Done
 
-The expand-contract sequence preserves every row. The duration is known. No
-caller uses the old shape. A recovery path is ready.
+A new migration holds the change, and no released migration changed. Every
+row of the copy of real data survived with its values. A recovery path
+restored the copy. Where callers overlap, the contract is deferred and named.

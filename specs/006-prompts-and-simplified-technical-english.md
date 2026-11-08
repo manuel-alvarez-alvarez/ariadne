@@ -155,7 +155,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    not a count of its own.
 7. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
-   amends nothing, since the merge column squashes. The refactoring section of `coding` commits
+   amends nothing, since the merge column squashes. The refactoring path of `coding` commits
    the moves it made, and `pr-babysit` never amends a pushed request. No
    skill divides a task into slices or small commits.
 8. The lifecycle briefings are Ariadne's own constants, read from the code on
