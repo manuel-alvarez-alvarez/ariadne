@@ -2,12 +2,31 @@ import { fileURLToPath, URL } from "node:url"
 
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
+import { defaultClientConditions, type Plugin } from "vite"
 import { defineConfig } from "vitest/config"
+
+// Vitest resolves every environment with the `node` condition, and a jsdom
+// test file runs in the `client` one. OpenTelemetry picks its Node.js or
+// browser build through a `#platform` import under that condition, so a test
+// would get the `http` exporter instead of the `fetch` one the webview ships
+// and the tests stub. Give the client environment the browser's conditions.
+const browserConditionsInTests: Plugin = {
+  name: "browser-conditions-in-tests",
+  apply: () => !!process.env.VITEST,
+  configEnvironment: {
+    order: "post",
+    handler(name, config) {
+      if (name !== "client") return
+      config.resolve ??= {}
+      config.resolve.conditions = [...defaultClientConditions]
+    },
+  },
+}
 
 // The dev server is what `tauri dev` points its webview at, so the port is
 // fixed and failing to get it must be an error rather than a silent fallback.
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), browserConditionsInTests],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -58,5 +77,8 @@ export default defineConfig({
     // into dozens of starved workers each missing their own test's timeout,
     // not just the one test actually doing the colliding work.
     maxWorkers: 4,
+    // Node itself loads an external module, with its own conditions; Vite
+    // resolves an inlined one, with `browserConditionsInTests`'s.
+    server: { deps: { inline: [/@opentelemetry\//] } },
   },
 })
