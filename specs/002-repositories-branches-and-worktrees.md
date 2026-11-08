@@ -99,17 +99,6 @@ and the integration with it (025).
     permission model is off, on registration and on an edit alike, with 409
     `ai_disabled` (022): the mode asks the model, and a model that is off
     answers nothing.
-13. `supervise_posts` says whether this repository's agents hold what they
-    post to the forge for a person's approval before the forge ever sees it:
-    every pull request a task opens is forced to a draft, and every reply,
-    review and resolve lands in the person's own pending GitHub review
-    instead of posting directly ([026](026-pull-requests.md)
-    rules 23 and 24). It defaults to `true`, is set when the repository is
-    registered and changed by editing it, from the CLI and the desktop app
-    alike, and an edit that does not name it keeps it. The CLI and the
-    desktop app show it only once the repository's forge integration is on
-    (025 rule 16): with nothing to post to, there is nothing for it to hold
-    back.
 
 ## Acceptance criteria
 
@@ -131,24 +120,6 @@ and the integration with it (025).
   is on
   (`ai_permissions.rs::a_repository_takes_the_ai_mode_only_once_the_model_is_on`,
   `store.rs::a_repository_takes_the_ai_permission_mode`).
-- A repository supervises its posts until told otherwise, a registration
-  that names no flag starts supervised, an edit that names only the flag
-  moves only the flag, and the column's own schema default starts every
-  fresh repository supervised
-  (`repositories.rs::a_repository_carries_its_supervise_posts_flag`,
-  `store.rs::repository_crud_and_unique_path_branch`,
-  `store.rs::a_fresh_database_already_has_every_column_the_old_chain_added`).
-- The flag is set from the CLI, on `repo add` and `repo update` alike, and
-  from the desktop app's repository form
-  (`repo.rs::tests::repo_add_and_update_take_the_supervise_posts_flag`,
-  `ui/src/features/repositories/repository-form-dialog.test.tsx::saves the supervise posts switch`).
-- `repo inspect` shows the "supervise posts" row only once the forge is
-  enabled, not for a repository with no forge row or one that is detected but
-  disabled (`repo.rs::tests::repo_add_and_update_take_the_supervise_posts_flag`),
-  and the desktop form shows the switch only below an "on" forge switch, in
-  both the create and the edit dialog, keeping its value while it is hidden
-  (`ui/src/features/repositories/repository-form-dialog.test.tsx::hides
-  supervise posts under an off forge switch, keeping its value`).
 - A repository defaults new goals to `develop-review-merge`, takes another default at
   registration or on an edit, and changes no existing goal
   (`repositories.rs::a_repository_defaults_new_goals_without_changing_existing_ones`,

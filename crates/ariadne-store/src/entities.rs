@@ -349,10 +349,6 @@ pub struct Repository {
     /// [`PermissionMode`] spells it. Read through
     /// [`Repository::permission_mode`].
     pub permission_mode: String,
-    /// Whether this repository's agents hold what they post to the forge for
-    /// a person's approval, pull requests opened as drafts included. Read
-    /// through [`Repository::supervise_posts`].
-    pub supervise_posts: bool,
     /// The forge its remote is on, where it has a usable one (025). Not a
     /// column: every read of a repository through the store fills it.
     #[sqlx(skip)]
@@ -392,12 +388,6 @@ impl Repository {
     /// `ask`, the one mode that approves nothing on its own.
     pub fn permission_mode(&self) -> PermissionMode {
         self.permission_mode.parse().unwrap_or(PermissionMode::Ask)
-    }
-
-    /// Whether this repository's agents hold what they post to the forge for
-    /// a person's approval, pull requests opened as drafts included.
-    pub fn supervise_posts(&self) -> bool {
-        self.supervise_posts
     }
 }
 
@@ -1006,10 +996,6 @@ pub struct CommentMark {
     pub forge_id: String,
     pub told_at: Option<String>,
     pub from_review: bool,
-    /// The agent's reply to this comment is held, unposted, in the user's
-    /// own forge drafts (026 rule 24): a one-way local mark, never read
-    /// back off the forge.
-    pub pending_reply: bool,
 }
 
 /// One comment on a pull request, as the forge holds it and the daemon's
