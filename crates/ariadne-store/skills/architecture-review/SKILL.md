@@ -1,35 +1,51 @@
 ---
 name: architecture-review
-description: Use when a design, component or integration needs review. Judges a change against system boundaries, coupling and dependency direction.
+description: Use when a design, component or integration needs review.
 ---
 
 # Architecture review
 
+Complete the architecture-review work. Done when the conditions in `## Done` hold.
+
 Judge the change against the system that exists. Write the verdict first.
 No preamble, no narration, no closing summary.
+
+## When not to use
+
+Use `code-review` when its triggers apply.
 
 ## Steps
 
 1. Pin the scope to the diff. Map the system it touches: modules, owners
    and dependency directions. Reuse the column report's evidence where it
    covers this revision.
+
    Done when every changed component has a place on the map.
 2. Place the change on that map. Mark each boundary it crosses. Read code
    outside the diff only to judge a risk you can name.
+
    Done when every new dependency has a source and a target.
 3. Trace ownership of behavior and state. Find each idea held in two
    places.
+
    Done when every changed responsibility has one named owner.
 4. Give each concern its trigger, the future change it blocks, and the
    rule or pattern it breaks. Price its cost. A concern with no nameable
    trigger or no rule it breaks is optional. Mark it unverified.
+
    Done when every blocking concern names its trigger, rule and cost.
 5. Write the verdict. Cap optional concerns at five, the ones you have
    most conviction in.
+
+   Done when the verdict has been written.
 6. Call `fail_step` with the verdict on a blocking finding, else
    `complete_step`.
 
-## What to look for
+   Done when the verdict has been submitted.
+
+## Rules
+
+### What to look for
 
 - Boundaries: a crossing that no existing path uses.
 - Direction: a dependency that points against the established flow.
@@ -39,11 +55,15 @@ No preamble, no narration, no closing summary.
 - Coupling: unrelated callers forced through one abstraction.
 - Reversal: a decision that costs much to change later.
 
-## Rules
+### Rules
 
 - Prefer the boundary arrangement the repository already uses.
 - Accept a small inconsistency when a broad abstraction has no current
   use.
+
+## Never
+
+Never change work outside the task.
 
 ## Do not tell yourself
 

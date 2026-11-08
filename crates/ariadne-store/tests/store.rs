@@ -3009,64 +3009,164 @@ async fn a_dropped_skill_only_an_ended_goal_names_leaves_on_reopen() {
 /// keeps one row, not two.
 #[tokio::test]
 async fn a_merged_skill_hands_its_staffings_to_the_skill_that_absorbed_it() {
+    for (old, absorbing) in [
+        ("testing", "coding"),
+        ("refactoring", "coding"),
+        ("spec-review", "code-review"),
+        ("performance-review", "code-review"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+
+        let store = Store::open(&path).await.unwrap();
+        let (goal, repo) = seed_goal(&store).await;
+        let both = seed_task(&store, &goal, &repo, vec![]).await;
+        let alone = seed_task(&store, &goal, &repo, vec![]).await;
+        drop(store);
+
+        // Reproduce both a duplicate staffing and a staffing of the old skill alone.
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+         VALUES (?, NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(old)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
+         SELECT id, ?, 1 FROM task_agents WHERE task_id = ? AND step = 'develop'",
+        )
+        .bind(old)
+        .bind(&both.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE task_agent_skills SET skill_name = ?
+          WHERE skill_name = 'coding'
+            AND agent_id IN (SELECT id FROM task_agents WHERE task_id = ?)",
+        )
+        .bind(old)
+        .bind(&alone.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE task_agent_skills SET skill_name = ? WHERE skill_name = 'coding'")
+            .bind(absorbing)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let store = Store::open(&path).await.unwrap();
+        for task in [&both, &alone] {
+            let author = agent_of(&store, task, "develop").await;
+            let names: Vec<String> = store
+                .agent_skills(&author.id)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|s| s.name)
+                .collect();
+            assert_eq!(names, [absorbing], "the staffing reads as the merged skill");
+        }
+        assert!(
+            matches!(store.get_skill(old).await, Err(StoreError::NotFound { .. })),
+            "and nothing holds the merged skill's row in place any more"
+        );
+    }
+}
+
+/// A workflow the user wrote and an active goal on it can both name a skill
+/// that merged into another. Reopening the database rewrites both to the
+/// absorbing skill before the merged one is pruned: the workflow still reads
+/// and saves, and the goal's columns still staff.
+#[tokio::test]
+async fn a_merged_skill_is_renamed_in_workflow_documents_and_goal_columns_on_open() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.db");
 
     let store = Store::open(&path).await.unwrap();
-    let (goal, repo) = seed_goal(&store).await;
-    let both = seed_task(&store, &goal, &repo, vec![]).await;
-    let alone = seed_task(&store, &goal, &repo, vec![]).await;
+    let repo = seed_repository(&store).await;
     drop(store);
 
-    // The era before the merge, reproduced: `testing` staffed beside `coding`
-    // on one task's first agent, and on its own on the other's.
+    let store = Store::open(&path).await.unwrap();
+    store
+        .create_workflow(NewWorkflow {
+            name: "custom-wf".into(),
+            document: "workflow custom-wf\n  build[Build]\n    Do the work.\n    skills: coding, code-review\n".into(),
+        })
+        .await
+        .unwrap();
+    let goal = store
+        .create_goal(NewGoal {
+            workflow: Some("custom-wf".into()),
+            issue_url: None,
+            title: "Test goal".into(),
+            description: "desc".into(),
+            repository_ids: vec![repo.id.clone()],
+            pin: default_pin(),
+        })
+        .await
+        .unwrap();
+    drop(store);
+
+    // The database as a release before the merge left it: the workflow and
+    // the active goal's column still name the skills that merged. Opening
+    // the store prunes a skill nothing staffs, so the old rows are not
+    // seeded; the names alone are what the open must rewrite.
     let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
         .await
         .unwrap();
-    sqlx::query(
-        "INSERT INTO skills (name, document, builtin, created_at, updated_at)
-         VALUES ('testing', NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
-         SELECT id, 'testing', 1 FROM task_agents WHERE task_id = ? AND step = 'develop'",
-    )
-    .bind(&both.id)
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "UPDATE task_agent_skills SET skill_name = 'testing'
-          WHERE skill_name = 'coding'
-            AND agent_id IN (SELECT id FROM task_agents WHERE task_id = ?)",
-    )
-    .bind(&alone.id)
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE workflows SET document = ? WHERE name = 'custom-wf'")
+        .bind("workflow custom-wf\n  build[Build]\n    Do the work.\n    skills: refactoring, coding, spec-review\n")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE goal_steps SET skills = ? WHERE goal_id = ?")
+        .bind(r#"["refactoring","coding","spec-review"]"#)
+        .bind(&goal.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE goals SET status = 'active' WHERE id = ?")
+        .bind(&goal.id)
+        .execute(&pool)
+        .await
+        .unwrap();
     pool.close().await;
 
     let store = Store::open(&path).await.unwrap();
-    for task in [&both, &alone] {
-        let author = agent_of(&store, task, "develop").await;
-        let names: Vec<String> = store
-            .agent_skills(&author.id)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|s| s.name)
-            .collect();
-        assert_eq!(names, ["coding"], "the staffing reads as the merged skill");
-    }
+    let workflow = store.get_workflow("custom-wf").await.unwrap();
+    let document = workflow
+        .document
+        .expect("the workflow keeps its own document");
+    assert_eq!(
+        document,
+        "workflow custom-wf\n  build[Build]\n    Do the work.\n    skills: coding, code-review\n",
+        "the merged names are rewritten once, in the order they were listed"
+    );
+    store
+        .set_workflow_document("custom-wf", &document)
+        .await
+        .expect("the rewritten workflow saves again");
+
+    let steps = store.goal_steps(&goal.id).await.unwrap();
+    assert_eq!(steps.len(), 1);
+    assert_eq!(
+        steps[0].skills, r#"["coding","code-review"]"#,
+        "the active goal's column names the absorbing skills"
+    );
     assert!(
         matches!(
-            store.get_skill("testing").await,
+            store.get_skill("refactoring").await,
             Err(StoreError::NotFound { .. })
         ),
-        "and nothing holds the merged skill's row in place any more"
+        "and the merged skill's row is pruned, with nothing naming it"
     );
 }
 

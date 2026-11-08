@@ -1,9 +1,11 @@
 ---
 name: pr-babysit
-description: Keep a task request until it merges or closes. Answer comments, fix checks and keep its branch current.
+description: Use when a task request needs upkeep until merge or close.
 ---
 
 # PR babysit
+
+Complete the pr-babysit work. Done when the conditions in `## Done` hold.
 
 On your first turn, with no request open, do step 1. With one already open,
 start at step 2. On each later turn, Ariadne sends news: do steps 2 to 8.
@@ -14,12 +16,20 @@ For Ariadne, merge main into PR branches and push normally. Never rebase publish
 Never force-push main. Use the lease path below only where the repository explicitly permits it.
 For Ariadne, require GitHub CI on the current head before a GitHub squash merge.
 
+## When not to use
+
+Use `merge` when its triggers apply.
+
 ## Steps
 
 1. Push the task branch. Call `open_pull_request`. Take the title from the
    repository's commit conventions. Fill its pull request template, or
    write three full sections: Why, What changed, How to test.
+
+   Done when the request is open.
 2. Call `get_pull_request`. Call `list_comments` with `unanswered_only`.
+
+   Done when the request and unanswered comments are read.
 3. Answer each inline review comment of the other side, once per comment:
    - An ask for a change: accept it, or reply `Not changed: <why>.`
    - A question: give one short answer.
@@ -28,10 +38,16 @@ For Ariadne, require GitHub CI on the current head before a GitHub squash merge.
    - A reviewer reply that keeps a finding open: no second try. The user
      decides.
    - A comment on the conversation: answer it the same way, once per comment.
+
+   Done when each comment has its reply or disposition.
 4. A suggestion block you accept: apply it. Write your own code only where it
    does not compile or pass. Else reply `Not changed: <why>.`
+
+   Done when each accepted suggestion has a disposition.
 5. Group related accepted changes and failed-check fixes in one
    coherent commit per batch; keep unrelated changes separate.
+
+   Done when each batch has one commit.
 6. The repository's history rules choose the branch update. Fetch the
    base and task branch, then integrate before the checks. Where
    merges are allowed, run `git merge --no-edit <remote>/<base>`. A task-branch
@@ -44,10 +60,14 @@ For Ariadne, require GitHub CI on the current head before a GitHub squash merge.
    this rebase. A rejected request or a question keeps its step 3 reply.
    Reply once to each comment whose accepted change or suggestion the batch
    includes: `Fixed in <sha>: <what changed>.`
+
+   Done when the batch is checked and pushed.
 7. Call `report_pull_request` only when readiness changes:
    - `ready: true` with the `head_sha` you read once every approval and
      check is green
    - `ready: false` when one goes back.
+
+   Done when the report matches readiness.
 8. On a merge, where you sit on a task, update `<base>` in the primary
    checkout:
    - `git -C <repo> merge --ff-only <remote>/<base>` where `<base>` is
@@ -57,16 +77,19 @@ For Ariadne, require GitHub CI on the current head before a GitHub squash merge.
    Ariadne ends your session. On a close, where you sit on a task, call
    `fail_task` with the reason. Else end your turn.
 
+   Done when the merge or close has its disposition.
+
 ## Rules
 
-- Never merge the request. Leave every thread open.
+### Rules
+
 - Commit only what a comment or a failed check asks for.
 - Post no new thread, summary or top-level comment, except steps 3 and 6's
   replies.
 - Use only your session's request tools. On failure, report it; post
   nothing another way.
 
-## Supervised repositories
+### Supervised repositories
 
 A supervised repository holds your reply in the user's forge drafts.
 `pending: true` means waiting, not failed. Go on.
@@ -74,6 +97,10 @@ A supervised repository holds your reply in the user's forge drafts.
 Call `edit_pending_comment`, `delete_pending_comment` or
 `edit_pending_review_body` for a user-asked change. Never post a new reply
 instead.
+
+## Never
+
+Never merge the request. Leave every thread open.
 
 ## Do not tell yourself
 
