@@ -42,8 +42,35 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   audit` and `npm run check:audit` are what fail a build on an advisory, and
   that does not change here.
 
+- [`workflows/pr-title.yml`](workflows/pr-title.yml) — runs on every pull
+  request open, reopen, push and title edit. It checks out the base branch
+  only and runs `scripts/check-commit-subject.sh` on the title, which has no
+  merge-commit exemption. It is not a required status check.
+
 [`RELEASING.md`](RELEASING.md) is the human explanation of the loop these two
 release workflows drive, the release token, and what to do when it expires.
+
+## GitHub settings
+
+[`settings/repository.json`](settings/repository.json) and
+[`settings/main-ruleset.json`](settings/main-ruleset.json) are the intended
+GitHub settings. `scripts/github-settings.sh apply` writes only the fields
+they name, and the one ruleset named `main`; other settings and rulesets stay
+as they are. `scripts/github-settings.sh verify` only reads, prints each
+difference and exits 1 on one. Both take `--repo OWNER/REPO` and use the
+credentials of `gh`. Nothing runs them automatically: run `apply` after you
+change a file, then `verify`.
+
+- Only squash merging is on. The squash commit subject is the PR title.
+- A merged PR's remote branch is deleted. Local worktrees and branches follow
+  Ariadne's own lifecycle, which this setting does not touch.
+- The `main` ruleset forbids deletion, non-fast-forward updates and merge
+  commits (`required_linear_history`). It has no bypass actor. Direct pushes
+  stay available.
+- The ruleset requires no pull request and no named status check. Instead,
+  every GitHub CI check on the current PR head must pass before a PR lands.
+- The `PR title` workflow reports a bad title, and runs again after an edit.
+- release-please titles its PR `chore: release X.Y.Z`, so it passes the check.
 
 ## CI caches
 

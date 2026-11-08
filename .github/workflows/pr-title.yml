@@ -1,0 +1,29 @@
+# Check that a pull request title is a valid Conventional Commit subject, with
+# the same validator the commit hook uses. GitHub uses the title as the squash
+# commit subject, so a bad title would land as a bad commit. The check re-runs
+# when the title is edited. It is not a required status check: landing policy
+# is in .github/AGENTS.md.
+name: PR title
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    name: Conventional Commit title
+    runs-on: ubuntu-latest
+    steps:
+      # Check out the base branch only: the validator that judges a title never
+      # comes from the pull request that carries it.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Validate the title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: scripts/check-commit-subject.sh "$TITLE"
