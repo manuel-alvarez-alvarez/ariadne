@@ -209,6 +209,13 @@ reads behind them ([026](026-pull-requests.md)).
     **Babysit goal**. The panel's Sessions tab lists the
     keeper session beside a review's, since both carry the request's id.
 
+17. The draft readiness route (026 rule 27) accepts the current agent of the task's request column on its own request. The daemon finds that column by its `request-merged` gate, not by its id.
+    It also accepts the request's keeper when the integration login opened the request.
+    It refuses another author's request with 403, including requests opened by bots.
+    Every other seat and a call without a session receive 403.
+    The `pr-babysit` skill calls the tool on the head it read when every check is green.
+    A draft needs this call before the keeper checks approvals.
+
 ## Acceptance criteria
 
 - A request of Ariadne's maps to the author role; Dependabot's and another
@@ -309,6 +316,18 @@ reads behind them ([026](026-pull-requests.md)).
 - A row shows the Ariadne babysitting pill while a keeper session babysits
   it by hand:
   `pull-requests-page.test.tsx::shows the Ariadne babysitting pill on a row a keeper session babysits by hand`.
+
+- The PR agent can mark its current draft ready; reviewer and orchestrator seats receive 403:
+  `workflow_pull_request.rs::only_the_pr_agent_can_mark_its_current_draft_ready`.
+- A request column is found by its gate, not its id:
+  `http/pull_requests.rs::ready_tests::a_request_column_is_found_by_its_gate_not_its_id`.
+- Keepers can mark the integration login's draft ready; sessionless calls receive 403:
+  `pull_request_babysit.rs::asking_keeps_a_request_of_mine_by_hand_until_the_merge`.
+- Keepers receive 403 for other authors:
+  `pull_request_babysit.rs::asking_keeps_another_authors_request_until_the_merge`,
+  `::asking_keeps_a_dependabot_request_until_the_merge`.
+- The skill marks checked drafts ready, only where its role is `author`:
+  `skill_tests/operate.rs::the_keeper_marks_a_draft_ready_on_the_checked_head`.
 
 ## Sources
 

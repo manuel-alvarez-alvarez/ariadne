@@ -16,7 +16,7 @@ use ariadne_api::pull_requests::{
     ReplyCommentRequest, ReportPullRequestRequest, SubmitReviewRequest,
 };
 use ariadne_core::models::ModelRank;
-use ariadne_core::workflow::PrOperation;
+use ariadne_core::workflow::{PrOperation, StepGate};
 use ariadne_store::{
     AgentSession, ForgeIntegration, PrOperationEnd, PullRequest, PullRequestComment,
     PullRequestFilter, PullRequestRow, StartPrOperation,
@@ -1396,4 +1396,109 @@ pub(super) async fn ask_babysit(
     state.notify_scheduler_pull_request(&row.id);
     let view = read_held(&state, row).await?;
     Ok(Json(pull_request_dto_of(&state.store, view).await?))
+}
+
+/// Whether `step` names a column of `columns` that waits on the request merge.
+fn is_request_column(columns: &[ariadne_store::GoalStep], step: Option<&str>) -> bool {
+    columns.iter().any(|column| {
+        Some(column.id.as_str()) == step
+            && column.gate.as_deref() == Some(StepGate::RequestMerged.as_str())
+    })
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub(super) struct MarkReadyRequest {
+    head_sha: String,
+}
+
+/// Mark the current draft ready through its keeping session.
+#[utoipa::path(post, path = "/v1/pull-requests/{id}/ready-for-review", tag = "pull-requests",
+    params(("id" = String, Path)), request_body = MarkReadyRequest,
+    responses((status = 200, body = PullRequestDto), (status = 400), (status = 403), (status = 409)))]
+pub(super) async fn mark_ready_for_review(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<MarkReadyRequest>,
+) -> ApiResult<Json<PullRequestDto>> {
+    let row = state.store.get_pull_request(&id).await?;
+    let session = own_session(&state, &headers, &row).await?;
+    let allowed = match session.seat() {
+        Some(ariadne_core::Seat::Keeper) => session.pull_request_id.as_deref() == Some(&id),
+        Some(ariadne_core::Seat::Agent) => match row.origin_task_id.as_deref() {
+            Some(task) => {
+                let task = state.store.get_task(task).await?;
+                let ctx = call_ctx(&state.store, &headers).await?;
+                super::steps::current_agent(&state, &ctx, &task).await?;
+                let columns = state.store.goal_steps(&task.goal_id).await?;
+                is_request_column(&columns, task.step.as_deref())
+            }
+            None => false,
+        },
+        _ => false,
+    };
+    if !allowed {
+        return Err(ApiError::forbidden(
+            "only the request's keeping session can mark it ready",
+        ));
+    }
+    if !is_sha(&req.head_sha) {
+        return Err(ApiError::bad_request("head_sha must be a hex sha"));
+    }
+    let pull = read_now(&state, row).await?;
+    let forge = integration(&state, &pull.repository_id).await?;
+    if !forge
+        .login
+        .as_deref()
+        .is_some_and(|login| login.eq_ignore_ascii_case(&pull.author_login))
+    {
+        return Err(ApiError::forbidden(
+            "only the integration login's request can be marked ready",
+        ));
+    }
+    if pull.head_sha != req.head_sha {
+        return Err(ApiError::conflict("the request head has changed"));
+    }
+    if !pull.draft {
+        return Ok(Json(pull_request_dto_of(&state.store, pull).await?));
+    }
+    client(&state, &forge)
+        .mark_ready_for_review(&slug(&forge), pull.number)
+        .await
+        .map_err(forge_error)?;
+    let mut pull = pull;
+    pull.draft = false;
+    state.forge_poll.wake(&pull.repository_id);
+    Ok(Json(pull_request_dto_of(&state.store, pull).await?))
+}
+
+#[cfg(test)]
+mod ready_tests {
+    use super::*;
+
+    fn column(id: &str, gate: Option<&str>) -> ariadne_store::GoalStep {
+        ariadne_store::GoalStep {
+            goal_id: "goal".into(),
+            ordinal: 0,
+            id: id.into(),
+            title: id.into(),
+            description: String::new(),
+            skills: "[]".into(),
+            ranks: "[]".into(),
+            gate: gate.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_request_column_is_found_by_its_gate_not_its_id() {
+        let columns = [
+            column("develop", Some("committed")),
+            column("land", Some(StepGate::RequestMerged.as_str())),
+            column("pr", None),
+        ];
+        assert!(is_request_column(&columns, Some("land")));
+        assert!(!is_request_column(&columns, Some("pr")));
+        assert!(!is_request_column(&columns, Some("develop")));
+        assert!(!is_request_column(&columns, None));
+    }
 }

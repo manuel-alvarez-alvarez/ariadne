@@ -155,7 +155,7 @@ impl AppState {
         issues::list, issues::get,
         pull_requests::list, pull_requests::get, pull_requests::get_by_number, pull_requests::refresh, pull_requests::search,
         pull_requests::comments, pull_requests::comment, pull_requests::reply, pull_requests::resolve,
-        pull_requests::report,
+        pull_requests::report, pull_requests::mark_ready_for_review,
         pull_requests::diff, pull_requests::submit_review, pull_requests::ask_review,
         pull_requests::ask_babysit,
         permissions::get, permissions::update, permissions::refresh,
@@ -248,6 +248,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/pull-requests/{id}/comments/{comment_id}/resolve",
             post(pull_requests::resolve),
+        )
+        .route(
+            "/v1/pull-requests/{id}/ready-for-review",
+            post(pull_requests::mark_ready_for_review),
         )
         .route("/v1/pull-requests/{id}/report", post(pull_requests::report))
         .route("/v1/pull-requests/{id}/diff", get(pull_requests::diff))

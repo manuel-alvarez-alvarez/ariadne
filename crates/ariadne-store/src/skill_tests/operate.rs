@@ -643,3 +643,11 @@ fn the_orchestration_skill_switches_a_struggling_agents_session() {
         );
     }
 }
+
+#[test]
+fn the_keeper_marks_a_draft_ready_on_the_checked_head() {
+    let doc = default_skill_document(PR_BABYSIT_SKILL).unwrap();
+    assert!(doc.contains("Call `mark_ready_for_review` with that `head_sha`"));
+    assert!(doc.contains("when every check on that head is green and the request is a draft"));
+    assert!(doc.contains("only where `get_pull_request` gives `role: author`"));
+}

@@ -218,6 +218,13 @@ pub(super) struct ResolveThreadReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+pub(super) struct MarkReadyReq {
+    /// The hex head sha you read every check against.
+    pub head_sha: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
 pub(super) struct ReportPullRequestReq {
     /// True once every required approval and check reads green. False when
     /// a later change turns one back.
@@ -808,6 +815,25 @@ impl AriadneMcp {
         json_result(self.post(&path, &serde_json::json!({})).await?)
     }
 
+    #[tool(
+        description = "Mark your draft ready for review after every check on its head is green."
+    )]
+    async fn mark_ready_for_review(
+        &self,
+        Parameters(req): Parameters<MarkReadyReq>,
+    ) -> Result<CallToolResult, McpError> {
+        if !(4..=64).contains(&req.head_sha.len())
+            || !req.head_sha.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(McpError::invalid_params("head_sha must be a hex sha", None));
+        }
+        let path = self.pull_request_path("/ready-for-review").await?;
+        json_result(
+            self.post(&path, &serde_json::json!({"head_sha": req.head_sha}))
+                .await?,
+        )
+    }
+
     #[tool(description = "Report your pull request.")]
     async fn report_pull_request(
         &self,
@@ -974,6 +1000,27 @@ mod tests {
         recording_daemon, recording_daemon_answering, recording_daemon_answering_in_turn,
         recording_no_content_daemon, server_at,
     };
+
+    #[tokio::test]
+    async fn marking_ready_posts_the_confirmed_head() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpSeat::PullRequestKeeper,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.mark_ready_for_review(Parameters(MarkReadyReq {
+            head_sha: "abcd1234".into(),
+        }))
+        .await
+        .unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].path, "/v1/pull-requests/01PR/ready-for-review");
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&seen[0].body).unwrap()["head_sha"],
+            "abcd1234"
+        );
+    }
 
     /// The request tools of a column's agent reach the routes of the request
     /// its task opened (030): each call finds that request through the
