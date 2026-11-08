@@ -893,10 +893,12 @@ async fn the_doctor_reports_the_interpreter_the_model_needs() {
 #[tokio::test]
 async fn the_install_gets_the_run_flavour_and_device_of_each_choice() {
     let record = tempfile::NamedTempFile::new().unwrap();
+    let hold_dir = tempfile::tempdir().unwrap();
+    let hold = hold_dir.path().join("let-go");
     let h = harness()
         .python_bin(python_printing("3.13.1"))
         .ai_permissions_hardware(machine("linux", "x86_64", 256, Some(256)))
-        .ai_permissions_installer(installer(record.path(), "", "0"))
+        .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
     let choices = [
         (
@@ -931,7 +933,10 @@ async fn the_install_gets_the_run_flavour_and_device_of_each_choice() {
         };
         let started: AiPermissionsStatusDto = h.json(update(body), StatusCode::OK).await;
         assert_eq!(started.state, AiPermissionsState::Installing, "{flavour}");
+        // Keep this install running until its initial state is observed.
+        std::fs::write(&hold, "go").unwrap();
         let ready = settles_on(&h, AiPermissionsState::Ready).await;
+        std::fs::remove_file(&hold).unwrap();
         assert_eq!(ready.installed_release.as_deref(), Some(release));
         assert_eq!(
             recorded(record.path())[1..],
