@@ -211,7 +211,12 @@ case "$test_case" in
         validator="$TEST_ROOT/repo/scripts/check-commit-subject.sh"
         "$validator" 'feat(core)!: change behavior'
         "$validator" 'docs: describe landing'
-        for subject in 'Merge branch main' 'feat(unknown): add' 'Fix: add' 'feat: '; do
+        "$validator" 'chore(deps): bump agent-client-protocol from 3.4.0 to 5.0.0 in the cargo-major group'
+        "$validator" 'chore(deps)!: update dependencies'
+        printf 'chore(deps): update dependencies\n' > "$TEST_ROOT/deps-msg"
+        "$TEST_ROOT/repo/.githooks/commit-msg" "$TEST_ROOT/deps-msg"
+        for subject in 'Merge branch main' 'feat(unknown): add' 'Fix: add' 'feat: ' \
+            'feat(deps): add' 'chore(deps): '; do
             if "$validator" "$subject" > "$TEST_ROOT/output" 2>&1; then exit 1; fi
         done
         ;;

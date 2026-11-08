@@ -118,6 +118,9 @@ names: `api`, `bench`, `cli`, `client`, `codex`, `console`, `core`, `daemon`,
 `specs`, `stats`, `store`, `ui`, `workflows`. A spec's `areas:` field under
 `specs/` uses the same names.
 
+Dependency maintenance also accepts `chore(deps): subject`, including
+Dependabot updates. The `deps` scope is reserved for `chore`.
+
 Release notes and version bumps are generated from commit messages by
 release-please, so write subjects a user can read in a changelog: say what
 changed for them, not which file you edited. Anything that is not a

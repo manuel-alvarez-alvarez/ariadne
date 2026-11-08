@@ -108,6 +108,8 @@ Out: what the daemon does once running (009, 012).
 8. Only main requires linear history. Each task or PR lands as one squashed Conventional Commit.
    Direct pushes are permitted. Never force-push main or rewrite existing main history.
    Merge main into published PR branches and push normally.
+   The validator accepts `chore(deps)` dependency updates, including breaking-change subjects.
+   It reserves `deps` for `chore` and rejects an empty subject.
    The commit hook exempts actual merges. The reusable subject validator never exempts titles.
    Main pushes check the outgoing commit in an isolated checkout with the full host-platform check set.
    Other branch pushes retain scoped checks. Require GitHub CI before GitHub squash merges.
@@ -396,5 +398,5 @@ fails the service step`).
 `crates/ariadne-cli/src/commands/daemon.rs`.
 
 Local landing acceptance: `scripts/tests/githooks.sh main-push` proves full checks, candidate isolation, and failure rejection.
-`subject-validator` proves shared subject rules. `merge-message` proves the merge exception.
+`subject-validator` proves shared subject rules, including dependency updates through the validator and commit hook. `merge-message` proves the merge exception.
 `main-merge` rejects main merge commits. Scoped push cases prove task-branch behavior.
