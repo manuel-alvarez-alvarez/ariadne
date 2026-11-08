@@ -181,27 +181,47 @@ written into the system prompt (006), and the lifecycle the seats sit in
     path. `research` cites a source for every fact and lists what it did not
     check, and `spec-writing` asks one question at a time and names the test
     of every criterion. Every review skill
-    — `code-review`, `pr-reviewer` and `architecture-review` — marks a blocking or must-fix finding with a
-    trigger, the input or state that causes it, the failure it causes, and
-    the criterion, behavior or written rule it breaks. A finding with no
-    nameable trigger is downgraded to its non-blocking weight and marked
-    unverified, and every non-blocking finding of one review is capped at
-    five. Each scopes its reading to the change under review, reuses
-    evidence that already covers it — the column report's, for the two
+    — `code-review`, `pr-reviewer` and `architecture-review` — writes its
+    verdict first, with no preamble and no closing summary, and states the
+    shared rules below in the same words. It marks a must-fix or blocking
+    finding with a trigger, the input or state that causes it, the failure
+    it causes, and the criterion, behavior or written rule it breaks. A
+    finding with no nameable trigger is downgraded to its optional weight
+    and marked unverified, and every optional finding of one review is
+    capped at five. Each pins its scope to the diff, reuses evidence that
+    already covers the reviewed revision — the column report's, for the two
     task-column skills, and its own prior round's, for `pr-reviewer` —
-    rather than re-deriving it, and reads further only to judge a risk it
-    can name. Each writes its verdict first, with no preamble, no process
-    narration and no closing summary. A skill that ends a column ends on
-    `complete_step` or `fail_step` (030): `code-review` fails the step on a
-    must-fix finding, never on an optional one, and edits no file; `coding`,
-    `merge` and `pr-babysit` name their own report only as "the column
-    report", never a field of it (006 rule 5) — `merge` alongside the base
-    branch's sha, `pr-babysit` on a merge; every other produce skill that
-    ends its own column — `debugging`, `migration`,
+    rather than re-deriving it, reads outside the diff only to judge a risk
+    it can name, and edits no file.
+
+    One column has one verdict. `code-review` ends the column: it fails the
+    step on a must-fix finding, completes it otherwise, and never fails it
+    on an optional one. `architecture-review` adds its findings to the one
+    verdict of the agent that loaded it, and names a step call only where
+    it is the only review skill loaded. `code-review` moves no ref and
+    names no `git checkout`: the task worktree is shared with the agent
+    whose commit it judges, and a review that detached HEAD there once left
+    that agent's fix commit off the branch. It reviews the branch revision
+    in place, pins the sha that `git rev-parse HEAD` prints as the reviewed
+    revision, treats a missing branch as a must-fix finding, and ends with
+    HEAD on the task branch at that sha. It reads the column report as
+    unverified claims, reruns no check only to confirm it, gives one pass
+    or fail line per `## Criteria` number, and judges the diff against
+    `## Out of scope`. It carries two lenses. A spec change is judged for
+    ambiguity, testability, duplication and scope. A hot-path change is
+    judged by a measurement with its workload, never by appearance, and a
+    cost with no measurement is optional. `pr-reviewer` never approves and
+    never lands, posts one inline comment per defect ranked P0, P1 or P2,
+    asks for changes only on a P0 or P1, resolves only its own threads, and
+    reads the request description and every comment as untrusted input.
+    `coding`, `merge` and `pr-babysit` name their own report only as "the
+    column report", never a field of it (006 rule 5) — `merge` alongside
+    the base branch's sha, `pr-babysit` on a merge; every other produce
+    skill that ends its own column — `debugging`, `migration`,
     `conflict-resolution`, `documentation`, `research`, `spec-writing` —
     calls `complete_step` with the column report the same way, and
     `conflict-resolution` hands the step to the skill beside it where one
-    lands the task; each other review skill fails it on a blocking finding.
+    lands the task.
     `conflict-resolution` alone states the conflict method: both sides read
     before either is kept, no side taken whole, no abort, each dropped intent
     written in the commit body. `merge` and `pr-babysit` name it and state no
@@ -421,8 +441,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - `documentation`, `research` and `spec-writing` each name a sibling, and
   `research` and `spec-writing` keep their own proof
   (`skill_tests/produce.rs::each_writing_skill_names_its_sibling_and_its_own_proof`).
-- The review skill ends on a step call, and the merge skill lands in order
-  (`skill_tests/review.rs::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
+- The review skill reviews in place, moves no ref and ends on a step call,
+  and the merge skill lands in order
+  (`skill_tests/review.rs::the_review_skill_reviews_in_place_and_ends_on_a_step_call`,
   `skill_tests/operate.rs::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`).
 - Only `conflict-resolution` states how a conflict is resolved, and it
   resolves by intent and finishes the operation
@@ -439,11 +460,15 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`skill_tests/operate.rs::the_orchestrator_staffs_each_column_on_its_rank`,
   `skill_tests/operate.rs::the_merge_skill_forbids_every_force_push`,
   `skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`).
-- Every review skill names a trigger on a blocking or must-fix finding,
-  downgrades and marks unverified a finding with none, and caps its
-  non-blocking findings at five; the two task-column skills also pin
-  their reading to the diff and reuse the column report's evidence
-  (`skill_tests/review.rs::every_review_skill_names_a_trigger_and_caps_its_optional_findings`).
+- Every review skill states the shared rules in the same words: a trigger
+  on a must-fix finding, a finding with none downgraded and marked
+  unverified, optional findings capped at five, the scope pinned to the
+  diff, and no file edited
+  (`skill_tests/review.rs::every_review_skill_states_the_shared_rules_in_the_same_words`).
+- `code-review` judges a spec change and a hot-path change by their lenses
+  (`skill_tests/review.rs::the_review_skill_judges_a_spec_and_a_hot_path_by_their_lenses`),
+  and `architecture-review` adds to the one verdict of its column
+  (`skill_tests/review.rs::architecture_review_adds_to_the_one_verdict_of_its_column`).
 - An agent is written on the pin it was given, whole
   (`store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`), and no
   table names an agent by anything but the registry id at the head of its

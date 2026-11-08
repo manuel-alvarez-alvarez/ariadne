@@ -319,12 +319,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 - `coding` calls `complete_step` with the column report that tool's
   description defines, covering every criterion, and names no field of it
   itself. `code-review` names the column report and the return report by
-  name, reads the former as unverified claims, then reuses only matching
-  evidence and runs missing, outdated or insufficient required checks.
+  name, reads the former as unverified claims, then reuses only matching evidence and runs missing, outdated or
+  insufficient required checks.
   Evidence does not replace its code inspection, acceptance review or
   repository-rule enforcement
   (`skill_tests/produce.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`,
-  `skill_tests/review.rs::the_review_skill_reuses_matching_evidence_and_ends_on_a_step_call`,
+  `skill_tests/review.rs::the_review_skill_reviews_in_place_and_ends_on_a_step_call`,
   `tools.rs::complete_step_and_fail_step_define_their_reports`).
   No shipped skill names a whole suite.
   Every other produce skill that ends its own column names the column

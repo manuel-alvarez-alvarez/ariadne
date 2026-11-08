@@ -5,57 +5,69 @@ description: Use when a diff, specification, hot path, regression or scaling ris
 
 # Code review
 
-Complete the code-review work. Done when the conditions in `## Done` hold.
-
-Judge repository convention and task acceptance apart. Write the verdict
-first. No preamble, no narration, no closing summary.
+Judge the branch revision and end the column with one verdict. Done when the conditions in `## Done` hold.
 
 ## When not to use
 
-Use `architecture-review` when its triggers apply.
+Use `architecture-review` when the question is a boundary or a dependency.
+Use `pr-reviewer` when the diff is an open forge request.
 
 ## Steps
 
-1. For a branch review, run `git checkout --detach <branch>` in the task
-   worktree. Read the column report as unverified claims, not proof.
+1. Run `git rev-parse HEAD` and `git branch --show-current`. Review that
+   revision in place. Name the sha as the reviewed revision. Where no
+   branch prints, the work is off the branch. That is a must-fix finding.
+
+   Done when the reviewed revision and the task branch are named.
+2. Read the column report as unverified claims, not proof.
 
    Done when you can name what each claim covers.
-2. Pin the scope to the diff. With a prior SHA from the conversation, run
+3. Pin the scope to the diff. With a prior SHA from the conversation, run
    `git merge-base --is-ancestor <sha> HEAD`. Where HEAD is after it, run
    `git diff <sha>..HEAD`. Otherwise, use `get_diff`.
 
    Done when the diff is not empty.
-3. List the checks the diff requires. Reuse a result only when its
-   revision matches `git rev-parse HEAD` and its command is a required
-   check. Run each required check with no reusable result, once for this
-   verdict.
+4. List the checks the diff requires. Reuse evidence only when it covers
+   the reviewed revision and a required check. Run each required check
+   with no reusable result, once for this verdict.
 
    Done when every required check has a reused or fresh result.
-4. Map every hunk of the diff to its purpose. Read code outside the diff
+5. Map every hunk of the diff to its purpose. Read code outside the diff
    only to judge a risk you can name.
 
    Done when each hunk has a purpose.
-5. Judge the repository axis against documented style, naming, structure
-   and patterns. Judge the acceptance axis against every criterion and
-   added behavior, and the diff against the Out of scope section. Judge
-   each test by reading its setup, action and assertions. Never change
-   code to see whether a test fails.
+6. Judge the repository axis and the acceptance axis below. Judge the diff
+   against the Out of scope section. Judge each test by reading its setup,
+   action and assertions. Apply each lens below that the diff touches.
 
-   Done when both axes have been judged.
-6. Give each finding its trigger, the input or state that breaks it, and
-   its failure. A finding with no trigger you can name is optional, not
-   must-fix, and marked unverified. Cap optional findings at five, the
-   ones you have most conviction in.
+   Done when both axes and every lens that applies have been judged.
+7. Give each finding its trigger: the input or state that causes it. Name
+   its failure and the rule it breaks. Search once for the same pattern
+   at sibling call sites. A finding with no trigger you can name is
+   optional. Mark it unverified. Cap optional findings at five, the ones
+   you have most conviction in.
 
    Done when every finding has a weight.
-7. Write the verdict under each axis's own heading, with one pass or fail
-   line per Criteria number. On a must-fix finding, call `fail_step` with
-   the return report. Else call `complete_step` with the verdict and the
-   optional findings.
+8. Write the verdict under each axis's own heading, with one pass or fail
+   line per Criteria number. Open it with pass or fail and the reviewed
+   revision. End it with each behavior you did not judge.
 
-   Done when the verdict has been submitted.
+   Done when every Criteria number has one line.
+9. On a must-fix finding, call `fail_step` with the return report. Else call
+   `complete_step` with the verdict and the optional findings.
+
+   Done when `git rev-parse HEAD` prints the reviewed revision and the
+   column has ended.
 
 ## Rules
+
+- Write the verdict first. Add no preamble and no closing summary.
+- A must-fix finding breaks a criterion or a written repository rule.
+- A criterion you did not judge fails. A category that does not apply
+  never counts as passed.
+- Judge the task, not your preferred design.
+- Evidence proves a check ran. Inspect code and enforce both axes
+  yourself.
 
 ### Repository conventions axis
 
@@ -69,117 +81,25 @@ Use `architecture-review` when its triggers apply.
 - Find a criterion with no implementation or proof.
 - Find behavior outside the task.
 
-### Rules
-
-- A must-fix finding breaks a criterion or a written repository rule.
-- An optional finding never fails the step.
-- Judge the task, not your preferred design. Edit no file.
-- Evidence proves a check ran. Inspect code and enforce both axes
-  yourself.
-- Never rerun a check only to confirm the column report.
-
 ### Specification lens
 
-A spec is ready when two people cannot read it two ways. Write the verdict
-first. No preamble, no narration, no closing summary.
-
-#### Steps
-
-1. Pin the scope to the diff. Read the goal and the changed rules. Reuse
-   the column report's evidence where it covers this revision.
-
-   Done when every changed rule is inside the goal or marked as added
-   scope.
-2. Name the test that proves each changed rule. Read code only to judge a
-   risk you can name.
-
-   Done when every changed rule has an observable pass condition.
-3. Find each missing decision: an error path, an empty case, a boundary, a
-   limit or a permission.
-
-   Done when each gap has one direct question.
-4. Give each finding its trigger: an ambiguous reading or a conflicting
-   rule. Name the requirement or written rule it breaks. A finding with
-   no nameable trigger or no broken requirement is optional. Mark it
-   unverified.
-
-   Done when every blocking finding names its trigger and the rule it
-   breaks.
-5. Write the verdict. Cap optional findings at five, the ones you have
-   most conviction in.
-
-   Done when the verdict has been written.
-6. Call `fail_step` with the verdict on a blocking finding, else
-   `complete_step`.
-
-   Done when the report has been submitted.
-
-#### What to look for
+A spec is ready when two people cannot read it two ways. Judge a changed
+rule inside the goal, and name the test that proves it.
 
 - Ambiguity: a rule two readers read two ways, to different behavior.
-- Tests: a criterion with no observable proof.
-- Reasons: a number with no stated basis.
+- Testability: a rule with no observable pass condition, or an error path,
+  empty case, boundary or limit left undecided.
 - Duplication: behavior stated twice, where one copy can go stale.
-- Time: a future promise in place of current behavior.
 - Scope: a requirement the goal did not request.
-
-#### Rules
-
-- Judge the specification without inventing its implementation.
-- Keep each requirement in one authoritative place.
-
-#### Do not tell yourself
-
-- "The implementer will know what this means." -> Different readings
-  create different products.
-- "We can choose the edge cases later." -> An unanswered boundary
-  question moves risk into implementation.
-- "The spec asked for a review, so I name an ambiguity." -> A clear rule
-  gets no invented reading.
-
-#### Done
-
-Every changed rule is testable, stated once and inside the goal. Optional
-findings stay at five or fewer.
 
 ### Performance lens
 
-Measure first. A guess about speed is usually wrong. Write the verdict
-first, beside its measurement. No preamble, no narration, no closing
-summary.
-
-#### Steps
-
-1. Pin the scope to the diff. Find the hot path it changes, and a
-   realistic workload.
-
-   Done when the workload names a real input size and operation.
-2. Reuse the column report's measurement only if it covers this
-   revision and workload. Else measure: method, environment, result.
-
-   Done when another reviewer can repeat it.
-3. Read the hot path for every cost class below. Read code outside the
-   diff only to judge a risk you can name.
-
-   Done when every class has a measurement or a recorded absence.
-4. Measure each proposed change the same way.
-
-   Done when each proposal has comparable before and after results.
-5. Give each finding its trigger, the workload that causes its measured
-   cost, and the regression or requirement it breaks. A finding with no
-   trigger or no broken rule is optional. Mark it unverified.
-
-   Done when every blocking finding names its trigger, cost and rule.
-6. Write the verdict. Cap optional findings at five, the ones you have
-   most conviction in.
-
-   Done when the verdict has been written.
-7. Call `fail_step` with the verdict on a blocking finding, else
-   `complete_step`.
-
-   Done when the report has been submitted.
-
-#### What to look for
+Judge a hot-path change by a measurement with its workload, never by
+appearance. The workload names a real input size and operation.
+Reuse the column report's measurement only where it covers the reviewed
+revision and workload. Else measure: method, environment, result.
+Measure each proposed change the same way. A cost you did not measure is
+optional.
 
 - Complexity: nested work over the same growing input.
 - Round trips: a query or a request per item where one call fits.
@@ -188,26 +108,14 @@ summary.
 - Blocking: slow work on a thread that other work needs.
 - Volume: rows or bytes read beyond what the answer needs.
 
-#### Rules
-
-- Keep readable code when the gain is too small to measure.
-
-#### Do not tell yourself
-
-- "This loop looks slow." -> Appearance is not a measurement.
-- "One item is enough." -> Growth costs appear at realistic sizes.
-- "The benchmark improved." -> Different workloads do not support one
-  comparison.
-
-#### Done
-
-The report names the hot path and workload. Each blocking finding has a
-measurement and the rule it breaks. Optional findings stay at five or
-fewer.
-
 ## Never
 
-Edit no file.
+- Never edit a file.
+- Run no command that moves HEAD or a ref: no switch, reset, rebase
+  or commit.
+- Never change code to see whether a test fails.
+- Never rerun a check only to confirm the column report.
+- Never fail the step on an optional finding.
 
 ## Do not tell yourself
 
@@ -215,10 +123,18 @@ Edit no file.
   covered behavior.
 - "The task passes, so conventions do not matter." -> A correct feature
   can still damage the repository.
+- "The report says it is fixed." -> The report is a claim. Read the code.
+- "The diff is small, so it is safe." -> Classify by risk, not by size.
 - "The task asked for a review, so I name a gap." -> A sound change gets
   no invented gap.
+- "The implementer will know what this means." -> Different readings
+  create different products.
+- "This loop looks slow." -> Appearance is not a measurement.
+- "The benchmark improved." -> Different workloads do not support one
+  comparison.
 
 ## Done
 
-Each axis has its own verdict. Every finding names its trigger, failure
-and weight. Every criterion has a status.
+Every Criteria number has a pass or fail line. Every finding names its
+trigger, failure and weight. HEAD stays on the task branch at the
+reviewed revision. The column ended on one step call.
