@@ -245,6 +245,38 @@
 }
 
 /*
+ * Scrollbars, on Linux only. WebKitGTK draws the system's wide, grey, opaque
+ * bars, which clash with both themes and, being classic bars that take layout
+ * space or sit over the edge, cover the right-hand side of a dialog's fields.
+ * macOS draws thin overlay bars of its own, so nothing is set there: the
+ * `data-platform` marker is put on `<html>` by `main.tsx`.
+ *
+ * The standard properties go first for engines that have them. WebKitGTK does
+ * not, so it gets `::-webkit-scrollbar`; an engine that honours the standard
+ * properties ignores the pseudo-elements once `scrollbar-width` is set, so
+ * the two never stack.
+ */
+html[data-platform="linux"] * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+html[data-platform="linux"] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+html[data-platform="linux"] ::-webkit-scrollbar-track,
+html[data-platform="linux"] ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+html[data-platform="linux"] ::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+}
+html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-foreground);
+}
+
+/*
  * Nothing in this app moves to say anything a still frame does not: the pulsing
  * dot is already a coloured dot next to the word "Live", a sheet sliding in is
  * already a sheet. So a reduce-motion preference switches the lot off in one

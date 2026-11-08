@@ -138,7 +138,15 @@ export function TaskDiff({ taskId }: { taskId: string }) {
         >
           <DialogTitle className="sr-only">Diff of the task branch</DialogTitle>
           {toolbar}
-          <div className="min-h-0 overflow-y-auto">{body}</div>
+          {/* The padding keeps the Linux scrollbar (see `index.css`) off the diff
+              text on a WebKitGTK that has no `scrollbar-gutter`; where it is
+              supported the gutter reserves the space and the padding is spare. */}
+          <div
+            data-testid="diff-scroll"
+            className="min-h-0 overflow-y-auto pr-2 [scrollbar-gutter:stable]"
+          >
+            {body}
+          </div>
         </DialogContent>
       </Dialog>
     </>

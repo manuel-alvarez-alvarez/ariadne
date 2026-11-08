@@ -22,7 +22,7 @@ import userEvent from "@testing-library/user-event"
 import { useState } from "react"
 import { describe, expect, it, vi } from "vitest"
 
-import { FormDialog } from "./form-dialog"
+import { FormDialog, FormDialogBody } from "./form-dialog"
 import { Button } from "./ui/button"
 import { DialogClose, DialogContent, DialogFooter, DialogTitle } from "./ui/dialog"
 
@@ -130,5 +130,19 @@ describe("saving a form with unsaved input", () => {
 
     expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(screen.queryByText("Discard changes?")).toBeNull()
+  })
+})
+
+describe("the scroll area of a form dialog", () => {
+  it("keeps room on the right for a Linux scrollbar, whatever the engine supports", () => {
+    render(
+      <FormDialogBody>
+        <input aria-label="Field" />
+      </FormDialogBody>,
+    )
+
+    const body = screen.getByLabelText("Field").closest("[data-slot=field-group]")
+    expect(body?.className).toContain("pr-2")
+    expect(body?.className).toContain("scrollbar-gutter:stable")
   })
 })

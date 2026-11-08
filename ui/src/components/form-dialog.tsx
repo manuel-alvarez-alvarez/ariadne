@@ -200,7 +200,10 @@ export function FormDialogContent({
  * it, both always in view, and only the middle moves.
  *
  * The padding of a pixel is what keeps the focus ring of the first and last
- * field from being shaved off by the scroll container's own edge.
+ * field from being shaved off by the scroll container's own edge. The right
+ * padding is wider, `pr-2`, and the `scrollbar-gutter` reserves it: on Linux
+ * the themed scrollbar (see `index.css`) is 8px wide and would otherwise sit
+ * on the fields' right edge and their focus rings.
  */
 export function FormDialogBody({
   className,
@@ -210,7 +213,12 @@ export function FormDialogBody({
   children: ReactNode
 }) {
   return (
-    <FieldGroup className={cn("max-h-[60svh] overflow-y-auto px-px py-px", className)}>
+    <FieldGroup
+      className={cn(
+        "max-h-[60svh] overflow-y-auto py-px pr-2 pl-px [scrollbar-gutter:stable]",
+        className,
+      )}
+    >
       {children}
     </FieldGroup>
   )

@@ -14,7 +14,7 @@
  * would silently stop working.
  */
 
-import { act, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, screen, waitFor } from "@testing-library/react"
 import { beforeEach, expect, it } from "vitest"
 
 import type { DomainEvent } from "@/api"
@@ -143,4 +143,13 @@ it("refetches when the task itself transitions, since landing moves the diff", a
   })
 
   expect(await screen.findByText("two.txt")).toBeTruthy()
+})
+
+it("keeps room on the right of the expanded diff for a Linux scrollbar", async () => {
+  await renderDiff()
+
+  fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
+
+  const scroll = await screen.findByTestId("diff-scroll")
+  expect(scroll.className).toContain("pr-2")
 })

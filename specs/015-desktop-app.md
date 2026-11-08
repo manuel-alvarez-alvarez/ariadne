@@ -73,6 +73,9 @@ Out: the daemon endpoints themselves (012).
    the expanded console or diff. Open dialogs retain their own focus.
    The header does not shrink, and the body scrolls within the
    remaining height, with one full-height child for the session view.
+   On Linux (WebKitGTK) every scroll area gets a thin scrollbar in theme
+   colours, light and dark, from one rule in `index.css` keyed on a
+   `data-platform="linux"` marker; macOS keeps its overlay scrollbars.
 3. Screens: the goals board (swimlanes plus an attention strip) has Active,
    All and Finished status segments. A status-menu icon holds a custom
    selection. Each lane header shows a progress bar, done/total and tokens.
@@ -568,7 +571,8 @@ Out: the daemon endpoints themselves (012).
     title `npm test`, kind `execute`, a `command` with a `description`, the
     options `Yes`, `Yes, and don't ask again for npm test * commands` and
     `No`, and the workspace `/Users/user/.ariadne/worktrees/goal/task`. Only
-    the fields scroll on a short window, with focus-ring padding;
+    the fields scroll on a short window, with focus-ring padding and a
+    reserved gutter so a Linux scrollbar covers no field;
     the header and footer stay in view and no width shows a horizontal scrollbar.
     Input is pretty-printed JSON and resizes vertically only. The title row
     holds an Examples picker beside the title, clear of the close button, that
@@ -1210,6 +1214,14 @@ Out: the daemon endpoints themselves (012).
   code and links, a link opening outside the app
   (`ui/src/features/tasks/task-history.test.tsx::renders a transition's
   reason as Markdown`).
+- On Linux every scroll area is restyled thin and in theme colours, scoped to a
+  `data-platform="linux"` marker that macOS and Android never get
+  (`ui/src/lib/platform.test.ts::marks <html> on Linux and leaves macOS and Android unmarked`,
+  `::styles scrollbars only under the Linux marker, with both the standard and the WebKit forms`).
+- A form dialog's fields and the expanded diff keep right-hand padding for the
+  scrollbar, independent of `scrollbar-gutter` support
+  (`ui/src/components/form-dialog.test.tsx::keeps room on the right for a Linux scrollbar, whatever the engine supports`,
+  `ui/src/features/tasks/task-diff.test.tsx::keeps room on the right of the expanded diff for a Linux scrollbar`).
 - The Tauri configuration has the restrictive content security policy that
   permits the configurable daemon and Tauri IPC connections without evaluated
   script
