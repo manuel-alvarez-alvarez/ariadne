@@ -51,7 +51,7 @@ fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
         "Never change code to see whether a test fails.",
         "Never rerun a check only to confirm the column report.",
         "Never fail the step on an optional finding.",
-        "On a must-fix finding, call `fail_step` with the verdict.",
+        "On a must-fix finding, call `fail_step` with the return report.",
         "Else call `complete_step` with the verdict and the optional findings.",
         "HEAD stays on the task branch at the reviewed revision.",
     ] {

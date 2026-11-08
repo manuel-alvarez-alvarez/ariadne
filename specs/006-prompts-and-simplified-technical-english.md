@@ -318,8 +318,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`defaults.rs::the_ste_rules_are_read_off_a_text_line_by_line`).
 - `coding` calls `complete_step` with the column report that tool's
   description defines, covering every criterion, and names no field of it
-  itself. `code-review` names the column report, reads it as unverified
-  claims, then reuses only matching evidence and runs missing, outdated or
+  itself. `code-review` names the column report and the return report by
+  name, reads the former as unverified claims, then reuses only matching evidence and runs missing, outdated or
   insufficient required checks.
   Evidence does not replace its code inspection, acceptance review or
   repository-rule enforcement

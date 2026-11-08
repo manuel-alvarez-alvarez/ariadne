@@ -53,7 +53,7 @@ Use `pr-reviewer` when the diff is an open forge request.
    revision. End it with each behavior you did not judge.
 
    Done when every Criteria number has one line.
-9. On a must-fix finding, call `fail_step` with the verdict. Else call
+9. On a must-fix finding, call `fail_step` with the return report. Else call
    `complete_step` with the verdict and the optional findings.
 
    Done when `git rev-parse HEAD` prints the reviewed revision and the
