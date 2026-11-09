@@ -480,11 +480,31 @@ mod check_state_fetch_tests {
     use crate::forge::Cli;
 
     const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, sys
+import json, os, re, sys, time
 here = os.path.dirname(os.path.abspath(sys.argv[0]))
 args = sys.argv[1:]
 with open(os.path.join(here, "calls.log"), "a") as log:
     log.write(json.dumps(args) + "\n")
+rollups = os.path.join(here, "rollups.json")
+if args[:2] == ["api", "graphql"] and os.path.exists(rollups):
+    # Answer only the aliases the query asks, and refuse a call that
+    # overlaps another one.
+    lock = os.path.join(here, "graphql.lock")
+    try:
+        os.close(os.open(lock, os.O_CREAT | os.O_EXCL))
+    except FileExistsError:
+        sys.stderr.write("parallel graphql calls")
+        sys.exit(1)
+    time.sleep(0.02)
+    states = json.load(open(rollups))
+    query = next(a for a in args if a.startswith("query="))
+    repository = {}
+    for n in re.findall(r"pr(\d+): pullRequest", query):
+        if n in states:
+            repository["pr" + n] = {"statusCheckRollup": {"state": states[n]}}
+    os.remove(lock)
+    sys.stdout.write(json.dumps({"data": {"repository": repository}}))
+    sys.exit(0)
 answers = json.load(open(os.path.join(here, "answers.json")))
 for entry in answers:
     prefix = entry["args"]
@@ -555,6 +575,20 @@ sys.exit(1)
             "createdAt": "2026-10-01T00:00:00Z"})
     }
 
+    /// The stub's check state of each of `1..=count`: failure on even
+    /// numbers, success on odd ones.
+    fn write_rollups(dir: &std::path::Path, count: i64) {
+        let states: serde_json::Map<_, _> = (1..=count)
+            .map(|n| {
+                (
+                    n.to_string(),
+                    json!(if n % 2 == 0 { "FAILURE" } else { "SUCCESS" }),
+                )
+            })
+            .collect();
+        std::fs::write(dir.join("rollups.json"), json!(states).to_string()).unwrap();
+    }
+
     fn calls(dir: &std::path::Path) -> Vec<Vec<String>> {
         std::fs::read_to_string(dir.join("calls.log"))
             .unwrap()
@@ -570,15 +604,8 @@ sys.exit(1)
         let dir = tempfile::tempdir().unwrap();
         let rows: Vec<_> = (1..=60).map(list_row).collect();
         let list = serde_json::to_string(&rows).unwrap();
-        let rollup = json!({"data": {"repository": (1..=60)
-            .map(|n| (format!("pr{n}"), json!({"statusCheckRollup": {"state":
-                if n % 2 == 0 { "FAILURE" } else { "SUCCESS" }}})))
-            .collect::<serde_json::Map<_, _>>()}})
-        .to_string();
-        let github = github(
-            dir.path(),
-            &[(&["pr", "list"], &list), (&["api", "graphql"], &rollup)],
-        );
+        write_rollups(dir.path(), 60);
+        let github = github(dir.path(), &[(&["pr", "list"], &list)]);
         let listed = github
             .list_open_pull_requests("github.com/acme/widgets", "me")
             .await
@@ -611,17 +638,19 @@ sys.exit(1)
         let dir = tempfile::tempdir().unwrap();
         let rows: Vec<_> = (1..=1000).map(list_row).collect();
         let list = serde_json::to_string(&rows).unwrap();
-        let rollup = json!({"data": {"repository": {}}}).to_string();
-        let github = github(
-            dir.path(),
-            &[(&["pr", "list"], &list), (&["api", "graphql"], &rollup)],
-        );
+        write_rollups(dir.path(), 1000);
+        let github = github(dir.path(), &[(&["pr", "list"], &list)]);
         github
             .list_open_pull_requests("github.com/acme/widgets", "me")
             .await
             .unwrap();
-        let lists = calls(dir.path()).iter().filter(|c| c[0] == "pr").count();
-        assert_eq!(lists, 1);
+        let lists: Vec<_> = calls(dir.path())
+            .into_iter()
+            .filter(|c| c[0] == "pr")
+            .collect();
+        assert_eq!(lists.len(), 1);
+        let limit = lists[0].iter().position(|a| a == "--limit").unwrap();
+        assert_eq!(lists[0][limit + 1], "1000");
     }
 
     /// One failed check-state call fails the whole fetch.
