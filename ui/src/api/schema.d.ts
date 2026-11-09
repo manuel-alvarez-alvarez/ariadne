@@ -682,7 +682,9 @@ export interface paths {
          *     user's own or the ones that ask for their review, each with what Ariadne
          *     keeps of it where it works on it. A repository with no fetch yet answers
          *     none of its requests. With `task`, the request a task opened, which its
-         *     author keeps (005).
+         *     author keeps (005). `q` narrows every held request before the list is
+         *     cut into pages of [`PULL_REQUEST_PAGE_SIZE`], the most recently updated
+         *     first; `cursor` names the page after the one that sent it.
          */
         get: operations["pull-requests_list"];
         put?: never;
@@ -826,6 +828,23 @@ export interface paths {
         get: operations["pull-requests_diff"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pull-requests/{id}/ready-for-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark the current draft ready through its keeping session. */
+        post: operations["pull-requests_mark_ready_for_review"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2758,6 +2777,9 @@ export interface components {
         LogSnapshotResponse: {
             lines: components["schemas"]["LogLineDto"][];
         };
+        MarkReadyRequest: {
+            head_sha: string;
+        };
         MessageDto: {
             body: string;
             created_at: string;
@@ -3073,6 +3095,12 @@ export interface components {
             goal_id: string;
             operation: components["schemas"]["PrOperation"];
             task_id?: string | null;
+        };
+        /** @description One page of `GET /v1/pull-requests`, the most recently updated first. */
+        PullRequestPageDto: {
+            /** @description The `cursor` that continues after this page; null on the last one. */
+            next_cursor?: string | null;
+            pull_requests: components["schemas"]["PullRequestDto"][];
         };
         /** @description Payload of `pull_requests_changed`: the repository whose requests moved. */
         PullRequestsChangedDto: {
@@ -5061,6 +5089,14 @@ export interface operations {
                  *     for the ones that do not.
                  */
                 requested?: boolean | null;
+                /**
+                 * @description Only the requests where every word of this text is in the number
+                 *     (`#12`), the title, the description, the author or the head branch,
+                 *     ignoring case.
+                 */
+                q?: string | null;
+                /** @description The `next_cursor` of the page before this one; opaque. */
+                cursor?: string | null;
             };
             header?: never;
             path?: never;
@@ -5073,8 +5109,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PullRequestDto"][];
+                    "application/json": components["schemas"]["PullRequestPageDto"];
                 };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             409: {
                 headers: {
@@ -5355,6 +5397,49 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    "pull-requests_mark_ready_for_review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkReadyRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

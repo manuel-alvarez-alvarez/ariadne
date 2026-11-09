@@ -15,7 +15,9 @@ use crate::output::{
     yes_no,
 };
 use anyhow::Result;
-use ariadne_api::pull_requests::{PullRequestDto, PullRequestListQuery, PullRequestMatchDto};
+use ariadne_api::pull_requests::{
+    PullRequestDto, PullRequestListQuery, PullRequestMatchDto, PullRequestPageDto,
+};
 use ariadne_api::sessions::{SessionPageDto, SessionPageQuery};
 use ariadne_client::Client;
 use clap::Subcommand;
@@ -258,8 +260,30 @@ fn inspect_rows(row: &PullRequestDto) -> Vec<(&'static str, Kv)> {
 fn inspect(row: &PullRequestDto, format: Format) -> Result<()> {
     print(format, row, || print_kv(&inspect_rows(row)))
 }
-async fn list(client: &Client, path: &str, format: Format) -> Result<()> {
-    let rows: Vec<PullRequestDto> = client.get_json(path).await?;
+/// Every request `query` leaves, read page by page until the last one.
+async fn every_page(client: &Client, query: &PullRequestListQuery) -> Result<Vec<PullRequestDto>> {
+    let mut rows = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page: PullRequestPageDto = client
+            .get_json(&query_path(
+                "/v1/pull-requests",
+                &PullRequestListQuery {
+                    cursor,
+                    ..query.clone()
+                },
+            )?)
+            .await?;
+        rows.extend(page.pull_requests);
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => return Ok(rows),
+        }
+    }
+}
+
+async fn list(client: &Client, query: &PullRequestListQuery, format: Format) -> Result<()> {
+    let rows = every_page(client, query).await?;
     print_list(format, &rows, COLUMNS, ls_row, "No pull requests")
 }
 
@@ -300,18 +324,19 @@ pub(crate) async fn run(client: &Client, command: PrCommand, format: Format) -> 
                 role,
                 task: None,
                 requested,
+                q: None,
+                cursor: None,
             };
-            let path = query_path("/v1/pull-requests", &query)?;
             if watch {
                 follow::watch(
                     client,
                     "/v1/events/stream",
                     |event| event.event.starts_with("pull_request_"),
-                    async || list(client, &path, format).await,
+                    async || list(client, &query, format).await,
                 )
                 .await
             } else {
-                list(client, &path, format).await
+                list(client, &query, format).await
             }
         }
         PrCommand::Inspect { repo, number } => {
@@ -579,6 +604,10 @@ mod tests {
             )])
         } else if uri.contains("/search") {
             json!([{"number":42,"title":"Fix widgets","author_login":"me","role":"author","tracked":true,"url":"https://github.com/acme/widgets/pull/42"}])
+        } else if method == "GET"
+            && (uri.starts_with("/v1/pull-requests?") || uri == "/v1/pull-requests")
+        {
+            json!({"pull_requests": [row()], "next_cursor": null})
         } else if method == "GET" && !uri.ends_with("/pull-requests/42") {
             json!([row()])
         } else {
@@ -586,6 +615,46 @@ mod tests {
         };
         axum::Json(payload).into_response()
     }
+    /// The daemon sends the list in pages, and `pr ls` prints every row of
+    /// every page: it follows each cursor until the last page, which has none.
+    #[tokio::test]
+    async fn pr_ls_follows_every_cursor_and_prints_every_row() {
+        async fn pages(
+            State(calls): State<Calls>,
+            Query(query): Query<PullRequestListQuery>,
+        ) -> axum::Json<serde_json::Value> {
+            calls.lock().unwrap().push((
+                "GET".into(),
+                query.cursor.clone().unwrap_or_default(),
+                serde_json::Value::Null,
+            ));
+            let mut first = row();
+            first["number"] = json!(1);
+            let mut second = row();
+            second["number"] = json!(2);
+            axum::Json(match query.cursor.as_deref() {
+                None => json!({"pull_requests": [first], "next_cursor": "page-2"}),
+                Some(_) => json!({"pull_requests": [second], "next_cursor": null}),
+            })
+        }
+        let calls: Calls = Arc::default();
+        let app = Router::new()
+            .route("/v1/pull-requests", get(pages))
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = Client::tcp(format!("http://{}", listener.local_addr().unwrap()));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let query = PullRequestListQuery {
+            role: Some("author".into()),
+            ..PullRequestListQuery::default()
+        };
+        let rows = every_page(&client, &query).await.unwrap();
+        server.abort();
+        assert_eq!(rows.iter().map(|r| r.number).collect::<Vec<_>>(), [1, 2]);
+        let cursors: Vec<String> = calls.lock().unwrap().iter().map(|c| c.1.clone()).collect();
+        assert_eq!(cursors, ["", "page-2"]);
+    }
+
     /// `--mine` and `--review-requests` are two narrowings of one list, so
     /// asking for both is refused rather than answered with nothing.
     #[test]

@@ -1030,7 +1030,7 @@ mod tests {
     /// beside it, lists its comments, posts one reply, and reports.
     #[tokio::test]
     async fn the_agents_request_tools_call_the_routes_of_the_request_its_task_opened() {
-        let found = r#"[{"id":"01PR"}]"#.to_string();
+        let found = r#"{"pull_requests":[{"id":"01PR"}],"next_cursor":null}"#.to_string();
         let row = r#"{"id":"01PR","repository_id":"01R","path":"/repos/widgets","forge":{"login":"me"},"worktree_path":"/wt/task"}"#.to_string();
         let (endpoint, seen) = recording_daemon_answering_in_turn(vec![
             found.clone(),

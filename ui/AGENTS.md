@@ -314,9 +314,9 @@ Several keys have no `detail` beside their list: `outsideSessions`, `agents`,
 `models`, `acpAgents`, `agentEvents` and `issues` are each read whole or
 filtered, with nothing the app opens on one id alone.
 
-The outside-sessions list is the one key the daemon pages: its cursor stays
-out of the key, because the pages of one filter are the pages of one infinite
-query.
+The outside-sessions list and the pull-requests list are the keys the daemon
+pages: the cursor stays out of the key, because the pages of one filter are
+the pages of one infinite query.
 
 Sub-resources hang off their detail key: `["tasks", "detail", id, "messages"]`,
 `… "transitions"`, `… "diff"`. Two consequences the event dispatcher

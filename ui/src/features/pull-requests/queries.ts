@@ -1,4 +1,9 @@
-import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
+import {
+  infiniteQueryOptions,
+  queryOptions,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query"
 import { api, type PullRequestDto, qk, unwrap } from "@/api"
 
 /**
@@ -46,17 +51,27 @@ export function pullRequestByKeyQueryOptions(key: string) {
 
 /**
  * `GET /v1/pull-requests` under `filters`: the open requests the Forge
- * screen's tab lists, from the repository's last fetch, and read again on
- * every `pull_requests_changed`.
+ * screen's tab lists, from the repository's last fetch, a page of 25 at a
+ * time, the most recently updated first. `q` is the tab's text filter, which
+ * the daemon applies to every request before it cuts the pages. Every
+ * `pull_requests_changed` reads the list again from its first page.
  */
 export function pullRequestsQueryOptions(filters: {
   repo?: string
   role?: string
   requested?: boolean
+  q?: string
 }) {
-  return queryOptions({
+  return infiniteQueryOptions({
     queryKey: qk.pullRequests.list(filters),
-    queryFn: () => unwrap(api().GET("/v1/pull-requests", { params: { query: filters } })),
+    queryFn: ({ pageParam }) =>
+      unwrap(
+        api().GET("/v1/pull-requests", {
+          params: { query: { ...filters, cursor: pageParam ?? undefined } },
+        }),
+      ),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.next_cursor ?? null,
   })
 }
 

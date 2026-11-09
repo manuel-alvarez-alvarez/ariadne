@@ -11,9 +11,10 @@ use crate::forge::live::{self, Details, Live};
 use crate::forge::pulls::{DraftComment, ReviewDraft};
 use crate::forge::{ForgeClient, PullRequestRef, pulls};
 use ariadne_api::pull_requests::{
-    AskBabysitRequest, AskReviewRequest, PullRequestCommentDto, PullRequestCommentQuery,
-    PullRequestDiffQuery, PullRequestDto, PullRequestListQuery, PullRequestMatchDto,
-    ReplyCommentRequest, ReportPullRequestRequest, SubmitReviewRequest,
+    AskBabysitRequest, AskReviewRequest, PULL_REQUEST_PAGE_SIZE, PullRequestCommentDto,
+    PullRequestCommentQuery, PullRequestDiffQuery, PullRequestDto, PullRequestListQuery,
+    PullRequestMatchDto, PullRequestPageDto, ReplyCommentRequest, ReportPullRequestRequest,
+    SubmitReviewRequest,
 };
 use ariadne_core::models::ModelRank;
 use ariadne_core::workflow::{PrOperation, StepGate};
@@ -25,7 +26,10 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
-use serde::Deserialize;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use utoipa::IntoParams;
@@ -193,18 +197,31 @@ async fn read_held(state: &AppState, row: PullRequestRow) -> ApiResult<PullReque
 /// user's own or the ones that ask for their review, each with what Ariadne
 /// keeps of it where it works on it. A repository with no fetch yet answers
 /// none of its requests. With `task`, the request a task opened, which its
-/// author keeps (005).
-#[utoipa::path(get, path = "/v1/pull-requests", tag = "pull-requests", params(PullRequestListQuery), responses((status = 200, body = [PullRequestDto]), (status = 409)))]
+/// author keeps (005). `q` narrows every held request before the list is
+/// cut into pages of [`PULL_REQUEST_PAGE_SIZE`], the most recently updated
+/// first; `cursor` names the page after the one that sent it.
+#[utoipa::path(get, path = "/v1/pull-requests", tag = "pull-requests", params(PullRequestListQuery), responses((status = 200, body = PullRequestPageDto), (status = 400), (status = 409)))]
 pub(super) async fn list(
     State(state): State<AppState>,
     Query(q): Query<PullRequestListQuery>,
-) -> ApiResult<Json<Vec<PullRequestDto>>> {
+) -> ApiResult<Json<PullRequestPageDto>> {
     if q.role
         .as_deref()
         .is_some_and(|r| !matches!(r, "author" | "reviewer"))
     {
         return Err(ApiError::bad_request("role must be author or reviewer"));
     }
+    let after = match q.cursor.as_deref() {
+        Some(cursor) => Some(ListCursor::decode(cursor).ok_or_else(|| {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_cursor",
+                "the cursor is not one this list sent",
+            )
+        })?),
+        None => None,
+    };
+    let text = q.q.as_deref();
     if let Some(task) = q.task {
         let rows = state
             .store
@@ -216,58 +233,173 @@ pub(super) async fn list(
         let mut dtos = Vec::with_capacity(rows.len());
         for row in rows {
             let pull = read_held(&state, row).await?;
-            dtos.push(pull_request_dto_of(&state.store, pull).await?);
+            let dto = pull_request_dto_of(&state.store, pull).await?;
+            let fields = [
+                dto.title.as_str(),
+                &dto.body,
+                &dto.author_login,
+                &dto.head_branch,
+            ];
+            if matches_text(text, dto.number, &fields) {
+                dtos.push(dto);
+            }
         }
-        return Ok(Json(dtos));
+        let (pull_requests, next_cursor) = page(
+            dtos,
+            |dto| list_key(&dto.updated_at, &dto.repository_id, dto.number),
+            after,
+        );
+        return Ok(Json(PullRequestPageDto {
+            pull_requests,
+            next_cursor,
+        }));
     }
     let forges = match &q.repo {
         Some(id) => vec![integration(&state, id).await?],
         None => state.store.enabled_forge_integrations().await?,
     };
-    let mut dtos = Vec::new();
-    for forge in forges {
-        let login = forge.login.clone().unwrap_or_default();
+    // Every held request the filters leave, before any is joined to its
+    // row: only the requests of the page are.
+    let mut held = Vec::new();
+    for (index, forge) in forges.iter().enumerate() {
         // A repository with no fetch yet holds no list: its requests are
         // empty rather than read live (026).
         let pulls::Listed { open, requested } = state
             .launcher
             .live
-            .list(&forge.repository_id, &forge)
+            .list(&forge.repository_id, forge)
             .map(|listed| pulls::Listed {
                 open: listed.open,
                 requested: listed.requested,
             })
             .unwrap_or_default();
         for pull in open {
-            let role = pulls::role(&pull.author_login, &forge);
+            let role = pulls::role(&pull.author_login, forge);
             let asks = requested.contains(&pull.number);
+            let fields = [
+                pull.title.as_str(),
+                &pull.body,
+                &pull.author_login,
+                &pull.head_branch,
+            ];
             if q.role.as_deref().is_some_and(|wanted| wanted != role)
                 || q.requested.is_some_and(|wanted| wanted != asks)
+                || !matches_text(text, pull.number, &fields)
             {
                 continue;
             }
-            let row = state
-                .store
-                .pull_request_by_number(&forge.repository_id, pull.number)
-                .await?;
-            dtos.push(match row {
-                // Ariadne works on it: the list's read beside the details the
-                // last detail read found.
-                Some(row) => {
-                    let cached = state.launcher.live.get(&row.id);
-                    let details = cached.as_ref().and_then(|l| l.details.clone());
-                    let evidence_ok = cached.is_none_or(|l| l.evidence_ok);
-                    let read = Live::new(pull, asks, details, evidence_ok);
-                    let marks = state.store.pull_request_comment_marks(&row.id).await?;
-                    let view = live::view(row, &read, &marks, &login);
-                    pull_request_dto_of(&state.store, view).await?
-                }
-                None => forge_pull_dto(&forge.repository_id, pull, role, asks),
-            });
+            held.push((index, pull, role, asks));
         }
     }
-    dtos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    Ok(Json(dtos))
+    let (held, next_cursor) = page(
+        held,
+        |(index, pull, _, _)| {
+            list_key(&pull.updated_at, &forges[*index].repository_id, pull.number)
+        },
+        after,
+    );
+    let mut pull_requests = Vec::with_capacity(held.len());
+    for (index, pull, role, asks) in held {
+        let forge = &forges[index];
+        let login = forge.login.clone().unwrap_or_default();
+        let row = state
+            .store
+            .pull_request_by_number(&forge.repository_id, pull.number)
+            .await?;
+        pull_requests.push(match row {
+            // Ariadne works on it: the list's read beside the details the
+            // last detail read found.
+            Some(row) => {
+                let cached = state.launcher.live.get(&row.id);
+                let details = cached.as_ref().and_then(|l| l.details.clone());
+                let evidence_ok = cached.is_none_or(|l| l.evidence_ok);
+                let read = Live::new(pull, asks, details, evidence_ok);
+                let marks = state.store.pull_request_comment_marks(&row.id).await?;
+                let view = live::view(row, &read, &marks, &login);
+                pull_request_dto_of(&state.store, view).await?
+            }
+            None => forge_pull_dto(&forge.repository_id, pull, role, asks),
+        });
+    }
+    Ok(Json(PullRequestPageDto {
+        pull_requests,
+        next_cursor,
+    }))
+}
+
+/// Whether a request answers `text`: every word of it is in its number
+/// (`#12`) or one of `fields`, ignoring case. No text answers every request.
+/// The desktop's own filter of the list, moved here so it reaches every page.
+fn matches_text(text: Option<&str>, number: i64, fields: &[&str]) -> bool {
+    let haystack = format!("#{number}\n{}", fields.join("\n")).to_lowercase();
+    text.unwrap_or_default()
+        .to_lowercase()
+        .split_whitespace()
+        .all(|word| haystack.contains(word))
+}
+
+/// Where a request sorts in the list: the most recently updated first, then
+/// by repository and number, so no two requests tie.
+type ListKey = (Reverse<String>, String, i64);
+
+fn list_key(updated_at: &str, repository_id: &str, number: i64) -> ListKey {
+    (
+        Reverse(updated_at.to_string()),
+        repository_id.to_string(),
+        number,
+    )
+}
+
+/// The sort key of the last request of a page, as the client carries it
+/// back: its fields under a base64url coat, which is all that makes it
+/// opaque.
+#[derive(Serialize, Deserialize)]
+struct ListCursor {
+    updated_at: String,
+    repository_id: String,
+    number: i64,
+}
+
+impl ListCursor {
+    fn of((Reverse(updated_at), repository_id, number): ListKey) -> Self {
+        Self {
+            updated_at,
+            repository_id,
+            number,
+        }
+    }
+
+    fn key(&self) -> ListKey {
+        list_key(&self.updated_at, &self.repository_id, self.number)
+    }
+
+    fn encode(&self) -> String {
+        URL_SAFE_NO_PAD.encode(serde_json::to_vec(self).expect("a cursor serializes"))
+    }
+
+    fn decode(cursor: &str) -> Option<Self> {
+        let bytes = URL_SAFE_NO_PAD.decode(cursor).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+}
+
+/// The page of `items` after `after`, in list order, and the cursor of the
+/// page after it where one is left.
+fn page<T>(
+    mut items: Vec<T>,
+    key: impl Fn(&T) -> ListKey,
+    after: Option<ListCursor>,
+) -> (Vec<T>, Option<String>) {
+    items.sort_by_cached_key(&key);
+    if let Some(after) = after.map(|cursor| cursor.key()) {
+        items.retain(|item| key(item) > after);
+    }
+    let more = items.len() > PULL_REQUEST_PAGE_SIZE;
+    items.truncate(PULL_REQUEST_PAGE_SIZE);
+    let next = more
+        .then(|| items.last().map(|last| ListCursor::of(key(last)).encode()))
+        .flatten();
+    (items, next)
 }
 
 /// A request Ariadne works on, as the last fetch found it, or read off the

@@ -129,8 +129,8 @@ async fn two_reads_after_one_fetch_run_no_further_pr_list_call() {
     let after_the_fetch = list_calls(&stub);
     assert!(after_the_fetch > 0, "the fetch itself runs the lists");
 
-    let first: Vec<Value> = h.get("/v1/pull-requests").await;
-    let second: Vec<Value> = h.get("/v1/pull-requests").await;
+    let first: Vec<Value> = h.pull_requests("/v1/pull-requests").await;
+    let second: Vec<Value> = h.pull_requests("/v1/pull-requests").await;
     assert_eq!(first.len(), 1);
     assert_eq!(second, first);
     assert_eq!(
@@ -185,7 +185,9 @@ async fn a_repository_with_no_fetch_yet_lists_empty_and_a_disabled_one_is_refuse
         },
     )
     .await;
-    let rows: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
+    let rows: Vec<Value> = h
+        .pull_requests(&format!("/v1/pull-requests?repo={id}"))
+        .await;
     assert_eq!(
         rows,
         Vec::<Value>::new(),
@@ -197,7 +199,9 @@ async fn a_repository_with_no_fetch_yet_lists_empty_and_a_disabled_one_is_refuse
         stub.fetches() >= 1
     })
     .await;
-    let rows: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
+    let rows: Vec<Value> = h
+        .pull_requests(&format!("/v1/pull-requests?repo={id}"))
+        .await;
     assert_eq!(rows.len(), 1, "the fetch filled the held list");
 
     let _: Value = h
@@ -233,7 +237,9 @@ async fn a_changed_forge_clears_the_held_list_before_its_fetch_succeeds() {
     let id = enabled_repository(&h).await;
     eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
 
-    let initial: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
+    let initial: Vec<Value> = h
+        .pull_requests(&format!("/v1/pull-requests?repo={id}"))
+        .await;
     assert_eq!(initial.len(), 1, "the first forge's list is held");
 
     let repository = h.store.get_repository(&id).await.unwrap();
@@ -266,7 +272,9 @@ async fn a_changed_forge_clears_the_held_list_before_its_fetch_succeeds() {
     })
     .await;
 
-    let rows: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
+    let rows: Vec<Value> = h
+        .pull_requests(&format!("/v1/pull-requests?repo={id}"))
+        .await;
     assert_eq!(rows, Vec::<Value>::new(), "the old list is not returned");
     let matches: Vec<Value> = h
         .get(&format!("/v1/repositories/{id}/pull-requests/search?q="))
@@ -352,5 +360,124 @@ async fn the_panel_route_still_reads_live() {
     assert_eq!(
         dto["title"], "Fix widgets, renamed",
         "the panel reads the forge now, not the repository's held list"
+    );
+}
+
+/// `count` open requests nobody asks me to review, so no fetch starts work
+/// on any: request `n` moved `n` minutes after midnight, its title is
+/// "Fix widgets" on an odd number and "Tune gadgets" on an even one, its
+/// description the same, and every third is mine.
+fn many_pulls(count: i64) -> Value {
+    let pulls: Vec<Value> = (1..=count)
+        .map(|n| {
+            let mut pull = github_pull(n, if n % 3 == 0 { "me" } else { "other" });
+            let title = if n % 2 == 1 {
+                "Fix widgets"
+            } else {
+                "Tune gadgets"
+            };
+            pull["reviewRequests"] = json!([]);
+            pull["title"] = json!(title);
+            pull["body"] = json!(format!("{title}."));
+            pull["updatedAt"] = json!(format!("2026-10-02T{:02}:{:02}:00Z", n / 60, n % 60));
+            pull
+        })
+        .collect();
+    json!([
+        answer(&["auth", "status"], 0, ""),
+        answer(&["api", "user"], 0, "me"),
+        answer(&["pr", "list"], 0, &json!(pulls).to_string()),
+        answer(&["api", "graphql"], 0, r#"{"data": {"repository": {}}}"#),
+        answer(
+            &["api", "repos/acme/widgets/issues?state=open&per_page=100"],
+            0,
+            "[]",
+        ),
+    ])
+}
+
+/// Every page of `GET /v1/pull-requests` under `query`, by its cursors:
+/// the number of each page's rows, page by page.
+async fn pages(h: &Harness, query: &str) -> Vec<Vec<i64>> {
+    let mut pages = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let uri = match &cursor {
+            Some(cursor) => format!("/v1/pull-requests?{query}&cursor={cursor}"),
+            None => format!("/v1/pull-requests?{query}"),
+        };
+        let page: Value = h.get(&uri).await;
+        pages.push(
+            page["pull_requests"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["number"].as_i64().unwrap())
+                .collect(),
+        );
+        match page["next_cursor"].as_str() {
+            Some(next) => cursor = Some(next.into()),
+            None => return pages,
+        }
+    }
+}
+
+/// The list goes out in pages of 25, the most recently updated first, each
+/// with the cursor of the next; the last page has none, and a `limit` the
+/// caller sends changes nothing (026).
+#[tokio::test]
+async fn the_list_goes_out_in_pages_of_25_newest_first_and_the_last_has_no_cursor() {
+    let stub = stub_forge_cli(many_pulls(30));
+    let h = harness().forge_cli(&stub).await;
+    let id = enabled_repository(&h).await;
+    eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
+
+    let newest_first: Vec<i64> = (1..=30).rev().collect();
+    let pages = pages(&h, &format!("repo={id}&limit=5")).await;
+    assert_eq!(
+        pages,
+        [newest_first[..25].to_vec(), newest_first[25..].to_vec()],
+        "25 rows, then the 5 left on a last page with no cursor"
+    );
+    let bad = h
+        .error(
+            get(&format!("/v1/pull-requests?repo={id}&cursor=nonsense")),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert_eq!(bad.error.code, "invalid_cursor");
+}
+
+/// The text filter reaches every held request before the list is cut into
+/// pages, and `role` holds on every page alongside it (026).
+#[tokio::test]
+async fn the_text_filter_and_the_role_hold_over_every_held_request_on_every_page() {
+    let stub = stub_forge_cli(many_pulls(60));
+    let h = harness().forge_cli(&stub).await;
+    let id = enabled_repository(&h).await;
+    eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
+
+    let odd: Vec<i64> = (1..=60).rev().filter(|n| n % 2 == 1).collect();
+    assert_eq!(
+        pages(&h, &format!("repo={id}&q=WIDGETS%20fix")).await,
+        [odd[..25].to_vec(), odd[25..].to_vec()],
+        "every word, any case, over all 60 requests"
+    );
+    assert_eq!(
+        pages(&h, &format!("repo={id}&q=%2342")).await,
+        [vec![42]],
+        "the number matches as #42"
+    );
+    let mine: Vec<i64> = (1..=60).rev().filter(|n| n % 3 == 0).collect();
+    assert_eq!(
+        pages(&h, &format!("repo={id}&role=author")).await,
+        [mine],
+        "the role narrows before the page is cut"
+    );
+    let theirs: Vec<i64> = (1..=60).rev().filter(|n| n % 3 != 0).collect();
+    assert_eq!(
+        pages(&h, &format!("repo={id}&role=reviewer&requested=false")).await,
+        [theirs[..25].to_vec(), theirs[25..].to_vec()],
+        "the role and requested hold on the second page too"
     );
 }

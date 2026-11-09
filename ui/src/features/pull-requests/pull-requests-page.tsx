@@ -10,13 +10,15 @@
  * the table reads at a glance without a column for each. The row holds no
  * button: a click opens the request's panel, which is where everything that
  * can be done to it is — an Ariadne review of a request of the user's among
- * it, and babysitting one by hand (032). The list is read live off the
- * forge, and read again on every `pull_requests_changed`; nothing adds or
- * removes a request.
+ * it, and babysitting one by hand (032). The daemon sends the list a page of
+ * 25 at a time, the text filter applied to every request first, and the next
+ * page loads as the table scrolls near its end. Every `pull_requests_changed`
+ * reads it again from its first page; nothing adds or removes a request.
  */
 
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query"
 import { RefreshCwIcon } from "lucide-react"
+import { useEffect, useMemo, useRef } from "react"
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
 
 import { api, type PullRequestDto, unwrap } from "@/api"
@@ -32,7 +34,6 @@ import { When } from "@/components/when"
 import {
   ForgeFilters,
   forgeName,
-  matchesText,
   useNeedsRefresh,
   useSearchFilter,
 } from "@/features/forge/forge-filters"
@@ -70,7 +71,14 @@ export function PullRequestsPage() {
   const whose = WHOSE.find((each) => each.value === role) ?? WHOSE[0]
   const [text, setText] = useSearchFilter("q")
   const filters = { repo: repo ?? undefined, ...whose.query }
-  const rows = useQuery(pullRequestsQueryOptions(filters))
+  const rows = useInfiniteQuery({
+    ...pullRequestsQueryOptions({ ...filters, q: text?.trim() || undefined }),
+    // A new filter keeps the rows it had on screen until its own answer is
+    // in, so the table does not flash empty on every word typed.
+    placeholderData: keepPreviousData,
+  })
+  const pages = rows.data?.pages
+  const listed = useMemo(() => pages?.flatMap((page) => page.pull_requests), [pages])
   const repositories = useQuery(repositoriesQueryOptions())
   const enabled = repositories.data?.filter((each) => each.forge?.enabled) ?? []
   const needsRefresh = useNeedsRefresh(repo ? enabled.filter((each) => each.id === repo) : enabled)
@@ -120,18 +128,7 @@ export function PullRequestsPage() {
       </ForgeFilters>
       {refresh.error ? <ErrorState title="Could not refresh" error={refresh.error} /> : null}
       <DataTable
-        query={{
-          ...rows,
-          data: rows.data?.filter((row) =>
-            matchesText(text, [
-              `#${row.number}`,
-              row.title,
-              row.body,
-              row.author_login,
-              row.head_branch,
-            ]),
-          ),
-        }}
+        query={{ ...rows, data: listed }}
         errorTitle="Could not load pull requests"
         columns={COLUMNS}
         empty={
@@ -158,8 +155,50 @@ export function PullRequestsPage() {
           />
         )}
       />
+      <NearEnd
+        armed={rows.hasNextPage && !rows.isFetchingNextPage}
+        pages={pages?.length ?? 0}
+        onReach={() => void rows.fetchNextPage()}
+      />
     </div>
   )
+}
+
+/** How close to the end of the table the next page starts to load. */
+const NEAR_END_MARGIN = "0px 0px 400px 0px"
+
+/**
+ * A mark under the table that asks for the next page once it scrolls within
+ * {@link NEAR_END_MARGIN} of the view. The observer is made again for each
+ * new page: a mark still in view after a short page reports it at once.
+ */
+function NearEnd({
+  armed,
+  pages,
+  onReach,
+}: {
+  armed: boolean
+  pages: number
+  onReach: () => void
+}) {
+  const mark = useRef<HTMLDivElement>(null)
+  const reach = useRef(onReach)
+  reach.current = onReach
+  // A new page is a new observer, which reports where the mark is now.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `pages` re-arms the observer
+  useEffect(() => {
+    const node = mark.current
+    if (!armed || !node || typeof IntersectionObserver === "undefined") return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) reach.current()
+      },
+      { rootMargin: NEAR_END_MARGIN },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [armed, pages])
+  return <div ref={mark} aria-hidden="true" />
 }
 
 function PullRequestRow({

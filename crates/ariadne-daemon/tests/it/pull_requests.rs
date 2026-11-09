@@ -116,18 +116,18 @@ async fn the_fetch_holds_the_list_and_tracks_only_a_request_that_asks_for_my_rev
     let h = harness().forge_cli(&stub).await;
     let id = enabled_repository(&h).await;
     eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
-    let rows: Vec<Value> = h.get("/v1/pull-requests").await;
+    let rows: Vec<Value> = h.pull_requests("/v1/pull-requests").await;
     assert_eq!(rows.len(), 2);
     let mine_row = rows.iter().find(|r| r["number"] == 1).unwrap();
     assert!(mine_row["id"].is_null(), "{mine_row:?}");
     let asked_row = rows.iter().find(|r| r["number"] == 2).unwrap();
     assert!(!asked_row["id"].is_null(), "{asked_row:?}");
-    let mine: Vec<Value> = h.get("/v1/pull-requests?role=author").await;
+    let mine: Vec<Value> = h.pull_requests("/v1/pull-requests?role=author").await;
     assert_eq!(mine.len(), 1);
     assert_eq!(mine[0]["number"], 1);
     assert_eq!(mine[0]["body"], "Fixes widgets.");
     let asks: Vec<Value> = h
-        .get("/v1/pull-requests?role=reviewer&requested=true")
+        .pull_requests("/v1/pull-requests?role=reviewer&requested=true")
         .await;
     assert_eq!(asks.len(), 1);
     assert_eq!(asks[0]["number"], 2);
@@ -245,7 +245,9 @@ async fn a_review_request_has_a_row_while_it_is_reviewed_and_none_once_it_merged
     let row = rows().await.pop().unwrap();
     assert_eq!(row.number, 2, "a request of mine nobody works on has none");
     assert_eq!(row.role, "reviewer");
-    let listed: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
+    let listed: Vec<Value> = h
+        .pull_requests(&format!("/v1/pull-requests?repo={id}"))
+        .await;
     let reviewed = listed.iter().find(|r| r["number"] == 2).unwrap();
     assert_eq!(reviewed["id"], row.id);
     // The row the first fetch gives the request is no proof that the same
@@ -448,12 +450,12 @@ async fn a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before() {
     assert_eq!(row.role, "author");
     assert_eq!(agent.seat(), Some(Seat::Agent));
     let kept: Vec<Value> = h
-        .get(&format!("/v1/pull-requests?task={}", cast.task.id))
+        .pull_requests(&format!("/v1/pull-requests?task={}", cast.task.id))
         .await;
     assert_eq!(kept.len(), 1, "the task's request");
     assert_eq!(kept[0]["id"], row.id);
     let listed: Vec<Value> = h
-        .get(&format!("/v1/pull-requests?repo={}", cast.repo.id))
+        .pull_requests(&format!("/v1/pull-requests?repo={}", cast.repo.id))
         .await;
     assert_eq!(listed[0]["id"], row.id);
     assert_eq!(listed[0]["origin_task_id"], cast.task.id);
@@ -572,7 +574,9 @@ async fn a_fetch_drops_the_viewers_own_pending_review_and_its_comments() {
     let h = harness().forge_cli(&stub).await;
     let id = enabled_repository(&h).await;
     eventually(TIMEOUT, "the first fetch", async || stub.fetches() >= 1).await;
-    let listed: Vec<Value> = h.get(&format!("/v1/pull-requests?repo={id}")).await;
+    let listed: Vec<Value> = h
+        .pull_requests(&format!("/v1/pull-requests?repo={id}"))
+        .await;
     let read = listed
         .iter()
         .find(|r| r["number"] == 1)
