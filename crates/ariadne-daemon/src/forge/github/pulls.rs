@@ -224,37 +224,48 @@ impl Github {
             return Ok(HashMap::new());
         }
         let (host, owner, name) = split_slug(repo)?;
-        let mut states = HashMap::new();
-        // One call at a time, at most `CHECK_STATES_PER_CALL` aliases each: a
-        // larger query is one GitHub refuses with a 502.
-        for chunk in numbers.chunks(CHECK_STATES_PER_CALL) {
-            let query = check_states_query(chunk);
-            let output = self
-                .cli
-                .answer(&[
-                    "api",
-                    "graphql",
-                    "--hostname",
-                    host,
-                    "-f",
-                    &format!("query={query}"),
-                    "-F",
-                    &format!("owner={owner}"),
-                    "-F",
-                    &format!("name={name}"),
-                ])
-                .await?;
-            let value: serde_json::Value = serde_json::from_str(&output)
-                .map_err(|e| format!("cannot read GitHub check states: {e}"))?;
-            let repository = &value["data"]["repository"];
-            states.extend(chunk.iter().map(|&n| {
+        in_calls(numbers, |chunk| {
+            self.check_states_call(host, owner, name, chunk)
+        })
+        .await
+    }
+
+    /// One GraphQL call for the check states of `numbers`.
+    async fn check_states_call(
+        &self,
+        host: &str,
+        owner: &str,
+        name: &str,
+        numbers: Vec<i64>,
+    ) -> Result<HashMap<i64, Option<String>>, String> {
+        let query = check_states_query(&numbers);
+        let output = self
+            .cli
+            .answer(&[
+                "api",
+                "graphql",
+                "--hostname",
+                host,
+                "-f",
+                &format!("query={query}"),
+                "-F",
+                &format!("owner={owner}"),
+                "-F",
+                &format!("name={name}"),
+            ])
+            .await?;
+        let value: serde_json::Value = serde_json::from_str(&output)
+            .map_err(|e| format!("cannot read GitHub check states: {e}"))?;
+        let repository = &value["data"]["repository"];
+        Ok(numbers
+            .into_iter()
+            .map(|n| {
                 let state = repository[format!("pr{n}")]["statusCheckRollup"]["state"]
                     .as_str()
                     .map(str::to_owned);
                 (n, state)
-            }));
-        }
-        Ok(states)
+            })
+            .collect())
     }
     async fn pulls(&self, repo: &str, filter: &[&str]) -> Result<Vec<ForgePullRequest>, String> {
         Ok(self
@@ -323,6 +334,24 @@ impl Github {
             .flatten();
         Ok(pull.normalized())
     }
+}
+
+/// Run `call` on `numbers` in chunks of at most `CHECK_STATES_PER_CALL`, one
+/// call after the other: a larger query is one GitHub refuses with a 502.
+/// A failed call fails the whole read.
+async fn in_calls<F, Fut>(
+    numbers: &[i64],
+    mut call: F,
+) -> Result<HashMap<i64, Option<String>>, String>
+where
+    F: FnMut(Vec<i64>) -> Fut,
+    Fut: std::future::Future<Output = Result<HashMap<i64, Option<String>>, String>>,
+{
+    let mut states = HashMap::new();
+    for chunk in numbers.chunks(CHECK_STATES_PER_CALL) {
+        states.extend(call(chunk.to_vec()).await?);
+    }
+    Ok(states)
 }
 
 /// A GraphQL query asking the combined check state alone of one
@@ -474,6 +503,56 @@ mod tests {
 }
 
 #[cfg(test)]
+mod in_calls_tests {
+    use std::cell::Cell;
+    use std::collections::HashMap;
+
+    use super::in_calls;
+
+    /// Every call yields once before it ends. A read that ran two calls
+    /// together would count both in flight at that yield; one after the
+    /// other, it counts one. No clock and no scheduler decide this: the
+    /// futures are polled by the test's own single-thread executor.
+    #[tokio::test]
+    async fn calls_of_at_most_25_numbers_run_one_after_the_other() {
+        let in_flight = Cell::new(0);
+        let most = Cell::new(0);
+        let sizes = std::cell::RefCell::new(Vec::new());
+        let numbers: Vec<i64> = (1..=60).collect();
+        let states = in_calls(&numbers, |chunk| {
+            sizes.borrow_mut().push(chunk.len());
+            let (in_flight, most) = (&in_flight, &most);
+            async move {
+                in_flight.set(in_flight.get() + 1);
+                most.set(most.get().max(in_flight.get()));
+                tokio::task::yield_now().await;
+                in_flight.set(in_flight.get() - 1);
+                Ok(chunk.into_iter().map(|n| (n, None)).collect())
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(most.get(), 1);
+        assert_eq!(*sizes.borrow(), [25, 25, 10]);
+        assert_eq!(states.len(), 60);
+    }
+
+    /// A failed call fails the read and no later call starts.
+    #[tokio::test]
+    async fn a_failed_call_ends_the_read() {
+        let calls = Cell::new(0);
+        let numbers: Vec<i64> = (1..=60).collect();
+        let read = in_calls(&numbers, |_| {
+            calls.set(calls.get() + 1);
+            async { Err::<HashMap<_, _>, _>("refused".to_string()) }
+        })
+        .await;
+        assert_eq!(read, Err("refused".to_string()));
+        assert_eq!(calls.get(), 1);
+    }
+}
+
+#[cfg(test)]
 mod check_state_fetch_tests {
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
@@ -491,22 +570,13 @@ with open(os.path.join(here, "calls.log"), "a") as log:
     log.write(json.dumps(args) + "\n")
 rollups = os.path.join(here, "rollups.json")
 if args[:2] == ["api", "graphql"] and os.path.exists(rollups):
-    # Answer only the aliases the query asks, and answer a call only once
-    # every earlier call has ended: a call that starts while another one
-    # runs finds a start without its end and fails.
-    started = [f for f in os.listdir(here) if f.startswith("start-")]
-    ended = [f for f in os.listdir(here) if f.startswith("end-")]
-    if len(started) != len(ended):
-        sys.stderr.write("parallel graphql calls")
-        sys.exit(1)
-    open(os.path.join(here, f"start-{len(started)}"), "w").close()
+    # Answer only the aliases the query asks.
     states = json.load(open(rollups))
     query = next(a for a in args if a.startswith("query="))
     repository = {}
     for n in re.findall(r"pr(\d+): pullRequest", query):
         if n in states:
             repository["pr" + n] = {"statusCheckRollup": {"state": states[n]}}
-    open(os.path.join(here, f"end-{len(started)}"), "w").close()
     sys.stdout.write(json.dumps({"data": {"repository": repository}}))
     sys.exit(0)
 answers = json.load(open(os.path.join(here, "answers.json")))
@@ -604,7 +674,7 @@ sys.exit(1)
     /// 60 open requests: check states go in calls of at most
     /// 25 aliases, every request keeping its own state.
     #[tokio::test]
-    async fn a_large_fetch_sends_the_check_states_in_small_sequential_calls() {
+    async fn a_large_fetch_sends_the_check_states_in_small_calls() {
         let dir = tempfile::tempdir().unwrap();
         let rows: Vec<_> = (1..=60).map(list_row).collect();
         let list = serde_json::to_string(&rows).unwrap();

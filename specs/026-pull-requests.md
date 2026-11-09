@@ -320,7 +320,9 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   a single request's own read merges that state in from its own call, which asks for none of a check's own context either:
   `forge/github/pulls.rs::check_state_fetch_tests::a_single_pull_read_merges_the_combined_state_from_its_own_graphql_call`.
 - A fetch sends at most 25 `pullRequest` aliases per GraphQL call, one call after the other, each request keeping its own state; one failed call fails the fetch:
-  `forge/github/pulls.rs::check_state_fetch_tests::a_large_fetch_sends_the_check_states_in_small_sequential_calls`,
+  `forge/github/pulls.rs::in_calls_tests::calls_of_at_most_25_numbers_run_one_after_the_other`,
+  `::a_failed_call_ends_the_read`,
+  `forge/github/pulls.rs::check_state_fetch_tests::a_large_fetch_sends_the_check_states_in_small_calls`,
   `::a_failed_check_state_call_fails_the_fetch`.
 - A detail read asks the forge for its parts together:
   `pull_requests.rs::a_detail_read_asks_the_forge_for_its_parts_together`.
