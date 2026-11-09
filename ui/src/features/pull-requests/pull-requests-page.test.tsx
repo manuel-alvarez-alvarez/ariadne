@@ -19,20 +19,27 @@ function page(rows: (typeof pull)[], next: string | null = null) {
  * newest observer that its mark under the table scrolled into view.
  */
 function stubObserver() {
-  const observers: ((entries: { isIntersecting: boolean }[]) => void)[] = []
+  type Callback = (entries: { isIntersecting: boolean }[]) => void
+  const observers: Callback[] = []
+  let made = 0
   vi.stubGlobal(
     "IntersectionObserver",
     class {
-      constructor(callback: (entries: { isIntersecting: boolean }[]) => void) {
+      callback: Callback
+      constructor(callback: Callback) {
+        this.callback = callback
         observers.push(callback)
+        made += 1
       }
       observe() {}
-      disconnect() {}
+      disconnect() {
+        observers.splice(observers.indexOf(this.callback), 1)
+      }
     },
   )
   return {
     reach: () => act(() => observers.at(-1)?.([{ isIntersecting: true }])),
-    count: () => observers.length,
+    count: () => made,
   }
 }
 
@@ -236,6 +243,29 @@ it("loads the next page near the end, and an event reads the list again from its
     }),
   )
   await waitFor(() => expect(listsOf(requests).map((p) => p.get("cursor"))[0]).toBe(null))
+})
+
+it("stops loading pages by itself once the next page fails", async () => {
+  const observer = stubObserver()
+  const requests: Request[] = []
+  daemonFetch.mockImplementation(async (input) => {
+    const request = input as Request
+    requests.push(request)
+    if (new URL(request.url).pathname !== "/v1/pull-requests") return jsonResponse([])
+    if (new URL(request.url).searchParams.get("cursor") === "page-2")
+      return jsonResponse({ error: { code: "internal", message: "boom" } }, 500)
+    return page([pull], "page-2")
+  })
+  renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
+  await screen.findByRole("link", { name: "#42 Fix widgets" })
+
+  observer.reach()
+  expect(await screen.findByText("Could not load pull requests")).toBeTruthy()
+  // The failed page leaves no live observer: the mark cannot ask again by itself.
+  await act(async () => {})
+  observer.reach()
+  await act(async () => {})
+  expect(listsOf(requests).map((p) => p.get("cursor"))).toEqual([null, "page-2"])
 })
 
 it("offers a refresh only while a repository in view polls or its webhook is down", async () => {

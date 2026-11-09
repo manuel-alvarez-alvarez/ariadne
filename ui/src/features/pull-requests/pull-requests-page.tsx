@@ -156,7 +156,7 @@ export function PullRequestsPage() {
         )}
       />
       <NearEnd
-        armed={rows.hasNextPage && !rows.isFetchingNextPage}
+        armed={rows.hasNextPage && !rows.isFetchingNextPage && !rows.isError}
         pages={pages?.length ?? 0}
         onReach={() => void rows.fetchNextPage()}
       />
