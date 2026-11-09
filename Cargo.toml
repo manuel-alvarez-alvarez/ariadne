@@ -178,3 +178,10 @@ debug = false
 [profile.release]
 lto = "thin"
 strip = "symbols"
+
+[patch.crates-io]
+sqlx = { git = "https://github.com/launchbadge/sqlx" }
+sqlx-core = { git = "https://github.com/launchbadge/sqlx" }
+sqlx-sqlite = { git = "https://github.com/launchbadge/sqlx" }
+sqlx-macros = { git = "https://github.com/launchbadge/sqlx" }
+sqlx-macros-core = { git = "https://github.com/launchbadge/sqlx" }
