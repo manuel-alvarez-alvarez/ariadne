@@ -95,9 +95,11 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
 4a. `GET /v1/pull-requests` sends one page of at most 25 requests (`PULL_REQUEST_PAGE_SIZE`), the most recently updated first, then by repository and number.
     The caller cannot choose another page size.
     The page carries `next_cursor`, an opaque cursor to the next page; the last page carries none.
-    A cursor the list did not send answers 400 `invalid_cursor`.
+    The cursor is not signed: the route reads any cursor that decodes to a sort key and sends the requests after that key.
+    A cursor that does not decode answers 400 `invalid_cursor`.
     `q` narrows every held request before the route cuts the page: each word of it, ignoring case, is in the number (`#12`), the title, the description, the author or the head branch.
-    `repo`, `role`, `requested` and `task` narrow the list the same way, on every page.
+    `repo`, `role` and `requested` narrow the list the same way, on every page.
+    With `task`, the route answers the requests that task opened and ignores `repo`, `role` and `requested`, as it did before the list had pages; `q` and `cursor` still apply.
 5. A repository fetch lists every open request of the repository in one read; GitHub names each request's own requested reviewers on that same read (`reviewRequests`), so the login's own review requests need no second read.
    It starts the work on each review request rule 3 names, then reads each row of the repository: the list's read where the list holds it, else a read of its own — a merged or closed request, or one the list misses.
    A row that asks for review keeps asking while the list names the login among its requested reviewers; one it no longer does, and that asked on the last read, is asked of the forge's timeline (029 rule 3).
@@ -420,11 +422,11 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `pr.rs::tests::pr_review_sends_the_ask_body_with_its_pin_and_the_stop_body_alone`,
   `::pr_review_with_no_model_and_no_stop_is_refused`,
   `::pr_review_refuses_stop_combined_with_an_asking_flag_and_a_bare_default_model`.
-- The list goes out in pages of 25, the most recently updated first, the last with no cursor, and a caller's `limit` changes nothing; a foreign cursor answers 400:
+- The list goes out in pages of 25, the most recently updated first, the last with no cursor, and a caller's `limit` changes nothing; a cursor that does not decode answers 400:
   `pull_request_lists.rs::the_list_goes_out_in_pages_of_25_newest_first_and_the_last_has_no_cursor`.
   The text filter reaches every held request before the page is cut, and `role` and `requested` hold on every page:
   `pull_request_lists.rs::the_text_filter_and_the_role_hold_over_every_held_request_on_every_page`.
-  A task's own request still answers through `?task=`:
+  A task's own request still answers through `?task=`, which ignores `repo`, `role` and `requested`:
   `pull_requests.rs::a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before`.
 - `pr ls` follows every cursor and prints every row:
   `pr.rs::tests::pr_ls_follows_every_cursor_and_prints_every_row`.

@@ -454,6 +454,15 @@ async fn a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before() {
         .await;
     assert_eq!(kept.len(), 1, "the task's request");
     assert_eq!(kept[0]["id"], row.id);
+    // With `task`, the route answers the task's request whatever `repo`,
+    // `role` and `requested` say, as it did before the list had pages.
+    let ignored: Vec<Value> = h
+        .pull_requests(&format!(
+            "/v1/pull-requests?task={}&repo=elsewhere&role=reviewer&requested=true",
+            cast.task.id
+        ))
+        .await;
+    assert_eq!(ignored, kept, "task ignores repo, role and requested");
     let listed: Vec<Value> = h
         .pull_requests(&format!("/v1/pull-requests?repo={}", cast.repo.id))
         .await;
