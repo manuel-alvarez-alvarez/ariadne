@@ -10,6 +10,12 @@
 #                      Tauri to sign the .app with.
 #   desktop-missing    no identity: APPLE_SIGNING_IDENTITY reaches npm
 #                       unset, as it always did.
+#   dashboard-present  ui/dashboard/package.json exists: install.sh runs npm
+#                       ci in ui/dashboard after ui/, before npm run tauri build.
+#   dashboard-absent   no ui/dashboard/package.json: the dashboard step is
+#                       skipped and the build still runs.
+#   dashboard-failed   npm ci and npm install both fail in ui/dashboard: the
+#                       install stops and names ui/dashboard and --no-ui.
 #   app-path           an app outside the approved locations is refused before
 #                       uninstalling anything.
 #   legacy-app-path    a prior Ariadne Desktop.app bundle under ~/Applications
@@ -80,6 +86,38 @@ case "$test_case" in
         case "$test_case" in
             desktop-present) grep -Fxq 'Ariadne Code Signing' "$TEST_ROOT/apple-signing-identity" ;;
             desktop-missing) [ ! -s "$TEST_ROOT/apple-signing-identity" ] ;;
+        esac
+        ;;
+    dashboard-present|dashboard-absent|dashboard-failed)
+        export TEST_IDENTITY=missing
+        if [ "$test_case" != dashboard-absent ]; then
+            mkdir -p "$TEST_ROOT/repo/ui/dashboard"
+            cp "$REPO_DIR/ui/dashboard/package.json" "$TEST_ROOT/repo/ui/dashboard/"
+        fi
+        if [ "$test_case" = dashboard-failed ]; then export TEST_NPM_FAIL_IN=dashboard; fi
+        # Each npm call logs its directory's basename; the build stub then fails
+        # on purpose, as in desktop-*, so nothing reaches /Applications.
+        if env HOME="$TEST_ROOT/home" ARIADNE_HOME="$TEST_ROOT/home/.ariadne" \
+            PREFIX="$TEST_ROOT/home/.local/bin" \
+            bash "$TEST_ROOT/repo/scripts/install.sh" --build-from-source --no-service \
+                --no-completions > "$TEST_ROOT/output" 2>&1; then
+            echo "expected the install to stop" >&2
+            exit 1
+        fi
+        case "$test_case" in
+            dashboard-present)
+                expected="$(printf '%s\n' 'ui ci' 'dashboard ci' 'ui run tauri build -- --bundles app')"
+                [ "$(cat "$TEST_ROOT/npm-commands")" = "$expected" ]
+                ;;
+            dashboard-absent)
+                expected="$(printf '%s\n' 'ui ci' 'ui run tauri build -- --bundles app')"
+                [ "$(cat "$TEST_ROOT/npm-commands")" = "$expected" ]
+                ;;
+            dashboard-failed)
+                grep -F 'npm install in ui/dashboard failed (--no-ui skips the app)' "$TEST_ROOT/output"
+                expected="$(printf '%s\n' 'ui ci' 'dashboard ci' 'dashboard install')"
+                [ "$(cat "$TEST_ROOT/npm-commands")" = "$expected" ]
+                ;;
         esac
         ;;
     app-path)

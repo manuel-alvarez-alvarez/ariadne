@@ -133,6 +133,11 @@ app_npm() {
     ( cd "$APP_SRC_DIR" && run_logged npm "$@" )
 }
 
+# npm, run from ui/dashboard/: its own package, which ui/'s build compiles.
+dashboard_npm() {
+    ( cd "$APP_SRC_DIR/dashboard" && run_logged npm "$@" )
+}
+
 # --- release downloads ---------------------------------------------------------
 
 # The target triple naming the release assets for this machine. Only the four
@@ -539,6 +544,11 @@ elif [ "$WITH_UI" = 1 ]; then
         # a stale or missing one is no reason to fail the whole install.
         app_npm ci || app_npm install \
             || ui_die "npm install in ui/ failed (--no-ui skips the app)"
+        # ui/dashboard is a package of its own, and the build below compiles it.
+        if [ -f "$APP_SRC_DIR/dashboard/package.json" ]; then
+            dashboard_npm ci || dashboard_npm install \
+                || ui_die "npm install in ui/dashboard failed (--no-ui skips the app)"
+        fi
         # On macOS only the .app is installed, so skip the dmg, as the release
         # does: its Finder step leaves the image busy and the unmount fails
         # about half the time on macOS 26.

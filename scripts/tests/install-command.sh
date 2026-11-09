@@ -96,6 +96,11 @@ case "$tool" in
         ;;
     codesign) ;;
     npm)
+        # The directory each call ran in, so a test can tell ui/ from ui/dashboard/.
+        printf '%s %s\n' "$(basename "$PWD")" "$*" >> "$TEST_ROOT/npm-commands"
+        if [ -n "${TEST_NPM_FAIL_IN:-}" ] && [ "$(basename "$PWD")" = "$TEST_NPM_FAIL_IN" ]; then
+            exit 1
+        fi
         if [ "$1" = run ]; then
             case "$*" in
                 'run tauri build -- --no-bundle')

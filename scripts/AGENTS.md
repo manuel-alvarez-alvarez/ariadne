@@ -86,7 +86,11 @@ in the root [`AGENTS.md`](../AGENTS.md).
   Desktop.app` bundle under `~/Applications` is removed during an installer
   migration; `prefix-change` proves an installer refuses a changed prefix;
   `manifest-unsafe` proves the installer refuses a manifest value containing
-  shell syntax before writing `install.env`.
+  shell syntax before writing `install.env`; `dashboard-present`,
+  `dashboard-absent` and `dashboard-failed` prove a source build runs
+  `npm ci` in `ui/dashboard` between the `ui/` install and `npm run tauri
+  build`, skips it without its `package.json`, and stops when both installs
+  fail.
 - `tests/install-service-macos.sh` — a macOS installer scenario, run as
   `bash scripts/tests/install-service-macos.sh`. The fake `launchctl` above
   keeps the old daemon's label present for a couple of polls after

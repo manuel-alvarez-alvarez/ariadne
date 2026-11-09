@@ -61,7 +61,12 @@ Out: what the daemon does once running (009, 012).
    `ui/src-tauri/icons/`. The entry names the window it belongs to
    (`StartupWMClass`, the installed app's own basename), without which the
    icon is right in the app grid and generic in the dash — the grid reads the
-   entry, the dash has only the window (015).
+   entry, the dash has only the window (015). A source build installs the
+   packages of `ui/` and then of `ui/dashboard/`, each with `npm ci` and
+   falling back to `npm install`, before `npm run tauri build`, since the
+   build compiles the dashboard. When both commands fail in `ui/dashboard/`,
+   the install stops and names it with `--no-ui`. Without
+   `ui/dashboard/package.json`, the step is skipped.
 2. It is idempotent: safe to re-run after an upgrade or a config change, every
    step replacing what a previous run installed. What was installed where is
    recorded in `~/.ariadne/install.env`, which `uninstall.sh` reads as a fixed
@@ -298,6 +303,11 @@ Out: what the daemon does once running (009, 012).
   with that identity when it is in the login keychain, and skips with a step
   note - never failing the install - when it is not
   (`scripts/tests/install-sign-macos.sh`: `present`, `missing`).
+- A source build installs `ui/dashboard` after `ui/` and before
+  `npm run tauri build`, skips it without `ui/dashboard/package.json`, and
+  stops naming `ui/dashboard` and `--no-ui` when both installs fail
+  (`scripts/tests/install-sign-macos.sh`: `dashboard-present`,
+  `dashboard-absent`, `dashboard-failed`).
 - An upgrade whose old launchd job is slow to drop, and whose first
   `launchctl bootstrap` loses the race against it, still ends with the
   service registered: `ui_stop_daemon` waits out the slow `print`, and
