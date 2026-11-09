@@ -480,28 +480,31 @@ mod check_state_fetch_tests {
     use crate::forge::Cli;
 
     const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, re, sys, time
+import json, os, re, sys
 here = os.path.dirname(os.path.abspath(sys.argv[0]))
 args = sys.argv[1:]
 with open(os.path.join(here, "calls.log"), "a") as log:
     log.write(json.dumps(args) + "\n")
 rollups = os.path.join(here, "rollups.json")
 if args[:2] == ["api", "graphql"] and os.path.exists(rollups):
-    # Answer only the aliases the query asks, and refuse a call that
-    # overlaps another one.
+    # Answer only the aliases the query asks, note where the call starts
+    # and ends, and refuse a call that starts while another one runs.
     lock = os.path.join(here, "graphql.lock")
     try:
         os.close(os.open(lock, os.O_CREAT | os.O_EXCL))
     except FileExistsError:
         sys.stderr.write("parallel graphql calls")
         sys.exit(1)
-    time.sleep(0.02)
+    with open(os.path.join(here, "events.log"), "a") as events:
+        events.write("start\n")
     states = json.load(open(rollups))
     query = next(a for a in args if a.startswith("query="))
     repository = {}
     for n in re.findall(r"pr(\d+): pullRequest", query):
         if n in states:
             repository["pr" + n] = {"statusCheckRollup": {"state": states[n]}}
+    with open(os.path.join(here, "events.log"), "a") as events:
+        events.write("end\n")
     os.remove(lock)
     sys.stdout.write(json.dumps({"data": {"repository": repository}}))
     sys.exit(0)
@@ -627,6 +630,8 @@ sys.exit(1)
             .map(|c| c.iter().find(|a| a.starts_with("query=")).unwrap().clone())
             .collect();
         assert_eq!(queries.len(), 3);
+        let events = std::fs::read_to_string(dir.path().join("events.log")).unwrap();
+        assert_eq!(events, "start\nend\n".repeat(3));
         for q in queries {
             assert!(q.matches("pullRequest(number:").count() <= 25);
         }
