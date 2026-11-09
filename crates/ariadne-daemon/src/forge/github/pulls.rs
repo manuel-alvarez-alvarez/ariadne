@@ -147,6 +147,12 @@ impl Pull {
         }
     }
 }
+/// The one limit of a repository's open-request list read.
+const PULL_LIST_LIMIT: usize = 1000;
+
+/// The most `pullRequest(number: …)` aliases one GraphQL call carries.
+const CHECK_STATES_PER_CALL: usize = 25;
+
 impl Github {
     pub(crate) async fn mark_ready_for_review(
         &self,
@@ -178,23 +184,16 @@ impl Github {
     }
 
     async fn rows(&self, repo: &str, filter: &[&str]) -> Result<Vec<Pull>, String> {
-        // Increase the limit until the complete result fits. `gh pr list` has
-        // no page flag; its limit drives the client's GraphQL pagination.
-        let mut limit = 100;
-        let mut rows = loop {
-            let size = limit.to_string();
-            let mut args = vec![
-                "pr", "list", "--repo", repo, "--state", "open", "--json", FIELDS, "--limit", &size,
-            ];
-            args.extend_from_slice(filter);
-            let output = self.cli.answer(&args).await?;
-            let rows: Vec<Pull> = serde_json::from_str(&output)
-                .map_err(|e| format!("cannot read GitHub pull requests: {e}"))?;
-            if rows.len() < limit {
-                break rows;
-            }
-            limit *= 2;
-        };
+        // One read at a high fixed limit: `gh pr list` has no page flag, and a
+        // larger second read would repeat every GraphQL page of the first.
+        let size = PULL_LIST_LIMIT.to_string();
+        let mut args = vec![
+            "pr", "list", "--repo", repo, "--state", "open", "--json", FIELDS, "--limit", &size,
+        ];
+        args.extend_from_slice(filter);
+        let output = self.cli.answer(&args).await?;
+        let mut rows: Vec<Pull> = serde_json::from_str(&output)
+            .map_err(|e| format!("cannot read GitHub pull requests: {e}"))?;
         let numbers: Vec<i64> = rows.iter().map(|p| p.number).collect();
         let states = self.check_states(repo, &numbers).await?;
         for row in &mut rows {
@@ -221,34 +220,37 @@ impl Github {
             return Ok(HashMap::new());
         }
         let (host, owner, name) = split_slug(repo)?;
-        let query = check_states_query(numbers);
-        let output = self
-            .cli
-            .answer(&[
-                "api",
-                "graphql",
-                "--hostname",
-                host,
-                "-f",
-                &format!("query={query}"),
-                "-F",
-                &format!("owner={owner}"),
-                "-F",
-                &format!("name={name}"),
-            ])
-            .await?;
-        let value: serde_json::Value = serde_json::from_str(&output)
-            .map_err(|e| format!("cannot read GitHub check states: {e}"))?;
-        let repository = &value["data"]["repository"];
-        Ok(numbers
-            .iter()
-            .map(|&n| {
+        let mut states = HashMap::new();
+        // One call at a time, at most `CHECK_STATES_PER_CALL` aliases each: a
+        // larger query is one GitHub refuses with a 502.
+        for chunk in numbers.chunks(CHECK_STATES_PER_CALL) {
+            let query = check_states_query(chunk);
+            let output = self
+                .cli
+                .answer(&[
+                    "api",
+                    "graphql",
+                    "--hostname",
+                    host,
+                    "-f",
+                    &format!("query={query}"),
+                    "-F",
+                    &format!("owner={owner}"),
+                    "-F",
+                    &format!("name={name}"),
+                ])
+                .await?;
+            let value: serde_json::Value = serde_json::from_str(&output)
+                .map_err(|e| format!("cannot read GitHub check states: {e}"))?;
+            let repository = &value["data"]["repository"];
+            states.extend(chunk.iter().map(|&n| {
                 let state = repository[format!("pr{n}")]["statusCheckRollup"]["state"]
                     .as_str()
                     .map(str::to_owned);
                 (n, state)
-            })
-            .collect())
+            }));
+        }
+        Ok(states)
     }
     async fn pulls(&self, repo: &str, filter: &[&str]) -> Result<Vec<ForgePullRequest>, String> {
         Ok(self
@@ -481,6 +483,8 @@ mod check_state_fetch_tests {
 import json, os, sys
 here = os.path.dirname(os.path.abspath(sys.argv[0]))
 args = sys.argv[1:]
+with open(os.path.join(here, "calls.log"), "a") as log:
+    log.write(json.dumps(args) + "\n")
 answers = json.load(open(os.path.join(here, "answers.json")))
 for entry in answers:
     prefix = entry["args"]
@@ -540,5 +544,96 @@ sys.exit(1)
             .await
             .unwrap();
         assert_eq!(read.checks, "failure");
+    }
+
+    fn list_row(n: i64) -> serde_json::Value {
+        json!({"number": n, "url": format!("https://github.com/acme/widgets/pull/{n}"),
+            "title": "Fix widgets", "author": {"login": "someone"}, "state": "OPEN",
+            "isDraft": false, "headRefName": "fix", "headRefOid": "abc",
+            "headRepository": {"url": "https://github.com/acme/widgets"},
+            "baseRefName": "main", "reviewDecision": "",
+            "createdAt": "2026-10-01T00:00:00Z"})
+    }
+
+    fn calls(dir: &std::path::Path) -> Vec<Vec<String>> {
+        std::fs::read_to_string(dir.join("calls.log"))
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    /// 60 open requests: one list read, then check states in calls of at most
+    /// 25 aliases, every request keeping its own state.
+    #[tokio::test]
+    async fn a_large_fetch_reads_the_list_once_and_the_check_states_in_small_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let rows: Vec<_> = (1..=60).map(list_row).collect();
+        let list = serde_json::to_string(&rows).unwrap();
+        let rollup = json!({"data": {"repository": (1..=60)
+            .map(|n| (format!("pr{n}"), json!({"statusCheckRollup": {"state":
+                if n % 2 == 0 { "FAILURE" } else { "SUCCESS" }}})))
+            .collect::<serde_json::Map<_, _>>()}})
+        .to_string();
+        let github = github(
+            dir.path(),
+            &[(&["pr", "list"], &list), (&["api", "graphql"], &rollup)],
+        );
+        let listed = github
+            .list_open_pull_requests("github.com/acme/widgets", "me")
+            .await
+            .unwrap();
+        assert_eq!(listed.open.len(), 60);
+        for p in &listed.open {
+            let expected = if p.number % 2 == 0 {
+                "failure"
+            } else {
+                "success"
+            };
+            assert_eq!(p.checks, expected, "#{}", p.number);
+        }
+        let calls = calls(dir.path());
+        assert_eq!(calls.iter().filter(|c| c[0] == "pr").count(), 1);
+        let queries: Vec<_> = calls
+            .iter()
+            .filter(|c| c[0] == "api")
+            .map(|c| c.iter().find(|a| a.starts_with("query=")).unwrap().clone())
+            .collect();
+        assert_eq!(queries.len(), 3);
+        for q in queries {
+            assert!(q.matches("pullRequest(number:").count() <= 25);
+        }
+    }
+
+    /// A full list is never read again at a larger limit.
+    #[tokio::test]
+    async fn a_full_list_is_not_read_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let rows: Vec<_> = (1..=1000).map(list_row).collect();
+        let list = serde_json::to_string(&rows).unwrap();
+        let rollup = json!({"data": {"repository": {}}}).to_string();
+        let github = github(
+            dir.path(),
+            &[(&["pr", "list"], &list), (&["api", "graphql"], &rollup)],
+        );
+        github
+            .list_open_pull_requests("github.com/acme/widgets", "me")
+            .await
+            .unwrap();
+        let lists = calls(dir.path()).iter().filter(|c| c[0] == "pr").count();
+        assert_eq!(lists, 1);
+    }
+
+    /// One failed check-state call fails the whole fetch.
+    #[tokio::test]
+    async fn a_failed_check_state_call_fails_the_fetch() {
+        let dir = tempfile::tempdir().unwrap();
+        let rows: Vec<_> = (1..=30).map(list_row).collect();
+        let list = serde_json::to_string(&rows).unwrap();
+        let github = github(dir.path(), &[(&["pr", "list"], &list)]);
+        let err = github
+            .list_open_pull_requests("github.com/acme/widgets", "me")
+            .await;
+        assert!(err.is_err());
     }
 }
