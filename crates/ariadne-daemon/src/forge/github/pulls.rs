@@ -147,9 +147,6 @@ impl Pull {
         }
     }
 }
-/// The one limit of a repository's open-request list read.
-const PULL_LIST_LIMIT: usize = 1000;
-
 /// The most `pullRequest(number: …)` aliases one GraphQL call carries.
 const CHECK_STATES_PER_CALL: usize = 25;
 
@@ -184,16 +181,23 @@ impl Github {
     }
 
     async fn rows(&self, repo: &str, filter: &[&str]) -> Result<Vec<Pull>, String> {
-        // One read at a high fixed limit: `gh pr list` has no page flag, and a
-        // larger second read would repeat every GraphQL page of the first.
-        let size = PULL_LIST_LIMIT.to_string();
-        let mut args = vec![
-            "pr", "list", "--repo", repo, "--state", "open", "--json", FIELDS, "--limit", &size,
-        ];
-        args.extend_from_slice(filter);
-        let output = self.cli.answer(&args).await?;
-        let mut rows: Vec<Pull> = serde_json::from_str(&output)
-            .map_err(|e| format!("cannot read GitHub pull requests: {e}"))?;
+        // Increase the limit until the complete result fits. `gh pr list` has
+        // no page flag; its limit drives the client's GraphQL pagination.
+        let mut limit = 100;
+        let mut rows = loop {
+            let size = limit.to_string();
+            let mut args = vec![
+                "pr", "list", "--repo", repo, "--state", "open", "--json", FIELDS, "--limit", &size,
+            ];
+            args.extend_from_slice(filter);
+            let output = self.cli.answer(&args).await?;
+            let rows: Vec<Pull> = serde_json::from_str(&output)
+                .map_err(|e| format!("cannot read GitHub pull requests: {e}"))?;
+            if rows.len() < limit {
+                break rows;
+            }
+            limit *= 2;
+        };
         let numbers: Vec<i64> = rows.iter().map(|p| p.number).collect();
         let states = self.check_states(repo, &numbers).await?;
         for row in &mut rows {
@@ -487,25 +491,22 @@ with open(os.path.join(here, "calls.log"), "a") as log:
     log.write(json.dumps(args) + "\n")
 rollups = os.path.join(here, "rollups.json")
 if args[:2] == ["api", "graphql"] and os.path.exists(rollups):
-    # Answer only the aliases the query asks, note where the call starts
-    # and ends, and refuse a call that starts while another one runs.
-    lock = os.path.join(here, "graphql.lock")
-    try:
-        os.close(os.open(lock, os.O_CREAT | os.O_EXCL))
-    except FileExistsError:
+    # Answer only the aliases the query asks, and answer a call only once
+    # every earlier call has ended: a call that starts while another one
+    # runs finds a start without its end and fails.
+    started = [f for f in os.listdir(here) if f.startswith("start-")]
+    ended = [f for f in os.listdir(here) if f.startswith("end-")]
+    if len(started) != len(ended):
         sys.stderr.write("parallel graphql calls")
         sys.exit(1)
-    with open(os.path.join(here, "events.log"), "a") as events:
-        events.write("start\n")
+    open(os.path.join(here, f"start-{len(started)}"), "w").close()
     states = json.load(open(rollups))
     query = next(a for a in args if a.startswith("query="))
     repository = {}
     for n in re.findall(r"pr(\d+): pullRequest", query):
         if n in states:
             repository["pr" + n] = {"statusCheckRollup": {"state": states[n]}}
-    with open(os.path.join(here, "events.log"), "a") as events:
-        events.write("end\n")
-    os.remove(lock)
+    open(os.path.join(here, f"end-{len(started)}"), "w").close()
     sys.stdout.write(json.dumps({"data": {"repository": repository}}))
     sys.exit(0)
 answers = json.load(open(os.path.join(here, "answers.json")))
@@ -600,10 +601,10 @@ sys.exit(1)
             .collect()
     }
 
-    /// 60 open requests: one list read, then check states in calls of at most
+    /// 60 open requests: check states go in calls of at most
     /// 25 aliases, every request keeping its own state.
     #[tokio::test]
-    async fn a_large_fetch_reads_the_list_once_and_the_check_states_in_small_calls() {
+    async fn a_large_fetch_sends_the_check_states_in_small_sequential_calls() {
         let dir = tempfile::tempdir().unwrap();
         let rows: Vec<_> = (1..=60).map(list_row).collect();
         let list = serde_json::to_string(&rows).unwrap();
@@ -623,39 +624,15 @@ sys.exit(1)
             assert_eq!(p.checks, expected, "#{}", p.number);
         }
         let calls = calls(dir.path());
-        assert_eq!(calls.iter().filter(|c| c[0] == "pr").count(), 1);
         let queries: Vec<_> = calls
             .iter()
             .filter(|c| c[0] == "api")
             .map(|c| c.iter().find(|a| a.starts_with("query=")).unwrap().clone())
             .collect();
         assert_eq!(queries.len(), 3);
-        let events = std::fs::read_to_string(dir.path().join("events.log")).unwrap();
-        assert_eq!(events, "start\nend\n".repeat(3));
         for q in queries {
             assert!(q.matches("pullRequest(number:").count() <= 25);
         }
-    }
-
-    /// A full list is never read again at a larger limit.
-    #[tokio::test]
-    async fn a_full_list_is_not_read_again() {
-        let dir = tempfile::tempdir().unwrap();
-        let rows: Vec<_> = (1..=1000).map(list_row).collect();
-        let list = serde_json::to_string(&rows).unwrap();
-        write_rollups(dir.path(), 1000);
-        let github = github(dir.path(), &[(&["pr", "list"], &list)]);
-        github
-            .list_open_pull_requests("github.com/acme/widgets", "me")
-            .await
-            .unwrap();
-        let lists: Vec<_> = calls(dir.path())
-            .into_iter()
-            .filter(|c| c[0] == "pr")
-            .collect();
-        assert_eq!(lists.len(), 1);
-        let limit = lists[0].iter().position(|a| a == "--limit").unwrap();
-        assert_eq!(lists[0][limit + 1], "1000");
     }
 
     /// One failed check-state call fails the whole fetch.

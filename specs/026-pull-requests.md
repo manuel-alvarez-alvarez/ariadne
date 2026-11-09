@@ -92,7 +92,7 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    `GET /v1/pull-requests` and its search answer from that held list alone, joined to the rows as the routes above do; neither calls the forge. A repository with no fetch yet holds no list, which both read as empty rather than live.
    `GET /v1/pull-requests/{id}` answers the held read of the row the same way; `GET /v1/repositories/{id}/pull-requests/{number}` stays live, since that is the panel reading one request on demand.
    `POST /v1/pull-requests/refresh` is still how a human asks the forge to be read again.
-5. A repository fetch lists the open requests of the repository in one `gh pr list` read at one fixed limit (1000), never read again at a larger one; a repository with more than 1000 open requests is read only to that limit, and the requests past it are not listed, held or read for check state; GitHub names each request's own requested reviewers on that same read (`reviewRequests`), so the login's own review requests need no second read.
+5. A repository fetch lists every open request of the repository in one read; GitHub names each request's own requested reviewers on that same read (`reviewRequests`), so the login's own review requests need no second read.
    It starts the work on each review request rule 3 names, then reads each row of the repository: the list's read where the list holds it, else a read of its own — a merged or closed request, or one the list misses.
    A row that asks for review keeps asking while the list names the login among its requested reviewers; one it no longer does, and that asked on the last read, is asked of the forge's timeline (029 rule 3).
    GitHub names a team's own request by a slug or a name, never a login, so a review asked of a team the login belongs to is read as asking nobody (Known gap).
@@ -319,9 +319,8 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `::checks_reads_every_rollup_state_by_its_documented_meaning`;
   a single request's own read merges that state in from its own call, which asks for none of a check's own context either:
   `forge/github/pulls.rs::check_state_fetch_tests::a_single_pull_read_merges_the_combined_state_from_its_own_graphql_call`.
-- A fetch reads the list once at the fixed limit, never again at a larger one; it sends at most 25 `pullRequest` aliases per GraphQL call, one call after the other, each request keeping its own state; one failed call fails the fetch:
-  `forge/github/pulls.rs::check_state_fetch_tests::a_large_fetch_reads_the_list_once_and_the_check_states_in_small_calls`,
-  `::a_full_list_is_not_read_again`,
+- A fetch sends at most 25 `pullRequest` aliases per GraphQL call, one call after the other, each request keeping its own state; one failed call fails the fetch:
+  `forge/github/pulls.rs::check_state_fetch_tests::a_large_fetch_sends_the_check_states_in_small_sequential_calls`,
   `::a_failed_check_state_call_fails_the_fetch`.
 - A detail read asks the forge for its parts together:
   `pull_requests.rs::a_detail_read_asks_the_forge_for_its_parts_together`.
