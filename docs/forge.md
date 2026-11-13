@@ -112,9 +112,10 @@ below.
 
 ## What a `pr-reviewer` session does
 
-A request that asks for your review, once it leaves draft, gets a session
-of its own once you ask for one, staffed on the pin you gave that ask, in a
-worktree detached at the request's head rather than a branch of its own.
+A request gets a review session of its own once you ask for one — at
+once, even while it is still a draft — staffed on the pin you gave that
+ask, in a worktree detached at the request's head rather than a branch of
+its own.
 The daemon wakes it with the request, then at the next reconcile after a
 later push or a reply in a thread it opened — told at once, with no wait
 for activity to settle. A push also waits for the session to go idle before
