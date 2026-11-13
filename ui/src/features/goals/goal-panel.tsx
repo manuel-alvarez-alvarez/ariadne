@@ -48,6 +48,7 @@ import { paths, taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
 import { GoalTasks } from "./goal-tasks"
+import { PlanningGuide } from "./planning-guide"
 import { goalQueryOptions } from "./queries"
 import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 
@@ -204,6 +205,14 @@ function GoalView({
         {error ? <RefreshWarning what="this goal" error={error} onRetry={onRetry} /> : null}
 
         <GoalMetadata goal={goal} />
+
+        {goal.status === "planning" && goal.orchestrated ? (
+          <PlanningGuide
+            goal={goal}
+            onOpenConversation={onSelectSession}
+            onNewTask={() => setNewTaskOpen(true)}
+          />
+        ) : null}
 
         <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
           <TabsList>

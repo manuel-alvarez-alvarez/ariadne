@@ -373,6 +373,25 @@ Out: the daemon endpoints themselves (012).
 27. A row of the Needs attention popover for an agent blocked on a permission or an
     input prompt opens that session's console with `?focus=`, so the terminal
     takes the keyboard on arrival.
+27a. The Needs attention popover has a View all action that opens a wider
+    drawer over the same attention list, order and targets, and leaves the
+    popover as it was
+    (`ui/src/features/goals/attention-header.test.tsx::opens a drawer from View all and filters a goal-less item by goal`).
+    Each row shows its whole subject, explanation, affected work and an action
+    label that names where the row goes — console, task, session, pull request
+    or repositories
+    (`ui/src/features/goals/attention-header.test.tsx::labels a console row and a task row by where each one navigates`).
+    Picking a row navigates to its target and closes the drawer
+    (`ui/src/features/goals/attention-header.test.tsx::navigates to the row target from the drawer and closes it`).
+    Goal and reason filters narrow one list, and "No goal" keeps goal-less
+    items reachable
+    (`ui/src/features/goals/attention-header.test.tsx::narrows the drawer list by reason and counts what is shown`).
+    The drawer keeps items under a partial read and says so, and says when a
+    read failed with nothing loaded
+    (`ui/src/features/goals/attention-header.test.tsx::keeps items and reports a partial read in the drawer`,
+    `ui/src/features/goals/attention-header.test.tsx::reports a failed read in the drawer when nothing loaded`).
+    Closing it returns focus to the trigger
+    (`ui/src/features/goals/attention-header.test.tsx::returns focus to the trigger when the drawer closes`).
 28. Above the console, a session blocked on a permission or an input prompt
     shows a banner that says where to answer: the picker in the console for
     a permission, the console's input for a question. A session that has
@@ -784,8 +803,27 @@ Out: the daemon endpoints themselves (012).
     selecting a row opens the goal panel and never expands tasks. A failed
     refresh keeps cached rows in both views under the retryable warning.
 
+48. While a goal is planning and has an orchestrator, its panel shows a
+    planning guide between the facts and the tabs. The guide words only what
+    the newest orchestrator session records: a `waiting_input` or `waiting_permission`
+    reason (waiting for you) whatever the status, else `starting`, `running`
+    (working), plain `idle`, or ended. A failed read shows unavailable even
+    over cached sessions. With no session recorded, or while the
+    sessions are loading or unreadable, it states that and claims no progress.
+    The Open orchestrator conversation button appears only with a session and
+    opens it over the panel as the Sessions tab does. Create task manually is
+    the guide's secondary action. The goal tabs and the header's New task
+    action stay as they were.
+
 ## Acceptance criteria
 
+- The planning guide words the recorded orchestrator session, a recorded wait
+  before its status, and opens it
+  (`ui/src/features/goals/planning-guide.test.tsx::words a recorded %j session as %s`);
+  it claims nothing without a session or after a failed read
+  (`ui/src/features/goals/planning-guide.test.tsx::claims no progress when no session is recorded, and keeps manual task creation`,
+  `ui/src/features/goals/planning-guide.test.tsx::says the state is unavailable when a refetch fails over cached sessions`,
+  `ui/src/features/goals/planning-guide.test.tsx::says the state is unavailable when the sessions cannot be read`).
 - Enabled desktop diagnostics export native shell events at their severity
   with a `tauri` target (`ui/src/telemetry/provider.test.tsx::forwards native shell logs at their level when diagnostics are enabled`,
   `ui/src/telemetry/telemetry.test.ts::exports operational info with its target and fields`).
