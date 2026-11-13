@@ -1,13 +1,19 @@
 /**
- * Why the task is where it is, in a sentence or two above its technical facts.
+ * Why the task is where it is, as a card above its technical facts.
  *
  * Only what the daemon recorded is said: the status and step, the failure
  * reason, the stalled flag, the dependencies' own statuses and the attention
  * reason of the task's live sessions. A task with nothing recorded says its
  * cause is unknown — never a guess from silence or from how long it has sat.
+ *
+ * The card reads top down: a headline with the status dot, a muted line of
+ * detail, then one row per thing the user can open — each dependency still
+ * unfinished, each session asking for someone — with the stall, the one
+ * recorded condition with nothing to open, as a row of its own.
  */
 
 import { useQueries } from "@tanstack/react-query"
+import { ArrowUpRightIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 
@@ -17,11 +23,14 @@ import {
   SESSION_ATTENTION_META,
   sessionAttention,
 } from "@/features/sessions/session-display"
+import { cn } from "@/lib/format"
 import { usePanelSessionTo, useTaskPanelTo } from "@/routes/paths"
 import { taskQueryOptions } from "./queries"
 import { STALLED_META } from "./stalled"
 import { TASK_STATUS_META } from "./status"
 import { stepTitle } from "./steps"
+
+type Dependency = { id: string; task?: TaskDto }
 
 export function TaskSummary({
   task,
@@ -34,7 +43,10 @@ export function TaskSummary({
   sessions?: SessionDto[]
 }) {
   const results = useQueries({ queries: task.depends_on.map((id) => taskQueryOptions(id)) })
-  const dependencies = task.depends_on.map((id, index) => ({ id, task: results[index]?.data }))
+  const dependencies: Dependency[] = task.depends_on.map((id, index) => ({
+    id,
+    task: results[index]?.data,
+  }))
   // Only a dependency whose status has loaded is a recorded blocker; one that
   // is still loading, or failed to load, says nothing either way.
   const unmet = dependencies.filter(
@@ -44,106 +56,110 @@ export function TaskSummary({
   const asking = (sessions ?? []).filter(
     (session) => isLiveStatus(session.status) && sessionAttention(session) !== null,
   )
-  const lines: ReactNode[] = []
+  const stalled = task.stalled && task.status !== "finished" && task.status !== "cancelled"
+
+  let headline: string
+  let detail: string | null = null
+  // A task that already moved on or ended still names what it depends on.
+  let listed: { label: string; items: Dependency[] } | null =
+    unmet.length > 0 ? { label: "Unfinished dependency", items: unmet } : null
 
   if (task.status === "failed" || task.status === "cancelled") {
-    const word = task.status === "failed" ? "Failed" : "Cancelled"
-    lines.push(task.reason ? `${word}: ${task.reason}` : `${word}. No reason was recorded for it.`)
+    headline = TASK_STATUS_META[task.status].label
+    detail = task.reason ?? "No reason was recorded for it."
   } else if (task.status === "finished") {
-    lines.push("Finished: its workflow completed.")
+    headline = "Finished"
+    detail = "Its workflow completed."
+    listed = null
   } else if (task.status === "in_progress") {
-    lines.push(task.step ? `Running the ${stepTitle(steps, task.step)} column.` : "Running.")
+    headline = task.step ? `Running the ${stepTitle(steps, task.step)} column` : "Running"
   } else if (unmet.length > 0) {
-    lines.push(<DependencyList lead="Waiting for" items={unmet} />)
+    headline = `Waiting for ${unmet.length === 1 ? "a dependency" : `${unmet.length} dependencies`}`
+    listed = { label: "Waiting for", items: unmet }
   } else if (unresolved.length > 0) {
-    lines.push(
-      <>
-        {task.status === "ready" ? "Ready." : "Pending."} Dependency status is not loaded, so the
-        cause is unknown. <DependencyList lead="Check" items={unresolved} />
-      </>,
-    )
+    headline = "Cause unknown"
+    detail = `${TASK_STATUS_META[task.status].label}. Dependency status is not loaded, so no blocker can be named.`
+    listed = { label: "Not loaded", items: unresolved }
   } else if (task.status === "ready") {
-    lines.push("Ready for its workflow to start. No blocker is recorded.")
+    headline = "Ready"
+    detail = "Waiting for its workflow to start. No blocker is recorded."
   } else {
-    lines.push(
-      "Pending. Its dependencies are finished or it has none, and no other cause is recorded. The cause is unknown.",
-    )
+    headline = "Cause unknown"
+    detail =
+      "Pending. Its dependencies are finished or it has none, and no other cause is recorded."
   }
 
-  // A task that already moved on or ended still names what it depends on.
-  if (["in_progress", "failed", "cancelled"].includes(task.status) && unmet.length > 0) {
-    lines.push(<DependencyList lead="Unfinished dependencies:" items={unmet} />)
-  }
-
-  if (task.stalled && task.status !== "finished" && task.status !== "cancelled") {
-    lines.push(`${STALLED_META.label}: ${STALLED_META.hint}`)
-  }
-
+  const warn = stalled || asking.length > 0
   return (
-    // Set like the facts below it: the same small muted label over `text-xs`
-    // text, inside the strip's own width, with a rule down its side to read as
-    // the lead of that strip rather than as stray paragraphs.
-    <section aria-label="Execution summary" className="space-y-0.5 border-l-2 pl-3 text-xs">
-      <h3 className="text-muted-foreground">Status</h3>
-      <div className="space-y-1 leading-snug">
-        {lines.map((line, index) => (
-          // Fixed, derived from the task alone, never reordered.
-          // biome-ignore lint/suspicious/noArrayIndexKey: see above
-          <p key={index}>{line}</p>
-        ))}
-        {asking.map((session) => (
-          <SessionAsking key={session.id} session={session} />
-        ))}
+    <section
+      aria-label="Execution summary"
+      className={cn(
+        "rounded-lg border bg-card text-sm",
+        TASK_STATUS_META[task.status].border ?? (warn && STALLED_META.border),
+      )}
+    >
+      <div className="space-y-0.5 px-3 py-2.5">
+        <p className="flex items-center gap-2 font-medium">
+          <span className={cn("size-2 shrink-0 rounded-full", TASK_STATUS_META[task.status].dot)} />
+          {headline}
+        </p>
+        {detail ? <p className="pl-4 text-xs text-muted-foreground">{detail}</p> : null}
       </div>
+      {listed || stalled || asking.length > 0 ? (
+        <ul className="divide-y border-t text-xs">
+          {stalled ? (
+            <Row tone={STALLED_META.text}>
+              {STALLED_META.label}: {STALLED_META.hint}
+            </Row>
+          ) : null}
+          {asking.map((session) => (
+            <SessionRow key={session.id} session={session} />
+          ))}
+          {listed?.items.map((dependency) => (
+            <DependencyRow key={dependency.id} label={listed.label} {...dependency} />
+          ))}
+        </ul>
+      ) : null}
     </section>
   )
 }
 
-function DependencyList({
-  lead,
-  items,
-}: {
-  lead: string
-  items: { id: string; task?: TaskDto }[]
-}) {
-  return (
-    <>
-      {lead}{" "}
-      {items.map((dependency, index) => (
-        <span key={dependency.id}>
-          {index > 0 ? ", " : ""}
-          <DependencyLink id={dependency.id} task={dependency.task} />
-        </span>
-      ))}
-      .
-    </>
-  )
+function Row({ tone, children }: { tone?: string; children: ReactNode }) {
+  return <li className={cn("flex min-w-0 items-center gap-2 px-3 py-1.5", tone)}>{children}</li>
 }
 
-function DependencyLink({ id, task }: { id: string; task?: TaskDto }) {
+function DependencyRow({ id, task, label }: Dependency & { label: string }) {
   const to = useTaskPanelTo(id)
+  const status = task ? TASK_STATUS_META[task.status] : undefined
   return (
-    <>
-      <Link to={to} replace className="underline underline-offset-3">
+    <Row>
+      <span className="w-32 shrink-0 text-muted-foreground">{label}</span>
+      <span className={cn("size-1.5 shrink-0 rounded-full", status?.dot ?? "bg-border")} />
+      <Link to={to} replace className="min-w-0 truncate underline-offset-3 hover:underline">
         {task?.title ?? id}
-      </Link>{" "}
-      <span className="text-muted-foreground">
-        ({task ? TASK_STATUS_META[task.status].label.toLowerCase() : "status unknown"})
+      </Link>
+      <span className="ml-auto shrink-0 text-muted-foreground">
+        {status ? status.label : "Status unknown"}
       </span>
-    </>
+    </Row>
   )
 }
 
-function SessionAsking({ session }: { session: SessionDto }) {
+function SessionRow({ session }: { session: SessionDto }) {
   const to = usePanelSessionTo(session.id)
   const reason = sessionAttention(session)
   if (reason === null) return null
   return (
-    <p>
-      A session is {SESSION_ATTENTION_META[reason].label.toLowerCase()}.{" "}
-      <Link to={to} replace className="underline underline-offset-3">
+    <Row tone="text-status-warn-fg">
+      A session is {SESSION_ATTENTION_META[reason].label.toLowerCase()}.
+      <Link
+        to={to}
+        replace
+        className="ml-auto flex shrink-0 items-center gap-1 font-medium underline-offset-3 hover:underline"
+      >
         Open the session
+        <ArrowUpRightIcon className="size-3.5" />
       </Link>
-    </p>
+    </Row>
   )
 }

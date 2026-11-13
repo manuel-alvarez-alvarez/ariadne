@@ -55,7 +55,8 @@ it("explains a pending task by the dependencies it waits for", async () => {
     },
   })
   const summary = await screen.findByRole("region", { name: "Execution summary" })
-  expect(summary.textContent).toContain("Waiting for Lay the schema (in progress).")
+  expect(summary.textContent).toContain("Waiting for a dependency")
+  expect(within(summary).getByRole("listitem").textContent).toContain("In progress")
   expect(within(summary).getByRole("link", { name: "Lay the schema" })).toBeTruthy()
 })
 
@@ -65,7 +66,7 @@ it("says the cause is unknown for a pending task with nothing recorded", async (
     seed: (client) => client.setQueryData(qk.tasks.detail(task.id), task),
   })
   const summary = await screen.findByRole("region", { name: "Execution summary" })
-  expect(summary.textContent).toContain("The cause is unknown.")
+  expect(summary.textContent).toContain("Cause unknown")
 })
 
 it("does not claim a blocker while a dependency's status is unresolved", async () => {
@@ -75,7 +76,7 @@ it("does not claim a blocker while a dependency's status is unresolved", async (
   })
   const summary = await screen.findByRole("region", { name: "Execution summary" })
   expect(summary.textContent).not.toContain("Waiting for")
-  expect(summary.textContent).toContain("cause is unknown")
+  expect(summary.textContent).toContain("Cause unknown")
 })
 
 it("lists unfinished dependencies of a failed task with its reason", async () => {
@@ -93,8 +94,10 @@ it("lists unfinished dependencies of a failed task with its reason", async () =>
     },
   })
   const summary = await screen.findByRole("region", { name: "Execution summary" })
-  expect(summary.textContent).toContain("Failed: dependency never landed")
-  expect(summary.textContent).toContain("Unfinished dependencies: Lay the schema (pending).")
+  expect(summary.textContent).toContain("dependency never landed")
+  const row = within(summary).getByRole("listitem")
+  expect(row.textContent).toContain("Unfinished dependency")
+  expect(row.textContent).toContain("Pending")
   expect(within(summary).getByRole("link", { name: "Lay the schema" })).toBeTruthy()
 })
 
