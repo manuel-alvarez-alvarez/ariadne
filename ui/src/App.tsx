@@ -22,7 +22,7 @@ import { TelemetryProvider } from "@/telemetry/provider"
 
 export default function App() {
   const [queryClient] = useState(createQueryClient)
-  const { confirmation } = useOpenExternalLinks()
+  useOpenExternalLinks()
 
   return (
     <ThemeProvider>
@@ -32,7 +32,6 @@ export default function App() {
             <EventStreamProvider>
               <RouterProvider router={router} />
               <Toaster />
-              {confirmation}
             </EventStreamProvider>
           </TooltipProvider>
         </QueryClientProvider>

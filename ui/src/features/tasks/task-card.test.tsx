@@ -149,7 +149,7 @@ it("says none staffed for a step with no agent", async () => {
 
 it("links the pull request and the updated time, and takes one tab stop", () => {
   card({ pr_url: "https://github.com/o/r/pull/7" })
-  const pr = screen.getByRole("link", { name: "Pull request" })
+  const pr = screen.getByRole("link", { name: /^Pull request #7\b/ })
   expect(pr.getAttribute("href")).toBe("https://github.com/o/r/pull/7")
   expect(pr.getAttribute("tabindex")).toBe("-1")
   expect(document.querySelector("time")).toBeTruthy()
@@ -157,10 +157,21 @@ it("links the pull request and the updated time, and takes one tab stop", () => 
   // than a row of its own, with line 2 leaving room for it.
   expect(pr.className).toContain("absolute")
   expect(pr.className).toContain("bottom-1.5")
-  expect(document.querySelector("time")?.parentElement?.parentElement?.className).toContain("pr-5")
+  expect(document.querySelector("time")?.parentElement?.parentElement?.style.paddingRight).toBe(
+    "min(2ch + 2rem, 40% + 1.25rem)",
+  )
   expect(pr.parentElement?.children).toHaveLength(3) // card link, hints, PR: no third row
   const links = screen.getAllByRole("link")
   expect(links.filter((link) => link.getAttribute("tabindex") !== "-1")).toHaveLength(1)
+})
+
+it("caps the reserved room at the link's own 40% limit for a long pull request number", () => {
+  card({ pr_url: "https://github.com/o/r/pull/123456" })
+  const pr = screen.getByRole("link", { name: /^Pull request #123456\b/ })
+  expect(pr.className).toContain("max-w-[40%]")
+  expect(document.querySelector("time")?.parentElement?.parentElement?.style.paddingRight).toBe(
+    "min(7ch + 2rem, 40% + 1.25rem)",
+  )
 })
 
 it("shows no pull request link without a pr_url, and no branch", () => {

@@ -1,11 +1,12 @@
 import { useQueries } from "@tanstack/react-query"
-import { GitBranchIcon, GitCommitHorizontalIcon, GitPullRequestIcon } from "lucide-react"
+import { GitBranchIcon, GitCommitHorizontalIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 
 import type { TaskDto, WorkflowStepDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { Fact, FactList } from "@/components/fact-list"
+import { PrLink } from "@/components/pr-link"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn, shortSha } from "@/lib/format"
@@ -57,15 +58,7 @@ export function TaskFacts({ task, steps = [] }: { task: TaskDto; steps?: Workflo
       </Fact>
       {task.pr_url ? (
         <Fact label="Pull request">
-          <a
-            href={task.pr_url}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1.5 text-xs underline-offset-3 hover:underline"
-          >
-            <GitPullRequestIcon className="size-3.5" />
-            {task.pr_url}
-          </a>
+          <PrLink url={task.pr_url} context={task.title} />
         </Fact>
       ) : null}
     </FactList>

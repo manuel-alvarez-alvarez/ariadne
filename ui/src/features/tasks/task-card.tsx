@@ -31,14 +31,13 @@
  * no tab stop of its own.
  */
 
-import { GitPullRequestIcon } from "lucide-react"
 import { useId } from "react"
 import { Link } from "react-router-dom"
 
 import type { TaskDto, WorkflowStepDto } from "@/api"
+import { PrLink } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When, whenHint } from "@/components/when"
 import {
   SESSION_ATTENTION_META,
@@ -57,6 +56,12 @@ import { findStep, stepTitle } from "./steps"
  * Every hint is read off the link's description instead ({@link cardHints}).
  */
 const NOT_A_STOP = -1
+
+/** Room line 2 leaves for the corner PR link: its inset, icon and gap, plus its `#number`, never more than the 40% the link itself may take. */
+function prLinkReserve(url: string): string {
+  const digits = /\/(?:pulls?|merge_requests)\/(\d+)/.exec(url)?.[1] ?? "PR"
+  return `min(calc(2rem + ${digits.length + 1}ch), calc(40% + 1.25rem))`
+}
 
 interface CardState {
   label: string
@@ -158,8 +163,8 @@ export function TaskCard({
         <div
           className={cn(
             "mt-1 flex min-w-0 items-center gap-x-2 text-xs whitespace-nowrap text-muted-foreground",
-            task.pr_url && "pr-5",
           )}
+          style={task.pr_url ? { paddingRight: prLinkReserve(task.pr_url) } : undefined}
         >
           <span className="min-w-0 flex-1 truncate">
             <TokenFigure
@@ -199,22 +204,12 @@ export function TaskCard({
           anchor cannot sit inside the card's link, so it is laid over the
           card's bottom-right corner, where line 2 leaves room for it. */}
       {task.pr_url && (
-        <Tooltip>
-          <TooltipTrigger
-            tabIndex={NOT_A_STOP}
-            render={
-              <a
-                href={task.pr_url}
-                aria-label="Pull request"
-                data-pr-link
-                className="absolute right-2.5 bottom-1.5 flex h-4 items-center text-muted-foreground hover:text-foreground"
-              />
-            }
-          >
-            <GitPullRequestIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>Open the pull request</TooltipContent>
-        </Tooltip>
+        <PrLink
+          url={task.pr_url}
+          context={task.title}
+          tabIndex={NOT_A_STOP}
+          className="absolute right-2.5 bottom-1.5 h-4 max-w-[40%] text-muted-foreground hover:text-foreground"
+        />
       )}
     </div>
   )

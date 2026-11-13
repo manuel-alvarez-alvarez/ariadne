@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, within } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, expect, it, vi } from "vitest"
 
@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri }))
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl }))
 
 function Screen() {
-  const { confirmation } = useOpenExternalLinks()
+  useOpenExternalLinks()
   return (
     <>
       <a href="https://example.com/pr/1">Pull request</a>
@@ -25,7 +25,6 @@ function Screen() {
       <a href="https://example.com/blocked-script">Script</a>
       <a href="ariadne://settings">Custom</a>
       <a href="#/goals">Goals</a>
-      {confirmation}
     </>
   )
 }
@@ -42,42 +41,24 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-it("shows the full target before opening a disguised external link", async () => {
+it("opens an external link directly, whatever its text says", async () => {
   const user = userEvent.setup()
   const { getByText } = mount()
 
   await user.click(getByText("Pull request"))
 
-  expect(openUrl).not.toHaveBeenCalled()
-  const dialog = screen.getByRole("dialog", { name: "Open external link?" })
-  expect(within(dialog).getByText("https://example.com/pr/1")).not.toBeNull()
-
-  await user.click(within(dialog).getByRole("button", { name: "Open link" }))
-
   expect(openUrl).toHaveBeenCalledWith("https://example.com/pr/1")
+  expect(screen.queryByRole("dialog")).toBeNull()
 })
 
-it("opens an external link directly when its text is its target", async () => {
-  const user = userEvent.setup()
-  const { getByText } = mount()
-
-  await user.click(getByText("https://example.com/direct"))
-
-  expect(openUrl).toHaveBeenCalledWith("https://example.com/direct")
-  expect(screen.queryByRole("dialog", { name: "Open external link?" })).toBeNull()
-})
-
-it("allows mailto links through the same confirmation", async () => {
+it("opens a mailto link directly", async () => {
   const user = userEvent.setup()
   const { getByText } = mount()
 
   await user.click(getByText("Report a problem"))
 
-  const dialog = screen.getByRole("dialog", { name: "Open external link?" })
-  expect(within(dialog).getByText("mailto:security@example.com")).not.toBeNull()
-  await user.click(within(dialog).getByRole("button", { name: "Open link" }))
-
   expect(openUrl).toHaveBeenCalledWith("mailto:security@example.com")
+  expect(screen.queryByRole("dialog")).toBeNull()
 })
 
 it("blocks unsafe link schemes before the webview follows them", () => {

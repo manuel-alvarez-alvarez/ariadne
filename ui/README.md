@@ -63,9 +63,10 @@ dashboard open in its iframe. It rejects evaluated script, plugins, document
 base changes and embedded ancestors.
 
 Links to `http:`, `https:` and `mailto:` destinations open in the system
-browser. When a link's visible text does not equal its target, Ariadne first
-shows the complete target URL for confirmation. OSC 8 links in a session
-console use the same confirmation. Other link schemes do not open.
+browser directly, with no confirmation, including Markdown and OSC 8 links in
+a session console. Other link schemes do not open. A pull request reference
+shows as a pull request icon and `#number`; hovering it shows the repository
+and the full URL.
 
 ### Scripts
 
