@@ -57,10 +57,10 @@ import { findStep, stepTitle } from "./steps"
  */
 const NOT_A_STOP = -1
 
-/** Room line 2 leaves for the corner PR link: its inset, icon and gap, plus its `#number`. */
+/** Room line 2 leaves for the corner PR link: its inset, icon and gap, plus its `#number`, never more than the 40% the link itself may take. */
 function prLinkReserve(url: string): string {
   const digits = /\/(?:pulls?|merge_requests)\/(\d+)/.exec(url)?.[1] ?? "PR"
-  return `calc(2rem + ${digits.length + 1}ch)`
+  return `min(calc(2rem + ${digits.length + 1}ch), calc(40% + 1.25rem))`
 }
 
 interface CardState {

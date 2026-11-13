@@ -158,19 +158,19 @@ it("links the pull request and the updated time, and takes one tab stop", () => 
   expect(pr.className).toContain("absolute")
   expect(pr.className).toContain("bottom-1.5")
   expect(document.querySelector("time")?.parentElement?.parentElement?.style.paddingRight).toBe(
-    "calc(2ch + 2rem)",
+    "min(2ch + 2rem, 40% + 1.25rem)",
   )
   expect(pr.parentElement?.children).toHaveLength(3) // card link, hints, PR: no third row
   const links = screen.getAllByRole("link")
   expect(links.filter((link) => link.getAttribute("tabindex") !== "-1")).toHaveLength(1)
 })
 
-it("reserves room for a long pull request number and keeps the link inside the card", () => {
+it("caps the reserved room at the link's own 40% limit for a long pull request number", () => {
   card({ pr_url: "https://github.com/o/r/pull/123456" })
   const pr = screen.getByRole("link", { name: /^Pull request #123456\b/ })
   expect(pr.className).toContain("max-w-[40%]")
   expect(document.querySelector("time")?.parentElement?.parentElement?.style.paddingRight).toBe(
-    "calc(7ch + 2rem)",
+    "min(7ch + 2rem, 40% + 1.25rem)",
   )
 })
 
