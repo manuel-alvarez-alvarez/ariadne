@@ -266,6 +266,24 @@ pub struct PullRequestListQuery {
     /// True for the requests that ask for the user's review (029), false
     /// for the ones that do not.
     pub requested: Option<bool>,
+    /// Only the requests where every word of this text is in the number
+    /// (`#12`), the title, the description, the author or the head branch,
+    /// ignoring case.
+    pub q: Option<String>,
+    /// The `next_cursor` of the page before this one; opaque.
+    pub cursor: Option<String>,
+}
+
+/// How many requests one page of `GET /v1/pull-requests` holds at most.
+/// The caller cannot choose another size.
+pub const PULL_REQUEST_PAGE_SIZE: usize = 25;
+
+/// One page of `GET /v1/pull-requests`, the most recently updated first.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PullRequestPageDto {
+    pub pull_requests: Vec<PullRequestDto>,
+    /// The `cursor` that continues after this page; null on the last one.
+    pub next_cursor: Option<String>,
 }
 
 /// An open request a search found that is not the user's own.

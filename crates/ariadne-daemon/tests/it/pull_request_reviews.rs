@@ -1357,7 +1357,7 @@ async fn a_request_of_mine_is_reviewed_once_asked_and_its_review_is_a_comment() 
     let repo = repository(&h, &path).await;
     let mut rows: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "the request to be listed", async || {
-        rows = h.get("/v1/pull-requests").await;
+        rows = h.pull_requests("/v1/pull-requests").await;
         rows.len() == 1
     })
     .await;

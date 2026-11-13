@@ -186,11 +186,12 @@ impl AriadneMcp {
             .task_id
             .as_deref()
             .ok_or_else(|| McpError::invalid_params("this session works for no request", None))?;
-        let rows: Vec<serde_json::Value> = self
+        // A task opens one request, so the first page holds it.
+        let page: serde_json::Value = self
             .get(&format!("/v1/pull-requests?task={task}&role=author"))
             .await?;
-        rows.first()
-            .and_then(|row| row["id"].as_str())
+        page["pull_requests"][0]["id"]
+            .as_str()
             .map(str::to_string)
             .ok_or_else(|| {
                 McpError::invalid_params(

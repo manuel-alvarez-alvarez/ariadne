@@ -237,7 +237,7 @@ async fn keep_until_merge(author: &str) {
     // asked to babysit it yet.
     let mut rows: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "the request to be listed", async || {
-        rows = h.get("/v1/pull-requests").await;
+        rows = h.pull_requests("/v1/pull-requests").await;
         rows.len() == 1
     })
     .await;
@@ -1318,7 +1318,7 @@ async fn a_keeper_whose_agent_dies_the_moment_it_starts_gives_up_after_the_budge
     let repo = repository(&h, &path).await;
     let mut rows: Vec<Value> = Vec::new();
     eventually(TIMEOUT, "the request to be listed", async || {
-        rows = h.get("/v1/pull-requests").await;
+        rows = h.pull_requests("/v1/pull-requests").await;
         rows.len() == 1
     })
     .await;

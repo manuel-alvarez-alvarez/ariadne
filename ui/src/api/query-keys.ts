@@ -59,7 +59,7 @@ export const qk = {
   pullRequests: {
     all: () => ["pull-requests"] as const,
     lists: () => ["pull-requests", "list"] as const,
-    list: (filters?: { repo?: string; role?: string; requested?: boolean }) =>
+    list: (filters?: { repo?: string; role?: string; requested?: boolean; q?: string }) =>
       ["pull-requests", "list", filters ?? {}] as const,
     /** By Ariadne's id of a request it works on, or by `repository:number`. */
     detail: (id: string) => ["pull-requests", "detail", id] as const,
