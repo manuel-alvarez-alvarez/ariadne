@@ -185,11 +185,19 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
  */
 function ColumnHeaders({ inProgress, done }: { inProgress: number; done: number }) {
   return (
-    <div className={cn(COLUMNS_GRID, "sticky top-0 z-20 border-b bg-background px-3 py-2")}>
+    <div
+      className={cn(
+        COLUMNS_GRID,
+        "sticky top-0 z-20 mx-2 border-x border-background bg-background py-2",
+      )}
+    >
       {LANE_COLUMNS.map((column, index) => (
         <h2
           key={column.key}
-          className={cn("min-w-0 truncate text-sm font-semibold", index === 1 && "border-l pl-3")}
+          className={cn(
+            "min-w-0 truncate pl-3 pr-3 text-sm font-semibold",
+            index === 1 && "border-l-2 border-border pl-3",
+          )}
         >
           <Tooltip>
             <TooltipTrigger render={<span />}>
@@ -291,7 +299,7 @@ function Lane({
       </header>
 
       {collapsed ? null : (
-        <div className={cn(COLUMNS_GRID, "px-3 pt-1 pb-2.5")}>
+        <div className={cn(COLUMNS_GRID, "pt-1 pb-2.5")}>
           {LANE_COLUMNS.map((column, index) => (
             // An empty cell is empty: whitespace already says the column has
             // nothing in it, and a board of placeholders says nothing at all.
@@ -302,7 +310,8 @@ function Lane({
               aria-label={`${goal.title}: ${column.label}`}
               className={cn(
                 CELL_GRID,
-                index === 1 && "border-l border-dotted border-border/70 pl-3",
+                index === 0 && "pl-3 pr-3",
+                index === 1 && "border-l-2 border-border pl-3 pr-3",
               )}
             >
               {column.key === "in_progress" && empty ? (

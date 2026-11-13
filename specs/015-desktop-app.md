@@ -683,8 +683,9 @@ Out: the daemon endpoints themselves (012).
 39. The goals board shows two global columns, "In progress" and "Done",
     drawn once as headings at the top with totals across all listed goals,
     including folded goals; cancelled tasks count as Done. In progress uses
-    66% and Done uses 34% of available column space, with a thin divider aligned
-    between headings and cells. Headings are larger and bolder. Each goal has a
+    66% and Done uses 34% of available column space, with a solid 2px, higher
+    contrast divider aligned between headings and cells and balanced padding
+    on both sides. Headings are larger and bolder. Each goal has a
     subtle dotted outline around its plain-background task area across both
     columns. Its header keeps title, collapse control, status, progress,
     attention and tokens compact. Cards wrap into additional rows as needed,
