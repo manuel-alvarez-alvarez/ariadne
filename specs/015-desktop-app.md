@@ -1424,16 +1424,11 @@ Out: the daemon endpoints themselves (012).
   `::keeps the cached task and its empty history under warnings, and a retry clears them`,
   `::keeps the cached task and its empty messages under warnings, and a retry clears them`,
   `::keeps cached table rows under the warning, and shows a load error with none`).
-<<<<<<< HEAD
-=======
 - Goals search, repository filter and the remembered List view
   (`ui/src/features/goals/goals-list-page.test.tsx::narrows by title and repository, and lists one row per goal that opens its panel`,
   `::counts cancelled tasks in a row's total and keeps the status filter when a row opens its panel`,
   `::keeps the selected repository named after a status change drops it from the goals`,
   `::keeps cached list rows under a retryable warning when the task refresh fails`).
-- An OSC 8 console link shows the same target confirmation before opening
-  (`ui/src/features/sessions/session-terminal.test.tsx::confirms an OSC 8 link before opening it outside the app`).
->>>>>>> origin/main
 
 ## Known gap
 
