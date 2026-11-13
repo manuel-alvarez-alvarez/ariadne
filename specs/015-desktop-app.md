@@ -373,6 +373,25 @@ Out: the daemon endpoints themselves (012).
 27. A row of the Needs attention popover for an agent blocked on a permission or an
     input prompt opens that session's console with `?focus=`, so the terminal
     takes the keyboard on arrival.
+27a. The Needs attention popover has a View all action that opens a wider
+    drawer over the same attention list, order and targets, and leaves the
+    popover as it was
+    (`ui/src/features/goals/attention-header.test.tsx::opens a drawer from View all and filters a goal-less item by goal`).
+    Each row shows its whole subject, explanation, affected work and an action
+    label that names where the row goes — console, task, session, pull request
+    or repositories
+    (`ui/src/features/goals/attention-header.test.tsx::labels a console row and a task row by where each one navigates`).
+    Picking a row navigates to its target and closes the drawer
+    (`ui/src/features/goals/attention-header.test.tsx::navigates to the row target from the drawer and closes it`).
+    Goal and reason filters narrow one list, and "No goal" keeps goal-less
+    items reachable
+    (`ui/src/features/goals/attention-header.test.tsx::narrows the drawer list by reason and counts what is shown`).
+    The drawer keeps items under a partial read and says so, and says when a
+    read failed with nothing loaded
+    (`ui/src/features/goals/attention-header.test.tsx::keeps items and reports a partial read in the drawer`,
+    `ui/src/features/goals/attention-header.test.tsx::reports a failed read in the drawer when nothing loaded`).
+    Closing it returns focus to the trigger
+    (`ui/src/features/goals/attention-header.test.tsx::returns focus to the trigger when the drawer closes`).
 28. Above the console, a session blocked on a permission or an input prompt
     shows a banner that says where to answer: the picker in the console for
     a permission, the console's input for a question. A session that has
