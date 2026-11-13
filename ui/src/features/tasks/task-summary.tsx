@@ -35,7 +35,12 @@ export function TaskSummary({
 }) {
   const results = useQueries({ queries: task.depends_on.map((id) => taskQueryOptions(id)) })
   const dependencies = task.depends_on.map((id, index) => ({ id, task: results[index]?.data }))
-  const unmet = dependencies.filter((dependency) => dependency.task?.status !== "finished")
+  // Only a dependency whose status has loaded is a recorded blocker; one that
+  // is still loading, or failed to load, says nothing either way.
+  const unmet = dependencies.filter(
+    (dependency) => dependency.task && dependency.task.status !== "finished",
+  )
+  const unresolved = dependencies.filter((dependency) => !dependency.task)
   const asking = (sessions ?? []).filter(
     (session) => isLiveStatus(session.status) && sessionAttention(session) !== null,
   )
@@ -49,16 +54,12 @@ export function TaskSummary({
   } else if (task.status === "in_progress") {
     lines.push(task.step ? `Running the ${stepTitle(steps, task.step)} column.` : "Running.")
   } else if (unmet.length > 0) {
+    lines.push(<DependencyList lead="Waiting for" items={unmet} />)
+  } else if (unresolved.length > 0) {
     lines.push(
       <>
-        Waiting for{" "}
-        {unmet.map((dependency, index) => (
-          <span key={dependency.id}>
-            {index > 0 ? ", " : ""}
-            <DependencyLink id={dependency.id} task={dependency.task} />
-          </span>
-        ))}
-        .
+        {task.status === "ready" ? "Ready." : "Pending."} Dependency status is not loaded, so the
+        cause is unknown. <DependencyList lead="Check" items={unresolved} />
       </>,
     )
   } else if (task.status === "ready") {
@@ -67,6 +68,11 @@ export function TaskSummary({
     lines.push(
       "Pending. Its dependencies are finished or it has none, and no other cause is recorded. The cause is unknown.",
     )
+  }
+
+  // A task that already moved on or ended still names what it depends on.
+  if (["in_progress", "failed", "cancelled"].includes(task.status) && unmet.length > 0) {
+    lines.push(<DependencyList lead="Unfinished dependencies:" items={unmet} />)
   }
 
   if (task.stalled && task.status !== "finished" && task.status !== "cancelled") {
@@ -84,6 +90,27 @@ export function TaskSummary({
         <SessionAsking key={session.id} session={session} />
       ))}
     </section>
+  )
+}
+
+function DependencyList({
+  lead,
+  items,
+}: {
+  lead: string
+  items: { id: string; task?: TaskDto }[]
+}) {
+  return (
+    <>
+      {lead}{" "}
+      {items.map((dependency, index) => (
+        <span key={dependency.id}>
+          {index > 0 ? ", " : ""}
+          <DependencyLink id={dependency.id} task={dependency.task} />
+        </span>
+      ))}
+      .
+    </>
   )
 }
 
