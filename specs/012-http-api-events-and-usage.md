@@ -443,8 +443,12 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
 - Cursors preserve submillisecond activity and break ties by agent, then session id.
   Directory boundaries and activity bounds are inclusive
   (`session_list.rs::cursor_preserves_precision_and_breaks_ties_by_agent_then_session`).
-- Migration 0002 removes unowned rows and the title column, preserving seated rows
-  (`crates/ariadne-store/tests/session_migration.rs::upgrade_removes_unowned_sessions_and_preserves_seated_sessions`).
+- Migrations 0002 and 0003 remove unowned sessions, the rows that reference
+  them and the title column, preserving seated sessions and their rows
+  (`crates/ariadne-store/tests/session_migration.rs::upgrade_removes_unowned_sessions_and_their_rows`).
+- A database that already ran 0002 and kept the removed sessions' rows opens
+  once 0003 clears them
+  (`crates/ariadne-store/tests/session_migration.rs::upgrade_clears_rows_an_earlier_session_removal_left_behind`).
 - Invalid cursors return `invalid_cursor` (`session_list.rs::an_unreadable_cursor_is_refused`).
 - Every event the runtime reports is acted on, a lifecycle event moves the
   status and raises nothing, and a wait on the user is raised and never
