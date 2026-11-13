@@ -14,8 +14,8 @@
  * would silently stop working.
  */
 
-import { act, fireEvent, screen, waitFor } from "@testing-library/react"
-import { beforeEach, expect, it } from "vitest"
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
+import { beforeEach, expect, it, vi } from "vitest"
 
 import type { DomainEvent } from "@/api"
 import { EventStreamProvider } from "@/events/provider"
@@ -152,4 +152,36 @@ it("keeps room on the right of the expanded diff for a Linux scrollbar", async (
 
   const scroll = await screen.findByTestId("diff-scroll")
   expect(scroll.className).toContain("pr-2")
+})
+
+it("filters the expanded diff's file index by name and shows each file's counts", async () => {
+  diff = SECOND
+  await renderDiff()
+  fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
+
+  const nav = await screen.findByRole("navigation", { name: "Changed files" })
+  expect(within(nav).getAllByText("+1")).toHaveLength(2)
+  fireEvent.change(within(nav).getByRole("searchbox"), { target: { value: "two" } })
+
+  expect(within(nav).queryByText("one.txt")).toBeNull()
+  expect(within(nav).getByText("two.txt")).toBeTruthy()
+})
+
+it("scrolls to the next file without changing folding", async () => {
+  diff = SECOND
+  await renderDiff()
+  fireEvent.click(screen.getByRole("button", { name: "Collapse one.txt" }))
+  fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
+  const scrolled = vi.fn()
+  Element.prototype.scrollIntoView = scrolled
+
+  fireEvent.click(await screen.findByRole("button", { name: "Next file" }))
+
+  expect(scrolled).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole("button", { name: "Expand one.txt" })).toBeTruthy()
+})
+
+it("offers no file index in the compact view", async () => {
+  await renderDiff()
+  expect(screen.queryByRole("navigation", { name: "Changed files" })).toBeNull()
 })

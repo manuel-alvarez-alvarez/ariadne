@@ -1309,6 +1309,14 @@ Out: the daemon endpoints themselves (012).
   scrollbar, independent of `scrollbar-gutter` support
   (`ui/src/components/form-dialog.test.tsx::keeps room on the right for a Linux scrollbar, whatever the engine supports`,
   `ui/src/features/tasks/task-diff.test.tsx::keeps room on the right of the expanded diff for a Linux scrollbar`).
+- The expanded task diff carries a file index above the diff: a filename
+  search, every changed file with its own counts, and previous / next buttons
+  that scroll to a file's section without changing folding or wrapping; the
+  compact view, raw view and empty states carry no index and mark nothing as
+  viewed
+  (`ui/src/features/tasks/task-diff.test.tsx::filters the expanded diff's file index by name and shows each file's counts`,
+  `::scrolls to the next file without changing folding`,
+  `::offers no file index in the compact view`).
 - The Tauri configuration has the restrictive content security policy that
   permits the configurable daemon and Tauri IPC connections without evaluated
   script
