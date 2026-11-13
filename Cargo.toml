@@ -179,9 +179,13 @@ debug = false
 lto = "thin"
 strip = "symbols"
 
+# Released sqlx 0.9.0 caps libsqlite3-sys below 0.38, and RUSTSEC-2026-0459
+# needs libsqlite3-sys 0.39.0. This patch takes sqlx from a git commit that
+# allows 0.39, pinned to the commit Cargo.lock resolves, so an update cannot
+# move it. Remove the patch when a released sqlx allows libsqlite3-sys 0.39.
 [patch.crates-io]
-sqlx = { git = "https://github.com/launchbadge/sqlx" }
-sqlx-core = { git = "https://github.com/launchbadge/sqlx" }
-sqlx-sqlite = { git = "https://github.com/launchbadge/sqlx" }
-sqlx-macros = { git = "https://github.com/launchbadge/sqlx" }
-sqlx-macros-core = { git = "https://github.com/launchbadge/sqlx" }
+sqlx = { git = "https://github.com/launchbadge/sqlx", rev = "ae659a0ca4e5e6708e589abc216f734deddb8e29" }
+sqlx-core = { git = "https://github.com/launchbadge/sqlx", rev = "ae659a0ca4e5e6708e589abc216f734deddb8e29" }
+sqlx-sqlite = { git = "https://github.com/launchbadge/sqlx", rev = "ae659a0ca4e5e6708e589abc216f734deddb8e29" }
+sqlx-macros = { git = "https://github.com/launchbadge/sqlx", rev = "ae659a0ca4e5e6708e589abc216f734deddb8e29" }
+sqlx-macros-core = { git = "https://github.com/launchbadge/sqlx", rev = "ae659a0ca4e5e6708e589abc216f734deddb8e29" }
