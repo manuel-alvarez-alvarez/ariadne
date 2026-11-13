@@ -138,48 +138,57 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   }
 
   return (
-    <div className={BOARD_FRAME}>
+    <>
+      {/* Outside the frame: the board fills the frame's whole height, so a
+          warning inside it would push the board past the frame's bottom edge. */}
       {staleTasks ? (
-        <RefreshWarning what="tasks" error={tasks.error} onRetry={() => void tasks.refetch()} />
+        <RefreshWarning
+          what="tasks"
+          error={tasks.error}
+          onRetry={() => void tasks.refetch()}
+          className="shrink-0"
+        />
       ) : null}
-      {/* A named region the keyboard can put focus into: the board scrolls both
+      <div className={BOARD_FRAME}>
+        {/* A named region the keyboard can put focus into: the board scrolls both
           ways, and a scrollport nothing can focus only scrolls under a pointer
           — the columns and lanes past its edges would be mouse-only. */}
-      <section
-        ref={board.ref}
-        aria-label="Goals board"
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container has to take focus to be scrollable by keyboard
-        tabIndex={0}
-        className={cn(
-          BOARD_BOX,
-          "overflow-auto focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
-        )}
-      >
-        <div className={BOARD_WIDTH}>
-          <ColumnHeaders inProgress={totals.in_progress} done={totals.finished} />
-          {lanes.map((goal) => {
-            // A finished goal opens folded: five columns of cards that all sit
-            // in Merged is a 270px box that is 85% empty, and on a 900px
-            // screen the cards are scrolled off it entirely — so it reads as
-            // an empty lane. Its header says what happened instead. The user's
-            // own answer, either way, wins over this.
-            const collapsed = isCollapsed(goal.id, isTerminalGoalStatus(goal.status))
-            return (
-              <Lane
-                key={goal.id}
-                goal={goal}
-                tasks={byGoal.get(goal.id)}
-                attention={attention}
-                collapsed={collapsed}
-                onToggle={() => setCollapsed(goal.id, !collapsed)}
-              />
-            )
-          })}
-        </div>
-      </section>
-      <ScrollEdge side="start" show={board.overflow.start} />
-      <ScrollEdge side="end" show={board.overflow.end} />
-    </div>
+        <section
+          ref={board.ref}
+          aria-label="Goals board"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container has to take focus to be scrollable by keyboard
+          tabIndex={0}
+          className={cn(
+            BOARD_BOX,
+            "overflow-auto focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
+          )}
+        >
+          <div className={BOARD_WIDTH}>
+            <ColumnHeaders inProgress={totals.in_progress} done={totals.finished} />
+            {lanes.map((goal) => {
+              // A finished goal opens folded: five columns of cards that all sit
+              // in Merged is a 270px box that is 85% empty, and on a 900px
+              // screen the cards are scrolled off it entirely — so it reads as
+              // an empty lane. Its header says what happened instead. The user's
+              // own answer, either way, wins over this.
+              const collapsed = isCollapsed(goal.id, isTerminalGoalStatus(goal.status))
+              return (
+                <Lane
+                  key={goal.id}
+                  goal={goal}
+                  tasks={byGoal.get(goal.id)}
+                  attention={attention}
+                  collapsed={collapsed}
+                  onToggle={() => setCollapsed(goal.id, !collapsed)}
+                />
+              )
+            })}
+          </div>
+        </section>
+        <ScrollEdge side="start" show={board.overflow.start} />
+        <ScrollEdge side="end" show={board.overflow.end} />
+      </div>
+    </>
   )
 }
 
