@@ -135,7 +135,7 @@ export function restoreStatusFilter(
 }
 
 /** The client-side narrowing of the goals the status filter returned. */
-export interface GoalSearch {
+interface GoalSearch {
   /** Matched against the title alone, ignoring case and surrounding space. */
   query: string
   /** One repository id; empty is every repository. */
