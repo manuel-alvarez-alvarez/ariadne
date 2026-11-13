@@ -2152,6 +2152,12 @@ impl Harness {
         self.json(get(uri), StatusCode::OK).await
     }
 
+    /// The rows of the first page of `GET /v1/pull-requests` under `uri`.
+    pub(crate) async fn pull_requests(&self, uri: &str) -> Vec<serde_json::Value> {
+        let page: serde_json::Value = self.get(uri).await;
+        serde_json::from_value(page["pull_requests"].clone()).expect("a page of requests")
+    }
+
     /// Send a request expected to fail and decode the error envelope.
     pub(crate) async fn error(&self, request: Request<Body>, expected: StatusCode) -> ErrorBody {
         let (status, body) = self.send(request).await;

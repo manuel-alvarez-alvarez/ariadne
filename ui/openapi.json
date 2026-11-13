@@ -7,7 +7,7 @@
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
     },
-    "version": "0.11.0"
+    "version": "1.0.0"
   },
   "paths": {
     "/v1/acp-agents": {
@@ -1523,7 +1523,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "The open requests of the enabled repositories, answered from the last\nfetch of each (026): every one, or with `role` and `requested` the\nuser's own or the ones that ask for their review, each with what Ariadne\nkeeps of it where it works on it. A repository with no fetch yet answers\nnone of its requests. With `task`, the request a task opened, which its\nauthor keeps (005).",
+        "summary": "The open requests of the enabled repositories, answered from the last\nfetch of each (026): every one, or with `role` and `requested` the\nuser's own or the ones that ask for their review, each with what Ariadne\nkeeps of it where it works on it. A repository with no fetch yet answers\nnone of its requests. With `task`, the request a task opened, which its\nauthor keeps (005). `q` narrows every held request before the list is\ncut into pages of [`PULL_REQUEST_PAGE_SIZE`], the most recently updated\nfirst; `cursor` names the page after the one that sent it.",
         "operationId": "list",
         "parameters": [
           {
@@ -1572,6 +1572,30 @@
                 "null"
               ]
             }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Only the requests where every word of this text is in the number\n(`#12`), the title, the description, the author or the head branch,\nignoring case.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The `next_cursor` of the page before this one; opaque.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -1579,14 +1603,12 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/PullRequestDto"
-                  }
+                  "$ref": "#/components/schemas/PullRequestPageDto"
                 }
               }
             }
           },
+          "400": {},
           "409": {}
         }
       }
@@ -1873,6 +1895,49 @@
           "400": {},
           "403": {},
           "404": {},
+          "409": {}
+        }
+      }
+    },
+    "/v1/pull-requests/{id}/ready-for-review": {
+      "post": {
+        "tags": [
+          "pull-requests"
+        ],
+        "summary": "Mark the current draft ready through its keeping session.",
+        "operationId": "mark_ready_for_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkReadyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullRequestDto"
+                }
+              }
+            }
+          },
+          "400": {},
+          "403": {},
           "409": {}
         }
       }
@@ -6390,6 +6455,17 @@
           }
         }
       },
+      "MarkReadyRequest": {
+        "type": "object",
+        "required": [
+          "head_sha"
+        ],
+        "properties": {
+          "head_sha": {
+            "type": "string"
+          }
+        }
+      },
       "MessageDto": {
         "type": "object",
         "required": [
@@ -7090,6 +7166,28 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PullRequestPageDto": {
+        "type": "object",
+        "description": "One page of `GET /v1/pull-requests`, the most recently updated first.",
+        "required": [
+          "pull_requests"
+        ],
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `cursor` that continues after this page; null on the last one."
+          },
+          "pull_requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PullRequestDto"
+            }
           }
         }
       },

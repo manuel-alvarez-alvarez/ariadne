@@ -1,7 +1,7 @@
 ---
 id: pull-requests
 status: current
-updated: 2026-11-08
+updated: 2026-11-09
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -92,6 +92,14 @@ The `pr` column, its gate and how its task ends belong to [030](030-workflows.md
    `GET /v1/pull-requests` and its search answer from that held list alone, joined to the rows as the routes above do; neither calls the forge. A repository with no fetch yet holds no list, which both read as empty rather than live.
    `GET /v1/pull-requests/{id}` answers the held read of the row the same way; `GET /v1/repositories/{id}/pull-requests/{number}` stays live, since that is the panel reading one request on demand.
    `POST /v1/pull-requests/refresh` is still how a human asks the forge to be read again.
+4a. `GET /v1/pull-requests` sends one page of at most 25 requests (`PULL_REQUEST_PAGE_SIZE`), the most recently updated first, then by repository and number.
+    The caller cannot choose another page size.
+    The page carries `next_cursor`, an opaque cursor to the next page; the last page carries none.
+    The cursor is not signed: the route reads any cursor that decodes to a sort key and sends the requests after that key.
+    A cursor that does not decode answers 400 `invalid_cursor`.
+    `q` narrows every held request before the route cuts the page: each word of it, ignoring case, is in the number (`#12`), the title, the description, the author or the head branch.
+    `repo`, `role` and `requested` narrow the list the same way, on every page.
+    With `task`, the route answers the requests that task opened and ignores `repo`, `role` and `requested`, as it did before the list had pages; `q` and `cursor` still apply.
 5. A repository fetch lists every open request of the repository in one read; GitHub names each request's own requested reviewers on that same read (`reviewRequests`), so the login's own review requests need no second read.
    It starts the work on each review request rule 3 names, then reads each row of the repository: the list's read where the list holds it, else a read of its own — a merged or closed request, or one the list misses.
    A row that asks for review keeps asking while the list names the login among its requested reviewers; one it no longer does, and that asked on the last read, is asked of the forge's timeline (029 rule 3).
@@ -246,8 +254,8 @@ All routes appear in OpenAPI, under the rules of [012](012-http-api-events-and-u
 
 | Route | Behavior |
 | --- | --- |
-| `GET /v1/pull-requests?repo=&role=&requested=` | List the open requests of the enabled repositories, or of one, from each repository's last fetch: every one, or by role and whether a request asks for the user's review, each joined to its row where Ariadne works on it. A repository with no fetch yet answers none of its requests. An explicit repository with its integration off answers 409. |
-| `GET /v1/pull-requests?task=` | The request a task opened, while Ariadne works on it. |
+| `GET /v1/pull-requests?repo=&role=&requested=&q=&cursor=` | List the open requests of the enabled repositories, or of one, from each repository's last fetch: every one, or by role, by whether a request asks for the user's review and by text, each joined to its row where Ariadne works on it. Answer one page of at most 25 with its `next_cursor` (rule 4a). A repository with no fetch yet answers none of its requests. An explicit repository with its integration off answers 409. |
+| `GET /v1/pull-requests?task=` | The request a task opened, while Ariadne works on it, as one page (rule 4a). |
 | `GET /v1/pull-requests/{id}` | A request Ariadne works on, as the last fetch found it, or read off the forge now where nothing has read it yet. |
 | `GET /v1/repositories/{id}/pull-requests/{number}` | One request of a repository, read off the forge now with its checks and comments, joined to its row where there is one. What the desktop's panel reads. |
 | `GET /v1/repositories/{id}/pull-requests/search?q=` | Search the repository's last fetched list by number, title, or author, the user's own left out. Each match says with `tracked` whether Ariadne works on it. A repository with no fetch yet matches nothing. |
@@ -267,7 +275,7 @@ There is no route that adds or removes a request.
 
 The command and screen follow [014](014-command-line-interface.md) and [015](015-desktop-app.md).
 
-- `pr ls [--repo <id|path>] [--mine | --review-requests] [--watch]` lists every open request from the repository's last fetch, the user's own with `--mine` (`role=author`), or the ones that ask for their review with `--review-requests` (`role=reviewer&requested=true`); the two do not combine. Its author column reads "you" on a request of the user's, its `ariadne` column says whether Ariadne keeps it for a task, reviews it, babysits it by hand (032), both of the last two together, or nothing, its `branches` column reads `head → base`, and its `session` column links the request's newest session.
+- `pr ls [--repo <id|path>] [--mine | --review-requests] [--watch]` lists every open request from the repository's last fetch, the user's own with `--mine` (`role=author`), or the ones that ask for their review with `--review-requests` (`role=reviewer&requested=true`); the two do not combine. It follows every cursor and prints every row of every page, with and without `--watch`. Its author column reads "you" on a request of the user's, its `ariadne` column says whether Ariadne keeps it for a task, reviews it, babysits it by hand (032), both of the last two together, or nothing, its `branches` column reads `head → base`, and its `session` column links the request's newest session.
 - `pr inspect <repo> <number>` prints every field of one request, read off the forge now, as a hand-written key-value block in a fixed reading order, the body last after a `---` line (014).
 - `pr search --repo <id|path> <query>` searches the repository's last fetched list.
 - `pr refresh [--repo <id|path>]` requests a fetch.
@@ -277,6 +285,8 @@ The command and screen follow [014](014-command-line-interface.md) and [015](015
 The sidebar's Forge entry opens the Forge screen, titled "Forge", whose two tabs are Pull requests (`#/forge/pull-requests`, where `#/forge` lands) and Issues (028).
 Pull requests lists the open requests, from the repository's last fetch. A three-way choice narrows them: All (every open request), Mine (`role=author`), and Review requests (`role=reviewer&requested=true`).
 A text box narrows the rows to the words of their number, title, description, author or head branch, and a repository picker to one enabled repository. Every filter is kept in the URL.
+The screen sends the text to the daemon as `q`, which filters every request before it cuts the pages (rule 4a), so the screen shows every match across pages.
+The screen shows the first page, and loads the next page when the user scrolls near the end of the table.
 A row shows the linked number and title with a Draft, Ariadne reviewing or Ariadne babysitting pill, and under it the repository, "by you" or the author, and the head and base branches; then pills for the checks and the review decision, the unanswered comments, a link to the session, and the update age.
 A row holds no button: a click on it, or Enter on it, opens the request's panel.
 The header offers Refresh only while a repository in view is not pushed live: the tunnel is off, the tunnel or its hook is down, or the last fetch failed. With every webhook live the events bring each change and there is no Refresh.
@@ -285,7 +295,7 @@ The panel reads the request off the forge by its repository and number. Its head
 Under it are the facts by name — a link to the request on the forge, the repository, the author, the branches, the head, the unanswered comments, the base, what Ariadne does with it, the task that keeps it and each failed check linked to its run — then two tabs: Description, the body rendered as Markdown, and Sessions, the request's review and keeper sessions and the task's keeping agent.
 Picking a session drills into it in the panel, as `?session=` beside `?pr=`, with a way back to the request.
 The panel offers Start review and Stop review on any open request (029), and, on any open request that no task keeps, Start babysit and Stop babysit (032), regardless of its author. Nothing on the screen adds or removes a request.
-`pull_requests_changed` invalidates every pull request key; no screen polls.
+`pull_requests_changed` invalidates every pull request key, and the list reads again from its first page; no screen polls.
 A `502` whose body names `forge_error` is not retried: the forge itself refused or rate-limited the daemon's own call, which a quick retry would only repeat, and a request a fetch rate-limits is still answered from its last fetch.
 A row and the panel link to the request's session. The panel shows the failed checks and `behind_base`.
 A session with a `pull_request_id` shows the request's title and a link to its URL in the sessions table Context column and the session panel.
@@ -412,13 +422,24 @@ A session with a `pull_request_id` shows the request's title and a link to its U
   `pr.rs::tests::pr_review_sends_the_ask_body_with_its_pin_and_the_stop_body_alone`,
   `::pr_review_with_no_model_and_no_stop_is_refused`,
   `::pr_review_refuses_stop_combined_with_an_asking_flag_and_a_bare_default_model`.
+- The list goes out in pages of 25, the most recently updated first, the last with no cursor, and a caller's `limit` changes nothing; a cursor that does not decode answers 400:
+  `pull_request_lists.rs::the_list_goes_out_in_pages_of_25_newest_first_and_the_last_has_no_cursor`.
+  The text filter reaches every held request before the page is cut, and `role` and `requested` hold on every page:
+  `pull_request_lists.rs::the_text_filter_and_the_role_hold_over_every_held_request_on_every_page`.
+  A task's own request still answers through `?task=`, which ignores `repo`, `role` and `requested`:
+  `pull_requests.rs::a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before`.
+- `pr ls` follows every cursor and prints every row:
+  `pr.rs::tests::pr_ls_follows_every_cursor_and_prints_every_row`.
 - `session ls --pull-request` reaches the daemon under `SessionPageQuery`'s
   own parameter: `session.rs::tests::pull_request_reaches_its_own_query_parameter`.
 - The screen renders rows, reads again on `pull_requests_changed`, and opens the pane by repository and number
   (`pull-requests-page.test.tsx::renders rows, updates from an event, and opens the floating panel`),
   lists every open request by default and narrows to mine or to review requests, adding none by hand
   (`::lists every open request by default, narrows to mine or to review requests, and adds none by hand`),
-  narrows by text (`::narrows the rows to the words of their title or description`),
+  sends its text filter to the daemon and shows every match across pages
+  (`::sends the text filter to the daemon and shows every matching row across pages`),
+  loads the next page near the end of the table and reads again from the first page on an event
+  (`::loads the next page near the end, and an event reads the list again from its first page`),
   offers Refresh only while a repository in view polls or its webhook is down
   (`::offers a refresh only while a repository in view polls or its webhook is down`),
   and holds no button: a click on the row opens the panel.

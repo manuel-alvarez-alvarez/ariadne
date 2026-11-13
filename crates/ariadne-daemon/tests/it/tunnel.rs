@@ -880,7 +880,7 @@ async fn a_public_url_or_no_enabled_integration_opens_no_tunnel() {
 /// The pull request rows a fetch recorded, without what names the daemon's
 /// own copy of them.
 async fn rows(h: &Harness) -> Vec<Value> {
-    let mut rows: Vec<Value> = h.get("/v1/pull-requests").await;
+    let mut rows: Vec<Value> = h.pull_requests("/v1/pull-requests").await;
     for row in &mut rows {
         let row = row.as_object_mut().unwrap();
         for own in [
