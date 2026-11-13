@@ -705,26 +705,40 @@ Out: the daemon endpoints themselves (012).
     Lanes keep their order: attention first, then live, then terminal goals.
     Each card stays one tab stop, and each cell is a named group
     (`<goal>: <column>`).
-    A task card is up to three compact rows. Row 1 is the title, one state badge and the
-    session attention badge: "Waits for N tasks" for a pending or ready task
-    with dependencies, "Waits" without, "Failed" with the task's `reason` in
-    its tooltip, "Stalled", or "Cancelled"; a task under way and not stalled
-    shows none. Row 2, absent on finished and cancelled cards, is a compact step track, one dot per step of the goal:
-    a check before the current step, a filled dot with `aria-current="step"`
-    on it, a ring after it; a finished task shows every dot as a check and a
-    task with no step every dot as a ring. The current step's title sits
-    beside the track while the task is in progress. Each dot's tooltip names
-    the step, its description, and its agent's model, effort and skills, with
-    a link to the agent's session, or says "none staffed". The current
-    staffed model follows the step title in row 2. Row 3 holds the total
-    input/output tokens (including zero), the relative updated time and, when
-    the task has a `pr_url`, a PR link icon in padding reserved for it. Rows
-    wrap within the card instead of overflowing; long step and model names
-    truncate, the model with a `title` and in the accessible description. A long workflow's markers wrap onto further lines. Reasoning effort and
-    per-agent workflow usage are in that description. The card shows no branch,
-    merge commit or dependency icon, is one link to `?task=` with one tab stop,
-    preserves its compact dimensions, and keeps its border order: attention,
-    failed, stalled. The goal panel's task list shows
+    A task card is three contained rows, for every status, in both board
+    columns and the goal panel. Its target minimum width is 18rem (about 288px):
+    the board fits fewer cards across, and a card shrinks inside a narrower
+    panel. The card is a CSS `@container`, so its own width decides what is
+    drawn, and no row overflows. Row 1 is the title (two lines with an
+    ellipsis, long unbroken text wrapped), the session attention badge and
+    one state badge: "Waits for N tasks" for a pending or ready task with
+    dependencies, "Waits" without, "Failed" with the task's `reason` in its
+    tooltip, "Stalled", or "Cancelled"; a task under way and not stalled shows
+    none. Badges shrink to their dot on a narrow card, and keep their full
+    text in tooltips and the accessible description. Row 2 is on one line for
+    every status, finished and cancelled included: one circle per step of the
+    goal joined by arrows, with a step's name beside it. A check is a step
+    before the current one, a filled circle with `aria-current="step"` is the
+    current one, a ring is one after it; a finished task shows every circle as
+    a check and a task with no step every circle as a ring. The current step's
+    name stays while the other names hide first as the card narrows; a
+    workflow of more than five steps also folds the steps more than one from
+    the current one behind an ellipsis. Each circle's tooltip names the step,
+    its description, and its agent's model, effort and skills, with a link to
+    the agent's session, or says "none staffed". Row 3 is one line: total
+    input/output tokens (including zero) at the left, last activity at the
+    right, and, when the task has a `pr_url`, a PR link icon in padding
+    reserved for it. Labels and the time shorten ("In 1.2k · Out 56" to
+    arrows, "3 minutes ago" to "3m") and truncate as the card narrows. Last
+    activity is the latest of the task's `updated_at` and the
+    `last_activity_at` of every session of that task, previous ones included
+    (read from the shared sessions query, which the event stream already
+    keeps fresh), and is `updated_at` when no session has activity. Model
+    names appear only in tooltips and the accessible description, which also
+    lists the whole workflow, the reasoning effort and per-agent usage. The
+    card shows no branch, merge commit or dependency icon, is one link to
+    `?task=` with one tab stop, and keeps its border order: attention, failed,
+    stalled. The goal panel's task list shows
     the same card (`ui/src/features/tasks/task-card.test.tsx`).
 40. The task panel of a stepped task draws one workflow section under its
     facts, in place of a separate Agents fact and step strip: a track of

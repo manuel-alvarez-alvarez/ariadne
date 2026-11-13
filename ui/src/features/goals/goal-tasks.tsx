@@ -87,7 +87,12 @@ export function GoalTasks({
     <ul className="flex flex-col gap-2">
       {ordered.map((task) => (
         <li key={task.id}>
-          <TaskCard task={task} steps={steps} attention={attention.byTask.get(task.id)} />
+          <TaskCard
+            task={task}
+            steps={steps}
+            attention={attention.byTask.get(task.id)}
+            lastActivityAt={attention.lastActivity.get(task.id)}
+          />
         </li>
       ))}
     </ul>

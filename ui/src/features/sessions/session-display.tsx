@@ -218,10 +218,13 @@ export function SessionAttentionBadge({
   /** `sm` for the dense rows of a board card; the default elsewhere. */
   size,
   hintTabIndex,
+  compact,
   className,
 }: {
   attention: SessionAttention
   size?: "sm" | "md"
+  /** Icon only in a narrow `@container`; see `StatusBadge.compact`. */
+  compact?: boolean
   /** `-1` inside something already focusable; see `StatusBadge.hintTabIndex`. */
   hintTabIndex?: number
   className?: string
@@ -235,6 +238,7 @@ export function SessionAttentionBadge({
       tone={meta.badge}
       hint={meta.hint}
       hintTabIndex={hintTabIndex}
+      compact={compact}
       className={className}
     />
   )

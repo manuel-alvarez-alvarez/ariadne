@@ -45,7 +45,7 @@ import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 /**
  * One template for the column header row and every lane's cells, so the two
  * columns line up down the board. Neither is narrower than a card reads at:
- * 13rem is what a card wants, 11rem is what it still reads at.
+ * 18rem is what a card wants; it shrinks within a narrow cell.
  */
 const COLUMNS_GRID = "grid grid-cols-[minmax(0,66fr)_minmax(0,34fr)]"
 
@@ -57,8 +57,9 @@ const COLUMNS_GRID = "grid grid-cols-[minmax(0,66fr)_minmax(0,34fr)]"
  */
 const BOARD_WIDTH = "min-w-[42rem]"
 
-/** The grid a cell lays its cards out on: as many 11rem-floor columns as fit. */
-const CELL_GRID = "grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] content-start gap-2"
+/** The grid a cell lays its cards out on: as many 18rem-floor columns as fit. */
+const CELL_GRID =
+  "grid grid-cols-[repeat(auto-fill,minmax(min(18rem,100%),1fr))] content-start gap-2"
 
 /**
  * The board's own scrollport: sticky only works against the box that scrolls.
@@ -327,6 +328,7 @@ function Lane({
                   task={task}
                   steps={goal.steps}
                   attention={attention.byTask.get(task.id)}
+                  lastActivityAt={attention.lastActivity.get(task.id)}
                 />
               ))}
             </div>

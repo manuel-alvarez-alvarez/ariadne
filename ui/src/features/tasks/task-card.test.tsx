@@ -42,7 +42,7 @@ it("shows no state badge for a task under way", () => {
   for (const label of ["Waits", "Failed", "Stalled", "Cancelled", "In progress"]) {
     expect(screen.queryByText(label)).toBeNull()
   }
-  expect(screen.getByRole("link").textContent).toContain("claude-agent-acp:claude-sonnet-5")
+  expect(screen.getByRole("link").textContent).not.toContain("claude-agent-acp:claude-sonnet-5")
   expect(
     document.getElementById(screen.getByRole("link").getAttribute("aria-describedby") ?? "")
       ?.textContent,
@@ -67,17 +67,17 @@ it("shows the current staffed model and compact task token totals", () => {
       agents: [],
     },
   })
-  expect(screen.getByText("codex-acp:a-very-long-model-name").className).toContain("truncate")
-  expect(screen.getByText("codex-acp:a-very-long-model-name").getAttribute("title")).toBe(
-    "codex-acp:a-very-long-model-name",
-  )
-  expect(screen.getByText("Build").className).toContain("truncate")
+  expect(screen.queryByText("codex-acp:a-very-long-model-name")).toBeNull()
+  expect(
+    document.getElementById(screen.getByRole("link").getAttribute("aria-describedby") ?? "")
+      ?.textContent,
+  ).toContain("Current model codex-acp:a-very-long-model-name")
+  expect(screen.getByText("Build", { selector: "span.truncate" })).toBeTruthy()
   expect(screen.getByText("In 1.2k · Out 56")).toBeTruthy()
-  expect(screen.getByRole("link").getAttribute("aria-describedby")).toBeTruthy()
 })
 
 it.each(["finished", "cancelled"] as const)(
-  "shows token totals without model for %s tasks",
+  "shows token totals and the workflow without a model for %s tasks",
   (status) => {
     card({
       status,
@@ -85,7 +85,7 @@ it.each(["finished", "cancelled"] as const)(
     })
     expect(screen.getByText("In 0 · Out 0")).toBeTruthy()
     expect(screen.queryByText("claude-agent-acp:claude-sonnet-5")).toBeNull()
-    expect(screen.queryByRole("list", { name: "Workflow steps" })).toBeNull()
+    expect(screen.getByRole("list", { name: "Workflow steps" })).toBeTruthy()
   },
 )
 
@@ -99,14 +99,14 @@ it("draws a check before the current step, a mark on it and rings after", () => 
   card({ status: "in_progress", step: "test" })
   expect(states()).toEqual(["done", "current", "ahead"])
   const [first, second] = screen.getAllByRole("listitem")
-  expect(first?.querySelector("svg")).toBeTruthy()
+  expect(first?.querySelector("svg.lucide-check")).toBeTruthy()
   expect(second?.getAttribute("aria-current")).toBe("step")
-  expect(second?.querySelector("svg")).toBeNull()
+  expect(second?.querySelector("svg.lucide-check")).toBeNull()
 })
 
-it("omits the workflow track for a finished task", () => {
+it("keeps the workflow track for a finished task, every step done", () => {
   card({ status: "finished", step: null })
-  expect(screen.queryByRole("list", { name: "Workflow steps" })).toBeNull()
+  expect(states()).toEqual(["done", "done", "done"])
 })
 
 it("draws every dot as a ring for a task with no step", () => {
@@ -156,7 +156,7 @@ it("links the pull request and the updated time, and takes one tab stop", () => 
   // than a row of its own, with line 2 leaving room for it.
   expect(pr.className).toContain("absolute")
   expect(pr.className).toContain("bottom-1.5")
-  expect(document.querySelector("time")?.parentElement?.className).toContain("pr-5")
+  expect(document.querySelector("time")?.parentElement?.parentElement?.className).toContain("pr-5")
   expect(pr.parentElement?.children).toHaveLength(3) // card link, hints, PR: no third row
   const links = screen.getAllByRole("link")
   expect(links.filter((link) => link.getAttribute("tabindex") !== "-1")).toHaveLength(1)
@@ -168,7 +168,7 @@ it("shows no pull request link without a pr_url, and no branch", () => {
   expect(screen.queryByText(/wire-the-sessions/)).toBeNull()
 })
 
-it("lets a long workflow's markers wrap inside the card", () => {
+it("keeps a long workflow on one line and folds its far steps", () => {
   const many = Array.from({ length: 12 }, (_, i) => ({
     id: `s${i}`,
     title: `S${i}`,
@@ -179,6 +179,36 @@ it("lets a long workflow's markers wrap inside the card", () => {
   renderScreen(<TaskCard task={aTask({ step: "s11" })} steps={many} />)
   const track = screen.getByRole("list", { name: "Workflow steps" })
   expect(within(track).getAllByRole("listitem")).toHaveLength(12)
-  expect(track.className).toContain("flex-wrap")
-  expect(track.className).toContain("max-w-full")
+  expect(track.className).toContain("flex-nowrap")
+  expect(track.className).toContain("overflow-hidden")
+  expect(within(track).getAllByRole("listitem")[0]?.className).toContain("hidden")
+})
+
+it("shows the latest of the task's update and its sessions' activity", () => {
+  renderScreen(
+    <TaskCard
+      task={aTask({ updated_at: "2026-01-01T00:00:00Z" })}
+      steps={STEPS}
+      lastActivityAt="2026-02-01T00:00:00Z"
+    />,
+  )
+  expect(document.querySelector("time")?.getAttribute("datetime")).toBe("2026-02-01T00:00:00Z")
+})
+
+it("falls back to the task's update without session activity", () => {
+  renderScreen(<TaskCard task={aTask({ updated_at: "2026-01-01T00:00:00Z" })} steps={STEPS} />)
+  expect(document.querySelector("time")?.getAttribute("datetime")).toBe("2026-01-01T00:00:00Z")
+})
+
+it("lists the folded steps in the fold marker's tooltip", async () => {
+  const many = Array.from({ length: 8 }, (_, i) => ({
+    id: `s${i}`,
+    title: `S${i}`,
+    description: `Does ${i}.`,
+    skills: [],
+    ranks: [],
+  }))
+  renderScreen(<TaskCard task={aTask({ status: "in_progress", step: "s7" })} steps={many} />)
+  await userEvent.hover(screen.getByLabelText("6 more steps"))
+  expect(await screen.findByText("Does 0.")).toBeTruthy()
 })

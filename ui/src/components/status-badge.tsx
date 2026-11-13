@@ -57,6 +57,7 @@ export function StatusBadge({
   box,
   hint,
   hintTabIndex,
+  compact = false,
   className,
 }: VariantProps<typeof statusBadgeVariants> & {
   /** What the status is called, already capitalized. */
@@ -81,21 +82,35 @@ export function StatusBadge({
    * would only be an interactive node nested in an interactive one.
    */
   hintTabIndex?: number
+  /**
+   * Shrinks the pill to its dot or icon when the nearest `@container` is
+   * narrow; the label stays for assistive technology and in the hint.
+   */
+  compact?: boolean
   className?: string
 }) {
   const content = (
     <>
       {icon ??
-        (dot ? (
+        (dot || compact ? (
           <span
-            className={cn("size-1.5 shrink-0 rounded-full", dot, pulse && "animate-pulse")}
+            className={cn(
+              "size-1.5 shrink-0 rounded-full",
+              dot ?? "bg-current",
+              pulse && "animate-pulse",
+            )}
             aria-hidden
           />
         ) : null)}
-      {label}
+      {compact ? <span className="sr-only @[17rem]:not-sr-only">{label}</span> : label}
     </>
   )
-  const classes = cn(statusBadgeVariants({ size, box }), tone, className)
+  const classes = cn(
+    statusBadgeVariants({ size, box }),
+    compact && "gap-0 @[17rem]:gap-1.5",
+    tone,
+    className,
+  )
 
   if (!hint) return <span className={classes}>{content}</span>
 

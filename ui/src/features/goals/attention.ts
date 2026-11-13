@@ -348,6 +348,8 @@ export interface BoardAttention {
    * own; its lane header is the only place it can be seen.
    */
   byGoal: Map<string, SessionAttention>
+  /** Task id → the latest `last_activity_at` of any of its sessions, previous ones included. */
+  lastActivity: Map<string, string>
 }
 
 export function useBoardAttention(): BoardAttention {
@@ -366,8 +368,14 @@ export function useBoardAttention(): BoardAttention {
 function collectBoardAttention(sessions: SessionDto[] | undefined): BoardAttention {
   const byTask = new Map<string, Flagged>()
   const byGoal = new Map<string, Flagged>()
+  const lastActivity = new Map<string, string>()
 
   for (const session of sessions ?? []) {
+    const active = session.last_activity_at
+    if (session.task_id && active) {
+      const seen = lastActivity.get(session.task_id)
+      if (!seen || latest(seen, active) === active) lastActivity.set(session.task_id, active)
+    }
     const reason = sessionAttention(session)
     if (!reason) continue
     const at = sessionAttentionAt(session)
@@ -380,7 +388,12 @@ function collectBoardAttention(sessions: SessionDto[] | undefined): BoardAttenti
     if (!held || held.at.localeCompare(at) < 0) index.set(key, { reason, at })
   }
 
-  return { byTask: reasons(byTask), byGoal: reasons(byGoal) }
+  return { byTask: reasons(byTask), byGoal: reasons(byGoal), lastActivity }
+}
+
+/** The later of two RFC 3339 stamps, compared as instants. */
+function latest(a: string, b: string): string {
+  return Date.parse(b) > Date.parse(a) ? b : a
 }
 
 /** One flagged session, while the newest of them is still being picked. */

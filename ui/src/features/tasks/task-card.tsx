@@ -1,11 +1,16 @@
 /**
- * One task, as it appears on the board and in any other list of tasks: two
- * lines. The first is the title with what is wrong or being waited on — one
- * state badge, and the session attention badge when an agent wants a person.
- * The second, for a task not finished or cancelled, is the compact workflow
- * step track ({@link StepTrack}), the current step's title and its model. The
- * third is the token totals and when the task was last updated, wrapping, with
- * the PR link in the reserved right padding.
+ * One task, as it appears on the board and in any other list of tasks: three
+ * contained rows, whatever the task's status and whatever the width. Row 1 is
+ * the title (two lines, ellipsis) with what is wrong or being waited on — one
+ * state badge, and the session attention badge when an agent wants a person;
+ * the badges shrink to their dot when the card is narrow. Row 2 is the
+ * workflow ({@link StepTrack}): circles, step names and arrows on one line,
+ * for finished and cancelled tasks too. Row 3 is the token totals at the left
+ * and the last activity at the right, with the PR link in reserved padding.
+ *
+ * The card is an `@container`: its own width, not the window's, decides which
+ * step names, labels and time wording are drawn, so it holds in a board cell
+ * and in the goal panel alike. Models are only in tooltips and the hints.
  *
  * The card says each thing **once**. A session attention badge that repeats
  * the state badge's label is dropped rather than drawn twice (see
@@ -59,6 +64,7 @@ export function TaskCard({
   task,
   steps,
   attention,
+  lastActivityAt,
 }: {
   task: TaskDto
   /** The goal's workflow columns, which the step track draws one dot for each. */
@@ -69,7 +75,17 @@ export function TaskCard({
    * (`useBoardAttention`) rather than fetched per card.
    */
   attention?: SessionAttention | null
+  /**
+   * The latest `last_activity_at` among the task's sessions, previous ones
+   * included (`useBoardAttention().lastActivity`); the card shows it only
+   * when it is later than the task's own `updated_at`.
+   */
+  lastActivityAt?: string | null
 }) {
+  const activity =
+    lastActivityAt && Date.parse(lastActivityAt) > Date.parse(task.updated_at)
+      ? lastActivityAt
+      : task.updated_at
   const state = cardState(task)
   const terminal = task.status === "cancelled"
   // `to.replace` is set exactly when a goal panel is open — the card's own
@@ -84,12 +100,12 @@ export function TaskCard({
   const currentAgent = currentStep
     ? task.agents.find((agent) => agent.step === currentStep.id)
     : undefined
-  const hints = cardHints(task, { state, flagged, currentStep, currentAgent })
+  const hints = cardHints(task, { state, flagged, currentStep, currentAgent, activity, steps })
 
   return (
     <div
       className={cn(
-        "relative rounded-lg border bg-card transition-colors hover:border-foreground/20 hover:bg-muted/50",
+        "@container relative min-w-0 overflow-hidden rounded-lg border bg-card transition-colors hover:border-foreground/20 hover:bg-muted/50",
         cardBorder(task, attention),
       )}
     >
@@ -102,7 +118,7 @@ export function TaskCard({
         <div className="flex items-start gap-2">
           <p
             className={cn(
-              "line-clamp-2 min-w-0 flex-1 text-sm leading-snug font-medium",
+              "line-clamp-2 min-w-0 flex-1 [overflow-wrap:anywhere] text-sm leading-snug font-medium",
               terminal && "text-muted-foreground line-through decoration-muted-foreground/40",
             )}
           >
@@ -112,7 +128,12 @@ export function TaskCard({
               addressed to the reader. Same pill as the attention strip and
               the sessions table, down to the wording. */}
           {flagged && (
-            <SessionAttentionBadge size="sm" attention={flagged} hintTabIndex={NOT_A_STOP} />
+            <SessionAttentionBadge
+              size="sm"
+              compact
+              attention={flagged}
+              hintTabIndex={NOT_A_STOP}
+            />
           )}
           {state && (
             <StatusBadge
@@ -121,42 +142,46 @@ export function TaskCard({
               tone={state.tone}
               hint={state.hint}
               hintTabIndex={NOT_A_STOP}
+              compact
             />
           )}
         </div>
 
-        {task.status !== "finished" && task.status !== "cancelled" && (
-          <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-            <StepTrack task={task} steps={steps} />
-            {currentStep && (
-              <span className="max-w-full min-w-0 truncate font-medium text-foreground">
-                {currentStep.title}
-              </span>
-            )}
-            {currentStep && currentAgent && (
-              <span className="max-w-full min-w-0 truncate" title={currentAgent.model}>
-                {currentAgent.model}
-              </span>
-            )}
-          </div>
-        )}
+        <div className="mt-1.5 flex min-w-0 items-center text-xs text-muted-foreground">
+          <StepTrack task={task} steps={steps} />
+        </div>
 
         <div
           className={cn(
-            "mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground",
+            "mt-1 flex min-w-0 items-center gap-x-2 text-xs whitespace-nowrap text-muted-foreground",
             task.pr_url && "pr-5",
           )}
         >
-          <span className="shrink-0 tabular-nums">
-            In {formatTokens(task.usage.total.input_tokens)} · Out{" "}
-            {formatTokens(task.usage.total.output_tokens)}
+          <span className="min-w-0 flex-1 truncate tabular-nums">
+            <span className="@[15rem]:hidden">
+              ↓{formatTokens(task.usage.total.input_tokens)} ↑
+              {formatTokens(task.usage.total.output_tokens)}
+            </span>
+            <span className="hidden @[15rem]:inline">
+              In {formatTokens(task.usage.total.input_tokens)} · Out{" "}
+              {formatTokens(task.usage.total.output_tokens)}
+            </span>
           </span>
-          <When
-            at={task.updated_at}
-            label="updated"
-            hintTabIndex={NOT_A_STOP}
-            className="ml-auto shrink-0"
-          />
+          <span className="min-w-0 shrink truncate">
+            <When
+              at={activity}
+              format="age"
+              label="last activity"
+              hintTabIndex={NOT_A_STOP}
+              className="@[20rem]:hidden"
+            />
+            <When
+              at={activity}
+              label="last activity"
+              hintTabIndex={NOT_A_STOP}
+              className="hidden @[20rem]:inline"
+            />
+          </span>
         </div>
       </Link>
 
@@ -264,7 +289,11 @@ function cardHints(
     flagged,
     currentStep,
     currentAgent,
+    activity,
+    steps,
   }: {
+    activity: string
+    steps: WorkflowStepDto[]
     state: CardState | null
     flagged: SessionAttention | null
     currentStep?: WorkflowStepDto
@@ -274,6 +303,20 @@ function cardHints(
   const hints: string[] = []
   if (flagged) hints.push(SESSION_ATTENTION_META[flagged].hint)
   if (state) hints.push(`${state.label}. ${state.hint}`)
+  if (steps.length > 0)
+    hints.push(
+      `Workflow: ${steps.map((step) => (step.id === currentStep?.id ? `${step.title} (current)` : step.title)).join(", ")}`,
+    )
+  for (const step of steps) {
+    const staffed = task.agents.find((agent) => agent.step === step.id)
+    hints.push(
+      `Step ${step.title}${step.description ? `: ${step.description}` : ""}; ${
+        staffed
+          ? `${staffed.model} @ ${staffed.effort ?? "default"}; skills ${staffed.skills.length > 0 ? staffed.skills.join(", ") : "none"}${staffed.session_id ? `; session ${staffed.session_id}` : ""}`
+          : "none staffed"
+      }`,
+    )
+  }
   if (currentStep) hints.push(`Current step ${currentStep.title}`)
   if (currentAgent)
     hints.push(
@@ -289,6 +332,6 @@ function cardHints(
     `Task tokens: ${formatTokens(task.usage.total.input_tokens)} input, ${formatTokens(task.usage.total.output_tokens)} output`,
   )
   if (task.pr_url) hints.push("Has a pull request")
-  hints.push(whenHint(task.updated_at, "updated"))
+  hints.push(whenHint(activity, "last activity"))
   return hints
 }
