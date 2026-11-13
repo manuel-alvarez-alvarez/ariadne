@@ -19,7 +19,7 @@ import { beforeEach, expect, it } from "vitest"
 
 import type { GoalDto } from "@/api"
 import { useSettingsStore } from "@/stores/settings"
-import { aGoal } from "@/test/fixtures"
+import { aGoal, aRepository, aTask } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalsListPage } from "./goals-list-page"
 
@@ -271,4 +271,101 @@ it("shows a load failure, not a refresh warning, when nothing was ever cached", 
 
   await screen.findByText("Could not load goals")
   expect(screen.queryByText("Could not refresh goals")).toBeNull()
+})
+
+it("narrows by title and repository, and lists one row per goal that opens its panel", async () => {
+  const web = aRepository({ id: "repo-web", path: "/dev/web" })
+  const api = aRepository({ id: "repo-api", path: "/dev/api" })
+  stubDaemon([
+    aGoal({ id: "g1", title: "Fix login", repos: [web, api] }),
+    aGoal({ id: "g2", title: "Fix billing", repos: [api] }),
+    aGoal({ id: "g3", title: "Write docs", repos: [web] }),
+  ])
+  useSettingsStore.setState({ goalsView: "board" })
+  const user = userEvent.setup()
+  renderBoard("/goals")
+
+  await user.click(await screen.findByRole("button", { name: "List" }))
+  expect(await screen.findAllByRole("link")).toHaveLength(3)
+  expect(JSON.parse(localStorage.getItem("ariadne.settings") ?? "{}")).toMatchObject({
+    state: { goalsView: "list" },
+  })
+
+  await user.type(screen.getByLabelText("Search goals by title"), "fix")
+  await user.click(screen.getByRole("button", { name: "Filter by repository" }))
+  await user.click(await screen.findByRole("menuitemcheckbox", { name: "/dev/web" }))
+  const rows = await screen.findAllByRole("link")
+  expect(rows).toHaveLength(1)
+  expect(rows[0]?.textContent).toContain("Fix login")
+  expect(rows[0]?.getAttribute("href")).toContain("g1")
+})
+
+it("counts cancelled tasks in a row's total and keeps the status filter when a row opens its panel", async () => {
+  stubDaemon([aGoal({ id: "g1", title: "Fix login" })])
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    const body =
+      url.pathname === "/v1/goals"
+        ? [aGoal({ id: "g1", title: "Fix login" })]
+        : url.pathname === "/v1/tasks"
+          ? [
+              aTask({ id: "t1", goal_id: "g1", status: "finished" }),
+              aTask({ id: "t2", goal_id: "g1", status: "cancelled" }),
+            ]
+          : []
+    return Promise.resolve(jsonResponse(body))
+  })
+  useSettingsStore.setState({ goalsView: "list" })
+  renderBoard("/goals?status=active")
+
+  const row = await screen.findByRole("link", { name: /Fix login/ })
+  expect(row.textContent).toContain("1/2 tasks")
+  expect(row.getAttribute("href")).toContain("status=active")
+  expect(row.getAttribute("href")).toContain("goal=g1")
+})
+
+it("keeps the selected repository named after a status change drops it from the goals", async () => {
+  const web = aRepository({ id: "repo-web", path: "/dev/web" })
+  stubDaemon([aGoal({ id: "g1", repos: [web] })])
+  const user = userEvent.setup()
+  renderBoard("/goals")
+  await user.click(await screen.findByRole("button", { name: "Filter by repository" }))
+  await user.click(await screen.findByRole("menuitemcheckbox", { name: "/dev/web" }))
+
+  stubDaemon([])
+  await user.click(screen.getByRole("button", { name: "Finished" }))
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Filter by repository" }).textContent).toBe("web"),
+  )
+})
+
+it("keeps cached list rows under a retryable warning when the task refresh fails", async () => {
+  stubDaemon([aGoal({ id: "g1", title: "Fix login" })])
+  useSettingsStore.setState({ goalsView: "list" })
+  const user = userEvent.setup()
+  const { queryClient } = renderScreen(<GoalsListPage />, { route: "/goals" })
+  await screen.findByText("Fix login")
+
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    return Promise.resolve(
+      url.pathname === "/v1/tasks"
+        ? errorResponse(503, "unavailable", "daemon is busy")
+        : jsonResponse(
+            url.pathname === "/v1/goals" ? [aGoal({ id: "g1", title: "Fix login" })] : [],
+          ),
+    )
+  })
+  await queryClient.invalidateQueries({ queryKey: ["tasks"] })
+
+  await screen.findByText("Could not refresh tasks")
+  expect(screen.getByText("Fix login")).toBeTruthy()
+
+  stubDaemon([aGoal({ id: "g1", title: "Fix login" })])
+  await user.click(screen.getByRole("button", { name: "Retry" }))
+  await waitFor(() => expect(screen.queryByText("Could not refresh tasks")).toBeNull())
 })
