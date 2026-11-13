@@ -555,23 +555,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/outside-sessions/resume": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Resume an outside conversation without creating a goal or task. */
-        post: operations["sessions_resume_outside"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/permissions/ai": {
         parameters: {
             query?: never;
@@ -1073,22 +1056,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List sessions: one page of the sessions Ariadne runs and the
-         *     conversations the ACP agents stored themselves, newest activity first.
-         */
+        /** List Ariadne sessions, newest activity first. */
         get: operations["sessions_list"];
         put?: never;
-        /**
-         * Start a loose session: a new conversation with an agent, in a directory,
-         *     with no goal, task or seat behind it.
-         * @description The model is checked as a goal's pin is — a registry agent and a model of
-         *     it, including a user-disabled manual-only model — and the effort against that model. The
-         *     directory must be an absolute path to one that exists. The session comes
-         *     back live, waiting for the first prompt typed into its console, which
-         *     becomes its title.
-         */
-        post: operations["sessions_create_session"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1746,7 +1717,6 @@ export interface components {
         AcpCapabilitiesDto: {
             model: boolean;
             protocol_v1: boolean;
-            session_list: boolean;
             session_load: boolean;
             session_new: boolean;
             stdio: boolean;
@@ -1756,7 +1726,7 @@ export interface components {
          * @description An optional ACP capability missing from an otherwise usable agent.
          * @enum {string}
          */
-        AcpDegradation: "no_efforts" | "no_adoption" | "no_restart_resume";
+        AcpDegradation: "no_efforts" | "no_restart_resume";
         /**
          * @description Who is attempting a transition: a seat, the daemon, or the user.
          * @enum {string}
@@ -2863,22 +2833,6 @@ export interface components {
          */
         ModelRank: "frontier" | "balanced" | "fast" | "local";
         /**
-         * @description Start a loose session: a new conversation with an agent, in a directory,
-         *     with no goal, task or seat behind it.
-         */
-        NewSessionRequest: {
-            /** @description The effort to run that model at; omitted = the agent's own. */
-            effort?: string | null;
-            /**
-             * @description The model to run, `<agent>:<model>`: a registry agent (`GET
-             *     /v1/acp-agents`) and a model of it (`GET /v1/models`).
-             * @example claude-acp:sonnet
-             */
-            model: string;
-            /** @description The absolute path of an existing directory the agent works in. */
-            working_directory: string;
-        };
-        /**
          * @description The agent of the `pr` column asking the daemon to open the pull or merge
          *     request its task lands by. The daemon runs the forge's own CLI, so this
          *     carries only what the agent cannot read off the task or the repository
@@ -3171,11 +3125,6 @@ export interface components {
             permission_mode: components["schemas"]["PermissionMode"];
             updated_at: string;
         };
-        /** @description Resume a stored conversation without a goal, task or seat. */
-        ResumeOutsideSessionRequest: {
-            agent_id: string;
-            internal_session_id: string;
-        };
         /**
          * @description Payload of the `resync` control event.
          *
@@ -3272,7 +3221,7 @@ export interface components {
             status: components["schemas"]["SessionStatus"];
             /**
              * @description The workflow column `task_agent_id` works, where the session still has
-             *     one; null for an orchestrator, a loose session, or an agent its task
+             *     one; null for an orchestrator, a PR session, or an agent its task
              *     no longer staffs.
              */
             step?: string | null;
@@ -3281,31 +3230,18 @@ export interface components {
              *     (`POST /v1/sessions/{id}/switch`); null otherwise.
              */
             switched_from?: string | null;
-            /** @description The staffed agent this session runs; None for an orchestrator or loose session. */
+            /** @description The staffed agent this session runs; None for an orchestrator or PR session. */
             task_agent_id?: string | null;
-            /** @description None for an orchestrator or a loose session. */
+            /** @description None for an orchestrator or a PR session. */
             task_id?: string | null;
-            /**
-             * @description A loose session's own title: the first prompt of the conversation it
-             *     resumed, or the first one typed into it. Null on a task's or a goal's
-             *     session, which goes by its work's title.
-             */
-            title?: string | null;
             /**
              * @description What this session's agent has spent, summed over every transcript it
              *     reported under. Zeros while nothing has been reported.
              */
             usage: components["schemas"]["TokenUsageDto"];
-            /** @description The worktree, or the recorded working directory of a loose session. */
+            /** @description The worktree or repository working directory. */
             worktree_path?: string | null;
         };
-        /**
-         * @description One row of `GET /v1/sessions`: a session of either kind.
-         *
-         *     An outside conversation carries no goal, task, seat or status, because
-         *     Ariadne runs no work behind it; what it does carry is the agent it belongs
-         *     to, the id that agent loads it back by, where it ran and when it last did.
-         */
         SessionEntryDto: {
             /** @description The registry agent this conversation runs on (`GET /v1/acp-agents`). */
             agent_id: string;
@@ -3315,7 +3251,7 @@ export interface components {
             context_size?: number | null;
             /** Format: int64 */
             context_used?: number | null;
-            /** @description When Ariadne created the row; None on an outside row. */
+            /** @description When Ariadne created the row. */
             created_at?: string | null;
             /**
              * @description Effort that model was launched at, off the same pin as `model`.
@@ -3324,47 +3260,35 @@ export interface components {
             effort?: string | null;
             ended_at?: string | null;
             goal_id?: string | null;
-            /** @description Ariadne's session id, or the agent's own session id on an outside row. */
+            /** @description Ariadne's session id. */
             id: string;
-            /** @description The ACP agent's own session id, which is `id` on an outside row. */
+            /** @description The ACP agent's own session id. */
             internal_session_id?: string | null;
-            kind: components["schemas"]["SessionKind"];
             /** @description When this session was last active, which the page is ordered by. */
             last_activity_at?: string | null;
-            /** @description Model requested at launch, `<agent>:<model>`; None on an outside row. */
+            /** @description Model requested at launch, `<agent>:<model>`. */
             model?: string | null;
             /** @description The pull request this session watches; None for every other session. */
             pull_request_id?: string | null;
             seat?: components["schemas"]["Seat"] | null;
             status?: components["schemas"]["SessionStatus"] | null;
-            /**
-             * @description The staffed agent this session runs; None for an orchestrator, a loose
-             *     session or an outside one.
-             */
+            /** @description The staffed agent this session runs; None for an orchestrator or PR session. */
             task_agent_id?: string | null;
             task_id?: string | null;
             /**
              * @description What this session is about: its task's title, the goal's title behind
-             *     an orchestrator, or the first prompt of an outside conversation.
+             *     an orchestrator, or the PR review's title.
              */
             title?: string | null;
             usage?: components["schemas"]["TokenUsageDto"] | null;
             /** @description The worktree, or the recorded working directory. */
             working_directory?: string | null;
         };
-        /**
-         * @description Which half of the listing a row came from: a session Ariadne runs, or a
-         *     conversation an ACP agent stored that Ariadne did not start.
-         * @enum {string}
-         */
-        SessionKind: "ariadne" | "outside";
         /** @description One page of `GET /v1/sessions`, newest activity first. */
         SessionPageDto: {
             /** @description The `cursor` that continues after this page; null on the last one. */
             next_cursor?: string | null;
             sessions: components["schemas"]["SessionEntryDto"][];
-            /** @description When the outside snapshot this page was cut from was taken, RFC 3339. */
-            snapshot_at: string;
             /** @description How many sessions the filters leave, over every page. */
             total: number;
         };
@@ -4811,47 +4735,6 @@ export interface operations {
             };
         };
     };
-    sessions_resume_outside: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResumeOutsideSessionRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionDto"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     permissions_get: {
         parameters: {
             query?: never;
@@ -5936,27 +5819,22 @@ export interface operations {
     sessions_list: {
         parameters: {
             query?: {
-                /** @description Only sessions of this kind. Omitted lists both. */
-                kind?: components["schemas"]["SessionKind"] | null;
                 /** @description Only sessions of this registry agent (`GET /v1/acp-agents`). */
                 agent?: string | null;
-                /** @description Filter by goal id. No outside session has one. */
+                /** @description Filter by goal id. */
                 goal?: string | null;
-                /** @description Filter by task id. No outside session has one. */
+                /** @description Filter by task id. */
                 task?: string | null;
-                /** @description Filter by pull request id. No outside session has one. */
+                /** @description Filter by pull request id. */
                 pull_request?: string | null;
                 /**
-                 * @description Filter by status. No outside session has one. A named status also
+                 * @description Filter by status. A named status also
                  *     lists sessions that have ended, as `all` does.
                  */
                 status?: components["schemas"]["SessionStatus"] | null;
-                /** @description Filter by seat. No outside session has one. */
+                /** @description Filter by seat. */
                 seat?: components["schemas"]["Seat"] | null;
-                /**
-                 * @description Only sessions currently flagged as needing attention. No outside
-                 *     session is.
-                 */
+                /** @description Only sessions currently flagged as needing attention. */
                 attention?: boolean | null;
                 /**
                  * @description Only sessions whose directory is this absolute path, or a path under
@@ -5978,8 +5856,6 @@ export interface operations {
                 limit?: number | null;
                 /** @description The `next_cursor` of the page before this one; opaque. */
                 cursor?: string | null;
-                /** @description Ask every agent again before answering, whatever the snapshot's age. */
-                refresh?: boolean | null;
             };
             header?: never;
             path?: never;
@@ -5996,47 +5872,6 @@ export interface operations {
                 };
             };
             400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    sessions_create_session: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NewSessionRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionDto"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -30,7 +30,6 @@ import type {
   TaskDto,
   WorkflowDto,
 } from "@/api"
-import type { OutsideSessionDto } from "@/features/sessions/queries"
 
 type SessionPageDto = components["schemas"]["SessionPageDto"]
 
@@ -144,34 +143,14 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     context_size: null,
     created_at: STAMP,
     ended_at: null,
-    title: null,
     pull_request_id: null,
     ...overrides,
   }
 }
 
 /**
- * A stored session an ACP agent holds on its own, listed over
- * `GET /v1/sessions?kind=outside` — Ariadne did not start it, and it carries
- * no goal, task or seat, having none of its own.
- */
-export function anOutsideSession(overrides: Partial<OutsideSessionDto> = {}): OutsideSessionDto {
-  return {
-    agent_id: "claude-agent-acp",
-    internal_session_id: "outside-internal-id-1",
-    working_directory: "/Users/me/dev/ariadne",
-    last_activity_at: STAMP,
-    first_prompt: "Fix the flaky test.",
-    model: null,
-    effort: null,
-    usage: null,
-    ...overrides,
-  }
-}
-
-/**
- * One page of `GET /v1/sessions` holding these Ariadne sessions, as the
- * daemon answers it: every one a listing row of kind `ariadne`.
+ * One page of `GET /v1/sessions` holding these sessions, as the daemon
+ * answers it.
  */
 export function aSessionPage(
   sessions: SessionDto[],
@@ -181,36 +160,8 @@ export function aSessionPage(
     sessions.map(
       ({ worktree_path, ...session }): SessionEntryDto => ({
         ...session,
-        kind: "ariadne",
         agent_id: session.model.split(":")[0] ?? "",
         working_directory: worktree_path,
-      }),
-    ),
-    page,
-  )
-}
-
-/**
- * One page of `GET /v1/sessions?kind=outside` holding these conversations,
- * as the daemon answers it.
- */
-export function anOutsideSessionPage(
-  sessions: OutsideSessionDto[],
-  page: Partial<SessionPageDto> = {},
-): SessionPageDto {
-  return aPage(
-    sessions.map(
-      (session): SessionEntryDto => ({
-        kind: "outside",
-        id: session.internal_session_id,
-        agent_id: session.agent_id,
-        internal_session_id: session.internal_session_id,
-        working_directory: session.working_directory,
-        last_activity_at: session.last_activity_at,
-        title: session.first_prompt,
-        model: session.model,
-        effort: session.effort,
-        usage: session.usage,
       }),
     ),
     page,
@@ -222,7 +173,6 @@ function aPage(sessions: SessionEntryDto[], page: Partial<SessionPageDto>): Sess
     sessions,
     next_cursor: null,
     total: sessions.length,
-    snapshot_at: STAMP,
     ...page,
   }
 }
@@ -327,7 +277,6 @@ export function anAcpAgent(overrides: Partial<AcpAgentDto> = {}): AcpAgentDto {
       session_new: true,
       model: true,
       thought_level: true,
-      session_list: true,
       session_load: true,
     },
     degraded: [],

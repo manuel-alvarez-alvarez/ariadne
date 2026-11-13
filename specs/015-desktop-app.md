@@ -81,9 +81,8 @@ Out: the daemon endpoints themselves (012).
    selection. Each goal is one slim lane under two global column headers; its
    one-line row carries the goal's tokens at the right end (rule 39). The task
    panel (facts, messages listed oldest first with both agents named by skills,
-   diff, history), sessions — Ariadne's own and every
-   outside conversation an ACP agent stored on its own, merged into one
-   listing, each shown in its console — skills, repositories, the agents of
+   diff, history), sessions — Ariadne's own,
+   each shown in its console — skills, repositories, the agents of
    the daemon's ACP registry with their launch flags and the models each may
    be staffed on, Workflows — shipped and user workflows grouped separately,
    with a document editor and a parsed preview drawn as a numbered pipeline
@@ -263,77 +262,36 @@ Out: the daemon endpoints themselves (012).
     terminal update reads `Subagent <state> · <title>`, using its id where the
     title is empty. A running child has a pending dot, a completed one active,
     and a failed one danger. Each row still expands to its raw payload.
-19. The sessions screen lists both kinds of session in one table, newest
-    activity first: the title, the status, the work — in one column, the
-    seat a session holds as a badge, the goal it is under and the task under
-    that, each of which narrows the table to its sessions when picked — the
-    agent, the age and the tokens. The daemon answers the two kinds over two endpoints —
-    `GET /v1/sessions` whole, for every session Ariadne started, `GET
-    /v1/outside-sessions` a page at a time, for every conversation an ACP
-    agent stored on its own — and the screen merges them client-side into the
-    one table. Every row shows its working directory under its title — a
-    task's worktree, a loose session's directory, an outside conversation's.
-    An outside row leaves its status, goal and task empty. Its Agent and
-    Tokens columns read as an Ariadne row's do once the daemon reports its
-    model, effort and usage — the pin it last ran on, and the tokens it has
-    spent, tooltip included — and, until then, name its registry agent
-    instead and leave the Tokens cell blank rather than showing a zero. A
-    filter bar above the table narrows the listing by kind, agent — the
-    registry of `GET /v1/acp-agents` — status, seat, directory, a since day,
-    an until day, and a search over the titles; `?goal=` and `?task=` narrow
-    it further, as a chip above the table. The search leads the bar, with the
-    count and Refresh at the other end of its row; under it each filter is
-    one compact trigger naming what it filters and, once set, what it is set
-    to, drawn dashed while unset. A window control beside them sets how far
-    back the outside half looks: the last 7 days it opens on every visit —
-    the daemon's own default, asked for with neither `since` nor `all` —
-    the last 30 as a `since` bound, or all of it with `all=true`; it is its
-    own `?window=` param, not remembered between visits, and an explicit
-    since or until day, being the more specific ask, is sent in its place
-    where one is set. The directory and the activity window open a popover —
-    the window with Today, Last 7 days and Last 30 days one click each, and
-    an empty day shown as "Any day" rather than as the date WebKit fills an
-    empty date field with — and Clear filters drops every filter of the bar
-    in one step, leaving the goal and task scope. Each filter is a URL
-    search param under the daemon's own name for it (`?kind=`, `?agent=`,
-    `?status=`, `?seat=`, `?dir=`, `?since=`, `?until=`, `?q=`), so a
-    narrowed screen is what its URL says and opens again with those filters
-    set; a typed one reaches the daemon once the typing has settled rather
-    than on every keystroke, and a day reaches it as the moment that bounds
-    it — the first instant of the day as `since`, its finest last moment as
-    `until` (`23:59:59.999999999Z`), in UTC, so a day holds every session
-    active on it whatever precision the agent reported. `status`, `seat`, `goal` and
-    `task` only ever reach `GET /v1/sessions`, being things an outside
-    session has none of; a goal or a task is therefore a structural
-    impossibility for one, and the outside half of the screen is skipped
-    rather than asked for an answer that can only be empty. `agent`, `dir`,
-    `since`, `until` and `q` reach `GET /v1/outside-sessions` the way they
-    always did, and narrow the Ariadne rows here, so a filter reads as one
-    filter over the whole table rather than one that only works on half of
-    it; a real status or a seat leaves an Ariadne row's half fetching but
-    takes it out of the merged rows, since neither is something an outside
-    session could match either. `status` and `seat` are remembered between
-    visits, the way this screen's filters always were; the rest are not,
-    since they are for finding one conversation. The Ariadne half renders as
-    soon as it answers; while the outside half is still loading, its rows
-    stay visible with one trailing loading row, and the count reads `<n>
-    sessions · looking for outside conversations`. The Ariadne half arrives
-    whole, so only the outside half pages: Load more asks for the
-    `next_cursor` the last page carried and appends what comes back, and one
-    count line — shown only while the outside half is part of the merged
-    rows — reads `<shown> of <total>` over both halves together. Refresh
-    refetches the outside half from its first page with `refresh=true`,
-    which is what asks every outside agent again. Picking an Ariadne row
-    opens its own panel (`?session=`) directly. Picking an outside row calls
-    `POST /v1/outside-sessions/resume` once, with its registry agent id and
-    internal session id, then opens the panel of the live session the daemon
-    hands back — which is what turns a stored conversation into one Ariadne
-    can show a console for. That session is loose: no goal, task or seat of
-    its own, same as any other session the screen has none of a fact for.
-    From then on it holds the conversation, so its outside row leaves every
-    cached page at once and the outside half is fetched again; a
-    `session_created` event does the same, for a resume made from the CLI or
-    another window.
+19. The sessions screen lists the sessions Ariadne has run in one table,
+    newest activity first: the title, the status, the work — in one column,
+    the seat a session holds as a badge, the goal it is under and the task
+    under that, each of which narrows the table to its sessions when picked —
+    the agent, the age and the tokens. It reads `GET /v1/sessions` whole,
+    ended sessions included, and every row shows its working directory under
+    its title. A filter bar above the table narrows the listing by agent —
+    the registry of `GET /v1/acp-agents` — status, seat, directory, a since
+    day, an until day, and a search over the titles; `?goal=` and `?task=`
+    narrow it further, as a chip above the table. The search leads the bar,
+    with the count at the other end of its row; under it each filter is one
+    compact trigger naming what it filters and, once set, what it is set to,
+    drawn dashed while unset. The directory and the activity window open a
+    popover — the window with Today, Last 7 days and Last 30 days one click
+    each, and an empty day shown as "Any day" rather than as the date WebKit
+    fills an empty date field with — and Clear filters drops every filter of
+    the bar in one step, leaving the goal and task scope. Each filter is a
+    URL search param (`?agent=`, `?status=`, `?seat=`, `?dir=`, `?since=`,
+    `?until=`, `?q=`), so a narrowed screen is what its URL says and opens
+    again with those filters set; a typed one narrows the rows once the
+    typing has settled rather than on every keystroke, and a day is compared
+    as the moment that bounds it — the first instant of the day as `since`,
+    its finest last moment as `until` (`23:59:59.999999999Z`), in UTC, so a
+    day holds every session active on it. `status`, `seat`, `goal` and `task`
+    reach `GET /v1/sessions`; `agent`, `dir`, `since`, `until` and `q` narrow
+    its rows here. `status` and `seat` are remembered between visits; the
+    rest are not, since they are for finding one session. The count line
+    reads `<shown> of <total> sessions`. Picking a row opens its own panel
+    (`?session=`). No control on the screen starts a session without a goal
+    or a task.
 20. The goal, task and session panels, and the session drill-downs inside the
     goal's and the task's own, share one header component: an optional
     breadcrumb row back to the entity this one is drilled into (a goal, for a
@@ -1059,11 +1017,10 @@ Out: the daemon endpoints themselves (012).
   `::moves across the columns with the arrow keys`,
   `::closes on Escape, and leaves the form dialog open`).
 - Every form that pins a model picks it through this picker: the task form,
-  the goal dialog, the new session and switch dialogs, and the review and
+  the goal dialog, the switch dialog, and the review and
   babysit dialogs
   (`ui/src/features/tasks/task-form-dialog.test.tsx::pins a column's model and effort through the three-column picker`,
   `ui/src/features/issues/issues-page.test.tsx::submits a goal dialog opened from an issue with the issue's data and the model picked`,
-  `ui/src/features/sessions/new-session-dialog.test.tsx::starts a session on the chosen model, in the typed directory, and hands it back`,
   `ui/src/features/sessions/session-actions.test.tsx::opens the switch dialog, posts its pin, and follows a successor`,
   `ui/src/features/pull-requests/pull-request-panel.test.tsx::starts and stops a review of a Dependabot request without a review assignment`,
   `::starts and stops babysitting a Dependabot request without a review assignment`).
@@ -1100,13 +1057,16 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/session-activity.test.tsx::names subagent updates by their first and completed state`,
   `::prefixes child events and keeps their folds separate from other children`,
   `::colors running, completed, and failed subagents from their states`).
-- `qk.outsideSessions` refetches on `session_created`, since a resume may
-  move one of its rows into the Ariadne half, and leaves it alone on
-  `session_updated`
-  (`ui/src/events/dispatch.test.ts::refetches the outside lists when a session is created, since it may hold one of their rows`,
-  `::leaves the outside lists alone when a session only moves on`).
-- The outside-sessions page, its route and the adoption dialog are gone
-  (`ui/src/routes/router.test.tsx::leads nowhere from the outside-sessions screen the merge dropped`).
+- The sessions screen lists every Ariadne session, and the agent, directory,
+  since, until and search filters each narrow its rows; no control starts a
+  session of its own
+  (`ui/src/features/sessions/sessions-page.test.tsx::lists every Ariadne session when no filter is set`,
+  `::narrows the rows to the sessions of one agent`,
+  `::narrows the rows to the sessions under a directory`,
+  `::narrows the rows to the sessions active since a day`,
+  `::narrows the rows to the sessions active until a day`,
+  `::narrows the rows to the titles a search matches, ignoring case`,
+  `::starts no session of its own`).
 - The terminal pane sends its size before anything else, and nothing typed
   before the socket is open
   (`ui/src/features/sessions/session-terminal.test.tsx::sends its size before anything else`).

@@ -34,7 +34,7 @@ it("reads every page of Ariadne's sessions, ended ones too, as session rows", as
 
   expect(sessions).toEqual([FIRST, SECOND])
   const [first, second] = listings()
-  expect(first?.get("kind")).toBe("ariadne")
+  expect(first?.get("kind")).toBeNull()
   expect(first?.get("all")).toBe("true")
   expect(first?.get("task")).toBe("t1")
   expect(first?.get("cursor")).toBeNull()

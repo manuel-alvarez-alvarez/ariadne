@@ -17,29 +17,20 @@
  * the original.
  */
 
-import {
-  type InfiniteData,
-  infiniteQueryOptions,
-  queryOptions,
-  useMutation,
-  useQueryClient,
-} from "@tanstack/react-query"
+import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 
 import {
   api,
   type CacheSnapshot,
   cacheRow,
-  type NewSessionRequest,
   optimisticStatus,
   qk,
-  type ResumeOutsideSessionRequest,
   restoreCache,
   type Seat,
   type SessionDto,
   type SessionEntryDto,
   type SessionStatus,
   type SwitchSessionRequest,
-  type TokenUsage,
   unwrap,
 } from "@/api"
 
@@ -96,11 +87,10 @@ const PAGE_LIMIT = 200
  * Every session Ariadne runs under these filters, ended ones too, as
  * `SessionDto` rows: the whole list, followed page by page.
  *
- * `GET /v1/sessions` pages Ariadne's sessions together with the outside
- * conversations, and leaves out what ended or went quiet over a week ago
+ * `GET /v1/sessions` leaves out what ended or went quiet over a week ago
  * unless `all` is set. Every view reading this list wants the lot — a task's
- * sessions, a goal's orchestrators, every stuck agent — so it asks for one
- * kind, sets `all`, and reads on until the last page.
+ * sessions, a goal's orchestrators, every stuck agent — so it sets `all` and
+ * reads on until the last page.
  */
 async function everyAriadneSession(query: Omit<SessionListFilters, "seat" | "live" | "attention">) {
   const sessions: SessionDto[] = []
@@ -108,7 +98,7 @@ async function everyAriadneSession(query: Omit<SessionListFilters, "seat" | "liv
   do {
     const page = await unwrap(
       api().GET("/v1/sessions", {
-        params: { query: { ...query, kind: "ariadne", all: true, limit: PAGE_LIMIT, cursor } },
+        params: { query: { ...query, all: true, limit: PAGE_LIMIT, cursor } },
       }),
     )
     sessions.push(...page.sessions.map(ariadneSession))
@@ -121,7 +111,7 @@ async function everyAriadneSession(query: Omit<SessionListFilters, "seat" | "liv
  * A listing row of an Ariadne session, as the `SessionDto` that
  * `GET /v1/sessions/{id}` answers for it — the shape the detail cache and
  * every session view read. The fields a listing row leaves optional are ones
- * an Ariadne session always has; only an outside row goes without them.
+ * an Ariadne session always has.
  */
 function ariadneSession(entry: SessionEntryDto): SessionDto {
   return {
@@ -144,51 +134,6 @@ function ariadneSession(entry: SessionEntryDto): SessionDto {
     created_at: entry.created_at ?? "",
     ended_at: entry.ended_at,
     pull_request_id: entry.pull_request_id,
-    // A listing row's title is its work's where it has work; only a loose
-    // session's is its own.
-    title: entry.goal_id || entry.task_id ? null : entry.title,
-  }
-}
-
-/**
- * A conversation Ariadne did not start: what the outside rows of
- * `GET /v1/sessions` carry.
- */
-export interface OutsideSessionDto {
-  agent_id: string
-  /** The id the agent loads this conversation back by. */
-  internal_session_id: string
-  working_directory: string
-  last_activity_at: string
-  first_prompt: string
-  /**
-   * The model it last ran on, `<agent>:<model>`, and the tokens it has spent
-   * — null until the daemon reports them for an outside row, which it does
-   * not do yet (see the sessions screen's Agent and Tokens columns).
-   */
-  model: string | null
-  effort: string | null
-  usage: TokenUsage | null
-}
-
-/** One page of the outside listing, its rows read as {@link OutsideSessionDto}. */
-interface OutsideSessionPage {
-  sessions: OutsideSessionDto[]
-  next_cursor?: string | null
-  total: number
-  snapshot_at: string
-}
-
-function outsideSession(entry: SessionEntryDto): OutsideSessionDto {
-  return {
-    agent_id: entry.agent_id,
-    internal_session_id: entry.internal_session_id ?? entry.id,
-    working_directory: entry.working_directory ?? "",
-    last_activity_at: entry.last_activity_at ?? "",
-    first_prompt: entry.title ?? "",
-    model: entry.model ?? null,
-    effort: entry.effort ?? null,
-    usage: entry.usage ?? null,
   }
 }
 
@@ -196,106 +141,6 @@ export function sessionQueryOptions(id: string) {
   return queryOptions({
     queryKey: qk.sessions.detail(id),
     queryFn: () => unwrap(api().GET("/v1/sessions/{id}", { params: { path: { id } } })),
-  })
-}
-
-/** What the outside-sessions list can be narrowed by, as the daemon takes it. */
-export interface OutsideSessionListFilters {
-  agent?: string
-  dir?: string
-  /** RFC 3339, not a day: see `filters.ts`. */
-  since?: string
-  until?: string
-  q?: string
-  /** List every outside conversation, whatever its age, in place of `since`. */
-  all?: boolean
-}
-
-/**
- * Conversations Ariadne did not start, ready for the user to resume: the
- * pages the daemon cuts from its snapshot, under one filter.
- *
- * `next_cursor` is the next page's parameter and a null one is the last page,
- * so the cursor never reaches the key — the pages of one filter are one cache
- * entry, which is what lets the table grow by a page rather than reload.
- *
- * `takeRefresh` is read at request time rather than keyed on: asking every
- * agent again is what the Refresh button does, not what the list is narrowed
- * by, and its answer belongs in the entry the filters already name. It is
- * taken, not read — the flag it answers from is spent on the first request of
- * a refetch, which is the first page.
- */
-export function outsideSessionsQueryOptions(
-  filters: OutsideSessionListFilters = {},
-  takeRefresh: () => boolean = () => false,
-) {
-  return infiniteQueryOptions({
-    queryKey: qk.outsideSessions.list(filters),
-    queryFn: ({ pageParam }) =>
-      unwrap(
-        api().GET("/v1/sessions", {
-          params: {
-            query: {
-              ...filters,
-              kind: "outside",
-              cursor: pageParam ?? undefined,
-              refresh: takeRefresh() || undefined,
-            },
-          },
-        }),
-      ).then(
-        (page): OutsideSessionPage => ({ ...page, sessions: page.sessions.map(outsideSession) }),
-      ),
-    initialPageParam: null as string | null,
-    getNextPageParam: (page) => page.next_cursor ?? null,
-  })
-}
-
-/**
- * Start a loose session: a new conversation with an agent, in a directory,
- * without a goal, task or seat. It comes back live, waiting for its first
- * prompt.
- */
-export function useStartSession() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: NewSessionRequest) => unwrap(api().POST("/v1/sessions", { body })),
-    onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
-  })
-}
-
-/**
- * Resume an outside conversation as a live session, without a goal, task or seat.
- *
- * The session that answers holds the conversation from then on, so its
- * outside row goes from every cached page at once — the table would show the
- * one conversation twice until the outside lists came back — and those lists
- * are refetched too, since the daemon now leaves it out of their totals.
- */
-export function useResumeOutsideSession() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: ResumeOutsideSessionRequest) =>
-      unwrap(api().POST("/v1/outside-sessions/resume", { body })),
-    onSuccess: (session, { agent_id, internal_session_id }) => {
-      cacheRow(queryClient, qk.sessions, session)
-      queryClient.setQueriesData<InfiniteData<OutsideSessionPage>>(
-        { queryKey: qk.outsideSessions.lists() },
-        (data) =>
-          data && {
-            ...data,
-            pages: data.pages.map((page) => ({
-              ...page,
-              sessions: page.sessions.filter(
-                (outside) =>
-                  outside.agent_id !== agent_id ||
-                  outside.internal_session_id !== internal_session_id,
-              ),
-            })),
-          },
-      )
-      void queryClient.invalidateQueries({ queryKey: qk.outsideSessions.lists() })
-    },
   })
 }
 

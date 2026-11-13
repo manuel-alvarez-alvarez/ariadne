@@ -189,23 +189,14 @@ export function sessionAttention(session: SessionDto): SessionAttention | null {
   return reason === "waiting_user" ? null : reason
 }
 
-/**
- * `seat` as `SEAT_LABELS` spells it, or what a loose session is instead — one
- * resumed from an outside conversation, which belongs to no goal, task or
- * seat.
- */
+/** `seat` as `SEAT_LABELS` spells it. */
 export function seatLabel(seat: Seat | null | undefined): string {
-  return seat ? SEAT_LABELS[seat] : "Loose session"
+  return seat ? SEAT_LABELS[seat] : "Session"
 }
 
-/**
- * The session panel's own heading: the seat it ran as, or a loose session's
- * own title — the first prompt it is known by — and what it is where it has
- * none yet.
- */
-export function sessionHeading(session: Pick<SessionDto, "seat" | "title">): string {
-  if (session.seat) return `${SEAT_LABELS[session.seat]} session`
-  return session.title ?? "Loose session"
+/** The session panel's own heading: the seat it ran as. */
+export function sessionHeading(session: Pick<SessionDto, "seat">): string {
+  return `${seatLabel(session.seat)} session`
 }
 
 /**

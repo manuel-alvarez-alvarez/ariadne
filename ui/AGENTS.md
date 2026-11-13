@@ -282,7 +282,6 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["tasks",        "list", filters]   ["tasks",    "detail", id]
 ["tasks",        "detail", id, "messages" | "transitions" | "diff"]
 ["sessions",     "list", filters]   ["sessions", "detail", id]
-["outside-sessions", "list", filters]
 ["skills",       "list", filters]   ["skills",   "detail", name]
 ["workflows",    "list", {}]        ["workflows", "detail", name]
 ["workflows",    "parse", document]
@@ -310,13 +309,12 @@ a repository's matching requests — that is neither a list nor a detail.
 them: each is one settings row (`GET /v1/permissions/ai`,
 `GET /v1/forge/tunnel`), not a collection.
 
-Several keys have no `detail` beside their list: `outsideSessions`, `agents`,
+Several keys have no `detail` beside their list: `agents`,
 `models`, `acpAgents`, `agentEvents` and `issues` are each read whole or
 filtered, with nothing the app opens on one id alone.
 
-The outside-sessions list and the pull-requests list are the keys the daemon
-pages: the cursor stays out of the key, because the pages of one filter are
-the pages of one infinite query.
+The pull-requests list is a key the daemon pages: the cursor stays out of the
+key, because the pages of one filter are the pages of one infinite query.
 
 Sub-resources hang off their detail key: `["tasks", "detail", id, "messages"]`,
 `… "transitions"`, `… "diff"`. Two consequences the event dispatcher
@@ -352,7 +350,7 @@ the query cache and it stays live.
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists` and `attention.lists`; a transition on the event also invalidates `tasks.transitions` and `tasks.diff` — a transition can be the task landing, and the diff answers for the merge commit once there is one |
 | `task_branch_updated` | invalidate `tasks.diff` for the task — a commit in the author's worktree, with nothing about the task row itself changed |
 | `message_sent` | invalidate `tasks.messages` for the task it is about; a message about the goal itself belongs to no task's channel |
-| `session_created` | patch `sessions.detail`, invalidate `sessions.lists` and `outsideSessions.lists` — a resume adopts an outside row; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
+| `session_created` | patch `sessions.detail`, invalidate `sessions.lists`; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
 | `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` and `attention.lists`; a session carrying a `pull_request_id` also invalidates that request's `pullRequests.detail` and `pullRequests.lists` |
 | `agent_event` | invalidate `agentEvents.lists` |
 | `skill_created`, `skill_updated` | patch `skills.detail`, invalidate `skills.lists` |

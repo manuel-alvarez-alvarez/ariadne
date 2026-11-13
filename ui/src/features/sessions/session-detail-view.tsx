@@ -257,16 +257,15 @@ export function SessionDetailView({
                 request it watches is what it is about, linked to the forge. */}
             {session.pull_request_id ? (
               <Fact label="Pull request">
-                <PullRequestLink id={session.pull_request_id} title={session.title} />
+                <PullRequestLink id={session.pull_request_id} />
               </Fact>
             ) : null}
             {/* One fact, not two: what the agent runs on is the tail of this line
                 (`claude-agent-acp:claude-opus-5`), and a Model row under it repeated
                 that tail with the agent half taken off. The session's own snapshot,
                 not the profile's current fields — the profile may have been edited
-                since this agent was launched. A loose session — one resumed from
-                an outside conversation — names its agent the same way, having no
-                seat to lead with. */}
+                since this agent was launched. A session with no seat names its
+                agent the same way, having none to lead with. */}
             <Fact label="Agent">
               {session.seat ? (
                 <SeatSummary seat={session.seat} model={session.model} effort={session.effort} />

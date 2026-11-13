@@ -248,28 +248,6 @@ describe("invalidateEverything", () => {
   })
 })
 
-describe("session events", () => {
-  it("refetches the outside lists when a session is created, since it may hold one of their rows", () => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const outside = qk.outsideSessions.list({})
-    queryClient.setQueryData(outside, { pages: [], pageParams: [] })
-
-    dispatch(queryClient, { event: "session_created", data: aSession() })
-
-    expect(stale(queryClient, outside)).toBe(true)
-  })
-
-  it("leaves the outside lists alone when a session only moves on", () => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const outside = qk.outsideSessions.list({})
-    queryClient.setQueryData(outside, { pages: [], pageParams: [] })
-
-    dispatch(queryClient, { event: "session_updated", data: aSession() })
-
-    expect(stale(queryClient, outside)).toBe(false)
-  })
-})
-
 describe("pull request session events", () => {
   /** A client holding a pull request list and its detail, as its screen and panel do. */
   function withPullRequest(): QueryClient {

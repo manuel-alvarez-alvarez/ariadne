@@ -4,7 +4,7 @@
  * the directory and the activity window — and the typed field both the search
  * and the directory are.
  *
- * What each filter means, and which half of the listing it reaches, is the
+ * What each filter means, and what each one narrows, is the
  * screen's (`sessions-page.tsx`); these only draw a filter and report what was
  * picked.
  */
@@ -27,9 +27,8 @@ import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { acpAgentsQueryOptions } from "@/features/agents/queries"
 import { cn } from "@/lib/format"
-
+import { type BrowseFilterParam, dayBefore } from "./browse-filters"
 import { ALL } from "./filters"
-import { dayBefore, type OutsideFilterParam, type Window } from "./outside-filters"
 
 /**
  * How long a typed filter waits for the next keystroke before the daemon is
@@ -160,46 +159,6 @@ export function AgentFilter({
   )
 }
 
-/** The window's three choices, in the order the trigger offers them. */
-const WINDOW_OPTIONS: { value: Window; label: string }[] = [
-  { value: "7", label: "Last 7 days" },
-  { value: "30", label: "Last 30 days" },
-  { value: "all", label: "All time" },
-]
-
-/**
- * How far back the table looks: the last 7 days (the daemon's own default),
- * the last 30, or all of it. Unlike the other triggers of the bar this one is
- * never unset — the table always has a window, 7 days being the one it opens
- * on — so it draws solid rather than dashed, and offers no "all ___" choice
- * of its own beside the three.
- */
-export function WindowFilter({
-  value,
-  onSelect,
-}: {
-  value: Window
-  onSelect: (value: string) => void
-}) {
-  const label = WINDOW_OPTIONS.find((option) => option.value === value)?.label ?? null
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={<FilterTrigger what="Window" valueLabel={label} aria-label="Filter by window" />}
-      />
-      <DropdownMenuContent align="start" className="w-44">
-        <DropdownMenuRadioGroup value={value} onValueChange={onSelect}>
-          {WINDOW_OPTIONS.map((option) => (
-            <DropdownMenuRadioItem key={option.value} value={option.value}>
-              {option.label}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 /**
  * Where a session ran: the directory it is in, or one above it. Typed, so
  * it opens as a field in a popover rather than as a menu of choices, and the
@@ -210,7 +169,7 @@ export function DirectoryFilter({
   onSettle,
 }: {
   value: string
-  onSettle: (param: OutsideFilterParam, value: string) => void
+  onSettle: (param: BrowseFilterParam, value: string) => void
 }) {
   return (
     <Popover>
@@ -271,8 +230,6 @@ function activityLabel(since: string, until: string): string | null {
 
 /**
  * When a session was last active: a preset window, or a day on either side.
- * Unset, the daemon lists the outside conversations of the last week and every
- * session Ariadne ran, which the popover says, since nothing else would.
  */
 export function ActivityFilter({
   since,
@@ -281,7 +238,7 @@ export function ActivityFilter({
 }: {
   since: string
   until: string
-  onChange: (values: Partial<Record<OutsideFilterParam, string>>) => void
+  onChange: (values: Partial<Record<BrowseFilterParam, string>>) => void
 }) {
   return (
     <Popover>
@@ -332,9 +289,6 @@ export function ActivityFilter({
             />
           </Field>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Unset, outside conversations of the last 7 days are listed.
-        </p>
         {since || until ? (
           <Button
             variant="ghost"
@@ -411,8 +365,8 @@ export function TypedFilter({
   placeholder: string
   /** What the URL carries, which is what the field opens on. */
   value: string
-  param: OutsideFilterParam
-  onSettle: (param: OutsideFilterParam, value: string) => void
+  param: BrowseFilterParam
+  onSettle: (param: BrowseFilterParam, value: string) => void
   className?: string
   autoFocus?: boolean
 }) {

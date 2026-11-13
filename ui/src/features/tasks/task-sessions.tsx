@@ -69,7 +69,7 @@ export function TaskSessions({
  * it runs by id (`task_agent_id`), an agent names its column by id (`step`),
  * and the goal's workflow names that column's title.
  *
- * A session with no staffed agent — an orchestrator, or a loose session —
+ * A session with no staffed agent — an orchestrator —
  * has no `task_agent_id`, and so no step. A step id the workflow no longer
  * carries (an edited workflow, or a stale agent) falls back to the id itself
  * rather than showing nothing for a session that plainly has a step.

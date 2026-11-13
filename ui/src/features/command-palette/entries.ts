@@ -118,9 +118,7 @@ export function buildPaletteEntries({
     })),
 
     // A session has no name of its own: it is "the reviewer of <task>", and
-    // that is also how somebody looking for one describes it. A loose
-    // session — one resumed from an outside conversation — has no goal, task
-    // or seat, so the label falls back the way every other reader does.
+    // that is also how somebody looking for one describes it.
     sessions: (sessions ?? []).map((session) => {
       const of =
         (session.task_id ? taskTitles.get(session.task_id) : undefined) ??

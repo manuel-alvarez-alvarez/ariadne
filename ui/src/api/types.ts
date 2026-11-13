@@ -40,8 +40,6 @@ export type SessionDto = Schemas["SessionDto"]
 export type SessionStatus = Schemas["SessionStatus"]
 export type AttentionReason = Schemas["AttentionReason"]
 export type SessionEntryDto = Schemas["SessionEntryDto"]
-export type ResumeOutsideSessionRequest = Schemas["ResumeOutsideSessionRequest"]
-export type NewSessionRequest = Schemas["NewSessionRequest"]
 export type SwitchSessionRequest = Schemas["SwitchSessionRequest"]
 
 export type AttentionListDto = Schemas["AttentionListDto"]

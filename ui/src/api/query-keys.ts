@@ -46,15 +46,6 @@ interface LearnedPermissionFilters {
   repository?: string
 }
 
-/** What `GET /v1/outside-sessions` narrows its snapshot by, page aside. */
-interface OutsideSessionFilters {
-  agent?: string
-  dir?: string
-  since?: string
-  until?: string
-  q?: string
-}
-
 export const qk = {
   pullRequests: {
     all: () => ["pull-requests"] as const,
@@ -94,16 +85,6 @@ export const qk = {
     list: (filters?: SessionFilters) => ["sessions", "list", filters ?? {}] as const,
     details: () => ["sessions", "detail"] as const,
     detail: (id: string) => ["sessions", "detail", id] as const,
-  },
-  /**
-   * Sessions an ACP agent stored outside Ariadne (`GET /v1/outside-sessions`).
-   * The cursor is not part of the key: the pages of one filter are the pages of
-   * one infinite query, and it is that query's own page parameter.
-   */
-  outsideSessions: {
-    all: () => ["outside-sessions"] as const,
-    lists: () => ["outside-sessions", "list"] as const,
-    list: (filters?: OutsideSessionFilters) => ["outside-sessions", "list", filters ?? {}] as const,
   },
   skills: {
     all: () => ["skills"] as const,

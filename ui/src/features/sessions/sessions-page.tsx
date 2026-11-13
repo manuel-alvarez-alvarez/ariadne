@@ -1,50 +1,22 @@
 /**
- * The sessions screen: every agent Ariadne has run, and every conversation an
- * ACP agent stored on its own that Ariadne did not start — one table over the
- * two of them, newest activity first.
+ * The sessions screen: every agent Ariadne has run, newest activity first.
  *
  * The panels answer "what is this task's author doing"; this screen answers
- * the question no panel can — "what is running right now", "which agent
- * failed while I was away", and "is there a conversation out there worth
- * picking back up". A row opens the session's own panel (`?session=`) over
- * this screen rather than navigating anywhere, so the list — and the filters
- * that produced it — stays behind it with the picked row still marked. An
- * outside row has no session yet to open: picking one resumes it first (see
- * {@link handleSelect}), which is what turns it into one.
+ * the question no panel can — "what is running right now", and "which agent
+ * failed while I was away". A row opens the session's own panel (`?session=`)
+ * over this screen rather than navigating anywhere, so the list — and the
+ * filters that produced it — stays behind it with the picked row still marked.
  *
- * The daemon answers the two kinds over two endpoints — `GET /v1/sessions`
- * whole, `GET /v1/outside-sessions` a page at a time — so this screen fetches
- * both and merges them client-side into the one table the task asks for.
- * `status`, `seat`, `goal` and `task` only ever narrow the Ariadne half, being
- * things an outside session has none of; a goal, a task or a real status
- * (`live` and `attention` included) therefore leaves nothing an outside row
- * could match, and its half of the request is skipped rather than asked for
- * an empty answer. `kind` picks which half is shown at all, and `agent`,
- * `dir`, `since`, `until` and `q` are asked of the outside endpoint the way
- * they always were and applied to the Ariadne rows here, so a filter reads as
- * one filter over the whole table rather than one that only works on half of
- * it.
- *
- * Paging follows from the same split: the Ariadne half arrives whole, so only
- * the outside half grows under Load more, and the count line — shown only
- * while that half is part of the mix — adds what has not loaded yet to what
- * has.
+ * `GET /v1/sessions` answers whole (see `queries.ts`). `status`, `seat`,
+ * `goal` and `task` are asked of the daemon, or narrowed by its answer; the
+ * agent, directory, activity window and search are applied to the rows here
+ * (see {@link matchesBrowse}).
  */
 
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
-import {
-  ListChecksIcon,
-  Loader2Icon,
-  type LucideIcon,
-  PlusIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  TargetIcon,
-  XIcon,
-} from "lucide-react"
-import { useMemo, useRef, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { ListChecksIcon, type LucideIcon, SearchIcon, TargetIcon, XIcon } from "lucide-react"
+import { useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { toast } from "sonner"
 
 import { ApiError, type GoalDto, type SessionDto, type TaskDto } from "@/api"
 import { ErrorState } from "@/components/error-state"
@@ -61,16 +33,10 @@ import { parseModelRef, pinLabel } from "@/features/models/model-ref"
 import { PullRequestLink } from "@/features/pull-requests/pull-request-link"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionColumn } from "@/features/tasks/steps"
-import { cn, describeError, SEAT_LABELS, shortId } from "@/lib/format"
-import { paths, sessionPanelFrom, sessionTerminalFrom } from "@/routes/paths"
-import {
-  ActivityFilter,
-  AgentFilter,
-  DirectoryFilter,
-  FilterMenu,
-  TypedFilter,
-  WindowFilter,
-} from "./filter-bar"
+import { cn, SEAT_LABELS, shortId } from "@/lib/format"
+import { paths, sessionPanelFrom } from "@/routes/paths"
+import { BROWSE_FILTER_PARAMS, type BrowseFilters, useBrowseFilters } from "./browse-filters"
+import { ActivityFilter, AgentFilter, DirectoryFilter, FilterMenu, TypedFilter } from "./filter-bar"
 import {
   ALL,
   ATTENTION,
@@ -86,22 +52,7 @@ import {
   statusLabel,
   TASK_PARAM,
 } from "./filters"
-import { NewSessionDialog } from "./new-session-dialog"
-import {
-  DEFAULT_WINDOW,
-  KIND_LABELS,
-  OUTSIDE_FILTER_PARAMS,
-  useOutsideSessionFilters,
-  WINDOW_PARAM,
-} from "./outside-filters"
-import {
-  byId,
-  type OutsideSessionDto,
-  outsideSessionsQueryOptions,
-  type SessionListFilters,
-  sessionsQueryOptions,
-  useResumeOutsideSession,
-} from "./queries"
+import { byId, type SessionListFilters, sessionsQueryOptions } from "./queries"
 import {
   SESSION_STATUS_META,
   SessionAttentionBadge,
@@ -109,11 +60,6 @@ import {
   shownAttention,
 } from "./session-display"
 import { useSessionFilters } from "./use-session-filters"
-
-/** One row of the merged table, told apart by which listing it came from. */
-type Row =
-  | { kind: "ariadne"; session: SessionDto }
-  | { kind: "outside"; session: OutsideSessionDto }
 
 const LOADING_ROWS = ["first", "second", "third"]
 const SESSION_COLUMNS = [
@@ -131,21 +77,11 @@ function errorDescription(error: unknown): string | undefined {
   return ApiError.is(error) && error.isNetworkError ? NETWORK_ERROR_DESCRIPTION : undefined
 }
 
-function rowKey(row: Row): string {
-  return row.kind === "ariadne"
-    ? row.session.id
-    : `${row.session.agent_id}:${row.session.internal_session_id}`
+function movedAt(session: SessionDto): string {
+  return session.last_activity_at ?? session.created_at
 }
 
-function movedAt(row: Row): string {
-  if (row.kind === "outside") return row.session.last_activity_at
-  return row.session.last_activity_at ?? row.session.created_at
-}
-
-/**
- * What an Ariadne row is about: the task it ran, the goal it planned, or a
- * loose session's own title.
- */
+/** What a row is about: the task it ran, the goal it planned, or the request it reviewed. */
 function ariadneTitle(
   session: SessionDto,
   goalsById: Map<string, GoalDto>,
@@ -153,28 +89,20 @@ function ariadneTitle(
 ): string {
   if (session.task_id) return tasksById.get(session.task_id)?.title ?? shortId(session.task_id)
   if (session.goal_id) return goalsById.get(session.goal_id)?.title ?? shortId(session.goal_id)
-  return session.title ?? "Loose session"
+  return session.pull_request_id
+    ? `Pull request ${shortId(session.pull_request_id)}`
+    : shortId(session.id)
 }
 
-/**
- * Whether an Ariadne row matches the filters the daemon only takes for the
- * outside listing — applied here so one filter reads as one filter over the
- * whole table, not one that only works on half of it.
- */
+/** Whether a session matches the agent, directory, activity and search filters. */
 function matchesBrowse(
   session: SessionDto,
   title: string,
-  {
-    agent,
-    dir,
-    since,
-    until,
-    q,
-  }: { agent?: string; dir?: string; since?: string; until?: string; q?: string },
+  { agent, dir, since, until, q }: BrowseFilters,
 ): boolean {
   if (agent && parseModelRef(session.model)?.agent !== agent) return false
   if (dir && !(session.worktree_path ?? "").startsWith(dir)) return false
-  const at = session.last_activity_at ?? session.created_at
+  const at = movedAt(session)
   if (since && new Date(at) < new Date(since)) return false
   if (until && new Date(at) > new Date(until)) return false
   if (q && !title.toLowerCase().includes(q.toLowerCase())) return false
@@ -192,129 +120,49 @@ export function SessionsPage() {
     filterBy,
     clearFilters: clearSessionFilters,
   } = useSessionFilters()
-  const browse = useOutsideSessionFilters()
+  const browse = useBrowseFilters()
 
-  const ariadneFilters: SessionListFilters = {
+  const filters: SessionListFilters = {
     ...statusFilters(status),
     seat: seat ?? undefined,
     goal: goal ?? undefined,
     task: task ?? undefined,
   }
-  const ariadneSessions = useQuery(sessionsQueryOptions(ariadneFilters))
-
-  // A goal or a task is a structural impossibility for an outside session —
-  // it has neither — so its half of the request is skipped rather than asked
-  // for an answer that can only be empty. Picking a kind of "Ariadne" does
-  // the same, on purpose. A status or a seat is not: they still reach the
-  // outside endpoint's own filters (`agent`, `dir`, `since`, `until`, `q`),
-  // which keep answering — it is only the merged *rows* that leave an
-  // outside session out while one of those is set, since none has a status
-  // or a seat to match it with (see `outsideEligible` below).
-  const outsideFetchEnabled = browse.kind !== "ariadne" && !goal && !task
-  const outsideEligible = outsideFetchEnabled && !status && !seat
-  const refreshWanted = useRef(false)
-  const outsideSessions = useInfiniteQuery({
-    ...outsideSessionsQueryOptions(browse.filters, () => {
-      const wanted = refreshWanted.current
-      refreshWanted.current = false
-      return wanted
-    }),
-    enabled: outsideFetchEnabled,
-  })
+  const sessions = useQuery(sessionsQueryOptions(filters))
 
   const goals = useQuery(goalsQueryOptions())
   const tasks = useQuery(taskListQueryOptions())
   const goalsById = byId(goals.data)
   const tasksById = byId(tasks.data)
 
-  const outsidePages = outsideSessions.data?.pages
-  const outsideRows = useMemo(
-    () => (outsidePages ?? []).flatMap((page) => page.sessions),
-    [outsidePages],
+  const rows = useMemo(
+    () =>
+      (sessions.data ?? [])
+        .filter((session) =>
+          matchesBrowse(session, ariadneTitle(session, goalsById, tasksById), browse.filters),
+        )
+        .sort((a, b) => movedAt(b).localeCompare(movedAt(a))),
+    [sessions.data, browse.filters, goalsById, tasksById],
   )
 
-  const ariadneRows = useMemo(() => {
-    if (browse.kind === "outside") return []
-    return (ariadneSessions.data ?? []).filter((session) =>
-      matchesBrowse(session, ariadneTitle(session, goalsById, tasksById), browse.filters),
-    )
-  }, [ariadneSessions.data, browse.kind, browse.filters, goalsById, tasksById])
-
-  const rows = useMemo(() => {
-    const merged: Row[] = [
-      ...ariadneRows.map((session): Row => ({ kind: "ariadne", session })),
-      ...(outsideEligible ? outsideRows.map((session): Row => ({ kind: "outside", session })) : []),
-    ]
-    return merged.sort((a, b) => movedAt(b).localeCompare(movedAt(a)))
-  }, [ariadneRows, outsideEligible, outsideRows])
-
-  const outsideTotal = outsidePages?.at(-1)?.total ?? outsideRows.length
-  const total = ariadneRows.length + (outsideEligible ? outsideTotal : 0)
-
   const filtered =
-    status !== null ||
-    seat !== null ||
-    browse.window !== DEFAULT_WINDOW ||
-    OUTSIDE_FILTER_PARAMS.some((param) => browse.values[param])
-  // One search-param update, window included, rather than one call per hook:
-  // two separate `setSearch` calls in the same handler would each start from
-  // the same pre-click params, so the second would undo the first's clears.
-  const clearFilters = () => clearSessionFilters([...OUTSIDE_FILTER_PARAMS, WINDOW_PARAM])
+    status !== null || seat !== null || BROWSE_FILTER_PARAMS.some((param) => browse.values[param])
+  const clearFilters = () => clearSessionFilters(BROWSE_FILTER_PARAMS)
 
-  const [starting, setStarting] = useState(false)
-  const [resumingKey, setResumingKey] = useState<string | null>(null)
-  const resume = useResumeOutsideSession()
-
-  function handleSelect(row: Row) {
-    if (row.kind === "ariadne") {
-      void navigate(sessionPanelFrom(paths.sessions(), search, row.session.id))
-      return
-    }
-    const key = rowKey(row)
-    if (resumingKey) return
-    setResumingKey(key)
-    resume.mutate(
-      { agent_id: row.session.agent_id, internal_session_id: row.session.internal_session_id },
-      {
-        onSuccess: (live) => {
-          setResumingKey(null)
-          void navigate(sessionPanelFrom(paths.sessions(), search, live.id))
-        },
-        onError: (error) => {
-          setResumingKey(null)
-          toast.error("Could not resume", { description: describeError(error) })
-        },
-      },
-    )
+  function handleSelect(session: SessionDto) {
+    void navigate(sessionPanelFrom(paths.sessions(), search, session.id))
   }
-
-  const outsidePending = outsideEligible && outsideSessions.isPending
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Sessions"
-        description="Every agent Ariadne has run, and every conversation an ACP agent stored on its own. Pick one to watch its console."
-        actions={
-          <Button onClick={() => setStarting(true)}>
-            <PlusIcon />
-            New session
-          </Button>
-        }
-      />
-
-      <NewSessionDialog
-        open={starting}
-        onOpenChange={setStarting}
-        onStarted={(session) =>
-          // Straight into its console: it is waiting for the first prompt.
-          void navigate(sessionTerminalFrom(paths.sessions(), search, session.id))
-        }
+        description="Every agent Ariadne has run. Pick one to watch its console."
       />
 
       {/* The search first, since finding one conversation by what it was
-          about is what the bar is used for most, with the count and Refresh
-          at the other end of its row. Under it, one compact trigger per
+          about is what the bar is used for most, with the count at the other end
+          of its row. Under it, one compact trigger per
           filter, each naming what it filters and what it is set to. The two
           free-form ones — the directory and the activity window — open a
           popover rather than sitting in the bar as bare fields: an empty date
@@ -335,44 +183,12 @@ export function SessionsPage() {
           </div>
 
           <div className="ml-auto flex items-center gap-3">
-            {outsideEligible ? (
-              <p className="text-sm text-muted-foreground tabular-nums">
-                {outsidePending
-                  ? `${ariadneRows.length} sessions · looking for outside conversations`
-                  : `${rows.length} of ${total} sessions`}
-              </p>
-            ) : null}
-            <Button
-              variant="outline"
-              disabled={!outsideFetchEnabled}
-              // Busy while the first page is in flight, its own refetch included:
-              // a refetch asked for over a request that is already running is the
-              // running one, which carries no `refresh`, and the flag this button
-              // set would then be spent on whatever asked next. A page loading
-              // underneath is Load more's spinner rather than this one's.
-              pending={outsideSessions.isFetching && !outsideSessions.isFetchingNextPage}
-              onClick={() => {
-                refreshWanted.current = true
-                void outsideSessions.refetch()
-              }}
-            >
-              <RefreshCwIcon />
-              Refresh
-            </Button>
+            <p className="text-sm text-muted-foreground tabular-nums">
+              {rows.length} of {sessions.data?.length ?? 0} sessions
+            </p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <FilterMenu
-            what="Kind"
-            value={browse.values.kind || ALL}
-            valueLabel={browse.kind ? KIND_LABELS[browse.kind] : null}
-            onSelect={(value) => browse.filterBy("kind", value)}
-            options={[
-              { value: "ariadne", label: KIND_LABELS.ariadne },
-              { value: "outside", label: KIND_LABELS.outside },
-            ]}
-            allLabel="All kinds"
-          />
           <AgentFilter
             value={browse.values.agent}
             onSelect={(agent) => browse.filterBy("agent", agent)}
@@ -400,7 +216,6 @@ export function SessionsPage() {
             options={SEATS.map((known) => ({ value: known, label: SEAT_LABELS[known] }))}
             allLabel="All seats"
           />
-          <WindowFilter value={browse.window} onSelect={browse.filterWindow} />
           <DirectoryFilter value={browse.values.dir} onSettle={browse.filterBy} />
           <ActivityFilter
             since={browse.values.since}
@@ -419,66 +234,39 @@ export function SessionsPage() {
 
       <ScopeChips goal={goal} task={task} onClear={filterBy} />
 
-      {ariadneSessions.isError ? (
+      {sessions.isError ? (
         <ErrorState
           title="Could not load sessions"
-          error={ariadneSessions.error}
-          description={errorDescription(ariadneSessions.error)}
-          onRetry={() => {
-            void ariadneSessions.refetch()
-            void outsideSessions.refetch()
-          }}
-        />
-      ) : null}
-      {outsideSessions.isError ? (
-        <ErrorState
-          title="Could not load outside conversations"
-          error={outsideSessions.error}
-          description={errorDescription(outsideSessions.error)}
-          onRetry={() => void outsideSessions.refetch()}
+          error={sessions.error}
+          description={errorDescription(sessions.error)}
+          onRetry={() => void sessions.refetch()}
         />
       ) : null}
       <SessionsTable
         rows={rows}
-        ariadnePending={ariadneSessions.isPending}
-        outsidePending={outsidePending}
+        pending={sessions.isPending}
         goalsById={goalsById}
         tasksById={tasksById}
-        resumingKey={resumingKey}
         onSelect={handleSelect}
         onScope={filterBy}
       />
-      {outsideEligible && outsideSessions.hasNextPage ? (
-        <Button
-          variant="outline"
-          className="self-center"
-          pending={outsideSessions.isFetchingNextPage}
-          onClick={() => void outsideSessions.fetchNextPage()}
-        >
-          Load more
-        </Button>
-      ) : null}
     </div>
   )
 }
 
 function SessionsTable({
   rows,
-  ariadnePending,
-  outsidePending,
+  pending,
   goalsById,
   tasksById,
-  resumingKey,
   onSelect,
   onScope,
 }: {
-  rows: Row[]
-  ariadnePending: boolean
-  outsidePending: boolean
+  rows: SessionDto[]
+  pending: boolean
   goalsById: Map<string, GoalDto>
   tasksById: Map<string, TaskDto>
-  resumingKey: string | null
-  onSelect: (row: Row) => void
+  onSelect: (session: SessionDto) => void
   onScope: (param: FilterParam, id: string) => void
 }) {
   return (
@@ -493,43 +281,26 @@ function SessionsTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {ariadnePending ? (
+        {pending ? (
           <SessionLoadingRows />
         ) : rows.length ? (
-          rows.map((row) => (
+          rows.map((session) => (
             <SessionRow
-              key={rowKey(row)}
-              row={row}
-              title={
-                row.kind === "ariadne"
-                  ? ariadneTitle(row.session, goalsById, tasksById)
-                  : row.session.first_prompt
-              }
-              goalTitle={
-                row.kind === "ariadne" && row.session.goal_id
-                  ? goalsById.get(row.session.goal_id)?.title
-                  : undefined
-              }
-              taskTitle={
-                row.kind === "ariadne" && row.session.task_id
-                  ? tasksById.get(row.session.task_id)?.title
-                  : undefined
-              }
-              column={
-                row.kind === "ariadne"
-                  ? sessionColumn(
-                      row.session,
-                      tasksById.get(row.session.task_id ?? ""),
-                      goalsById.get(row.session.goal_id ?? ""),
-                    )
-                  : undefined
-              }
-              resuming={resumingKey === rowKey(row)}
-              onSelect={() => onSelect(row)}
+              key={session.id}
+              session={session}
+              title={ariadneTitle(session, goalsById, tasksById)}
+              goalTitle={session.goal_id ? goalsById.get(session.goal_id)?.title : undefined}
+              taskTitle={session.task_id ? tasksById.get(session.task_id)?.title : undefined}
+              column={sessionColumn(
+                session,
+                tasksById.get(session.task_id ?? ""),
+                goalsById.get(session.goal_id ?? ""),
+              )}
+              onSelect={() => onSelect(session)}
               onScope={onScope}
             />
           ))
-        ) : outsidePending ? null : (
+        ) : (
           <TableRow className="hover:bg-transparent">
             <TableCell colSpan={SESSION_COLUMNS.length} className="p-0">
               <p className="px-4 py-8 text-center text-sm text-muted-foreground">
@@ -538,7 +309,6 @@ function SessionsTable({
             </TableCell>
           </TableRow>
         )}
-        {outsidePending ? <OutsideLoadingRow /> : null}
       </TableBody>
     </ScrollableTable>
   )
@@ -556,50 +326,30 @@ function SessionLoadingRows() {
   ))
 }
 
-function OutsideLoadingRow() {
-  return (
-    <TableRow className="hover:bg-transparent">
-      <TableCell
-        colSpan={SESSION_COLUMNS.length}
-        className="py-3 text-center text-sm text-muted-foreground"
-      >
-        <span className="inline-flex items-center gap-2">
-          <Loader2Icon className="size-4 animate-spin" aria-hidden />
-          Looking for outside conversations…
-        </span>
-      </TableCell>
-    </TableRow>
-  )
-}
-
 function SessionRow({
-  row,
+  session,
   title,
   goalTitle,
   taskTitle,
   column,
-  resuming,
   onSelect,
   onScope,
 }: {
-  row: Row
+  session: SessionDto
   title: string
   goalTitle: string | undefined
   taskTitle: string | undefined
   /** The workflow column a step agent staffs, which names it in place of its seat. */
   column: string | undefined
-  resuming: boolean
   onSelect: () => void
   /** Narrow the table to a goal or a task picked in the row. */
   onScope: (param: FilterParam, id: string) => void
 }) {
-  const directory =
-    row.kind === "outside" ? row.session.working_directory : row.session.worktree_path
+  const directory = session.worktree_path
   return (
     <TableRow
       tabIndex={0}
       className="cursor-pointer bg-background focus-visible:outline-none focus-visible:-outline-offset-2 focus-visible:ring-2 focus-visible:ring-ring/50"
-      aria-busy={resuming}
       aria-label={title}
       onClick={(event) => {
         const target = event.target as Element
@@ -617,10 +367,8 @@ function SessionRow({
         <span className="block truncate" title={title}>
           {title}
         </span>
-        {/* Where the agent ran, for every kind of row alike: a goal's or a
-            task's worktree, a loose session's directory, an outside
-            conversation's. It rides under the title rather than taking a
-            column of its own. */}
+        {/* Where the agent ran: a goal's or a task's worktree. It rides under
+            the title rather than taking a column of its own. */}
         {directory ? (
           <span
             className="block truncate font-mono text-xs text-muted-foreground"
@@ -631,47 +379,34 @@ function SessionRow({
         ) : null}
       </TableCell>
       <TableCell>
-        {resuming ? (
-          <span className="text-xs text-muted-foreground">Resuming…</span>
-        ) : row.kind === "outside" ? (
-          <Dash />
-        ) : (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <SessionStatusBadge status={row.session.status} />
-            <RowAttention session={row.session} />
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <SessionStatusBadge status={session.status} />
+          <RowAttention session={session} />
+        </div>
       </TableCell>
       <TableCell className="max-w-64">
-        {row.kind === "ariadne" ? (
-          <WorkCell
-            session={row.session}
-            goalTitle={goalTitle}
-            taskTitle={taskTitle}
-            column={column}
-            onScope={onScope}
-          />
-        ) : (
-          <Dash />
-        )}
+        <WorkCell
+          session={session}
+          goalTitle={goalTitle}
+          taskTitle={taskTitle}
+          column={column}
+          onScope={onScope}
+        />
       </TableCell>
       <TableCell className="max-w-40 truncate text-xs text-muted-foreground">
-        {row.kind === "ariadne"
-          ? pinLabel(row.session.model, row.session.effort)
-          : (row.session.model && pinLabel(row.session.model, row.session.effort)) ||
-            row.session.agent_id}
+        {pinLabel(session.model, session.effort)}
       </TableCell>
       <TableCell className="text-right text-xs text-muted-foreground">
-        {row.session.usage ? <TokenFigure usage={row.session.usage} /> : <Dash />}
+        <TokenFigure usage={session.usage} />
       </TableCell>
       <TableCell className="text-right tabular-nums text-muted-foreground">
-        <When at={movedAt(row)} format="age" label="last activity" />
+        <When at={movedAt(session)} format="age" label="last activity" />
       </TableCell>
     </TableRow>
   )
 }
 
-/** The reason badge of an Ariadne row, in the words the attention list uses. */
+/** The reason badge of a row, in the words the attention list uses. */
 function RowAttention({ session }: { session: SessionDto }) {
   const attention = shownAttention(session)
   return attention ? <SessionAttentionBadge attention={attention} /> : null
@@ -684,8 +419,7 @@ function RowAttention({ session }: { session: SessionDto }) {
  * the goals and tasks of every row line up beside it. Picking the goal or the
  * task narrows the table to its sessions, the way the chips above it do. A
  * pull request session has neither: its request stands in their place, by
- * title, linked to the forge. A loose session holds no seat and has none of
- * them.
+ * title, linked to the forge.
  */
 function WorkCell({
   session,
@@ -730,7 +464,7 @@ function WorkCell({
             className="text-muted-foreground"
           />
         ) : null}
-        {pullRequestId ? <PullRequestLink id={pullRequestId} title={session.title} /> : null}
+        {pullRequestId ? <PullRequestLink id={pullRequestId} /> : null}
       </div>
     </div>
   )

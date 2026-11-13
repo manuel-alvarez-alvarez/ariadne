@@ -153,9 +153,7 @@ export function useAttention(): Attention {
   // rows usually cost no extra request, where `GET /v1/sessions?attention=true`
   // would be a second list of its own. Filtering here is also what keeps the
   // rule — "the daemon raised a reason for it" — in one place for both this
-  // strip and `ariadne attention`. A loose session — one resumed from an
-  // outside conversation — has no goal, task or seat, and every reader below
-  // falls back accordingly.
+  // strip and `ariadne attention`.
   const sessions = useQuery(sessionsQueryOptions())
   // The daemon's own recovery producer: gates `exhausted` (see
   // `recoveryExhaustedSessions`) and supplies the rows — a machine resource
@@ -277,9 +275,8 @@ function collectAttention(
     flaggedAt.set(key, at)
     rows.set(key, {
       id: key,
-      // A loose session — one resumed from an outside conversation — has no
-      // goal at all; the fallback is what keeps this row's id total even for
-      // one of those, on the rare chance its agent process disconnects.
+      // A pull request's session has no goal; the fallback keeps this row's
+      // id total.
       goalId: session.goal_id ?? "",
       goal: goalsById.get(session.goal_id ?? ""),
       // The row is as recent as its most recent reason, whichever raised it.
@@ -293,7 +290,7 @@ function collectAttention(
   }
 
   // Every recovery item is its own row, whatever its cause: none of them
-  // belongs to one goal the way a task or a loose session's row does, and
+  // belongs to one goal the way a task's row does, and
   // a `quota` item's own summary, action and target say more than this
   // board could derive from the bare `exhausted` flag alone.
   for (const item of recovery?.items ?? []) {
@@ -382,7 +379,7 @@ function collectBoardAttention(sessions: SessionDto[] | undefined): BoardAttenti
     // A session with no task is an orchestrator's, and lands on its goal's lane.
     const index = session.task_id ? byTask : byGoal
     const key = session.task_id ?? session.goal_id ?? ""
-    // A pull request's session, or a loose one, has no card and no lane.
+    // A pull request's session has no card and no lane.
     if (!key) continue
     const held = index.get(key)
     if (!held || held.at.localeCompare(at) < 0) index.set(key, { reason, at })
@@ -497,7 +494,7 @@ export function attentionSubject(item: AttentionItem): string {
   // A pull request's session works for no goal: the request is its subject.
   const pullRequestId = item.session?.pull_request_id
   if (pullRequestId) {
-    return `Pull request · ${item.session?.title ?? shortId(pullRequestId)}`
+    return `Pull request · ${shortId(pullRequestId)}`
   }
   return item.session
     ? `${agentLabel(item)} · ${item.goal?.title ?? `Goal ${shortId(item.goalId)}`}`
