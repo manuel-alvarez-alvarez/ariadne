@@ -1,10 +1,33 @@
+/**
+ * One task, as it appears on the board and in any other list of tasks: two
+ * lines. The first is the title with what is wrong or being waited on — one
+ * state badge, and the session attention badge when an agent wants a person.
+ * The second is the compact workflow step track ({@link StepTrack}), the
+ * current step's title while the task runs, and at the right end the PR link
+ * and when the task was last updated.
+ *
+ * The card says each thing **once**. A session attention badge that repeats
+ * the state badge's label is dropped rather than drawn twice (see
+ * {@link repeatsCard}), which is what a stalled task saying "Stalled" beside
+ * "⚠ Stalled" was.
+ *
+ * **The whole card is one tab stop.** Everything explanatory is a real
+ * `Tooltip` for a pointer, and not one of them is focusable: the tooltip
+ * primitive makes every trigger focusable (`components/ui/tooltip.tsx`), which
+ * inside an anchor is an interactive node inside an interactive one. Every
+ * hint is collected into one hidden line instead ({@link cardHints}) and hung
+ * off the link with `aria-describedby`, so what was only in a tooltip is read
+ * where the card is landed on. The PR link is the one real anchor on the card
+ * and sits outside the link, as a sibling laid over line 2's right end, with
+ * no tab stop of its own.
+ */
+
 import { GitPullRequestIcon } from "lucide-react"
 import { useId } from "react"
 import { Link } from "react-router-dom"
 
 import type { TaskDto, WorkflowStepDto } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
-import { stepUsageRows } from "@/components/token-figure"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When, whenHint } from "@/components/when"
 import {
@@ -12,7 +35,7 @@ import {
   type SessionAttention,
   SessionAttentionBadge,
 } from "@/features/sessions/session-display"
-import { cachedShare, cn, formatTokens, plural } from "@/lib/format"
+import { cn, plural } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
 import { STALLED_META } from "./stalled"
 import { TASK_STATUS_META } from "./status"
@@ -20,7 +43,7 @@ import { StepTrack } from "./step-track"
 import { findStep } from "./steps"
 
 /**
- * The title link describes the state. Usage and PR controls are sibling controls.
+ * The card is one tab stop, so nothing drawn on it takes one of its own.
  * Every hint is read off the link's description instead ({@link cardHints}).
  */
 const NOT_A_STOP = -1
@@ -47,7 +70,7 @@ export function TaskCard({
   attention?: SessionAttention | null
 }) {
   const state = cardState(task)
-  const terminal = task.status === "cancelled" || task.status === "finished"
+  const terminal = task.status === "cancelled"
   // `to.replace` is set exactly when a goal panel is open — the card's own
   // link is replacing it rather than stacking on it, on the board behind it
   // or in the goal's own task list alike (`routes/paths.ts`'s `taskPanelTo`).
@@ -56,133 +79,96 @@ export function TaskCard({
   // dropped: it is the same fact, said once.
   const flagged = attention && !repeatsCard(attention, state) ? attention : null
   const hintsId = useId()
-  const currentStep = !terminal ? findStep(steps, task.step) : undefined
+  const currentStep = task.status === "in_progress" ? findStep(steps, task.step) : undefined
   const hints = cardHints(task, { state, flagged, currentStep })
 
-  const currentAgent = task.agents.find((agent) => agent.step === task.step)
-  const rows = stepUsageRows(task.usage, (id) => findStep(steps, id)?.title ?? id)
-  const usageDetails = (
-    <div className="space-y-2 text-sm">
-      <p>{cachedShare(task.usage.total)} cached input</p>
-      {rows.map((row) => (
-        <p key={row.key}>
-          {row.label}: Input {formatTokens(row.usage.input_tokens)} · Output{" "}
-          {formatTokens(row.usage.output_tokens)} · {cachedShare(row.usage)} cached
-        </p>
-      ))}
-    </div>
-  )
-
   return (
-    <article
+    <div
       className={cn(
-        "min-w-[300px] rounded-lg border bg-card text-card-foreground",
+        "relative rounded-lg border bg-card transition-colors hover:border-foreground/20 hover:bg-muted/50",
         cardBorder(task, attention),
       )}
     >
       <Link
         to={to}
         replace={to.replace}
-        aria-describedby={hintsId}
-        className={cn(
-          "block rounded-lg px-4 pt-4 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
-          terminal ? "pb-2" : "pb-3",
-        )}
+        aria-describedby={hints.length > 0 ? hintsId : undefined}
+        className="block rounded-lg px-2.5 pt-2.5 pb-1.5 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
       >
-        <p className="line-clamp-3 text-base leading-snug font-semibold">{task.title}</p>
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-          {flagged && <SessionAttentionBadge attention={flagged} hintTabIndex={NOT_A_STOP} />}
-          {terminal ? (
-            <span className="font-semibold">
-              {task.status === "finished" ? "Finished" : "Cancelled"}
-            </span>
-          ) : (
-            state && (
-              <StatusBadge
-                label={state.label}
-                tone={state.tone}
-                hint={state.hint}
-                hintTabIndex={NOT_A_STOP}
-              />
-            )
+        <div className="flex items-start gap-2">
+          <p
+            className={cn(
+              "line-clamp-2 min-w-0 flex-1 text-sm leading-snug font-medium",
+              terminal && "text-muted-foreground line-through decoration-muted-foreground/40",
+            )}
+          >
+            {task.title}
+          </p>
+          {/* First among the badges: it is the one thing on the card that is
+              addressed to the reader. Same pill as the attention strip and
+              the sessions table, down to the wording. */}
+          {flagged && (
+            <SessionAttentionBadge size="sm" attention={flagged} hintTabIndex={NOT_A_STOP} />
+          )}
+          {state && (
+            <StatusBadge
+              size="sm"
+              label={state.label}
+              tone={state.tone}
+              hint={state.hint}
+              hintTabIndex={NOT_A_STOP}
+            />
           )}
         </div>
-        {!terminal && (
-          <div className="mt-3 space-y-3 text-sm">
-            <StepTrack task={task} steps={steps} />
-            {task.step && (
-              <p className="break-words">
-                Current model: {currentAgent?.model || "None staffed"}
-                {currentAgent?.effort ? ` · ${currentAgent.effort}` : ""}
-              </p>
-            )}
-          </div>
-        )}
-        {task.reason && (task.status === "failed" || task.status === "cancelled") && (
-          <p className="mt-2 line-clamp-2 text-sm">{task.reason}</p>
-        )}
+
+        <div
+          className={cn(
+            "mt-1.5 flex items-center gap-2 text-xs text-muted-foreground",
+            task.pr_url && "pr-5",
+          )}
+        >
+          <StepTrack task={task} steps={steps} />
+          {currentStep && <span className="min-w-0 truncate">{currentStep.title}</span>}
+          <When
+            at={task.updated_at}
+            label="updated"
+            hintTabIndex={NOT_A_STOP}
+            className="ml-auto shrink-0"
+          />
+        </div>
       </Link>
-      <div className="px-4 pb-3 text-sm">
-        {terminal ? (
-          <div className="flex flex-wrap gap-x-4 tabular-nums">
-            <span>Input {formatTokens(task.usage.total.input_tokens)}</span>
-            <span>Output {formatTokens(task.usage.total.output_tokens)}</span>
-          </div>
-        ) : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label="Task token usage"
-                  className="flex w-full flex-wrap gap-x-4 gap-y-1 rounded text-left tabular-nums focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              }
-            >
-              <span>
-                Input {formatTokens(task.usage.total.input_tokens)} ·{" "}
-                {cachedShare(task.usage.total)} cached
-              </span>
-              <span>Output {formatTokens(task.usage.total.output_tokens)}</span>
-            </TooltipTrigger>
-            <TooltipContent role="tooltip" className="max-w-sm flex-col items-start">
-              <p>
-                Input {formatTokens(task.usage.total.input_tokens)} · Output{" "}
-                {formatTokens(task.usage.total.output_tokens)}
-              </p>
-              {usageDetails}
-            </TooltipContent>
-          </Tooltip>
-        )}
-        {terminal ? (
-          <details className="mt-2">
-            <summary className="cursor-pointer">Usage details</summary>
-            {usageDetails}
-            <p className="mt-2">
-              Updated <When at={task.updated_at} label="updated" hintTabIndex={NOT_A_STOP} />
-            </p>
-          </details>
-        ) : (
-          <p className="mt-2 text-muted-foreground">
-            Updated <When at={task.updated_at} label="updated" hintTabIndex={NOT_A_STOP} />
-          </p>
-        )}
-        {task.pr_url && (
-          <a
-            href={task.pr_url}
-            aria-label="Pull request"
-            data-pr-link
-            className="mt-2 inline-flex items-center gap-1 underline underline-offset-4"
+
+      {/* Everything the link says only to a pointer, in one line for whoever
+          is reading the link itself. Outside the anchor, so it describes the
+          link rather than joining its name. */}
+      {hints.length > 0 && (
+        <p id={hintsId} className="sr-only">
+          {hints.join(". ")}
+        </p>
+      )}
+
+      {/* The PR link is the right end of line 2, beside the time: a real
+          anchor cannot sit inside the card's link, so it is laid over the
+          card's bottom-right corner, where line 2 leaves room for it. */}
+      {task.pr_url && (
+        <Tooltip>
+          <TooltipTrigger
+            tabIndex={NOT_A_STOP}
+            render={
+              <a
+                href={task.pr_url}
+                aria-label="Pull request"
+                data-pr-link
+                className="absolute right-2.5 bottom-1.5 flex h-4 items-center text-muted-foreground hover:text-foreground"
+              />
+            }
           >
-            <GitPullRequestIcon className="size-4" />
-            Pull request
-          </a>
-        )}
-      </div>
-      <p id={hintsId} className="sr-only">
-        {hints.join(". ")}
-      </p>
-    </article>
+            <GitPullRequestIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>Open the pull request</TooltipContent>
+        </Tooltip>
+      )}
+    </div>
   )
 }
 

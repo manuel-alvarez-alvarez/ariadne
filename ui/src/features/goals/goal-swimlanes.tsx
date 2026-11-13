@@ -45,7 +45,7 @@ import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 /**
  * One template for the column header row and every lane's cells, so the two
  * columns line up down the board. Neither is narrower than a card reads at:
- * 300px is the minimum readable card width.
+ * 13rem is what a card wants, 11rem is what it still reads at.
  */
 const COLUMNS_GRID = "grid grid-cols-[minmax(0,66fr)_minmax(0,34fr)]"
 
@@ -55,10 +55,10 @@ const COLUMNS_GRID = "grid grid-cols-[minmax(0,66fr)_minmax(0,34fr)]"
  * on the block *inside* the scrollport, which is what makes a narrow window
  * scroll the board rather than squeeze its cards past reading.
  */
-const BOARD_WIDTH = "min-w-[66rem]"
+const BOARD_WIDTH = "min-w-[42rem]"
 
-/** The grid a cell lays its cards out on: as many 300px-floor columns as fit. */
-const CELL_GRID = "grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] content-start gap-2"
+/** The grid a cell lays its cards out on: as many 11rem-floor columns as fit. */
+const CELL_GRID = "grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] content-start gap-2"
 
 /**
  * The board's own scrollport: sticky only works against the box that scrolls.
