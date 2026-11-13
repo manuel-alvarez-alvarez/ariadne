@@ -753,9 +753,10 @@ Out: the daemon endpoints themselves (012).
 
 48. While a goal is planning and has an orchestrator, its panel shows a
     planning guide between the facts and the tabs. The guide words only what
-    the newest orchestrator session records: `starting`, `running` (working),
-    `idle` with a `waiting_input` or `waiting_permission` reason (waiting for
-    you), plain `idle`, or ended. With no session recorded, or while the
+    the newest orchestrator session records: a `waiting_input` or `waiting_permission`
+    reason (waiting for you) whatever the status, else `starting`, `running`
+    (working), plain `idle`, or ended. A failed read shows unavailable even
+    over cached sessions. With no session recorded, or while the
     sessions are loading or unreadable, it states that and claims no progress.
     The Open orchestrator conversation button appears only with a session and
     opens it over the panel as the Sessions tab does. Create task manually is
@@ -764,9 +765,12 @@ Out: the daemon endpoints themselves (012).
 
 ## Acceptance criteria
 
-- The planning guide words the recorded orchestrator session, opens it, and
-  claims nothing without one
+- The planning guide words the recorded orchestrator session, a recorded wait
+  before its status, and opens it
+  (`ui/src/features/goals/planning-guide.test.tsx::words a recorded %j session as %s`);
+  it claims nothing without a session or after a failed read
   (`ui/src/features/goals/planning-guide.test.tsx::claims no progress when no session is recorded, and keeps manual task creation`,
+  `ui/src/features/goals/planning-guide.test.tsx::says the state is unavailable when a refetch fails over cached sessions`,
   `ui/src/features/goals/planning-guide.test.tsx::says the state is unavailable when the sessions cannot be read`).
 - Enabled desktop diagnostics export native shell events at their severity
   with a `tauri` target (`ui/src/telemetry/provider.test.tsx::forwards native shell logs at their level when diagnostics are enabled`,

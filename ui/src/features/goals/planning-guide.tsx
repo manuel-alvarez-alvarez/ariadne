@@ -25,23 +25,26 @@ type PlanningState =
 
 /** The newest orchestrator session decides; the list is read as the daemon sent it. */
 function planningState(sessions: SessionDto[] | undefined, failed: boolean): PlanningState {
-  if (!sessions) return failed ? { kind: "unavailable" } : { kind: "loading" }
+  // A failed read outranks cached data: the old state is not current.
+  if (failed) return { kind: "unavailable" }
+  if (!sessions) return { kind: "loading" }
   const session = sessions.reduce<SessionDto | null>(
     (latest, next) => (latest && latest.created_at >= next.created_at ? latest : next),
     null,
   )
   if (!session) return { kind: "none" }
+  // A recorded wait comes before the status: a running agent can be blocked.
+  const reason = sessionAttention(session)
+  if (reason === "waiting_input" || reason === "waiting_permission") {
+    return { kind: "waiting", session }
+  }
   switch (session.status) {
     case "starting":
       return { kind: "starting", session }
     case "running":
       return { kind: "working", session }
-    case "idle": {
-      const reason = sessionAttention(session)
-      return reason === "waiting_input" || reason === "waiting_permission"
-        ? { kind: "waiting", session }
-        : { kind: "idle", session }
-    }
+    case "idle":
+      return { kind: "idle", session }
     default:
       return { kind: "ended", session }
   }

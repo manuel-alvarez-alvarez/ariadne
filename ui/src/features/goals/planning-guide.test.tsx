@@ -27,6 +27,10 @@ it.each<[Partial<SessionDto>, string]>([
   [{ status: "starting" }, "The orchestrator is starting"],
   [{ status: "running" }, "The orchestrator is working on the plan"],
   [{ status: "idle", attention_reason: "waiting_input" }, "The orchestrator is waiting for you"],
+  [
+    { status: "running", attention_reason: "waiting_permission" },
+    "The orchestrator is waiting for you",
+  ],
   [{ status: "idle" }, "The orchestrator is idle"],
   [{ status: "exited" }, "The planning conversation has ended"],
 ])("words a recorded %j session as %s", async (overrides, headline) => {
@@ -48,4 +52,21 @@ it("says the state is unavailable when the sessions cannot be read", async () =>
   mount("error")
   expect(await screen.findByText("Planning state is unavailable")).toBeTruthy()
   expect(screen.queryByRole("button", { name: "Open orchestrator conversation" })).toBeNull()
+})
+
+it("says the state is unavailable when a refetch fails over cached sessions", async () => {
+  daemonFetch.mockResolvedValueOnce(
+    jsonResponse(aSessionPage([orchestrator({ status: "running" })])),
+  )
+  const { queryClient } = renderScreen(
+    <PlanningGuide
+      goal={aGoal({ status: "planning" })}
+      onOpenConversation={vi.fn()}
+      onNewTask={vi.fn()}
+    />,
+  )
+  expect(await screen.findByText("The orchestrator is working on the plan")).toBeTruthy()
+  daemonFetch.mockResolvedValue(errorResponse(500, "internal", "boom"))
+  await queryClient.invalidateQueries()
+  expect(await screen.findByText("Planning state is unavailable")).toBeTruthy()
 })
