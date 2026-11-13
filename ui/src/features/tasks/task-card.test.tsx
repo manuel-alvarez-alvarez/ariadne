@@ -42,8 +42,48 @@ it("shows no state badge for a task under way", () => {
   for (const label of ["Waits", "Failed", "Stalled", "Cancelled", "In progress"]) {
     expect(screen.queryByText(label)).toBeNull()
   }
-  expect(screen.getByText("Test", { selector: "span.truncate" })).toBeTruthy()
+  expect(screen.getByRole("link").textContent).toContain("claude-agent-acp:claude-sonnet-5")
+  expect(
+    document.getElementById(screen.getByRole("link").getAttribute("aria-describedby") ?? "")
+      ?.textContent,
+  ).toContain("Current step Test")
 })
+
+it("shows the current staffed model and compact task token totals", () => {
+  card({
+    status: "in_progress",
+    step: "build",
+    agents: [
+      {
+        id: "a1",
+        step: "build",
+        skills: ["coding"],
+        model: "codex-acp:a-very-long-model-name",
+        effort: "high",
+      },
+    ],
+    usage: {
+      total: { input_tokens: 1234, cached_input_tokens: 300, output_tokens: 56 },
+      agents: [],
+    },
+  })
+  expect(screen.getByText("codex-acp:a-very-long-model-name").className).toContain("truncate")
+  expect(screen.getByText("In 1.2k · Out 56")).toBeTruthy()
+  expect(screen.getByRole("link").getAttribute("aria-describedby")).toBeTruthy()
+})
+
+it.each(["finished", "cancelled"] as const)(
+  "shows token totals without model for %s tasks",
+  (status) => {
+    card({
+      status,
+      usage: { total: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }, agents: [] },
+    })
+    expect(screen.getByText("In 0 · Out 0")).toBeTruthy()
+    expect(screen.queryByText("claude-agent-acp:claude-sonnet-5")).toBeNull()
+    expect(screen.queryByRole("list", { name: "Workflow steps" })).toBeNull()
+  },
+)
 
 it("puts a failed task's reason in its badge tooltip", async () => {
   card({ status: "failed", reason: "the build broke" })
@@ -60,9 +100,9 @@ it("draws a check before the current step, a mark on it and rings after", () => 
   expect(second?.querySelector("svg")).toBeNull()
 })
 
-it("draws every dot as a check for a finished task and as a ring for one with no step", () => {
+it("omits the workflow track for a finished task", () => {
   card({ status: "finished", step: null })
-  expect(states()).toEqual(["done", "done", "done"])
+  expect(screen.queryByRole("list", { name: "Workflow steps" })).toBeNull()
 })
 
 it("draws every dot as a ring for a task with no step", () => {

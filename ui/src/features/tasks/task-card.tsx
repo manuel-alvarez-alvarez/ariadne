@@ -35,7 +35,7 @@ import {
   type SessionAttention,
   SessionAttentionBadge,
 } from "@/features/sessions/session-display"
-import { cn, plural } from "@/lib/format"
+import { cn, formatTokens, plural } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
 import { STALLED_META } from "./stalled"
 import { TASK_STATUS_META } from "./status"
@@ -80,7 +80,10 @@ export function TaskCard({
   const flagged = attention && !repeatsCard(attention, state) ? attention : null
   const hintsId = useId()
   const currentStep = task.status === "in_progress" ? findStep(steps, task.step) : undefined
-  const hints = cardHints(task, { state, flagged, currentStep })
+  const currentAgent = currentStep
+    ? task.agents.find((agent) => agent.step === currentStep.id)
+    : undefined
+  const hints = cardHints(task, { state, flagged, currentStep, currentAgent })
 
   return (
     <div
@@ -127,8 +130,18 @@ export function TaskCard({
             task.pr_url && "pr-5",
           )}
         >
-          <StepTrack task={task} steps={steps} />
-          {currentStep && <span className="min-w-0 truncate">{currentStep.title}</span>}
+          {task.status !== "finished" && task.status !== "cancelled" && (
+            <StepTrack task={task} steps={steps} />
+          )}
+          {currentStep && currentAgent && (
+            <span className="min-w-0 truncate" title={currentAgent.model}>
+              {currentAgent.model}
+            </span>
+          )}
+          <span className="shrink-0 tabular-nums">
+            In {formatTokens(task.usage.total.input_tokens)} · Out{" "}
+            {formatTokens(task.usage.total.output_tokens)}
+          </span>
           <When
             at={task.updated_at}
             label="updated"
@@ -241,12 +254,31 @@ function cardHints(
     state,
     flagged,
     currentStep,
-  }: { state: CardState | null; flagged: SessionAttention | null; currentStep?: WorkflowStepDto },
+    currentAgent,
+  }: {
+    state: CardState | null
+    flagged: SessionAttention | null
+    currentStep?: WorkflowStepDto
+    currentAgent?: TaskDto["agents"][number]
+  },
 ): string[] {
   const hints: string[] = []
   if (flagged) hints.push(SESSION_ATTENTION_META[flagged].hint)
   if (state) hints.push(`${state.label}. ${state.hint}`)
   if (currentStep) hints.push(`Current step ${currentStep.title}`)
+  if (currentAgent)
+    hints.push(
+      `Current model ${currentAgent.model}; reasoning effort ${currentAgent.effort ?? "default"}`,
+    )
+  for (const agent of task.usage.agents) {
+    const staffed = task.agents.find((item) => item.id === agent.agent_id)
+    hints.push(
+      `${staffed?.step ?? agent.step ?? "Workflow"} usage: ${formatTokens(agent.usage.input_tokens)} input, ${formatTokens(agent.usage.output_tokens)} output`,
+    )
+  }
+  hints.push(
+    `Task tokens: ${formatTokens(task.usage.total.input_tokens)} input, ${formatTokens(task.usage.total.output_tokens)} output`,
+  )
   if (task.pr_url) hints.push("Has a pull request")
   hints.push(whenHint(task.updated_at, "updated"))
   return hints

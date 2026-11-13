@@ -716,9 +716,14 @@ Out: the daemon endpoints themselves (012).
     the step, its description, and its agent's model, effort and skills, with
     a link to the agent's session, or says "none staffed". The right end of
     line 2 is a PR link icon, when the task has a `pr_url`, beside the relative
-    updated time. The card shows no branch, merge commit, dependency icon or
-    token figure, is one link to `?task=` with one tab stop, and keeps its
-    border order: attention, failed, stalled. The goal panel's task list shows
+    updated time. The card has one compact metadata row with the current
+    staffed model and total input/output tokens; finished and cancelled cards
+    have no workflow track and show totals only, including zero. Long model names truncate in the row and
+    remain available in the accessible description. Reasoning effort and
+    per-agent workflow usage are in that description. The card shows no branch,
+    merge commit or dependency icon, is one link to `?task=` with one tab stop,
+    preserves its compact dimensions, and keeps its border order: attention,
+    failed, stalled. The goal panel's task list shows
     the same card (`ui/src/features/tasks/task-card.test.tsx`).
 40. The task panel of a stepped task draws one workflow section under its
     facts, in place of a separate Agents fact and step strip: a track of
