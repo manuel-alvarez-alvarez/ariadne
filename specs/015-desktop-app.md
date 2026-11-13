@@ -732,6 +732,17 @@ Out: the daemon endpoints themselves (012).
     Markdown, through the same renderer as descriptions and messages, so a
     reason an agent wrote with lists, code or links reads as it does
     everywhere else.
+45a. The task panel opens on an execution summary above the technical facts,
+    built from recorded state alone: the status and step, the failure or
+    cancel reason, the stalled flag, each unfinished dependency named by
+    title and status in text and linked to its task, and each live session
+    with an attention reason, linked to that session. A task with no
+    recorded blocker says its cause is unknown; the summary never infers
+    one from silence or elapsed time. Branch, worktree, tokens and the
+    other identifiers stay in the facts below it
+    (`ui/src/features/tasks/task-panel.test.tsx::explains a pending task by
+    the dependencies it waits for`, `::says the cause is unknown for a
+    pending task with nothing recorded`).
 46. The packaged webview has a content security policy that permits scripts,
     styles, fonts and images from the app, and images from the ACP registry's CDN
     (`https://cdn.agentclientprotocol.com`) alone. It permits HTTP, HTTPS, WebSocket

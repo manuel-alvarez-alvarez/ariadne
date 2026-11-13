@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen } from "@testing-library/react"
+import { screen, within } from "@testing-library/react"
 import { expect, it } from "vitest"
 
 import { qk } from "@/api"
@@ -43,4 +43,27 @@ it("shows workflow agents by column", async () => {
   expect(await screen.findByText("Build")).toBeTruthy()
   expect(screen.getByText("Test")).toBeTruthy()
   expect(screen.queryByText("Agents")).toBeNull()
+})
+
+it("explains a pending task by the dependencies it waits for", async () => {
+  const dependency = aTask({ id: "dep-1", title: "Lay the schema", status: "in_progress" })
+  const task = aTask({ status: "pending", step: null, depends_on: [dependency.id] })
+  renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => {
+      client.setQueryData(qk.tasks.detail(task.id), task)
+      client.setQueryData(qk.tasks.detail(dependency.id), dependency)
+    },
+  })
+  const summary = await screen.findByRole("region", { name: "Execution summary" })
+  expect(summary.textContent).toContain("Waiting for Lay the schema (in progress).")
+  expect(within(summary).getByRole("link", { name: "Lay the schema" })).toBeTruthy()
+})
+
+it("says the cause is unknown for a pending task with nothing recorded", async () => {
+  const task = aTask({ status: "pending", step: null, depends_on: [] })
+  renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail(task.id), task),
+  })
+  const summary = await screen.findByRole("region", { name: "Execution summary" })
+  expect(summary.textContent).toContain("The cause is unknown.")
 })
