@@ -5,8 +5,11 @@
  * state badge, and the session attention badge when an agent wants a person;
  * the badges shrink to their dot when the card is narrow. Row 2 is the
  * workflow ({@link StepTrack}): circles, step names and arrows on one line,
- * for finished and cancelled tasks too. Row 3 is the token totals at the left
- * and the last activity at the right, with the PR link in reserved padding.
+ * for finished and cancelled tasks too. Row 3 is the task's `TokenFigure`
+ * (`↑input share ↓output`, the goal lane header's own rendering, at every
+ * width) at the left and the last activity at the right, with the PR link in
+ * reserved padding. The figure's hover names Input and Output and lists one
+ * row per workflow step.
  *
  * The card is an `@container`: its own width, not the window's, decides which
  * step names, labels and time wording are drawn, so it holds in a board cell
@@ -34,6 +37,7 @@ import { Link } from "react-router-dom"
 
 import type { TaskDto, WorkflowStepDto } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
+import { stepUsageRows, TokenFigure } from "@/components/token-figure"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When, whenHint } from "@/components/when"
 import {
@@ -46,7 +50,7 @@ import { useTaskPanelTo } from "@/routes/paths"
 import { STALLED_META } from "./stalled"
 import { TASK_STATUS_META } from "./status"
 import { StepTrack } from "./step-track"
-import { findStep } from "./steps"
+import { findStep, stepTitle } from "./steps"
 
 /**
  * The card is one tab stop, so nothing drawn on it takes one of its own.
@@ -157,15 +161,12 @@ export function TaskCard({
             task.pr_url && "pr-5",
           )}
         >
-          <span className="min-w-0 flex-1 truncate tabular-nums">
-            <span className="@[15rem]:hidden">
-              ↓{formatTokens(task.usage.total.input_tokens)} ↑
-              {formatTokens(task.usage.total.output_tokens)}
-            </span>
-            <span className="hidden @[15rem]:inline">
-              In {formatTokens(task.usage.total.input_tokens)} · Out{" "}
-              {formatTokens(task.usage.total.output_tokens)}
-            </span>
+          <span className="min-w-0 flex-1 truncate">
+            <TokenFigure
+              usage={task.usage.total}
+              rows={stepUsageRows(task.usage, (step) => stepTitle(steps, step))}
+              tabIndex={NOT_A_STOP}
+            />
           </span>
           <span className="min-w-0 shrink truncate">
             <When
