@@ -73,7 +73,8 @@ it("shows the current staffed model and compact task token totals", () => {
       ?.textContent,
   ).toContain("Current model codex-acp:a-very-long-model-name")
   expect(screen.getByText("Build", { selector: "span.truncate" })).toBeTruthy()
-  expect(screen.getByText("In 1.2k · Out 56")).toBeTruthy()
+  expect(screen.getByText("1.2k")).toBeTruthy()
+  expect(screen.getByText("56")).toBeTruthy()
 })
 
 it.each(["finished", "cancelled"] as const)(
@@ -83,7 +84,7 @@ it.each(["finished", "cancelled"] as const)(
       status,
       usage: { total: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }, agents: [] },
     })
-    expect(screen.getByText("In 0 · Out 0")).toBeTruthy()
+    expect(screen.getAllByText("0").length).toBeGreaterThan(0)
     expect(screen.queryByText("claude-agent-acp:claude-sonnet-5")).toBeNull()
     expect(screen.getByRole("list", { name: "Workflow steps" })).toBeTruthy()
   },
@@ -211,4 +212,29 @@ it("lists the folded steps in the fold marker's tooltip", async () => {
   renderScreen(<TaskCard task={aTask({ status: "in_progress", step: "s7" })} steps={many} />)
   await userEvent.hover(screen.getByLabelText("6 more steps"))
   expect(await screen.findByText("Does 0.")).toBeTruthy()
+})
+
+it("hovers the token figure into Input, Output and a row per step, with no tab stop inside the link", async () => {
+  card({
+    status: "in_progress",
+    step: "build",
+    agents: [],
+    usage: {
+      total: { input_tokens: 1234, cached_input_tokens: 300, output_tokens: 56 },
+      agents: [
+        {
+          agent_id: "a1",
+          skills: [],
+          step: "build",
+          usage: { input_tokens: 1234, cached_input_tokens: 300, output_tokens: 56 },
+        },
+      ],
+    },
+  })
+  const link = screen.getByRole("link")
+  expect(link.querySelectorAll("[tabindex]:not([tabindex='-1'])").length).toBe(0)
+  await userEvent.hover(screen.getByText("1.2k"))
+  expect((await screen.findAllByText("Input")).length).toBeGreaterThan(0)
+  expect(screen.getAllByText("Output").length).toBeGreaterThan(0)
+  expect(screen.getAllByText("Build").length).toBeGreaterThan(0)
 })
