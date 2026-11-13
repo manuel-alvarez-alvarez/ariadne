@@ -36,6 +36,7 @@ export function AttentionPopover() {
   const [open, setOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const picked = useRef(false)
   const unavailable = attention.items.length === 0 && attention.error !== null
   const empty =
     attention.items.length === 0 && !attention.isPending && !unavailable && !attention.partial
@@ -100,11 +101,19 @@ export function AttentionPopover() {
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
         onOpenChangeComplete={(next) => {
-          if (!next) triggerRef.current?.focus()
+          // A picked row moved the keyboard to its target; only a dismissal returns it here.
+          if (!next && !picked.current) triggerRef.current?.focus()
+          picked.current = false
         }}
       >
         <SheetContent className="sm:max-w-3xl">
-          <AttentionDrawer attention={attention} onSelect={() => setDrawerOpen(false)} />
+          <AttentionDrawer
+            attention={attention}
+            onSelect={() => {
+              picked.current = true
+              setDrawerOpen(false)
+            }}
+          />
         </SheetContent>
       </Sheet>
     </>
@@ -172,10 +181,13 @@ function AttentionDrawer({
     else hasNoGoal = true
     for (const r of reasonsOf(item)) reasons.set(r.key, r.label)
   }
+  // A value whose option is gone (its last item resolved) is no filter, as the select shows.
+  const activeGoal = goal === NO_GOAL ? (hasNoGoal ? goal : "") : goals.has(goal) ? goal : ""
+  const activeReason = reasons.has(reason) ? reason : ""
   const shown = attention.items.filter(
     (item) =>
-      (!goal || (goal === NO_GOAL ? !item.goalId : item.goalId === goal)) &&
-      (!reason || reasonsOf(item).some((r) => r.key === reason)),
+      (!activeGoal || (activeGoal === NO_GOAL ? !item.goalId : item.goalId === activeGoal)) &&
+      (!activeReason || reasonsOf(item).some((r) => r.key === activeReason)),
   )
   const selectClass = "h-8 rounded-md border bg-background px-2 text-sm"
   return (
@@ -191,7 +203,7 @@ function AttentionDrawer({
           Goal
           <select
             className={selectClass}
-            value={goal}
+            value={activeGoal}
             onChange={(event) => setGoal(event.target.value)}
           >
             <option value="">All goals</option>
@@ -207,7 +219,7 @@ function AttentionDrawer({
           Reason
           <select
             className={selectClass}
-            value={reason}
+            value={activeReason}
             onChange={(event) => setReason(event.target.value)}
           >
             <option value="">All reasons</option>

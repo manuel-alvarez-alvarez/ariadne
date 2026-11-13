@@ -140,3 +140,27 @@ it("reports a failed read in the drawer when nothing loaded", async () => {
   await openDrawer()
   expect(await screen.findByText(/Could not load attention/)).not.toBeNull()
 })
+it("does not return focus to the trigger after a row is picked", async () => {
+  recovery = [item({ kind: "console", session_id: "01JSESS0000000000000000009" })]
+  renderScreen(<AttentionPopover />, { route: "/profiles" })
+  const trigger = await openDrawer()
+  fireEvent.click(await screen.findByText("Open console"))
+  await waitFor(() => expect(screen.queryByText("Showing 1 of 1")).toBeNull())
+  await new Promise((resolve) => requestAnimationFrame(resolve))
+  expect(document.activeElement).not.toBe(trigger)
+})
+it("drops a filter whose last item resolved instead of hiding every row", async () => {
+  recovery = [
+    item(),
+    { ...item(), id: "recovery:access:other", reason: "access", summary: "Sign in to continue" },
+  ]
+  const { queryClient } = renderScreen(<AttentionPopover />, { route: "/profiles" })
+  await openDrawer()
+  await screen.findByText("Showing 2 of 2")
+  fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "recovery:access" } })
+  expect(screen.getByText("Showing 1 of 2")).not.toBeNull()
+  recovery = [item()]
+  await queryClient.invalidateQueries()
+  expect(await screen.findByText("Showing 1 of 1")).not.toBeNull()
+  expect((screen.getByLabelText("Reason") as HTMLSelectElement).value).toBe("")
+})
