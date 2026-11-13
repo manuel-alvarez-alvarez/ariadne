@@ -13,7 +13,7 @@ import { ArrowRightIcon } from "lucide-react"
 
 import type { TaskStatus, TaskTransitionDto, WorkflowStepDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -43,7 +43,7 @@ export function TaskHistory({
     )
   }
 
-  if (transitions.error) {
+  if (transitions.error && !transitions.data) {
     return (
       <ErrorState
         title="Could not load history"
@@ -58,11 +58,20 @@ export function TaskHistory({
   }
 
   return (
-    <ol className="relative space-y-0 border-l pl-5">
-      {transitions.data.map((transition) => (
-        <TransitionRow key={transition.id} transition={transition} steps={steps} />
-      ))}
-    </ol>
+    <div className="space-y-3">
+      {transitions.error ? (
+        <RefreshWarning
+          what="history"
+          error={transitions.error}
+          onRetry={() => void transitions.refetch()}
+        />
+      ) : null}
+      <ol className="relative space-y-0 border-l pl-5">
+        {transitions.data.map((transition) => (
+          <TransitionRow key={transition.id} transition={transition} steps={steps} />
+        ))}
+      </ol>
+    </div>
   )
 }
 

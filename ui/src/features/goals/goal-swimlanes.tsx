@@ -18,7 +18,7 @@ import { useMemo } from "react"
 import { Link } from "react-router-dom"
 
 import type { GoalDto, TaskDto } from "@/api"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { ScrollEdge } from "@/components/scroll-edge"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
@@ -122,7 +122,8 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
     return counts
   }, [byGoal, goals])
 
-  if (tasks.error) {
+  const staleTasks = tasks.error && tasks.data !== undefined
+  if (tasks.error && !staleTasks) {
     return (
       <ErrorState
         title="Could not load tasks"
@@ -138,6 +139,9 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
 
   return (
     <div className={BOARD_FRAME}>
+      {staleTasks ? (
+        <RefreshWarning what="tasks" error={tasks.error} onRetry={() => void tasks.refetch()} />
+      ) : null}
       {/* A named region the keyboard can put focus into: the board scrolls both
           ways, and a scrollport nothing can focus only scrolls under a pointer
           — the columns and lanes past its edges would be mouse-only. */}

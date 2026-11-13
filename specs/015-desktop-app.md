@@ -307,7 +307,13 @@ Out: the daemon endpoints themselves (012).
     header that names the entity only where its data already has, so a
     failed refetch of a goal already cached shows that goal, under its one
     title, with one inline notice above it rather than a second title and a
-    lost panel. The goal, task and session panels open on a dense fact list
+    lost panel. The same holds for every read that has content cached: shared
+    tables, the goals board, a goal's task list, and a task panel with its
+    history and messages keep showing that content when a refresh fails, under
+    one `RefreshWarning` ("Could not refresh …", marked as possibly outdated,
+    with a Retry for that read alone). A read that never succeeded shows the
+    load error instead. The warning leaves with the next successful refresh;
+    actions, confirmations and their error feedback are untouched. The goal, task and session panels open on a dense fact list
     above their tabs — `text-xs`, three columns at `sm` and four at `lg`, no
     card frame — rather than the framed grid further down an entity's own
     screen; a stepped task's own workflow section is rule 40's.
@@ -1322,6 +1328,11 @@ Out: the daemon endpoints themselves (012).
   `::blocks unsafe link schemes before the webview follows them`,
   `::ignores an internal link`, `::leaves a same-origin Tauri fragment link alone`,
   `::leaves a plain browser's link behavior alone`).
+- A failed refresh keeps the cached goals on the board under a retryable
+  warning that clears after a successful retry, while a read that never loaded
+  shows the load error
+  (`ui/src/features/goals/goals-list-page.test.tsx::keeps the cached goals under a retryable warning when a refresh fails, and clears it on success`,
+  `::shows a load failure, not a refresh warning, when nothing was ever cached`).
 - An OSC 8 console link shows the same target confirmation before opening
   (`ui/src/features/sessions/session-terminal.test.tsx::confirms an OSC 8 link before opening it outside the app`).
 
