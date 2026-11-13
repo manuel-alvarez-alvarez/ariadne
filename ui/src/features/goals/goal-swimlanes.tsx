@@ -47,7 +47,7 @@ import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
  * columns line up down the board. Neither is narrower than a card reads at:
  * 13rem is what a card wants, 11rem is what it still reads at.
  */
-const COLUMNS_GRID = "grid grid-cols-2 gap-3 px-3"
+const COLUMNS_GRID = "grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)]"
 
 /**
  * What the board is laid out at before it gives up and scrolls: two columns at
@@ -55,7 +55,7 @@ const COLUMNS_GRID = "grid grid-cols-2 gap-3 px-3"
  * on the block *inside* the scrollport, which is what makes a narrow window
  * scroll the board rather than squeeze its cards past reading.
  */
-const BOARD_WIDTH = "min-w-[28rem]"
+const BOARD_WIDTH = "min-w-[42rem]"
 
 /** The grid a cell lays its cards out on: as many 13rem-floor columns as fit. */
 const CELL_GRID = "grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] content-start gap-2"
@@ -111,6 +111,15 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
     () => orderLanes(goals, (goal) => laneNeedsAttention(goal.id, byGoal.get(goal.id), attention)),
     [goals, byGoal, attention],
   )
+  const totals = useMemo(() => {
+    const counts = { in_progress: 0, finished: 0 }
+    for (const goal of goals) {
+      const lane = byGoal.get(goal.id)
+      counts.in_progress += lane?.columns.get("in_progress")?.length ?? 0
+      counts.finished += lane?.columns.get("finished")?.length ?? 0
+    }
+    return counts
+  }, [byGoal, goals])
 
   if (tasks.error) {
     return (
@@ -142,7 +151,7 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
         )}
       >
         <div className={BOARD_WIDTH}>
-          <ColumnHeaders />
+          <ColumnHeaders inProgress={totals.in_progress} done={totals.finished} />
           {lanes.map((goal) => {
             // A finished goal opens folded: five columns of cards that all sit
             // in Merged is a 270px box that is 85% empty, and on a 900px
@@ -174,13 +183,18 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
  * scrollport's top edge and opaque, because the lanes scroll underneath it.
  * Each name is a heading, so a screen reader hears the columns by name.
  */
-function ColumnHeaders() {
+function ColumnHeaders({ inProgress, done }: { inProgress: number; done: number }) {
   return (
-    <div className={cn(COLUMNS_GRID, "sticky top-0 z-20 border-b bg-background py-2")}>
-      {LANE_COLUMNS.map((column) => (
-        <h2 key={column.key} className="min-w-0 truncate text-xs font-medium">
+    <div className={cn(COLUMNS_GRID, "sticky top-0 z-20 border-b bg-background px-3 py-2")}>
+      {LANE_COLUMNS.map((column, index) => (
+        <h2
+          key={column.key}
+          className={cn("min-w-0 truncate text-sm font-semibold", index === 1 && "border-l pl-3")}
+        >
           <Tooltip>
-            <TooltipTrigger render={<span />}>{column.label}</TooltipTrigger>
+            <TooltipTrigger render={<span />}>
+              {column.label} ({column.key === "in_progress" ? inProgress : done})
+            </TooltipTrigger>
             <TooltipContent>{column.hint}</TooltipContent>
           </Tooltip>
         </h2>
@@ -215,7 +229,7 @@ function Lane({
   const empty = (tasks?.all.length ?? 0) === 0
 
   return (
-    <section className="border-b last:border-b-0">
+    <section className="mx-2 mb-2 rounded-sm border border-dotted border-border/70 bg-background">
       <header className={cn("flex items-center gap-2 px-3", collapsed ? "py-1.5" : "pt-2 pb-1")}>
         <Button
           variant="ghost"
@@ -277,8 +291,8 @@ function Lane({
       </header>
 
       {collapsed ? null : (
-        <div className={cn(COLUMNS_GRID, "pt-1 pb-2.5")}>
-          {LANE_COLUMNS.map((column) => (
+        <div className={cn(COLUMNS_GRID, "px-3 pt-1 pb-2.5")}>
+          {LANE_COLUMNS.map((column, index) => (
             // An empty cell is empty: whitespace already says the column has
             // nothing in it, and a board of placeholders says nothing at all.
             // biome-ignore lint/a11y/useSemanticElements: a fieldset is a form control; this names a cell
@@ -286,7 +300,10 @@ function Lane({
               key={column.key}
               role="group"
               aria-label={`${goal.title}: ${column.label}`}
-              className={CELL_GRID}
+              className={cn(
+                CELL_GRID,
+                index === 1 && "border-l border-dotted border-border/70 pl-3",
+              )}
             >
               {column.key === "in_progress" && empty ? (
                 <p className="col-span-full text-xs text-muted-foreground">

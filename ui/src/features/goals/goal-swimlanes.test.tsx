@@ -15,9 +15,27 @@ it("draws the two column names once, however many goals", async () => {
   renderScreen(<GoalSwimlanes goals={goals} />)
 
   const headings = await screen.findAllByRole("heading", { level: 2 })
-  expect(headings.map((heading) => heading.textContent)).toEqual(["In progress", "Done"])
+  expect(headings.map((heading) => heading.textContent)).toEqual(["In progress (0)", "Done (0)"])
   expect(screen.queryByText("Pending")).toBeNull()
   expect(screen.queryByText("Cancelled")).toBeNull()
+})
+
+it("shows task totals across all listed goals in the column headings", async () => {
+  const goals = [
+    aGoal({ id: "goal-a", title: "Alpha" }),
+    aGoal({ id: "goal-b", title: "Beta", status: "completed" }),
+  ]
+  daemonFetch.mockResolvedValue(
+    jsonResponse([
+      aTask({ id: "a1", goal_id: "goal-a", status: "pending" }),
+      aTask({ id: "a2", goal_id: "goal-a", status: "cancelled" }),
+      aTask({ id: "b1", goal_id: "goal-b", status: "finished" }),
+    ]),
+  )
+  renderScreen(<GoalSwimlanes goals={goals} />)
+
+  expect(await screen.findByRole("heading", { name: "In progress (1)" })).toBeTruthy()
+  expect(screen.getByRole("heading", { name: "Done (2)" })).toBeTruthy()
 })
 
 it.each<[TaskStatus, string, string]>([

@@ -681,8 +681,16 @@ Out: the daemon endpoints themselves (012).
 38. Toasts show at the bottom left, clear of the header and the pane
     (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
 39. The goals board shows two global columns, "In progress" and "Done",
-    drawn once as headings at the top; no lane draws a column row. Each goal
-    is one lane under them, split into two cells. A task in `pending`,
+    drawn once as headings at the top with totals across all listed goals,
+    including folded goals; cancelled tasks count as Done. In progress uses
+    66% and Done uses 34% of available column space, with a thin divider aligned
+    between headings and cells. Headings are larger and bolder. Each goal has a
+    subtle dotted outline around its plain-background task area across both
+    columns. Its header keeps title, collapse control, status, progress,
+    attention and tokens compact. Cards wrap into additional rows as needed,
+    increasing goal height. Both columns remain at readable minimum width and
+    the board scrolls horizontally in narrow windows. Each goal is one lane
+    under them, split into two cells. A task in `pending`,
     `ready`, `in_progress` or `failed` sits in the In progress cell, a failed
     one outlined in danger; a task in `finished` or `cancelled` sits in the
     Done cell. A goal's workflow steps make no columns, and there is no
