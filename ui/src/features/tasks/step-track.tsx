@@ -29,7 +29,10 @@ const DOT: Record<StepState, string> = {
 export function StepTrack({ task, steps }: { task: TaskDto; steps: WorkflowStepDto[] }) {
   const current = steps.findIndex((step) => step.id === task.step)
   return (
-    <ol aria-label="Workflow steps" className="flex items-center gap-1">
+    <ol
+      aria-label="Workflow steps"
+      className="flex min-w-0 max-w-full flex-wrap items-center gap-1"
+    >
       {steps.map((step, index) => {
         const state = stepState(task, index, current)
         const agent = task.agents.find((candidate) => candidate.step === step.id)
@@ -47,7 +50,7 @@ export function StepTrack({ task, steps }: { task: TaskDto; steps: WorkflowStepD
                 render={
                   <span
                     className={cn(
-                      "flex size-3 items-center justify-center rounded-full border",
+                      "flex size-3 shrink-0 items-center justify-center rounded-full border",
                       DOT[state],
                     )}
                   />

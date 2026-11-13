@@ -2,9 +2,10 @@
  * One task, as it appears on the board and in any other list of tasks: two
  * lines. The first is the title with what is wrong or being waited on — one
  * state badge, and the session attention badge when an agent wants a person.
- * The second is the compact workflow step track ({@link StepTrack}), the
- * current step's title while the task runs, and at the right end the PR link
- * and when the task was last updated.
+ * The second, for a task not finished or cancelled, is the compact workflow
+ * step track ({@link StepTrack}), the current step's title and its model. The
+ * third is the token totals and when the task was last updated, wrapping, with
+ * the PR link in the reserved right padding.
  *
  * The card says each thing **once**. A session attention badge that repeats
  * the state badge's label is dropped rather than drawn twice (see
@@ -124,20 +125,28 @@ export function TaskCard({
           )}
         </div>
 
+        {task.status !== "finished" && task.status !== "cancelled" && (
+          <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+            <StepTrack task={task} steps={steps} />
+            {currentStep && (
+              <span className="max-w-full min-w-0 truncate font-medium text-foreground">
+                {currentStep.title}
+              </span>
+            )}
+            {currentStep && currentAgent && (
+              <span className="max-w-full min-w-0 truncate" title={currentAgent.model}>
+                {currentAgent.model}
+              </span>
+            )}
+          </div>
+        )}
+
         <div
           className={cn(
-            "mt-1.5 flex items-center gap-2 text-xs text-muted-foreground",
+            "mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground",
             task.pr_url && "pr-5",
           )}
         >
-          {task.status !== "finished" && task.status !== "cancelled" && (
-            <StepTrack task={task} steps={steps} />
-          )}
-          {currentStep && currentAgent && (
-            <span className="min-w-0 truncate" title={currentAgent.model}>
-              {currentAgent.model}
-            </span>
-          )}
           <span className="shrink-0 tabular-nums">
             In {formatTokens(task.usage.total.input_tokens)} · Out{" "}
             {formatTokens(task.usage.total.output_tokens)}

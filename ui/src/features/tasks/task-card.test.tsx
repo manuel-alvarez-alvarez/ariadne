@@ -68,6 +68,10 @@ it("shows the current staffed model and compact task token totals", () => {
     },
   })
   expect(screen.getByText("codex-acp:a-very-long-model-name").className).toContain("truncate")
+  expect(screen.getByText("codex-acp:a-very-long-model-name").getAttribute("title")).toBe(
+    "codex-acp:a-very-long-model-name",
+  )
+  expect(screen.getByText("Build").className).toContain("truncate")
   expect(screen.getByText("In 1.2k · Out 56")).toBeTruthy()
   expect(screen.getByRole("link").getAttribute("aria-describedby")).toBeTruthy()
 })
@@ -162,4 +166,19 @@ it("shows no pull request link without a pr_url, and no branch", () => {
   card({ pr_url: null })
   expect(screen.queryByRole("link", { name: "Pull request" })).toBeNull()
   expect(screen.queryByText(/wire-the-sessions/)).toBeNull()
+})
+
+it("lets a long workflow's markers wrap inside the card", () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({
+    id: `s${i}`,
+    title: `S${i}`,
+    description: "",
+    skills: [],
+    ranks: [],
+  }))
+  renderScreen(<TaskCard task={aTask({ step: "s11" })} steps={many} />)
+  const track = screen.getByRole("list", { name: "Workflow steps" })
+  expect(within(track).getAllByRole("listitem")).toHaveLength(12)
+  expect(track.className).toContain("flex-wrap")
+  expect(track.className).toContain("max-w-full")
 })
