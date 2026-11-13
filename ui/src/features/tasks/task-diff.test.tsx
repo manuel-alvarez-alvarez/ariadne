@@ -14,8 +14,8 @@
  * would silently stop working.
  */
 
-import { act, fireEvent, screen, waitFor } from "@testing-library/react"
-import { beforeEach, expect, it } from "vitest"
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 import type { DomainEvent } from "@/api"
 import { EventStreamProvider } from "@/events/provider"
@@ -54,6 +54,20 @@ function stubDaemon() {
     Promise.resolve(new Response(diff, { headers: { "content-type": "text/plain" } })),
   )
 }
+
+/** jsdom lays nothing out and has no `scrollIntoView`; this test-owned stub is removed after each test. */
+function stubScroll() {
+  const scrolled = vi.fn()
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: scrolled,
+  })
+  return scrolled
+}
+
+afterEach(() => {
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView")
+})
 
 beforeEach(() => {
   diff = FIRST
@@ -152,4 +166,77 @@ it("keeps room on the right of the expanded diff for a Linux scrollbar", async (
 
   const scroll = await screen.findByTestId("diff-scroll")
   expect(scroll.className).toContain("pr-2")
+})
+
+it("filters the expanded diff's file index by name and shows each file's counts", async () => {
+  diff = SECOND
+  await renderDiff()
+  fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
+
+  const nav = await screen.findByRole("navigation", { name: "Changed files" })
+  expect(within(nav).getAllByText("+1")).toHaveLength(2)
+  fireEvent.change(within(nav).getByRole("searchbox"), { target: { value: "two" } })
+
+  expect(within(nav).queryByText("one.txt")).toBeNull()
+  expect(within(nav).getByText("two.txt")).toBeTruthy()
+})
+
+it("scrolls to the next file without changing folding", async () => {
+  diff = SECOND
+  await renderDiff()
+  fireEvent.click(screen.getByRole("button", { name: "Collapse one.txt" }))
+  fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
+  const scrolled = stubScroll()
+
+  fireEvent.click(await screen.findByRole("button", { name: "Next file" }))
+
+  expect(scrolled).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole("button", { name: "Expand one.txt" })).toBeTruthy()
+})
+
+it("scrolls to the previous file, wrapping to the last from the start", async () => {
+  diff = SECOND
+  await renderDiff()
+  fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
+  const scrolled = stubScroll()
+
+  fireEvent.click(await screen.findByRole("button", { name: "Previous file" }))
+
+  expect(scrolled).toHaveBeenCalledTimes(1)
+  const nav = screen.getByRole("navigation", { name: "Changed files" })
+  expect(within(nav).getByText("two.txt").closest("button")?.getAttribute("aria-current")).toBe(
+    "true",
+  )
+})
+
+it("offers no file index in the raw view", async () => {
+  await renderDiff()
+  fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
+  expect(await screen.findByRole("navigation", { name: "Changed files" })).toBeTruthy()
+
+  fireEvent.click(screen.getByRole("button", { name: /Raw/ }))
+
+  expect(screen.queryByRole("navigation", { name: "Changed files" })).toBeNull()
+})
+
+it("shows the empty state without a file index when the open expanded diff becomes empty", async () => {
+  const dispatch = await renderDiff()
+  fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
+  expect(await screen.findByRole("navigation", { name: "Changed files" })).toBeTruthy()
+  diff = ""
+
+  dispatch({
+    event: "task_branch_updated",
+    data: { task_id: TASK.id, goal_id: TASK.goal_id, branch: TASK.branch, head: HEAD },
+  })
+
+  expect(
+    await screen.findByText("The branch exists but has no changes against its base yet"),
+  ).toBeTruthy()
+  expect(screen.queryByRole("navigation", { name: "Changed files" })).toBeNull()
+})
+
+it("offers no file index in the compact view", async () => {
+  await renderDiff()
+  expect(screen.queryByRole("navigation", { name: "Changed files" })).toBeNull()
 })
