@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-10-24
+updated: 2026-11-13
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -218,10 +218,25 @@ Out: the daemon endpoints themselves (012).
     row, each name a concrete `<agent>:<model>` before their form can submit,
     where `<agent>` is a registry agent id (011), and an empty effort stays
     valid and uses that model's default effort.
-14. The model picker lists concrete catalog entries only, under one heading
-    per registry agent, in the order the catalog first names each agent. No
-    screen shows an automatic or default model; `auto` is an effort choice
-    only.
+14. The model picker is one popover of three columns: agent, model and
+    effort. A search box and a "Show disabled" switch sit above them (011).
+    The agent column lists each agent that has a shown model. Each row has
+    the agent's icon and id, in the order the catalog first names the agent.
+    A pick there fills the model column with the models of that agent. Each
+    row has the model id and its description. A pick there fills the effort
+    column with `auto (<default>)` and the model's efforts, with their
+    descriptions. A pick there completes the choice and closes the popover.
+    The popover opens on the current pin, with its agent, model and effort
+    selected. The trigger shows the agent icon, the model and the effort. It
+    shows "Choose a model" when no model is chosen. A non-empty search
+    replaces the agent and model columns with one list of the matching
+    models. Each row has the agent icon, the model id and its description.
+    A pick there clears the search and shows the columns on that agent and
+    model. The picker takes no free-text model. A saved pin that is not in
+    the catalog still shows on the trigger as it is. The arrow keys move
+    within and across the columns, and Enter picks. Escape closes the
+    popover and not the form dialog around it. No screen shows an automatic
+    or default model; `auto` is an effort choice only.
 15. The client checks only the shape of a pin: one `:`, with text on both
     sides of it. Which agents exist is the daemon's answer, so the client
     refuses no agent id by name. Only the first `:` splits the pin; a later
@@ -959,9 +974,50 @@ Out: the daemon endpoints themselves (012).
   `::refuses one half on its own by showing where the other goes`,
   `::refuses a leading colon, which names no agent`,
   `::refuses a trailing colon, which names no model`).
-- The picker lists only concrete model ids, grouped by agent
-  (`ui/src/features/models/pin-picker.test.tsx::offers only concrete catalog models, grouped by agent`).
-  The order of turned-on and turned-off models in it is spec 011's rule.
+- The picker's trigger shows the agent icon, the model and the effort, and
+  asks for a model until one is chosen
+  (`ui/src/features/models/pin-picker.test.tsx::shows the agent icon, the model and the effort on the trigger`,
+  `::asks the user to choose a model before one is picked`).
+- The popover puts a search box and a "Show disabled" switch above the
+  agent, model and effort columns
+  (`ui/src/features/models/pin-picker.test.tsx::puts a search box and a Show disabled switch above the agent, model and effort columns`).
+  Which turned-off models it lists is spec 011's rule.
+- The agent column lists each agent with a shown model, with its icon, in
+  catalog order; an agent pick fills the model column with its models, each
+  with its id and description
+  (`ui/src/features/models/pin-picker.test.tsx::lists each agent with a shown model, with its icon, in catalog order`,
+  `::fills the model column with the picked agent's models, each with its id and description`).
+- A model pick fills the effort column with `auto (<default>)` and the
+  model's efforts, and an effort pick completes the choice and closes the
+  popover
+  (`ui/src/features/models/pin-picker.test.tsx::fills the effort column from the picked model, and an effort pick completes the choice`,
+  `::picks the agent's own effort as auto`).
+- The popover opens on the current pin, with its agent, model and effort
+  selected
+  (`ui/src/features/models/pin-picker.test.tsx::opens on the current pin, with its agent, model and effort selected`).
+- A search replaces the agent and model columns with one list of the
+  matching models, matched by id or description, and a pick from it clears
+  the search and shows the columns on that agent and model
+  (`ui/src/features/models/pin-picker.test.tsx::replaces the agent and model columns with one list of every matching model, on and off`,
+  `::finds a model by what its agent said about it`,
+  `::clears the search on a pick and shows the columns on that agent and model`).
+- The picker offers no free-text model, and a saved pin that is not in the
+  catalog still shows on the trigger as it is
+  (`ui/src/features/models/pin-picker.test.tsx::offers no free-text row, and keeps a saved pin the catalog does not carry on the trigger`).
+- The picker works with the keyboard alone, and Escape closes the popover
+  and not the form dialog around it
+  (`ui/src/features/models/pin-picker.test.tsx::picks with the keyboard alone: search, arrows, enter`,
+  `::moves across the columns with the arrow keys`,
+  `::closes on Escape, and leaves the form dialog open`).
+- Every form that pins a model picks it through this picker: the task form,
+  the goal dialog, the new session and switch dialogs, and the review and
+  babysit dialogs
+  (`ui/src/features/tasks/task-form-dialog.test.tsx::pins a column's model and effort through the three-column picker`,
+  `ui/src/features/issues/issues-page.test.tsx::submits a goal dialog opened from an issue with the issue's data and the model picked`,
+  `ui/src/features/sessions/new-session-dialog.test.tsx::starts a session on the chosen model, in the typed directory, and hands it back`,
+  `ui/src/features/sessions/session-actions.test.tsx::opens the switch dialog, posts its pin, and follows a successor`,
+  `ui/src/features/pull-requests/pull-request-panel.test.tsx::starts and stops a review of a Dependabot request without a review assignment`,
+  `::starts and stops babysitting a Dependabot request without a review assignment`).
 - A pin is checked by its shape alone and split at its first `:`
   (`ui/src/features/models/model-ref.test.ts::takes any agent and any model, one colon apart`,
   `::refuses one half on its own by showing where the other goes`,
@@ -979,9 +1035,15 @@ Out: the daemon endpoints themselves (012).
   middle-cut model
   (`ui/src/features/sessions/sessions-list.test.tsx::keeps the effort beside a middle-cut model and gives the row a whole-pin hint`).
 - A listed model offers its own efforts, and an unlisted one takes free text
-  (`ui/src/features/models/pin-picker.test.tsx::offers the efforts of the pinned model, the agent's own first, and stores the pick`,
+  (`ui/src/features/models/pin-picker.test.tsx::fills the effort column from the picked model, and an effort pick completes the choice`,
   `::takes free text for a model of a known agent the catalog does not list`,
   `::takes free text for a model nothing has discovered`).
+- An effort the new model does not take is cleared, one it takes travels,
+  and a model with no efforts says so
+  (`ui/src/features/models/pin-picker.test.tsx::drops an effort the model moved to does not take`,
+  `::keeps an effort the model moved to takes as well`,
+  `::drops the effort of a model that takes none, and says so`,
+  `::requires a model before it offers effort choices`).
 - The agent activity feed shows the daemon's summary and opens and closes the
   raw payload under its row. It names a child start and terminal state, prefixes
   a child's stored events, keeps child and parent folds apart, and colors a

@@ -1,7 +1,7 @@
 ---
 id: models-effort-and-pins
 status: current
-updated: 2026-10-19
+updated: 2026-11-13
 areas: [core, api, store, daemon, cli, ui, specs]
 commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, a69b953f, 03f9c8b7]
 tests:
@@ -112,7 +112,11 @@ orchestrator decides (003).
 19. A model turned off stays in the catalog, marked off, and is manual-only:
     a user may pin it through the desktop app or CLI without changing its
     enabled state, but automatic staffing and MCP `list_models` leave it out.
-    Every desktop picker shows it with that manual-only mark.
+    The desktop picker lists it, muted and marked off, while its "Show
+    disabled" switch is on, and in every search. The switch alone decides
+    the columns, for the pinned model too. The picker turns the switch on
+    when it opens on a turned-off pin, or when a search picks a turned-off
+    model. The app keeps that switch across opens, pickers and restarts.
 20. Work already staffed on a model turned off is not disturbed: a task keeps
     running, and an effort moved on its own still moves.
 21. An id the catalog does not carry cannot be turned off, and the last entry
@@ -225,12 +229,19 @@ orchestrator decides (003).
   (`agents-page.test.tsx::puts each model in the tab of the agent that runs it`,
   `::sends the id in the body, so a model named with a slash still travels`,
   `::says why, where the daemon refuses to turn a model off`); the picker
-  lists the turned-on models first, one group for each agent in catalog order,
-  then a separator, then the disabled ones in the same way under headings that
-  name the agent and say "manual only", with "Other…" last, and takes free
-  text for a model the catalog does not list
-  (`pin-picker.test.tsx::puts turned-off models after a separator, under manual-only headings`,
-  `::takes free text for a model of a known agent the catalog does not list`);
+  lists a turned-off model only while "Show disabled" is on, muted, marked
+  off and in catalog order among the rest, with no section of its own
+  (`pin-picker.test.tsx::shows turned-off models only with the switch on, muted and marked off`),
+  turns the switch on for a turned-off pin and hides that pin once the switch
+  is off
+  (`::opens a turned-off pin with the switch turned on, and hides it once the switch is off`,
+  `::clears the search on a pick and shows the columns on that agent and model`),
+  keeps that switch across opens, pickers and restarts
+  (`::keeps the switch across opens, pickers and restarts`), lists every
+  matching model in a search whatever the switch says
+  (`::replaces the agent and model columns with one list of every matching model, on and off`),
+  and takes a free-text effort for a model the catalog does not list
+  (`::takes free text for a model of a known agent the catalog does not list`);
   and the pin's shape is checked on the field
   (`model-ref.test.ts::refuses one half on its own by showing where the other goes`).
 

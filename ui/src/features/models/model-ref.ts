@@ -24,7 +24,7 @@ import { z } from "zod"
  *
  * A model is required wherever a pin is written.
  */
-export function modelRefError(text: string): string | null {
+function modelRefError(text: string): string | null {
   const trimmed = text.trim()
   if (trimmed.length === 0) return "Choose a model."
   const colon = trimmed.indexOf(":")

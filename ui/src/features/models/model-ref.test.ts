@@ -11,9 +11,15 @@
 
 import { describe, expect, it } from "vitest"
 
-import { modelRefError, parseModelRef } from "./model-ref"
+import { modelRefField, parseModelRef } from "./model-ref"
 
-describe("modelRefError", () => {
+/** What the model field says about the text, or null where it takes it. */
+function modelRefError(text: string): string | null {
+  const result = modelRefField().safeParse(text)
+  return result.success ? null : (result.error.issues[0]?.message ?? null)
+}
+
+describe("modelRefField", () => {
   it("refuses an empty model", () => {
     expect(modelRefError("")).toBe("Choose a model.")
     expect(modelRefError("   ")).toBe("Choose a model.")

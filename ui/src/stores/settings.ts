@@ -71,6 +71,13 @@ interface SettingsState {
   /** The inspector width in pixels, clamped to the window by its frame. */
   panelWidth: number
   setPanelWidth: (width: number) => void
+  /**
+   * Whether the model picker lists the models turned off on the agents
+   * screen. One value for every picker: it is how this user picks, not a
+   * property of one form. See `features/models/pin-picker.tsx`.
+   */
+  showDisabledModels: boolean
+  setShowDisabledModels: (show: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -95,6 +102,8 @@ export const useSettingsStore = create<SettingsState>()(
       setPanelWidth: (panelWidth) => set({ panelWidth }),
       sidebarCollapsed: false,
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+      showDisabledModels: false,
+      setShowDisabledModels: (showDisabledModels) => set({ showDisabledModels }),
     }),
     {
       name: SETTINGS_STORAGE_KEY,
@@ -121,6 +130,7 @@ export const useSettingsStore = create<SettingsState>()(
         sessionTaskFilter: state.sessionTaskFilter,
         sidebarCollapsed: state.sidebarCollapsed,
         panelWidth: state.panelWidth,
+        showDisabledModels: state.showDisabledModels,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) setApiBaseUrl(state.baseUrl)
