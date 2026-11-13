@@ -11,12 +11,11 @@
 
 import { useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
-import { Link } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 
 import type { GoalDto, TaskDto } from "@/api"
 import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { taskListQueryOptions } from "@/features/tasks"
-import { paths } from "@/routes/paths"
 import { type BoardAttention, taskAttentionReason, useBoardAttention } from "./attention"
 import { BoardSkeleton } from "./goal-swimlanes"
 import { laneCounts, orderLanes } from "./lanes"
@@ -30,8 +29,16 @@ function attentionCount(goal: GoalDto, tasks: readonly TaskDto[], attention: Boa
   return stuck + (attention.byGoal.has(goal.id) ? 1 : 0)
 }
 
+/** The current params with this goal's panel open, so the status filter survives. */
+function goalPanelSearch(current: URLSearchParams, goalId: string): string {
+  const next = new URLSearchParams(current)
+  next.set("goal", goalId)
+  return `?${next}`
+}
+
 export function GoalList({ goals }: { goals: GoalDto[] }) {
   const tasks = useQuery(taskListQueryOptions({}))
+  const [search] = useSearchParams()
   const attention = useBoardAttention()
   const byGoal = useMemo(() => {
     const map = new Map<string, TaskDto[]>()
@@ -75,13 +82,14 @@ export function GoalList({ goals }: { goals: GoalDto[] }) {
         className="min-h-0 flex-1 divide-y overflow-auto rounded-lg border"
       >
         {rows.map((goal) => {
-          const counts = laneCounts(byGoal.get(goal.id) ?? [])
+          const goalTasks = byGoal.get(goal.id) ?? []
+          const counts = laneCounts(goalTasks)
           const status = GOAL_STATUS_META[goal.status]
           const needs = attentionCount(goal, byGoal.get(goal.id) ?? [], attention)
           return (
             <li key={goal.id}>
               <Link
-                to={paths.goal(goal.id)}
+                to={{ search: goalPanelSearch(search, goal.id) }}
                 className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
               >
                 <span className="min-w-0 flex-1 truncate font-medium">{goal.title}</span>
@@ -90,7 +98,7 @@ export function GoalList({ goals }: { goals: GoalDto[] }) {
                   {status.label}
                 </span>
                 <span className="whitespace-nowrap text-xs text-muted-foreground">
-                  {counts.finished}/{counts.pipeline} tasks
+                  {counts.finished}/{goalTasks.length} tasks
                 </span>
                 <span
                   className={`whitespace-nowrap text-xs ${needs > 0 ? "text-destructive" : "text-muted-foreground"}`}

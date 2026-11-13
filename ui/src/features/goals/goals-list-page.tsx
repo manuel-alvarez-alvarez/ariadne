@@ -82,7 +82,10 @@ export function GoalsListPage() {
   const { statuses, filterBy } = useStatusFilter()
   const [createOpen, setCreateOpen] = useState(false)
   const [query, setQuery] = useState("")
-  const [repoId, setRepoId] = useState("")
+  // Kept with its path: a status change can leave the repository out of the
+  // loaded goals, and the control must still name the filter it applies.
+  const [repo, setRepo] = useState<{ id: string; path: string } | null>(null)
+  const repoId = repo?.id ?? ""
   const view = useSettingsStore((state) => state.goalsView)
   const setView = useSettingsStore((state) => state.setGoalsView)
 
@@ -90,8 +93,9 @@ export function GoalsListPage() {
   const repositories = useMemo(() => {
     const byId = new Map<string, string>()
     for (const goal of goals.data ?? []) for (const repo of goal.repos) byId.set(repo.id, repo.path)
+    if (repo) byId.set(repo.id, repo.path)
     return [...byId].sort((a, b) => a[1].localeCompare(b[1]))
-  }, [goals.data])
+  }, [goals.data, repo])
   const shown = useMemo(
     () => searchGoals(goals.data ?? [], { query, repoId }),
     [goals.data, query, repoId],
@@ -150,7 +154,7 @@ export function GoalsListPage() {
               <DropdownMenuContent align="end">
                 <DropdownMenuCheckboxItem
                   checked={repoId === ""}
-                  onCheckedChange={() => setRepoId("")}
+                  onCheckedChange={() => setRepo(null)}
                 >
                   All repositories
                 </DropdownMenuCheckboxItem>
@@ -159,7 +163,7 @@ export function GoalsListPage() {
                   <DropdownMenuCheckboxItem
                     key={id}
                     checked={repoId === id}
-                    onCheckedChange={() => setRepoId(id)}
+                    onCheckedChange={() => setRepo({ id, path })}
                   >
                     {path}
                   </DropdownMenuCheckboxItem>
