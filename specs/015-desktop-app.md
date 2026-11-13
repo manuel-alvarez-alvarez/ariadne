@@ -367,6 +367,13 @@ Out: the daemon endpoints themselves (012).
 27. A row of the Needs attention popover for an agent blocked on a permission or an
     input prompt opens that session's console with `?focus=`, so the terminal
     takes the keyboard on arrival.
+27a. The Needs attention popover has a View all action that opens a wider
+    drawer over the same attention list, order and targets. Each row shows
+    its whole subject, explanation, affected work and an action label. Goal
+    and reason filters narrow one list, and "No goal" keeps goal-less items
+    reachable. The drawer says when it is loading, empty, partial or failed,
+    and returns focus to the trigger on close
+    (`ui/src/features/goals/attention-header.test.tsx::opens a drawer from View all and filters a goal-less item by goal`).
 28. Above the console, a session blocked on a permission or an input prompt
     shows a banner that says where to answer: the picker in the console for
     a permission, the console's input for a question. A session that has
