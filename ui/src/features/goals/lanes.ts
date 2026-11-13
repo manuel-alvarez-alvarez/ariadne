@@ -12,102 +12,32 @@
  */
 
 import type { GoalDto, TaskDto, TaskStatus } from "@/api"
-import { TASK_STATUS_META } from "@/features/tasks"
 import { plural } from "@/lib/format"
-import { isStillPlanning, isTerminalGoalStatus } from "./status"
+import { isTerminalGoalStatus } from "./status"
 
-/** One column of a lane: what its header says, and the key its cards are filed under. */
-interface LaneColumn {
-  key: string
-  label: string
-  /** What the column means, for its header's tooltip. */
-  hint: string
-  /** Solid dot classes, from the status ramp. */
-  dot: string
-}
-
-/** Where a stepped lane files the tasks that sit in a column, apart from the status keys. */
-function stepKey(id: string): string {
-  return `step:${id}`
-}
+/** The board's two columns, shared by every lane. */
+export type LaneColumnKey = "in_progress" | "finished"
 
 /**
- * Where a stepless lane files a task under way: it has no workflow column to
- * sit in, so it gets the one column a goal with no steps still owns.
+ * The columns the board draws once, in order: what is still moving, then what
+ * is over. Every lane splits into one cell for each.
  */
-const IN_PROGRESS_KEY = "in_progress"
+export const LANE_COLUMNS: readonly { key: LaneColumnKey; label: string; hint: string }[] = [
+  {
+    key: "in_progress",
+    label: "In progress",
+    hint: "Pending, ready, under way, or failed and waiting on a retry.",
+  },
+  { key: "finished", label: "Done", hint: "Finished or cancelled." },
+]
 
 /**
- * The columns a goal's lane draws, in order.
- *
- * Every goal draws Pending, then Done. Between them sits either a goal's
- * workflow columns, one per step, or, for a goal with no steps, the one
- * column a task under way sits in.
+ * The column a task's card sits in. Pending, ready, in progress and failed
+ * tasks are still in progress, a failed one being a retry candidate; finished
+ * and cancelled tasks are done.
  */
-export function laneColumns(goal: Pick<GoalDto, "steps">): LaneColumn[] {
-  const middle: LaneColumn[] =
-    goal.steps.length > 0
-      ? goal.steps.map((step) => ({
-          key: stepKey(step.id),
-          label: step.title,
-          hint: step.description || step.title,
-          dot: TASK_STATUS_META.in_progress.dot,
-        }))
-      : [
-          {
-            key: IN_PROGRESS_KEY,
-            label: TASK_STATUS_META.in_progress.label,
-            hint: "No workflow runs; an agent is working on the task.",
-            dot: TASK_STATUS_META.in_progress.dot,
-          },
-        ]
-  return [
-    {
-      key: "pending",
-      label: TASK_STATUS_META.pending.label,
-      hint: TASK_STATUS_META.pending.hint,
-      dot: TASK_STATUS_META.pending.dot,
-    },
-    ...middle,
-    {
-      key: "finished",
-      label: "Done",
-      hint: TASK_STATUS_META.finished.hint,
-      dot: TASK_STATUS_META.finished.dot,
-    },
-  ]
-}
-
-/**
- * The key of the column a task's card sits in, or null for a task off the
- * board (cancelled).
- *
- * A goal still being planned holds all of its tasks in the first column,
- * `pending` and `ready` alike: nothing under it has been handed to an
- * agent, so a card further along would say a task is moving when it is
- * waiting on the orchestrator.
- *
- * A failed task lands in that first column too, whatever the goal is doing:
- * the one thing anybody does with a failure is retry it, and a retry puts it
- * back exactly there. Its card is outlined in danger and badged `Failed`.
- *
- * On a stepped goal, a task under way sits in the column of its `step`; one
- * whose step the goal does not list sits in the first step's column. On a
- * stepless goal, a task under way sits in the lane's one `IN_PROGRESS_KEY`
- * column.
- */
-export function laneColumnOf(
-  task: TaskDto,
-  goal: Pick<GoalDto, "status" | "steps">,
-): string | null {
-  if (task.status === "cancelled") return null
-  if (task.status === "failed" || isStillPlanning(goal.status)) return "pending"
-  if (task.status === "pending" || task.status === "ready") return "pending"
-  if (task.status === "finished") return "finished"
-  const firstStep = goal.steps[0]
-  if (!firstStep) return IN_PROGRESS_KEY
-  const step = goal.steps.find((one) => one.id === task.step) ?? firstStep
-  return stepKey(step.id)
+export function laneColumnOf(task: Pick<TaskDto, "status">): LaneColumnKey {
+  return task.status === "finished" || task.status === "cancelled" ? "finished" : "in_progress"
 }
 
 /**
@@ -155,7 +85,7 @@ interface LaneCounts {
    */
   pipeline: number
   finished: number
-  /** Retry candidates: they stay in the Pending column, outlined in danger. */
+  /** Retry candidates: they stay in the In progress column, outlined in danger. */
   failed: number
   /** A session stopped moving before it could report a task failure. */
   stalled: number

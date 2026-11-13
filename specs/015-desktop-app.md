@@ -78,9 +78,8 @@ Out: the daemon endpoints themselves (012).
    `data-platform="linux"` marker; macOS keeps its overlay scrollbars.
 3. Screens: the goals board (swimlanes plus an attention strip) has Active,
    All and Finished status segments. A status-menu icon holds a custom
-   selection. Each lane header shows a progress bar, done/total and tokens.
-   Its title hint carries the created stamp. The bar and a collapsed lane
-   retain the lane summary. The task
+   selection. Each goal is one slim lane under two global column headers; its
+   one-line row carries the goal's tokens at the right end (rule 39). The task
    panel (facts, messages listed oldest first with both agents named by skills,
    diff, history), sessions — Ariadne's own and every
    outside conversation an ACP agent stored on its own, merged into one
@@ -681,16 +680,22 @@ Out: the daemon endpoints themselves (012).
     `PUT /v1/dashboards/{name}` from `ViewDashboard`'s own `onSave`.
 38. Toasts show at the bottom left, clear of the header and the pane
     (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
-39. A goal a workflow runs (030) is shown by its columns. Its lane on the
-    goals board draws its own column row: Pending (pending, ready, and failed
-    outlined in danger), one column per step in order, titled by the step,
-    then Done (finished); cancelled stays off the board. A card sits in the
-    column of its task's `step`. A lane of a goal with no steps draws Pending,
-    In progress and Done, and a task of that goal under way sits in In
-    progress. Each lane carries its own column row, and its grid takes
-    as many columns as it has, at the same width floors; the board scrolls
-    sideways to its widest lane. A card whose status shows names the step
-    where the status said `in progress`.
+39. The goals board shows two global columns, "In progress" and "Done",
+    drawn once as headings at the top; no lane draws a column row. Each goal
+    is one lane under them, split into two cells. A task in `pending`,
+    `ready`, `in_progress` or `failed` sits in the In progress cell, a failed
+    one outlined in danger; a task in `finished` or `cancelled` sits in the
+    Done cell. A goal's workflow steps make no columns, and there is no
+    separate Cancelled section. The lane's row is one line: a collapse
+    chevron, the title as a link to `?goal=`, the goal status dot, `done/total`,
+    the orchestrator attention badge, and the token figure at the right end.
+    The title's tooltip gives the full title, each repository as
+    `path [base_branch]`, the created time, and the progress as done against
+    failed and stalled. The row has no progress bar and no repository
+    summary. A collapsed lane shows the one-line summary text and no cells.
+    Lanes keep their order: attention first, then live, then terminal goals.
+    Each card stays one tab stop, and each cell is a named group
+    (`<goal>: <column>`).
 40. The task panel of a stepped task draws one workflow section under its
     facts, in place of a separate Agents fact and step strip: a track of
     nodes, one per column in order, and under each node the column's title,
@@ -1227,11 +1232,17 @@ Out: the daemon endpoints themselves (012).
   `::shows a field error on invalid JSON and disables Test`). These typing
   proofs wait for the dialog's opening focus to reach Examples before editing,
   so its deferred focus cannot interrupt the simulated keystrokes under load.
-- A lane of a stepped goal draws Pending, its columns and Done, and puts each
-  card in its step's column; a lane without steps draws Pending, In progress
-  and Done, with a task under way in the middle one
-  (`ui/src/features/goals/goal-swimlanes.test.tsx::draws each goal workflow columns`,
-  `::draws an in-progress task of a stepless goal in its own column`).
+- The board draws "In progress" and "Done" once as headings, however many
+  goals it shows, and files a task of each status in the cell rule 39 names
+  for it, stepped goals included
+  (`ui/src/features/goals/goal-swimlanes.test.tsx::draws the two column names once, however many goals`,
+  `::files a %s task under %s, not %s`,
+  `::keeps a stepped goal's tasks in the same two columns`).
+- A goal's lane is one line of chevron, title link, status, `done/total` and
+  tokens, with no progress bar, and a folded lane shows its summary and no
+  cells
+  (`ui/src/features/goals/goal-swimlanes.test.tsx::draws a goal as one line: toggle, title link, status, progress and tokens`,
+  `::shows the lane summary in place of the cells once folded`).
 - The task panel of a stepped task draws one workflow section in place of
   its old Agents fact and step strip: every column on the track, each with
   its agent's skills, model and session under its name, and no description

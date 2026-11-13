@@ -28,34 +28,31 @@ interface GoalStatusMeta {
    * orchestrator's violet, an active goal is the accent, completed is done.
    */
   badge: string
+  /** Solid dot classes, from the same ramp. */
+  dot: string
 }
 
 export const GOAL_STATUS_META: Record<GoalStatus, GoalStatusMeta> = {
   planning: {
     label: "Planning",
     badge: "bg-status-review-soft text-status-review-fg",
+    dot: "bg-status-review",
   },
   active: {
     label: "Active",
     badge: "bg-status-active-soft text-status-active-fg",
+    dot: "bg-status-active",
   },
   completed: {
     label: "Completed",
     badge: "bg-status-done-soft text-status-done-fg",
+    dot: "bg-status-done",
   },
   cancelled: {
     label: "Cancelled",
     badge: "bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground/60",
   },
-}
-
-/**
- * Whether the orchestrator is still writing the plan — its tasks are held back
- * until it finalizes it, whether they are `pending` or `ready`, and the board
- * keeps them all in its first column to say so.
- */
-export function isStillPlanning(status: GoalStatus): boolean {
-  return status === "planning"
 }
 
 /** Statuses a goal cannot leave: no actions apply to them. */

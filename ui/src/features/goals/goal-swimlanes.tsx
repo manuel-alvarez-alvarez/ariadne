@@ -1,11 +1,11 @@
 /**
- * The goals list as a board: one horizontal swimlane per goal, every task of
- * every shown goal in its cell. Each lane draws its own columns: Pending, In
- * progress and Done for a goal with no workflow, or Pending, one column per
- * step and Done for a goal a workflow runs.
+ * The goals list as a board: two global columns, "In progress" and "Done",
+ * drawn once at the top, and one slim lane per goal under them. A lane is one
+ * line about its goal and two cells, one under each column, holding its task
+ * cards.
  *
- * The board scrolls in both directions inside its own box, which is what makes
- * each goal's name stick to the left edge.
+ * The board scrolls in both directions inside its own box, which is what keeps
+ * the column headers stuck to its top edge.
  *
  * The lanes share a single task-list query (`GET /v1/tasks`), which the SSE
  * dispatcher invalidates on `task_created`/`task_updated`, so cards move
@@ -14,13 +14,12 @@
 
 import { useQuery } from "@tanstack/react-query"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
-import { type CSSProperties, useMemo } from "react"
+import { useMemo } from "react"
 import { Link } from "react-router-dom"
 
 import type { GoalDto, TaskDto } from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { ScrollEdge } from "@/components/scroll-edge"
-import { StatusBadge } from "@/components/status-badge"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -29,43 +28,37 @@ import { type SessionAttention, SessionAttentionBadge } from "@/features/session
 import { TaskCard, taskListQueryOptions } from "@/features/tasks"
 import { findStep, stepTitle } from "@/features/tasks/steps"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
-import { cn, folderName, formatAbsolute } from "@/lib/format"
+import { cn, formatAbsolute } from "@/lib/format"
 import { paths } from "@/routes/paths"
 import { type BoardAttention, taskAttentionReason, useBoardAttention } from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"
-import { laneColumnOf, laneColumns, laneCounts, laneSummary, orderLanes } from "./lanes"
+import {
+  LANE_COLUMNS,
+  type LaneColumnKey,
+  laneColumnOf,
+  laneCounts,
+  laneSummary,
+  orderLanes,
+} from "./lanes"
 import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 
 /**
- * One template for a lane's header row and its cards, so the columns line up:
- * as many as the lane has, and none of them narrower than a card is readable
- * at. A lane sets `--lane-columns` to its own count — three (Pending, In
- * progress, Done) for a goal with no workflow, or Pending, its steps and Done
- * for one with.
- *
- * Two floors, because a 1280px laptop is the machine this is used on: 13rem is
- * what a card wants, 11rem is what it still reads at, and below `xl` the
- * second one is what keeps a wide lane's last column on screen instead of
- * past the right edge.
+ * One template for the column header row and every lane's cells, so the two
+ * columns line up down the board. Neither is narrower than a card reads at:
+ * 13rem is what a card wants, 11rem is what it still reads at.
  */
-const COLUMNS_GRID =
-  "grid grid-cols-[repeat(var(--lane-columns),minmax(11rem,1fr))] gap-3 xl:grid-cols-[repeat(var(--lane-columns),minmax(13rem,1fr))]"
+const COLUMNS_GRID = "grid grid-cols-2 gap-3 px-3"
 
 /**
- * What the lanes are laid out at before the board gives up and scrolls: the
- * widest lane's floor (its columns and their 0.75rem gaps) plus the padding
- * either side of a lane, rounded up — 12rem a column at the narrow floor,
- * 14.4rem at the wide one, which for a five-column lane is 60rem and 72rem.
- * It sits on the block *inside* the scrollport, which is what makes a narrow
- * window scroll the board rather than squeeze its columns past reading.
+ * What the board is laid out at before it gives up and scrolls: two columns at
+ * the card floor, their gap and the padding either side, rounded up. It sits
+ * on the block *inside* the scrollport, which is what makes a narrow window
+ * scroll the board rather than squeeze its cards past reading.
  */
-const BOARD_WIDTH =
-  "min-w-[calc(var(--board-columns)*12rem)] xl:min-w-[calc(var(--board-columns)*14.4rem)]"
+const BOARD_WIDTH = "min-w-[28rem]"
 
-/** The custom property a grid above reads its column count from. */
-function columnCount(name: "--lane-columns" | "--board-columns", count: number): CSSProperties {
-  return { [name]: count } as CSSProperties
-}
+/** The grid a cell lays its cards out on: as many 13rem-floor columns as fit. */
+const CELL_GRID = "grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] content-start gap-2"
 
 /**
  * The board's own scrollport: sticky only works against the box that scrolls.
@@ -100,12 +93,6 @@ const BOARD_BOX = "h-full rounded-lg border contain-paint"
  */
 const BOARD_FRAME = "relative min-h-0 flex-1"
 
-/**
- * Left-pinned and opaque, because the lanes scroll underneath it. `w-fit` is
- * what lets it slide: a full-width block has nowhere to stick to.
- */
-const LANE_HEADER = "sticky left-0 z-10 flex w-fit max-w-full items-center gap-2 bg-background px-3"
-
 export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   const tasks = useQuery(taskListQueryOptions({}))
   const byGoal = useMemo(() => groupByGoal(tasks.data ?? [], goals), [tasks.data, goals])
@@ -124,9 +111,6 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
     () => orderLanes(goals, (goal) => laneNeedsAttention(goal.id, byGoal.get(goal.id), attention)),
     [goals, byGoal, attention],
   )
-  // Every lane draws its own columns now, so the board is as wide as the
-  // lane with the most of them.
-  const widest = Math.max(3, ...goals.map((goal) => laneColumns(goal).length))
 
   if (tasks.error) {
     return (
@@ -157,7 +141,8 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
           "overflow-auto focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
         )}
       >
-        <div className={BOARD_WIDTH} style={columnCount("--board-columns", widest)}>
+        <div className={BOARD_WIDTH}>
+          <ColumnHeaders />
           {lanes.map((goal) => {
             // A finished goal opens folded: five columns of cards that all sit
             // in Merged is a 270px box that is 85% empty, and on a 900px
@@ -184,6 +169,26 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   )
 }
 
+/**
+ * The two column names, once, at the top of the board. Stuck to the
+ * scrollport's top edge and opaque, because the lanes scroll underneath it.
+ * Each name is a heading, so a screen reader hears the columns by name.
+ */
+function ColumnHeaders() {
+  return (
+    <div className={cn(COLUMNS_GRID, "sticky top-0 z-20 border-b bg-background py-2")}>
+      {LANE_COLUMNS.map((column) => (
+        <h2 key={column.key} className="min-w-0 truncate text-xs font-medium">
+          <Tooltip>
+            <TooltipTrigger render={<span />}>{column.label}</TooltipTrigger>
+            <TooltipContent>{column.hint}</TooltipContent>
+          </Tooltip>
+        </h2>
+      ))}
+    </div>
+  )
+}
+
 function Lane({
   goal,
   tasks,
@@ -198,28 +203,20 @@ function Lane({
   collapsed: boolean
   onToggle: () => void
 }) {
-  const columns = laneColumns(goal)
   const counts = laneCounts(tasks?.all ?? [])
-  const total = counts.pipeline
-  const done = counts.finished
-  const danger = counts.failed + counts.stalled
   const summary = laneSummary(tasks?.all ?? [])
   const repos = goal.repos.map((repo) => `${repo.path} [${repo.base_branch}]`).join("\n")
-  // Folder name, not the full path: the header is a line among five other
-  // cells, and the path in full is what the tooltip on the title already
-  // gives — this is only the part that tells lanes apart at a glance.
-  const repoSummary = goal.repos
-    .map((repo) => `${folderName(repo.path)} [${repo.base_branch}]`)
-    .join(", ")
+  const status = GOAL_STATUS_META[goal.status]
   // An orchestrator belongs to no task, so it has no card to be flagged on: the lane
   // header is the only place its goal is named, and so the only place it can
   // ask for a person. It is shown collapsed too — a lane folded away is
   // exactly where a stuck orchestrator would otherwise go unseen.
   const orchestrator: SessionAttention | undefined = attention.byGoal.get(goal.id)
+  const empty = (tasks?.all.length ?? 0) === 0
 
   return (
     <section className="border-b last:border-b-0">
-      <header className={cn(LANE_HEADER, collapsed ? "py-1.5" : "pt-2.5 pb-1")}>
+      <header className={cn("flex items-center gap-2 px-3", collapsed ? "py-1.5" : "pt-2 pb-1")}>
         <Button
           variant="ghost"
           size="icon-xs"
@@ -249,106 +246,62 @@ function Lane({
               {repos || "Open the goal"}
             </span>
             <span className="text-background/70">created {formatAbsolute(goal.created_at)}</span>
+            <span className="text-background/70">
+              {counts.finished}/{counts.pipeline} done · {counts.failed} failed · {counts.stalled}{" "}
+              stalled
+            </span>
           </TooltipContent>
         </Tooltip>
-        {repoSummary && (
-          <span className="min-w-0 truncate text-xs text-muted-foreground">{repoSummary}</span>
-        )}
-        <StatusBadge
-          box="badge"
-          label={GOAL_STATUS_META[goal.status].label}
-          tone={GOAL_STATUS_META[goal.status].badge}
-        />
+        {/* A dot, not a badge: the lane is one line. Its text is for a screen
+            reader, which would otherwise hear nothing of the goal's status. */}
+        <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)} aria-hidden />
+        <span className="sr-only">{status.label}</span>
+        <span className="whitespace-nowrap text-xs text-muted-foreground">
+          {counts.finished}/{counts.pipeline}
+        </span>
         {orchestrator ? <SessionAttentionBadge attention={orchestrator} /> : null}
         {collapsed ? (
-          <span className="whitespace-nowrap text-xs text-muted-foreground">{summary}</span>
-        ) : (
-          <span className="flex items-center gap-2 whitespace-nowrap text-xs text-muted-foreground">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <div
-                    role="progressbar"
-                    aria-label={summary}
-                    aria-valuemin={0}
-                    aria-valuemax={total}
-                    aria-valuenow={done}
-                    className="flex h-1 w-16 overflow-hidden rounded-full bg-muted"
-                  />
-                }
-              >
-                <span
-                  className="bg-status-done"
-                  style={{ width: `${(done / Math.max(total, 1)) * 100}%` }}
-                />
-                <span
-                  className="bg-status-danger"
-                  style={{ width: `${(danger / Math.max(total, 1)) * 100}%` }}
-                />
-              </TooltipTrigger>
-              <TooltipContent>{summary}</TooltipContent>
-            </Tooltip>
-            <span>
-              {done}/{total}
-            </span>
-            {/* What the whole goal has cost — the orchestrator and every
-                column's agents — which is the one number the board can show
-                without opening anything. The hint behind it names the halves
-                and splits the total by who spent it. */}
-            <TokenFigure
-              usage={goal.usage.total}
-              rows={goalUsageRows(goal.usage, (step) => stepTitle(goal.steps, step))}
-            />
+          <span className="min-w-0 truncate whitespace-nowrap text-xs text-muted-foreground">
+            {summary}
           </span>
-        )}
+        ) : null}
+        {/* What the whole goal has cost — the orchestrator and every
+            column's agents — which is the one number the board can show
+            without opening anything. The hint behind it names the halves
+            and splits the total by who spent it. */}
+        <TokenFigure
+          className="ml-auto whitespace-nowrap text-xs text-muted-foreground"
+          usage={goal.usage.total}
+          rows={goalUsageRows(goal.usage, (step) => stepTitle(goal.steps, step))}
+        />
       </header>
 
       {collapsed ? null : (
-        // The lane's own column row: a goal run by a workflow has columns of
-        // its own, so one row shared by every lane can no longer name them.
-        <div
-          className={cn(COLUMNS_GRID, "px-3 pt-1 pb-1.5")}
-          style={columnCount("--lane-columns", columns.length)}
-        >
-          {columns.map((column) => (
-            <div key={column.key} className="flex min-w-0 items-center gap-2">
-              <span className={cn("size-1.5 shrink-0 rounded-full", column.dot)} />
-              <h2 className="min-w-0 truncate text-xs font-medium">
-                <Tooltip>
-                  <TooltipTrigger render={<span />}>{column.label}</TooltipTrigger>
-                  <TooltipContent>{column.hint}</TooltipContent>
-                </Tooltip>
-              </h2>
-              <span className="text-xs text-muted-foreground">
-                {tasks?.columns.get(column.key)?.length ?? 0}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {collapsed ? null : total === 0 ? (
-        <p className="sticky left-0 w-fit px-3 pt-1 pb-3 text-xs text-muted-foreground">
-          {goal.status === "planning"
-            ? "No tasks yet — the orchestrator is still working"
-            : "No tasks"}
-        </p>
-      ) : (
-        <div
-          className={cn(COLUMNS_GRID, "px-3 pt-1 pb-2.5")}
-          style={columnCount("--lane-columns", columns.length)}
-        >
-          {columns.map((column) => (
+        <div className={cn(COLUMNS_GRID, "pt-1 pb-2.5")}>
+          {LANE_COLUMNS.map((column) => (
             // An empty cell is empty: whitespace already says the column has
             // nothing in it, and a board of placeholders says nothing at all.
-            <div key={column.key} className="flex flex-col gap-2">
+            // biome-ignore lint/a11y/useSemanticElements: a fieldset is a form control; this names a cell
+            <div
+              key={column.key}
+              role="group"
+              aria-label={`${goal.title}: ${column.label}`}
+              className={CELL_GRID}
+            >
+              {column.key === "in_progress" && empty ? (
+                <p className="col-span-full text-xs text-muted-foreground">
+                  {goal.status === "planning"
+                    ? "No tasks yet — the orchestrator is still working"
+                    : "No tasks"}
+                </p>
+              ) : null}
               {(tasks?.columns.get(column.key) ?? []).map((task) => (
                 <TaskCard
                   key={task.id}
                   task={task}
-                  // A failure in the Pending column has to say so: the outline
-                  // is what catches the eye, the badge is what names it.
-                  showStatus={task.status === "failed"}
+                  // A failure or a cancellation has to say so: the outline is
+                  // what catches the eye, the badge is what names it.
+                  showStatus={task.status === "failed" || task.status === "cancelled"}
                   step={findStep(goal.steps, task.step)}
                   attention={attention.byTask.get(task.id)}
                 />
@@ -357,32 +310,13 @@ function Lane({
           ))}
         </div>
       )}
-
-      {/* Only the cancelled are down here now. A failed task is a retry
-          candidate, so it stays in the Pending column where the retry would
-          put it back; a cancelled one is nobody's next move. */}
-      {!collapsed && tasks && tasks.offBoard.length > 0 && (
-        <div className="mx-3 mb-2.5 space-y-2 rounded-lg border border-dashed bg-muted/20 p-2">
-          <h3 className="text-xs font-medium text-muted-foreground">Cancelled</h3>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {tasks.offBoard.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                showStatus
-                attention={attention.byTask.get(task.id)}
-              />
-            ))}
-          </div>
-        </div>
-      )}
     </section>
   )
 }
 
 /**
- * The loading board, shaped like the board it becomes: a few lanes, each with
- * its column row, on the same grid. Shown by the page while the goals load and by
+ * The loading board, shaped like the board it becomes: the two column names and
+ * a few lanes on the same grid. Shown by the page while the goals load and by
  * the board while the tasks do, so a cold start is one skeleton, not two
  * unrelated ones in sequence.
  */
@@ -390,23 +324,19 @@ export function BoardSkeleton() {
   return (
     <div className={BOARD_FRAME} aria-hidden>
       <div className={cn(BOARD_BOX, "overflow-hidden")}>
-        <div className={BOARD_WIDTH} style={columnCount("--board-columns", 3)}>
+        <div className={BOARD_WIDTH}>
+          <div className={cn(COLUMNS_GRID, "border-b py-2")}>
+            {LANE_COLUMNS.map((column) => (
+              <Skeleton key={column.key} className="h-3 w-20" />
+            ))}
+          </div>
           {[0, 1, 2].map((lane) => (
-            <div
-              key={lane}
-              className="border-b px-3 pt-2.5 pb-2.5 last:border-b-0"
-              style={columnCount("--lane-columns", 3)}
-            >
-              <Skeleton className="h-4 w-48" />
-              <div className={cn(COLUMNS_GRID, "pt-3")}>
-                {[0, 1, 2].map((column) => (
-                  <Skeleton key={column} className="h-3 w-20" />
-                ))}
-              </div>
+            <div key={lane} className="border-b py-2.5 last:border-b-0">
+              <Skeleton className="mx-3 h-4 w-48" />
               <div className={cn(COLUMNS_GRID, "pt-2")}>
-                {[0, 1, 2].map((column) => (
-                  <div key={column}>
-                    {(lane + column) % 2 === 0 ? <Skeleton className="h-14 w-full" /> : null}
+                {LANE_COLUMNS.map((column, index) => (
+                  <div key={column.key}>
+                    {(lane + index) % 2 === 0 ? <Skeleton className="h-14 w-full" /> : null}
                   </div>
                 ))}
               </div>
@@ -420,10 +350,8 @@ export function BoardSkeleton() {
 
 interface GoalTasks {
   all: TaskDto[]
-  /** Board cells, keyed by the lane's column keys (see `laneColumns`). */
-  columns: Map<string, TaskDto[]>
-  /** Cancelled tasks: off the pipeline, but not out of sight. */
-  offBoard: TaskDto[]
+  /** Board cells, keyed by the lane's column keys (see `LANE_COLUMNS`). */
+  columns: Map<LaneColumnKey, TaskDto[]>
 }
 
 /**
@@ -448,8 +376,7 @@ function laneNeedsAttention(
 
 /**
  * The tasks of each lane, in the cell each one belongs in — which cell is
- * `laneColumnOf`'s answer, and a goal's status is part of it, which is why the
- * goals are an argument here.
+ * `laneColumnOf`'s answer.
  */
 function groupByGoal(tasks: TaskDto[], goals: GoalDto[]): Map<string, GoalTasks> {
   const lanes = new Map<string, GoalTasks>()
@@ -460,15 +387,11 @@ function groupByGoal(tasks: TaskDto[], goals: GoalDto[]): Map<string, GoalTasks>
     if (!goal) continue
     let lane = lanes.get(task.goal_id)
     if (!lane) {
-      lane = { all: [], columns: new Map(), offBoard: [] }
+      lane = { all: [], columns: new Map() }
       lanes.set(task.goal_id, lane)
     }
     lane.all.push(task)
-    const column = laneColumnOf(task, goal)
-    if (column === null) {
-      lane.offBoard.push(task)
-      continue
-    }
+    const column = laneColumnOf(task)
     const cell = lane.columns.get(column)
     if (cell) cell.push(task)
     else lane.columns.set(column, [task])
