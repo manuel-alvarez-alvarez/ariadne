@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-11-08
+updated: 2026-11-13
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
@@ -78,9 +78,7 @@ launch environment and a discovery timeout, on the session id the probe's
 agent or rejected its catalog. A failed close or delete is logged as a
 warning and does not reject the agent or discard its catalog. A catalog
 read from the store rather than a fresh `session/new` opens no session, so
-it leaves nothing to delete. Metadata listing (rule 5, `GET /v1/sessions`'s
-outside half) opens no session either: it asks only `initialize` and
-`session/list`.
+it leaves nothing to delete.
 
 ## Behavior
 
@@ -96,8 +94,6 @@ outside half) opens no session either: it asks only `initialize` and
    the session with `session/new` — or, for a resume, `session/resume` where
    the agent advertises it and `session/load` where it only advertises
    loading — and passes the MCP servers of the launch file every time.
-   An outside loose session always opens through `session/load` (020).
-   A loose session receives no task MCP server or seat instructions.
 3. The model is set through `session/set_config_option` on the option of
    category `model`, or, where no option has that category, on the option
    whose id or name is `model`. The effort is set the same way, on category
@@ -125,7 +121,6 @@ outside half) opens no session either: it asks only `initialize` and
    pin must land: a refused option fails a switch between turns with the
    agent's reason, and the session keeps its old pin
    (`::a_refused_same_agent_option_keeps_the_old_pin`).
-   Loose sessions instead retain and record the loaded model (020).
 4. A prompt the runtime sends is its own text. The first prompt of a launch
    and the first after a model switch carry the system prompt and a blank
    line ahead of that text (006 rule 2). A command never carries it: where text from any
@@ -146,8 +141,6 @@ outside half) opens no session either: it asks only `initialize` and
    prompt of a switched session does: that prompt stays whole, past the
    daemon prompt fold
    (`handoff.rs::the_first_prompt_of_a_switched_session_stays_with_its_earlier_history`);
-   a loose session has no briefing, so its first daemon prompt stays too
-   (`handoff.rs::the_first_daemon_prompt_of_a_loose_session_stays`);
    every prompt whose `prompt_kind` is `agent_resume` or
    `orchestrator_resume`, never found by its text
    (`handoff.rs::resume_nudges_are_left_out_by_their_prompt_kind`); and
@@ -218,8 +211,7 @@ outside half) opens no session either: it asks only `initialize` and
    one.
 9. The ACP permission mode is the repository's (002), read at launch: a
    task's sessions take its repository's, an orchestrator its goal's first
-   repository's, and a loose session (020) the registered repository its
-   directory lies deepest in — `auto` when it lies in none. `auto` selects the
+   repository's, and a PR session its request's repository's. `auto` selects the
    first allowing option, then the first option, and cancels only an empty
    list. `ask` records the request in the console, raises session attention
    and blocks until console input selects an option. `learn` does the same
@@ -260,7 +252,7 @@ outside half) opens no session either: it asks only `initialize` and
      to 64 hex characters in either case, with a letter and a digit,
      `<HASH>`, and an Ariadne id (`0` and 25 of `[0-9a-z]`, a whole word)
      `<ID>`. Numbers stay. An
-     orchestrator and a loose session have no branch. A column agent's
+     orchestrator has no branch. A column agent's
      branch is its task's, shared by every column of the task (030).
    - The key is the compact JSON of the kept fields with sorted keys:
      `git rebase main 2>&1 | tail -40` with a `description` is
@@ -323,8 +315,7 @@ outside half) opens no session either: it asks only `initialize` and
    its level and everything else about it. A `once` row never answers a later
    request. A denied row
    never auto-allows and never auto-denies. A request with no `rawInput`
-   never auto-allows, and a session outside every repository records and
-   answers nothing. The AI permission model reads the raw input, not the key.
+   never auto-allows. The AI permission model reads the raw input, not the key.
    In `ai`, the AI permission model decides first (022), then `learn`
    handles every answer that is not a confident allow or deny.
    The answering row's id, level and key appear on `permission_request` and
@@ -435,12 +426,6 @@ outside half) opens no session either: it asks only `initialize` and
   (`acp_discovery.rs::a_cached_opencode_catalog_probe_creates_no_session_and_runs_no_deletion`).
 - A non-OpenCode probe does not run session delete
   (`acp_discovery.rs::a_non_opencode_probe_runs_no_session_delete`).
-- Metadata listing — `initialize` then `session/list`, outside any catalog
-  probe — opens no session and runs no OpenCode delete
-  (`acp_discovery.rs::metadata_listing_opens_no_session_and_runs_no_delete_for_opencode`),
-  which a real OpenCode CLI confirms too, in its own isolated data directory,
-  where this machine has one on `PATH`
-  (`acp_discovery.rs::real_opencode_metadata_listing_creates_no_session`).
 - An ACP error with `data.details` records the ACP message and detail in
   `session.error` while keeping the other fields
   (`acp_runtime.rs::an_acp_error_reports_its_details_in_the_event_message`).

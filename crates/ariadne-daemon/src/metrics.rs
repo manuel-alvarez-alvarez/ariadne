@@ -152,7 +152,7 @@ fn seat(session: &AgentSession) -> String {
 
 /// The workflow column id of an agent session: its staffed task agent's
 /// column. A session no column staffs — the orchestrator's, a reviewer's, a
-/// keeper's, or one resumed loose — carries none.
+/// keeper's — carries none.
 async fn step(store: &Store, session: &AgentSession) -> String {
     if session.seat.as_deref() != Some(ariadne_core::Seat::Agent.as_str()) {
         return NONE.into();

@@ -1,7 +1,7 @@
 ---
 id: stats
 status: superseded
-updated: 2026-10-18
+updated: 2026-11-13
 superseded_by: 035
 areas: [api, store, daemon]
 commits: []
@@ -66,8 +66,8 @@ not a change to how they decide it.
    kind over a span of time.
 6. A fact about a session is filled from that session by one daemon helper,
    `stats::session_fact`. The repository is the task's, or the goal's where
-   the goal works in one repository alone; a loose session and an
-   orchestrator over several repositories name none. The goal, task, session,
+   the goal works in one repository alone; an orchestrator over several
+   repositories names none. The goal, task, session,
    launch, seat, model and effort are the session's own. The skills are the
    ones its staffed agent loads, in order (`task_agent_skills`); a session
    with no staffed agent has none.

@@ -7,8 +7,8 @@ use clap::Subcommand;
 
 use ariadne_api::pull_requests::PullRequestDto;
 use ariadne_api::sessions::{
-    ConsoleInputRequest, NewSessionRequest, SessionDto, SessionEntryDto, SessionKind,
-    SessionPageDto, SessionPageQuery, SwitchSessionRequest,
+    ConsoleInputRequest, SessionDto, SessionEntryDto, SessionPageDto, SessionPageQuery,
+    SwitchSessionRequest,
 };
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::TaskDto;
@@ -19,9 +19,7 @@ use ariadne_core::{AttentionReason, Seat, SessionStatus};
 use super::attention::reason_label;
 use super::follow;
 use super::resolve::{self, Kind};
-use super::{
-    Subject, confirm, one_of, parse_effort, parse_effort_or_default, parse_model, query_path,
-};
+use super::{Subject, confirm, one_of, parse_effort_or_default, parse_model, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, at, col, dash, empty_state, moment, note, ok_id_line, print,
@@ -76,9 +74,9 @@ const INDENT: &str = "\n                 ";
 /// What `session ls --help` ends with.
 const LS_EXAMPLES: &str = "\
 Examples:
-  ariadne session ls                                  # recent live and outside sessions
+  ariadne session ls                                  # recent live sessions
   ariadne session ls --all --task <task-id>           # that task's history
-  ariadne session ls --kind outside --agent codex-acp # stored agent sessions
+  ariadne session ls --agent codex-acp              # sessions on one agent
   ariadne session ls --cursor <token>
 ";
 
@@ -88,12 +86,9 @@ Examples:
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub(crate) enum SessionCommand {
-    /// List Ariadne and outside agent sessions
+    /// List Ariadne sessions
     #[command(after_help = LS_EXAMPLES)]
     Ls {
-        /// Only Ariadne or outside sessions
-        #[arg(long, value_parser = ["ariadne", "outside"])]
-        kind: Option<String>,
         /// Filter by registry agent id
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_ids))]
         agent: Option<String>,
@@ -137,39 +132,12 @@ pub(crate) enum SessionCommand {
         /// Continue from a previous page
         #[arg(long, value_name = "TOKEN")]
         cursor: Option<String>,
-        /// Refresh the daemon's session snapshot before listing
-        #[arg(long)]
-        refresh: bool,
         /// Fetch every page, including ended Ariadne sessions
         #[arg(short, long, conflicts_with = "cursor")]
         all: bool,
         /// Redraw the table whenever a session changes, until Ctrl-C
         #[arg(long)]
         watch: bool,
-    },
-    /// Start a loose session: a new conversation with an agent, in a
-    /// directory, with no goal or task behind it
-    ///
-    /// The session waits for its first prompt, which becomes its title:
-    /// type it in `ariadne attach <id>`, or send it with `ariadne session
-    /// send`.
-    New {
-        /// What the session runs on: AGENT:MODEL — the id of an agent of the
-        /// ACP registry and, after the colon, one model of it
-        /// (codex-acp:gpt-5.3-codex)
-        #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
-        model: String,
-        /// The reasoning effort that model is run at: one of the efforts
-        /// `ariadne models ls` lists for it. Default: whatever the agent runs
-        /// it at
-        #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
-        effort: Option<String>,
-        /// The directory the agent works in. Default: the current one
-        #[arg(long, value_name = "PATH", value_hint = clap::ValueHint::DirPath)]
-        dir: Option<std::path::PathBuf>,
-        /// Open the session's console once it has started
-        #[arg(long)]
-        attach: bool,
     },
     /// Switch a session to another model or agent
     Switch {
@@ -246,7 +214,6 @@ fn parse_switch_model(model: &str) -> std::result::Result<String, String> {
 pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result<()> {
     match cmd {
         SessionCommand::Ls {
-            kind,
             agent,
             task,
             goal,
@@ -260,14 +227,13 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
             search,
             limit,
             cursor,
-            refresh,
+
             all,
             watch,
         } => {
             ls(
                 client,
                 ListOptions {
-                    kind,
                     agent,
                     task,
                     goal,
@@ -281,52 +247,13 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                     search,
                     limit,
                     cursor,
-                    refresh,
+
                     all,
                 },
                 watch,
                 format,
             )
             .await?
-        }
-        SessionCommand::New {
-            model,
-            effort,
-            dir,
-            attach,
-        } => {
-            let dir = match dir {
-                Some(dir) => dir,
-                None => std::env::current_dir()?,
-            };
-            // The daemon takes an absolute path, and a relative one means
-            // this shell's directory, not the daemon's.
-            let dir = std::path::absolute(&dir)?;
-            let s: SessionDto = client
-                .post_json(
-                    "/v1/sessions",
-                    &NewSessionRequest {
-                        model,
-                        effort,
-                        working_directory: dir.display().to_string(),
-                    },
-                )
-                .await?;
-            if attach {
-                return super::attach::attach(client, &s.id, None).await;
-            }
-            print(format, &s, || {
-                println!(
-                    "{}",
-                    status_line(
-                        view().color,
-                        view().quiet,
-                        "session",
-                        &s.id,
-                        s.status.as_str(),
-                    )
-                )
-            })?;
         }
         SessionCommand::Switch { id, model, effort } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
@@ -442,7 +369,6 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
 
 #[derive(Debug)]
 struct ListOptions {
-    kind: Option<String>,
     agent: Option<String>,
     task: Option<String>,
     goal: Option<String>,
@@ -456,7 +382,7 @@ struct ListOptions {
     search: Option<String>,
     limit: Option<usize>,
     cursor: Option<String>,
-    refresh: bool,
+
     all: bool,
 }
 
@@ -483,21 +409,10 @@ fn parse_day_bound(value: &str, end_of_day: bool) -> Result<String, String> {
     Ok(time.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
 }
 
-fn session_kind(kind: Option<&str>) -> Option<SessionKind> {
-    match kind {
-        Some("ariadne") => Some(SessionKind::Ariadne),
-        Some("outside") => Some(SessionKind::Outside),
-        None => None,
-        Some(_) => unreachable!("clap validates session kinds"),
-    }
-}
-
 fn sessions_path(options: &ListOptions, cursor: Option<&str>) -> Result<String> {
-    let follows_all_page = cursor.is_some() && options.cursor.is_none();
     query_path(
         "/v1/sessions",
         &SessionPageQuery {
-            kind: session_kind(options.kind.as_deref()),
             agent: options.agent.clone(),
             goal: options.goal.clone(),
             task: options.task.clone(),
@@ -514,7 +429,6 @@ fn sessions_path(options: &ListOptions, cursor: Option<&str>) -> Result<String> 
             cursor: cursor
                 .map(str::to_string)
                 .or_else(|| options.cursor.clone()),
-            refresh: (options.refresh && !follows_all_page).then_some(true),
         },
     )
 }
@@ -559,7 +473,6 @@ fn next_session_note(page: &SessionPageDto, options: &ListOptions) -> Option<Str
 
 fn next_session_command(options: &ListOptions, cursor: &str) -> String {
     let mut args = vec!["ariadne".to_string(), "session".into(), "ls".into()];
-    push_option(&mut args, "--kind", options.kind.as_deref());
     push_option(&mut args, "--agent", options.agent.as_deref());
     push_option(&mut args, "--goal", options.goal.as_deref());
     push_option(&mut args, "--task", options.task.as_deref());
@@ -785,7 +698,6 @@ fn attention_label(reason: Option<AttentionReason>) -> String {
 fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
     let mut pairs = vec![
         ("id", Kv::id(s.id.clone())),
-        ("title", Kv::title(dash(s.title.as_deref()))),
         ("goal", Kv::id(dash(s.goal_id.as_deref()))),
         ("task", Kv::id(dash(s.task_id.as_deref()))),
         ("pull request", Kv::id(dash(s.pull_request_id.as_deref()))),
@@ -831,7 +743,7 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
 
 /// How a seat reads: the seat alone, or, for the agent of a workflow column
 /// that still has one, the seat and the column together, e.g. `agent ·
-/// develop`. `absent` is what an unseated row (a loose or outside session)
+/// develop`. `absent` is what a missing seat
 /// prints — a dash in an inspect block, empty in a table cell.
 fn seat_text(seat: Option<Seat>, step: Option<&str>, absent: &str) -> String {
     match (seat, step) {
@@ -885,7 +797,6 @@ mod tests {
 
     fn options() -> ListOptions {
         ListOptions {
-            kind: None,
             agent: None,
             task: None,
             goal: None,
@@ -899,33 +810,31 @@ mod tests {
             search: None,
             limit: None,
             cursor: None,
-            refresh: false,
             all: false,
         }
     }
 
-    fn outside(id: &str) -> SessionEntryDto {
+    fn entry(id: &str) -> SessionEntryDto {
         SessionEntryDto {
-            kind: SessionKind::Outside,
             id: id.into(),
             agent_id: "codex-acp".into(),
             title: Some(format!("Prompt for {id}")),
-            goal_id: None,
+            goal_id: Some("01GOAL".into()),
             task_id: None,
-            seat: None,
+            seat: Some(Seat::Orchestrator),
             task_agent_id: None,
-            model: None,
+            model: Some("codex-acp:model".into()),
             effort: None,
             internal_session_id: Some(id.into()),
             working_directory: Some("/work/api".into()),
-            status: None,
+            status: Some(SessionStatus::Starting),
             attention_reason: None,
             attention_since: None,
             last_activity_at: Some("2026-09-12T12:00:00Z".into()),
-            usage: None,
+            usage: Some(Default::default()),
             context_used: None,
             context_size: None,
-            created_at: None,
+            created_at: Some("2026-09-12T12:00:00Z".into()),
             ended_at: None,
             pull_request_id: None,
         }
@@ -933,16 +842,14 @@ mod tests {
 
     fn page(ids: &[&str], next_cursor: Option<&str>, total: usize) -> SessionPageDto {
         SessionPageDto {
-            sessions: ids.iter().map(|id| outside(id)).collect(),
+            sessions: ids.iter().map(|id| entry(id)).collect(),
             next_cursor: next_cursor.map(str::to_string),
             total,
-            snapshot_at: "2026-09-12T12:00:00Z".into(),
         }
     }
 
     fn ariadne(id: &str, status: SessionStatus) -> SessionEntryDto {
-        let mut session = outside(id);
-        session.kind = SessionKind::Ariadne;
+        let mut session = entry(id);
         session.status = Some(status);
         session.model = Some("codex-acp:model".into());
         session.usage = Some(Default::default());
@@ -953,7 +860,6 @@ mod tests {
     #[test]
     fn every_session_flag_reaches_its_query_parameter() {
         let options = ListOptions {
-            kind: Some("outside".into()),
             agent: Some("codex-acp".into()),
             goal: Some("01GOAL".into()),
             task: Some("01TASK".into()),
@@ -967,12 +873,12 @@ mod tests {
             search: Some("rate limit".into()),
             limit: Some(25),
             cursor: Some("next/page".into()),
-            refresh: true,
+
             all: false,
         };
         assert_eq!(
             sessions_path(&options, None).unwrap(),
-            "/v1/sessions?kind=outside&agent=codex-acp&goal=01GOAL&task=01TASK&pull_request=01PR&status=idle&seat=agent&attention=true&dir=%2Fwork%2Fapi&since=2026-09-01T00%3A00%3A00Z&until=2026-09-12T12%3A30%3A00%2B02%3A00&q=rate+limit&limit=25&cursor=next%2Fpage&refresh=true"
+            "/v1/sessions?agent=codex-acp&goal=01GOAL&task=01TASK&pull_request=01PR&status=idle&seat=agent&attention=true&dir=%2Fwork%2Fapi&since=2026-09-01T00%3A00%3A00Z&until=2026-09-12T12%3A30%3A00%2B02%3A00&q=rate+limit&limit=25&cursor=next%2Fpage"
         );
     }
 
@@ -1011,11 +917,10 @@ mod tests {
                 ariadne("running", SessionStatus::Running),
                 ariadne("idle", SessionStatus::Idle),
                 ariadne("exited", SessionStatus::Exited),
-                outside("outside"),
+                entry("other"),
             ],
             next_cursor: None,
             total: 4,
-            snapshot_at: "2026-09-12T12:00:00Z".into(),
         };
 
         narrow_statuses(&mut page, &[SessionStatus::Idle, SessionStatus::Exited]);
@@ -1070,7 +975,7 @@ mod tests {
         let options = ListOptions {
             agent: Some("codex-acp".into()),
             limit: Some(2),
-            refresh: true,
+
             all: true,
             ..options()
         };
@@ -1089,74 +994,8 @@ mod tests {
         assert_eq!(
             *queries.lock().unwrap(),
             [
-                "agent=codex-acp&all=true&limit=2&refresh=true",
+                "agent=codex-acp&all=true&limit=2",
                 "agent=codex-acp&all=true&limit=2&cursor=after-two"
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn new_starts_a_session_in_the_directory_as_an_absolute_path() {
-        use axum::Router;
-        use axum::extract::State;
-        use axum::routing::post;
-
-        type Bodies = std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
-        async fn create(
-            State(bodies): State<Bodies>,
-            axum::Json(body): axum::Json<serde_json::Value>,
-        ) -> axum::Json<SessionDto> {
-            bodies.lock().unwrap().push(body);
-            axum::Json(SessionDto {
-                goal_id: None,
-                seat: None,
-                task_agent_id: None,
-                ..session("01NEW", "goal", None)
-            })
-        }
-
-        let bodies = Bodies::default();
-        let app = Router::new()
-            .route("/v1/sessions", post(create))
-            .with_state(bodies.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let client = Client::tcp(format!("http://{address}"));
-
-        for (dir, effort) in [
-            (Some("relative/dir".into()), Some("high".to_string())),
-            (None, None),
-        ] {
-            run(
-                &client,
-                SessionCommand::New {
-                    model: "codex-acp:gpt-5".into(),
-                    effort,
-                    dir,
-                    attach: false,
-                },
-                Format::Json,
-            )
-            .await
-            .unwrap();
-        }
-        server.abort();
-
-        let cwd = std::env::current_dir().unwrap();
-        assert_eq!(
-            *bodies.lock().unwrap(),
-            [
-                serde_json::json!({
-                    "model": "codex-acp:gpt-5",
-                    "effort": "high",
-                    "working_directory": cwd.join("relative/dir").display().to_string(),
-                }),
-                serde_json::json!({
-                    "model": "codex-acp:gpt-5",
-                    "effort": null,
-                    "working_directory": cwd.display().to_string(),
-                }),
             ]
         );
     }
@@ -1215,18 +1054,17 @@ mod tests {
     #[test]
     fn a_next_cursor_prints_the_session_command_for_the_next_page() {
         let options = ListOptions {
-            kind: Some("outside".into()),
             agent: Some("codex-acp".into()),
             dir: Some("/work/api service".into()),
             search: Some("rate limit".into()),
             limit: Some(25),
-            refresh: true,
+
             ..options()
         };
         assert_eq!(
             next_session_note(&page(&["one"], Some("after-one"), 8), &options).as_deref(),
             Some(
-                "Next: ariadne session ls --kind outside --agent codex-acp --dir '/work/api service' --search 'rate limit' --limit 25 --cursor after-one"
+                "Next: ariadne session ls --agent codex-acp --dir '/work/api service' --search 'rate limit' --limit 25 --cursor after-one"
             )
         );
         assert_eq!(next_session_note(&page(&["one"], None, 1), &options), None);
@@ -1244,10 +1082,9 @@ mod tests {
         pr_session.pull_request_id = Some("01PR".into());
         pr_session.title = Some("Fix widgets".into());
         let mut listing = SessionPageDto {
-            sessions: vec![pr_session, outside("outside-id")],
+            sessions: vec![pr_session, entry("other-id")],
             next_cursor: None,
             total: 2,
-            snapshot_at: "2026-09-12T12:00:00Z".into(),
         };
         let pull: PullRequestDto = serde_json::from_value(serde_json::json!({
             "id": "01PR", "repository_id": "01R", "number": 42,
@@ -1267,7 +1104,7 @@ mod tests {
         );
         assert_eq!(
             listing.sessions[1].title.as_deref(),
-            Some("Prompt for outside-id")
+            Some("Prompt for other-id")
         );
     }
 
@@ -1279,54 +1116,6 @@ mod tests {
     fn step_labels_reads_each_tasks_agents() {
         let steps = step_labels(&[crate::commands::fixtures::task("01TASK", "01GOAL")]);
         assert_eq!(steps.get("01DEVELOP").map(String::as_str), Some("develop"));
-    }
-
-    #[test]
-    fn the_session_table_has_the_unified_columns_and_empty_outside_fields() {
-        let table = crate::output::render_table(
-            LS,
-            &[session_row(
-                &outside("outside-id"),
-                chrono::Utc::now(),
-                &HashMap::new(),
-            )],
-            &View::plain(),
-        )
-        .unwrap();
-        let header: Vec<_> = table.lines().next().unwrap().split_whitespace().collect();
-        assert_eq!(
-            header,
-            [
-                "ID", "TITLE", "STATUS", "GOAL", "TASK", "SEAT", "AGENT", "MODEL", "AGE", "TOKENS"
-            ]
-        );
-        assert_eq!(
-            session_row(&outside("outside-id"), chrono::Utc::now(), &HashMap::new())[2..6],
-            ["", "", "", ""]
-        );
-    }
-
-    #[test]
-    fn an_outside_row_shows_its_model_and_token_usage() {
-        let mut session = outside("outside-id");
-        session.model = Some("codex-acp:gpt-5".into());
-        session.usage = Some(ariadne_api::usage::TokenUsageDto {
-            input_tokens: 1_200,
-            cached_input_tokens: 800,
-            output_tokens: 300,
-        });
-
-        let row = session_row(&session, chrono::Utc::now(), &HashMap::new());
-        assert_eq!(row[7], "codex-acp:gpt-5");
-        assert_eq!(row[9], "↑1.2k 66.7% ↓300");
-    }
-
-    #[test]
-    fn an_outside_row_without_model_or_usage_keeps_both_cells_empty() {
-        let row = session_row(&outside("outside-id"), chrono::Utc::now(), &HashMap::new());
-
-        assert_eq!(row[7], "");
-        assert_eq!(row[9], "");
     }
 
     #[test]
@@ -1363,7 +1152,7 @@ mod tests {
 
     #[test]
     fn columns_select_the_model_by_header_name() {
-        let mut session = outside("outside-id");
+        let mut session = entry("other-id");
         session.model = Some("codex-acp:gpt-5".into());
         let view = View {
             columns: vec!["model".into()],
@@ -1407,21 +1196,6 @@ mod tests {
     }
 
     #[test]
-    fn a_loose_session_prints_dashes_for_missing_fields() {
-        let loose = SessionDto {
-            goal_id: None,
-            task_id: None,
-            seat: None,
-            ..session("01LOOSE", "01GOAL", None)
-        };
-        let block = kv_block(&inspect_pairs(&loose), &View::plain());
-        for field in ["goal", "task", "seat"] {
-            let line = block.lines().find(|line| line.starts_with(field)).unwrap();
-            assert_eq!(line.split_whitespace().collect::<Vec<_>>(), [field, "-"]);
-        }
-    }
-
-    #[test]
     fn an_agent_seat_with_a_step_names_the_step_beside_it() {
         let s = session("01SESS", "01GOAL", Some("01TASK"));
         let block = kv_block(&inspect_pairs(&s), &View::plain());
@@ -1443,42 +1217,6 @@ mod tests {
             ["seat", "orchestrator"]
         );
         assert_eq!(what_for(&s), "orchestrator of goal 01GOAL");
-    }
-
-    #[test]
-    fn a_switched_session_shows_its_title_and_what_it_continues() {
-        let s = SessionDto {
-            title: Some("Fix widgets".into()),
-            switched_from: Some("01h00000000000000000000001".into()),
-            ..session("01SESS", "01GOAL", Some("01TASK"))
-        };
-        let block = kv_block(&inspect_pairs(&s), &View::plain());
-        let title = block
-            .lines()
-            .find(|line| line.starts_with("title"))
-            .unwrap();
-        assert_eq!(
-            title.split_whitespace().collect::<Vec<_>>(),
-            ["title", "Fix", "widgets"]
-        );
-        let continues = block
-            .lines()
-            .find(|line| line.starts_with("continues"))
-            .unwrap();
-        assert_eq!(
-            continues.split_whitespace().collect::<Vec<_>>(),
-            ["continues", "01h00000000000000000000001"]
-        );
-    }
-
-    #[test]
-    fn a_session_with_neither_shows_a_dash_for_title_and_continues() {
-        let s = session("01SESS", "01GOAL", Some("01TASK"));
-        let block = kv_block(&inspect_pairs(&s), &View::plain());
-        for field in ["title", "continues"] {
-            let line = block.lines().find(|line| line.starts_with(field)).unwrap();
-            assert_eq!(line.split_whitespace().collect::<Vec<_>>(), [field, "-"]);
-        }
     }
 
     #[test]

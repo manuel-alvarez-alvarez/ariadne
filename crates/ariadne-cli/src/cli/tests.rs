@@ -223,7 +223,6 @@ const LEAVES: &[(&str, bool)] = &[
     ("session kill", true),
     ("session logs", true),
     ("session ls", true),
-    ("session new", true),
     ("session resume", true),
     ("session send", true),
     ("session switch", true),
@@ -479,11 +478,10 @@ fn quiet_parses_after_a_mutation() {
 }
 
 #[test]
-fn session_ls_takes_filters_pages_refresh_and_all() {
+fn session_ls_takes_filters_pages_and_all() {
     let Command::Session {
         command:
             SessionCommand::Ls {
-                kind,
                 agent,
                 dir,
                 since,
@@ -491,7 +489,6 @@ fn session_ls_takes_filters_pages_refresh_and_all() {
                 search,
                 limit,
                 cursor,
-                refresh,
                 all,
                 ..
             },
@@ -499,8 +496,6 @@ fn session_ls_takes_filters_pages_refresh_and_all() {
         "ariadne",
         "session",
         "ls",
-        "--kind",
-        "outside",
         "--agent",
         "codex-acp",
         "--dir",
@@ -513,7 +508,6 @@ fn session_ls_takes_filters_pages_refresh_and_all() {
         "rate limit",
         "--limit",
         "25",
-        "--refresh",
         "--all",
     ])
     .command
@@ -521,7 +515,6 @@ fn session_ls_takes_filters_pages_refresh_and_all() {
         panic!("session ls");
     };
 
-    assert_eq!(kind.as_deref(), Some("outside"));
     assert_eq!(agent.as_deref(), Some("codex-acp"));
     assert_eq!(dir.as_deref(), Some("/work/api"));
     assert_eq!(since.as_deref(), Some("2026-09-01T00:00:00Z"));
@@ -529,7 +522,6 @@ fn session_ls_takes_filters_pages_refresh_and_all() {
     assert_eq!(search.as_deref(), Some("rate limit"));
     assert_eq!(limit, Some(25));
     assert_eq!(cursor, None);
-    assert!(refresh);
     assert!(all);
 }
 
@@ -2201,4 +2193,16 @@ fn query_takes_instant_and_range_flags() {
 fn query_refuses_at_with_since_and_step_without_since() {
     assert!(try_parse(&["ariadne", "query", "up", "--at", "1h", "--since", "2h"]).is_err());
     assert!(try_parse(&["ariadne", "query", "up", "--step", "30s"]).is_err());
+}
+
+#[test]
+fn removed_session_commands_and_options_are_refused() {
+    for args in [
+        vec!["ariadne", "session", "new"],
+        vec!["ariadne", "session", "ls", "--kind", "ariadne"],
+        vec!["ariadne", "session", "ls", "--refresh"],
+        vec!["ariadne", "attach", "session-id", "--agent", "codex-acp"],
+    ] {
+        assert!(try_parse(&args).is_err(), "{args:?}");
+    }
 }

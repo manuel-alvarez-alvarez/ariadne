@@ -322,7 +322,6 @@ mod tests {
             launch_id: None,
             created_at: String::new(),
             ended_at: None,
-            title: None,
             switched_from: None,
             pull_request_id: Some(pull_request_id.into()),
         }

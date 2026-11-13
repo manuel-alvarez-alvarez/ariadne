@@ -1,8 +1,8 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-10-18
-areas: [api, daemon]
+updated: 2026-11-13
+areas: [api, daemon, store]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
   - crates/ariadne-daemon/tests/it/docs.rs
@@ -23,6 +23,7 @@ tests:
   - crates/ariadne-daemon/src/config.rs
   - crates/ariadne-daemon/src/socket.rs
   - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-store/tests/session_migration.rs
   - crates/ariadne-store/src/events.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
@@ -104,10 +105,25 @@ and the ACP runtime that reports the agent events (021).
    into, resizes or reads an agent's own terminal, and no endpoint is one an
    agent reports events to: the daemon's own ACP runtime is the one
    reporter, and it ingests in process.
-   `GET /v1/sessions` is the one listing over both kinds of session (020):
-   one cursor page of Ariadne's own sessions and of the conversations the
-   ACP agents stored, as a `SessionPageDto`. There is no second listing
-   endpoint for the outside ones.
+   `GET /v1/sessions` lists sessions of goals, tasks and PR reviews.
+   `SessionPageDto` carries `sessions`, `next_cursor` and `total` after filters.
+   Each entry carries its session fields and the title of its task, goal or request.
+   `SessionPageQuery` keeps `agent`, `dir`, `since`, `until`, `q`, `status`,
+   `seat`, `goal`, `task`, `pull_request`, `attention`, `all`, `limit` and `cursor`.
+   `dir` requires an absolute path and matches that path and its descendants.
+   `q` matches a case-insensitive substring of the work's title.
+   `since` and `until` are inclusive RFC 3339 activity bounds.
+   Without either bound, the window covers seven days; `all` removes it.
+   The default page includes live sessions; `all` or a named status includes ended sessions.
+   Missing activity falls back to creation time.
+   Entries sort by activity descending, then agent id and session id ascending.
+   `limit` defaults to 50 and clamps to 1–200.
+   The opaque cursor carries the last entry's exact activity, agent id and session id.
+   It continues after that key, even when entries change between requests.
+   An unreadable cursor returns 400 with code `invalid_cursor`.
+   Session creation and resume routes for unowned conversations do not exist.
+   Migration 0002 deletes sessions with no goal, task or seat and drops their stored title column.
+   Goal, task and PR review sessions keep their data.
 9. An ingested event is recorded whole, then read in the runtime's one
    vocabulary. `session_start`, `user_prompt_submit`, `pre_tool_use`,
    `post_tool_use` and `permission.replied` mark the session running; `stop`
@@ -411,9 +427,25 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   `::the_doctor_reports_the_interpreter_the_model_needs`), and a change of
   the status reaches the stream
   (`::turning_the_model_on_starts_the_install_and_reports_it_ready`).
-- The session listing's query and its page DTO are in the OpenAPI document,
-  and the outside listing it replaced is not
+- The session query and page DTO appear in OpenAPI
   (`session_list.rs::the_query_and_the_page_are_in_the_openapi_document`).
+- Removed creation routes refuse posts (`session_list.rs::removed_session_creation_routes_refuse_posts`).
+- Five sessions at limit two produce three ordered pages
+  (`session_list.rs::five_sessions_at_limit_two_are_three_pages_newest_first`).
+- Agent, goal, directory and title filters select Ariadne work
+  (`session_list.rs::agent_goal_directory_and_title_narrow_ariadne_sessions`).
+- The default window covers seven days; explicit bounds and `all` replace it
+  (`session_list.rs::the_default_page_holds_the_last_seven_days_and_all_widens_it`).
+- Task, seat, status and attention filters select their session rows
+  (`session_list.rs::task_narrows_the_listing_to_one_tasks_sessions`,
+  `::seat_narrows_the_listing_to_one_seat`, `::status_narrows_the_listing_to_one_status`,
+  `::attention_narrows_the_listing_to_the_sessions_waiting_on_somebody`).
+- Cursors preserve submillisecond activity and break ties by agent, then session id.
+  Directory boundaries and activity bounds are inclusive
+  (`session_list.rs::cursor_preserves_precision_and_breaks_ties_by_agent_then_session`).
+- Migration 0002 removes unowned rows and the title column, preserving seated rows
+  (`crates/ariadne-store/tests/session_migration.rs::upgrade_removes_unowned_sessions_and_preserves_seated_sessions`).
+- Invalid cursors return `invalid_cursor` (`session_list.rs::an_unreadable_cursor_is_refused`).
 - Every event the runtime reports is acted on, a lifecycle event moves the
   status and raises nothing, and a wait on the user is raised and never
   reads as liveness

@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-11-08
+updated: 2026-11-13
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -40,7 +40,6 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    goal is created, or taken from the default of its first repository (030);
    the orchestrator reads it off the briefing and does not ask for it. No
    numbers: how many tasks the goal takes is what the conversation settles.
-   Resuming an outside session starts no planning (020).
 2. The orchestrator never writes code. Its whole output is the plan.
 3. It asks the user about every unclear point, until nothing about the goal is
    open: `wait_for_user` with a one-line hint for the Needs attention list

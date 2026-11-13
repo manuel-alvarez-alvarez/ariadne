@@ -51,7 +51,6 @@ pub(super) fn acp_agents(agents: &[AcpAgentDto]) -> Vec<Check> {
                         .iter()
                         .map(|gap| match gap {
                             ariadne_api::agents::AcpDegradation::NoEfforts => "no efforts",
-                            ariadne_api::agents::AcpDegradation::NoAdoption => "no adoption",
                             ariadne_api::agents::AcpDegradation::NoRestartResume => {
                                 "no restart resume"
                             }
@@ -80,13 +79,12 @@ fn acp_capabilities(agent: &AcpAgentDto) -> String {
     let yes_no = |available| if available { "yes" } else { "no" };
     let capabilities = &agent.capabilities;
     format!(
-        "stdio {}; version 1 {}; new {}; model {}; thought level {}; list {}; load {}",
+        "stdio {}; version 1 {}; new {}; model {}; thought level {}; load {}",
         yes_no(capabilities.stdio),
         yes_no(capabilities.protocol_v1),
         yes_no(capabilities.session_new),
         yes_no(capabilities.model),
         yes_no(capabilities.thought_level),
-        yes_no(capabilities.session_list),
         yes_no(capabilities.session_load),
     )
 }
@@ -215,7 +213,6 @@ mod tests {
             session_new: true,
             model: true,
             thought_level: false,
-            session_list: false,
             session_load: false,
         };
         let rejected = AcpAgentDto {
@@ -234,11 +231,7 @@ mod tests {
             source: AcpAgentSource::Config,
             status: AcpAgentStatus::Ready,
             capabilities,
-            degraded: vec![
-                AcpDegradation::NoEfforts,
-                AcpDegradation::NoAdoption,
-                AcpDegradation::NoRestartResume,
-            ],
+            degraded: vec![AcpDegradation::NoEfforts, AcpDegradation::NoRestartResume],
             rejection_reason: None,
             icon: None,
         };
@@ -247,7 +240,6 @@ mod tests {
         assert!(checks[0].detail.contains("model option is missing"));
         assert!(checks[0].detail.contains("thought level no"));
         assert!(checks[1].detail.contains("no efforts"));
-        assert!(checks[1].detail.contains("no adoption"));
         assert!(checks[1].detail.contains("no restart resume"));
     }
 

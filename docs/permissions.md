@@ -31,8 +31,6 @@ Which repository applies:
 
 - Every column's agent on a task uses the task's repository.
 - A goal's orchestrator uses the goal's first repository.
-- A resumed outside conversation uses the registered repository its directory
-  is in. Outside every registered repository, it uses `auto`.
 
 The mode cannot be set per task or in `~/.ariadne/config.toml`. A
 `permission_mode` key left in `config.toml` stops the daemon from starting, so

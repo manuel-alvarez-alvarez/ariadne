@@ -441,7 +441,6 @@ async fn the_api_lists_an_installed_index_agent_and_one_user_agent() {
         "a config entry has no icon: {custom}"
     );
     assert_eq!(custom["status"], "ready");
-    assert_eq!(custom["capabilities"]["session_list"], true);
     assert_eq!(custom["capabilities"]["session_load"], true);
     assert_eq!(custom["degraded"], json!([]));
 
@@ -1285,11 +1284,10 @@ async fn every_optional_capability_gap_sets_its_degraded_flag() {
     let degraded = agents.iter().find(|a| a["id"] == "degraded").unwrap();
     assert_eq!(degraded["status"], "ready");
     assert_eq!(degraded["capabilities"]["thought_level"], false);
-    assert_eq!(degraded["capabilities"]["session_list"], false);
     assert_eq!(degraded["capabilities"]["session_load"], false);
     assert_eq!(
         degraded["degraded"],
-        json!(["no_efforts", "no_adoption", "no_restart_resume"])
+        json!(["no_efforts", "no_restart_resume"])
     );
 }
 
@@ -1655,143 +1653,6 @@ async fn a_non_opencode_probe_runs_no_session_delete() {
     assert_eq!(agents[0]["status"], "ready", "{agents:#?}");
     assert!(has(&agent.methods(), "session/close"));
     assert!(!has(&agent.methods(), "cli/session/delete"));
-}
-
-/// Metadata listing — `initialize` then `session/list`, the way `GET
-/// /v1/sessions` reads an agent's stored conversations outside any catalog
-/// probe — opens no session and runs no OpenCode delete.
-#[tokio::test]
-async fn metadata_listing_opens_no_session_and_runs_no_delete_for_opencode() {
-    let dir = tempfile::tempdir().unwrap();
-    let stub = stub_acp_agent(
-        dir.path(),
-        crate::session_list::listing_script(json!([]), None),
-    );
-    let h = harness()
-        .home(crate::session_list::home_with_agents(&[(
-            "opencode", &stub.bin,
-        )]))
-        .discover_agents()
-        .await;
-    common::acp::discovery_accepted(&h, &stub, "opencode").await;
-
-    let _: Value = h.get("/v1/sessions?refresh=true").await;
-
-    let methods = stub.methods();
-    assert_eq!(methods, ["initialize", "session/list"], "{methods:?}");
-}
-
-/// A real `opencode` binary, if this machine has one on `PATH`, proves the
-/// same claim the stub proves above: `initialize` and `session/list` alone
-/// open no session. A fresh, isolated data directory — of its own, so this
-/// never touches a real one — keeps zero rows in its `session` table
-/// afterward.
-#[tokio::test]
-async fn real_opencode_metadata_listing_creates_no_session() {
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    let Some(program) = ariadne_core::probe::which(&path, "opencode") else {
-        eprintln!("opencode is not on PATH; skipping the real-CLI check");
-        return;
-    };
-
-    let dir = tempfile::tempdir().unwrap();
-    let data_home = dir.path().join("data");
-    let config_home = dir.path().join("config");
-    std::fs::create_dir_all(&data_home).unwrap();
-    std::fs::create_dir_all(&config_home).unwrap();
-
-    let mut command = tokio::process::Command::new(&program);
-    command
-        .arg("acp")
-        .current_dir(dir.path())
-        .env("XDG_DATA_HOME", &data_home)
-        .env("XDG_CONFIG_HOME", &config_home)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true);
-    let mut child = command.spawn().expect("starting the real opencode binary");
-    let stdin = child.stdin.take().expect("opencode's stdin");
-    let stdout = child.stdout.take().expect("opencode's stdout");
-
-    let listed = tokio::time::timeout(
-        TIMEOUT,
-        agent_client_protocol::Client
-            .v1()
-            .name("ariadne-discovery-check")
-            .connect_with(
-                agent_client_protocol::ByteStreams::new(
-                    tokio_util::compat::TokioAsyncWriteCompatExt::compat_write(stdin),
-                    tokio_util::compat::TokioAsyncReadCompatExt::compat(stdout),
-                ),
-                async |cx| {
-                    cx.send_request(agent_client_protocol::v1::schema::InitializeRequest::new(
-                        agent_client_protocol::schema::ProtocolVersion::V1,
-                    ))
-                    .block_task()
-                    .await
-                    .expect("initialize");
-                    let listed = cx
-                        .send_request(agent_client_protocol::v1::schema::ListSessionsRequest::new())
-                        .block_task()
-                        .await
-                        .expect("session/list");
-                    Ok(listed)
-                },
-            ),
-    )
-    .await
-    .expect("the real opencode agent to answer")
-    .expect("the ACP connection to the real opencode agent");
-
-    let _ = child.start_kill();
-    let _ = child.wait().await;
-
-    assert!(
-        listed.sessions.is_empty(),
-        "a fresh isolated OpenCode must list no session: {:?}",
-        listed.sessions
-    );
-
-    let db_path = data_home.join("opencode").join("opencode.db");
-    if db_path.is_file() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .connect_with(
-                sqlx::sqlite::SqliteConnectOptions::new()
-                    .filename(&db_path)
-                    .read_only(true),
-            )
-            .await
-            .expect("opening the real opencode database");
-        // OpenCode names its session table by schema version — `session`
-        // up to v1, `session_v2` from v2.0 — so the table is found by name
-        // rather than assumed, and every version of it is counted.
-        let tables: Vec<String> = sqlx::query_scalar(
-            "SELECT name FROM sqlite_master \
-             WHERE type = 'table' AND (name = 'session' OR name GLOB 'session_v[0-9]*')",
-        )
-        .fetch_all(&pool)
-        .await
-        .expect("listing the real opencode session tables");
-        assert!(
-            !tables.is_empty(),
-            "the real OpenCode database has a session table to count"
-        );
-        for table in tables {
-            // The name comes from `sqlite_master` of a database this test
-            // alone made, and it is quoted as an identifier.
-            let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-                "SELECT COUNT(*) FROM `{table}`"
-            )))
-            .fetch_one(&pool)
-            .await
-            .expect("counting sessions");
-            assert_eq!(
-                count, 0,
-                "initialize and session/list must open no session in the real OpenCode `{table}` table"
-            );
-        }
-    }
 }
 
 /// A daemon start reads an agent's catalog once per agent version: the store

@@ -223,9 +223,6 @@ pub(crate) fn deletable_goal_ids() -> Vec<CompletionCandidate> {
 // ---- sessions ------------------------------------------------------------
 
 fn session_help(x: &Value) -> String {
-    if s(x, "kind") == "outside" {
-        return format!("[outside] {}", s(x, "agent_id"));
-    }
     format!(
         "[{}] {} {}",
         s(x, "status"),
@@ -250,13 +247,7 @@ fn session_candidates(rows: &[Value], help: impl Fn(&Value) -> String) -> Vec<Co
 
 /// Session ids, newest first (`session inspect`, `session logs`).
 pub(crate) fn session_ids() -> Vec<CompletionCandidate> {
-    session_candidates(
-        &session_rows(fetch_value("/v1/sessions"))
-            .into_iter()
-            .filter(|row| s(row, "kind") != "outside")
-            .collect::<Vec<_>>(),
-        session_help,
-    )
+    session_candidates(&session_rows(fetch_value("/v1/sessions")), session_help)
 }
 
 /// What `session kill` can act on: a session with an agent process to kill.

@@ -15,7 +15,7 @@ use ariadne_api::permissions::{
     LearnedPermissionDto, LearnedPermissionLevel, LearnedPermissionScope, LearnedPermissionTarget,
 };
 use ariadne_api::repositories::{ForgeDto, RepositoryDto};
-use ariadne_api::sessions::{OutsideSessionDto, SessionDto, SessionEntryDto, SessionKind};
+use ariadne_api::sessions::{SessionDto, SessionEntryDto};
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{AgentUsageDto, TaskAgentDto, TaskDto, TaskTransitionDto, TaskUsageDto};
 use ariadne_api::usage::TokenUsageDto;
@@ -187,7 +187,7 @@ dto! {
         context_size: s.context_size.and_then(|value| u64::try_from(value).ok()),
         .. id, goal_id, task_id, task_agent_id, model, effort, internal_session_id,
            worktree_path, attention_since,
-           last_activity_at, created_at, ended_at, title, switched_from, pull_request_id
+           last_activity_at, created_at, ended_at, switched_from, pull_request_id
     }
 }
 
@@ -324,10 +324,8 @@ pub(crate) async fn session_entry_of(
     session: store::AgentSession,
     title: Option<String>,
 ) -> Result<SessionEntryDto, StoreError> {
-    let mut session = session_dto_of(store, session).await?;
-    let title = title.or(session.title.take());
+    let session = session_dto_of(store, session).await?;
     Ok(SessionEntryDto {
-        kind: SessionKind::Ariadne,
         agent_id: agent_of(&session.model).to_string(),
         title,
         working_directory: session.worktree_path,
@@ -350,38 +348,6 @@ pub(crate) async fn session_entry_of(
         ended_at: session.ended_at,
         pull_request_id: session.pull_request_id,
     })
-}
-
-/// The same row for a conversation Ariadne did not start: the agent, the id
-/// it loads back by, where it ran and when, and its first prompt as its
-/// title. It has no goal, task, seat or status, because Ariadne runs no work
-/// behind it.
-pub(crate) fn outside_entry(outside: &OutsideSessionDto) -> SessionEntryDto {
-    let text = |value: &String| (!value.is_empty()).then(|| value.clone());
-    SessionEntryDto {
-        kind: SessionKind::Outside,
-        id: outside.internal_session_id.clone(),
-        agent_id: outside.agent_id.clone(),
-        title: text(&outside.first_prompt),
-        internal_session_id: Some(outside.internal_session_id.clone()),
-        working_directory: Some(outside.working_directory.clone()),
-        last_activity_at: text(&outside.last_activity_at),
-        goal_id: None,
-        task_id: None,
-        seat: None,
-        task_agent_id: None,
-        model: None,
-        effort: None,
-        status: None,
-        attention_reason: None,
-        attention_since: None,
-        usage: None,
-        context_used: None,
-        context_size: None,
-        created_at: None,
-        ended_at: None,
-        pull_request_id: None,
-    }
 }
 
 /// [`goal_dto`] with everything it needs loaded: the repositories the goal

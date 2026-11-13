@@ -447,33 +447,6 @@ impl Store {
         Ok(session)
     }
 
-    /// Record the model returned when an outside conversation is loaded.
-    pub async fn set_loose_session_model(&self, id: &str, model: &str) -> Result<()> {
-        self.write_session(
-            id,
-            sqlx::query("UPDATE agent_sessions SET model = ? WHERE id = ? AND seat IS NULL")
-                .bind(model)
-                .bind(id),
-        )
-        .await?;
-        self.publish_session_update(id).await
-    }
-
-    /// Give a session its title, unless it already has one: a loose session
-    /// is named once, by the first prompt it is known by, and keeps it.
-    pub async fn set_session_title_if_unset(&self, id: &str, title: &str) -> Result<()> {
-        let written =
-            sqlx::query("UPDATE agent_sessions SET title = ? WHERE id = ? AND title IS NULL")
-                .bind(title)
-                .bind(id)
-                .execute(self.w())
-                .await?;
-        if written.rows_affected() == 0 {
-            return Ok(());
-        }
-        self.publish_session_update(id).await
-    }
-
     /// Record the agent-internal id (claude session uuid / codex thread id /
     /// opencode session id) once known.
     pub async fn set_session_internal_id(&self, id: &str, internal: &str) -> Result<()> {

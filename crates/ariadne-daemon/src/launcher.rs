@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::models::agent_of;
-use ariadne_core::{GoalStatus, PermissionMode, PromptKind, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{GoalStatus, PromptKind, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{
     AgentPin, AgentSession, NewAgentEvent, NewSession, PrOperationOwner, PullRequest, Repository,
     SessionFilter, Store, Task, TaskAgent, TaskFilter,
@@ -303,23 +303,12 @@ impl Launcher {
                     .next()
                     .context("the session's goal has no repository")?,
             ),
-            None => self
-                .store
-                .list_repositories()
-                .await?
-                .into_iter()
-                .filter(|repo| plan.cwd.starts_with(&repo.path))
-                .max_by_key(|repo| repo.path.len()),
-        };
-        // A loose session outside every registered checkout has no
-        // repository to ask, and nowhere to remember an approval.
-        let (repository_id, repository_path, permission_mode) = repository.map_or_else(
-            || (String::new(), String::new(), PermissionMode::Auto),
-            |repo| {
-                let mode = repo.permission_mode();
-                (repo.id, repo.path, mode)
-            },
-        );
+            None => anyhow::bail!("session has no repository"),
+        }
+        .context("session has no repository")?;
+        let permission_mode = repository.permission_mode();
+        let repository_id = repository.id;
+        let repository_path = repository.path;
         self.acp.set_task_branch(&session.id, task_branch);
         let agent_id = agent_of(&session.model);
         let command = self.registry.command_of(agent_id).with_context(|| {
@@ -691,125 +680,6 @@ impl Launcher {
         ))
     }
 
-    /// Resume an outside conversation in its recorded directory.
-    pub(crate) async fn resume_outside(
-        &self,
-        outside: &ariadne_api::sessions::OutsideSessionDto,
-    ) -> Result<AgentSession> {
-        // Checked before a row is made: an agent cannot start in a directory
-        // that is gone, and a failed row would hold the conversation from
-        // then on, in the listing's outside half's place.
-        let cwd = PathBuf::from(&outside.working_directory);
-        if !cwd.is_dir() {
-            anyhow::bail!(
-                "the directory this conversation ran in is gone: {}",
-                cwd.display()
-            );
-        }
-        let model = self
-            .registry
-            .default_model(&outside.agent_id)
-            .await
-            .context("the agent has no discovered default model")?;
-        let session = self
-            .store
-            .create_session(NewSession {
-                goal_id: None,
-                task_id: None,
-                seat: None,
-                task_agent_id: None,
-                model: format!("{}:{model}", outside.agent_id),
-                effort: None,
-                worktree_path: Some(outside.working_directory.clone()),
-                pull_request_id: None,
-            })
-            .await?;
-        self.store
-            .set_session_internal_id(&session.id, &outside.internal_session_id)
-            .await?;
-        if let Some(title) = loose_title(&outside.first_prompt) {
-            self.store
-                .set_session_title_if_unset(&session.id, &title)
-                .await?;
-        }
-        let result = self
-            .launch_loose(&session, cwd, Some(&outside.internal_session_id), "")
-            .await;
-        if result.is_err() {
-            self.store
-                .set_session_status(&session.id, SessionStatus::Failed)
-                .await?;
-        }
-        result
-    }
-
-    /// Start a loose session: a new conversation with the agent the pin
-    /// names, in `cwd`, with no goal, task or seat. The agent answers
-    /// `session/new`, and waits for the first prompt typed into its console.
-    pub(crate) async fn start_loose(
-        &self,
-        pin: ariadne_store::AgentPin,
-        cwd: PathBuf,
-    ) -> Result<AgentSession> {
-        let session = self
-            .store
-            .create_session(NewSession {
-                goal_id: None,
-                task_id: None,
-                seat: None,
-                task_agent_id: None,
-                model: pin.model,
-                effort: pin.effort,
-                worktree_path: Some(cwd.display().to_string()),
-                pull_request_id: None,
-            })
-            .await?;
-        let result = self.launch_loose(&session, cwd, None, "").await;
-        if result.is_err() {
-            self.store
-                .set_session_status(&session.id, SessionStatus::Failed)
-                .await?;
-        }
-        result
-    }
-
-    /// Launch a loose session's agent: loading the conversation `internal`
-    /// names, or opening a new one where there is none.
-    async fn launch_loose(
-        &self,
-        session: &AgentSession,
-        cwd: PathBuf,
-        internal: Option<&str>,
-        instruction: &str,
-    ) -> Result<AgentSession> {
-        let launch_id = ariadne_core::id::new_id();
-        let plan = SpawnPlan {
-            args: self.store.agent_flags(agent_of(&session.model)).await?,
-            env: vec![
-                ("ARIADNE_SESSION_ID".into(), session.id.clone()),
-                ("ARIADNE_LAUNCH_ID".into(), launch_id.clone()),
-            ],
-            cwd,
-            internal_session_id: internal.map(str::to_string),
-            config: ariadne_core::acp::LaunchConfig {
-                version: ariadne_core::acp::VERSION,
-                system_prompt: String::new(),
-                initial_prompt: (!instruction.is_empty()).then(|| instruction.to_string()),
-                model: session
-                    .model
-                    .split_once(':')
-                    .context("session has no agent pin")?
-                    .1
-                    .to_string(),
-                effort: session.effort.clone(),
-                resume_session_id: internal.map(str::to_string),
-                mcp_servers: Vec::new(),
-            },
-        };
-        self.launch(session, plan, &launch_id).await?;
-        Ok(self.store.get_session(&session.id).await?)
-    }
-
     /// The task's one worktree, checked out on its branch: created on the
     /// first column's first launch, and created again whenever it has been
     /// cleaned up under a task that is still going. Every column works in it
@@ -932,7 +802,7 @@ impl Launcher {
                             .context("goal has no repositories")?
                             .path,
                     ),
-                    None => anyhow::bail!("the loose session's working directory is gone"),
+                    None => anyhow::bail!("session has no goal, task or pull request"),
                 },
             },
         };
@@ -953,13 +823,8 @@ impl Launcher {
             self.acp.preserve_user_resume(&previous.id);
         }
         let session = self.store.restart_session(&previous.id, None).await?;
-        if session.seat.is_none() {
-            self.launch_loose(&session, cwd, Some(internal), instruction.unwrap_or(""))
-                .await
-        } else {
-            self.launch_resumed(&session, cwd, internal, instruction.unwrap_or(""))
-                .await
-        }
+        self.launch_resumed(&session, cwd, internal, instruction.unwrap_or(""))
+            .await
     }
 
     /// Switch a session onto another pin. Keep its conversation when the
@@ -969,14 +834,11 @@ impl Launcher {
     /// starts, so two agents never work on one seat. The old row is marked
     /// `exited` and keeps a `session.switched` event naming its successor
     /// and `reason`. The seat's pin moves with the switch, so a later spawn
-    /// or resume of the seat runs on the new one; a loose session has no
-    /// seat pin to move.
+    /// or resume of the seat runs on the new one.
     ///
     /// The new agent has no conversation to resume. It is briefed as a fresh
     /// spawn of its seat is, then handed the old session's history
-    /// ([`handoff_text`]), then told what a resume would have told it. A
-    /// loose session has no briefing and no resume text: it gets the history
-    /// alone.
+    /// ([`handoff_text`]), then told what a resume would have told it.
     pub(crate) async fn switch_session(
         &self,
         session_id: &str,
@@ -1049,7 +911,7 @@ impl Launcher {
         }
 
         let plan = match old.seat() {
-            None => self.loose_switch(&old)?,
+            None => anyhow::bail!("session has no seat"),
             Some(Seat::Orchestrator) => self.orchestrator_switch(&old).await?,
             Some(_) if old.pull_request_id.is_some() => self.pull_request_switch(&old).await?,
             Some(Seat::Agent) => self.agent_switch(&old).await?,
@@ -1058,7 +920,7 @@ impl Launcher {
             }
         };
         let events = self.store.list_session_events(&old.id).await?;
-        let handoff = handoff_text(&events, HANDOFF_BUDGET, plan.briefing.is_some());
+        let handoff = handoff_text(&events, HANDOFF_BUDGET);
         let prompt = [plan.briefing, Some(handoff), plan.resume]
             .into_iter()
             .flatten()
@@ -1105,33 +967,7 @@ impl Launcher {
             .await?;
         self.move_seat_pin(&old, &pin).await?;
 
-        if session.seat.is_none() {
-            if let Some(title) = &old.title {
-                self.store
-                    .set_session_title_if_unset(&session.id, title)
-                    .await?;
-            }
-            let result = self.launch_loose(&session, plan.cwd, None, &prompt).await;
-            if result.is_err() {
-                self.store
-                    .set_session_status(&session.id, SessionStatus::Failed)
-                    .await?;
-            }
-            result?;
-            // A loose session has no seat to find its siblings by: the
-            // row it replaced is the one superseded.
-            self.store.clear_session_attention(&old.id).await?;
-        } else {
-            // A pull request session goes by its request's title (026).
-            if session.pull_request_id.is_some()
-                && let Some(title) = &old.title
-            {
-                self.store
-                    .set_session_title_if_unset(&session.id, title)
-                    .await?;
-            }
-            self.spawn(&session, plan.cwd, prompt).await?;
-        }
+        self.spawn(&session, plan.cwd, prompt).await?;
         self.store
             .get_session(&session.id)
             .await
@@ -1140,8 +976,8 @@ impl Launcher {
 
     /// Move the pin of the seat a switched session sits on, so a later spawn
     /// or resume of the seat runs on the new one: the goal's for an
-    /// orchestrator, the staffed agent's for a column's agent. A loose
-    /// session and a review session have no seat pin to move.
+    /// orchestrator, the staffed agent's for a column's agent.
+    /// A review session has no seat pin to move.
     async fn move_seat_pin(&self, old: &AgentSession, pin: &AgentPin) -> Result<()> {
         match (old.seat(), &old.task_agent_id, &old.goal_id) {
             (Some(Seat::Orchestrator), _, Some(goal_id)) => {
@@ -1153,22 +989,6 @@ impl Launcher {
             _ => {}
         }
         Ok(())
-    }
-
-    /// Where a switched loose session goes on: the directory it ran in.
-    fn loose_switch(&self, old: &AgentSession) -> Result<SwitchPlan> {
-        let cwd = old
-            .worktree_path
-            .as_deref()
-            .map(PathBuf::from)
-            .filter(|path| path.is_dir())
-            .context("the loose session's working directory is gone")?;
-        Ok(SwitchPlan {
-            worktree: old.worktree_path.clone(),
-            cwd,
-            briefing: None,
-            resume: None,
-        })
     }
 
     /// The orchestrator's switch: the first repository, the goal's briefing,
@@ -1699,9 +1519,6 @@ impl Launcher {
                 pull_request_id: Some(pull.id.clone()),
             })
             .await?;
-        self.store
-            .set_session_title_if_unset(&session.id, &pull.title)
-            .await?;
         let briefing = self.pull_request_briefing_of(pull, &repo, &worktree);
         let skills = match owner {
             Some(owner) => self.store.agent_skills(&owner.agent.id).await?,
@@ -1836,9 +1653,6 @@ impl Launcher {
                 worktree_path: Some(worktree.display().to_string()),
                 pull_request_id: Some(pull.id.clone()),
             })
-            .await?;
-        self.store
-            .set_session_title_if_unset(&session.id, &pull.title)
             .await?;
         let briefing = self
             .keeper_briefing_of(pull, &repo, &worktree, &branch)
@@ -2119,20 +1933,6 @@ struct SwitchPlan {
     cwd: PathBuf,
     briefing: Option<String>,
     resume: Option<String>,
-}
-
-/// The most of a prompt a loose session's title keeps.
-const TITLE_CHARS: usize = 120;
-
-/// A loose session's title, out of the prompt it is known by: the first line
-/// with anything on it, cut to [`TITLE_CHARS`]. None for a prompt with no
-/// text, which names nothing.
-pub(crate) fn loose_title(prompt: &str) -> Option<String> {
-    let line = prompt
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())?;
-    Some(line.chars().take(TITLE_CHARS).collect())
 }
 
 /// Whether a task's branch is one to follow: there is a worktree to commit in,

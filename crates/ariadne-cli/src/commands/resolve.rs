@@ -338,7 +338,7 @@ fn field(v: &Value, key: &str) -> String {
 mod tests {
     use super::*;
 
-    use ariadne_api::sessions::{SessionEntryDto, SessionKind};
+    use ariadne_api::sessions::SessionEntryDto;
     use ariadne_core::SessionStatus;
 
     use crate::error::Exit;
@@ -351,7 +351,6 @@ mod tests {
 
         fn session(id: &str) -> SessionEntryDto {
             SessionEntryDto {
-                kind: SessionKind::Ariadne,
                 id: id.into(),
                 agent_id: "codex-acp".into(),
                 title: Some("Continue work".into()),
@@ -398,13 +397,11 @@ mod tests {
                         sessions: vec![session("newer")],
                         next_cursor: Some("after-newer".into()),
                         total: 2,
-                        snapshot_at: "2026-09-12T12:00:00Z".into(),
                     },
                     SessionPageDto {
                         sessions: vec![session("older")],
                         next_cursor: None,
                         total: 2,
-                        snapshot_at: "2026-09-12T12:00:00Z".into(),
                     },
                 ]
                 .into(),

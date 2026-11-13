@@ -23,7 +23,7 @@ use serde::Serialize;
 
 use ariadne_api::attention::{AttentionCause, AttentionListDto};
 use ariadne_api::goals::GoalDto;
-use ariadne_api::sessions::{SessionEntryDto, SessionKind, SessionPageDto, SessionPageQuery};
+use ariadne_api::sessions::{SessionEntryDto, SessionPageDto, SessionPageQuery};
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, SseEvent};
 use ariadne_core::{AttentionReason, TaskStatus};
@@ -131,7 +131,7 @@ fn session_reason(session: &SessionEntryDto) -> Option<Reason> {
 /// Every item `GET /v1/attention` currently finds, printed as its own
 /// section below the per-goal board: cause, summary, the one action that
 /// clears it, how long it has waited, and what it affects. None of these
-/// belongs to one goal the way a task or a loose session's row does, so
+/// belongs to one goal the way a task's row does, so
 /// they stand apart from the board rather than inside one of its groups.
 fn recovery_items_section(
     recovery: &AttentionListDto,
@@ -306,7 +306,6 @@ pub(crate) async fn run(client: &Client, watch: bool, format: Format) -> Result<
 /// exactly that, outstanding work owed to a dead agent, however old.
 async fn ariadne_sessions(client: &Client) -> Result<Vec<SessionEntryDto>> {
     let query = SessionPageQuery {
-        kind: Some(SessionKind::Ariadne),
         all: Some(true),
         ..SessionPageQuery::default()
     };
@@ -434,7 +433,6 @@ pub(crate) mod tests {
     /// business. `flagged` and `dead` are the ones that are on the list.
     pub(crate) fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionEntryDto {
         SessionEntryDto {
-            kind: SessionKind::Ariadne,
             id: id.into(),
             agent_id: "stub".into(),
             title: None,
@@ -815,7 +813,6 @@ pub(crate) mod tests {
                 sessions: vec![flagged("01S1", "01GA", AttentionReason::WaitingPermission)],
                 next_cursor: None,
                 total: 1,
-                snapshot_at: NOW.into(),
             })
         }
         async fn attention() -> axum::Json<AttentionListDto> {
@@ -866,7 +863,6 @@ pub(crate) mod tests {
                 sessions: Vec::new(),
                 next_cursor: None,
                 total: 0,
-                snapshot_at: NOW.into(),
             })
         }
         async fn attention() -> axum::Json<AttentionListDto> {
@@ -926,13 +922,11 @@ pub(crate) mod tests {
                     sessions: vec![flagged("01S1", "01GA", AttentionReason::WaitingPermission)],
                     next_cursor: Some("after-one".into()),
                     total: 2,
-                    snapshot_at: NOW.into(),
                 },
                 SessionPageDto {
                     sessions: vec![flagged("01S2", "01GA", AttentionReason::WaitingInput)],
                     next_cursor: None,
                     total: 2,
-                    snapshot_at: NOW.into(),
                 },
             ]))),
             queries: queries.clone(),
@@ -954,7 +948,6 @@ pub(crate) mod tests {
             "both pages reach the board"
         );
         let queries = queries.lock().unwrap();
-        assert!(queries[0].contains("kind=ariadne"), "{queries:?}");
         assert!(queries[1].contains("cursor=after-one"), "{queries:?}");
     }
 }

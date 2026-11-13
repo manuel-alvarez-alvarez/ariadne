@@ -16,7 +16,7 @@ reads.
 | [Permission modes](permissions.md) | automatic, prompted, remembered, and AI-judged ACP permission answers |
 | [Metrics](metrics.md) | daemon metrics, Prometheus names, queries, and the dashboard |
 | [Dashboards](dashboards.md) | the Dashboards screen's Perses dashboard: editing a panel, saving, resetting, and `ariadne dashboard` |
-| [Resuming a session](resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
+| [Resuming a session](resuming-sessions.md) | listing Ariadne sessions and continuing a live or ended session |
 | [How Ariadne works](how-it-works.md) | a goal from planning through its workflow's columns, task lifecycle, and ACP sessions |
 | [The forge integration](forge.md) | enabling GitHub, the pull request and review sessions, webhooks and the tunnel, issues |
 | [Ariadne Desktop](../ui/README.md) | running the desktop app |

@@ -147,9 +147,7 @@ async fn run(cli: Cli, client: Arc<Client>) -> Result<ExitCode> {
                 commands::daemon::logs(&client, home, follow, service, level).await
             }
         },
-        Command::Attach { id, seat, agent } => {
-            commands::attach::attach_any(&client, &id, seat, agent.as_deref()).await
-        }
+        Command::Attach { id, seat } => commands::attach::attach_any(&client, &id, seat).await,
         Command::Agent { command } => commands::agent::run(&client, command, format).await,
         Command::Skill { command } => commands::skill::run(&client, command, format).await,
         Command::Workflow { command } => commands::workflow::run(&client, command, format).await,

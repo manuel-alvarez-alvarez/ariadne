@@ -487,9 +487,6 @@ impl HarnessBuilder {
             telemetry_store: telemetry_store.clone(),
             log_stream: log_stream.clone(),
             agent_registry,
-            outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::with_transcripts(
-                &transcript_homes(dir.path()),
-            ),
             ai_permissions,
             reply_locks: Default::default(),
         };
@@ -792,7 +789,6 @@ mod template_lock_tests {
 /// directory, so no test reads the transcripts of the machine it runs on.
 fn transcript_homes(dir: &Path) -> TranscriptHomes {
     TranscriptHomes {
-        listing_cache: dir.join("outside-session-listing-cache.json"),
         codex: dir.join("codex"),
         claude: dir.join("claude"),
         opencode: dir.join("opencode"),

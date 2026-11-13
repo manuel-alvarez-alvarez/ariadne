@@ -232,10 +232,6 @@ async fn main() -> Result<()> {
     );
     // A changed pull request is what starts, tells and ends its session.
     forge_poll.connect_scheduler(sched_tx.clone());
-    let outside_sessions = ariadne_daemon::acp_sessions::OutsideSessions::from_env();
-    // The first listing then finds the snapshot taken, or being taken, rather
-    // than asking every agent itself.
-    outside_sessions.warm(&agent_registry).await;
     let state = AppState {
         forge_poll,
         store,
@@ -247,7 +243,6 @@ async fn main() -> Result<()> {
         telemetry_store: telemetry_store.clone(),
         log_stream,
         agent_registry,
-        outside_sessions,
         ai_permissions,
         tunnel: tunnel.clone(),
         reply_locks: Default::default(),

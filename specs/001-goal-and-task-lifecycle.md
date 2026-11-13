@@ -1,7 +1,7 @@
 ---
 id: goal-and-task-lifecycle
 status: current
-updated: 2026-10-10
+updated: 2026-11-13
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
@@ -36,7 +36,7 @@ Out: how each state is *worked* — planning (003), the columns of the workflow
    and `cancelled` are terminal.
 2. A goal opens in `planning` with one orchestrator session and nothing else
    running. `finalize_plan` moves it to `active` and starts every task at
-   once (003). Resuming an outside session creates no goal or task (020).
+   once (003).
 3. A goal is `completed` when its orchestrator or the user says so
    (`complete_goal`, 003) — refused while any task is not terminal — and
    `cancelled` when the user cancels it. Cancelling records the reason on

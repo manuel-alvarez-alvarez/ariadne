@@ -116,9 +116,9 @@ Examples:
 
 const SESSION_EXAMPLES: &str = "\
 Examples:
-  ariadne session ls                       # recent Ariadne and outside sessions
+  ariadne session ls                       # recent Ariadne sessions
   ariadne session ls --all --goal <goal-id>
-  ariadne session ls --kind outside --agent codex-acp --since 2026-09-01
+  ariadne session ls --agent codex-acp --since 2026-09-01
   ariadne session ls --cursor <token>
   ariadne session logs <session-id>        # its transcript so far
   ariadne session resume <session-id>      # new agent process, same conversation
@@ -132,7 +132,6 @@ Examples:
   ariadne attach <task-id>                 # the agent of the task's current column
   ariadne task attach <task-id> --step review   # one column's agent instead
   ariadne attach <session-id>              # that one session
-  ariadne attach <outside-id> --agent codex-acp
 ";
 
 /// What a failed command exits with, for whoever is reading the code rather
@@ -489,13 +488,13 @@ pub(crate) enum Command {
         #[arg(long)]
         watch: bool,
     },
-    /// Attach to the console of a session, outside session, task or goal id
+    /// Attach to the console of a session, task or goal id
     ///
     /// The console of whichever agent that id names, revived first when it is
     /// gone. Leave the console with Ctrl-C; the agent keeps working.
     #[command(after_help = ATTACH_EXAMPLES)]
     Attach {
-        /// Session, outside session, task or goal id
+        /// Session, task or goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::attach_ids))]
         id: String,
         /// Which seat of that id to attach to (default: agent for a task,
@@ -503,9 +502,6 @@ pub(crate) enum Command {
         /// goal; not valid with a session id)
         #[arg(long, value_parser = values::Spelling::<ariadne_core::Seat>::new())]
         seat: Option<ariadne_core::Seat>,
-        /// Registry agent for an outside session id
-        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_ids))]
-        agent: Option<String>,
     },
     /// Serve Ariadne MCP tools over stdio (spawned by coding agents)
     #[command(hide = true)]
@@ -622,7 +618,6 @@ const QUIET_OUTPUT: &[&str] = &[
     "repo update",
     "session kill",
     "session ls",
-    "session new",
     "session resume",
     "session send",
     "skill create",

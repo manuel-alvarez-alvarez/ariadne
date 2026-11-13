@@ -241,22 +241,6 @@ mod tests {
     }
 
     #[test]
-    fn a_loose_session_keeps_its_attention_row() {
-        let session = SessionEntryDto {
-            goal_id: None,
-            task_id: None,
-            seat: None,
-            ..flagged("01LOOSE", "01GOAL", AttentionReason::AgentError)
-        };
-        let attention = group(Vec::new(), Vec::new(), vec![session], false);
-        assert_eq!(attention.count, 1);
-        assert_eq!(attention.goals[0].goal_id, "-");
-        let rows = rows(&attention.goals[0], &HashMap::new(), chrono::Utc::now());
-        assert_eq!(rows[0][1], "- session");
-        assert_eq!(rows[0][3], "-");
-    }
-
-    #[test]
     fn groups_follow_the_goal_order_the_ui_shows() {
         let attention = group(
             vec![goal("01GA", "older"), goal("01GB", "newer")],

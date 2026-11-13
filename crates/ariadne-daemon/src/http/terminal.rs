@@ -109,7 +109,13 @@ async fn header(state: &AppState, session: &ariadne_api::sessions::SessionDto) -
             }
             Err(_) => (None, None),
         },
-        None => (session.title.clone(), None),
+        None => match &session.pull_request_id {
+            Some(id) => match state.launcher.pull_view(id).await {
+                Ok(pull) => (Some(pull.title), None),
+                Err(_) => (None, None),
+            },
+            None => (None, None),
+        },
     };
     Header::for_session(session, title, repository)
 }

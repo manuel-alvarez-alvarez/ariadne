@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-10-24
+updated: 2026-11-13
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 2a65c9cb]
 tests:
@@ -191,27 +191,20 @@ same binary also serves (013).
     status and command, plus the reason of every rejected agent. Its JSON is
     the daemon's list unchanged.
 26. `ariadne session ls` lists one filtered page of Ariadne sessions and
-    outside ACP sessions. Its columns are `id`, `title`, `status`, `goal`,
+    PR review sessions. Its columns are `id`, `title`, `status`, `goal`,
     `task`, `seat`, `agent`, `model`, `age` and `tokens`; `directory` is
     available with `--columns`. The `seat` column names a column agent's
     workflow column beside its seat, `agent · develop`; every other seat
     names only itself (rule 24). That column reads the task behind each row,
-    since the page object carries no step of its own. An outside row leaves
-    status, goal, task and seat empty. It sends
-    `--kind`, `--agent`, `--status`, `--seat`, `--goal`, `--task`, `--attention`,
-    `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`,
-    `--refresh`, `--all` and `--pull-request` to the daemon, the last as
-    `SessionPageQuery`'s own `pull_request` (026); `--search` becomes `q`,
-    and agent flags complete registry agent ids. A date activity bound is the start of
+    since the page object carries no step of its own.
+    Its filters and paging follow 012. A date activity bound uses the start of
     its UTC day for `--since` and the end for `--until`. The table ends with
     `<shown> of <total> sessions` and a reusable next-page command when the
     daemon returns a cursor. `--all` follows every cursor into one table and
     cannot be combined with `--cursor`. JSON preserves the page object, while
     quiet output prints its session ids. `session discover` does not exist.
 27. `ariadne attach`, `goal attach` and `task attach` open the console of the
-    session an id names, revived first when it is gone. `ariadne attach` also
-    takes an outside internal id: it resumes the conversation, then opens its
-    console. An outside id shared by agents requires `--agent`. A finished
+    session an id names, revived first when it is gone. A finished
     task whose worktree is gone revives its session. On a terminal it is an
     inline pane (008); with stdin or stdout redirected it is the plain line
     protocol — one `kind · summary` per event, numbered permission choices,
@@ -224,15 +217,8 @@ same binary also serves (013).
 30. `session inspect` shows a reported context window as `<used> / <size>`
     with the compact token spelling. It shows no context line when the agent
     has not reported one, and it never shows a cost.
-30a. `session inspect` prints `title` after `id`, and `continues` after
-    `internal id`. `continues` is the id of the session a `session switch`
-    replaced on its seat. Each prints a dash where the DTO carries none.
-31. `session new --model AGENT:MODEL [--effort E] [--dir PATH] [--attach]`
-    starts a loose session (020): a new conversation with no goal or task,
-    in `--dir` or the current directory, sent to the daemon as an absolute
-    path. It prints the session's status line, or with `--attach` opens its
-    console at once. The first prompt typed into it is its title.
-31a. `session switch <id> --model AGENT:MODEL [--effort EFFORT]` switches
+30a. `session inspect` prints `continues`, the session replaced by a switch, or a dash.
+31a. `session switch` <id> --model AGENT:MODEL [--effort EFFORT]` switches
     the session to a new conversation on the requested pin, preserving its
     seat. It refuses `--model default` locally; `--effort default` leaves
     effort unpinned. It prints the new session id and pin, or the full DTO
@@ -356,8 +342,7 @@ same binary also serves (013).
     `default`, a review pinning a model of its own. `--model` is required
     with no `--stop`: there is no repository pin to fall back to, so
     leaving it out is a usage error naming `--model`. `--attach` waits for
-    the review session to start and opens its console, as `session new
-    --attach` does. `pr review <repo> <number> --stop` sends `{asked:
+    the review session to start and opens its console, with `ariadne attach`. `pr review <repo> <number> --stop` sends `{asked:
     false}` alone and conflicts with `--model`, `--effort`, `--skill` and
     `--attach`. It prints one styled mutation line, the request id with
     `-q`, and the DTO with `--format json`.
@@ -624,11 +609,8 @@ lists all four values. Add a CLI parser test before relying on this coverage.
 - Inspect keys contain no underscores
   (`task.rs::the_inspect_block_types_its_id_title_and_status`).
 - Session and model subject columns use `title`, and model booleans use
-  `yes` or `no` (`session.rs::the_session_table_has_the_unified_columns_and_empty_outside_fields`,
-  `models.rs::the_description_drops_before_the_efforts_do`,
+  `yes` or `no` (`models.rs::the_description_drops_before_the_efforts_do`,
   `::a_row_stars_the_default_effort_and_dashes_what_is_unsaid`).
-- A loose session prints dashes for absent goal, task and seat fields
-  (`session.rs::a_loose_session_prints_dashes_for_missing_fields`).
 - An agent seat with a workflow column names both, and every other seat
   names only itself, in `session inspect`, `session kill`'s confirmation and
   the `seat` column of `session ls`, which reads the column off the task
@@ -640,10 +622,6 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `::step_labels_reads_each_tasks_agents`).
 - `session inspect` shows a reported context window with compact token counts
   (`session.rs::the_inspect_block_shows_the_reported_context_window`).
-- `session inspect` prints `title` and `continues`, dashed where the DTO
-  carries neither
-  (`session.rs::a_switched_session_shows_its_title_and_what_it_continues`,
-  `::a_session_with_neither_shows_a_dash_for_title_and_continues`).
 - `agent update` takes flags, a clear or a reset but only one, and keeps a
   flag that looks like a flag as it is
   (`cli/tests.rs::updating_an_agent_takes_flags_or_clear_or_reset_but_only_one`,
@@ -661,26 +639,17 @@ lists all four values. Add a CLI parser test before relying on this coverage.
   `::a_date_is_the_utc_day_boundary_for_session_listing`,
   `::all_fetches_every_page_and_keeps_each_session_once`,
   `::a_next_cursor_prints_the_session_command_for_the_next_page`,
-  `::the_session_table_has_the_unified_columns_and_empty_outside_fields`,
-  `::an_outside_row_shows_its_model_and_token_usage`,
-  `::an_outside_row_without_model_or_usage_keeps_both_cells_empty`,
   `::an_ariadne_row_keeps_its_agent_model_and_token_columns`,
   `::columns_select_the_model_by_header_name`,
   `::pull_request_reaches_its_own_query_parameter`,
-  `cli/tests.rs::session_ls_takes_filters_pages_refresh_and_all`,
-  `::session_ls_all_and_cursor_are_exclusive`). Outside ids resume through
-  the resume endpoint and a shared id requires `--agent`
-  (`attach.rs::an_outside_id_resumes_through_the_resume_endpoint`,
-  `::an_outside_id_shared_by_agents_requires_an_agent_flag`).
+  `cli/tests.rs::session_ls_takes_filters_pages_and_all`,
+  `::session_ls_all_and_cursor_are_exclusive`).
 - The console renders a stub-agent transcript and submits typed input, and
   its permission question submits the selected option
   (`commands/console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,
   `::a_permission_question_renders_and_delivers_the_selected_answer`);
   `session send` takes an id and the text
   (`cli/tests.rs::session_send_takes_an_id_and_the_text_to_send`);
-  `session new` starts a loose session on a model, in the current directory
-  or the one `--dir` names, sent as an absolute path
-  (`commands/session.rs::new_starts_a_session_in_the_directory_as_an_absolute_path`);
   `session switch` posts its pin and prints the returned session, while
   `default` is refused locally
   (`session.rs::switch_posts_the_pin_and_returns_the_new_session`,

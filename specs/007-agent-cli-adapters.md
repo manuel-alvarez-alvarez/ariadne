@@ -1,14 +1,13 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-10-21
+updated: 2026-11-13
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
   - crates/ariadne-daemon/tests/it/adapters.rs
   - crates/ariadne-daemon/tests/it/agents.rs
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
-  - crates/ariadne-daemon/tests/it/acp_session_resume.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/resume.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
@@ -155,8 +154,7 @@ skill says (017).
    proven entry above, since silence proves nothing of an identity nothing
    else already vouched for.
 5. A ready agent that lacks an optional capability is degraded, one flag per
-   gap: `no_efforts` for no effort option, `no_adoption` for no
-   `session_list`, and `no_restart_resume` for no `session_load`.
+   gap: `no_efforts` for no effort option and `no_restart_resume` for no `session_load`.
 6. `GET /v1/models` lists the models of every agent whose catalog the
    registry knows: what a ready agent has just answered, and what a kept
    catalog holds for an agent whose probe ran out of time. An agent that
@@ -184,8 +182,7 @@ skill says (017).
    command and arguments, and its environment equals that MCP server's
    environment. Spawn and resume use the same launch plan, and other agents
    do not receive this variable. The setting applies to that process and does
-   not edit the user's OpenCode configuration. A loose session carries only
-   `ARIADNE_SESSION_ID` and `ARIADNE_LAUNCH_ID`, while a pull-request session
+   not edit the user's OpenCode configuration. A pull-request session
    carries `ARIADNE_PULL_REQUEST_ID` and no goal id.
 11. The launch id is fresh for every process started under a session row,
     and the row is told it before the process starts. That is what tells the
@@ -194,10 +191,9 @@ skill says (017).
     system prompt, the first prompt, the model, the effort, the session it
     resumes, and one MCP server, `ariadne` — the `ariadne` CLI with the
     arguments `mcp serve` and the session context as its environment. The
-    runtime sends the agent exactly what this file says. A loose launch writes no
-    `acp.json` and starts no MCP server. OpenCode's process setting derives
+    runtime sends the agent exactly what this file says. OpenCode's process setting derives
     from this launch record.
-13. Orchestrator and loose spawns carry their briefing as the first prompt; a column-agent spawn has no initial prompt and receives its column prompt afterwards. A resume names the agent session it continues and carries its
+13. Orchestrator spawns carry their briefing as the first prompt; a column-agent spawn has no initial prompt and receives its column prompt afterwards. A resume names the agent session it continues and carries its
     instruction once, as the next prompt; an empty instruction resumes an
     agent that is told nothing.
 14. A briefing has no size limit on its way to the agent: it travels in the
@@ -316,10 +312,6 @@ skill says (017).
   (`::an_agent_without_a_version_is_read_on_every_start`), and the store
   keeps one catalog per agent
   (`store.rs::an_acp_catalog_is_kept_per_agent_and_replaced_by_a_newer_read`).
-- A kept catalog without a default model is repaired at startup and permits
-  outside-session resume with the loaded model or the default fallback
-  (`acp_session_resume.rs::an_old_catalog_does_not_block_the_loaded_model`,
-  `::an_old_catalog_recovers_the_default_when_load_has_no_model`).
 - Every required capability is enforced
   (`acp_discovery.rs::every_required_acp_capability_is_enforced`), and an agent
   with no model option is rejected with the reason shown

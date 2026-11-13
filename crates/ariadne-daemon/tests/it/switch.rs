@@ -429,58 +429,6 @@ async fn a_switched_orchestrator_moves_the_goals_pin() {
     assert_eq!(goal.model, TO);
 }
 
-/// A loose session has no briefing and no resume text: its successor gets
-/// the history alone, in the same directory, and no seat pin moves.
-#[tokio::test]
-async fn a_switched_loose_session_gets_the_handoff_alone() {
-    let h = harness().second_agent().await;
-    let work = h.at("work");
-    std::fs::create_dir(&work).unwrap();
-    let old: SessionDto = h
-        .json(
-            post_json(
-                "/v1/sessions",
-                json!({ "model": FROM, "working_directory": work.to_str().unwrap() }),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    let old = h.store.get_session(&old.id).await.unwrap();
-    let (status, _) = h
-        .send(post_json(
-            &format!("/v1/sessions/{}/console/input", old.id),
-            json!({"text": "Tidy the release notes"}),
-        ))
-        .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    first_turn_done(&h, &old).await;
-
-    let new = switch(&h, &old, TO).await;
-
-    assert_eq!(new.switched_from.as_deref(), Some(old.id.as_str()));
-    assert_eq!(new.seat, None);
-    assert_eq!(new.goal_id, None);
-    assert_eq!(new.worktree_path.as_deref(), work.to_str());
-    assert_eq!(new.model, TO);
-    assert_eq!(h.session_status(&old).await, SessionStatus::Exited);
-    assert_eq!(switched_event(&h, &old).await["to"], json!(new.id));
-
-    let new_row = h.store.get_session(&new.id).await.unwrap();
-    eventually(TIMEOUT, "the new agent's first prompt", || async {
-        !h.prompts_to(&new_row).is_empty()
-    })
-    .await;
-    // A loose session has no system prompt, so the runtime's blank line
-    // before the prompt is all that precedes it.
-    let prompt = h.prompts_to(&new_row).remove(0);
-    assert!(
-        prompt.trim_start().starts_with(HANDOFF),
-        "the handoff alone: {prompt}"
-    );
-    assert!(prompt.contains("Tidy the release notes"), "{prompt}");
-    assert!(prompt.contains("agent\ndone"), "{prompt}");
-}
-
 /// A session switched in the middle of a turn has that turn cancelled and
 /// its agent killed and reaped before the new agent starts.
 #[tokio::test]

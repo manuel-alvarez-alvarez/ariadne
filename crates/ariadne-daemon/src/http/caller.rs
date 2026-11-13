@@ -40,7 +40,7 @@ pub(super) async fn call_ctx(store: &Store, headers: &HeaderMap) -> ApiResult<Ca
         .await
         .map_err(|_| ApiError::forbidden(format!("unknown agent session: {session_id}")))?;
     let actor = match session.seat() {
-        None => return Err(ApiError::forbidden("a loose session has no task authority")),
+        None => return Err(ApiError::forbidden("session has no seat")),
         Some(Seat::Orchestrator) => Actor::Orchestrator,
         // A review or keeper session (029, 032) acts on its request alone,
         // through the request routes; on a task it has the authority of an

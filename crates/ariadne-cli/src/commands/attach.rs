@@ -8,10 +8,7 @@
 
 use anyhow::{Result, bail};
 
-use ariadne_api::sessions::{
-    ResumeOutsideSessionRequest, SessionDto, SessionEntryDto, SessionKind, SessionPageDto,
-    SessionPageQuery,
-};
+use ariadne_api::sessions::{SessionDto, SessionEntryDto, SessionPageDto, SessionPageQuery};
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, ClientError};
 use ariadne_core::Seat;
@@ -210,91 +207,8 @@ pub(crate) async fn attach(client: &Client, id: &str, seat: Option<Seat>) -> Res
     attach_to(client, &session).await
 }
 
-async fn outside_matches(
-    client: &Client,
-    id: &str,
-    agent: Option<&str>,
-) -> Result<Vec<SessionEntryDto>> {
-    let mut page: SessionPageDto = client
-        .get_json(&query_path(
-            "/v1/sessions",
-            &SessionPageQuery {
-                kind: Some(SessionKind::Outside),
-                agent: agent.map(str::to_string),
-                all: Some(true),
-                limit: Some(200),
-                ..SessionPageQuery::default()
-            },
-        )?)
-        .await?;
-    let mut sessions = page.sessions;
-    while let Some(cursor) = page.next_cursor {
-        page = client
-            .get_json(&query_path(
-                "/v1/sessions",
-                &SessionPageQuery {
-                    kind: Some(SessionKind::Outside),
-                    agent: agent.map(str::to_string),
-                    all: Some(true),
-                    limit: Some(200),
-                    cursor: Some(cursor),
-                    ..SessionPageQuery::default()
-                },
-            )?)
-            .await?;
-        sessions.extend(page.sessions.clone());
-    }
-    Ok(sessions
-        .into_iter()
-        .filter(|session| session.id == id)
-        .collect())
-}
-
-fn choose_outside_session(
-    id: &str,
-    matches: Vec<SessionEntryDto>,
-) -> Result<Option<SessionEntryDto>> {
-    match matches.len() {
-        0 => Ok(None),
-        1 => Ok(matches.into_iter().next()),
-        count => bail!("outside session {id} belongs to {count} agents; pass --agent <agent-id>"),
-    }
-}
-
-async fn resume_outside(client: &Client, outside: SessionEntryDto) -> Result<SessionDto> {
-    client
-        .post_json(
-            "/v1/outside-sessions/resume",
-            &ResumeOutsideSessionRequest {
-                agent_id: outside.agent_id,
-                internal_session_id: outside.id,
-            },
-        )
-        .await
-        .map_err(Into::into)
-}
-
-async fn attach_outside(client: &Client, outside: SessionEntryDto) -> Result<()> {
-    let session = resume_outside(client, outside).await?;
-    attach_to(client, &session).await
-}
-
-/// `ariadne attach <id>`: session, outside session, task or goal id.
-pub(crate) async fn attach_any(
-    client: &Client,
-    id: &str,
-    seat: Option<Seat>,
-    agent: Option<&str>,
-) -> Result<()> {
-    if let Some(outside) = choose_outside_session(id, outside_matches(client, id, agent).await?)? {
-        if seat.is_some() {
-            bail!("--seat does not apply to an outside session id: {id}");
-        }
-        return attach_outside(client, outside).await;
-    }
-    if agent.is_some() {
-        bail!("--agent applies only to an outside session id: {id}");
-    }
+/// `ariadne attach <id>`: session, task or goal id.
+pub(crate) async fn attach_any(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
     // Which of the three it is decides everything below, so a short id that
     // names one of each is refused here rather than resolved to whichever
     // list happens to be probed first.
@@ -333,28 +247,27 @@ mod tests {
     use crate::commands::fixtures;
     use crate::commands::fixtures::session;
 
-    fn outside(id: &str, agent_id: &str) -> SessionEntryDto {
+    fn entry(id: &str, agent_id: &str) -> SessionEntryDto {
         SessionEntryDto {
-            kind: SessionKind::Outside,
             id: id.into(),
             agent_id: agent_id.into(),
             title: Some("Continue this work".into()),
-            goal_id: None,
+            goal_id: Some("01GOAL".into()),
             task_id: None,
-            seat: None,
+            seat: Some(Seat::Orchestrator),
             task_agent_id: None,
-            model: None,
+            model: Some("codex-acp:model".into()),
             effort: None,
             internal_session_id: Some(id.into()),
             working_directory: Some("/work/api".into()),
-            status: None,
+            status: Some(SessionStatus::Starting),
             attention_reason: None,
             attention_since: None,
             last_activity_at: Some("2026-09-12T12:00:00Z".into()),
-            usage: None,
+            usage: Some(Default::default()),
             context_used: None,
             context_size: None,
-            created_at: None,
+            created_at: Some("2026-09-12T12:00:00Z".into()),
             ended_at: None,
             pull_request_id: None,
         }
@@ -390,8 +303,7 @@ mod tests {
         }
 
         fn column_session(id: &str, agent: &str, live: bool) -> SessionEntryDto {
-            let mut entry = outside(id, "codex-acp");
-            entry.kind = SessionKind::Ariadne;
+            let mut entry = entry(id, "codex-acp");
             entry.goal_id = Some("01GOAL".into());
             entry.task_id = Some("01TASK".into());
             entry.seat = Some(Seat::Agent);
@@ -415,7 +327,6 @@ mod tests {
                 ],
                 next_cursor: None,
                 total: 2,
-                snapshot_at: "2026-09-12T12:00:00Z".into(),
             })
         }
 
@@ -512,56 +423,6 @@ mod tests {
         assert!(err.to_string().contains("merge"), "{err}");
     }
 
-    #[test]
-    fn an_outside_id_shared_by_agents_requires_an_agent_flag() {
-        let error = choose_outside_session(
-            "outside-id",
-            vec![
-                outside("outside-id", "codex-acp"),
-                outside("outside-id", "claude-acp"),
-            ],
-        )
-        .expect_err("an ambiguous outside id");
-        assert!(error.to_string().contains("--agent"), "{error}");
-    }
-
-    #[tokio::test]
-    async fn an_outside_id_resumes_through_the_resume_endpoint() {
-        use axum::extract::State;
-        use axum::routing::post;
-        use axum::{Json, Router};
-
-        async fn resume(
-            State(session): State<SessionDto>,
-            Json(request): Json<ResumeOutsideSessionRequest>,
-        ) -> Json<SessionDto> {
-            assert_eq!(request.agent_id, "codex-acp");
-            assert_eq!(request.internal_session_id, "outside-id");
-            Json(session)
-        }
-
-        let live = SessionDto {
-            status: SessionStatus::Running,
-            ..session("01LOOSE", "01GOAL", None)
-        };
-        let app = Router::new()
-            .route("/v1/outside-sessions/resume", post(resume))
-            .with_state(live.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
-        let resumed = resume_outside(
-            &Client::tcp(format!("http://{address}")),
-            outside("outside-id", "codex-acp"),
-        )
-        .await
-        .unwrap();
-        server.abort();
-        assert_eq!(resumed.id, live.id);
-        assert!(resumed.status.is_live());
-    }
-
     #[tokio::test]
     async fn revival_uses_the_newest_resumable_session() {
         use axum::extract::{Path, State};
@@ -572,8 +433,7 @@ mod tests {
         struct Api(std::sync::Arc<std::sync::Mutex<Option<String>>>);
 
         fn ended(id: &str) -> SessionEntryDto {
-            let mut entry = outside(id, "codex-acp");
-            entry.kind = SessionKind::Ariadne;
+            let mut entry = entry(id, "codex-acp");
             entry.status = Some(SessionStatus::Exited);
             entry.seat = Some(Seat::Agent);
             entry.model = Some("codex-acp:model".into());
@@ -585,7 +445,6 @@ mod tests {
                 sessions: vec![ended("newest"), ended("oldest")],
                 next_cursor: None,
                 total: 2,
-                snapshot_at: "2026-09-12T12:00:00Z".into(),
             })
         }
 

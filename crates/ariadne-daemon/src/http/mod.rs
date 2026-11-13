@@ -52,7 +52,6 @@ use ariadne_api::{HealthResponse, SESSION_HEADER, VersionResponse};
 use ariadne_store::Store;
 
 use crate::acp_discovery::AgentRegistry;
-use crate::acp_sessions::OutsideSessions;
 use catalog::{acp_agents, agents, models};
 
 use crate::ai_permissions::AiPermissions;
@@ -83,9 +82,6 @@ pub struct AppState {
     pub log_stream: LogStream,
     /// ACP commands and their cached discovery snapshot.
     pub agent_registry: AgentRegistry,
-    /// The snapshot of every agent's stored sessions that the outside half
-    /// of `/v1/sessions` pages.
-    pub outside_sessions: OutsideSessions,
     /// the model's settings, its Python check and its install (022).
     pub ai_permissions: AiPermissions,
     /// The webhook tunnel and its switch (027).
@@ -169,7 +165,7 @@ impl AppState {
         channel::list_task_messages, channel::post_task_message,
         goals::list_goal_messages, goals::post_goal_message, channel::diff,
         channel::open_pull_request, steps::complete, steps::fail,
-        sessions::list, sessions::create, sessions::resume_outside,
+        sessions::list,
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
         agent_requests::create, agent_requests::withdraw,
@@ -373,11 +369,7 @@ pub fn router(state: AppState) -> Router {
             post(channel::open_pull_request),
         )
         // sessions
-        .route("/v1/sessions", get(sessions::list).post(sessions::create))
-        .route(
-            "/v1/outside-sessions/resume",
-            post(sessions::resume_outside),
-        )
+        .route("/v1/sessions", get(sessions::list))
         .route("/v1/sessions/{id}", get(sessions::get))
         .route("/v1/sessions/{id}/kill", post(sessions::kill))
         .route("/v1/sessions/{id}/resume", post(sessions::resume))

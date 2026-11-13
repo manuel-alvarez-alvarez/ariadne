@@ -112,7 +112,18 @@ async fn header(client: &Client, session: SessionDto) -> Header {
             ),
             Err(_) => (None, None),
         },
-        (None, None) => (session.title.clone(), None),
+        (None, None) => match &session.pull_request_id {
+            Some(id) => match client
+                .get_json::<ariadne_api::pull_requests::PullRequestDto>(&format!(
+                    "/v1/pull-requests/{id}"
+                ))
+                .await
+            {
+                Ok(pull) => (Some(pull.title), None),
+                Err(_) => (None, None),
+            },
+            None => (None, None),
+        },
     };
     Header::for_session(&session, title, repository)
 }
@@ -503,7 +514,6 @@ mod tests {
             context_size: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             ended_at: None,
-            title: None,
             switched_from: None,
             pull_request_id: None,
         };
@@ -514,25 +524,6 @@ mod tests {
         let shown = format!("{header:?}");
         assert!(shown.contains("Input box"), "{shown}");
         assert!(shown.contains("ariadne"), "{shown}");
-    }
-
-    #[tokio::test]
-    async fn a_loose_session_banner_has_no_goal_or_task() {
-        let (client, server) = serve(stub(true, false)).await;
-        let session = SessionDto {
-            goal_id: None,
-            task_id: None,
-            seat: None,
-            ..crate::commands::fixtures::session("01LOOSE", "01GOAL", None)
-        };
-
-        let header = super::header(&client, session).await;
-        server.abort();
-
-        let shown = format!("{header:?}");
-        assert!(shown.contains("seat: \"-\""), "{shown}");
-        assert!(shown.contains("task: None"), "{shown}");
-        assert!(shown.contains("repository: None"), "{shown}");
     }
 
     /// What a frame reads as: the kinds a snapshot holds, an event's kind,

@@ -16,9 +16,7 @@
 //! its marker file — an update that names `as_session` goes out under that
 //! session id, a subagent's, `updates_first` goes out before the turn's
 //! permission request, and `permission_session` names the session that asks — and the stored sessions a load or resume finds, which
-//! `session/list` answers whole, or `session_page_size` at a time behind a `nextCursor` — and never
-//! answers a page from `session_list_stall_from` on, nor any before the file
-//! `session_list_wait_for` names exists, and how long the agent
+//! the script names, and how long the agent
 //! takes to come up at all (`start_delay`, in seconds). With `writer_child`
 //! it is codex-acp's shape: the conversation is written by a child process
 //! the agent starts, which outlives the agent by [`WRITER_LINGER_SECS`]
@@ -601,29 +599,6 @@ def respond(request):
         raise Failure(-32001, "unknown session %s" % wanted)
     if method == "session/close":
         return {}
-    if method == "session/list":
-        # An agent that holds its list until the test lets it go.
-        marker = script.get("session_list_wait_for")
-        while marker and not os.path.exists(marker):
-            time.sleep(0.01)
-        sessions = script.get("session_list", [])
-        size = script.get("session_page_size")
-        if not size:
-            return {"sessions": sessions}
-        # A paging agent: `size` sessions per page, and a cursor that names
-        # where the next page starts, until nothing remains.
-        cursor = request.get("params", {}).get("cursor")
-        start = int(cursor) if cursor else 0
-        stall_from = script.get("session_list_stall_from")
-        if stall_from is not None and start >= stall_from:
-            # An agent that never answers this page: the client's budget
-            # is what ends the listing.
-            while True:
-                time.sleep(0.1)
-        listed = {"sessions": sessions[start:start + size]}
-        if start + size < len(sessions):
-            listed["nextCursor"] = str(start + size)
-        return listed
     if method == "session/set_config_option":
         params = request["params"]
         if params.get("value") == script.get("reject_config_value"):

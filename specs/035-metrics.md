@@ -1,7 +1,7 @@
 ---
 id: metrics
 status: current
-updated: 2026-10-21
+updated: 2026-11-13
 areas: [daemon, store, docs]
 commits: []
 tests:
@@ -112,7 +112,7 @@ Loki reads and `ariadne query` (034); the shipped dashboard (036).
     model allowed, `cancelled` where no option was chosen, else `deny`.
 14. `step` is the workflow column id of an agent session's staffed task
     agent. A session no column staffs — the orchestrator's, a reviewer's, a
-    keeper's, or one resumed loose — carries `none`.
+    keeper's — carries `none`.
 
 ### Group 2: live state
 

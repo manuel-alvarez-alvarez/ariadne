@@ -63,65 +63,39 @@ allowing option. Repeat `--location` for each path the call touches.
 ## List every session
 
 `ariadne session ls` lists Ariadne's own sessions — an orchestrator's, a
-column agent's, a reviewer's, a keeper's — next to outside sessions: conversations an ACP
-agent holds that Ariadne never started. Rows come newest activity first.
+column agent's, a reviewer's, or a keeper's. Rows come newest activity first.
 
 ```sh
 ariadne session ls
-ariadne session ls --kind outside --agent codex-acp --dir ~/projects/api
+ariadne session ls --agent codex-acp --dir ~/projects/api
 ariadne session ls --status running --attention
 ```
 
 Its columns are `id`, `title`, `status`, `goal`, `task`, `seat`, `agent`,
 `model`, `age` and `tokens`; add `directory` with `--columns`. The `seat`
 column names a column agent's workflow column beside its seat, `agent ·
-develop`; every other seat names only itself. An outside session leaves
-`status`, `goal`, `task` and `seat` empty. By default, the table holds only the
+develop`; every other seat names only itself. By default, the table holds only the
 last 7 days of activity. Use `--since` or `--until` to set an activity bound.
 Use `--all` to remove the default 7-day window, include ended sessions, and
 fetch every page into one table.
-`--kind`, `--agent`, `--status`, `--seat`, `--goal`, `--task` and `--attention`
+`--agent`, `--status`, `--seat`, `--goal`, `--task` and `--attention`
 narrow which rows show; `--dir` and `--search` narrow by working directory and
-text; `--limit`, `--cursor` and `--refresh` page the table. See [Resuming a
+text; `--limit` and `--cursor` page the table. See [Resuming a
 session](resuming-sessions.md) for finding and continuing one of these.
-
-## Start a new session
-
-`ariadne session new` starts a conversation with an agent in a directory,
-with no goal or task behind it — the same as **New session** on the desktop
-app's Sessions screen.
-
-```sh
-ariadne session new --model codex-acp:gpt-5.3-codex --attach
-ariadne session new --model claude-acp:sonnet --effort high --dir ~/projects/api
-```
-
-`--dir` defaults to the current directory. The session waits for its first
-prompt, which becomes its title: type it in `ariadne attach <id>` (or pass
-`--attach`), or send it with `ariadne session send <id> "…"`.
 
 ## Connect to a session
 
 `ariadne attach` is an interactive console, not a shell inside the agent. It
 shows the session's recorded events and sends each line you type as the next
 prompt. The agent keeps working after you leave. It takes a session id, a
-task id, a goal id, or an outside session's internal id, from the table
-above.
+task id or a goal id from the table above.
 
 ```sh
 ariadne attach <goal-id>                 # the orchestrator
 ariadne attach <task-id>                 # the agent of the task's current column
 ariadne task attach <task-id> --step review   # one column's agent instead
 ariadne attach <session-id>              # one specific session, live or ended
-ariadne attach <internal-id> --agent codex-acp  # an outside session
 ```
-
-Attaching an outside id resumes the conversation and opens the console on it
-in one step. Attaching an ended Ariadne session revives it the same way,
-whether its goal completed or its worktree was already removed. `--agent`
-breaks the tie on the rare internal id two agents both hold; otherwise the id
-alone is enough. [Resuming a session](resuming-sessions.md) says what a
-resumed or revived session can and cannot do.
 
 In a terminal the console is an inline pane as tall as the terminal. Its last
 rows are pinned: a status row, the input box, and a footer. So the input box
@@ -621,8 +595,7 @@ setting to fall back to, and the model must be ranked `balanced` or
 The ask makes one goal with one task; `pr inspect` prints its id as `review
 goal`. `--skill` loads another skill beside `pr-reviewer`, which
 every review loads anyway; repeat it for more than one. `--attach` waits for
-the review session to start and opens its console, the way `session new
---attach` does. `ariadne pr review <repo> <number> --stop` stops Ariadne's
+the review session to start and opens its console, with `ariadne attach`. `ariadne pr review <repo> <number> --stop` stops Ariadne's
 review and cannot be combined with `--model`, `--effort`, `--skill` or
 `--attach`.
 
@@ -807,14 +780,14 @@ the built-in help screen.
 | `version`, `doctor` | No command-specific options. |
 | `daemon` | `start`, `stop [--timeout SECONDS]`, `restart [--timeout SECONDS]`, `status`, and `logs [-f]`; each accepts `--home PATH`. |
 | `agent` | `ls`, `refresh`, and `update AGENT [--flag FLAG]... [--clear-flags\|--reset]`. |
-| `models` | `ls [--agent AGENT]`, `show MODEL`, `enable MODEL`, `disable MODEL`, `rank MODEL RANK\|--clear`. |
+| `models` | `ls`, `show MODEL`, `enable MODEL`, `disable MODEL`, `rank MODEL RANK\|--clear`. |
 | `skill` | `ls`, `get NAME`, `inspect NAME`, `create NAME [--file FILE]`, `set NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
 | `workflow` | `ls`, `show NAME`, `check [--file FILE]`, `create NAME [--file FILE]`, `update NAME [--file FILE]`, `reset NAME [-y]`, `rm NAME [-y]`. |
 | `repo` | `ls`, `inspect ID`, `add PATH`, `update ID`, `rm ID [-y]`. Add and update use `--branch`, `--description`, `--permission-mode auto\|ask\|learn\|ai`, `--workflow`, and `--forge on\|off`; update also uses `--path`. |
 | `goal` | `create --model AGENT:MODEL [--title] [-d\|--description] [--from-issue] [--repo]... [--effort] [--workflow]`; `ls [--status STATUS,...] [-a] [--watch]`; `inspect`, `complete`, `cancel [-y]`, `rm [-y]`, and `attach` take an ID. |
 | `task` | `create GOAL --title TEXT --agent STEP[:SKILLS]=MODEL[@EFFORT] [--description] [--depends-on]... [--repo]`; `update ID` accepts `--title`, `--description`, repeatable `--agent` and `--depends-on`, or `--clear-depends-on`; `ls` accepts `--goal`, repeatable `--status`, `-a`, `--step`, and `--watch`; `inspect`, `messages [--full]`, `history`, `cancel [-y]`, `retry`, `diff`, `attach [--seat] [--step]`, and `logs [--seat] [-f] [--tail] [--since] [--kind]...` take an ID. |
-| `session` | `ls` accepts `--kind`, `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `--refresh`, `-a`, and `--watch`; `new --model AGENT:MODEL [--effort] [--dir] [--attach]`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
-| `events`, `attention`, `attach` | `events [-f] [--goal] [--task] [--session] [--kind]...`; `attention [--watch]`; `attach ID [--seat orchestrator\|agent\|reviewer\|keeper] [--agent AGENT]`. |
+| `session` | `ls` accepts `--agent`, `--task`, `--goal`, `--pull-request`, repeatable `--status`, `--seat`, `--attention`, `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`, `-a`, and `--watch`; `switch ID --model AGENT:MODEL [--effort]`; `inspect ID`; `send ID TEXT`; `logs ID [-f] [--tail] [--since] [--kind]...`; `resume ID`; `kill ID [-y]`. |
+| `events`, `attention`, `attach` | `events [-f] [--goal] [--task] [--session] [--kind]...`; `attention [--watch]`; `attach ID [--seat orchestrator\|agent\|reviewer\|keeper]`. |
 | `query` | `query EXPR [--at RFC3339\|SPAN \| --since RFC3339\|SPAN [--step SPAN]]`; evaluates the supported PromQL subset at now, at `--at`, or as a range from `--since`. |
 | `pr`, `issue`, `forge` | `pr ls [--repo] [--mine\|--review-requests] [--watch]`, `inspect REPO NUMBER`, `search --repo REPO QUERY`, `refresh [--repo]`, `review REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`, `babysit REPO NUMBER [--model] [--effort] [--skill]... [--attach\|--stop]`; `issue ls --repo REPO [--all]`; `forge tunnel [on\|off]`. |
 | `permissions` | `ai show`, `enable [--wait]`, `disable`, `refresh [--wait]`, `set` with `--allow-threshold`, `--deny-threshold`, `--default-thresholds`, `--flavour`, or `--device`, and `test --tool TEXT --input JSON [--kind] [--option]... [--location]... [--workspace]`; `learned list [--repo]`, `show ID`, `rm ID`, and `scope ID all\|repository`. |

@@ -3,12 +3,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
-use ariadne_api::sessions::{
-    NewSessionRequest, ResumeOutsideSessionRequest, SessionDto, SessionPageDto, SessionPageQuery,
-    SwitchSessionRequest,
-};
-use ariadne_core::models::agent_of;
-use ariadne_store::SessionFilter;
+use ariadne_api::sessions::{SessionDto, SessionPageDto, SessionPageQuery, SwitchSessionRequest};
 
 use super::AppState;
 use super::caller::call_ctx;
@@ -16,109 +11,7 @@ use super::convert::session_dto_of;
 use super::error::{ApiError, ApiResult, Json};
 use crate::acp_sessions::{Filter, QueryError};
 
-/// Start a loose session: a new conversation with an agent, in a directory,
-/// with no goal, task or seat behind it.
-///
-/// The model is checked as a goal's pin is — a registry agent and a model of
-/// it, including a user-disabled manual-only model — and the effort against that model. The
-/// directory must be an absolute path to one that exists. The session comes
-/// back live, waiting for the first prompt typed into its console, which
-/// becomes its title.
-#[utoipa::path(post, path = "/v1/sessions", tag = "sessions",
-    operation_id = "create_session",
-    request_body = NewSessionRequest,
-    responses((status = 200, body = SessionDto), (status = 400), (status = 403), (status = 409)))]
-pub(super) async fn create(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<NewSessionRequest>,
-) -> ApiResult<Json<SessionDto>> {
-    let ctx = call_ctx(&state.store, &headers).await?;
-    if ctx.session.is_some() {
-        return Err(ApiError::forbidden("only the user may start a session"));
-    }
-    let pin = super::pins::chosen(
-        &state.store,
-        &state.agent_registry,
-        Some(&req.model),
-        req.effort.as_deref(),
-    )
-    .await?;
-    let cwd = std::path::PathBuf::from(&req.working_directory);
-    if !cwd.is_absolute() || !cwd.is_dir() {
-        return Err(ApiError::bad_request(format!(
-            "the working directory must be the absolute path of a directory that exists: {}",
-            req.working_directory
-        )));
-    }
-    let session = state
-        .launcher
-        .start_loose(pin, cwd)
-        .await
-        .map_err(|error| ApiError::conflict(format!("{error:#}")))?;
-    Ok(Json(session_dto_of(&state.store, session).await?))
-}
-
-/// Resume an outside conversation without creating a goal or task.
-#[utoipa::path(post, path = "/v1/outside-sessions/resume", tag = "sessions",
-    request_body = ResumeOutsideSessionRequest,
-    responses((status = 200, body = SessionDto), (status = 403), (status = 404), (status = 409)))]
-pub(super) async fn resume_outside(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<ResumeOutsideSessionRequest>,
-) -> ApiResult<Json<SessionDto>> {
-    let ctx = call_ctx(&state.store, &headers).await?;
-    if ctx.session.is_some() {
-        return Err(ApiError::forbidden(
-            "only the user may resume an outside session",
-        ));
-    }
-    let _guard = state.outside_sessions.resumes.lock().await;
-    for session in state.store.list_sessions(SessionFilter::default()).await? {
-        if session.seat.is_none()
-            && session.goal_id.is_none()
-            && session.task_id.is_none()
-            && agent_of(&session.model) == req.agent_id
-            && session.internal_session_id.as_deref() == Some(req.internal_session_id.as_str())
-        {
-            let session = state
-                .launcher
-                .revive_session(&session.id, None)
-                .await
-                .map_err(|error| ApiError::conflict(error.to_string()))?;
-            return Ok(Json(session_dto_of(&state.store, session).await?));
-        }
-    }
-    let snapshot = state
-        .outside_sessions
-        .snapshot(&state.agent_registry, false)
-        .await;
-    let outside = snapshot
-        .find(&state.store, &req.agent_id, &req.internal_session_id)
-        .await
-        .map_err(|error| ApiError::conflict(error.to_string()))?;
-    let Some(outside) = outside else {
-        state
-            .outside_sessions
-            .snapshot(&state.agent_registry, true)
-            .await;
-        return Err(ApiError::new(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            format!("outside session not found: {}", req.internal_session_id),
-        ));
-    };
-    let session = state
-        .launcher
-        .resume_outside(&outside)
-        .await
-        .map_err(|error| ApiError::conflict(error.to_string()))?;
-    Ok(Json(session_dto_of(&state.store, session).await?))
-}
-
-/// List sessions: one page of the sessions Ariadne runs and the
-/// conversations the ACP agents stored themselves, newest activity first.
+/// List Ariadne sessions, newest activity first.
 #[utoipa::path(get, path = "/v1/sessions", tag = "sessions",
     params(SessionPageQuery),
     responses((status = 200, body = SessionPageDto), (status = 400)))]
@@ -126,37 +19,21 @@ pub(super) async fn list(
     State(state): State<AppState>,
     Query(q): Query<SessionPageQuery>,
 ) -> ApiResult<Json<SessionPageDto>> {
-    // Read the query before any agent is asked for a snapshot it would
-    // not answer from.
     let filter = Filter::parse(&q).map_err(|error| match error {
         QueryError::InvalidCursor => {
             ApiError::new(StatusCode::BAD_REQUEST, "invalid_cursor", error.to_string())
         }
         QueryError::InvalidFilter(_) => ApiError::bad_request(error.to_string()),
     })?;
-    // A page no outside session can be in asks no agent for one.
-    let snapshot = if filter.takes_outside() {
-        state
-            .outside_sessions
-            .snapshot(&state.agent_registry, q.refresh.unwrap_or(false))
-            .await
-    } else {
-        state.outside_sessions.cached()
-    };
-    let page = crate::acp_sessions::page(
-        &snapshot,
-        state.outside_sessions.readers(),
-        &state.store,
-        &filter,
-    )
-    .await
-    .map_err(|error| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            error.to_string(),
-        )
-    })?;
+    let page = crate::acp_sessions::page(&state.store, &state.launcher.live, &filter)
+        .await
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                error.to_string(),
+            )
+        })?;
     Ok(Json(page))
 }
 

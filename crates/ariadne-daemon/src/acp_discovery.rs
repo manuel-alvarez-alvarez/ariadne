@@ -20,7 +20,6 @@ use ariadne_api::agents::{
     AcpAgentDto, AcpAgentSource, AcpAgentStatus, AcpCapabilitiesDto, AcpDegradation,
 };
 use ariadne_api::models::{EffortDto, ModelDto};
-use ariadne_api::sessions::OutsideSessionDto;
 use ariadne_client::endpoint::AcpAgentConfig;
 use ariadne_store::Store;
 
@@ -148,8 +147,6 @@ impl Discovery {
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Catalog {
     models: Vec<Choice>,
-    #[serde(default)]
-    default_model: Option<String>,
     thought_level: bool,
     efforts: Vec<Choice>,
     default_effort: Option<String>,
@@ -430,9 +427,7 @@ impl AgentRegistry {
             };
             let unchanged = !reread
                 && kept.get(&result.agent.id).is_some_and(|cached| {
-                    &cached.version == version
-                        && cached.command == result.agent.command
-                        && cached.catalog.default_model.is_some()
+                    &cached.version == version && cached.command == result.agent.command
                 });
             if !unchanged {
                 self.keep_catalog(&result.agent, version, &result.catalog)
@@ -498,56 +493,6 @@ impl AgentRegistry {
             .collect()
     }
 
-    /// The stored sessions of every agent the last discovery found ready and
-    /// able to list them (`session_list`), asked over `session/list`.
-    ///
-    /// One short-lived process per agent, the same shape as a probe: the
-    /// cached discovery result says who to ask and whether to bother, this
-    /// asks each of them, and the child is gone again before it returns. An
-    /// agent that fails to answer contributes nothing rather than failing the
-    /// whole listing.
-    pub(crate) async fn stored_sessions(&self) -> Vec<OutsideSessionDto> {
-        let cwd = self.probe_cwd.clone();
-        let capable: Vec<(AcpAgentDto, PathBuf)> = self
-            .results
-            .read()
-            .await
-            .iter()
-            .map(|result| result.agent.clone())
-            .filter(|agent| {
-                agent.status == AcpAgentStatus::Ready && agent.capabilities.session_list
-            })
-            .filter_map(|agent| {
-                let program = self.program_of(&agent.id)?;
-                Some((agent, program))
-            })
-            .collect();
-        let calls = capable.into_iter().map(|(agent, program)| {
-            let cwd = cwd.clone();
-            async move {
-                // One budget over every page of the agent, and the pages that
-                // arrived inside it are kept whatever ended the listing.
-                let mut sessions = Vec::new();
-                match tokio::time::timeout(
-                    self.timeouts.probe,
-                    list_stored_sessions(&agent, &program, &cwd, &mut sessions),
-                )
-                .await
-                {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => {
-                        tracing::warn!(agent = %agent.id, error = %format!("{error:#}"), "listing an ACP agent's stored sessions failed");
-                    }
-                    Err(_) => {
-                        tracing::warn!(agent = %agent.id, "listing an ACP agent's stored sessions timed out");
-                    }
-                }
-                sessions
-            }
-        });
-        join_all(calls).await.into_iter().flatten().collect()
-    }
-
     /// The command one registry agent is spawned with, by its stable id —
     /// what the launcher runs for a session pinned to that agent. `None`
     /// where nothing in the registry carries the id. A refused entry — a
@@ -555,11 +500,6 @@ impl AgentRegistry {
     /// its first holder.
     pub fn command_of(&self, id: &str) -> Option<Vec<String>> {
         self.entry_of(id).map(|entry| entry.command.clone())
-    }
-
-    /// The file a probe of that agent starts, by its stable id.
-    fn program_of(&self, id: &str) -> Option<PathBuf> {
-        self.entry_of(id).map(|entry| entry.program.clone())
     }
 
     fn entry_of(&self, id: &str) -> Option<RegistryEntry> {
@@ -581,16 +521,6 @@ impl AgentRegistry {
             .iter()
             .find(|result| result.agent.id == id)
             .map(|result| result.agent.capabilities.clone())
-    }
-
-    /// The model selected by the agent's discovery session.
-    pub(crate) async fn default_model(&self, agent_id: &str) -> Option<String> {
-        self.results
-            .read()
-            .await
-            .iter()
-            .find(|result| result.agent.id == agent_id)
-            .and_then(|result| result.catalog.default_model.clone())
     }
 
     /// Convert every accepted discovery choice into the shared model catalog.
@@ -882,18 +812,13 @@ async fn probe_protocol(
     }
 
     let advertised = &initialized.agent_capabilities;
-    capabilities.session_list = advertised.session_capabilities.list.is_some();
     capabilities.session_load = advertised.load_session;
 
     let version = initialized
         .agent_info
         .as_ref()
         .map(|info| info.version.clone());
-    // Older stored catalogs have no default model. Read them again even when
-    // the agent version is unchanged, so loose-session resume has its fallback.
-    let catalog = match cached.filter(|cached| {
-        version.as_deref() == Some(&cached.version) && cached.catalog.default_model.is_some()
-    }) {
+    let catalog = match cached.filter(|cached| version.as_deref() == Some(&cached.version)) {
         // `session/new` answered for this command at this version already.
         Some(cached) => {
             capabilities.session_new = true;
@@ -912,9 +837,6 @@ async fn probe_protocol(
     let mut degraded = Vec::new();
     if !capabilities.thought_level {
         degraded.push(AcpDegradation::NoEfforts);
-    }
-    if !capabilities.session_list {
-        degraded.push(AcpDegradation::NoAdoption);
     }
     if !capabilities.session_load {
         degraded.push(AcpDegradation::NoRestartResume);
@@ -983,7 +905,6 @@ async fn read_catalog(
     );
     capabilities.thought_level = thought.is_some();
     Ok(Catalog {
-        default_model: crate::acp::current_value(model).map(str::to_string),
         models,
         thought_level: thought.is_some(),
         efforts: thought.map(choices).unwrap_or_default(),
@@ -1047,93 +968,6 @@ fn initialize() -> v1::InitializeRequest {
             "ariadne-discovery",
             env!("CARGO_PKG_VERSION"),
         ))
-}
-
-/// Ask one agent for its stored sessions: spawn it, `initialize`, `session/list`
-/// page after page, then kill it — the same one-shot shape as [`probe`], for a
-/// call that has no session to keep open. Each page lands in `sessions` as it
-/// arrives, so a caller that gives up on the rest still holds what came.
-async fn list_stored_sessions(
-    agent: &AcpAgentDto,
-    program: &Path,
-    cwd: &Path,
-    sessions: &mut Vec<OutsideSessionDto>,
-) -> Result<()> {
-    let Some((_, args)) = agent.command.split_first() else {
-        bail!("command is empty");
-    };
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .current_dir(cwd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    apply_agent_launch_environment(&mut command, &agent.id, None);
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("starting `{}`", agent.command.join(" ")))?;
-    let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
-        bail!("agent did not open stdio");
-    };
-    let mut listed = None;
-    let connected = Client
-        .v1()
-        .name("ariadne-discovery")
-        .connect_with(pipes(stdin, stdout), async |cx| {
-            listed = Some(sessions_over_rpc(agent, &cx, sessions).await);
-            Ok(())
-        })
-        .await;
-    let _ = child.start_kill();
-    let _ = child.wait().await;
-    match (connected, listed) {
-        (_, Some(result)) => result,
-        (Err(error), None) => Err(anyhow!("ACP connection failed: {error}")),
-        (Ok(()), None) => Err(anyhow!("the agent closed its stdio while listing sessions")),
-    }
-}
-
-/// `initialize`, then `session/list` with each `nextCursor` the agent answers
-/// with, until a reply carries none.
-async fn sessions_over_rpc(
-    agent: &AcpAgentDto,
-    cx: &ConnectionTo<Agent>,
-    sessions: &mut Vec<OutsideSessionDto>,
-) -> Result<()> {
-    call(cx, "initialize", initialize())
-        .await
-        .context("initialize failed")?;
-    let mut cursor: Option<String> = None;
-    loop {
-        let request = v1::ListSessionsRequest::new().cursor(cursor.clone());
-        let listed = call(cx, "session/list", request)
-            .await
-            .context("session/list failed")?;
-        sessions.extend(
-            listed
-                .sessions
-                .iter()
-                .map(|session| stored_session(agent, session)),
-        );
-        cursor = listed.next_cursor;
-        if cursor.is_none() {
-            return Ok(());
-        }
-    }
-}
-
-/// One `session/list` entry as an outside session, or `None` where it names
-/// no session id — the one field there is nothing to show without.
-fn stored_session(agent: &AcpAgentDto, session: &v1::SessionInfo) -> OutsideSessionDto {
-    OutsideSessionDto {
-        agent_id: agent.id.clone(),
-        internal_session_id: session.session_id.0.to_string(),
-        working_directory: session.cwd.display().to_string(),
-        last_activity_at: session.updated_at.clone().unwrap_or_default(),
-        first_prompt: session.title.clone().unwrap_or_default(),
-    }
 }
 
 /// Every value a select option offers, grouped or not, and its current value

@@ -584,7 +584,6 @@ struct DriverIo {
     task_id: Option<String>,
     subagents: Subagents,
     reports: Followers,
-    ready: Option<oneshot::Sender<()>>,
 }
 
 impl AcpRuntime {
@@ -1187,7 +1186,6 @@ impl AcpRuntime {
         let permission = Arc::new(Mutex::new(None));
         let turn = Arc::new(tokio::sync::Mutex::new(Turn::default()));
         let session = self.inner.store.get_session(&launch.session_id).await?;
-        let loose = session.seat.is_none();
         let task_id = session.task_id;
         let outbound = Outbound::default();
         let subagents = Subagents::default();
@@ -1212,8 +1210,6 @@ impl AcpRuntime {
                     ended: ended.shared(),
                 },
             );
-        let (ready, loaded) = oneshot::channel();
-        let session_id = launch.session_id.clone();
         let runtime = self.clone();
         tokio::spawn(async move {
             runtime
@@ -1229,7 +1225,6 @@ impl AcpRuntime {
                         task_id,
                         subagents,
                         reports,
-                        ready: loose.then_some(ready),
                     },
                     stopped,
                     queued,
@@ -1238,30 +1233,10 @@ impl AcpRuntime {
                 .await;
             drop(reaped);
         });
-        if loose {
-            match tokio::time::timeout(self.inner.timeouts.session_load, loaded).await {
-                Ok(Ok(())) => {}
-                result => {
-                    self.kill(&session_id);
-                    bail!("loading the outside session failed: {result:?}");
-                }
-            }
-        }
         Ok(())
     }
 
-    /// Take a session's agent down. The entry goes at once — a spawn guard
-    /// asking right after is told the seat is free — and the driver cancels
-    /// the turn it is running, then kills and reaps the child behind it. A
-    /// session with no agent here is a no-op.
-    ///
-    /// The kill does not wait for the reap; the next launch of the session
-    /// does.
-    pub(crate) fn kill(&self, session_id: &str) {
-        self.take_down(session_id);
-    }
-
-    /// [`Self::kill`], and wait until the driver has cancelled the turn and
+    /// Take the agent down and wait until the driver has cancelled the turn and
     /// reaped the child: for a caller that starts another agent on the same
     /// work under another session id, which no launch of this one waits for.
     pub(crate) async fn kill_and_wait(&self, session_id: &str) {
@@ -1271,7 +1246,7 @@ impl AcpRuntime {
         }
     }
 
-    /// [`Self::kill`], and a future that resolves once the driver has
+    /// Take the agent down and return a future that resolves once the driver has
     /// cancelled the turn, reported what it spent and its end, and reaped the
     /// child: for a caller that must not wait in line, but has work to do
     /// once the agent's last words are in.
@@ -1465,15 +1440,8 @@ impl AcpRuntime {
                     rpc.seat_brief = seat_brief_in_turns(&launch.config.system_prompt);
                     rpc.brief = rpc.seat_brief.clone();
                     protocol_outcome = Some(
-                        run_protocol(
-                            &mut rpc,
-                            &launch.cwd,
-                            &launch.config,
-                            prompts,
-                            switches,
-                            io.ready,
-                        )
-                        .await,
+                        run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts, switches)
+                            .await,
                     );
                     Ok(())
                 }),
@@ -2567,38 +2535,13 @@ async fn run_protocol(
     config: &LaunchConfig,
     prompts: mpsc::UnboundedReceiver<Prompt>,
     switches: mpsc::UnboundedReceiver<ConfigSwitch>,
-    ready: Option<oneshot::Sender<()>>,
 ) -> Result<()> {
     let initialized = rpc.call("initialize", initialize()).await?;
     if initialized.protocol_version != ProtocolVersion::V1 {
         bail!("ACP agent did not negotiate protocol version 1");
     }
 
-    let loose = ready.is_some();
-    if loose {
-        let first_load = rpc
-            .sink
-            .runtime
-            .inner
-            .store
-            .get_session(&rpc.sink.session_id)
-            .await?
-            .launched_at
-            .is_none();
-        let mut turn = rpc.turn.lock().await;
-        turn.replay = Some(first_load);
-        turn.running = first_load;
-        turn.agent_session = config.resume_session_id.clone();
-    }
-    let setup = session_setup(rpc, cwd, config, &initialized, loose).await?;
-    if loose {
-        let mut turn = rpc.turn.lock().await;
-        if let Some((kind, payload)) = turn.end_text() {
-            rpc.sink.emit(kind, payload).await;
-        }
-        turn.running = false;
-        turn.replay = None;
-    }
+    let setup = session_setup(rpc, cwd, config, &initialized).await?;
     let session_id = setup.session_id;
     let _ = rpc.sink.agent_session.set(session_id.clone());
     let (homes, internal, cwd_owned) = (
@@ -2613,32 +2556,16 @@ async fn run_protocol(
     .await
     .ok()
     .map(|transcript| Arc::new(Mutex::new(transcript)));
-    // A loaded conversation runs on whatever model it ran on, and the row
-    // records that one. Every new conversation — a loose one started from
-    // scratch included — is put on the model it was pinned to.
-    let mut options = if loose && resumed {
-        let model = find_config_option(&setup.config_options, &["model"], &["model"])
-            .and_then(current_value)
-            .unwrap_or(&config.model);
-        let store = &rpc.sink.runtime.inner.store;
-        let row = store.get_session(&rpc.sink.session_id).await?;
-        let agent = ariadne_core::models::agent_of(&row.model);
-        store
-            .set_loose_session_model(&row.id, &format!("{agent}:{model}"))
-            .await?;
-        setup.config_options
-    } else {
-        pin_or_fall_back(
-            rpc,
-            &session_id,
-            setup.config_options,
-            &["model"],
-            &["model"],
-            "model",
-            &config.model,
-        )
-        .await
-    };
+    let mut options = pin_or_fall_back(
+        rpc,
+        &session_id,
+        setup.config_options,
+        &["model"],
+        &["model"],
+        "model",
+        &config.model,
+    )
+    .await;
     if let Some(effort) = &config.effort {
         options = pin_or_fall_back(
             rpc,
@@ -2655,9 +2582,6 @@ async fn run_protocol(
     rpc.sink
         .emit("session_start", json!({"session_id": session_id}))
         .await;
-    if let Some(ready) = ready {
-        let _ = ready.send(());
-    }
     if let Some(prompt) = config.initial_prompt.as_deref() {
         let prompt = Prompt {
             text: prompt.to_string(),
@@ -2897,7 +2821,6 @@ async fn session_setup(
     cwd: &Path,
     config: &LaunchConfig,
     initialized: &v1::InitializeResponse,
-    force_load: bool,
 ) -> Result<OpenedSession> {
     let mcp_servers = crate::acp_schema::mcp_servers(config);
     let Some(session_id) = &config.resume_session_id else {
@@ -2916,7 +2839,7 @@ async fn session_setup(
     let capabilities = &initialized.agent_capabilities;
     // Neither answer carries the id it reopened: it is the one that was
     // asked for, and every caller reads one off the result.
-    let config_options = if !force_load && capabilities.session_capabilities.resume.is_some() {
+    let config_options = if capabilities.session_capabilities.resume.is_some() {
         let request =
             v1::ResumeSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers);
         rpc.call("session/resume", request).await?.config_options

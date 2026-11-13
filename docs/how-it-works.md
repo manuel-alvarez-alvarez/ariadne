@@ -48,8 +48,7 @@ outcomes. `## Interfaces` names any contract with another task.
 ## Sessions and attention
 
 A session is the conversation an ACP agent holds for the orchestrator, for
-one column's agent, or one you started directly with an ACP agent outside
-Ariadne. `ariadne session ls` lists every one of them, newest activity
+one column's agent, or a PR reviewer or keeper. `ariadne session ls` lists every one of them, newest activity
 first, and `ariadne attention` shows those waiting for a person. Connect
 with `ariadne attach <id>` to read events and send a prompt: in a terminal
 it is an inline pane with the transcript above and a status line and input
@@ -73,10 +72,8 @@ command to read the question and answer it. Your input answers every open
 question of that session. A later turn keeps a question only when it calls
 `wait_for_user` again; otherwise, ending the turn ends the wait.
 
-`attach` also resumes a stored outside conversation and revives an ended
-Ariadne session, each with no separate step first. A resumed outside session
-has no goal, no task and no worktree: the agent keeps working in the
-directory the original conversation already used. [Resuming a
+`attach` revives an ended Ariadne session before it opens the console.
+The session keeps its work and conversation. [Resuming a
 session](resuming-sessions.md) has the commands.
 
 Permission requests can pause a session. In the CLI or desktop console,

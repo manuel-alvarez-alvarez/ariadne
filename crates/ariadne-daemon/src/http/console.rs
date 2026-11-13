@@ -627,18 +627,12 @@ pub(super) async fn take_input(state: &AppState, id: &str, text: String) -> ApiR
             session.status
         )));
     }
-    let title = (session.title.is_none() && session.goal_id.is_none() && session.task_id.is_none())
-        .then(|| crate::launcher::loose_title(&text))
-        .flatten();
     let requests = state.store.pending_agent_request_ids(id).await?;
     state
         .launcher
         .acp
         .send_input(id, text)
         .map_err(|e| ApiError::conflict(e.to_string()))?;
-    if let Some(title) = title {
-        state.store.set_session_title_if_unset(id, &title).await?;
-    }
     state.store.clear_session_attention(id).await?;
     state.store.answer_agent_requests(id, &requests).await?;
     state.notify_scheduler_session(id);

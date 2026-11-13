@@ -496,8 +496,7 @@ fn babysit_path(repo_id: &str, number: i64) -> String {
 
 /// `pr review --attach`: polls `GET /v1/sessions?pull_request=` until the
 /// scheduler has started, or resumed, the review session it just woke, the
-/// way `session new --attach` waits for none at all — a review session
-/// comes from a later scheduler tick, never the route's own answer.
+/// session comes from a later scheduler tick, never the route's own answer.
 ///
 /// The query asks for live sessions alone: it carries no `all`, since a
 /// session a `--stop` just before this took down still answers that filter
@@ -1022,7 +1021,6 @@ mod tests {
     /// id off it.
     fn session_row(id: &str) -> ariadne_api::sessions::SessionEntryDto {
         ariadne_api::sessions::SessionEntryDto {
-            kind: ariadne_api::sessions::SessionKind::Ariadne,
             id: id.into(),
             agent_id: "stub".into(),
             title: None,
@@ -1083,7 +1081,6 @@ mod tests {
             sessions,
             next_cursor: None,
             total,
-            snapshot_at: "2026-10-10T00:00:00Z".into(),
         })
         .into_response()
     }
@@ -1144,7 +1141,6 @@ mod tests {
                 sessions,
                 next_cursor: None,
                 total,
-                snapshot_at: "2026-10-10T00:00:00Z".into(),
             })
         }
         let app = Router::new().route("/v1/sessions", get(seated_sessions));

@@ -47,7 +47,6 @@ pub struct AcpCapabilitiesDto {
     pub session_new: bool,
     pub model: bool,
     pub thought_level: bool,
-    pub session_list: bool,
     pub session_load: bool,
 }
 
@@ -56,7 +55,6 @@ pub struct AcpCapabilitiesDto {
 #[serde(rename_all = "snake_case")]
 pub enum AcpDegradation {
     NoEfforts,
-    NoAdoption,
     NoRestartResume,
 }
 

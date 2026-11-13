@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-11-08
+updated: 2026-11-13
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
@@ -219,7 +219,7 @@ every other kebab-case word in it; the wire spells the same gate
    column fold into the first; a column the edit leaves out loses its agent
    only while nothing names it, and is refused by name otherwise. A session
    on a staffed agent reports that agent's column as its own `step`
-   (`SessionDto.step`); an orchestrator, a loose or an outside session,
+   (`SessionDto.step`); an orchestrator or PR session,
    carrying no staffed agent, reports none. `GET /v1/sessions`'s listing DTO
    carries no `step` of its own, so its JSON stays what it was; a reader of
    the listing finds a row's column on the task behind it instead (014

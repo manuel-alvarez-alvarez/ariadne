@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-10-17
+updated: 2026-11-13
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -38,8 +38,7 @@ moves a task through (001), and the wording of the text a message arrives in
 3. A recipient is the orchestrator of the goal, or one staffed agent of a task
    named by the column it staffs, which `get_task` lists. An agent has no
    name, so the column is the address; the orchestrator needs none, since the
-   goal has one. A loose session has no goal or staffed agent and is not a
-   recipient (020).
+   goal has one.
 4. One verb (`send_message`), for asking and for answering. There is no
    `answer` kind and no `reply`: an answer is a message to whoever asked,
    addressed the way the question was, so nothing threads and no row points

@@ -455,7 +455,6 @@ async fn the_schema_names_agents_by_registry_id_alone() {
             "context_size",
             "launched_at",
             "launch_id",
-            "title",
             "switched_from",
             "pull_request_id",
         ]
