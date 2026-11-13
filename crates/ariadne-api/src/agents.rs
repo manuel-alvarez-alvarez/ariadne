@@ -18,6 +18,9 @@ pub struct AcpAgentDto {
     pub degraded: Vec<AcpDegradation>,
     /// Why discovery rejected this agent.
     pub rejection_reason: Option<String>,
+    /// The URL of the agent's icon in the ACP registry. Null for an agent
+    /// without one, such as an `[[acp_agents]]` config entry.
+    pub icon: Option<String>,
 }
 
 /// Where one registry entry came from: an agent of the ACP registry index

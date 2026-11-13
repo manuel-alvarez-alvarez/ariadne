@@ -43,7 +43,8 @@ skill says (017).
    `PATH` holds, and every `[[acp_agents]]` entry of the daemon config, each
    an `id` and a `command`. `GET /v1/acp-agents` lists them all, the
    discovered ones first, each with the `source` it came from — `registry` or
-   `config`. Ariadne installs nothing: the index is vendored as a snapshot
+   `config`. Each also carries an optional `icon`: the URL the index gives
+   the agent, and null for an `[[acp_agents]]` entry. Ariadne installs nothing: the index is vendored as a snapshot
    (`crates/ariadne-daemon/acp-registry/`), and what exists here is whatever
    `PATH` answers for.
 
@@ -227,6 +228,10 @@ skill says (017).
 - OpenCode gets one process MCP entry equal to the ACP server on spawn and
   resume, and other agents get no such setting
   (`acp.rs::opencode_config_content_matches_the_acp_mcp_entry`).
+
+- A registry agent carries the `icon` URL of the index, and a configured
+  agent's `icon` is null
+  (`acp_discovery.rs::the_api_lists_an_installed_index_agent_and_one_user_agent`).
 
 - Refresh downloads the configured index and registers its installed agent
   (`acp_discovery.rs::refresh_downloads_the_configured_index_and_registers_its_installed_agent`).

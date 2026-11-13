@@ -430,8 +430,16 @@ async fn the_api_lists_an_installed_index_agent_and_one_user_agent() {
     assert_eq!(goose["command"], json!(["goose", "acp"]), "{goose}");
     assert_eq!(goose["source"], "registry", "{goose}");
     assert_eq!(goose["status"], "ready", "{goose}");
+    assert_eq!(
+        goose["icon"], "https://cdn.agentclientprotocol.com/registry/v1/latest/goose.svg",
+        "a registry agent carries the icon URL of the index: {goose}"
+    );
     let custom = &agents[1];
     assert_eq!(custom["source"], "config", "{custom}");
+    assert!(
+        custom["icon"].is_null(),
+        "a config entry has no icon: {custom}"
+    );
     assert_eq!(custom["status"], "ready");
     assert_eq!(custom["capabilities"]["session_list"], true);
     assert_eq!(custom["capabilities"]["session_load"], true);

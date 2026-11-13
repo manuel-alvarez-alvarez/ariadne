@@ -47,7 +47,8 @@ import { describeError, plural } from "@/lib/format"
 
 import { AgentFlagsDialog } from "./agent-flags-dialog"
 import { sameFlags } from "./agent-flags-values"
-import { agentConfigsQueryOptions, useRefreshAcpAgents } from "./queries"
+import { AgentIcon } from "./agent-icon"
+import { acpAgentsQueryOptions, agentConfigsQueryOptions, useRefreshAcpAgents } from "./queries"
 
 /**
  * What refreshing does, in the one sentence it takes to say it — on the
@@ -67,6 +68,10 @@ export function AgentsPage() {
 
   const configs = useQuery(agentConfigsQueryOptions())
   const models = useQuery(modelsQueryOptions())
+  // The registry's icon URLs; the page reads fine without them, so a failed
+  // request leaves the bundled icons and the letters, with no error of its own.
+  const acpAgents = useQuery(acpAgentsQueryOptions())
+  const icons = new Map(acpAgents.data?.map((agent) => [agent.id, agent.icon]))
 
   function openEdit(config: AgentConfigDto) {
     setEditing(config)
@@ -99,6 +104,7 @@ export function AgentsPage() {
 
       <AgentTabs
         configs={configs}
+        icons={icons}
         models={models.data ?? []}
         modelsPending={models.isPending && !models.isError}
         off={off}
@@ -130,6 +136,7 @@ interface ConfigsQuery {
 
 function AgentTabs({
   configs,
+  icons,
   models,
   modelsPending,
   off,
@@ -138,6 +145,7 @@ function AgentTabs({
   onEdit,
 }: {
   configs: ConfigsQuery
+  icons: Map<string, string | null | undefined>
   models: ModelDto[]
   modelsPending: boolean
   off: number
@@ -195,6 +203,7 @@ function AgentTabs({
         <TabsList>
           {configs.data.map((config) => (
             <TabsTrigger key={config.agent_id} value={config.agent_id}>
+              <AgentIcon agentId={config.agent_id} icon={icons.get(config.agent_id)} />
               {config.agent_id}
               {/* How big that agent's catalog is — the rows behind the tab, which
                   is what this pill means everywhere else. Which of them are on

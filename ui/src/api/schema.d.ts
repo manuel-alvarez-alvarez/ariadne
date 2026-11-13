@@ -1721,6 +1721,11 @@ export interface components {
             command: string[];
             /** @description One flag for every optional capability that is absent. */
             degraded: components["schemas"]["AcpDegradation"][];
+            /**
+             * @description The URL of the agent's icon in the ACP registry. Null for an agent
+             *     without one, such as an `[[acp_agents]]` config entry.
+             */
+            icon?: string | null;
             /** @description Stable id used as the model-id prefix. */
             id: string;
             /** @description Why discovery rejected this agent. */

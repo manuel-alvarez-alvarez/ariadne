@@ -4100,6 +4100,13 @@
             },
             "description": "One flag for every optional capability that is absent."
           },
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The URL of the agent's icon in the ACP registry. Null for an agent\nwithout one, such as an `[[acp_agents]]` config entry."
+          },
           "id": {
             "type": "string",
             "description": "Stable id used as the model-id prefix."

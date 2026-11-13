@@ -711,7 +711,8 @@ Out: the daemon endpoints themselves (012).
     reason an agent wrote with lists, code or links reads as it does
     everywhere else.
 46. The packaged webview has a content security policy that permits scripts,
-    styles, fonts and images from the app. It permits HTTP, HTTPS, WebSocket
+    styles, fonts and images from the app, and images from the ACP registry's CDN
+    (`https://cdn.agentclientprotocol.com`) alone. It permits HTTP, HTTPS, WebSocket
     and secure WebSocket connections because the user selects the daemon's
     host. It permits Tauri IPC connections through `ipc:` and
     `http://ipc.localhost`, so bundled plugins can work. It permits a frame
@@ -870,6 +871,15 @@ Out: the daemon endpoints themselves (012).
   `::puts each model in the tab of the agent that runs it`,
   `::counts each agent's catalog on its tab`,
   `::sends the whole list, added row included, to that agent's endpoint`).
+- Each agent's tab shows its icon: the SVG bundled for it, else the registry
+  `icon` URL of `GET /v1/acp-agents`, else the first letter of its id. An image that
+  fails to load hands over to the next source in that order, so a failed
+  bundled SVG tries the registry URL, and a failed URL leaves the letter
+  (`ui/src/features/agents/agent-icon.test.tsx::tries the registry URL when the bundled image fails, then the letter when it fails too`,
+  `ui/src/features/agents/agents-page.test.tsx::draws each agent's icon beside its tab, from the registry URL where nothing is bundled`).
+  The webview's `img-src` adds `https://cdn.agentclientprotocol.com` and no
+  other host
+  (`ui/src/lib/tauri-config.test.ts::lets images load from the ACP registry's CDN and no other host`).
 - Each model has a switch, and the screen says why where the daemon refuses
   one (`ui/src/features/agents/agents-page.test.tsx::turns a model off`,
   `::says why, where the daemon refuses to turn a model off`) — the rule of
