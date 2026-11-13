@@ -1111,7 +1111,8 @@ Out: the daemon endpoints themselves (012).
   `::hides only the narrow zone label`).
   The drag proof fixes the control's border and padding as well as its
   rectangle: moving from x=60 to x=62 on a 200px track takes 0.3000 to
-  0.3100, independent of jsdom's default computed borders.
+  0.3100, independent of jsdom's default computed borders. The stub overrides
+  style reads and preserves the read-only computed declaration.
 - A handle released at a new value, or a number field left or Entered, sends
   only the field that changed, clamped to 0–1, up to four decimals; neither
   handle can reach or pass the other; each thumb has `aria-valuetext` with the

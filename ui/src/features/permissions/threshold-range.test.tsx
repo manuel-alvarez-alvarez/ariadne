@@ -117,13 +117,24 @@ it("formats an input to four decimals on first render, after a drag, and after a
   // The slider reads its control's styles on mount. Pin the horizontal
   // offsets too: jsdom's default computed border widths vary by version.
   const readStyle = window.getComputedStyle.bind(window)
-  vi.stubGlobal("getComputedStyle", (element: Element) =>
-    Object.assign(readStyle(element), {
-      borderInlineStartWidth: "0px",
-      borderInlineEndWidth: "0px",
-      paddingInlineStart: "0px",
-      paddingInlineEnd: "0px",
-    }),
+  vi.stubGlobal(
+    "getComputedStyle",
+    (element: Element) =>
+      new Proxy(readStyle(element), {
+        get(target, property) {
+          // Computed styles are read-only. Override reads without changing them.
+          if (
+            property === "borderInlineStartWidth" ||
+            property === "borderInlineEndWidth" ||
+            property === "paddingInlineStart" ||
+            property === "paddingInlineEnd"
+          ) {
+            return "0px"
+          }
+          const value = Reflect.get(target, property, target)
+          return typeof value === "function" ? value.bind(target) : value
+        },
+      }),
   )
   render(<ThresholdRange allowThreshold={0.3} denyThreshold={0.8} mutate={mutate} />)
 
