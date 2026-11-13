@@ -96,8 +96,7 @@ it("writes the bytes of a binary frame into the terminal", async () => {
   await waitFor(() => expect(screenText()).toContain("Hello from the console"))
 })
 
-it("confirms an OSC 8 link before opening it outside the app", async () => {
-  const user = userEvent.setup()
+it("opens an OSC 8 link outside the app without confirmation", async () => {
   await renderPane()
   const handler = linkHandlers[0]
   if (!handler) throw new Error("the terminal has no external link handler")
@@ -110,11 +109,7 @@ it("confirms an OSC 8 link before opening it outside the app", async () => {
     }),
   )
 
-  expect(openUrl).not.toHaveBeenCalled()
-  const dialog = screen.getByRole("dialog", { name: "Open external link?" })
-  expect(dialog.textContent).toContain("https://example.com/console")
-  await user.click(screen.getByRole("button", { name: "Open link" }))
-
+  expect(screen.queryByRole("dialog")).toBeNull()
   expect(openUrl).toHaveBeenCalledWith("https://example.com/console")
 })
 

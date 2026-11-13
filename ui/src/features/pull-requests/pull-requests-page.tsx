@@ -26,6 +26,7 @@ import { DataTable } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
+import { PrLink } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup } from "@/components/ui/button-group"
@@ -227,15 +228,14 @@ function PullRequestRow({
       <TableCell className="max-w-md whitespace-normal">
         <div className="flex flex-col gap-0.5">
           <span className="flex flex-wrap items-center gap-2">
-            <a
-              href={row.url}
-              target="_blank"
-              rel="noreferrer"
+            <PrLink
+              url={row.url}
+              number={row.number}
+              context={row.title}
               onClick={(event) => event.stopPropagation()}
-              className="font-medium underline-offset-3 hover:underline"
-            >
-              #{row.number} {row.title}
-            </a>
+              className="font-medium"
+            />
+            <span className="font-medium">{row.title}</span>
             {row.draft ? <StatusBadge size="sm" box="outlined" label="Draft" /> : null}
             {row.review_asked ? (
               <StatusBadge

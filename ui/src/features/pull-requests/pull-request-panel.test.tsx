@@ -82,7 +82,7 @@ it("reads its facts by name, renders its description, links the forge, and remov
   expect(screen.queryByText("head_sha")).toBeNull()
   expect(screen.getByRole("heading", { name: "Summary" })).toBeTruthy()
   expect(screen.getByText("widgets").tagName).toBe("STRONG")
-  const forge = screen.getByRole("link", { name: /#42 on the forge/ })
+  const forge = screen.getByRole("link", { name: /^Pull request #42\b/ })
   expect(forge.getAttribute("href")).toBe(pull.url)
   // Ariadne lets go of a request on its own: nothing removes one by hand.
   expect(screen.queryByRole("button", { name: "Remove" })).toBeNull()

@@ -713,7 +713,7 @@ Out: the daemon endpoints themselves (012).
     the goal lane header's own `TokenFigure` at every width; its hover names
     Input and Output and lists one row per workflow step, and it is not a tab
     stop) at the left, last activity at the
-    right, and, when the task has a `pr_url`, a PR link icon in padding
+    right, and, when the task has a `pr_url`, a compact PR link (icon and `#number`) in padding
     reserved for it. The time shortens ("3 minutes ago" to "3m") and truncate as the card narrows. Last
     activity is the latest of the task's `updated_at` and the
     `last_activity_at` of every session of that task, previous ones included
@@ -789,8 +789,7 @@ Out: the daemon endpoints themselves (012).
     system's default browser instead of the webview, which otherwise ignores
     `target="_blank"` and has no opener wired in. The handler permits only
     `http:`, `https:` and `mailto:` anchors; it stops every other scheme. It
-    shows the full target and asks before opening unless the link text equals
-    the target. The terminal's OSC 8 links use that same handler. An in-app
+    opens the target directly, with no confirmation. The terminal's OSC 8 links use that same handler. An in-app
     link, whose href resolves onto the app's own origin, is left alone.
     Outside Tauri — the Vite dev server, and every test — the handler does
     nothing and a plain browser's own link behavior applies.
@@ -1388,15 +1387,23 @@ Out: the daemon endpoints themselves (012).
   permits the configurable daemon and Tauri IPC connections without evaluated
   script
   (`ui/src/lib/tauri-config.test.ts::carries a restrictive content security policy`).
-- The app-root handler permits only the supported external schemes, confirms
-  a disguised target before opening it, leaves an in-app link alone, and does
+- The app-root handler permits only the supported external schemes, opens
+  an allowed link directly with no confirmation, leaves an in-app link alone, and does
   neither outside Tauri
-  (`ui/src/hooks/use-open-external-links.test.tsx::shows the full target before opening a disguised external link`,
-  `::opens an external link directly when its text is its target`,
-  `::allows mailto links through the same confirmation`,
+  (`ui/src/hooks/use-open-external-links.test.tsx::opens an external link directly, whatever its text says`,
+  `::opens a mailto link directly`,
   `::blocks unsafe link schemes before the webview follows them`,
   `::ignores an internal link`, `::leaves a same-origin Tauri fragment link alone`,
   `::leaves a plain browser's link behavior alone`).
+- Every pull request reference (task card, task facts, session pull request,
+  Forge table and panel) is a `PrLink`: a pull request icon and `#number`, the
+  real URL as its `href`, the repository and full URL on hover, an accessible
+  name carrying the number, repository and task or title, truncation inside its
+  container, and a `PR` fallback when no number can be read from the URL
+  (`ui/src/components/pr-link.test.tsx::shows a compact number and keeps the full destination`,
+  `::falls back to a compact label when the number is unknown`).
+- A terminal OSC 8 link opens directly through the same opener
+  (`ui/src/features/sessions/session-terminal.test.tsx::opens an OSC 8 link outside the app without confirmation`).
 - A failed refresh keeps the cached goals on the board under a retryable
   warning that clears after a successful retry, while a read that never loaded
   shows the load error
@@ -1409,8 +1416,6 @@ Out: the daemon endpoints themselves (012).
   `::keeps the cached task and its empty history under warnings, and a retry clears them`,
   `::keeps the cached task and its empty messages under warnings, and a retry clears them`,
   `::keeps cached table rows under the warning, and shows a load error with none`).
-- An OSC 8 console link shows the same target confirmation before opening
-  (`ui/src/features/sessions/session-terminal.test.tsx::confirms an OSC 8 link before opening it outside the app`).
 
 ## Known gap
 

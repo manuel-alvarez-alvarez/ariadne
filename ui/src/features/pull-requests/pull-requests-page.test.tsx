@@ -67,9 +67,9 @@ it("renders rows, updates from an event, and opens the floating panel", async ()
     </>,
     { route: "/forge/pull-requests" },
   )
-  expect((await screen.findByRole("link", { name: "#42 Fix widgets" })).getAttribute("href")).toBe(
-    pull.url,
-  )
+  expect(
+    (await screen.findByRole("link", { name: /^Pull request #42\b/ })).getAttribute("href"),
+  ).toBe(pull.url)
   row = { ...pull, checks: "success" }
   act(() =>
     dispatchDomainEvent(queryClient, {
@@ -105,7 +105,7 @@ it("lists every open request by default, narrows to mine or to review requests, 
     return jsonResponse([pull])
   })
   const { location } = renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
-  await screen.findByRole("link", { name: "#42 Fix widgets" })
+  await screen.findByRole("link", { name: /^Pull request #42\b/ })
   expect(screen.queryByRole("button", { name: "Add pull request" })).toBeNull()
   expect(screen.queryByRole("switch", { name: "Include closed and merged" })).toBeNull()
   const lists = () => listsOf(requests)
@@ -138,7 +138,7 @@ it("filters and refreshes through the same routes as the CLI", async () => {
     return jsonResponse([pull])
   })
   renderScreen(<PullRequestsPage />)
-  await screen.findByRole("link", { name: "#42 Fix widgets" })
+  await screen.findByRole("link", { name: /^Pull request #42\b/ })
   await userEvent.click(screen.getByRole("combobox", { name: "Filter by repository" }))
   await userEvent.click(await screen.findByRole("option", { name: "acme/widgets" }))
   await userEvent.click(screen.getByRole("button", { name: "Mine" }))
@@ -194,17 +194,17 @@ it("sends the text filter to the daemon and shows every matching row across page
     return params.get("cursor") === "widgets-2" ? page([third]) : page([pull], "widgets-2")
   })
   const { location } = renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
-  await screen.findByRole("link", { name: "#7 Add gadgets" })
+  await screen.findByRole("link", { name: /^Pull request #7\b/ })
 
   fireEvent.change(screen.getByRole("searchbox", { name: "Filter by text" }), {
     target: { value: "widgets" },
   })
-  await waitFor(() => expect(screen.queryByRole("link", { name: "#7 Add gadgets" })).toBeNull())
+  await waitFor(() => expect(screen.queryByRole("link", { name: /^Pull request #7\b/ })).toBeNull())
   expect(listsOf(requests).some((params) => params.get("q") === "widgets")).toBe(true)
   expect(location.url).toBe("/forge/pull-requests?q=widgets")
   observer.reach()
-  expect(await screen.findByRole("link", { name: "#3 Fix more widgets" })).toBeTruthy()
-  expect(screen.getByRole("link", { name: "#42 Fix widgets" })).toBeTruthy()
+  expect(await screen.findByRole("link", { name: /^Pull request #3\b/ })).toBeTruthy()
+  expect(screen.getByRole("link", { name: /^Pull request #42\b/ })).toBeTruthy()
   expect(
     listsOf(requests).some((p) => p.get("q") === "widgets" && p.get("cursor") === "widgets-2"),
   ).toBe(true)
@@ -223,13 +223,13 @@ it("loads the next page near the end, and an event reads the list again from its
       : page([pull], "page-2")
   })
   const { queryClient } = renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
-  await screen.findByRole("link", { name: "#42 Fix widgets" })
+  await screen.findByRole("link", { name: /^Pull request #42\b/ })
   // The first page alone, until the table scrolls near its end.
-  expect(screen.queryByRole("link", { name: "#7 Add gadgets" })).toBeNull()
+  expect(screen.queryByRole("link", { name: /^Pull request #7\b/ })).toBeNull()
   expect(listsOf(requests).map((p) => p.get("cursor"))).toEqual([null])
 
   observer.reach()
-  expect(await screen.findByRole("link", { name: "#7 Add gadgets" })).toBeTruthy()
+  expect(await screen.findByRole("link", { name: /^Pull request #7\b/ })).toBeTruthy()
   // The last page has no cursor, so nothing is left to watch for.
   const observers = observer.count()
   observer.reach()
@@ -257,7 +257,7 @@ it("stops loading pages by itself once the next page fails", async () => {
     return page([pull], "page-2")
   })
   renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
-  await screen.findByRole("link", { name: "#42 Fix widgets" })
+  await screen.findByRole("link", { name: /^Pull request #42\b/ })
 
   observer.reach()
   // The first page stays on screen, so the failed page reads as a failed refresh.
@@ -287,7 +287,7 @@ it("offers a refresh only while a repository in view polls or its webhook is dow
     return jsonResponse([pull])
   })
   renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests?repo=live" })
-  await screen.findByRole("link", { name: "#42 Fix widgets" })
+  await screen.findByRole("link", { name: /^Pull request #42\b/ })
   // The live webhook brings every change on its own.
   await waitFor(() => expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull())
 

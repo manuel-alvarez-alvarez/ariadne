@@ -31,14 +31,13 @@
  * no tab stop of its own.
  */
 
-import { GitPullRequestIcon } from "lucide-react"
 import { useId } from "react"
 import { Link } from "react-router-dom"
 
 import type { TaskDto, WorkflowStepDto } from "@/api"
+import { PrLink } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When, whenHint } from "@/components/when"
 import {
   SESSION_ATTENTION_META,
@@ -199,22 +198,12 @@ export function TaskCard({
           anchor cannot sit inside the card's link, so it is laid over the
           card's bottom-right corner, where line 2 leaves room for it. */}
       {task.pr_url && (
-        <Tooltip>
-          <TooltipTrigger
-            tabIndex={NOT_A_STOP}
-            render={
-              <a
-                href={task.pr_url}
-                aria-label="Pull request"
-                data-pr-link
-                className="absolute right-2.5 bottom-1.5 flex h-4 items-center text-muted-foreground hover:text-foreground"
-              />
-            }
-          >
-            <GitPullRequestIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>Open the pull request</TooltipContent>
-        </Tooltip>
+        <PrLink
+          url={task.pr_url}
+          context={task.title}
+          tabIndex={NOT_A_STOP}
+          className="absolute right-2.5 bottom-1.5 h-4 text-muted-foreground hover:text-foreground"
+        />
       )}
     </div>
   )

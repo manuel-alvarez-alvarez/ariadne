@@ -2,31 +2,23 @@
  * The Tauri webview ignores `target="_blank"` and has no shell opener wired
  * in by default, so a click on an external link otherwise does nothing (see
  * `ui/AGENTS.md`). One document-level listener, bound once by the shell,
- * opens it through `tauri-plugin-opener` instead.
+ * opens it through `tauri-plugin-opener` instead, with no confirmation.
  *
  * Outside Tauri — Vite's dev server, and every test — `isTauri()` is false
  * and the click is left alone, so a plain browser keeps its normal link
  * behavior (including `target="_blank"`). The terminal calls the returned
- * opener for OSC 8 links, which has no anchor text to compare with its target.
+ * opener for OSC 8 links.
  */
 
 import { isTauri } from "@tauri-apps/api/core"
 import { openUrl } from "@tauri-apps/plugin-opener"
-import { createElement, Fragment, type ReactNode, useCallback, useEffect, useState } from "react"
-
-import { ConfirmDialog } from "@/components/confirm-dialog"
+import { useCallback, useEffect } from "react"
 
 const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"])
 
-interface ExternalLink {
-  href: string
-}
-
 interface OpenExternalLinks {
-  /** Opens a URL only after the source text has made its destination clear. */
-  openExternalLink: (href: string, visibleText?: string) => void
-  /** The confirmation dialog, rendered by the caller beside its UI. */
-  confirmation: ReactNode
+  /** Opens an allowed URL straight in the system browser. */
+  openExternalLink: (href: string) => void
 }
 
 /** An anchor is external when it does not resolve onto the app's own origin. */
@@ -48,15 +40,9 @@ export function useOpenExternalLinks({
 }: {
   listen?: boolean
 } = {}): OpenExternalLinks {
-  const [pending, setPending] = useState<ExternalLink | null>(null)
-
-  const openExternalLink = useCallback((href: string, visibleText?: string) => {
+  const openExternalLink = useCallback((href: string) => {
     if (!isTauri() || !isAllowedExternalUrl(href)) return
-    if (visibleText === href) {
-      void openUrl(href)
-      return
-    }
-    setPending({ href })
+    void openUrl(href)
   }, [])
 
   useEffect(() => {
@@ -73,33 +59,12 @@ export function useOpenExternalLinks({
       }
 
       event.preventDefault()
-      if (event.button === 0) openExternalLink(anchor.href, anchor.textContent ?? undefined)
+      if (event.button === 0) openExternalLink(anchor.href)
     }
 
     document.addEventListener("click", onClick)
     return () => document.removeEventListener("click", onClick)
   }, [listen, openExternalLink])
 
-  return {
-    openExternalLink,
-    confirmation: pending
-      ? createElement(ConfirmDialog, {
-          open: true,
-          onClose: () => setPending(null),
-          title: "Open external link?",
-          description: createElement(
-            Fragment,
-            null,
-            "Ariadne will open this link in your default browser.",
-            createElement("br"),
-            createElement("code", { className: "break-all" }, pending.href),
-          ),
-          confirmLabel: "Open link",
-          onConfirm: () => {
-            void openUrl(pending.href)
-            setPending(null)
-          },
-        })
-      : null,
-  }
+  return { openExternalLink }
 }

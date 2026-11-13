@@ -10,8 +10,8 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { GitPullRequestIcon } from "lucide-react"
 
+import { PrLink } from "@/components/pr-link"
 import { cn, shortId } from "@/lib/format"
 
 import { pullRequestQueryOptions } from "./queries"
@@ -31,17 +31,8 @@ export function PullRequestLink({
   const name = pull.data?.title ?? title ?? `Pull request ${shortId(id)}`
   return (
     <span className={cn("flex min-w-0 items-center gap-1", className)}>
-      <GitPullRequestIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       {pull.data ? (
-        <a
-          href={pull.data.url}
-          target="_blank"
-          rel="noreferrer"
-          title={`Pull request: ${name}`}
-          className="min-w-0 truncate underline-offset-2 hover:underline"
-        >
-          {name}
-        </a>
+        <PrLink url={pull.data.url} number={pull.data.number} context={name} />
       ) : (
         <span className="min-w-0 truncate">{name}</span>
       )}

@@ -21,7 +21,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { BotIcon, BotOffIcon, ExternalLinkIcon } from "lucide-react"
+import { BotIcon, BotOffIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
@@ -33,6 +33,7 @@ import { Fact, FactList } from "@/components/fact-list"
 import { Markdown } from "@/components/markdown"
 import { PanelHeader } from "@/components/panel-header"
 import { PanelSheet } from "@/components/panel-sheet"
+import { PrLink } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -363,15 +364,12 @@ function PullRequestFacts({ pull }: { pull: PullRequestDto }) {
   return (
     <FactList>
       <Fact label="Request">
-        <a
-          href={pull.url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 underline-offset-3 hover:underline"
-        >
-          #{pull.number} on the forge
-          <ExternalLinkIcon className="size-3.5" />
-        </a>
+        <PrLink
+          url={pull.url}
+          number={pull.number}
+          repository={forgeName(repository) || undefined}
+          context={pull.title}
+        />
       </Fact>
       <Fact label="Repository">
         <span className="font-mono text-sm">{forgeName(repository) || pull.repository_id}</span>

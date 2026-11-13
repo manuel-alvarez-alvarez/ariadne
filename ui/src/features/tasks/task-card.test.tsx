@@ -149,7 +149,7 @@ it("says none staffed for a step with no agent", async () => {
 
 it("links the pull request and the updated time, and takes one tab stop", () => {
   card({ pr_url: "https://github.com/o/r/pull/7" })
-  const pr = screen.getByRole("link", { name: "Pull request" })
+  const pr = screen.getByRole("link", { name: /^Pull request #7\b/ })
   expect(pr.getAttribute("href")).toBe("https://github.com/o/r/pull/7")
   expect(pr.getAttribute("tabindex")).toBe("-1")
   expect(document.querySelector("time")).toBeTruthy()
