@@ -794,15 +794,6 @@ Out: the daemon endpoints themselves (012).
     link, whose href resolves onto the app's own origin, is left alone.
     Outside Tauri — the Vite dev server, and every test — the handler does
     nothing and a plain browser's own link behavior applies.
-48. The goals screen has a title-only search and a single-repository filter,
-    with "All repositories" to clear it. A goal matches a repository when it
-    includes it, even if it also uses others. Both combine with the status
-    filters and apply to the Board and the List. A Board/List toggle is
-    remembered on the device and opens on Board. The List shows one row per
-    goal with status, completed/total tasks, attention count and repositories;
-    selecting a row opens the goal panel and never expands tasks. A failed
-    refresh keeps cached rows in both views under the retryable warning.
-
 48. While a goal is planning and has an orchestrator, its panel shows a
     planning guide between the facts and the tabs. The guide words only what
     the newest orchestrator session records: a `waiting_input` or `waiting_permission`
@@ -814,6 +805,15 @@ Out: the daemon endpoints themselves (012).
     opens it over the panel as the Sessions tab does. Create task manually is
     the guide's secondary action. The goal tabs and the header's New task
     action stay as they were.
+
+49. The goals screen has a title-only search and a single-repository filter,
+    with "All repositories" to clear it. A goal matches a repository when it
+    includes it, even if it also uses others. Both combine with the status
+    filters and apply to the Board and the List. A Board/List toggle is
+    remembered on the device and opens on Board. The List shows one row per
+    goal with status, completed/total tasks, attention count and repositories;
+    selecting a row opens the goal panel and never expands tasks. A failed
+    refresh keeps cached rows in both views under the retryable warning.
 
 ## Acceptance criteria
 
