@@ -37,6 +37,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn, plural } from "@/lib/format"
 import { DiffEditor, LARGE_FILE_LINES } from "./diff-editor"
+import { DiffFileNav, diffFileDomId } from "./diff-file-nav"
 import { type DiffFile, type ParsedDiff, parseUnifiedDiff } from "./diff-parse"
 import { useDiffWrap } from "./diff-prefs"
 import { taskDiffQueryOptions } from "./queries"
@@ -138,6 +139,7 @@ export function TaskDiff({ taskId }: { taskId: string }) {
         >
           <DialogTitle className="sr-only">Diff of the task branch</DialogTitle>
           {toolbar}
+          {!empty && !raw && parsed.files.length > 0 && <DiffFileNav files={parsed.files} />}
           {/* The padding keeps the Linux scrollbar (see `index.css`) off the diff
               text on a WebKitGTK that has no `scrollbar-gutter`; where it is
               supported the gutter reserves the space and the padding is spare. */}
@@ -298,7 +300,7 @@ function DiffFileSection({
   const { label, icon: Icon } = CHANGE_META[file.change]
 
   return (
-    <section className="overflow-hidden rounded-lg border">
+    <section id={diffFileDomId(file.id)} className="overflow-hidden rounded-lg border">
       <header className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-2 py-1.5">
         <Button
           variant="ghost"
