@@ -157,10 +157,21 @@ it("links the pull request and the updated time, and takes one tab stop", () => 
   // than a row of its own, with line 2 leaving room for it.
   expect(pr.className).toContain("absolute")
   expect(pr.className).toContain("bottom-1.5")
-  expect(document.querySelector("time")?.parentElement?.parentElement?.className).toContain("pr-5")
+  expect(document.querySelector("time")?.parentElement?.parentElement?.style.paddingRight).toBe(
+    "calc(2rem + 2ch)",
+  )
   expect(pr.parentElement?.children).toHaveLength(3) // card link, hints, PR: no third row
   const links = screen.getAllByRole("link")
   expect(links.filter((link) => link.getAttribute("tabindex") !== "-1")).toHaveLength(1)
+})
+
+it("reserves room for a long pull request number and keeps the link inside the card", () => {
+  card({ pr_url: "https://github.com/o/r/pull/123456" })
+  const pr = screen.getByRole("link", { name: /^Pull request #123456\b/ })
+  expect(pr.className).toContain("max-w-[40%]")
+  expect(document.querySelector("time")?.parentElement?.parentElement?.style.paddingRight).toBe(
+    "calc(2rem + 7ch)",
+  )
 })
 
 it("shows no pull request link without a pr_url, and no branch", () => {

@@ -57,6 +57,12 @@ import { findStep, stepTitle } from "./steps"
  */
 const NOT_A_STOP = -1
 
+/** Room line 2 leaves for the corner PR link: its inset, icon and gap, plus its `#number`. */
+function prLinkReserve(url: string): string {
+  const digits = /\/(?:pulls?|merge_requests)\/(\d+)/.exec(url)?.[1] ?? "PR"
+  return `calc(2rem + ${digits.length + 1}ch)`
+}
+
 interface CardState {
   label: string
   hint: string
@@ -157,8 +163,8 @@ export function TaskCard({
         <div
           className={cn(
             "mt-1 flex min-w-0 items-center gap-x-2 text-xs whitespace-nowrap text-muted-foreground",
-            task.pr_url && "pr-5",
           )}
+          style={task.pr_url ? { paddingRight: prLinkReserve(task.pr_url) } : undefined}
         >
           <span className="min-w-0 flex-1 truncate">
             <TokenFigure
@@ -202,7 +208,7 @@ export function TaskCard({
           url={task.pr_url}
           context={task.title}
           tabIndex={NOT_A_STOP}
-          className="absolute right-2.5 bottom-1.5 h-4 text-muted-foreground hover:text-foreground"
+          className="absolute right-2.5 bottom-1.5 h-4 max-w-[40%] text-muted-foreground hover:text-foreground"
         />
       )}
     </div>
