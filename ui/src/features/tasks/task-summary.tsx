@@ -80,15 +80,21 @@ export function TaskSummary({
   }
 
   return (
-    <section aria-label="Execution summary" className="space-y-1 text-sm">
-      {lines.map((line, index) => (
-        // Fixed, derived from the task alone, never reordered.
-        // biome-ignore lint/suspicious/noArrayIndexKey: see above
-        <p key={index}>{line}</p>
-      ))}
-      {asking.map((session) => (
-        <SessionAsking key={session.id} session={session} />
-      ))}
+    // Set like the facts below it: the same small muted label over `text-xs`
+    // text, inside the strip's own width, with a rule down its side to read as
+    // the lead of that strip rather than as stray paragraphs.
+    <section aria-label="Execution summary" className="space-y-0.5 border-l-2 pl-3 text-xs">
+      <h3 className="text-muted-foreground">Status</h3>
+      <div className="space-y-1 leading-snug">
+        {lines.map((line, index) => (
+          // Fixed, derived from the task alone, never reordered.
+          // biome-ignore lint/suspicious/noArrayIndexKey: see above
+          <p key={index}>{line}</p>
+        ))}
+        {asking.map((session) => (
+          <SessionAsking key={session.id} session={session} />
+        ))}
+      </div>
     </section>
   )
 }
