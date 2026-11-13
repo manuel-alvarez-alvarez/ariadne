@@ -1337,7 +1337,8 @@ Out: the daemon endpoints themselves (012).
   with its history, empty lists included, under the same retryable warning, and
   a successful retry clears it
   (`ui/src/features/tasks/stale-reads.test.tsx::keeps an empty goal task list under the warning, and clears it on a successful retry`,
-  `::keeps cached task detail, history and messages under warnings, empty or not`,
+  `::keeps the cached task and its empty history under warnings, and a retry clears them`,
+  `::keeps the cached task and its empty messages under warnings, and a retry clears them`,
   `::keeps cached table rows under the warning, and shows a load error with none`).
 - An OSC 8 console link shows the same target confirmation before opening
   (`ui/src/features/sessions/session-terminal.test.tsx::confirms an OSC 8 link before opening it outside the app`).
