@@ -260,7 +260,8 @@ it("stops loading pages by itself once the next page fails", async () => {
   await screen.findByRole("link", { name: "#42 Fix widgets" })
 
   observer.reach()
-  expect(await screen.findByText("Could not load pull requests")).toBeTruthy()
+  // The first page stays on screen, so the failed page reads as a failed refresh.
+  expect(await screen.findByText("Could not refresh pull requests")).toBeTruthy()
   // The failed page leaves no live observer: the mark cannot ask again by itself.
   await act(async () => {})
   observer.reach()

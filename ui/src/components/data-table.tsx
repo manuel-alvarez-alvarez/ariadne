@@ -20,7 +20,7 @@
 import { Fragment, type ReactNode } from "react"
 
 import { ApiError } from "@/api"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { ScrollableTable } from "@/components/scroll-edge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -73,7 +73,8 @@ export function DataTable<T>({
    */
   pinnedEnd?: boolean
 }) {
-  if (query.isError) {
+  const stale = query.isError && query.data !== undefined
+  if (query.isError && !stale) {
     return (
       <ErrorState
         title={errorTitle}
@@ -89,7 +90,7 @@ export function DataTable<T>({
     )
   }
 
-  return (
+  const table = (
     // A screen this narrow for its columns scrolls sideways, and says so:
     // macOS draws no scrollbar until something moves, so the fade at the edge
     // is the only sign that a column is cut short.
@@ -135,6 +136,18 @@ export function DataTable<T>({
         )}
       </TableBody>
     </ScrollableTable>
+  )
+
+  if (!stale) return table
+  return (
+    <div className="flex flex-col gap-3">
+      <RefreshWarning
+        what={errorTitle.replace(/^Could not load /, "")}
+        error={query.error}
+        onRetry={() => void query.refetch()}
+      />
+      {table}
+    </div>
   )
 }
 

@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 
 import type { MessageDto, TaskDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
@@ -23,7 +23,7 @@ export function TaskMessages({ task }: { task: TaskDto }) {
     )
   }
 
-  if (messages.error) {
+  if (messages.error && !messages.data) {
     return (
       <ErrorState
         title="Could not load messages"
@@ -34,15 +34,35 @@ export function TaskMessages({ task }: { task: TaskDto }) {
   }
 
   if (messages.data.length === 0) {
-    return <EmptyState emphasis="quiet" title="The agents have said nothing yet" />
+    return (
+      <div className="space-y-4">
+        {messages.error ? (
+          <RefreshWarning
+            what="messages"
+            error={messages.error}
+            onRetry={() => void messages.refetch()}
+          />
+        ) : null}
+        <EmptyState emphasis="quiet" title="The agents have said nothing yet" />
+      </div>
+    )
   }
 
   return (
-    <ol className="space-y-4">
-      {messages.data.map((message) => (
-        <MessageRow key={message.id} message={message} task={task} />
-      ))}
-    </ol>
+    <div className="space-y-4">
+      {messages.error ? (
+        <RefreshWarning
+          what="messages"
+          error={messages.error}
+          onRetry={() => void messages.refetch()}
+        />
+      ) : null}
+      <ol className="space-y-4">
+        {messages.data.map((message) => (
+          <MessageRow key={message.id} message={message} task={task} />
+        ))}
+      </ol>
+    </div>
   )
 }
 
