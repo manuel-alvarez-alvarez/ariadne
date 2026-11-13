@@ -1312,13 +1312,15 @@ Out: the daemon endpoints themselves (012).
 - The expanded task diff carries a file index above the diff: a filename
   search, every changed file with its own counts, and previous / next buttons
   that scroll to a file's section without changing folding or wrapping; the
-  compact and raw views carry no index, an empty diff has no expanded view,
-  and nothing is marked as viewed
+  compact and raw views carry no index; an empty diff cannot be expanded,
+  and one that becomes empty while expanded stays in the dialog with its
+  empty state and no index; nothing is marked as viewed
   (`ui/src/features/tasks/task-diff.test.tsx::filters the expanded diff's file index by name and shows each file's counts`,
   `::scrolls to the next file without changing folding`,
   `::scrolls to the previous file, wrapping to the last from the start`,
   `::offers no file index in the compact view`,
-  `::offers no file index in the raw view`).
+  `::offers no file index in the raw view`,
+  `::shows the empty state without a file index when the open expanded diff becomes empty`).
 - The Tauri configuration has the restrictive content security policy that
   permits the configurable daemon and Tauri IPC connections without evaluated
   script

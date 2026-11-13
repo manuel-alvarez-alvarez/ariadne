@@ -219,6 +219,23 @@ it("offers no file index in the raw view", async () => {
   expect(screen.queryByRole("navigation", { name: "Changed files" })).toBeNull()
 })
 
+it("shows the empty state without a file index when the open expanded diff becomes empty", async () => {
+  const dispatch = await renderDiff()
+  fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
+  expect(await screen.findByRole("navigation", { name: "Changed files" })).toBeTruthy()
+  diff = ""
+
+  dispatch({
+    event: "task_branch_updated",
+    data: { task_id: TASK.id, goal_id: TASK.goal_id, branch: TASK.branch, head: HEAD },
+  })
+
+  expect(
+    await screen.findByText("The branch exists but has no changes against its base yet"),
+  ).toBeTruthy()
+  expect(screen.queryByRole("navigation", { name: "Changed files" })).toBeNull()
+})
+
 it("offers no file index in the compact view", async () => {
   await renderDiff()
   expect(screen.queryByRole("navigation", { name: "Changed files" })).toBeNull()
