@@ -158,7 +158,7 @@ it("links the pull request and the updated time, and takes one tab stop", () => 
   expect(pr.className).toContain("absolute")
   expect(pr.className).toContain("bottom-1.5")
   expect(document.querySelector("time")?.parentElement?.parentElement?.style.paddingRight).toBe(
-    "calc(2rem + 2ch)",
+    "calc(2ch + 2rem)",
   )
   expect(pr.parentElement?.children).toHaveLength(3) // card link, hints, PR: no third row
   const links = screen.getAllByRole("link")
@@ -170,7 +170,7 @@ it("reserves room for a long pull request number and keeps the link inside the c
   const pr = screen.getByRole("link", { name: /^Pull request #123456\b/ })
   expect(pr.className).toContain("max-w-[40%]")
   expect(document.querySelector("time")?.parentElement?.parentElement?.style.paddingRight).toBe(
-    "calc(2rem + 7ch)",
+    "calc(7ch + 2rem)",
   )
 })
 
