@@ -27,7 +27,9 @@ beforeEach(() => {
     return Promise.resolve(jsonResponse(aSessionPage([])))
   })
 })
-function item(): AttentionItemDto {
+function item(
+  target: AttentionItemDto["target"] = { kind: "task", task_id: task.id },
+): AttentionItemDto {
   return {
     id: "recovery:resource:test",
     producer: "recovery",
@@ -36,7 +38,7 @@ function item(): AttentionItemDto {
     required_action: "Free resources",
     since: "2026-01-01T00:00:00Z",
     affected: [],
-    target: { kind: "task", task_id: task.id },
+    target,
   }
 }
 it("hides after a complete successful empty read", async () => {
@@ -77,4 +79,64 @@ it("opens a drawer from View all and filters a goal-less item by goal", async ()
   expect(await screen.findByText("Showing 1 of 1")).not.toBeNull()
   fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "recovery:resource" } })
   expect(screen.getByText("Resource limit reached")).not.toBeNull()
+})
+
+async function openDrawer() {
+  const trigger = await screen.findByRole("button", { name: /Needs attention/ })
+  fireEvent.click(trigger)
+  fireEvent.click(await screen.findByRole("button", { name: "View all" }))
+  return trigger
+}
+it("labels a console row and a task row by where each one navigates", async () => {
+  recovery = [
+    item({ kind: "console", session_id: "01JSESS0000000000000000009" }),
+    { ...item(), id: "recovery:resource:other", summary: "Other limit" },
+  ]
+  renderScreen(<AttentionPopover />, { route: "/profiles" })
+  await openDrawer()
+  expect(await screen.findByText("Open console")).not.toBeNull()
+  expect(screen.getByText("Open task")).not.toBeNull()
+})
+it("navigates to the row target from the drawer and closes it", async () => {
+  recovery = [item()]
+  const { location } = renderScreen(<AttentionPopover />, { route: "/profiles" })
+  await openDrawer()
+  fireEvent.click(await screen.findByText("Open task"))
+  await waitFor(() => expect(screen.queryByText("Showing 1 of 1")).toBeNull())
+  expect(location.url).toContain(`task=${task.id}`)
+})
+it("returns focus to the trigger when the drawer closes", async () => {
+  recovery = [item()]
+  renderScreen(<AttentionPopover />, { route: "/profiles" })
+  const trigger = await openDrawer()
+  await screen.findByText("Showing 1 of 1")
+  fireEvent.keyDown(document, { key: "Escape" })
+  await waitFor(() => expect(screen.queryByText("Showing 1 of 1")).toBeNull())
+  await waitFor(() => expect(document.activeElement).toBe(trigger))
+})
+it("narrows the drawer list by reason and counts what is shown", async () => {
+  recovery = [
+    item(),
+    { ...item(), id: "recovery:access:other", reason: "access", summary: "Sign in to continue" },
+  ]
+  renderScreen(<AttentionPopover />, { route: "/profiles" })
+  await openDrawer()
+  expect(await screen.findByText("Showing 2 of 2")).not.toBeNull()
+  fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "recovery:access" } })
+  expect(screen.getByText("Showing 1 of 2")).not.toBeNull()
+  expect(screen.queryByText("Resource limit reached")).toBeNull()
+})
+it("keeps items and reports a partial read in the drawer", async () => {
+  recovery = [item()]
+  failSessions = true
+  renderScreen(<AttentionPopover />, { route: "/profiles" })
+  await openDrawer()
+  expect(await screen.findByText(/Some items could not load/)).not.toBeNull()
+  expect(screen.getByText("Showing 1 of 1")).not.toBeNull()
+})
+it("reports a failed read in the drawer when nothing loaded", async () => {
+  failSessions = true
+  renderScreen(<AttentionPopover />, { route: "/profiles" })
+  await openDrawer()
+  expect(await screen.findByText(/Could not load attention/)).not.toBeNull()
 })

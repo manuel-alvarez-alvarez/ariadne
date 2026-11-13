@@ -130,10 +130,27 @@ function reasonsOf(item: AttentionItem): { key: string; label: string }[] {
   return out
 }
 
+/** Names where {@link attentionTarget} will go, so the label never misstates it. */
 function actionLabel(item: AttentionItem): string {
-  if (item.recovery) return item.recovery.required_action
-  if (item.sessionReason && !item.taskId) return "Open session"
-  return item.taskId ? "Open task" : "Open"
+  if (item.recovery) {
+    switch (item.recovery.target.kind) {
+      case "console":
+        return "Open console"
+      case "task":
+        return "Open task"
+      case "pull_request":
+        return "Open pull request"
+      case "settings":
+        return "Open repositories"
+    }
+  }
+  if (
+    item.session &&
+    (item.sessionReason === "waiting_permission" || item.sessionReason === "waiting_input")
+  )
+    return "Open console"
+  if (!item.taskReason && item.session) return "Open session"
+  return "Open task"
 }
 
 /** The popover's own list, wider, with a goal and a reason filter over it. */
