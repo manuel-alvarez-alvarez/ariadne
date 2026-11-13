@@ -69,18 +69,23 @@ export function GoalTasks({
 
   if (ordered.length === 0) {
     return (
-      <EmptyState
-        emphasis="quiet"
-        title="No tasks yet"
-        action={
-          onNewTask ? (
-            <Button variant="outline" size="sm" onClick={onNewTask}>
-              <PlusIcon />
-              New task
-            </Button>
-          ) : undefined
-        }
-      />
+      <div className="flex flex-col gap-2">
+        {stale ? (
+          <RefreshWarning what="tasks" error={tasks.error} onRetry={() => void tasks.refetch()} />
+        ) : null}
+        <EmptyState
+          emphasis="quiet"
+          title="No tasks yet"
+          action={
+            onNewTask ? (
+              <Button variant="outline" size="sm" onClick={onNewTask}>
+                <PlusIcon />
+                New task
+              </Button>
+            ) : undefined
+          }
+        />
+      </div>
     )
   }
 

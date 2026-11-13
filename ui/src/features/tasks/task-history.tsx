@@ -54,7 +54,18 @@ export function TaskHistory({
   }
 
   if (transitions.data.length === 0) {
-    return <EmptyState emphasis="quiet" title="The task has not moved yet" />
+    return (
+      <div className="space-y-3">
+        {transitions.error ? (
+          <RefreshWarning
+            what="history"
+            error={transitions.error}
+            onRetry={() => void transitions.refetch()}
+          />
+        ) : null}
+        <EmptyState emphasis="quiet" title="The task has not moved yet" />
+      </div>
+    )
   }
 
   return (

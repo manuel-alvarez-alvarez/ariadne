@@ -34,7 +34,18 @@ export function TaskMessages({ task }: { task: TaskDto }) {
   }
 
   if (messages.data.length === 0) {
-    return <EmptyState emphasis="quiet" title="The agents have said nothing yet" />
+    return (
+      <div className="space-y-4">
+        {messages.error ? (
+          <RefreshWarning
+            what="messages"
+            error={messages.error}
+            onRetry={() => void messages.refetch()}
+          />
+        ) : null}
+        <EmptyState emphasis="quiet" title="The agents have said nothing yet" />
+      </div>
+    )
   }
 
   return (

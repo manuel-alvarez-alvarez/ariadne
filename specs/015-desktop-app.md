@@ -1333,6 +1333,12 @@ Out: the daemon endpoints themselves (012).
   shows the load error
   (`ui/src/features/goals/goals-list-page.test.tsx::keeps the cached goals under a retryable warning when a refresh fails, and clears it on success`,
   `::shows a load failure, not a refresh warning, when nothing was ever cached`).
+- A failed refresh keeps cached tables, goal task lists, and the task panel
+  with its history, empty lists included, under the same retryable warning, and
+  a successful retry clears it
+  (`ui/src/features/tasks/stale-reads.test.tsx::keeps an empty goal task list under the warning, and clears it on a successful retry`,
+  `::keeps cached task detail, history and messages under warnings, empty or not`,
+  `::keeps cached table rows under the warning, and shows a load error with none`).
 - An OSC 8 console link shows the same target confirmation before opening
   (`ui/src/features/sessions/session-terminal.test.tsx::confirms an OSC 8 link before opening it outside the app`).
 
