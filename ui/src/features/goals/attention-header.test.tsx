@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { fireEvent, screen, waitFor } from "@testing-library/react"
-import { beforeEach, expect, it } from "vitest"
+import { beforeEach, expect, it, vi } from "vitest"
 import type { AttentionItemDto } from "@/api"
 import { aGoal, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
@@ -144,10 +144,10 @@ it("does not return focus to the trigger after a row is picked", async () => {
   recovery = [item({ kind: "console", session_id: "01JSESS0000000000000000009" })]
   renderScreen(<AttentionPopover />, { route: "/profiles" })
   const trigger = await openDrawer()
+  const refocus = vi.spyOn(trigger, "focus")
   fireEvent.click(await screen.findByText("Open console"))
   await waitFor(() => expect(screen.queryByText("Showing 1 of 1")).toBeNull())
-  await new Promise((resolve) => requestAnimationFrame(resolve))
-  expect(document.activeElement).not.toBe(trigger)
+  expect(refocus).not.toHaveBeenCalled()
 })
 it("drops a filter whose last item resolved instead of hiding every row", async () => {
   recovery = [
