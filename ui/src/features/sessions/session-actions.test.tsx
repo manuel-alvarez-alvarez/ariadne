@@ -46,8 +46,8 @@ async function switchToSuccessor(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "Runs on" }))
   const options = await screen.findByRole("listbox", { name: "Models" })
   await user.click(within(options).getByText(SUCCESSOR.model))
-  await user.click(screen.getByRole("radio", { name: "high" }))
-  await user.keyboard("{Escape}")
+  // The effort is the last pick, and it closes the popover itself.
+  await user.click(within(screen.getByRole("listbox", { name: "Efforts" })).getByText("high"))
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Switch" }))
 }
 

@@ -7,8 +7,8 @@
  * shape the profiles screen once had. The catalog outgrew what a scroll box
  * reads well, so both move to a popup list searched rather than scrolled: the
  * shadcn `Popover` (`components/ui/popover.tsx`) over a `Command` (cmdk)
- * list, the same two primitives `PinPicker` and `RepositoryCombobox` compose
- * by hand for theirs.
+ * list, the same two primitives `RepositoryCombobox` composes by hand for
+ * its own.
  */
 
 import { ChevronsUpDownIcon } from "lucide-react"

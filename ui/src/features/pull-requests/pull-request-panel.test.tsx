@@ -50,6 +50,7 @@ function daemon(
     if (path === "/v1/skills") return jsonResponse(SKILLS)
     if (path === "/v1/sessions") return jsonResponse({ sessions: [], next_cursor: null })
     if (path === "/v1/repositories") return jsonResponse(repositories)
+    if (path === "/v1/acp-agents") return jsonResponse([])
     return jsonResponse(row())
   })
 }
