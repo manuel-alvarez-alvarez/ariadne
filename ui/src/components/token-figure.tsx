@@ -63,15 +63,18 @@ export function TokenFigure({
   usage,
   rows,
   className,
+  tabIndex,
 }: {
   usage: TokenUsage
   /** The agents behind a total, listed under its named halves in the hint. */
   rows?: UsageRow[]
   className?: string
+  /** Pass -1 where the figure sits inside a link and must not be a tab stop. */
+  tabIndex?: number
 }) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<span className={cn(FIGURE, className)} />}>
+      <TooltipTrigger tabIndex={tabIndex} render={<span className={cn(FIGURE, className)} />}>
         <TokenHalves usage={usage} />
       </TooltipTrigger>
       <TooltipContent className="flex-col items-start gap-2">
