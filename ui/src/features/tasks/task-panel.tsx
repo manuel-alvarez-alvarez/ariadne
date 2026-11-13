@@ -48,6 +48,7 @@ import { TaskFacts } from "./task-facts"
 import { TaskHistory } from "./task-history"
 import { TaskMessages } from "./task-messages"
 import { TaskSessions, TaskSessionView } from "./task-sessions"
+import { TaskSummary } from "./task-summary"
 import { WorkflowSteps } from "./workflow-steps"
 
 // Description leads the strip and is where the panel opens: it is what the
@@ -127,6 +128,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
         <>
           <TaskHeader task={task.data} />
           <PaneBody>
+            <TaskSummary task={task.data} steps={steps} sessions={sessions.data} />
             <TaskFacts task={task.data} steps={steps} />
             {steps.length > 0 ? <WorkflowSteps task={task.data} steps={steps} /> : null}
 
