@@ -17,7 +17,7 @@
  * own — see `restoreStatusFilter` and `use-status-filter.ts`.
  */
 
-import type { GoalStatus } from "@/api"
+import type { GoalDto, GoalStatus } from "@/api"
 import { GOAL_STATUSES, isTerminalGoalStatus } from "./status"
 
 /**
@@ -132,4 +132,25 @@ export function restoreStatusFilter(
   const filter = parseStatusFilter(remembered)
   if (filter.length === 0) return null
   return withStatusFilter(params, filter)
+}
+
+/** The client-side narrowing of the goals the status filter returned. */
+export interface GoalSearch {
+  /** Matched against the title alone, ignoring case and surrounding space. */
+  query: string
+  /** One repository id; empty is every repository. */
+  repoId: string
+}
+
+/**
+ * The goals whose title contains the query and that work in the repository.
+ * A goal that also uses other repositories still matches.
+ */
+export function searchGoals(goals: readonly GoalDto[], { query, repoId }: GoalSearch): GoalDto[] {
+  const needle = query.trim().toLowerCase()
+  return goals.filter(
+    (goal) =>
+      goal.title.toLowerCase().includes(needle) &&
+      (repoId === "" || goal.repos.some((repo) => repo.id === repoId)),
+  )
 }

@@ -10,8 +10,15 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { FilterIcon, PlusIcon, TargetIcon } from "lucide-react"
-import { useState } from "react"
+import {
+  FilterIcon,
+  KanbanIcon,
+  LayoutListIcon,
+  PlusIcon,
+  SearchIcon,
+  TargetIcon,
+} from "lucide-react"
+import { useMemo, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
 import { EmptyState } from "@/components/empty-state"
@@ -26,15 +33,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
+import { useSettingsStore } from "@/stores/settings"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import {
   DEFAULT_GOAL_STATUS_FILTER,
   NO_STATUS_FILTER,
   readStatusFilter,
   type StatusFilter,
+  searchGoals,
   serializeStatusFilter,
   toggleStatusFilter,
 } from "./filters"
+import { GoalList } from "./goal-list"
 import { BoardSkeleton, GoalSwimlanes } from "./goal-swimlanes"
 import { goalsQueryOptions } from "./queries"
 import { GOAL_STATUS_META, GOAL_STATUSES, isTerminalGoalStatus } from "./status"
@@ -70,8 +81,21 @@ export function GoalsListPage() {
   const [search, setSearch] = useSearchParams()
   const { statuses, filterBy } = useStatusFilter()
   const [createOpen, setCreateOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  const [repoId, setRepoId] = useState("")
+  const view = useSettingsStore((state) => state.goalsView)
+  const setView = useSettingsStore((state) => state.setGoalsView)
 
   const goals = useQuery(goalsQueryOptions({ statuses }))
+  const repositories = useMemo(() => {
+    const byId = new Map<string, string>()
+    for (const goal of goals.data ?? []) for (const repo of goal.repos) byId.set(repo.id, repo.path)
+    return [...byId].sort((a, b) => a[1].localeCompare(b[1]))
+  }, [goals.data])
+  const shown = useMemo(
+    () => searchGoals(goals.data ?? [], { query, repoId }),
+    [goals.data, query, repoId],
+  )
   const empty = emptyBoardCopy(statuses)
   const active = sameFilter(statuses, ACTIVE_FILTER)
   const all = statuses.length === 0
@@ -99,6 +123,67 @@ export function GoalsListPage() {
         description="What Ariadne is working on, and what it has finished."
         actions={
           <>
+            <div className="relative">
+              <SearchIcon className="pointer-events-none absolute top-2.5 left-2 size-4 text-muted-foreground" />
+              <Input
+                aria-label="Search goals by title"
+                placeholder="Search titles"
+                className="w-44 pl-8"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant={repoId ? "secondary" : "outline"}
+                    aria-label="Filter by repository"
+                  />
+                }
+              >
+                {repositories
+                  .find(([id]) => id === repoId)?.[1]
+                  .split("/")
+                  .pop() || "All repositories"}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuCheckboxItem
+                  checked={repoId === ""}
+                  onCheckedChange={() => setRepoId("")}
+                >
+                  All repositories
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
+                {repositories.map(([id, path]) => (
+                  <DropdownMenuCheckboxItem
+                    key={id}
+                    checked={repoId === id}
+                    onCheckedChange={() => setRepoId(id)}
+                  >
+                    {path}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <ButtonGroup aria-label="Goals view">
+              <Button
+                variant={view === "board" ? "secondary" : "outline"}
+                aria-pressed={view === "board"}
+                onClick={() => setView("board")}
+              >
+                <KanbanIcon />
+                Board
+              </Button>
+              <Button
+                variant={view === "list" ? "secondary" : "outline"}
+                aria-pressed={view === "list"}
+                onClick={() => setView("list")}
+              >
+                <LayoutListIcon />
+                List
+              </Button>
+            </ButtonGroup>
             <ButtonGroup aria-label="Goal status">
               <Button
                 variant={active ? "secondary" : "outline"}
@@ -182,6 +267,14 @@ export function GoalsListPage() {
 
       {goals.isPending ? <BoardSkeleton /> : null}
 
+      {goals.data?.length && shown.length === 0 ? (
+        <EmptyState
+          icon={<TargetIcon className="size-5" />}
+          title="No goals match"
+          description="Nothing matches this search and repository. Clear them to see more."
+        />
+      ) : null}
+
       {goals.data?.length === 0 ? (
         <EmptyState
           icon={<TargetIcon className="size-5" />}
@@ -198,7 +291,8 @@ export function GoalsListPage() {
         />
       ) : null}
 
-      {goals.data?.length ? <GoalSwimlanes goals={goals.data} /> : null}
+      {shown.length && view === "board" ? <GoalSwimlanes goals={shown} /> : null}
+      {shown.length && view === "list" ? <GoalList goals={shown} /> : null}
 
       <CreateGoalDialog
         open={createOpen}

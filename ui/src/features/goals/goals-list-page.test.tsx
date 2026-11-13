@@ -19,7 +19,7 @@ import { beforeEach, expect, it } from "vitest"
 
 import type { GoalDto } from "@/api"
 import { useSettingsStore } from "@/stores/settings"
-import { aGoal } from "@/test/fixtures"
+import { aGoal, aRepository } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalsListPage } from "./goals-list-page"
 
@@ -271,4 +271,31 @@ it("shows a load failure, not a refresh warning, when nothing was ever cached", 
 
   await screen.findByText("Could not load goals")
   expect(screen.queryByText("Could not refresh goals")).toBeNull()
+})
+
+it("narrows by title and repository, and lists one row per goal that opens its panel", async () => {
+  const web = aRepository({ id: "repo-web", path: "/dev/web" })
+  const api = aRepository({ id: "repo-api", path: "/dev/api" })
+  stubDaemon([
+    aGoal({ id: "g1", title: "Fix login", repos: [web, api] }),
+    aGoal({ id: "g2", title: "Fix billing", repos: [api] }),
+    aGoal({ id: "g3", title: "Write docs", repos: [web] }),
+  ])
+  useSettingsStore.setState({ goalsView: "board" })
+  const user = userEvent.setup()
+  renderBoard("/goals")
+
+  await user.click(await screen.findByRole("button", { name: "List" }))
+  expect(await screen.findAllByRole("link")).toHaveLength(3)
+  expect(JSON.parse(localStorage.getItem("ariadne.settings") ?? "{}")).toMatchObject({
+    state: { goalsView: "list" },
+  })
+
+  await user.type(screen.getByLabelText("Search goals by title"), "fix")
+  await user.click(screen.getByRole("button", { name: "Filter by repository" }))
+  await user.click(await screen.findByRole("menuitemcheckbox", { name: "/dev/web" }))
+  const rows = await screen.findAllByRole("link")
+  expect(rows).toHaveLength(1)
+  expect(rows[0]?.textContent).toContain("Fix login")
+  expect(rows[0]?.getAttribute("href")).toContain("g1")
 })
