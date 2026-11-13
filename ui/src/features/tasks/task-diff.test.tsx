@@ -15,7 +15,7 @@
  */
 
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
-import { beforeEach, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 import type { DomainEvent } from "@/api"
 import { EventStreamProvider } from "@/events/provider"
@@ -54,6 +54,20 @@ function stubDaemon() {
     Promise.resolve(new Response(diff, { headers: { "content-type": "text/plain" } })),
   )
 }
+
+/** jsdom lays nothing out and has no `scrollIntoView`; this test-owned stub is removed after each test. */
+function stubScroll() {
+  const scrolled = vi.fn()
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: scrolled,
+  })
+  return scrolled
+}
+
+afterEach(() => {
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView")
+})
 
 beforeEach(() => {
   diff = FIRST
@@ -172,13 +186,37 @@ it("scrolls to the next file without changing folding", async () => {
   await renderDiff()
   fireEvent.click(screen.getByRole("button", { name: "Collapse one.txt" }))
   fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
-  const scrolled = vi.fn()
-  Element.prototype.scrollIntoView = scrolled
+  const scrolled = stubScroll()
 
   fireEvent.click(await screen.findByRole("button", { name: "Next file" }))
 
   expect(scrolled).toHaveBeenCalledTimes(1)
   expect(screen.getByRole("button", { name: "Expand one.txt" })).toBeTruthy()
+})
+
+it("scrolls to the previous file, wrapping to the last from the start", async () => {
+  diff = SECOND
+  await renderDiff()
+  fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
+  const scrolled = stubScroll()
+
+  fireEvent.click(await screen.findByRole("button", { name: "Previous file" }))
+
+  expect(scrolled).toHaveBeenCalledTimes(1)
+  const nav = screen.getByRole("navigation", { name: "Changed files" })
+  expect(within(nav).getByText("two.txt").closest("button")?.getAttribute("aria-current")).toBe(
+    "true",
+  )
+})
+
+it("offers no file index in the raw view", async () => {
+  await renderDiff()
+  fireEvent.click(screen.getByRole("button", { name: "Expand the diff" }))
+  expect(await screen.findByRole("navigation", { name: "Changed files" })).toBeTruthy()
+
+  fireEvent.click(screen.getByRole("button", { name: /Raw/ }))
+
+  expect(screen.queryByRole("navigation", { name: "Changed files" })).toBeNull()
 })
 
 it("offers no file index in the compact view", async () => {
