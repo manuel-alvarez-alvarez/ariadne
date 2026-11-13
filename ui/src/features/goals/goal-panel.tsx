@@ -23,7 +23,7 @@ import { useSearchParams } from "react-router-dom"
 import { ApiError, type GoalDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { Fact, FactList } from "@/components/fact-list"
 import { Markdown } from "@/components/markdown"
 import { PanelHeader } from "@/components/panel-header"
@@ -202,9 +202,7 @@ function GoalView({
         {/* A refetch can fail with the goal already cached — the dashboard
             keeps polling it — and the stale data is still worth showing, with
             one notice above it rather than losing the panel to the error. */}
-        {error ? (
-          <ErrorState title="Could not refresh this goal" error={error} onRetry={onRetry} />
-        ) : null}
+        {error ? <RefreshWarning what="this goal" error={error} onRetry={onRetry} /> : null}
 
         <GoalMetadata goal={goal} />
 
