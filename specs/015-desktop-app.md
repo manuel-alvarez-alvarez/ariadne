@@ -702,11 +702,13 @@ Out: the daemon endpoints themselves (012).
     workflow of more than five steps also folds the steps more than one from
     the current one behind an ellipsis. Each circle's tooltip names the step,
     its description, and its agent's model, effort and skills, with a link to
-    the agent's session, or says "none staffed". Row 3 is one line: total
-    input/output tokens (including zero) at the left, last activity at the
+    the agent's session, or says "none staffed". Row 3 is one line: the
+    task's token figure (`↑input share ↓output`, including zero, rendered by
+    the goal lane header's own `TokenFigure` at every width; its hover names
+    Input and Output and lists one row per workflow step, and it is not a tab
+    stop) at the left, last activity at the
     right, and, when the task has a `pr_url`, a PR link icon in padding
-    reserved for it. Labels and the time shorten ("In 1.2k · Out 56" to
-    arrows, "3 minutes ago" to "3m") and truncate as the card narrows. Last
+    reserved for it. The time shortens ("3 minutes ago" to "3m") and truncate as the card narrows. Last
     activity is the latest of the task's `updated_at` and the
     `last_activity_at` of every session of that task, previous ones included
     (read from the shared sessions query, which the event stream already
