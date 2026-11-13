@@ -26,7 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { TaskCard, taskListQueryOptions } from "@/features/tasks"
-import { findStep, stepTitle } from "@/features/tasks/steps"
+import { stepTitle } from "@/features/tasks/steps"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
 import { cn, formatAbsolute } from "@/lib/format"
 import { paths } from "@/routes/paths"
@@ -299,10 +299,7 @@ function Lane({
                 <TaskCard
                   key={task.id}
                   task={task}
-                  // A failure or a cancellation has to say so: the outline is
-                  // what catches the eye, the badge is what names it.
-                  showStatus={task.status === "failed" || task.status === "cancelled"}
-                  step={findStep(goal.steps, task.step)}
+                  steps={goal.steps}
                   attention={attention.byTask.get(task.id)}
                 />
               ))}

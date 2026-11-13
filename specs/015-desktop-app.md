@@ -696,6 +696,22 @@ Out: the daemon endpoints themselves (012).
     Lanes keep their order: attention first, then live, then terminal goals.
     Each card stays one tab stop, and each cell is a named group
     (`<goal>: <column>`).
+    A task card is two lines. Line 1 is the title, one state badge and the
+    session attention badge: "Waits for N tasks" for a pending or ready task
+    with dependencies, "Waits" without, "Failed" with the task's `reason` in
+    its tooltip, "Stalled", or "Cancelled"; a task under way and not stalled
+    shows none. Line 2 is a compact step track, one dot per step of the goal:
+    a check before the current step, a filled dot with `aria-current="step"`
+    on it, a ring after it; a finished task shows every dot as a check and a
+    task with no step every dot as a ring. The current step's title sits
+    beside the track while the task is in progress. Each dot's tooltip names
+    the step, its description, and its agent's model, effort and skills, with
+    a link to the agent's session, or says "none staffed". The right end of
+    line 2 is a PR link icon, when the task has a `pr_url`, beside the relative
+    updated time. The card shows no branch, merge commit, dependency icon or
+    token figure, is one link to `?task=` with one tab stop, and keeps its
+    border order: attention, failed, stalled. The goal panel's task list shows
+    the same card (`ui/src/features/tasks/task-card.test.tsx`).
 40. The task panel of a stepped task draws one workflow section under its
     facts, in place of a separate Agents fact and step strip: a track of
     nodes, one per column in order, and under each node the column's title,

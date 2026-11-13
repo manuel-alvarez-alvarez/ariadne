@@ -1,42 +1,32 @@
 /**
- * One task, as it appears on the board and in any other list of tasks.
+ * One task, as it appears on the board and in any other list of tasks: two
+ * lines. The first is the title with what is wrong or being waited on — one
+ * state badge, and the session attention badge when an agent wants a person.
+ * The second is the compact workflow step track ({@link StepTrack}), the
+ * current step's title while the task runs, and at the right end the PR link
+ * and when the task was last updated.
  *
- * What earns space here is what tells you whether a task needs attention:
- * whether one of its agents is waiting on a person, which round of review it
- * is on, whether its agent went idle, and how many other tasks it is waiting
- * for — plus the branch, which is the one string an
- * author actually wants off the card and into a terminal. It sits outside
- * the link on purpose: a copy button nested in an anchor is neither valid nor
- * clickable without hijacking the navigation.
- *
- * The card says each of those things **once**. A badge that repeats a label
- * already on the card is dropped rather than drawn twice (see
+ * The card says each thing **once**. A session attention badge that repeats
+ * the state badge's label is dropped rather than drawn twice (see
  * {@link repeatsCard}), which is what a stalled task saying "Stalled" beside
  * "⚠ Stalled" was.
  *
  * **The whole card is one tab stop.** Everything explanatory is a real
- * `Tooltip` for a pointer, and not one of them is focusable. They used to be:
- * the tooltip primitive makes every trigger focusable
- * (`components/ui/tooltip.tsx`), so a card was some seven stops of spans — six
- * of them nested inside an anchor, which is an interactive node inside an
- * interactive one — and a board of thirty cards was two hundred stops of
- * hints. Every one of those hints is collected into one hidden line instead
- * ({@link cardHints}) and hung off the link with `aria-describedby`: nothing
- * that was only in a tooltip has stopped being reachable, it is read where
- * the card is landed on rather than seven Tabs into it.
- *
- * That includes the branch's copy button, which is the one *control* here
- * rather than a hint. It keeps its name and its click; what it gives up is
- * being the card's second stop, and the keyboard route to the branch is the
- * same control in the task panel this card's link opens.
+ * `Tooltip` for a pointer, and not one of them is focusable: the tooltip
+ * primitive makes every trigger focusable (`components/ui/tooltip.tsx`), which
+ * inside an anchor is an interactive node inside an interactive one. Every
+ * hint is collected into one hidden line instead ({@link cardHints}) and hung
+ * off the link with `aria-describedby`, so what was only in a tooltip is read
+ * where the card is landed on. The PR link is the one real anchor on the card
+ * and sits outside the link, as a sibling laid over line 2's right end, with
+ * no tab stop of its own.
  */
 
-import { GitBranchIcon, LayersIcon, TriangleAlertIcon } from "lucide-react"
+import { GitPullRequestIcon } from "lucide-react"
 import { useId } from "react"
 import { Link } from "react-router-dom"
 
 import type { TaskDto, WorkflowStepDto } from "@/api"
-import { CopyableId } from "@/components/copyable-id"
 import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When, whenHint } from "@/components/when"
@@ -49,41 +39,37 @@ import { cn, plural } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
 import { STALLED_META } from "./stalled"
 import { TASK_STATUS_META } from "./status"
+import { StepTrack } from "./step-track"
+import { findStep } from "./steps"
 
 /**
- * The card is one tab stop, so nothing drawn on it takes one of its own —
- * hints inside the link and controls beside it alike. Every hint is read off
- * the link's description instead ({@link cardHints}); the copy button keeps
- * its click and its name.
+ * The card is one tab stop, so nothing drawn on it takes one of its own.
+ * Every hint is read off the link's description instead ({@link cardHints}).
  */
 const NOT_A_STOP = -1
 
+interface CardState {
+  label: string
+  hint: string
+  tone: string
+}
+
 export function TaskCard({
   task,
-  showStatus = false,
-  step,
+  steps,
   attention,
 }: {
   task: TaskDto
-  showStatus?: boolean
-  /**
-   * The workflow column the task sits in, on a goal a workflow runs. A
-   * stepped task is `in_progress` from its first column to its last, so the
-   * column is what its status badge names instead.
-   */
-  step?: WorkflowStepDto
+  /** The goal's workflow columns, which the step track draws one dot for each. */
+  steps: WorkflowStepDto[]
   /**
    * Why one of this task's sessions wants a person, when one does — the flag
    * the daemon raised, handed down by whoever is holding the sessions list
    * (`useBoardAttention`) rather than fetched per card.
-   *
-   * A card is where the work is, and until this was on it the only way to see
-   * that a task was blocked on a permission prompt was to read the strip above
-   * the board and match the titles up.
    */
   attention?: SessionAttention | null
 }) {
-  const status = cardStatus(task, step)
+  const state = cardState(task)
   const terminal = task.status === "cancelled"
   // `to.replace` is set exactly when a goal panel is open — the card's own
   // link is replacing it rather than stacking on it, on the board behind it
@@ -91,14 +77,15 @@ export function TaskCard({
   const to = useTaskPanelTo(task.id)
   // The reason is still what outlines the card even where the badge for it is
   // dropped: it is the same fact, said once.
-  const flagged = attention && !repeatsCard(attention, task, showStatus) ? attention : null
+  const flagged = attention && !repeatsCard(attention, state) ? attention : null
   const hintsId = useId()
-  const hints = cardHints(task, { status: showStatus ? status.hint : null, flagged })
+  const currentStep = task.status === "in_progress" ? findStep(steps, task.step) : undefined
+  const hints = cardHints(task, { state, flagged, currentStep })
 
   return (
     <div
       className={cn(
-        "rounded-lg border bg-card transition-colors hover:border-foreground/20 hover:bg-muted/50",
+        "relative rounded-lg border bg-card transition-colors hover:border-foreground/20 hover:bg-muted/50",
         cardBorder(task, attention),
       )}
     >
@@ -106,64 +93,47 @@ export function TaskCard({
         to={to}
         replace={to.replace}
         aria-describedby={hints.length > 0 ? hintsId : undefined}
-        className="block rounded-lg px-2.5 pt-2.5 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+        className="block rounded-lg px-2.5 pt-2.5 pb-1.5 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
       >
-        <p
-          className={cn(
-            "line-clamp-2 text-sm leading-snug font-medium",
-            terminal && "text-muted-foreground line-through decoration-muted-foreground/40",
-          )}
-        >
-          {task.title}
-        </p>
-
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          {/* First in the row, ahead of the status: it is the one thing on the
-              card that is addressed to the reader. Same pill as the attention
-              strip and the sessions table, down to the wording. */}
+        <div className="flex items-start gap-2">
+          <p
+            className={cn(
+              "line-clamp-2 min-w-0 flex-1 text-sm leading-snug font-medium",
+              terminal && "text-muted-foreground line-through decoration-muted-foreground/40",
+            )}
+          >
+            {task.title}
+          </p>
+          {/* First among the badges: it is the one thing on the card that is
+              addressed to the reader. Same pill as the attention strip and
+              the sessions table, down to the wording. */}
           {flagged && (
             <SessionAttentionBadge size="sm" attention={flagged} hintTabIndex={NOT_A_STOP} />
           )}
-          {showStatus && (
+          {state && (
             <StatusBadge
               size="sm"
-              label={status.label}
-              tone={status.badge}
-              hint={status.hint}
+              label={state.label}
+              tone={state.tone}
+              hint={state.hint}
               hintTabIndex={NOT_A_STOP}
             />
           )}
-          {task.depends_on.length > 0 && (
-            <Tooltip>
-              <TooltipTrigger
-                tabIndex={NOT_A_STOP}
-                render={<span className="flex items-center gap-1" />}
-              >
-                <LayersIcon className="size-3" />
-                {task.depends_on.length}
-              </TooltipTrigger>
-              <TooltipContent>{dependencyHint(task)}</TooltipContent>
-            </Tooltip>
+        </div>
+
+        <div
+          className={cn(
+            "mt-1.5 flex items-center gap-2 text-xs text-muted-foreground",
+            task.pr_url && "pr-5",
           )}
-          {task.stalled && (
-            <Tooltip>
-              <TooltipTrigger
-                tabIndex={NOT_A_STOP}
-                render={
-                  <span className={cn("flex items-center gap-1 font-medium", STALLED_META.text)} />
-                }
-              >
-                <TriangleAlertIcon className="size-3" />
-                {STALLED_META.label}
-              </TooltipTrigger>
-              <TooltipContent>{STALLED_META.hint}</TooltipContent>
-            </Tooltip>
-          )}
+        >
+          <StepTrack task={task} steps={steps} />
+          {currentStep && <span className="min-w-0 truncate">{currentStep.title}</span>}
           <When
             at={task.updated_at}
             label="updated"
             hintTabIndex={NOT_A_STOP}
-            className="ml-auto"
+            className="ml-auto shrink-0"
           />
         </div>
       </Link>
@@ -177,35 +147,61 @@ export function TaskCard({
         </p>
       )}
 
-      {/* The branch, and only the branch. What a card is read for is whether
-          the task wants something; what it runs on is a fact about the task,
-          and the task panel is where facts live. It also happened to be the
-          longest string on the card — a `profile:model @ effort` in a mono
-          font in an 11rem column — which is how a board of narrow cards ends
-          up with pills painted across their own borders. */}
-      <div className="px-2.5 pt-1.5 pb-2.5">
-        <span className="flex w-fit max-w-full items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-xs text-muted-foreground">
-          <GitBranchIcon className="size-3 shrink-0" />
-          {/* Middle-truncated: the card is narrow, and what an author looks
-              for is the slug at the end rather than the ULID it hangs off. */}
-          <CopyableId value={task.branch} label="branch" truncate="middle" tabIndex={NOT_A_STOP} />
-        </span>
-      </div>
+      {/* The PR link is the right end of line 2, beside the time: a real
+          anchor cannot sit inside the card's link, so it is laid over the
+          card's bottom-right corner, where line 2 leaves room for it. */}
+      {task.pr_url && (
+        <Tooltip>
+          <TooltipTrigger
+            tabIndex={NOT_A_STOP}
+            render={
+              <a
+                href={task.pr_url}
+                aria-label="Pull request"
+                data-pr-link
+                className="absolute right-2.5 bottom-1.5 flex h-4 items-center text-muted-foreground hover:text-foreground"
+              />
+            }
+          >
+            <GitPullRequestIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>Open the pull request</TooltipContent>
+        </Tooltip>
+      )}
     </div>
   )
 }
 
 /**
- * What the card's status badge says: the status, or for a stepped task under
- * way the column it is in — its title, its description as the hint.
+ * The one state badge of a card, or none: a task under way with no stall says
+ * nothing, because its step track already says where it is.
  */
-function cardStatus(
-  task: TaskDto,
-  step: WorkflowStepDto | undefined,
-): { label: string; hint: string; badge: string } {
-  const status = TASK_STATUS_META[task.status]
-  if (!step || task.status !== "in_progress") return status
-  return { ...status, label: step.title, hint: step.description || status.hint }
+function cardState(task: TaskDto): CardState | null {
+  if (task.stalled) {
+    return { label: STALLED_META.label, hint: STALLED_META.hint, tone: STALLED_META.badge }
+  }
+  const meta = TASK_STATUS_META[task.status]
+  switch (task.status) {
+    case "pending":
+    case "ready":
+      return {
+        label:
+          task.depends_on.length > 0
+            ? `Waits for ${plural(task.depends_on.length, "task")}`
+            : "Waits",
+        hint:
+          task.depends_on.length > 0
+            ? `Waits for ${plural(task.depends_on.length, "task")} to merge`
+            : meta.hint,
+        tone: meta.badge,
+      }
+    case "failed":
+      return { label: meta.label, hint: task.reason || meta.hint, tone: meta.badge }
+    case "cancelled":
+      return { label: meta.label, hint: meta.hint, tone: meta.badge }
+    default:
+      return null
+  }
 }
 
 /**
@@ -227,41 +223,31 @@ function cardBorder(task: TaskDto, attention?: SessionAttention | null): string 
 /**
  * Whether the attention badge would only say again what the card already says.
  *
- * The daemon raises a session reason and the task carries a flag of its own,
- * and for a stall they are the same fact seen from two places — which the card
- * was drawing as `Stalled` beside `⚠ Stalled`. Compared by label rather than
- * by naming the one pair that collides today: two vocabularies that share a
- * word will share it again.
+ * Compared by label rather than by naming the one pair that collides today:
+ * two vocabularies that share a word will share it again.
  */
-function repeatsCard(attention: SessionAttention, task: TaskDto, showStatus: boolean): boolean {
-  const said = new Set<string>()
-  if (showStatus) said.add(TASK_STATUS_META[task.status].label)
-  if (task.stalled) said.add(STALLED_META.label)
-  return said.has(SESSION_ATTENTION_META[attention].label)
+function repeatsCard(attention: SessionAttention, state: CardState | null): boolean {
+  return state?.label === SESSION_ATTENTION_META[attention].label
 }
 
 /**
  * Every hint on the card, in reading order — the whole of what the tooltips
- * say, since none of them can be focused.
- *
- * The link is the card's only stop, so this is the one place a keyboard is
- * told what a sub-status means or what the exact stamp behind "2 hours ago"
- * was going to say. Anything a tooltip is the *only* home for belongs here;
- * the branch does not, because it is written on the card in plain text.
+ * say, since none of them can be focused: the state, the current step, the
+ * pull request and when the task was updated.
  */
 function cardHints(
   task: TaskDto,
-  { status, flagged }: { status: string | null; flagged: SessionAttention | null },
+  {
+    state,
+    flagged,
+    currentStep,
+  }: { state: CardState | null; flagged: SessionAttention | null; currentStep?: WorkflowStepDto },
 ): string[] {
   const hints: string[] = []
   if (flagged) hints.push(SESSION_ATTENTION_META[flagged].hint)
-  if (status) hints.push(status)
-  if (task.depends_on.length > 0) hints.push(dependencyHint(task))
-  if (task.stalled) hints.push(STALLED_META.hint)
+  if (state) hints.push(`${state.label}. ${state.hint}`)
+  if (currentStep) hints.push(`Current step ${currentStep.title}`)
+  if (task.pr_url) hints.push("Has a pull request")
   hints.push(whenHint(task.updated_at, "updated"))
   return hints
-}
-
-function dependencyHint(task: TaskDto): string {
-  return `Waits for ${plural(task.depends_on.length, "task")} to merge`
 }

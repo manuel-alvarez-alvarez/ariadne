@@ -24,7 +24,7 @@ import { AgentSummary } from "@/features/models/agent-summary"
 import { cn } from "@/lib/format"
 import { SessionLink } from "./task-sessions"
 
-type StepState = "done" | "current" | "ahead"
+export type StepState = "done" | "current" | "ahead"
 
 const STATE_META: Record<
   StepState,
@@ -127,7 +127,7 @@ export function WorkflowSteps({ task, steps }: { task: TaskDto; steps: WorkflowS
   )
 }
 
-function stepState(task: TaskDto, index: number, current: number): StepState {
+export function stepState(task: TaskDto, index: number, current: number): StepState {
   if (task.status === "finished") return "done"
   if (current < 0) return "ahead"
   if (index < current) return "done"
