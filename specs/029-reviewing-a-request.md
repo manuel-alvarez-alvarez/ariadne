@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-11-08
+updated: 2026-11-13
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -52,14 +52,16 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 1. Any open request can be reviewed once explicitly asked through rule 10,
    whether its author is the user, another person or a bot, and whether
    GitHub assigned the user a review. Its row wants one live session while
-   `review_asked` holds, the request is open and out of draft, and the forge
+   `review_asked` holds, the request is open, draft or not, and the forge
    integration is enabled. The session runs on `review_model` and
    `review_effort`, with seat `reviewer`, `pr-reviewer` and the picked
    `review_skills`, on the task of the review goal (rule 10b). A GitHub review request still creates a row on the
    first fetch so attention can offer a manual start (026, 031); it never
    starts a session by itself.
-2. A draft starts nothing. When the request leaves draft, the next fetch
-   starts the session. A request that goes back to draft ends it.
+2. A draft is no work of its own: a review request on one creates no row
+   until it leaves draft. An explicit ask on a draft starts the session at
+   once, since the ask is the user's word that the review is wanted now;
+   leaving draft or going back to it neither starts nor ends that session.
 3. Whether the request still asks for the user's review is read on every
    fetch and held with the live read, never stored (026 rule 4). The fetch's
    open list says yes where it names the login among the request's own
@@ -115,11 +117,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    prompt. A fetch with the same head hands nothing. A reply alone needs no
    idle session, since it moves no worktree:
    `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.
-9. A request that turns merged or closed, goes back to draft, or whose
-   manual ask is stopped has its reviewer session killed and its detached
-   worktree removed. A merge or a close completes the review goal and its
-   task; a stop cancels both (rule 10b). A draft retains the ask, the goal
-   and the task, and resumes when ready.
+9. A request that turns merged or closed, or whose manual ask is stopped,
+   has its reviewer session killed and its detached worktree removed. A
+   merge or a close completes the review goal and its task; a stop cancels
+   both (rule 10b).
    Stopping review preserves an active keeper or task; stopping a keeper
    preserves an asked review. The request's row is removed when no work or
    outstanding review-request attention remains. GitHub assignment changes
@@ -353,7 +354,10 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `::a_review_posted_after_a_withdrawal_keeps_the_manual_review`,
   `::a_request_withdrawn_after_my_review_keeps_its_manual_review`.
 
-- An open request out of draft gets one live session on the review pin, seat
+- A review asked on a draft starts at once, and the same session runs on
+  as the request leaves draft and goes back to it:
+  `pull_request_reviews.rs::an_asked_review_starts_on_a_draft_and_outlives_its_draft_state`.
+- An open request gets one live session on the review pin, seat
   `reviewer`, detached at `head_sha`, with `pr-reviewer` indexed:
   `pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`.
 - GitHub's open list names the login among a request's own `reviewRequests`

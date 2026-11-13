@@ -679,8 +679,8 @@ impl super::Scheduler {
     }
 
     /// A manually asked review (029): one live reviewer session while the
-    /// request is open and out of draft; its session and worktree taken
-    /// down otherwise.
+    /// request is open, draft or not; its session and worktree taken down
+    /// otherwise.
     async fn review_pass(
         &mut self,
         pull: &PullRequest,
@@ -761,8 +761,8 @@ impl super::Scheduler {
         Ok(())
     }
 
-    /// End only the reviewer session when its ask stops, the request ends,
-    /// or it returns to draft. The outer pass keeps the row for another
+    /// End only the reviewer session when its ask stops or the request
+    /// ends. The outer pass keeps the row for another
     /// seat or an outstanding GitHub review request.
     async fn end_review(
         &mut self,
@@ -771,7 +771,7 @@ impl super::Scheduler {
     ) -> anyhow::Result<()> {
         // Reached only once `review_pass` has already found the request no
         // longer wants a reviewer session, for any reason — closed, no
-        // longer asking, back to draft, or never asked for directly on its
+        // longer asking, or never asked for directly on its
         // own row. Whatever earlier give-up this request's reviewer seat
         // carries is no longer this recovery's to answer for: the work it
         // was given up on does not exist any more either way.

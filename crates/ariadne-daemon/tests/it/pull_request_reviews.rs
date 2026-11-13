@@ -377,35 +377,56 @@ async fn an_open_request_i_review_gets_one_session_detached_at_its_head() {
     assert_eq!(sessions(&h, &id).await.len(), 1, "one session");
 }
 
-/// A draft starts nothing until it leaves draft.
+/// A draft is no work of its own, but a review asked on it starts at once
+/// rather than waiting for the request to leave draft, and the same session
+/// runs on whether the request leaves draft or goes back to it.
 #[tokio::test]
-async fn a_draft_starts_no_review_until_it_leaves_draft() {
+async fn an_asked_review_starts_on_a_draft_and_outlives_its_draft_state() {
     let stub = stub_forge_cli(json!([]));
     let h = harness().scheduler().forge_cli(&stub).await;
     let (path, head) = checkout(&h);
-    stub.reprogram(script(&Shown {
+    let draft = Shown {
         draft: true,
         ..Shown::open(&head)
-    }));
+    };
+    stub.reprogram(script(&draft));
     let repo = repository(&h, &path).await;
     h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
-    // Wait for the draft's own fetch round to finish, not merely for a
-    // quiet window, so the reprogram below never races a straggler still
-    // reading this draft script. `fetch_again` would wake a second round
-    // and take its own baseline before this first one is proven over,
-    // letting the first round's own completion satisfy that wait instead
-    // of the second one it actually means to wait for.
+    // Wait for the draft's own fetch round to finish, so the rows read
+    // below are that round's.
     eventually(TIMEOUT, "the draft's own fetch to finish", async || {
         stub.fetches() >= 1
     })
     .await;
     assert!(no_rows(&h).await, "a draft is no work yet");
 
+    let ask = axum::http::Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "/v1/repositories/{repo}/pull-requests/1/ariadne-review"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"asked": true, "model": PIN}).to_string()))
+        .unwrap();
+    let asked: Value = h.json(ask, StatusCode::OK).await;
+    let id = asked["id"].as_str().expect("the request's row").to_string();
+    assert_eq!(asked["draft"], json!(true), "{asked}");
+    fetch_again(&h, &stub, &repo).await;
+    let session = idle_session(&h, &id).await;
+    let worktree = PathBuf::from(session.worktree_path.clone().unwrap());
+    assert_eq!(sh(&worktree, "git rev-parse HEAD"), head);
+
     stub.reprogram(script(&Shown::open(&head)));
-    h.state.forge_poll.wake(&repo);
-    let id = the_request(&h).await;
-    ask_review(&h, &id, &repo, 1, PIN).await;
-    idle_session(&h, &id).await;
+    fetch_again(&h, &stub, &repo).await;
+    stub.reprogram(script(&draft));
+    fetch_again(&h, &stub, &repo).await;
+    let live: Vec<_> = sessions(&h, &id)
+        .await
+        .into_iter()
+        .filter(|s| s.ended_at.is_none())
+        .collect();
+    assert_eq!(live.len(), 1, "one session through every draft change");
+    assert_eq!(live[0].id, session.id);
 }
 
 /// A request that asks for my review starts no session until the user

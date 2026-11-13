@@ -917,15 +917,11 @@ async fn still_enabled(store: &Store, expected: &ForgeIntegration) -> Result<boo
 }
 
 /// Whether the request `row` wants a review session of its own: an open
-/// request out of draft, asked for directly on its own row by an explicit
-/// manual start (029). Authorship and GitHub review assignments do not
-/// change that explicit ask.
+/// request, draft or not, asked for directly on its own row by an explicit
+/// manual start (029). Authorship, draft state and GitHub review
+/// assignments do not change that explicit ask.
 pub(crate) fn wants_session(row: &PullRequest, integration: &ForgeIntegration) -> bool {
-    row.review_asked
-        && row.review_model.is_some()
-        && row.state == "open"
-        && integration.enabled
-        && !row.draft
+    row.review_asked && row.review_model.is_some() && row.state == "open" && integration.enabled
 }
 
 /// Whether the request `row` wants a keeper session of its own (032): a
