@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { type AgentConfigDto, type ModelDto, qk } from "@/api"
 import { Toaster } from "@/components/ui/sonner"
-import { aModel, anAgentConfig } from "@/test/fixtures"
+import { aModel, anAcpAgent, anAgentConfig } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { AgentsPage } from "./agents-page"
 
@@ -86,6 +86,7 @@ function stubDaemon(
   refuse?: string,
   /** The one refusal a rank write can get: no such model in the catalog. */
   refuseRank?: string,
+  acpAgents: ReturnType<typeof anAcpAgent>[] = [],
 ) {
   const stored = configs.map((config) => ({ ...config }))
   const catalog = models.map((model) => ({ ...model }))
@@ -111,6 +112,7 @@ function stubDaemon(
       return jsonResponse(model)
     }
     if (pathname === "/v1/models") return jsonResponse(catalog)
+    if (pathname === "/v1/acp-agents") return jsonResponse(acpAgents)
 
     if (request.method === "PUT") {
       const kind = pathname.split("/").at(-1)
@@ -181,6 +183,19 @@ describe("AgentsPage", () => {
     await selectAgent(user, "codex-acp")
     expect(await screen.findByText("--dangerously-bypass-approvals-and-sandbox")).toBeDefined()
     expect(screen.queryByText("--dangerously-skip-permissions")).toBeNull()
+  })
+
+  it("draws each agent's icon beside its tab, from the registry URL where nothing is bundled", async () => {
+    const url = "https://cdn.agentclientprotocol.com/registry/v1/latest/opencode-acp.svg"
+    stubDaemon([CLAUDE_CODE, CODEX, OPENCODE], [OPUS, LOCAL], undefined, undefined, [
+      anAcpAgent({ id: "opencode-acp", icon: url }),
+    ])
+    renderScreen(<AgentsPage />)
+
+    const opencode = await screen.findByRole("tab", { name: /^opencode-acp/ })
+    await waitFor(() => expect(opencode.querySelector("img")?.getAttribute("src")).toBe(url))
+    // Without an icon the tab shows the first letter of its id.
+    expect(screen.getByRole("tab", { name: /^codex-acp/ }).textContent).toContain("c")
   })
 
   it("says whether the open tab's list has been moved off the defaults", async () => {

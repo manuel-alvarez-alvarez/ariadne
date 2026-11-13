@@ -37,6 +37,8 @@ pub(crate) struct Installed {
     /// searching again by name would answer from whatever `PATH` the process
     /// carries, which is not always the one discovery read.
     pub(crate) program: PathBuf,
+    /// The icon URL the index gives the agent, if it gives one.
+    pub(crate) icon: Option<String>,
 }
 
 /// Where each package manager keeps its own record of what it installed.
@@ -275,6 +277,7 @@ fn found(agent: &IndexAgent, path: &OsStr, homes: &ManagerHomes) -> Option<Insta
                 .chain(candidate.args)
                 .collect(),
             program,
+            icon: agent.icon.clone(),
         })
     })
 }
@@ -537,6 +540,7 @@ struct Index {
 #[derive(Deserialize)]
 struct IndexAgent {
     id: String,
+    icon: Option<String>,
     #[serde(default)]
     distribution: Distribution,
 }

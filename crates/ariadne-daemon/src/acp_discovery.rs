@@ -81,6 +81,8 @@ struct RegistryEntry {
     /// is never probed and never resolved, and its rejection carries this
     /// reason.
     refused: Option<String>,
+    /// The registry's icon URL for the agent; none for a configured entry.
+    icon: Option<String>,
 }
 
 /// Why an entry is refused, or `None` for one in good standing: its id is
@@ -254,6 +256,7 @@ impl AgentRegistry {
                     named_by_package: found.named_by_package,
                     unproven_package: found.unproven_package,
                     refused,
+                    icon: found.icon,
                 }
             })
             .collect();
@@ -274,6 +277,7 @@ impl AgentRegistry {
                 named_by_package: false,
                 unproven_package: None,
                 refused,
+                icon: None,
             };
             let discovered = entries
                 .iter_mut()
@@ -731,6 +735,7 @@ fn rejected_with(
             capabilities,
             degraded: Vec::new(),
             rejection_reason: Some(reason),
+            icon: entry.icon.clone(),
         },
         catalog: Catalog::default(),
         version: None,
@@ -923,6 +928,7 @@ async fn probe_protocol(
             capabilities: capabilities.clone(),
             degraded,
             rejection_reason: None,
+            icon: entry.icon.clone(),
         },
         catalog,
         version,

@@ -313,6 +313,30 @@ export function anAgentConfig(overrides: Partial<AgentConfigDto> = {}): AgentCon
   }
 }
 
+type AcpAgentDto = components["schemas"]["AcpAgentDto"]
+
+export function anAcpAgent(overrides: Partial<AcpAgentDto> = {}): AcpAgentDto {
+  return {
+    id: "claude-agent-acp",
+    command: ["claude-agent-acp"],
+    source: "registry",
+    status: "ready",
+    capabilities: {
+      stdio: true,
+      protocol_v1: true,
+      session_new: true,
+      model: true,
+      thought_level: true,
+      session_list: true,
+      session_load: true,
+    },
+    degraded: [],
+    rejection_reason: null,
+    icon: null,
+    ...overrides,
+  }
+}
+
 /** One reasoning effort a `GET /v1/models` entry can be run at. */
 export function anEffort(overrides: Partial<EffortDto> = {}): EffortDto {
   return {

@@ -226,6 +226,7 @@ mod tests {
             capabilities: capabilities.clone(),
             degraded: Vec::new(),
             rejection_reason: Some("model option is missing".into()),
+            icon: None,
         };
         let degraded = AcpAgentDto {
             id: "limited".into(),
@@ -239,6 +240,7 @@ mod tests {
                 AcpDegradation::NoRestartResume,
             ],
             rejection_reason: None,
+            icon: None,
         };
 
         let checks = acp_agents(&[rejected, degraded]);
@@ -263,6 +265,7 @@ mod tests {
             capabilities: AcpCapabilitiesDto::default(),
             degraded: Vec::new(),
             rejection_reason: None,
+            icon: None,
         };
         let checks = acp_agents(&[agent("gone", AcpAgentStatus::Rejected)]);
         let none = by_name(&checks, "any agent");

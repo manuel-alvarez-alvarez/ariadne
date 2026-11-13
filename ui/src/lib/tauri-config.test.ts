@@ -25,4 +25,13 @@ describe("Tauri window configuration", () => {
     expect(csp).toContain("frame-src 'self'")
     expect(csp).not.toContain("unsafe-eval")
   })
+
+  it("lets images load from the ACP registry's CDN and no other host", () => {
+    const imgSrc = config.app.security.csp
+      .split(";")
+      .map((directive) => directive.trim())
+      .find((directive) => directive.startsWith("img-src"))
+
+    expect(imgSrc).toBe("img-src 'self' https://cdn.agentclientprotocol.com")
+  })
 })
