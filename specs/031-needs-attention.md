@@ -1,7 +1,7 @@
 ---
 id: needs-attention
 status: current
-updated: 2026-10-17
+updated: 2026-11-13
 areas: [api, daemon, cli, ui]
 commits: []
 tests:
@@ -32,6 +32,7 @@ tests:
   - crates/ariadne-daemon/src/forge/github/details.rs
   - ui/src/features/goals/attention.test.tsx
   - ui/src/features/goals/attention-alerts.test.tsx
+  - ui/src/features/goals/attention-header.test.tsx
   - ui/src/events/dispatch.test.ts
   - ui/src/features/pull-requests/pull-request-panel.test.tsx
 ---
@@ -62,6 +63,27 @@ policy, and `report_pull_request` fields — which are 029's. Agent request
 semantics remain with 009. The viewer's own pending review or draft notes
 raise no item at all: they are the human's to find and finish directly on
 the forge, never Ariadne's to surface a count of (026 rule 9).
+
+## Desktop header
+
+1. The shared app header shows the live attention count while any attention
+   read is pending, unavailable, or partial. It hides the indicator only after
+   a complete successful read confirms an empty list. Pending and unavailable
+   states offer retry where applicable; partial reads keep known items visible
+   and show a retry action.
+2. The indicator opens a bounded, scrollable popover with each shared item,
+   its subject, reason, action, and affected-subject links. Selecting a target
+   closes the popover and follows the existing attention target semantics.
+   Escape closes it and returns focus to its trigger.
+3. The popover uses the shared attention query and event invalidations; it adds
+   no polling or subscription. The shell header remains available while page
+   content scrolls.
+
+Acceptance criteria: `ui/src/features/goals/attention-header.test.tsx` proves
+loading, unavailable, empty, partial and populated states, item navigation,
+Escape dismissal, and rendering outside the Goals route. The header is outside
+the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
+
 
 ## Behavior
 

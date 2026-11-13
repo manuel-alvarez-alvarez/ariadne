@@ -26,7 +26,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { AttentionStrip } from "./attention-strip"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import {
   DEFAULT_GOAL_STATUS_FILTER,
@@ -167,10 +166,6 @@ export function GoalsListPage() {
           </>
         }
       />
-
-      {/* Above the lanes and outside the filter: what is stuck stays in sight
-          whatever the board is narrowed to. */}
-      <AttentionStrip />
 
       {goals.error ? (
         <ErrorState

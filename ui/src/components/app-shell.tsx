@@ -45,6 +45,7 @@ import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { CommandPalette } from "@/features/command-palette/command-palette"
 import { AttentionAlerts } from "@/features/goals/attention-alerts"
+import { AttentionPopover } from "@/features/goals/attention-strip"
 import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
 import { DaemonLogsDrawer } from "@/features/system/daemon-logs-drawer"
 import { PALETTE_SHORTCUT, useGlobalShortcuts } from "@/hooks/use-global-shortcuts"
@@ -215,6 +216,7 @@ export function AppShell() {
                   before search, theme and settings rather than beside the
                   title. Empty on a screen that passes none. */}
               <div ref={setActionsSlot} className="ml-auto flex items-center gap-2" />
+              <AttentionPopover />
               <div className="flex items-center gap-1">
                 {/* The palette's affordance: a chord nobody can see is a chord
                     nobody uses, so the header carries it with its hint. */}

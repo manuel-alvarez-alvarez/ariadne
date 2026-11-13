@@ -1,43 +1,16 @@
-/**
- * Everything that is stuck, in one flat list above the board.
- *
- * The board answers "what is being worked on"; this answers "what is waiting
- * for me", which is the question that gets asked first. It sits between the
- * header and the lanes rather than on a screen of its own, so the answer is
- * already there when the board opens — and it is one list rather than a list
- * per goal: five goals with one stuck task each is five rows, not five
- * headings. Each row names its goal instead, since nothing above it does.
- *
- * One row per thing gone wrong, too: a failed task under an agent that
- * reported an error is one row with two badges rather than the same trouble
- * twice (see `attention.ts`). Every row is a link to the control the answer is
- * given through — the thread a question was asked in, the console a prompt is
- * waiting in — so reading the list and acting on it are the same gesture, and
- * the board stays underneath.
- *
- * The list never clips: what does not fit is counted and expanded on a click,
- * because a strip that says "8 items" and shows five with no scrollbar is a
- * strip that hides exactly the row nobody knew to look for. Nor does it go
- * quiet when it cannot answer — a failed `GET /v1/sessions` is an error row,
- * not an empty board.
- *
- * Nothing here polls, and nothing here reads the board's status filter; see
- * `attention.ts`. The same count reaches the rest of the app through
- * `attention-alerts.tsx`, for the screens this strip is not on.
- */
+/** The shell's persistent entry point to the shared live attention list. */
 
-import { TriangleAlertIcon } from "lucide-react"
-import { type ReactNode, useState } from "react"
+import { useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 
 import type { GoalDto } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When } from "@/components/when"
 import { SessionAttentionBadge } from "@/features/sessions/session-display"
 import { StalledBadge, TASK_STATUS_META } from "@/features/tasks"
-import { describeError, plural, shortId } from "@/lib/format"
+import { describeError, shortId } from "@/lib/format"
 
 import {
   type AttentionItem,
@@ -49,104 +22,56 @@ import {
   useAttention,
 } from "./attention"
 
-/**
- * How many rows are shown before the rest are counted rather than listed.
- *
- * Enough that the usual morning is one glance and no click, small enough that
- * a bad one does not push the board off the screen — and the rest are one
- * click away rather than behind a scrollbar macOS does not draw.
- */
-const VISIBLE_ROWS = 5
-
-export function AttentionStrip() {
+/** The shared attention list, available from every screen. */
+export function AttentionPopover() {
   const attention = useAttention()
-  const [expanded, setExpanded] = useState(false)
-
-  if (attention.items.length === 0) {
-    // Nothing loaded and nothing said why: the list is the one thing on this
-    // screen that must not read as "all clear" when it is really "unknown".
-    if (attention.error) {
-      return (
-        <Frame>
-          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-xs text-muted-foreground">
-            <TriangleAlertIcon className="size-3.5 shrink-0 text-status-warn" aria-hidden />
-            <span>Could not load what needs attention — {describeError(attention.error)}.</span>
-            <Retry onClick={attention.refetch} />
-          </p>
-        </Frame>
-      )
-    }
-    // A thin bar rather than the strip's own shape: until the three lists
-    // answer, how tall the list is going to be is not known, and a tall
-    // placeholder that collapses to nothing shifts the board under the cursor.
-    if (attention.isPending) {
-      return (
-        <Skeleton
-          role="status"
-          aria-label="Loading what needs attention"
-          className="h-9 shrink-0"
-        />
-      )
-    }
-    // Nothing stuck is the normal state of a healthy board, and the board is
-    // what the screen is for: the strip is absent rather than reassuring.
-    return null
-  }
-
-  const hidden = attention.items.length - VISIBLE_ROWS
-  const rows = expanded ? attention.items : attention.items.slice(0, VISIBLE_ROWS)
-
+  const [open, setOpen] = useState(false)
+  const unavailable = attention.items.length === 0 && attention.error !== null
+  const empty =
+    attention.items.length === 0 && !attention.isPending && !unavailable && !attention.partial
+  if (empty) return null
   return (
-    <Frame>
-      <header className="flex items-baseline gap-2 border-b px-3 py-2">
-        <h2 className="font-heading text-sm font-semibold">Needs attention</h2>
-        <span className="text-xs text-muted-foreground">
-          {plural(attention.items.length, "item")}
-        </span>
-      </header>
-
-      {/* A container query rather than a viewport one: how much room a row has
-          is the strip's width — the sidebar and the panel padding are between
-          it and the window — so at 900px the meta used to take half of a row
-          the window still called wide. */}
-      <ul className="@container divide-y">
-        {rows.map((item) => (
-          <Row key={item.id} item={item} />
-        ))}
-      </ul>
-
-      {hidden > 0 ? (
-        <div className="border-t px-3 py-1.5">
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
           <button
             type="button"
-            onClick={() => setExpanded(!expanded)}
-            className="text-xs text-muted-foreground underline-offset-3 hover:text-foreground hover:underline"
-          >
-            {expanded ? "Show fewer" : `${hidden} more…`}
-          </button>
-        </div>
-      ) : null}
-
-      {/* One of the three queries can fail while the others answered, and what
-          is above is a real list with holes in it — not a list that failed to
-          load. Saying so is the difference between "read this, some of it is
-          missing" and letting a short list pass for the whole truth. */}
-      {attention.partial ? (
-        <p className="border-t px-3 py-2 text-xs text-muted-foreground">
-          Some of this list could not be loaded — {describeError(attention.error)}.{" "}
-          <Retry onClick={attention.refetch} />
-        </p>
-      ) : null}
-    </Frame>
-  )
-}
-
-/** The bordered box, whichever of the three things is inside it. */
-function Frame({ children }: { children: ReactNode }) {
-  return (
-    <section aria-label="Needs attention" className="shrink-0 rounded-lg border">
-      {children}
-    </section>
+            className="h-8 rounded-md border px-2 text-sm text-status-warn-fg"
+            aria-label={`Needs attention, ${attention.items.length} items`}
+          />
+        }
+      >
+        Needs attention{" "}
+        <span className="ml-1">{attention.items.length || (attention.isPending ? "…" : "!")}</span>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[min(24rem,calc(100vw-1rem))] p-0">
+        <header className="border-b px-3 py-2 font-semibold">
+          Needs attention · {attention.items.length}
+        </header>
+        {attention.isPending && attention.items.length === 0 ? (
+          <p role="status" className="px-3 py-2">
+            Loading attention…
+          </p>
+        ) : null}
+        {unavailable ? (
+          <p className="px-3 py-2">
+            Could not load attention — {describeError(attention.error)}.{" "}
+            <Retry onClick={attention.refetch} />
+          </p>
+        ) : null}
+        <ul className="max-h-[min(70vh,32rem)] divide-y overflow-y-auto">
+          {attention.items.map((item) => (
+            <Row key={item.id} item={item} onSelect={() => setOpen(false)} />
+          ))}
+        </ul>
+        {attention.partial ? (
+          <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+            Some items could not load — {describeError(attention.error)}.{" "}
+            <Retry onClick={attention.refetch} />
+          </p>
+        ) : null}
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -171,7 +96,7 @@ function Retry({ onClick }: { onClick: () => void }) {
  * question opens the thread it was asked in and a prompt opens the console it
  * is waiting in.
  */
-function Row({ item }: { item: AttentionItem }) {
+function Row({ item, onSelect }: { item: AttentionItem; onSelect?: () => void }) {
   const [search] = useSearchParams()
   // Where a row lands depends on the screen as well as its params: the strip is
   // the board's, but the same targets are used from the alerts, which are
@@ -221,6 +146,7 @@ function Row({ item }: { item: AttentionItem }) {
         // Set exactly when the target is a task panel replacing an open
         // goal's, rather than stacking on it (`target.replace`).
         replace={target.replace}
+        onClick={onSelect}
         className={className}
       >
         {content}

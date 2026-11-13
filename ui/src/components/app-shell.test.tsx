@@ -162,8 +162,16 @@ it("shows the screen's name once, as the header's only h1, with its actions at t
   const headerChildren = Array.from(header.children)
   const actionsContainer = headerChildren.find((el) => el.contains(newGoal))
   const controlsContainer = headerChildren.find((el) => el.contains(search))
-  expect(headerChildren.indexOf(controlsContainer as Element)).toBe(
+  // The shared Needs attention indicator may sit between them, and nothing else.
+  const between = headerChildren.slice(
     headerChildren.indexOf(actionsContainer as Element) + 1,
+    headerChildren.indexOf(controlsContainer as Element),
+  )
+  for (const el of between) {
+    expect(el.getAttribute("aria-label")).toMatch(/^Needs attention/)
+  }
+  expect(headerChildren.indexOf(controlsContainer as Element)).toBeGreaterThan(
+    headerChildren.indexOf(actionsContainer as Element),
   )
   // The screen's own content never gets its own competing heading.
   const main = document.querySelector("main")

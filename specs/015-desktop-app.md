@@ -76,7 +76,7 @@ Out: the daemon endpoints themselves (012).
    On Linux (WebKitGTK) every scroll area gets a thin scrollbar in theme
    colours, light and dark, from one rule in `index.css` keyed on a
    `data-platform="linux"` marker; macOS keeps its overlay scrollbars.
-3. Screens: the goals board (swimlanes plus an attention strip) has Active,
+3. Screens: the goals board (swimlanes) has Active,
    All and Finished status segments. A status-menu icon holds a custom
    selection. Each goal is one slim lane under two global column headers; its
    one-line row carries the goal's tokens at the right end (rule 39). The task
@@ -406,7 +406,7 @@ Out: the daemon endpoints themselves (012).
     keeps the effort after an `@` readable, and its hint holds the whole pin
     (`ui/src/features/sessions/sessions-list.test.tsx::keeps the effort beside
     a middle-cut model and gives the row a whole-pin hint`).
-27. A row of the attention strip for an agent blocked on a permission or an
+27. A row of the Needs attention popover for an agent blocked on a permission or an
     input prompt opens that session's console with `?focus=`, so the terminal
     takes the keyboard on arrival.
 28. Above the console, a session blocked on a permission or an input prompt
