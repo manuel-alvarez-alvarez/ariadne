@@ -9,7 +9,7 @@
  * that lead a screen carry it, the ones inside a panel tab or a dialog do not.
  */
 
-import { AlertCircleIcon } from "lucide-react"
+import { AlertCircleIcon, RefreshCwIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -46,6 +46,43 @@ export function ErrorState({
           </Button>
         </AlertAction>
       ) : null}
+    </Alert>
+  )
+}
+
+/**
+ * A refresh that failed with content already cached.
+ *
+ * The cached rows stay on screen under this notice: they may be outdated, and
+ * the retry asks again for just the read that failed. A read that never
+ * succeeded is an {@link ErrorState} instead. The notice leaves once a refresh
+ * succeeds, because the query's error clears with it.
+ */
+export function RefreshWarning({
+  what,
+  error,
+  onRetry,
+  className,
+}: {
+  /** What is on screen, lower case: "goals", "tasks". */
+  what: string
+  error: unknown
+  /** The failed query's `refetch`. */
+  onRetry: () => void
+  className?: string
+}) {
+  return (
+    <Alert className={className}>
+      <RefreshCwIcon />
+      <AlertTitle>Could not refresh {what}</AlertTitle>
+      <AlertDescription>
+        Showing what was last loaded, which may be outdated. {describeError(error)}
+      </AlertDescription>
+      <AlertAction>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      </AlertAction>
     </Alert>
   )
 }

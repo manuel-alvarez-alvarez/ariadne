@@ -15,7 +15,7 @@ import { useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup } from "@/components/ui/button-group"
@@ -167,7 +167,11 @@ export function GoalsListPage() {
         }
       />
 
-      {goals.error ? (
+      {goals.error && goals.data ? (
+        <RefreshWarning what="goals" error={goals.error} onRetry={() => void goals.refetch()} />
+      ) : null}
+
+      {goals.error && !goals.data ? (
         <ErrorState
           showIcon
           title="Could not load goals"

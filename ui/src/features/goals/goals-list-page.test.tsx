@@ -20,7 +20,7 @@ import { beforeEach, expect, it } from "vitest"
 import type { GoalDto } from "@/api"
 import { useSettingsStore } from "@/stores/settings"
 import { aGoal } from "@/test/fixtures"
-import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalsListPage } from "./goals-list-page"
 
 const GOAL: GoalDto = aGoal()
@@ -234,4 +234,41 @@ it("keeps the filter where a restart can find it", async () => {
       state: { goalStatusFilter: "active" },
     }),
   )
+})
+
+it("keeps the cached goals under a retryable warning when a refresh fails, and clears it on success", async () => {
+  const user = userEvent.setup()
+  const { queryClient } = renderScreen(<GoalsListPage />, { route: "/goals" })
+  await screen.findByText(GOAL.title)
+
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    return Promise.resolve(
+      url.pathname === "/v1/goals"
+        ? errorResponse(503, "unavailable", "daemon is busy")
+        : jsonResponse([]),
+    )
+  })
+  await queryClient.invalidateQueries({ queryKey: ["goals", "list"] })
+
+  await screen.findByText("Could not refresh goals")
+  expect(screen.getByText(GOAL.title)).toBeTruthy()
+  expect(screen.queryByText("Could not load goals")).toBeNull()
+
+  stubDaemon()
+  await user.click(screen.getByRole("button", { name: "Retry" }))
+  await waitFor(() => expect(screen.queryByText("Could not refresh goals")).toBeNull())
+  expect(screen.getByText(GOAL.title)).toBeTruthy()
+})
+
+it("shows a load failure, not a refresh warning, when nothing was ever cached", async () => {
+  daemonFetch.mockImplementation(() =>
+    Promise.resolve(errorResponse(503, "unavailable", "daemon is busy")),
+  )
+  renderBoard("/goals")
+
+  await screen.findByText("Could not load goals")
+  expect(screen.queryByText("Could not refresh goals")).toBeNull()
 })

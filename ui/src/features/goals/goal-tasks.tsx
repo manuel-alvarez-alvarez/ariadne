@@ -18,7 +18,7 @@ import { useMemo } from "react"
 
 import type { WorkflowStepDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { compareByAttention, TaskCard, taskListQueryOptions } from "@/features/tasks"
@@ -45,7 +45,8 @@ export function GoalTasks({
   // that is stuck should not be the one below the fold.
   const ordered = useMemo(() => [...(tasks.data ?? [])].sort(compareByAttention), [tasks.data])
 
-  if (tasks.error) {
+  const stale = tasks.error && tasks.data !== undefined
+  if (tasks.error && !stale) {
     return (
       <ErrorState
         showIcon
@@ -68,33 +69,43 @@ export function GoalTasks({
 
   if (ordered.length === 0) {
     return (
-      <EmptyState
-        emphasis="quiet"
-        title="No tasks yet"
-        action={
-          onNewTask ? (
-            <Button variant="outline" size="sm" onClick={onNewTask}>
-              <PlusIcon />
-              New task
-            </Button>
-          ) : undefined
-        }
-      />
+      <div className="flex flex-col gap-2">
+        {stale ? (
+          <RefreshWarning what="tasks" error={tasks.error} onRetry={() => void tasks.refetch()} />
+        ) : null}
+        <EmptyState
+          emphasis="quiet"
+          title="No tasks yet"
+          action={
+            onNewTask ? (
+              <Button variant="outline" size="sm" onClick={onNewTask}>
+                <PlusIcon />
+                New task
+              </Button>
+            ) : undefined
+          }
+        />
+      </div>
     )
   }
 
   return (
-    <ul className="flex flex-col gap-2">
-      {ordered.map((task) => (
-        <li key={task.id}>
-          <TaskCard
-            task={task}
-            steps={steps}
-            attention={attention.byTask.get(task.id)}
-            lastActivityAt={attention.lastActivity.get(task.id)}
-          />
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-2">
+      {stale ? (
+        <RefreshWarning what="tasks" error={tasks.error} onRetry={() => void tasks.refetch()} />
+      ) : null}
+      <ul className="flex flex-col gap-2">
+        {ordered.map((task) => (
+          <li key={task.id}>
+            <TaskCard
+              task={task}
+              steps={steps}
+              attention={attention.byTask.get(task.id)}
+              lastActivityAt={attention.lastActivity.get(task.id)}
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }

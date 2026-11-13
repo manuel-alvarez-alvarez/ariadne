@@ -21,7 +21,7 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 import type { TaskDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
+import { ErrorState, RefreshWarning } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { PanelHeader } from "@/components/panel-header"
 import { PanelSheet } from "@/components/panel-sheet"
@@ -111,7 +111,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
             <Skeleton className="h-64 w-full" />
           </PaneBody>
         </>
-      ) : task.error ? (
+      ) : task.error && !task.data ? (
         <>
           <PaneHeader>
             <PaneTitle className="sr-only">Task {taskId}</PaneTitle>
@@ -128,6 +128,13 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
         <>
           <TaskHeader task={task.data} />
           <PaneBody>
+            {task.error ? (
+              <RefreshWarning
+                what="this task"
+                error={task.error}
+                onRetry={() => void task.refetch()}
+              />
+            ) : null}
             <TaskSummary task={task.data} steps={steps} sessions={sessions.data} />
             <TaskFacts task={task.data} steps={steps} />
             {steps.length > 0 ? <WorkflowSteps task={task.data} steps={steps} /> : null}
