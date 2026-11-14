@@ -367,6 +367,45 @@ Out: the daemon endpoints themselves (012).
     anything itself: it moves focus to the panel's Close button, or to the
     modal's Collapse button, so the plain Escape that follows closes what
     is now focused.
+    The console has the extras of the CLI's attach pane
+    (`crates/ariadne-console/src/tui/`), rules 23a to 23f.
+23a. One fold toggle serves the whole console. Folded, it keeps the last 4
+    lines of a tool's output, the first 24 lines of a diff and the first 6
+    lines of a daemon prompt, and says how many lines it hides. The console
+    starts folded on each open. A control in the console's header and
+    Ctrl-O from anywhere in the console, the header's controls included,
+    flip it, and the control names the
+    state it flips to: `Unfold` while folded, `Fold` while unfolded.
+23b. The latest `available_commands_update` event replaces the command
+    list, whole: a later list, an empty one included, replaces the earlier
+    one. A list whose payload carries a `subagent`, of any value, is ignored, and the event
+    draws no block.
+23c. While the input starts with `/` and the cursor is in its first word, a
+    suggestion list shows at most 8 of the listed commands whose name holds
+    the typed text, each with its name, description and input hint, or says
+    "no matching command". No list shows while a permission question waits.
+    Up and Down move the pick, Tab or Enter completes it into the input as
+    `/name `, and Escape closes the list without cancelling the turn; the next edit
+    of the input opens it again. A
+    picked command is sent as plain text through `/console/input`, as every
+    prompt is.
+23d. A status row above the input shows the session's status, and while a
+    turn runs a spinner with `thinking` or `running <tool>` and a turn clock
+    counted from the `created_at` of the turn's first event. It shows the
+    token totals `↑in ↓out`: the sum over the launches of the latest
+    `ariadne_usage` of each launch's `stop`, or the session's own usage
+    where that is more, each count apart.
+23e. A sent prompt shows at once as a user prompt block tagged `queued`.
+    The `user_prompt_submit` with `source: "console"` and the same text,
+    newer than the send, replaces it: an older echo, such as one a resync
+    replays, does not. A failed post removes the queued block and adds an error
+    block. Each send is its own queued block: a failed post removes the
+    block of that send alone, even where an identical prompt is queued
+    beside it, and where the echo of a later identical send came first, the
+    failure clears the entry that echo left behind. A snapshot keeps a queued prompt it does not yet hold.
+23f. A footer under the input names the keys of the state: idle
+    (`enter send`), running (`esc cancel`) and a permission question
+    (`up/down or 1-9 choose`, `enter answer`), each with the fold key.
 24. A `resync` or a dropped stream is retried on the event stream's
     backoff, and the pane says it is reconnecting meanwhile. The fresh
     snapshot replaces the transcript, so no block shows twice.
@@ -1290,6 +1329,40 @@ Out: the daemon endpoints themselves (012).
   follows the newest block only while the reader is at the bottom
   (`ui/src/features/sessions/console/session-console.test.tsx::gives the input the keyboard when asked to on arrival`,
   `::follows the newest block while the reader is at the bottom`).
+- The fold toggle folds output, diffs and daemon prompts together, starts
+  folded, and flips from the header control and from Ctrl-O
+  (`ui/src/features/sessions/console/session-console.test.tsx::folds output, diffs and daemon prompts together, starting folded, from the header and Ctrl-O`,
+  `::folds on Ctrl-O from a header control, not only from the input`).
+- The latest command list replaces the earlier one, an empty list and all,
+  and a subagent's list is ignored
+  (`ui/src/features/sessions/console/transcript.test.ts::replaces the command list with each later one, an empty list included`,
+  `::ignores a command list a subagent sent`,
+  `::ignores a command list whose subagent is %s`).
+- The suggestion list shows the matching commands, at most eight, says none
+  matches, completes the pick, closes on Escape without cancelling, and a
+  command goes as text
+  (`ui/src/features/sessions/console/session-console.test.tsx::suggests the agent's commands while the first word is typed, and completes the pick`,
+  `::says no command matches, closes the list on Escape without cancelling, and sends a command as text`,
+  `::shows at most eight suggestions`,
+  `::reopens the suggestions on the next edit after Escape closed them`).
+- The status row shows the status, the turn with its clock and the token
+  totals
+  (`ui/src/features/sessions/console/session-console.test.tsx::shows the status, the turn with its clock, and the token totals`,
+  `ui/src/features/sessions/console/transcript.test.ts::totals the latest usage of each launch, never below the session's own`,
+  `::starts the turn clock at the turn's first event and names the open tool`).
+- A sent prompt shows as queued until its console echo replaces it, and a
+  failed send removes it
+  (`ui/src/features/sessions/console/session-console.test.tsx::shows a sent prompt as queued until the console echo replaces it`,
+  `::removes the queued prompt and adds an error block when the send fails`,
+  `ui/src/features/sessions/console/transcript.test.ts::shows a queued prompt until its console echo arrives, and drops it on a failed send`,
+  `::keeps a queued prompt across a snapshot that does not hold its echo`,
+  `::matches a queued prompt only to an echo newer than its send`,
+  `::takes back only the queued send that failed when the same text is queued twice`,
+  `::leaves no stale entry when an echo takes a failed send's entry before its failure arrives`,
+  `ui/src/features/sessions/console/session-console.test.tsx::takes back only the failed send when the same prompt is sent twice at once`,
+  `::leaves nothing queued when the echo of the second send comes before the first send's failure`).
+- The footer names the keys of the state
+  (`ui/src/features/sessions/console/session-console.test.tsx::names the keys of the state in the footer`).
 - The blocked banner says where to answer, says to resume an agent that is
   gone, and shows for no other reason
   (`ui/src/features/sessions/session-blocked-banner.test.tsx::says what a permission prompt is waiting for, and where to answer it`,

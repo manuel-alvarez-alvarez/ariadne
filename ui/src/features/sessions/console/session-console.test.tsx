@@ -595,3 +595,258 @@ it("rebuilds the bar and the views from the snapshot of a reconnect", async () =
   await user.click(screen.getByRole("tab", { name: /Tester/ }))
   within(transcript()).getByText("new child")
 })
+
+const lines = (count: number, label = "line") =>
+  Array.from({ length: count }, (_, index) => `${label} ${index + 1}`).join("\n")
+
+it("folds output, diffs and daemon prompts together, starting folded, from the header and Ctrl-O", async () => {
+  const user = userEvent.setup()
+  renderConsole([
+    event("user_prompt_submit", { text: lines(10, "prompt"), source: "daemon" }),
+    event("tool_call_update", {
+      acp: {
+        toolCallId: "call-1",
+        title: "Bash",
+        status: "completed",
+        content: [{ type: "content", content: { text: lines(10, "out") } }],
+      },
+    }),
+    event("tool_call_update", {
+      acp: {
+        toolCallId: "call-2",
+        title: "Edit",
+        content: [{ type: "diff", path: "a.ts", patch: { text: `@@\n${lines(30, "+add")}` } }],
+      },
+    }),
+  ])
+
+  const log = within(transcript())
+  expect(log.getByText(/prompt 6/)).not.toBeNull()
+  expect(log.queryByText(/prompt 7/)).toBeNull()
+  expect(log.getByText(/out 10/)).not.toBeNull()
+  expect(log.queryByText(/out 6\b/)).toBeNull()
+  expect(log.getByText(/out 7/)).not.toBeNull()
+  expect(log.queryByText("+add 25")).toBeNull()
+
+  await user.click(screen.getByRole("button", { name: "Unfold" }))
+  expect(log.getByText(/prompt 10/)).not.toBeNull()
+  expect(log.getByText(/out 1\b/)).not.toBeNull()
+  expect(log.getByText("+add 30")).not.toBeNull()
+
+  fireEvent.keyDown(input(), { key: "o", ctrlKey: true })
+  screen.getByRole("button", { name: "Unfold" })
+  expect(log.queryByText(/out 6\b/)).toBeNull()
+})
+
+function listCommands(source: FakeEventSource, commands: object[]) {
+  act(() =>
+    source.emit("event", event("available_commands_update", { available_commands: commands })),
+  )
+}
+
+it("suggests the agent's commands while the first word is typed, and completes the pick", () => {
+  const { source } = renderConsole()
+  listCommands(source, [
+    { name: "init", description: "Set up", input: { hint: "the path" } },
+    { name: "review", description: "Review it" },
+    { name: "compact", description: "Shrink" },
+  ])
+
+  fireEvent.change(input(), { target: { value: "/i" } })
+  const list = screen.getByRole("listbox", { name: "Slash commands" })
+  expect(within(list).getAllByRole("option")).toHaveLength(2)
+  within(list).getByText("the path")
+  within(list).getByText("Set up")
+
+  fireEvent.keyDown(input(), { key: "ArrowDown" })
+  expect(within(list).getByRole("option", { name: /review/ })).toHaveProperty(
+    "ariaSelected",
+    "true",
+  )
+  fireEvent.keyDown(input(), { key: "Tab" })
+  expect(input()).toHaveProperty("value", "/review ")
+  expect(screen.queryByRole("listbox", { name: "Slash commands" })).toBeNull()
+  expect(posts).toHaveLength(0)
+})
+
+it("says no command matches, closes the list on Escape without cancelling, and sends a command as text", async () => {
+  const { source } = renderConsole([event("user_prompt_submit", { text: "go" })], "running")
+  listCommands(source, [{ name: "init", description: "Set up" }])
+
+  fireEvent.change(input(), { target: { value: "/zzz" } })
+  screen.getByText("no matching command")
+
+  fireEvent.change(input(), { target: { value: "/ini" } })
+  fireEvent.keyDown(input(), { key: "Escape" })
+  expect(screen.queryByRole("listbox", { name: "Slash commands" })).toBeNull()
+  expect(posts).toHaveLength(0)
+
+  fireEvent.change(input(), { target: { value: "/ini" } })
+  fireEvent.change(input(), { target: { value: "" } })
+  fireEvent.change(input(), { target: { value: "/ini" } })
+  fireEvent.keyDown(input(), { key: "Enter" })
+  expect(input()).toHaveProperty("value", "/init ")
+  fireEvent.keyDown(input(), { key: "Enter" })
+  await waitFor(() => expect(posts).toHaveLength(1))
+  expect(posts[0]).toEqual({
+    path: `/v1/sessions/${SESSION_ID}/console/input`,
+    body: JSON.stringify({ text: "/init " }),
+  })
+})
+
+it("shows at most eight suggestions", () => {
+  const { source } = renderConsole()
+  listCommands(
+    source,
+    Array.from({ length: 12 }, (_, index) => ({ name: `cmd${index}`, description: "" })),
+  )
+
+  fireEvent.change(input(), { target: { value: "/cmd" } })
+
+  expect(
+    within(screen.getByRole("listbox", { name: "Slash commands" })).getAllByRole("option"),
+  ).toHaveLength(8)
+})
+
+it("shows the status, the turn with its clock, and the token totals", () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date("2026-11-14T10:01:05Z"))
+  const stop = event("stop", {
+    stop_reason: "end_turn",
+    ariadne_usage: { source: "a", input_tokens: 12_400, output_tokens: 3_100 },
+  })
+  const { source } = renderConsole([stop], "idle")
+  const row = screen.getByLabelText("Session status")
+  within(row).getByText("idle")
+  within(row).getByText("↑12k ↓3.1k")
+  expect(within(row).queryByText("thinking")).toBeNull()
+
+  act(() => source.emit("event", event("user_prompt_submit", { text: "go" })))
+  within(row).getByText("thinking")
+  within(row).getByText("1m 05s")
+  act(() => vi.advanceTimersByTime(3000))
+  within(row).getByText("1m 08s")
+
+  act(() => source.emit("event", event("pre_tool_use", { tool_name: "Bash" })))
+  within(row).getByText("running Bash")
+})
+
+it("shows a sent prompt as queued until the console echo replaces it", async () => {
+  const { source } = renderConsole()
+
+  fireEvent.change(input(), { target: { value: "ship it" } })
+  fireEvent.keyDown(input(), { key: "Enter" })
+  within(transcript()).getByText("ship it")
+  within(transcript()).getByText("queued")
+
+  act(() =>
+    source.emit("event", event("user_prompt_submit", { text: "ship it", source: "console" })),
+  )
+  expect(within(transcript()).getAllByText("ship it")).toHaveLength(1)
+  expect(within(transcript()).queryByText("queued")).toBeNull()
+})
+
+it("removes the queued prompt and adds an error block when the send fails", async () => {
+  answer(() => errorResponse(409, "session_not_live", "the session is not live"))
+  renderConsole()
+
+  fireEvent.change(input(), { target: { value: "ship it" } })
+  fireEvent.keyDown(input(), { key: "Enter" })
+
+  await within(transcript()).findByText(/the session is not live/)
+  expect(within(transcript()).queryByText("ship it")).toBeNull()
+  expect(within(transcript()).queryByText("queued")).toBeNull()
+})
+
+it("names the keys of the state in the footer", () => {
+  const { source } = renderConsole()
+  screen.getByText(/enter send/)
+  expect(screen.queryByText(/esc cancel/)).toBeNull()
+
+  act(() => source.emit("event", event("user_prompt_submit", { text: "go" })))
+  screen.getByText(/esc cancel/)
+
+  act(() =>
+    source.emit(
+      "event",
+      event("permission_request", {
+        tool_name: "Edit",
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+      }),
+    ),
+  )
+  screen.getByText(/up\/down or 1-9 choose · enter answer/)
+  expect(screen.queryByText(/esc cancel/)).toBeNull()
+})
+
+it("folds on Ctrl-O from a header control, not only from the input", () => {
+  renderConsole()
+  const expand = screen.getByRole("button", { name: "Expand the console" })
+
+  fireEvent.keyDown(expand, { key: "o", ctrlKey: true })
+  screen.getByRole("button", { name: "Fold" })
+
+  fireEvent.keyDown(screen.getByRole("button", { name: "Fold" }), { key: "o", ctrlKey: true })
+  screen.getByRole("button", { name: "Unfold" })
+})
+
+it("reopens the suggestions on the next edit after Escape closed them", () => {
+  const { source } = renderConsole()
+  listCommands(source, [{ name: "init", description: "Set up" }])
+  fireEvent.change(input(), { target: { value: "/ini" } })
+  fireEvent.keyDown(input(), { key: "Escape" })
+  expect(screen.queryByRole("listbox", { name: "Slash commands" })).toBeNull()
+
+  fireEvent.change(input(), { target: { value: "/init" } })
+
+  screen.getByRole("listbox", { name: "Slash commands" })
+})
+
+it("takes back only the failed send when the same prompt is sent twice at once", async () => {
+  let calls = 0
+  answer(() => {
+    calls += 1
+    return calls === 1
+      ? errorResponse(409, "session_not_live", "the first send was refused")
+      : new Response(null, { status: 204 })
+  })
+  const { source } = renderConsole()
+
+  for (let send = 0; send < 2; send += 1) {
+    fireEvent.change(input(), { target: { value: "again" } })
+    fireEvent.keyDown(input(), { key: "Enter" })
+  }
+
+  await within(transcript()).findByText(/the first send was refused/)
+  expect(within(transcript()).getAllByText("queued")).toHaveLength(1)
+
+  act(() => source.emit("event", event("user_prompt_submit", { text: "again", source: "console" })))
+  expect(within(transcript()).queryByText("queued")).toBeNull()
+  expect(within(transcript()).getAllByText("again")).toHaveLength(1)
+})
+
+it("leaves nothing queued when the echo of the second send comes before the first send's failure", async () => {
+  let refuse: () => void = () => {}
+  const refused = new Promise<void>((resolve) => {
+    refuse = resolve
+  })
+  let calls = 0
+  daemonFetch.mockImplementation(async () => {
+    calls += 1
+    if (calls > 1) return new Response(null, { status: 204 })
+    await refused
+    return errorResponse(409, "session_not_live", "the first send was refused")
+  })
+  const { source } = renderConsole()
+
+  for (let send = 0; send < 2; send += 1) {
+    fireEvent.change(input(), { target: { value: "again" } })
+    fireEvent.keyDown(input(), { key: "Enter" })
+  }
+  act(() => source.emit("event", event("user_prompt_submit", { text: "again", source: "console" })))
+  act(() => refuse())
+
+  await within(transcript()).findByText(/the first send was refused/)
+  expect(within(transcript()).queryByText("queued")).toBeNull()
+  expect(within(transcript()).getAllByText("again")).toHaveLength(1)
+})

@@ -12,9 +12,13 @@ import {
   applyEvent,
   applySnapshot,
   type Block,
+  dequeuePrompt,
   emptyTranscript,
   oldestEventId,
   prependEvents,
+  queuePrompt,
+  runningTool,
+  tokenTotals,
   view,
 } from "./transcript"
 
@@ -478,4 +482,146 @@ it.each([
   expect(status(view(transcript))).toEqual(["completed"])
   expect(status(view(transcript, "child-1"))).toEqual(["completed"])
   expect(status(view(transcript, "child-2"))).toEqual(["pending"])
+})
+
+function commands(...names: string[]) {
+  return event("available_commands_update", {
+    available_commands: names.map((name) => ({ name, description: `${name} does it` })),
+  })
+}
+
+it("replaces the command list with each later one, an empty list included", () => {
+  const events = [
+    commands("init", "review"),
+    event("available_commands_update", {
+      available_commands: [{ name: "plan", description: "Plan", input: { hint: "the goal" } }],
+    }),
+  ]
+  const listed = applySnapshot(emptyTranscript(), events)
+  expect(listed.availableCommands).toEqual([
+    { name: "plan", description: "Plan", hint: "the goal" },
+  ])
+  expect(listed.blocks).toEqual([])
+
+  const emptied = applyEvent(listed, event("available_commands_update", { available_commands: [] }))
+  expect(emptied.availableCommands).toEqual([])
+})
+
+it("ignores a command list a subagent sent", () => {
+  const listed = applySnapshot(emptyTranscript(), [
+    commands("init"),
+    event("available_commands_update", {
+      subagent: { id: "child" },
+      available_commands: [{ name: "child-only" }],
+    }),
+  ])
+
+  expect(listed.availableCommands.map((command) => command.name)).toEqual(["init"])
+})
+
+it("shows a queued prompt until its console echo arrives, and drops it on a failed send", () => {
+  const queued = queuePrompt(emptyTranscript(), "ship it", "q1")
+  expect(queued.queuedPrompts.map((prompt) => prompt.text)).toEqual(["ship it"])
+
+  const typedElsewhere = applyEvent(queued, event("user_prompt_submit", { text: "ship it" }))
+  expect(typedElsewhere.queuedPrompts).toHaveLength(1)
+  const other = applyEvent(queued, event("user_prompt_submit", { text: "else", source: "console" }))
+  expect(other.queuedPrompts).toHaveLength(1)
+  const echoed = applyEvent(
+    queued,
+    event("user_prompt_submit", { text: "ship it", source: "console" }),
+  )
+  expect(echoed.queuedPrompts).toEqual([])
+
+  expect(dequeuePrompt(queued, "q1", "ship it").queuedPrompts).toEqual([])
+})
+
+it("keeps a queued prompt across a snapshot that does not hold its echo", () => {
+  const queued = queuePrompt(emptyTranscript(), "ship it", "q1")
+  expect(applySnapshot(queued, []).queuedPrompts).toHaveLength(1)
+  const echoed = [event("user_prompt_submit", { text: "ship it", source: "console" })]
+  expect(applySnapshot(queued, echoed).queuedPrompts).toEqual([])
+})
+
+it("totals the latest usage of each launch, never below the session's own", () => {
+  const stop = (source: string, input: number, output: number) =>
+    event("stop", {
+      stop_reason: "end_turn",
+      ariadne_usage: { source, input_tokens: input, output_tokens: output },
+    })
+  const transcript = applySnapshot(emptyTranscript(), [
+    stop("a", 100, 10),
+    stop("a", 300, 30),
+    stop("b", 50, 5),
+  ])
+
+  expect(tokenTotals(transcript)).toEqual({ input: 350, output: 35 })
+  expect(tokenTotals(transcript, { input: 1000, output: 1 })).toEqual({ input: 1000, output: 35 })
+})
+
+it("starts the turn clock at the turn's first event and names the open tool", () => {
+  const first = {
+    ...event("user_prompt_submit", { text: "go" }),
+    created_at: "2026-11-14T10:00:00Z",
+  }
+  const later = {
+    ...event("pre_tool_use", { tool_name: "Bash" }),
+    created_at: "2026-11-14T10:00:05Z",
+  }
+  const running = applySnapshot(emptyTranscript(), [first, later])
+  expect(running.turnStartedAt).toBe("2026-11-14T10:00:00Z")
+  expect(runningTool(running)).toBe("Bash")
+
+  const stopped = applyEvent(running, event("stop", { stop_reason: "cancelled" }))
+  expect(stopped.turnStartedAt).toBeUndefined()
+})
+
+it.each([
+  ["a title only", { title: "child" }],
+  ["a bare string", "child"],
+  ["a null", null],
+])("ignores a command list whose subagent is %s", (_label, subagent) => {
+  const listed = applySnapshot(emptyTranscript(), [
+    commands("init"),
+    event("available_commands_update", { subagent, available_commands: [{ name: "other" }] }),
+  ])
+
+  expect(listed.availableCommands.map((command) => command.name)).toEqual(["init"])
+})
+
+it("matches a queued prompt only to an echo newer than its send", () => {
+  const old = event("user_prompt_submit", { text: "again", source: "console" })
+  const seen = applySnapshot(emptyTranscript(), [old])
+  const queued = queuePrompt(seen, "again", "q1")
+
+  // A resync replays the old echo first: it is not the answer to the new send.
+  const replayed = applySnapshot(queued, [old])
+  expect(replayed.queuedPrompts).toHaveLength(1)
+
+  const echoed = applyEvent(
+    replayed,
+    event("user_prompt_submit", { text: "again", source: "console" }),
+  )
+  expect(echoed.queuedPrompts).toEqual([])
+})
+
+it("takes back only the queued send that failed when the same text is queued twice", () => {
+  const twice = queuePrompt(queuePrompt(emptyTranscript(), "again", "q1"), "again", "q2")
+
+  expect(dequeuePrompt(twice, "q1", "again").queuedPrompts.map((prompt) => prompt.id)).toEqual([
+    "q2",
+  ])
+})
+
+it("leaves no stale entry when an echo takes a failed send's entry before its failure arrives", () => {
+  const twice = queuePrompt(queuePrompt(emptyTranscript(), "again", "q1"), "again", "q2")
+  // The second send succeeded, and its echo came first: it takes the oldest entry.
+  const echoed = applyEvent(
+    twice,
+    event("user_prompt_submit", { text: "again", source: "console" }),
+  )
+  expect(echoed.queuedPrompts.map((prompt) => prompt.id)).toEqual(["q2"])
+
+  // The first send's failure then finds its own entry gone, and clears the stale one.
+  expect(dequeuePrompt(echoed, "q1", "again").queuedPrompts).toEqual([])
 })

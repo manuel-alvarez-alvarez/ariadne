@@ -95,31 +95,88 @@ interface ChildAgent extends Subagent {
   announcedAt: string
 }
 
+/** A slash command the agent lists: an ACP `AvailableCommand`. */
+export interface AgentCommand {
+  /** The name, without its `/`. */
+  name: string
+  description: string
+  /** What its argument is, as the agent says it. */
+  hint?: string
+}
+
+/** A prompt the console sent that the stream has not echoed yet. */
+interface QueuedPrompt {
+  id: string
+  text: string
+  /** The newest event id the transcript held when it was sent: only a later echo matches. */
+  after: string
+}
+
 export interface Transcript {
   blocks: Block[]
   /** Every child in the order it was first heard of. */
   subagents: ChildAgent[]
   /** A turn runs: a prompt or the agent's output since the last stop. */
   running: boolean
+  /** The `created_at` of the running turn's first event. */
+  turnStartedAt?: string
+  /** The newest event id folded in. */
+  newest: string
+  /** The latest list of the session's slash commands, whole. */
+  availableCommands: AgentCommand[]
+  /** Prompts sent from this console, shown until their `user_prompt_submit` arrives. */
+  queuedPrompts: QueuedPrompt[]
+  /** The latest totals each launch reported on a `stop`, by launch. */
+  launches: Readonly<Record<string, TokenTotals>>
   /** Every event id folded in, so an event delivered twice is folded once. */
   seen: ReadonlySet<string>
   /** Every event folded in, oldest first, so an older page can be folded before them. */
   events: readonly AgentEventDto[]
 }
 
-export function emptyTranscript(): Transcript {
-  return { blocks: [], subagents: [], running: false, seen: new Set(), events: [] }
+export interface TokenTotals {
+  input: number
+  output: number
 }
 
-/** The transcript a `snapshot` opens on, in place of whatever was shown. */
-export function applySnapshot(_transcript: Transcript, events: AgentEventDto[]): Transcript {
-  return events.reduce(applyEvent, emptyTranscript())
+export function emptyTranscript(): Transcript {
+  return {
+    blocks: [],
+    subagents: [],
+    running: false,
+    newest: "",
+    availableCommands: [],
+    queuedPrompts: [],
+    launches: {},
+    seen: new Set(),
+    events: [],
+  }
+}
+
+/**
+ * The transcript a `snapshot` opens on, in place of whatever was shown. A
+ * prompt still queued stays, until the snapshot or a later event holds it.
+ */
+export function applySnapshot(transcript: Transcript, events: AgentEventDto[]): Transcript {
+  const opened = { ...emptyTranscript(), queuedPrompts: transcript.queuedPrompts }
+  return events.reduce(applyEvent, opened)
 }
 
 /** One more event of the stream, folded into the blocks so far. */
 export function applyEvent(transcript: Transcript, event: AgentEventDto): Transcript {
   if (transcript.seen.has(event.id)) return transcript
   const seen = new Set(transcript.seen).add(event.id)
+  if (event.kind === COMMANDS_KIND) {
+    // A child's list is the child's, not the session's: any payload that names a `subagent`.
+    if (at(event.payload, "subagent") !== undefined)
+      return { ...transcript, events: [...transcript.events, event], seen }
+    return {
+      ...transcript,
+      availableCommands: commandsOf(event),
+      events: [...transcript.events, event],
+      seen,
+    }
+  }
   const blocks = transcript.blocks.slice()
   const subagents = transcript.subagents.slice()
   if (event.kind === SUBAGENT_UPDATE) followChild(subagents, blocks, event)
@@ -128,10 +185,16 @@ export function applyEvent(transcript: Transcript, event: AgentEventDto): Transc
     if (id !== undefined) childAt(subagents, event, id)
     fold(blocks, event)
   }
+  const now = running(transcript.running, event.kind)
   return {
+    ...transcript,
     blocks,
     subagents,
-    running: running(transcript.running, event.kind),
+    running: now,
+    newest: event.id > transcript.newest ? event.id : transcript.newest,
+    turnStartedAt: now ? (transcript.turnStartedAt ?? event.created_at) : undefined,
+    queuedPrompts: unqueue(transcript.queuedPrompts, event),
+    launches: event.kind === "stop" ? launchesOf(transcript.launches, event) : transcript.launches,
     seen,
     events: [...transcript.events, event],
   }
@@ -148,13 +211,105 @@ export function oldestEventId(transcript: Transcript): string | undefined {
  * A page of events older than all the transcript holds, oldest first, folded
  * in before the events already shown, so a call or a run of text that spans
  * the page boundary folds as one block. The console's own error blocks stay.
+ * The queue and the running turn are not events, so they stay as they were.
  */
 export function prependEvents(transcript: Transcript, events: AgentEventDto[]): Transcript {
   const fresh = events.filter((event) => !transcript.seen.has(event.id))
   if (fresh.length === 0) return transcript
   const folded = [...fresh, ...transcript.events].reduce(applyEvent, emptyTranscript())
   const local = transcript.blocks.filter((block) => block.id.startsWith("local:"))
-  return { ...folded, blocks: [...folded.blocks, ...local] }
+  return {
+    ...transcript,
+    blocks: [...folded.blocks, ...local],
+    subagents: folded.subagents,
+    seen: folded.seen,
+    events: folded.events,
+    availableCommands: folded.availableCommands,
+    launches: folded.launches,
+  }
+}
+
+const COMMANDS_KIND = "available_commands_update"
+
+function commandsOf(event: AgentEventDto): AgentCommand[] {
+  return list(event.payload, "available_commands").flatMap((entry) => {
+    const name = str(entry, "name")
+    if (!name) return []
+    return [
+      {
+        name,
+        description: str(entry, "description") ?? "",
+        hint: str(entry, "input", "hint"),
+      },
+    ]
+  })
+}
+
+/** The matching echo of a prompt this console sent takes its queued block away. */
+function unqueue(queued: QueuedPrompt[], event: AgentEventDto): QueuedPrompt[] {
+  if (event.kind !== "user_prompt_submit" || str(event.payload, "source") !== "console") {
+    return queued
+  }
+  const text = str(event.payload, "text")
+  const index = queued.findIndex((prompt) => prompt.text === text && event.id > prompt.after)
+  return index === -1 ? queued : queued.filter((_, at) => at !== index)
+}
+
+/** A launch's latest totals replace the ones before them. */
+function launchesOf(
+  launches: Readonly<Record<string, TokenTotals>>,
+  event: AgentEventDto,
+): Readonly<Record<string, TokenTotals>> {
+  const source = str(event.payload, "ariadne_usage", "source")
+  const input = at(event.payload, "ariadne_usage", "input_tokens")
+  const output = at(event.payload, "ariadne_usage", "output_tokens")
+  if (source === undefined || typeof input !== "number" || typeof output !== "number") {
+    return launches
+  }
+  return { ...launches, [source]: { input, output } }
+}
+
+/**
+ * What the session has spent: the sum of each launch's latest totals, or the
+ * session's own usage where that is more, each count on its own.
+ */
+export function tokenTotals(transcript: Transcript, own?: TokenTotals): TokenTotals {
+  const sum = Object.values(transcript.launches).reduce(
+    (total, launch) => ({
+      input: total.input + launch.input,
+      output: total.output + launch.output,
+    }),
+    { input: 0, output: 0 },
+  )
+  return {
+    input: Math.max(sum.input, own?.input ?? 0),
+    output: Math.max(sum.output, own?.output ?? 0),
+  }
+}
+
+/** The title of the tool call still open, if one is. */
+export function runningTool(transcript: Transcript): string | undefined {
+  const last = transcript.blocks.findLast((block) => block.type === "tool")
+  return last?.type === "tool" && !isTerminal(last.tool.status) ? last.tool.title : undefined
+}
+
+/** Show a prompt at once, before the stream echoes it; `id` names this send alone. */
+export function queuePrompt(transcript: Transcript, text: string, id: string): Transcript {
+  const after = transcript.newest
+  return { ...transcript, queuedPrompts: [...transcript.queuedPrompts, { id, text, after }] }
+}
+
+/**
+ * Take a queued prompt back by the id of its send: that send failed. Where an
+ * echo of the same text already took its entry, that echo was another send's,
+ * so the oldest entry of that text left is the one that is stale.
+ */
+export function dequeuePrompt(transcript: Transcript, id: string, text: string): Transcript {
+  const queued = transcript.queuedPrompts
+  const found = queued.findIndex((prompt) => prompt.id === id)
+  const index = found === -1 ? queued.findIndex((prompt) => prompt.text === text) : found
+  if (index === -1) return transcript
+  return { ...transcript, queuedPrompts: queued.filter((_, at) => at !== index) }
 }
 
 /**

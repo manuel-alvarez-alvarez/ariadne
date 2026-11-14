@@ -426,6 +426,13 @@ stream (008). It lives in `src/features/sessions/console/`:
   posts `{"subagent_id"}` to the cancel route for a running child that may
   be cancelled.
 
+The console also has the CLI pane's extras (spec 015, rules 23a to 23f): a
+fold toggle (header control and Ctrl-O), the agent's slash commands as a
+suggestion list over the input, a status row, a `queued` block for a sent
+prompt, and a footer of keys. `transcript.ts` holds their state
+(`availableCommands`, `queuedPrompts`, the launches' token totals and the
+turn's start); `session-console.tsx` draws it.
+
 Escape inside the console cancels a running turn and never reaches the pane
 or the modal. ⌘Escape moves the keyboard to the panel's Close button or the
 modal's Collapse button. The tests drive the console through the

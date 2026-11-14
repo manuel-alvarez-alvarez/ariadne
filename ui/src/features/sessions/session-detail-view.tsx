@@ -331,6 +331,7 @@ export function SessionDetailView({
             sessionId={session.id}
             status={session.status}
             autoFocus={focusTerminal}
+            usage={{ input: session.usage.input_tokens, output: session.usage.output_tokens }}
             className="h-full min-h-0"
           />
         </TabsContent>

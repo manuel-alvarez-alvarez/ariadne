@@ -14,15 +14,29 @@
  * leaves the console for the panel's Close button or the modal's Collapse
  * button, so a plain Escape next closes what is now focused. The typed
  * chords of the shell stay silent while the input has the keyboard, since
- * it is a text field (`isTypingTarget`).
+ * it is a text field (`isTypingTarget`). Ctrl-O folds and unfolds the whole
+ * console, and Escape closes the slash-command list before it cancels a turn.
  *
  * A session with subagents shows a bar of views above the input: `main`, the
  * session's own, and one per child. A click, Tab and Shift-Tab switch the
  * view. A child's view is read-only: Escape there goes back to `main`, or
  * cancels the child where it runs and said it may be cancelled.
+ *
+ * The extras the CLI's attach pane has (`crates/ariadne-console/src/tui/`):
+ * one fold toggle, the agent's slash commands as a suggestion list over the
+ * input, a status row, a sent prompt shown at once as `queued`, and a footer
+ * of the keys the state takes.
  */
 
-import { Loader2Icon, Maximize2Icon, Minimize2Icon, PlugZapIcon, SquareIcon } from "lucide-react"
+import {
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
+  Loader2Icon,
+  Maximize2Icon,
+  Minimize2Icon,
+  PlugZapIcon,
+  SquareIcon,
+} from "lucide-react"
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -37,37 +51,54 @@ import { api, type SessionStatus, unwrap } from "@/api"
 import { Markdown } from "@/components/markdown"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
-import { cn, describeError } from "@/lib/format"
+import { cn, describeError, formatTokens } from "@/lib/format"
 import { useBaseUrl } from "@/stores/settings"
 
 import { isLiveStatus } from "../session-display"
 import { ConsoleStream, type ConsoleStreamStatus, consoleStreamUrl } from "./console-stream"
 import {
+  type AgentCommand,
   appendError,
   applyEvent,
   applySnapshot,
   type Block,
+  dequeuePrompt,
   emptyTranscript,
   isTerminal,
   oldestEventId,
   type PermissionOption,
   pendingPermission,
   prependEvents,
+  queuePrompt,
+  runningTool,
   stateMark,
+  type TokenTotals,
   type Transcript,
+  tokenTotals,
   view,
 } from "./transcript"
+
+/** How many lines a folded console keeps of each kind of text. */
+const FOLDED_OUTPUT_LINES = 4
+const FOLDED_DIFF_LINES = 24
+const FOLDED_PROMPT_LINES = 6
+
+/** The most commands the suggestion list shows. */
+const SUGGESTIONS = 8
 
 export function SessionConsole({
   sessionId,
   status,
   autoFocus,
+  usage,
   className,
 }: {
   sessionId: string
   status: SessionStatus
   /** Hand the input the keyboard as soon as it is on screen. */
   autoFocus?: boolean
+  /** What the session itself reports spending, the floor of the status row's totals. */
+  usage?: TokenTotals
   className?: string
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -84,6 +115,7 @@ export function SessionConsole({
             sessionId={sessionId}
             status={status}
             autoFocus
+            usage={usage}
             className="h-full"
             onCollapse={() => setExpanded(false)}
           />
@@ -97,6 +129,7 @@ export function SessionConsole({
       sessionId={sessionId}
       status={status}
       autoFocus={autoFocus}
+      usage={usage}
       className={className}
       onExpand={() => setExpanded(true)}
     />
@@ -119,6 +152,7 @@ function ConsolePane({
   sessionId,
   status,
   autoFocus,
+  usage,
   className,
   onExpand,
   onCollapse,
@@ -126,6 +160,7 @@ function ConsolePane({
   sessionId: string
   status: SessionStatus
   autoFocus?: boolean
+  usage?: TokenTotals
   className?: string
   onExpand?: () => void
   onCollapse?: () => void
@@ -136,6 +171,11 @@ function ConsolePane({
   const [streamError, setStreamError] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
   const [selected, setSelected] = useState(0)
+  const [folded, setFolded] = useState(true)
+  const [cursor, setCursor] = useState(0)
+  const [suggested, setSuggested] = useState(0)
+  const [dismissed, setDismissed] = useState(false)
+  const [now, setNow] = useState(Date.now)
   const [answering, setAnswering] = useState<string | null>(null)
   /** The child whose view is shown; none for `main`. */
   const [shown, setShown] = useState<string | undefined>(undefined)
@@ -143,6 +183,8 @@ function ConsolePane({
   const log = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
   const collapseButton = useRef<HTMLButtonElement>(null)
+  const root = useRef<HTMLDivElement>(null)
+  const sends = useRef(0)
   const following = useRef(true)
   const [history, setHistory] = useState<History>({ state: "idle" })
   // Bumped when a snapshot or a new session replaces the transcript, so a page
@@ -244,6 +286,21 @@ function ConsolePane({
   const running = live && (status === "running" || transcript.running)
   const pending = live ? pendingPermission(transcript) : undefined
   const pendingId = pending?.id
+  const turnStartedAt = running ? transcript.turnStartedAt : undefined
+
+  // The turn clock counts on, once a second, while a turn runs.
+  useEffect(() => {
+    if (turnStartedAt === undefined) return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [turnStartedAt])
+
+  const suggestions =
+    live && !pending && !dismissed
+      ? suggest(transcript.availableCommands, draft, cursor)
+      : undefined
+  const pickedSuggestion = Math.min(suggested, Math.max((suggestions?.length ?? 1) - 1, 0))
 
   // A new question starts on its first option, and with nobody answering it.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only a new question resets the pick
@@ -267,11 +324,40 @@ function ConsolePane({
     [sessionId],
   )
 
+  function edit(text: string, at: number) {
+    setDraft(text)
+    setCursor(at)
+    setSuggested(0)
+    setDismissed(false)
+  }
+
   function send() {
     const text = draft
     if (text.trim().length === 0) return
-    setDraft("")
-    post(text).catch((error) => fail("Could not send the prompt", error))
+    edit("", 0)
+    // Each send is its own queue entry, so a failure takes back that send alone.
+    sends.current += 1
+    const id = `queued:${sends.current}`
+    setTranscript((current) => queuePrompt(current, text, id))
+    post(text).catch((error) => {
+      setTranscript((current) => dequeuePrompt(current, id, text))
+      fail("Could not send the prompt", error)
+    })
+  }
+
+  /** The suggestion list's keys: Up and Down move, Tab and Enter complete. True when taken. */
+  function suggestKey(event: KeyboardEvent): boolean {
+    if (!suggestions) return false
+    const count = suggestions.length
+    if (event.key === "ArrowUp" && count > 0) setSuggested(Math.max(pickedSuggestion - 1, 0))
+    else if (event.key === "ArrowDown" && count > 0)
+      setSuggested(Math.min(pickedSuggestion + 1, count - 1))
+    else if ((event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) && count > 0) {
+      const command = suggestions[pickedSuggestion]
+      if (command) edit(`/${command.name} `, command.name.length + 2)
+    } else return false
+    event.preventDefault()
+    return true
   }
 
   function answer(option: PermissionOption) {
@@ -336,6 +422,7 @@ function ConsolePane({
     if (event.key === "Enter" && (event.shiftKey || event.nativeEvent.isComposing)) return
     // An empty input hands its keys to a waiting question, as the CLI does.
     if (draft.length === 0 && pickKey(event)) return
+    if (suggestKey(event)) return
     if (event.key === "Enter") {
       event.preventDefault()
       send()
@@ -344,8 +431,26 @@ function ConsolePane({
 
   // Escape and ⌘Escape are claimed on the console's own element, before the
   // pane or the dialog around it hears of them.
-  const latest = useRef({ running, cancel, onCollapse, children, child, childCancellable })
-  latest.current = { running, cancel, onCollapse, children, child, childCancellable }
+  const latest = useRef({
+    running,
+    cancel,
+    onCollapse,
+    children,
+    child,
+    childCancellable,
+    suggesting: false,
+    dismiss: () => {},
+  })
+  latest.current = {
+    running,
+    cancel,
+    onCollapse,
+    children,
+    child,
+    childCancellable,
+    suggesting: suggestions !== undefined,
+    dismiss: () => setDismissed(true),
+  }
   const switchers = useRef({ showView, cancelChild })
   switchers.current = { showView, cancelChild }
   useEffect(() => {
@@ -374,12 +479,24 @@ function ConsolePane({
             ?.focus()
         return
       }
-      if (child) {
+      if (latest.current.suggesting) latest.current.dismiss()
+      else if (child) {
         if (childCancellable) switchers.current.cancelChild(child)
         else switchers.current.showView(undefined)
-        return
-      }
-      if (latest.current.running) latest.current.cancel()
+      } else if (latest.current.running) latest.current.cancel()
+    }
+    el.addEventListener("keydown", onKey)
+    return () => el.removeEventListener("keydown", onKey)
+  }, [])
+
+  // Ctrl-O folds from anywhere in the console, the header's controls included.
+  useEffect(() => {
+    const el = root.current
+    if (!el) return
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "o" || !event.ctrlKey || event.metaKey || event.altKey) return
+      event.preventDefault()
+      setFolded((was) => !was)
     }
     el.addEventListener("keydown", onKey)
     return () => el.removeEventListener("keydown", onKey)
@@ -387,6 +504,7 @@ function ConsolePane({
 
   return (
     <div
+      ref={root}
       className={cn(
         "flex min-h-0 flex-col overflow-hidden rounded-lg border bg-background text-sm text-foreground shadow-xs",
         className,
@@ -401,6 +519,15 @@ function ConsolePane({
             </span>
           ) : null}
         </span>
+        <Button
+          size="xs"
+          variant="ghost"
+          onClick={() => setFolded((was) => !was)}
+          aria-keyshortcuts="Control+O"
+        >
+          {folded ? <ChevronsUpDownIcon /> : <ChevronsDownUpIcon />}
+          {folded ? "Unfold" : "Fold"}
+        </Button>
         {onExpand ? (
           <Button size="icon-xs" variant="ghost" onClick={onExpand} aria-label="Expand the console">
             <Maximize2Icon />
@@ -435,6 +562,7 @@ function ConsolePane({
             <BlockView
               key={block.id}
               block={block}
+              folded={folded}
               picker={
                 block.type === "permission" && block.id === pendingId ? (
                   <PermissionPicker
@@ -449,6 +577,11 @@ function ConsolePane({
               }
             />
           ))}
+          {transcript.queuedPrompts.map((prompt) => (
+            <div key={prompt.id} data-block="prompt">
+              <PromptBox text={prompt.text} queued />
+            </div>
+          ))}
         </div>
         {children.length > 0 ? (
           <ViewBar
@@ -458,39 +591,55 @@ function ConsolePane({
             onShow={showView}
           />
         ) : null}
+        <StatusRow
+          status={status}
+          turn={
+            running
+              ? { tool: runningTool(transcript), seconds: elapsedSeconds(turnStartedAt, now) }
+              : undefined
+          }
+          tokens={tokenTotals(transcript, usage)}
+        />
         {child ? (
           <div className="border-t px-3 py-2 font-mono text-xs text-muted-foreground">
             read-only · tab next view · {childCancellable ? "esc cancel" : "esc back"}
           </div>
         ) : (
-          <div className="flex items-end gap-2 border-t p-2">
-            <div className="min-w-0 flex-1">
-              <textarea
-                ref={field}
-                aria-label="Message the agent"
-                value={draft}
-                disabled={!live}
-                rows={2}
-                placeholder={
-                  live ? "Message the agent. Enter sends, Shift+Enter adds a line." : undefined
-                }
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={onFieldKey}
-                className="block max-h-40 min-h-10 w-full resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-              />
-              {live ? null : (
-                <p className="pt-1 text-xs text-muted-foreground">
-                  This session has ended. Resume it to talk to it.
-                </p>
-              )}
+          <>
+            <div className="flex items-end gap-2 border-t p-2">
+              <div className="min-w-0 flex-1">
+                <textarea
+                  ref={field}
+                  aria-label="Message the agent"
+                  value={draft}
+                  disabled={!live}
+                  rows={2}
+                  placeholder={
+                    live ? "Message the agent. Enter sends, Shift+Enter adds a line." : undefined
+                  }
+                  onChange={(event) => edit(event.target.value, event.target.selectionStart)}
+                  onSelect={(event) => setCursor(event.currentTarget.selectionStart)}
+                  onKeyDown={onFieldKey}
+                  className="block max-h-40 min-h-10 w-full resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                />
+                {live ? null : (
+                  <p className="pt-1 text-xs text-muted-foreground">
+                    This session has ended. Resume it to talk to it.
+                  </p>
+                )}
+                {suggestions ? (
+                  <SuggestionList commands={suggestions} picked={pickedSuggestion} />
+                ) : null}
+              </div>
+              {running ? (
+                <Button size="sm" variant="outline" onClick={cancel} aria-label="Cancel the turn">
+                  <SquareIcon />
+                  Cancel
+                </Button>
+              ) : null}
             </div>
-            {running ? (
-              <Button size="sm" variant="outline" onClick={cancel} aria-label="Cancel the turn">
-                <SquareIcon />
-                Cancel
-              </Button>
-            ) : null}
-          </div>
+            <Footer hints={footerHints({ live, running, asking: pending !== undefined, folded })} />
+          </>
         )}
       </div>
     </div>
@@ -573,6 +722,173 @@ function ViewBar({
   )
 }
 
+/** The commands a typed `/word` names, while the cursor is still in that word. */
+function suggest(
+  commands: AgentCommand[],
+  draft: string,
+  cursor: number,
+): AgentCommand[] | undefined {
+  if (commands.length === 0 || !draft.startsWith("/") || /\s/.test(draft.slice(0, cursor))) {
+    return undefined
+  }
+  const typed = (draft.split(/\s/)[0] ?? "").slice(1).toLowerCase()
+  const matching = commands.filter((command) => command.name.toLowerCase().includes(typed))
+  const first = matching.filter((command) => command.name.toLowerCase().startsWith(typed))
+  return [...first, ...matching.filter((command) => !first.includes(command))].slice(0, SUGGESTIONS)
+}
+
+function SuggestionList({ commands, picked }: { commands: AgentCommand[]; picked: number }) {
+  if (commands.length === 0) {
+    return <p className="pt-1 font-mono text-xs text-muted-foreground">no matching command</p>
+  }
+  return (
+    <div
+      role="listbox"
+      aria-label="Slash commands"
+      className="mt-1 space-y-0.5 rounded-md border p-1 font-mono text-xs"
+    >
+      {commands.map((command, index) => (
+        <div
+          key={command.name}
+          role="option"
+          aria-selected={index === picked}
+          tabIndex={-1}
+          className={cn(
+            "flex items-baseline gap-2 rounded px-2 py-0.5",
+            index === picked && "bg-primary text-primary-foreground",
+          )}
+        >
+          <span className="shrink-0">/{command.name}</span>
+          <span className="min-w-0 truncate opacity-70">{command.description}</span>
+          {command.hint ? <span className="shrink-0 opacity-70">{command.hint}</span> : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function elapsedSeconds(since: string | undefined, now: number): number | undefined {
+  if (since === undefined) return undefined
+  const started = Date.parse(since)
+  return Number.isNaN(started) ? undefined : Math.max(0, Math.floor((now - started) / 1000))
+}
+
+/** `12s`, or `1m 04s` past a minute: the CLI's turn clock. */
+function clock(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`
+}
+
+function StatusRow({
+  status,
+  turn,
+  tokens,
+}: {
+  status: SessionStatus
+  turn?: { tool?: string; seconds?: number }
+  tokens: TokenTotals
+}) {
+  const spent = tokens.input > 0 || tokens.output > 0
+  return (
+    <section
+      aria-label="Session status"
+      className="flex items-center gap-3 border-t px-3 py-1 font-mono text-xs text-muted-foreground"
+    >
+      <span>{status}</span>
+      {turn ? (
+        <span className="flex items-center gap-1.5">
+          <Loader2Icon className="size-3 animate-spin" aria-hidden />
+          {turn.tool === undefined ? "thinking" : `running ${turn.tool}`}
+          {turn.seconds === undefined ? null : <span>{clock(turn.seconds)}</span>}
+        </span>
+      ) : null}
+      {spent ? (
+        <span className="ml-auto">
+          ↑{formatTokens(tokens.input)} ↓{formatTokens(tokens.output)}
+        </span>
+      ) : null}
+    </section>
+  )
+}
+
+function footerHints(state: {
+  live: boolean
+  running: boolean
+  asking: boolean
+  folded: boolean
+}): string[] {
+  const keys = state.asking
+    ? ["up/down or 1-9 choose", "enter answer"]
+    : state.running
+      ? ["esc cancel", "enter send", "shift+enter newline"]
+      : state.live
+        ? ["enter send", "shift+enter newline"]
+        : []
+  return [...keys, state.folded ? "ctrl-o unfold" : "ctrl-o fold"]
+}
+
+function Footer({ hints }: { hints: string[] }) {
+  return (
+    <p className="border-t px-3 py-1 font-mono text-[11px] text-muted-foreground">
+      {hints.join(" · ")}
+    </p>
+  )
+}
+
+/** The lines a fold keeps of a text, and how many it hides. */
+function clip(
+  text: string,
+  folded: boolean,
+  limit: number,
+  keep: "first" | "last",
+): { text: string; hidden: number } {
+  const lines = text.split("\n")
+  if (lines.at(-1) === "") lines.pop()
+  if (!folded || lines.length <= limit) return { text, hidden: 0 }
+  const shown = keep === "first" ? lines.slice(0, limit) : lines.slice(-limit)
+  return { text: shown.join("\n"), hidden: lines.length - limit }
+}
+
+function Hidden({ count, keep }: { count: number; keep: "first" | "last" }) {
+  if (count === 0) return null
+  const noun = count === 1 ? "line" : "lines"
+  return (
+    <div className="font-mono text-[11px] text-muted-foreground">
+      … {count} {keep === "first" ? "more" : "earlier"} {noun} folded
+    </div>
+  )
+}
+
+function PromptBox({
+  text,
+  daemon,
+  queued,
+  folded = false,
+}: {
+  text: string
+  daemon?: boolean
+  queued?: boolean
+  folded?: boolean
+}) {
+  const shown = clip(text, folded && daemon === true, FOLDED_PROMPT_LINES, "first")
+  return (
+    <div className="rounded-md border-l-2 border-primary bg-muted/50 px-3 py-2">
+      {daemon ? (
+        <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
+          daemon
+        </span>
+      ) : null}
+      {queued ? (
+        <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
+          queued
+        </span>
+      ) : null}
+      <p className="whitespace-pre-wrap break-words">{shown.text}</p>
+      <Hidden count={shown.hidden} keep="first" />
+    </div>
+  )
+}
+
 function StreamStatusLine({
   status,
   error,
@@ -605,7 +921,15 @@ function StreamStatusLine({
   )
 }
 
-function BlockView({ block, picker }: { block: Block; picker: ReactNode }) {
+function BlockView({
+  block,
+  picker,
+  folded,
+}: {
+  block: Block
+  picker: ReactNode
+  folded: boolean
+}) {
   return (
     <div data-block={block.type}>
       {block.subagent ? (
@@ -613,24 +937,23 @@ function BlockView({ block, picker }: { block: Block; picker: ReactNode }) {
           ↳ {block.subagent.title}
         </div>
       ) : null}
-      <BlockBody block={block} picker={picker} />
+      <BlockBody block={block} picker={picker} folded={folded} />
     </div>
   )
 }
 
-function BlockBody({ block, picker }: { block: Block; picker: ReactNode }) {
+function BlockBody({
+  block,
+  picker,
+  folded,
+}: {
+  block: Block
+  picker: ReactNode
+  folded: boolean
+}) {
   switch (block.type) {
     case "prompt":
-      return (
-        <div className="rounded-md border-l-2 border-primary bg-muted/50 px-3 py-2">
-          {block.daemon ? (
-            <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
-              daemon
-            </span>
-          ) : null}
-          <p className="whitespace-pre-wrap break-words">{block.text}</p>
-        </div>
-      )
+      return <PromptBox text={block.text} daemon={block.daemon} folded={folded} />
     case "message":
       return <Markdown>{block.text}</Markdown>
     case "thought":
@@ -659,8 +982,8 @@ function BlockBody({ block, picker }: { block: Block; picker: ReactNode }) {
             ) : null}
             <span className="min-w-0 break-words font-medium">{block.tool.title}</span>
           </div>
-          {block.tool.output ? <Output text={block.tool.output} /> : null}
-          {block.tool.diff ? <Diff text={block.tool.diff} /> : null}
+          {block.tool.output ? <Output text={block.tool.output} folded={folded} /> : null}
+          {block.tool.diff ? <Diff text={block.tool.diff} folded={folded} /> : null}
         </div>
       )
     case "permission":
@@ -668,7 +991,7 @@ function BlockBody({ block, picker }: { block: Block; picker: ReactNode }) {
         <div className="rounded-md border border-status-warn/40 bg-status-warn-soft/30 px-3 py-2 text-xs">
           <div className="font-medium">Permission · {block.title}</div>
           {block.command ? <Output text={block.command} /> : null}
-          {block.diff ? <Diff text={block.diff} /> : null}
+          {block.diff ? <Diff text={block.diff} folded={folded} /> : null}
           {block.answer ? (
             <div className="pt-1 font-mono text-muted-foreground">
               <span aria-hidden>↳ </span>
@@ -713,31 +1036,41 @@ function ToolStatus({ status }: { status?: string }) {
   return <span className={tone}>{status ?? "pending"}</span>
 }
 
-function Output({ text }: { text: string }) {
+/** Output keeps its last lines where folded: what a command ended on. `folded` is absent for a command. */
+function Output({ text, folded = false }: { text: string; folded?: boolean }) {
+  const shown = clip(text, folded, FOLDED_OUTPUT_LINES, "last")
   return (
-    <pre className="mt-1.5 max-h-64 overflow-auto rounded bg-muted/50 p-2 font-mono text-xs whitespace-pre-wrap break-words">
-      {text}
-    </pre>
+    <div className="mt-1.5">
+      <Hidden count={shown.hidden} keep="last" />
+      <pre className="max-h-64 overflow-auto rounded bg-muted/50 p-2 font-mono text-xs whitespace-pre-wrap break-words">
+        {shown.text}
+      </pre>
+    </div>
   )
 }
 
-function Diff({ text }: { text: string }) {
+/** A diff keeps its first lines where folded. */
+function Diff({ text, folded }: { text: string; folded: boolean }) {
+  const shown = clip(text, folded, FOLDED_DIFF_LINES, "first")
   return (
-    <pre className="mt-1.5 max-h-64 overflow-auto rounded bg-muted/50 p-2 font-mono text-xs">
-      {text.split("\n").map((line, index) => (
-        <div
-          // biome-ignore lint/suspicious/noArrayIndexKey: the lines of one diff, never reordered
-          key={index}
-          className={cn(
-            line.startsWith("+") && !line.startsWith("+++") && "text-status-done-fg",
-            line.startsWith("-") && !line.startsWith("---") && "text-status-danger-fg",
-            line.startsWith("@@") && "text-muted-foreground",
-          )}
-        >
-          {line || " "}
-        </div>
-      ))}
-    </pre>
+    <div className="mt-1.5">
+      <pre className="max-h-64 overflow-auto rounded bg-muted/50 p-2 font-mono text-xs">
+        {shown.text.split("\n").map((line, index) => (
+          <div
+            // biome-ignore lint/suspicious/noArrayIndexKey: the lines of one diff, never reordered
+            key={index}
+            className={cn(
+              line.startsWith("+") && !line.startsWith("+++") && "text-status-done-fg",
+              line.startsWith("-") && !line.startsWith("---") && "text-status-danger-fg",
+              line.startsWith("@@") && "text-muted-foreground",
+            )}
+          >
+            {line || " "}
+          </div>
+        ))}
+      </pre>
+      <Hidden count={shown.hidden} keep="first" />
+    </div>
   )
 }
 
