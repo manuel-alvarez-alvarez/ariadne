@@ -6,12 +6,12 @@
  * block's time.
  */
 
-import { act, fireEvent, render, screen, within } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, expect, it, vi } from "vitest"
 
 import type { AgentEventDto } from "@/api"
 
-import { BlockView } from "./blocks"
+import { BlockView, ToolRow } from "./blocks"
 import { applyEvent, type Block, emptyTranscript } from "./transcript"
 
 const rendered = vi.hoisted(() => [] as string[])
@@ -57,6 +57,11 @@ function drawn(block: Block, folded = false, onToggle = () => {}) {
   return render(<BlockView block={block} picker={null} folded={folded} onToggle={onToggle} />)
 }
 
+function row(block: Block) {
+  if (block.type !== "tool") throw new Error("Expected a tool")
+  return <ToolRow block={block} selected={false} onSelect={() => {}} />
+}
+
 function call(id: string, acp: Record<string, unknown>, created_at?: string, input?: unknown) {
   return event(
     "tool_call_update",
@@ -87,15 +92,13 @@ const edit = () =>
 const framed = (node: Element) =>
   /(^|\s)(border|border-[blrtxy]|bg-[\w/[\]-]+)(\s|$)/.test(node.getAttribute("class") ?? "")
 
-it("draws a tool call with a left border and captioned sections", () => {
+it("draws tool details with captioned sections and no left border", () => {
   const { container } = drawn(edit())
 
   const frames = Array.from(container.querySelectorAll("*")).filter(
     (node) => node.tagName !== "BUTTON" && framed(node),
   )
-  expect(frames).toHaveLength(1)
-  expect(frames[0]?.classList.contains("border-l")).toBe(true)
-  expect(frames[0]?.classList.contains("border-green-500")).toBe(true)
+  expect(frames).toHaveLength(0)
   const sections = Array.from(container.querySelectorAll("[data-code-block]"))
   expect(
     sections.map((section) => section.querySelector("[data-code-caption]")?.textContent),
@@ -129,25 +132,16 @@ it("copies one section's text from its icon-only control and never toggles the f
   expect(onToggle).not.toHaveBeenCalled()
 })
 
-it("places the tool icon after its border and status beside its subject", () => {
-  const blocks = fold(
+it("places the tool kind and status before its name and short summary", () => {
+  const [block] = fold(
     call("run", { title: "Bash", kind: "execute", status: "pending" }, at(9, 5, 7), {
       command: "cargo test\n--all",
     }),
-    call(
-      "run",
-      { status: "completed", content: [{ type: "content", content: { text: "a\nb\nc" } }] },
-      at(9, 5, 7, 340),
-    ),
   )
-  const { container } = drawn(blocks[0] as Block, true)
-
-  const marker = container.querySelector(".border-l")
-  expect(marker?.firstElementChild?.querySelector("[data-tool-kind=execute]")).not.toBeNull()
-  const summary = screen.getByRole("button", { expanded: false })
-  expect(within(summary).getByText("cargo test").className).toContain("text-foreground")
-  expect(summary.querySelector("[data-summary-end]")?.textContent).toBe("340ms")
-  expect(summary.textContent).toMatch(/^completedcargo test/)
+  const { container } = render(row(block as Block))
+  const summary = screen.getByRole("button", { pressed: false })
+  expect(summary.textContent).toContain("executependingBashcargo test")
+  expect(container.querySelector("[data-tool-kind=execute]")).not.toBeNull()
 })
 
 it("gives every ACP kind its own icon and any other kind one more", () => {
@@ -180,7 +174,7 @@ it("says how long a call took in the unit that fits it, once it has ended", () =
       call("c", { title: "Bash", kind: "execute", status: "in_progress" }, at(10, 0, 0)),
       call("c", { status: "completed" }, ended),
     )
-    const { container, unmount } = drawn(blocks[0] as Block)
+    const { container, unmount } = render(row(blocks[0] as Block))
     const end = container.querySelector("[data-summary-end]")?.textContent
     unmount()
     return end
@@ -189,7 +183,7 @@ it("says how long a call took in the unit that fits it, once it has ended", () =
   expect(took(at(10, 0, 2, 100))).toBe("2.1s")
   expect(took(at(10, 1, 4))).toBe("1m 04s")
   const running = fold(call("c", { title: "Bash", kind: "execute", status: "in_progress" }))
-  const { container } = drawn(running[0] as Block)
+  const { container } = render(row(running[0] as Block))
   expect(container.querySelector("[data-summary-end]")?.textContent).toBeTruthy()
 })
 
@@ -287,12 +281,13 @@ it("renders a prompt as Markdown: headings, task lists, a fenced block, and a si
   expect(paragraph?.parentElement?.className).toContain("[&_p]:whitespace-pre-wrap")
 })
 
-it("renders an unfolded daemon prompt as Markdown and keeps its summary plain", () => {
+it("renders developer prompts as full Markdown without a fold", () => {
   const [block] = fold(event("user_prompt_submit", { text: "## Resume\n- one", source: "daemon" }))
   const { container } = drawn(block as Block, false)
 
   expect(container.querySelector("h2")?.textContent).toBe("Resume")
-  expect(screen.getByRole("button").querySelector("h2")).toBeNull()
+  expect(screen.queryByRole("button")).toBeNull()
+  screen.getByText("Developer")
 })
 
 it("draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text", () => {
@@ -305,7 +300,7 @@ it("draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text"
 
 const LONG = `${"packages/very/deep/".repeat(12)}file.ts`
 
-it("keeps a tool header on one line, with its full subject on hover and its facts at the right end", () => {
+it("keeps a tool row compact with its full subject on hover", () => {
   const [block] = fold(
     call(
       "long",
@@ -313,13 +308,11 @@ it("keeps a tool header on one line, with its full subject on hover and its fact
       at(10, 0, 0),
     ),
   )
-  const { container } = drawn(block as Block)
-
-  const start = container.querySelector("[data-summary-end]")?.previousElementSibling
-  expect(start?.className).toContain("truncate")
-  expect(start?.getAttribute("title")).toMatch(new RegExp(`^${LONG}\\n.*2026.*10:00:00`))
-  expect(container.querySelector("[data-summary-end]")?.className).toContain("shrink-0")
-  expect(container.querySelector("[data-summary-end]")?.textContent).toBe("0ms")
+  render(row(block as Block))
+  const button = screen.getByRole("button")
+  expect(button.getAttribute("title")).toContain(LONG)
+  expect(button.querySelector("[data-summary-end]")?.textContent).toBe("0ms")
+  expect(button.querySelectorAll(".truncate")).toHaveLength(2)
 })
 
 it("shows a call's full subject in its body where its input does not show it", () => {
@@ -344,39 +337,14 @@ it("shows a call's full subject in its body where its input does not show it", (
   expect(shown.container.querySelector("code")?.textContent).toBe("echo hello")
 })
 
-it("gives a bodyless call a foldable body only when its header is cut", () => {
-  const [block] = fold(
-    call("c", { title: "Read", kind: "read", status: "completed", locations: [{ path: LONG }] }),
-  )
-  vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(100)
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(100)
-  const fits = drawn(block as Block, false)
-  expect(fits.container.querySelector("button")).toBeNull()
-  fits.unmount()
-
-  vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(500)
-  const cut = drawn(block as Block, false)
-  expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("true")
-  expect(cut.container.querySelector("[data-tool-subject]")?.textContent).toBe(LONG)
-})
-
-it("measures a header again when its subject grows", () => {
-  const started = call("g", { title: "Read", kind: "read", status: "pending" })
-  const [short] = fold(started)
-  const [grown] = fold(started, call("g", { locations: [{ path: LONG }], status: "completed" }))
-  // The element's size never changes here, only its text, as with a `flex-1` header.
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(100)
-  vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    return this.textContent && this.textContent.length > 50 ? 500 : 100
-  })
-  const { container, rerender } = drawn(short as Block, false)
-  expect(container.querySelector("button")).toBeNull()
-
-  rerender(<BlockView block={grown as Block} picker={null} folded={false} onToggle={() => {}} />)
-  expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("true")
-  expect(container.querySelector("[data-tool-subject]")?.textContent).toBe(LONG)
+it("allows selecting a call even when it has no content", () => {
+  const [block] = fold(call("empty", { title: "Read", kind: "read", status: "completed" }))
+  if (block?.type !== "tool") throw new Error("Expected a tool")
+  const select = vi.fn()
+  render(<ToolRow block={block} selected={false} onSelect={select} />)
+  const button = screen.getByRole("button")
+  fireEvent.click(button)
+  expect(select).toHaveBeenCalledWith(block.id, button)
 })
 
 const permissionEvents = (extra: Record<string, unknown> = {}) => [
@@ -445,7 +413,7 @@ it("updates a running tool duration and freezes it on completion", () => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date(at(10, 0, 1)))
   const running = fold(call("c", { title: "Run", status: "in_progress" }, at(10, 0, 0)))[0] as Block
-  const { rerender, unmount } = drawn(running)
+  const { rerender, unmount } = render(row(running))
   expect(screen.getByText("1.0s")).toBeTruthy()
   act(() => vi.advanceTimersByTime(1000))
   expect(screen.getByText("2.0s")).toBeTruthy()
@@ -453,9 +421,50 @@ it("updates a running tool duration and freezes it on completion", () => {
     call("c", { title: "Run", status: "in_progress" }, at(10, 0, 0)),
     call("c", { status: "completed" }, at(10, 0, 2)),
   )[0] as Block
-  rerender(<BlockView block={finished} picker={null} folded={false} onToggle={() => {}} />)
+  rerender(row(finished))
   vi.advanceTimersByTime(5000)
   expect(screen.getByText("2.0s")).toBeTruthy()
   unmount()
   vi.useRealTimers()
+})
+
+it("shows a repeated tool command only in input", () => {
+  const [block] = fold(
+    call("run", { title: "Run echo hello", kind: "execute", status: "completed" }, undefined, {
+      command: "echo hello",
+    }),
+  )
+  const { container } = drawn(block as Block)
+  expect(container.querySelector("h4")?.textContent).toBe("Tool call")
+  expect(container.querySelector("code")?.textContent).toContain("echo hello")
+})
+
+it("shows a repeated permission command only in its command section", () => {
+  const [block] = fold(
+    event("permission_request", { tool_name: "echo hello", tool_input: { command: "echo hello" } }),
+  )
+  const { container } = drawn(block as Block)
+  expect(container.querySelector("[data-summary-end]")?.previousElementSibling?.textContent).toBe(
+    "Permission",
+  )
+  expect(container.querySelector("code")?.textContent).toContain("echo hello")
+})
+
+it.each(["sh", "pwd"])("keeps descriptive tool headings for %s input", (command) => {
+  const [tool] = fold(
+    call("short", { title: "Bash", kind: "execute", status: "completed" }, undefined, { command }),
+  )
+  const shown = drawn(tool as Block)
+  expect(shown.container.querySelector("h4")?.textContent).toBe("Bash")
+  shown.unmount()
+})
+
+it.each(["sh", "pwd"])("keeps descriptive permission headings for %s input", (command) => {
+  const [permission] = fold(
+    event("permission_request", { tool_name: "Bash", tool_input: { command } }),
+  )
+  const { container } = drawn(permission as Block)
+  expect(container.querySelector("[data-summary-end]")?.previousElementSibling?.textContent).toBe(
+    "Permission · Bash",
+  )
 })

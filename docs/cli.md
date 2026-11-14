@@ -444,16 +444,33 @@ and who decided. If the daemon goes away mid-session, the console says it is
 reconnecting, and shows the session afresh once it is back. The agent receives
 the same input whichever console you use.
 
-In the desktop console, your messages and the agent's replies are the main
-text, and questions stand out as cards. Tool calls, thoughts and daemon
-prompts start folded into one summary line: click the line, or focus it and
-press Enter or Space, to open that block alone. `Unfold` and `Fold` in the
-header, Ctrl-O, and the plus menu's `Expand all` and `Collapse all` change
-every block at once. The folds stay as you left them when the stream updates,
-when you expand the console, and when you switch tabs.
+In the browser and desktop console, conversation appears beside selected tool
+details when the panel has enough space. Narrow panels open a details drawer.
+Each tool stays on one compact row with its name, status, and summary.
+Click a row, or focus it and press Enter or Space, to read its input, output,
+and available code changes. New calls do not change your selection.
+Close the details with its close button or Escape to return to the selected row.
+The embedded and expanded consoles use the same layout.
 
-Code in a reply, a tool's output and a diff show in full and wrap at the edge
-of the panel; only the transcript scrolls. A code block shows its language
+Questions stay in the conversation. Permission rows open their command, diff,
+and response controls beside the conversation, or in the right drawer on narrow panels.
+Use `Pending request` to open a permission and focus its picker. For a question,
+this control closes the drawer and reveals the question in the conversation.
+This works for subagent requests too.
+
+User, developer and assistant messages always remain expanded. Role labels identify
+them. You headers have a person icon, restrained 12% primary background and solid inset border ring. All three role icons share one vertical column.
+Assistant headers have a bot icon, subtle muted background and faint solid inset border ring; Developer headers
+have a code icon, a slightly deeper shade of the same muted background and solid inset border ring. Both stay fully expanded.
+Compact secondary activity sits slightly indented, without left borders.
+Pending questions stay open. Answered questions can fold to show the question
+and chosen answer together. Thoughts still fold individually. There are no global fold controls in the header or plus menu. Tool rows stay compact. Ctrl-O has no action
+in the browser or desktop console; it still works in the terminal console.
+Drafts, history, and conversation fold preferences remain available when you
+expand the console or change tabs. See [spec 015](../specs/015-desktop-app.md).
+
+Code wraps inside the conversation and details, which scroll independently.
+A code block shows its language
 when it has one, colors comments, strings, numbers and keywords for the
 common languages, and has a `Copy` button that copies the code as written.
 Diffs keep their green and red lines. When you scroll up to read, the console

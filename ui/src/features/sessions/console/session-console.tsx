@@ -16,18 +16,16 @@
  * leaves the console for the panel's Close button or the modal's Collapse
  * button, so a plain Escape next closes what is now focused. The typed
  * chords of the shell stay silent while the input has the keyboard, since
- * it is a text field (`isTypingTarget`). Ctrl-O folds and unfolds the whole
- * console, and Escape closes the slash-command list before it cancels a turn.
+ * it is a text field (`isTypingTarget`). Escape closes the slash-command list before it cancels a turn.
  *
  * A session with subagents shows a bar of views above the input: `main`, the
  * session's own, and one per child. A click and the arrow keys inside the bar
  * switch the view; the bar is one Tab stop. A child's view is read-only: Escape there goes back to `main`, or
  * cancels the child where it runs and said it may be cancelled.
  *
- * The transcript is the console's one scroll box: blocks, code and diffs grow
- * with their content and wrap, and none scrolls inside. Tool details, thoughts
- * and daemon prompts fold, each on its own header, into a summary line; the
- * folds are retained with the rest of the view. A reader who scrolls away from
+ * Conversation and selected tool details scroll independently. Code wraps
+ * within both. Thoughts and resolved requests retain their fold preferences.
+ * A reader who scrolls away from
  * the newest output gets a Jump to latest button, marked when output has come
  * in since.
  *
@@ -58,7 +56,7 @@ import { useBaseUrl } from "@/stores/settings"
 
 import { SwitchSessionDialog, useResumeAction } from "../session-actions"
 import { isLiveStatus } from "../session-display"
-import { BlockView, PermissionPicker, PromptBox } from "./blocks"
+import { BlockView, PermissionPicker, PermissionRow, PromptBox, ToolRow } from "./blocks"
 import { Composer, suggest } from "./composer"
 import { ComposerMenu } from "./composer-menu"
 import { ConsoleStream, type ConsoleStreamStatus, consoleStreamUrl } from "./console-stream"
@@ -107,6 +105,7 @@ import {
   tokenTotals,
   view,
 } from "./transcript"
+import { ConsoleWorkspace } from "./workspace"
 
 /** Numbers the sends of every console, so a retained failure never shares an id with a new send. */
 let sendCount = 0
@@ -225,7 +224,10 @@ function ConsolePane({
   const [streamError, setStreamError] = useState<string | null>(null)
   const [draft, setDraft] = useState(() => readViewState(key).draft)
   const [selected, setSelected] = useState(0)
-  const [folded, setFolded] = useState(() => readViewState(key).folded)
+  const [selectedTool, setSelectedTool] = useState<string>()
+  const toolTrigger = useRef<HTMLElement | null>(null)
+  const [requestReveal, setRequestReveal] = useState(0)
+  const requestFocus = useRef<string | undefined>(undefined)
   const [blockFolds, setBlockFolds] = useState(() => readViewState(key).blockFolds)
   const [cursor, setCursor] = useState(0)
   const [suggested, setSuggested] = useState(0)
@@ -253,7 +255,6 @@ function ConsolePane({
   const log = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
   const collapseButton = useRef<HTMLButtonElement>(null)
-  const root = useRef<HTMLDivElement>(null)
   const following = useRef(readViewState(key).following)
   /** True while the reader is away from the newest output, and whether any came in since. */
   const [away, setAway] = useState(() => !readViewState(key).following)
@@ -275,10 +276,11 @@ function ConsolePane({
   // Another daemon or session in the same pane brings its own retained state.
   const [loadedKey, setLoadedKey] = useState(key)
   if (loadedKey !== key) {
+    setSelectedTool(undefined)
+    requestFocus.current = undefined
     setLoadedKey(key)
     const kept = readViewState(key)
     setDraft(kept.draft)
-    setFolded(kept.folded)
     setBlockFolds(kept.blockFolds)
     setShown(kept.shown)
     setFailed(kept.failed)
@@ -415,7 +417,7 @@ function ConsolePane({
   useLayoutEffect(() => {
     const el = log.current
     if (el && following.current && restore.current === null) pin(el, pinned)
-  }, [folded, blockFolds])
+  }, [blockFolds])
 
   // Blocks above a reader who scrolled away change height when they fold,
   // unfold or take output; the block the reader was on stays where it was.
@@ -426,7 +428,7 @@ function ConsolePane({
     if (!el || !place || following.current || restore.current !== null) return
     const at = blockOffset(el, place.blockId)
     if (at !== undefined && at !== place.offset) el.scrollTop += at - place.offset
-  }, [transcript, folded, blockFolds])
+  }, [transcript, blockFolds])
 
   // A panel that is resized, or a block that grows after it is drawn, keeps a
   // following reader at the newest output too.
@@ -511,23 +513,6 @@ function ConsolePane({
     setAnswering(null)
   }, [pendingId])
 
-  // A permission folds when it is answered, whatever the console's fold is;
-  // the block's own choice, made while it waited, stays.
-  const askedId = useRef<string>(undefined)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only a permission leaving the pending place folds
-  useEffect(() => {
-    const was = askedId.current
-    askedId.current = pendingId
-    if (was === undefined || was === pendingId) return
-    const block = transcript.blocks.find((one) => one.id === was)
-    if (block?.type !== "permission" || !block.answer) return
-    const kept = readViewState(keyRef.current).blockFolds
-    if (kept[was] !== undefined) return
-    const next = { ...kept, [was]: true }
-    setBlockFolds(next)
-    updateViewState(keyRef.current, { blockFolds: next })
-  }, [pendingId])
-
   const fail = useCallback((what: string, error: unknown) => {
     setTranscript((current) => appendError(current, `${what}: ${describeError(error)}`))
   }, [])
@@ -582,7 +567,7 @@ function ConsolePane({
     <BlockView
       key={block.id}
       block={block}
-      folded={blockFolds[block.id] ?? folded}
+      folded={blockFolds[block.id] ?? true}
       onToggle={toggleBlock}
       picker={
         <QuestionCard
@@ -591,7 +576,7 @@ function ConsolePane({
           live={live}
           sent={answered.has(block.requestId)}
           onAnswered={markAnswered}
-          folded={blockFolds[block.id] ?? folded}
+          folded={blockFolds[block.id] ?? true}
           onToggle={toggleBlock}
         />
       }
@@ -726,6 +711,7 @@ function ConsolePane({
 
   /** Show the view of `to`, or `main` for none, and hand it the keyboard. */
   const showView = useCallback((to: string | undefined, keepFocus = false) => {
+    setSelectedTool(undefined)
     setShown(to)
     updateViewState(keyRef.current, { shown: to })
     if (keepFocus) return
@@ -764,8 +750,14 @@ function ConsolePane({
       (event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229)
     )
       return
-    // An empty input hands its keys to a waiting question, as the CLI does.
-    if (draft.length === 0 && pickKey(event)) return
+    // Permission shortcuts belong only to the displayed pending picker.
+    if (
+      draft.length === 0 &&
+      tool?.type === "permission" &&
+      tool.id === pendingId &&
+      pickKey(event)
+    )
+      return
     if (suggestKey(event)) return
     if (event.key === "Enter") {
       event.preventDefault()
@@ -828,28 +820,6 @@ function ConsolePane({
     updateViewState(keyRef.current, { blockFolds: next })
   }, [])
 
-  /** Fold or unfold everything, individual preferences included. */
-  const toggleFold = useRef(() => {})
-  toggleFold.current = () => {
-    const next = !folded
-    setFolded(next)
-    setBlockFolds({})
-    updateViewState(keyRef.current, { folded: next, blockFolds: {} })
-  }
-
-  // Ctrl-O folds from anywhere in the console, the header's controls included.
-  useEffect(() => {
-    const el = root.current
-    if (!el) return
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key.toLowerCase() !== "o" || !event.ctrlKey || event.metaKey || event.altKey) return
-      event.preventDefault()
-      toggleFold.current()
-    }
-    el.addEventListener("keydown", onKey)
-    return () => el.removeEventListener("keydown", onKey)
-  }, [])
-
   const resume = useResumeAction(onResumed)
   const viewName = child ? child.title : "main"
   const menu = (
@@ -861,8 +831,6 @@ function ConsolePane({
       onSwitch={session && canSwitch ? () => setSwitchOpen(true) : undefined}
       onResume={live ? undefined : () => resume.resume(sessionId)}
       resumePending={resume.pending}
-      folded={folded}
-      onToggleFold={() => toggleFold.current()}
       copyLabel={`Copy loaded transcript (${viewName})`}
       onCopy={() => {
         void copyText(blocksText(blocks)).then((copied) =>
@@ -875,9 +843,68 @@ function ConsolePane({
     />
   )
 
+  const selectTool = useCallback((id: string, trigger: HTMLButtonElement) => {
+    requestFocus.current = undefined
+    toolTrigger.current = trigger
+    setSelectedTool(id)
+  }, [])
+  const tool = blocks.find(
+    (block): block is Extract<typeof block, { type: "tool" | "permission" }> =>
+      (block.type === "tool" || block.type === "permission") && block.id === selectedTool,
+  )
+  const pendingQuestion = live
+    ? openQuestion([...restoredQuestions(requests, transcript), ...transcript.blocks], answered)
+    : undefined
+  const request = pending ?? pendingQuestion
+  function requestTarget() {
+    const id = requestFocus.current
+    if (!id) return null
+    const block = Array.from(
+      log.current?.querySelectorAll<HTMLElement>("[data-block-id]") ?? [],
+    ).find((element) => element.dataset.blockId === id)
+    return (
+      block?.querySelector<HTMLElement>('[role="listbox"]') ??
+      block?.querySelector<HTMLElement>(
+        'textarea, button:not(:disabled):not([aria-label^="Copy"])',
+      ) ??
+      field.current
+    )
+  }
+
+  function revealRequest(trigger: HTMLButtonElement) {
+    if (!request) return
+    requestFocus.current = request.id
+    setRequestReveal((value) => value + 1)
+    setSelectedTool(undefined)
+    showView(request.subagent?.id, true)
+    if (request.type === "permission") {
+      requestFocus.current = undefined
+      toolTrigger.current = trigger
+      setSelectedTool(request.id)
+    }
+  }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reveal once after the requested view renders
+  useLayoutEffect(() => {
+    if (!requestFocus.current || tool) return
+    const target = requestTarget()
+    target?.scrollIntoView({ block: "nearest" })
+    target?.focus()
+  }, [requestReveal])
+  const pendingControl = request ? (
+    <div className="px-3 pt-1">
+      <Button
+        size="sm"
+        variant="secondary"
+        className="h-7 justify-start text-xs"
+        onClick={(event) => revealRequest(event.currentTarget)}
+      >
+        Pending request · {request.type === "permission" ? "Permission" : "Question"}
+      </Button>
+    </div>
+  ) : null
+
   return (
     <div
-      ref={root}
       className={cn(
         "flex min-h-0 flex-col overflow-hidden rounded-lg border bg-background text-sm text-foreground shadow-xs",
         className,
@@ -892,14 +919,6 @@ function ConsolePane({
             </span>
           ) : null}
         </span>
-        <Button
-          size="xs"
-          variant="ghost"
-          onClick={() => toggleFold.current()}
-          aria-keyshortcuts="Control+O"
-        >
-          {folded ? "Unfold" : "Fold"}
-        </Button>
         {onExpand ? (
           <Button size="icon-xs" variant="ghost" onClick={onExpand} aria-label="Expand the console">
             <Maximize2Icon />
@@ -918,142 +937,167 @@ function ConsolePane({
         ) : null}
       </div>
       <div ref={body} tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
-        <HistoryLine history={history} onRetry={() => void loadOlder()} />
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          <div
-            ref={log}
-            role="log"
-            aria-label="Console transcript"
-            className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3"
-            onScroll={(event) => {
-              const el = event.currentTarget
-              // A restore of the reader's place waits on the blocks: until it
-              // lands, a scroll is the box shrinking, not the reader.
-              if (restore.current !== null) return
-              // Our own scroll to the newest output lands after the content may
-              // have grown again; it is not the reader leaving.
-              placed.current = firstInView(el)
-              if (el.scrollTop === pinned.current) {
-                pinned.current = null
-              } else {
-                following.current =
-                  el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK_PX
-                setAway(!following.current)
-                if (following.current) setUnread(false)
-              }
-              updateViewState(keyRef.current, {
-                scrollTop: el.scrollTop,
-                anchor: firstInView(el),
-                following: following.current,
-              })
-              if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
-            }}
-          >
-            {inPlace.map((block) =>
-              block.type === "question" ? (
-                card(block)
-              ) : (
-                <BlockView
-                  key={block.id}
-                  block={block}
-                  folded={blockFolds[block.id] ?? folded}
-                  onToggle={toggleBlock}
-                  picker={
-                    block.type === "permission" && block.id === pendingId ? (
-                      <PermissionPicker
-                        options={block.options}
-                        selected={selected}
-                        answering={answering}
-                        onSelect={setSelected}
-                        onAnswer={answerPick}
-                        onKeyDown={pickerKey}
-                      />
-                    ) : null
-                  }
-                />
-              ),
-            )}
-            {requestsError ? (
-              <div
-                role="alert"
-                className="flex items-center gap-2 rounded-md border border-status-danger/40 px-3 py-1 font-mono text-xs text-status-danger-fg"
-              >
-                Could not read the pending questions: {requestsError}
-                <Button size="xs" variant="outline" onClick={readRequests}>
-                  Retry
-                </Button>
-              </div>
-            ) : null}
-            {live ? null : restored.map(card)}
-            {transcript.queuedPrompts.map((prompt) => (
-              <div key={prompt.id} data-block="prompt">
-                <PromptBox text={prompt.text} queued />
-              </div>
-            ))}
-            {failed.map((one) => (
-              <FailedMessage
-                key={one.id}
-                one={one}
-                onRetry={() => retry(one)}
-                onEdit={() => editFailed(one)}
+        <ConsoleWorkspace
+          tool={tool}
+          requestReveal={requestReveal}
+          onClose={() => setSelectedTool(undefined)}
+          trigger={toolTrigger}
+          picker={
+            tool?.type === "permission" && tool.id === pendingId ? (
+              <PermissionPicker
+                options={tool.options}
+                selected={selected}
+                answering={answering}
+                onSelect={setSelected}
+                onAnswer={answerPick}
+                onKeyDown={pickerKey}
               />
-            ))}
-            {waiting.map(card)}
-          </div>
-          {away ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={jumpToLatest}
-              className="absolute right-3 bottom-2 shadow-md"
-            >
-              <ArrowDownIcon />
-              Jump to latest
-              {unread ? (
-                <span
-                  role="status"
-                  className="rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground"
-                >
-                  New output
-                </span>
-              ) : null}
-            </Button>
-          ) : null}
-        </div>
-        {children.length > 0 ? (
-          <ViewBar
-            agents={children}
-            shown={child?.id}
-            asking={pending?.askedBy?.id}
-            onShow={(to, keepFocus) => showView(to, keepFocus)}
-          />
-        ) : null}
-        <Composer
-          fieldRef={field}
-          menu={menu}
-          draft={draft}
-          live={live}
-          running={running}
-          question={question !== undefined}
-          child={child ? { cancellable: childCancellable } : undefined}
-          suggestions={suggestions}
-          picked={pickedSuggestion}
-          onChange={edit}
-          onSelect={setCursor}
-          onKeyDown={onFieldKey}
-          onPick={(command) => complete(command.name)}
-          onSend={send}
-          onStop={cancel}
-        />
-        <StatusRow
-          status={status}
-          turn={
-            running
-              ? { tool: runningTool(transcript), seconds: elapsedSeconds(turnStartedAt, now) }
-              : undefined
+            ) : null
           }
-          tokens={tokenTotals(transcript, usage)}
-        />
+          pendingControl={tool?.id === request?.id ? null : pendingControl}
+          returnTarget={requestTarget}
+        >
+          <HistoryLine history={history} onRetry={() => void loadOlder()} />
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <div
+              ref={log}
+              role="log"
+              aria-label="Console transcript"
+              className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-2 [&>[data-block=prompt]]:mt-3 [&>[data-block=message]]:mt-3 [&>[data-block=question]]:mt-3"
+              onScroll={(event) => {
+                const el = event.currentTarget
+                // A restore of the reader's place waits on the blocks: until it
+                // lands, a scroll is the box shrinking, not the reader.
+                if (restore.current !== null) return
+                // Our own scroll to the newest output lands after the content may
+                // have grown again; it is not the reader leaving.
+                placed.current = firstInView(el)
+                if (el.scrollTop === pinned.current) {
+                  pinned.current = null
+                } else {
+                  following.current =
+                    el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK_PX
+                  setAway(!following.current)
+                  if (following.current) setUnread(false)
+                }
+                updateViewState(keyRef.current, {
+                  scrollTop: el.scrollTop,
+                  anchor: firstInView(el),
+                  following: following.current,
+                })
+                if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
+              }}
+            >
+              {inPlace.map((block) =>
+                block.type === "tool" ? (
+                  <ToolRow
+                    key={block.id}
+                    block={block}
+                    selected={tool?.id === block.id}
+                    onSelect={selectTool}
+                  />
+                ) : block.type === "permission" ? (
+                  <PermissionRow
+                    key={block.id}
+                    block={block}
+                    selected={tool?.id === block.id}
+                    onSelect={selectTool}
+                  />
+                ) : block.type === "question" ? (
+                  card(block)
+                ) : (
+                  <BlockView
+                    key={block.id}
+                    block={block}
+                    folded={blockFolds[block.id] ?? true}
+                    onToggle={toggleBlock}
+                    picker={null}
+                  />
+                ),
+              )}
+              {requestsError ? (
+                <div
+                  role="alert"
+                  className="flex items-center gap-2 rounded-md border border-status-danger/40 px-3 py-1 font-mono text-xs text-status-danger-fg"
+                >
+                  Could not read the pending questions: {requestsError}
+                  <Button size="xs" variant="outline" onClick={readRequests}>
+                    Retry
+                  </Button>
+                </div>
+              ) : null}
+              {live ? null : restored.map(card)}
+              {transcript.queuedPrompts.map((prompt) => (
+                <div key={prompt.id} data-block="prompt">
+                  <PromptBox text={prompt.text} queued />
+                </div>
+              ))}
+              {failed.map((one) => (
+                <FailedMessage
+                  key={one.id}
+                  one={one}
+                  onRetry={() => retry(one)}
+                  onEdit={() => editFailed(one)}
+                />
+              ))}
+              {waiting.map(card)}
+            </div>
+            {away ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={jumpToLatest}
+                className="absolute right-3 bottom-2 shadow-md"
+              >
+                <ArrowDownIcon />
+                Jump to latest
+                {unread ? (
+                  <span
+                    role="status"
+                    className="rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground"
+                  >
+                    New output
+                  </span>
+                ) : null}
+              </Button>
+            ) : null}
+          </div>
+          {children.length > 0 ? (
+            <ViewBar
+              agents={children}
+              shown={child?.id}
+              asking={pending?.askedBy?.id}
+              onShow={(to, keepFocus) => showView(to, keepFocus)}
+            />
+          ) : null}
+          {pendingControl}
+          <Composer
+            fieldRef={field}
+            menu={menu}
+            draft={draft}
+            live={live}
+            running={running}
+            question={question !== undefined}
+            child={child ? { cancellable: childCancellable } : undefined}
+            suggestions={suggestions}
+            picked={pickedSuggestion}
+            onChange={edit}
+            onSelect={setCursor}
+            onKeyDown={onFieldKey}
+            onPick={(command) => complete(command.name)}
+            onSend={send}
+            onStop={cancel}
+          />
+          <StatusRow
+            status={status}
+            turn={
+              running
+                ? { tool: runningTool(transcript), seconds: elapsedSeconds(turnStartedAt, now) }
+                : undefined
+            }
+            tokens={tokenTotals(transcript, usage)}
+          />
+        </ConsoleWorkspace>
       </div>
       {session ? (
         <SwitchSessionDialog
