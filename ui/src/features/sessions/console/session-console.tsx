@@ -15,6 +15,11 @@
  * button, so a plain Escape next closes what is now focused. The typed
  * chords of the shell stay silent while the input has the keyboard, since
  * it is a text field (`isTypingTarget`).
+ *
+ * A session with subagents shows a bar of views above the input: `main`, the
+ * session's own, and one per child. A click, Tab and Shift-Tab switch the
+ * view. A child's view is read-only: Escape there goes back to `main`, or
+ * cancels the child where it runs and said it may be cancelled.
  */
 
 import { Loader2Icon, Maximize2Icon, Minimize2Icon, PlugZapIcon, SquareIcon } from "lucide-react"
@@ -48,7 +53,9 @@ import {
   type PermissionOption,
   pendingPermission,
   prependEvents,
+  stateMark,
   type Transcript,
+  view,
 } from "./transcript"
 
 export function SessionConsole({
@@ -130,6 +137,8 @@ function ConsolePane({
   const [draft, setDraft] = useState("")
   const [selected, setSelected] = useState(0)
   const [answering, setAnswering] = useState<string | null>(null)
+  /** The child whose view is shown; none for `main`. */
+  const [shown, setShown] = useState<string | undefined>(undefined)
   const body = useRef<HTMLDivElement>(null)
   const log = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
@@ -221,6 +230,16 @@ function ConsolePane({
     else if (following.current) el.scrollTop = el.scrollHeight
   }, [transcript])
 
+  const children = transcript.subagents
+  // A snapshot that no longer holds the child shown goes back to `main`.
+  const child = children.find((one) => one.id === shown)
+  const blocks = view(transcript, child?.id)
+  const runningChildren = children.filter((one) => one.state === "running").length
+  const childCancellable = child?.cancel === true && child.state === "running"
+  useEffect(() => {
+    if (shown !== undefined && child === undefined) setShown(undefined)
+  }, [shown, child])
+
   const live = isLiveStatus(status)
   const running = live && (status === "running" || transcript.running)
   const pending = live ? pendingPermission(transcript) : undefined
@@ -269,6 +288,32 @@ function ConsolePane({
     ).catch((error) => fail("Could not cancel the turn", error))
   }, [sessionId, fail])
 
+  const cancelChild = useCallback(
+    (target: { id: string; title: string }) => {
+      unwrap(
+        api().POST("/v1/sessions/{id}/console/cancel", {
+          params: { path: { id: sessionId } },
+          body: { subagent_id: target.id },
+        }),
+      ).catch((error) =>
+        setTranscript((current) =>
+          appendError(current, `Could not cancel the subagent: ${describeError(error)}`, {
+            id: target.id,
+            title: target.title,
+          }),
+        ),
+      )
+    },
+    [sessionId],
+  )
+
+  /** Show the view of `to`, or `main` for none, and hand it the keyboard. */
+  const showView = useCallback((to: string | undefined) => {
+    setShown(to)
+    // The child's view has no input: the console itself keeps the keys.
+    requestAnimationFrame(() => (to === undefined ? field.current : body.current)?.focus())
+  }, [])
+
   /** The picker's keys: Up, Down and 1-9 select, Enter answers. True when taken. */
   function pickKey(event: KeyboardEvent): boolean {
     if (!pending || answering !== null || pending.options.length === 0) return false
@@ -299,12 +344,25 @@ function ConsolePane({
 
   // Escape and ⌘Escape are claimed on the console's own element, before the
   // pane or the dialog around it hears of them.
-  const latest = useRef({ running, cancel, onCollapse })
-  latest.current = { running, cancel, onCollapse }
+  const latest = useRef({ running, cancel, onCollapse, children, child, childCancellable })
+  latest.current = { running, cancel, onCollapse, children, child, childCancellable }
+  const switchers = useRef({ showView, cancelChild })
+  switchers.current = { showView, cancelChild }
   useEffect(() => {
     const el = body.current
     if (!el) return
     const onKey = (event: globalThis.KeyboardEvent) => {
+      const { children, child, childCancellable } = latest.current
+      // Tab and Shift-Tab walk the views in bar order, wrapping around. A
+      // session with no child keeps its Tab.
+      if (event.key === "Tab" && children.length > 0 && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault()
+        const views = [undefined, ...children.map((one) => one.id)]
+        const at = views.indexOf(child?.id)
+        const step = event.shiftKey ? views.length - 1 : 1
+        switchers.current.showView(views[(at + step) % views.length])
+        return
+      }
       if (event.key !== "Escape") return
       event.preventDefault()
       event.stopPropagation()
@@ -314,6 +372,11 @@ function ConsolePane({
           el.closest<HTMLElement>('[data-slot="docked-pane"]')
             ?.querySelector<HTMLElement>('[data-slot="pane-close"]')
             ?.focus()
+        return
+      }
+      if (child) {
+        if (childCancellable) switchers.current.cancelChild(child)
+        else switchers.current.showView(undefined)
         return
       }
       if (latest.current.running) latest.current.cancel()
@@ -330,8 +393,13 @@ function ConsolePane({
       )}
     >
       <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5 font-mono text-xs text-muted-foreground">
-        <span role="status" className="min-w-0">
+        <span role="status" className="flex min-w-0 items-center gap-3">
           <StreamStatusLine status={streamStatus} error={streamError} />
+          {runningChildren > 0 ? (
+            <span className="text-status-active-fg">
+              running {runningChildren} {runningChildren === 1 ? "subagent" : "subagents"}
+            </span>
+          ) : null}
         </span>
         {onExpand ? (
           <Button size="icon-xs" variant="ghost" onClick={onExpand} aria-label="Expand the console">
@@ -350,7 +418,7 @@ function ConsolePane({
           </Button>
         ) : null}
       </div>
-      <div ref={body} className="flex min-h-0 flex-1 flex-col">
+      <div ref={body} tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
         <HistoryLine history={history} onRetry={() => void loadOlder()} />
         <div
           ref={log}
@@ -363,7 +431,7 @@ function ConsolePane({
             if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
           }}
         >
-          {transcript.blocks.map((block) => (
+          {blocks.map((block) => (
             <BlockView
               key={block.id}
               block={block}
@@ -382,34 +450,48 @@ function ConsolePane({
             />
           ))}
         </div>
-        <div className="flex items-end gap-2 border-t p-2">
-          <div className="min-w-0 flex-1">
-            <textarea
-              ref={field}
-              aria-label="Message the agent"
-              value={draft}
-              disabled={!live}
-              rows={2}
-              placeholder={
-                live ? "Message the agent. Enter sends, Shift+Enter adds a line." : undefined
-              }
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={onFieldKey}
-              className="block max-h-40 min-h-10 w-full resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-            />
-            {live ? null : (
-              <p className="pt-1 text-xs text-muted-foreground">
-                This session has ended. Resume it to talk to it.
-              </p>
-            )}
+        {children.length > 0 ? (
+          <ViewBar
+            agents={children}
+            shown={child?.id}
+            asking={pending?.askedBy?.id}
+            onShow={showView}
+          />
+        ) : null}
+        {child ? (
+          <div className="border-t px-3 py-2 font-mono text-xs text-muted-foreground">
+            read-only · tab next view · {childCancellable ? "esc cancel" : "esc back"}
           </div>
-          {running ? (
-            <Button size="sm" variant="outline" onClick={cancel} aria-label="Cancel the turn">
-              <SquareIcon />
-              Cancel
-            </Button>
-          ) : null}
-        </div>
+        ) : (
+          <div className="flex items-end gap-2 border-t p-2">
+            <div className="min-w-0 flex-1">
+              <textarea
+                ref={field}
+                aria-label="Message the agent"
+                value={draft}
+                disabled={!live}
+                rows={2}
+                placeholder={
+                  live ? "Message the agent. Enter sends, Shift+Enter adds a line." : undefined
+                }
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={onFieldKey}
+                className="block max-h-40 min-h-10 w-full resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              {live ? null : (
+                <p className="pt-1 text-xs text-muted-foreground">
+                  This session has ended. Resume it to talk to it.
+                </p>
+              )}
+            </div>
+            {running ? (
+              <Button size="sm" variant="outline" onClick={cancel} aria-label="Cancel the turn">
+                <SquareIcon />
+                Cancel
+              </Button>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -441,6 +523,54 @@ function HistoryLine({ history, onRetry }: { history: History; onRetry: () => vo
     )
   }
   return null
+}
+
+/** The views of a session with subagents: `main`, then each child with the mark of its state. */
+function ViewBar({
+  agents,
+  shown,
+  asking,
+  onShow,
+}: {
+  agents: Transcript["subagents"]
+  shown: string | undefined
+  /** The child whose permission question waits. */
+  asking: string | undefined
+  onShow: (to: string | undefined) => void
+}) {
+  const views = [
+    { id: undefined, label: "main" },
+    ...agents.map((one) => ({
+      id: one.id,
+      label: `${stateMark(one.state)} ${one.title}${one.id === asking ? " ?" : ""}`,
+    })),
+  ]
+  return (
+    <div
+      role="tablist"
+      aria-label="Console views"
+      className="flex flex-wrap gap-1 border-t px-2 py-1 font-mono text-xs"
+    >
+      {views.map((one) => (
+        <button
+          key={one.id ?? ""}
+          type="button"
+          role="tab"
+          aria-selected={one.id === shown}
+          tabIndex={-1}
+          onClick={() => onShow(one.id)}
+          className={cn(
+            "rounded px-1.5 py-0.5",
+            one.id === shown
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:bg-muted",
+          )}
+        >
+          {one.label}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 function StreamStatusLine({
@@ -553,6 +683,8 @@ function BlockBody({ block, picker }: { block: Block; picker: ReactNode }) {
       )
     case "note":
       return <div className="font-mono text-xs text-muted-foreground">· {block.text}</div>
+    case "child":
+      return <div className="font-mono text-xs text-muted-foreground">{block.text}</div>
     case "error":
       return (
         <div className="rounded-md border border-status-danger/40 bg-status-danger-soft/40 px-3 py-2 text-xs text-status-danger-fg">

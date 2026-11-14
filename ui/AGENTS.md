@@ -412,12 +412,19 @@ stream (008). It lives in `src/features/sessions/console/`:
   tool call block per `tool_call_id`, live chunks in one open block that the
   stored whole closes, a permission and its reply in one block, and a
   diagnosis on the error it names. A block keeps its first event id, and the
-  `subagent` that spoke, where the payload names one.
+  `subagent` that spoke, where the payload names one. It lists the
+  session's children from their `subagent_update` events, and `view` picks
+  the blocks of `main` or of one child. A child's permission question is
+  the session's, so it stays in `main`.
 - `session-console.tsx` draws the blocks, the input box and the cancel
   control. A prompt and a permission pick both post `{"text"}` to
   `POST /v1/sessions/{id}/console/input`. A cancel posts
   `POST /v1/sessions/{id}/console/cancel` with no body. A failed post adds an
-  error block.
+  error block. A session with subagents shows a bar of views, as the CLI
+  attach pane does (008 rules 30 to 36). Tab and Shift-Tab switch the view,
+  and a child's view is read-only. Escape there goes back to `main`, or
+  posts `{"subagent_id"}` to the cancel route for a running child that may
+  be cancelled.
 
 Escape inside the console cancels a running turn and never reaches the pane
 or the modal. ⌘Escape moves the keyboard to the panel's Close button or the

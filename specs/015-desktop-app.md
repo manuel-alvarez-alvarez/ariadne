@@ -370,6 +370,37 @@ Out: the daemon endpoints themselves (012).
 24. A `resync` or a dropped stream is retried on the event stream's
     backoff, and the pane says it is reconnecting meanwhile. The fresh
     snapshot replaces the transcript, so no block shows twice.
+24a. The console shows a session's subagents as the CLI attach pane does
+    (008 rules 30 to 36). A `subagent_update` announces a child on its first
+    `subagent.id`. A bar above the input shows only while the session has a
+    child. It lists `main`, then each child in announcement order, with the
+    mark of its state: `●` running, `✓` completed, `✗` failed, `⊘`
+    cancelled, `◇` none. The child whose permission question waits carries
+    `?`.
+24b. A click on a bar entry, Tab and Shift-Tab switch the view, in bar
+    order, and wrap around. A session with no child takes Tab as before.
+24c. A child's view shows only the events that carry its
+    `payload.subagent.id`. A call's update merges only into the block of
+    the same speaker, even under the same call id or title. It has no input
+    box and takes no typing. Its footer starts with `read-only`.
+24d. Escape in a child's view returns to `main`. Where the child's latest
+    `capabilities.cancel` is true and its state is `running`, Escape posts
+    `{"subagent_id": "<id>"}` to `POST /v1/sessions/{id}/console/cancel`
+    instead, and the footer says `esc cancel`, not `esc back`. A refusal,
+    a `409` included, adds an error block to the child's view.
+24e. The `main` view shows a line per child announcement,
+    `◇ subagent <title> · <task>`, and a line per end state,
+    `<mark> subagent <title> <state> · <elapsed>`, timed from the
+    announcement. A child first heard of at its end gets both lines. A
+    child's own events stay out of `main`.
+24f. A child's `permission_request` and `permission.replied` show in
+    `main`, and the question names the child:
+    `<tool> · asked by subagent <title>`. The picker answers it from `main`.
+24g. The status row says `running N subagents` while any child is in state
+    `running`.
+24h. A snapshot, the one a reconnect brings included, rebuilds the bar and
+    the views. A shown child that the snapshot no longer holds gives way to
+    `main`.
 25. A session's view has two tabs over one space: the console, open by
     default, and the agent activity feed. The tab is in the URL (`?tab=`);
     the console's tab is `terminal` on the wire, so an older link still
@@ -1209,6 +1240,39 @@ Out: the daemon endpoints themselves (012).
 - A running turn is cancelled from its control and from Escape inside the
   console
   (`ui/src/features/sessions/console/session-console.test.tsx::cancels a running turn from its control and from Escape inside the console`).
+- The bar shows only with a child, and lists `main` and each child in
+  announcement order with the mark of its state and `?` on the child that
+  asks (rule 24a)
+  (`ui/src/features/sessions/console/session-console.test.tsx::shows the bar only with a child, listing main and each child with its mark`,
+  `::marks a completed and a cancelled child`,
+  `ui/src/features/sessions/console/transcript.test.ts::lists each child in announcement order with its state and whether it may be cancelled`).
+- A click, Tab and Shift-Tab switch the view in bar order and wrap around,
+  and a session with no child keeps its Tab (rule 24b)
+  (`ui/src/features/sessions/console/session-console.test.tsx::switches the view with Tab, Shift-Tab and a click, in bar order, wrapping around`,
+  `::leaves Tab alone in a session with no child`).
+- A child's view shows its own events only, has no input and says
+  `read-only` (rule 24c)
+  (`ui/src/features/sessions/console/session-console.test.tsx::shows a child's own events read-only, and its questions and lines in main`,
+  `ui/src/features/sessions/console/transcript.test.ts::shows a child's events in its own view only`,
+  `::keeps a parent's and each child's tool calls apart with %s`).
+- Escape in a child's view goes back to `main`, or cancels a running child
+  that may be cancelled, and a refusal shows in the child's view (rule 24d)
+  (`ui/src/features/sessions/console/session-console.test.tsx::goes back to main on Escape from a child that may not be cancelled`,
+  `::cancels a running child that may be cancelled on Escape, and shows a refusal in its view`).
+- `main` has a line per announcement and per end, a child first heard of
+  at its end has both, and a child's events stay out (rule 24e)
+  (`ui/src/features/sessions/console/transcript.test.ts::gives main a line per announcement and per end, timed from the announcement`,
+  `::gives a child first heard of at its end both lines`,
+  `ui/src/features/sessions/console/session-console.test.tsx::shows a child's own events read-only, and its questions and lines in main`).
+- A child's question shows in `main`, names the child, and is answered
+  there (rule 24f)
+  (`ui/src/features/sessions/console/transcript.test.ts::asks a child's permission in main, naming the child, and answers it there`,
+  `ui/src/features/sessions/console/session-console.test.tsx::shows a child's own events read-only, and its questions and lines in main`).
+- The status row counts the running subagents (rule 24g)
+  (`ui/src/features/sessions/console/session-console.test.tsx::says how many subagents run`).
+- A fresh snapshot rebuilds the bar and the views (rule 24h)
+  (`ui/src/features/sessions/console/session-console.test.tsx::rebuilds the bar and the views from the snapshot of a reconnect`,
+  `ui/src/features/sessions/console/transcript.test.ts::rebuilds the children from a fresh snapshot`).
 - A permission is answered from its picker with the keys or a click, and
   the reply shows who decided; Shift+Enter and a composing Enter in an
   empty input answer nothing

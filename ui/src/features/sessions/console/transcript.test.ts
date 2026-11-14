@@ -15,6 +15,7 @@ import {
   emptyTranscript,
   oldestEventId,
   prependEvents,
+  view,
 } from "./transcript"
 
 let next = 0
@@ -347,4 +348,134 @@ it("folds a message and a call that span the page boundary into one block each",
   expect(full.blocks.map((block) => block.type)).toEqual(["tool", "message"])
   expect(full.blocks[0]).toMatchObject({ tool: { title: "Bash", status: "completed" } })
   expect(full.blocks[1]).toMatchObject({ text: "Hello world", open: false })
+})
+
+/** A `subagent_update` as the daemon stores it (021), at `at`. */
+function update(id: string, title: string, state: string, at: string, more: object = {}) {
+  return {
+    ...event("subagent_update", {
+      subagent: { id, title, description: `${title} task` },
+      state,
+      capabilities: { cancel: false },
+      ...more,
+    }),
+    created_at: at,
+  }
+}
+
+const EXPLORER = { id: "child-1", title: "Explorer" }
+
+it("lists each child in announcement order with its state and whether it may be cancelled", () => {
+  const transcript = applySnapshot(emptyTranscript(), [
+    update("child-1", "Explorer", "running", "2026-11-14T10:00:00Z"),
+    update("child-2", "Tester", "running", "2026-11-14T10:00:01Z", {
+      capabilities: { cancel: true },
+    }),
+    update("child-1", "Explorer", "completed", "2026-11-14T10:00:05Z"),
+  ])
+
+  expect(transcript.subagents.map((child) => [child.title, child.state, child.cancel])).toEqual([
+    ["Explorer", "completed", false],
+    ["Tester", "running", true],
+  ])
+})
+
+it("gives main a line per announcement and per end, timed from the announcement", () => {
+  const transcript = applySnapshot(emptyTranscript(), [
+    update("child-1", "Explorer", "running", "2026-11-14T10:00:00Z"),
+    update("child-1", "Explorer", "running", "2026-11-14T10:00:30Z"),
+    update("child-1", "Explorer", "failed", "2026-11-14T10:01:05Z"),
+  ])
+
+  expect(view(transcript).map((block) => block.type === "child" && block.text)).toEqual([
+    "◇ subagent Explorer · Explorer task",
+    "✗ subagent Explorer failed · 1m 05s",
+  ])
+})
+
+it("gives a child first heard of at its end both lines", () => {
+  const transcript = applySnapshot(emptyTranscript(), [
+    update("child-1", "Explorer", "cancelled", "2026-11-14T10:00:00Z"),
+  ])
+
+  expect(view(transcript).map((block) => block.type === "child" && block.text)).toEqual([
+    "◇ subagent Explorer · Explorer task",
+    "⊘ subagent Explorer cancelled · 0s",
+  ])
+})
+
+it("shows a child's events in its own view only", () => {
+  const transcript = applySnapshot(emptyTranscript(), [
+    event("agent_message", { text: "parent" }),
+    event("agent_message", { text: "child", subagent: EXPLORER }),
+    event("agent_message", { text: "other", subagent: { id: "child-2", title: "Tester" } }),
+  ])
+
+  expect(view(transcript).map((block) => block.type === "message" && block.text)).toEqual([
+    "parent",
+  ])
+  expect(
+    view(transcript, "child-1").map((block) => block.type === "message" && block.text),
+  ).toEqual(["child"])
+  // A child first heard of through its own event is in the list too.
+  expect(transcript.subagents.map((child) => child.id)).toEqual(["child-1", "child-2"])
+})
+
+it("asks a child's permission in main, naming the child, and answers it there", () => {
+  const transcript = applySnapshot(emptyTranscript(), [
+    event("permission_request", {
+      tool_name: "Bash",
+      subagent: EXPLORER,
+      options: [{ optionId: "allow", name: "Allow" }],
+    }),
+    event("permission.replied", { option_id: "allow", subagent: EXPLORER, decided_by: "console" }),
+  ])
+
+  expect(view(transcript, "child-1")).toEqual([])
+  expect(view(transcript)).toEqual([
+    expect.objectContaining({
+      type: "permission",
+      title: "Bash · asked by subagent Explorer",
+      askedBy: EXPLORER,
+      answer: { optionId: "allow", name: "Allow", decidedBy: "console" },
+    }),
+  ])
+})
+
+it("rebuilds the children from a fresh snapshot", () => {
+  const before = applySnapshot(emptyTranscript(), [
+    update("child-1", "Explorer", "running", "2026-11-14T10:00:00Z"),
+  ])
+
+  const after = applySnapshot(before, [
+    update("child-2", "Tester", "running", "2026-11-14T10:00:00Z"),
+  ])
+
+  expect(after.subagents.map((child) => child.id)).toEqual(["child-2"])
+})
+
+it.each([
+  ["the same call id", { acp: { toolCallId: "call-1", title: "Run" } }],
+  ["no call id and the same title", { tool_name: "Run" }],
+])("keeps a parent's and each child's tool calls apart with %s", (_label, call) => {
+  const done = (subagent?: object) =>
+    event("post_tool_use", {
+      ...call,
+      ...(subagent ? { subagent } : {}),
+      acp: { ...("acp" in call ? call.acp : {}), status: "completed" },
+    })
+  const transcript = applySnapshot(emptyTranscript(), [
+    event("pre_tool_use", call),
+    event("pre_tool_use", { ...call, subagent: EXPLORER }),
+    event("pre_tool_use", { ...call, subagent: { id: "child-2", title: "Tester" } }),
+    // Each update comes after another speaker's call of the same id or title.
+    done(),
+    done(EXPLORER),
+  ])
+
+  const status = (blocks: Block[]) =>
+    blocks.map((block) => block.type === "tool" && (block.tool.status ?? "pending"))
+  expect(status(view(transcript))).toEqual(["completed"])
+  expect(status(view(transcript, "child-1"))).toEqual(["completed"])
+  expect(status(view(transcript, "child-2"))).toEqual(["pending"])
 })

@@ -8,8 +8,9 @@
  * (`applySnapshot`), and every later `event` extends it (`applyEvent`).
  *
  * Every block keeps the id of the event it opened on, and the child that
- * spoke where `payload.subagent` names one: a child's events stay inline,
- * tagged with its title.
+ * spoke where `payload.subagent` names one. `subagents` lists each child in
+ * the order it was first heard of, and `view` picks the blocks of one view:
+ * the session's own, `main`, or one child's (008 rules 30 to 35).
  */
 
 import type { AgentEventDto } from "@/api"
@@ -68,7 +69,10 @@ export type Block =
   | (BlockBase & { type: "tool"; tool: ToolCall })
   | (BlockBase & {
       type: "permission"
+      /** The call, and the child that asks where one does: `<tool> · asked by subagent <title>`. */
       title: string
+      /** The child whose question this is. The session answers it, so it shows in `main`. */
+      askedBy?: Subagent
       /** The command the call runs, where it runs one. */
       command?: string
       diff?: string
@@ -76,11 +80,25 @@ export type Block =
       answer?: { optionId?: string; name: string; decidedBy?: string }
     })
   | (BlockBase & { type: "note"; text: string })
+  /** A line of `main` for a child's announcement or its end. */
+  | (BlockBase & { type: "child"; text: string })
   | (BlockBase & { type: "error"; text: string; diagnosis?: string })
   | (BlockBase & { type: "raw"; kind: string; summary: string })
 
+/** One child the agent announced, as its latest `subagent_update` said. */
+interface ChildAgent extends Subagent {
+  /** `running`, `completed`, `failed` or `cancelled`, or none where the agent said none. */
+  state?: string
+  /** Whether the console may cancel this child now. */
+  cancel: boolean
+  /** When it was first heard of: what an end counts its time from. */
+  announcedAt: string
+}
+
 export interface Transcript {
   blocks: Block[]
+  /** Every child in the order it was first heard of. */
+  subagents: ChildAgent[]
   /** A turn runs: a prompt or the agent's output since the last stop. */
   running: boolean
   /** Every event id folded in, so an event delivered twice is folded once. */
@@ -90,7 +108,7 @@ export interface Transcript {
 }
 
 export function emptyTranscript(): Transcript {
-  return { blocks: [], running: false, seen: new Set(), events: [] }
+  return { blocks: [], subagents: [], running: false, seen: new Set(), events: [] }
 }
 
 /** The transcript a `snapshot` opens on, in place of whatever was shown. */
@@ -103,9 +121,16 @@ export function applyEvent(transcript: Transcript, event: AgentEventDto): Transc
   if (transcript.seen.has(event.id)) return transcript
   const seen = new Set(transcript.seen).add(event.id)
   const blocks = transcript.blocks.slice()
-  fold(blocks, event)
+  const subagents = transcript.subagents.slice()
+  if (event.kind === SUBAGENT_UPDATE) followChild(subagents, blocks, event)
+  else {
+    const id = childId(event)
+    if (id !== undefined) childAt(subagents, event, id)
+    fold(blocks, event)
+  }
   return {
     blocks,
+    subagents,
     running: running(transcript.running, event.kind),
     seen,
     events: [...transcript.events, event],
@@ -132,11 +157,109 @@ export function prependEvents(transcript: Transcript, events: AgentEventDto[]): 
   return { ...folded, blocks: [...folded.blocks, ...local] }
 }
 
-/** An error the console itself met, such as a send the daemon refused. */
-export function appendError(transcript: Transcript, text: string): Transcript {
+/**
+ * An error the console itself met, such as a send the daemon refused, in the
+ * view of the child it is about, or in `main`.
+ */
+export function appendError(transcript: Transcript, text: string, child?: Subagent): Transcript {
   // No event opened it, so its id is local, and unique among the blocks.
   const id = `local:${transcript.blocks.length}`
-  return { ...transcript, blocks: [...transcript.blocks, { type: "error", id, text }] }
+  const block: Block = { type: "error", id, text, ...(child ? { subagent: child } : {}) }
+  return { ...transcript, blocks: [...transcript.blocks, block] }
+}
+
+/**
+ * The blocks of one view: a child's own, by its id, or with none the
+ * session's own, `main`, which holds no child's events but its questions.
+ */
+export function view(transcript: Transcript, child?: string): Block[] {
+  return transcript.blocks.filter((block) => block.subagent?.id === child)
+}
+
+/** The mark of a child's state, in the bar and in the lines of `main`. */
+export function stateMark(state: string | undefined): string {
+  switch (state) {
+    case "running":
+      return "●"
+    case "completed":
+      return "✓"
+    case "failed":
+      return "✗"
+    case "cancelled":
+      return "⊘"
+    default:
+      return "◇"
+  }
+}
+
+const SUBAGENT_UPDATE = "subagent_update"
+const ENDED_STATES = new Set(["completed", "failed", "cancelled"])
+
+/**
+ * Fold one `subagent_update` into the children, and into `main` the line it
+ * is worth there: one for an announcement, with the title and the task, and
+ * one for an end, with the time since the announcement. A first update that
+ * already ends the child is both, and gets both lines.
+ */
+function followChild(subagents: ChildAgent[], blocks: Block[], event: AgentEventDto): void {
+  const id = childId(event)
+  if (id === undefined) return
+  const known = subagents.some((child) => child.id === id)
+  const index = childAt(subagents, event, id)
+  const was = subagents[index] as ChildAgent
+  const state = str(event.payload, "state")
+  const child: ChildAgent = {
+    ...was,
+    title: titleOf(event, id),
+    state,
+    cancel: at(event.payload, "capabilities", "cancel") === true,
+  }
+  subagents[index] = child
+  if (!known) {
+    const task = str(event.payload, "subagent", "description")
+    const text = `${stateMark(undefined)} subagent ${child.title}`
+    blocks.push({ id: event.id, type: "child", text: task ? `${text} · ${task}` : text })
+  }
+  if (state !== was.state && state !== undefined && ENDED_STATES.has(state)) {
+    const text = `${stateMark(state)} subagent ${child.title} ${state}`
+    const took = elapsed(was.announcedAt, event.created_at)
+    blocks.push({
+      id: `${event.id}:end`,
+      type: "child",
+      text: took === undefined ? text : `${text} · ${took}`,
+    })
+  }
+}
+
+/** The place of the child `id` in `subagents`, adding it where it is new. */
+function childAt(subagents: ChildAgent[], event: AgentEventDto, id: string): number {
+  const at = subagents.findIndex((child) => child.id === id)
+  if (at !== -1) return at
+  subagents.push({ id, title: titleOf(event, id), cancel: false, announcedAt: event.created_at })
+  return subagents.length - 1
+}
+
+function titleOf(event: AgentEventDto, id: string): string {
+  return str(event.payload, "subagent", "title") || id
+}
+
+/** The time from one stored instant to a later one, as the CLI's clock reads it. */
+function elapsed(from: string, to: string): string | undefined {
+  const ms = Date.parse(to) - Date.parse(from)
+  if (Number.isNaN(ms) || ms < 0) return undefined
+  const seconds = Math.floor(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`
+}
+
+/** The child an event's payload names, where it names one. */
+function childId(event: AgentEventDto): string | undefined {
+  return str(event.payload, "subagent", "id")
+}
+
+/** A question and its reply are the session's, whoever asks: they show in `main`. */
+function askedOfTheSession(kind: string): boolean {
+  return kind === "permission_request" || kind === "permission.replied"
 }
 
 /** The newest permission nobody has answered, if one waits. */
@@ -189,7 +312,7 @@ function fold(blocks: Block[], event: AgentEventDto): void {
       return
     case "tool_call_update":
     case "post_tool_use":
-      if (mergeTool(blocks, toolOf(payload, UNNAMED_TOOL))) return
+      if (mergeTool(blocks, event)) return
   }
   blocks.push(blockOf(event))
 }
@@ -226,10 +349,12 @@ function blockOf(event: AgentEventDto): Block {
       return { ...base, type: "tool", tool: toolOf(payload, UNNAMED_TOOL) }
     case "permission_request": {
       const tool = toolOf(payload, event.summary)
+      const asker = childOf(event)
       return {
         ...base,
         type: "permission",
-        title: tool.title,
+        title: asker ? `${tool.title} · asked by subagent ${asker.title}` : tool.title,
+        ...(asker ? { askedBy: asker } : {}),
         command: commandOf(tool.input),
         diff: tool.diff,
         options: list(payload, "options").flatMap((option) => {
@@ -265,14 +390,18 @@ function blockOf(event: AgentEventDto): Block {
 }
 
 function baseOf(event: AgentEventDto): BlockBase {
-  const id = str(event.payload, "subagent", "id")
-  if (id === undefined) return { id: event.id }
-  return { id: event.id, subagent: { id, title: str(event.payload, "subagent", "title") ?? id } }
+  const child = askedOfTheSession(event.kind) ? undefined : childOf(event)
+  return child ? { id: event.id, subagent: child } : { id: event.id }
+}
+
+function childOf(event: AgentEventDto): Subagent | undefined {
+  const id = childId(event)
+  return id === undefined ? undefined : { id, title: titleOf(event, id) }
 }
 
 /** Whether a block was spoken by the same agent: the session, or one child. */
 function sameSpeaker(block: Block, event: AgentEventDto): boolean {
-  return block.subagent?.id === str(event.payload, "subagent", "id")
+  return block.subagent?.id === childId(event)
 }
 
 /**
@@ -365,11 +494,17 @@ function foldDiagnosis(blocks: Block[], event: AgentEventDto): void {
   if (block?.type === "error") blocks[index] = { ...block, diagnosis: event.summary }
 }
 
-/** Merge a later event of a call into its open block; false where none is open. */
-function mergeTool(blocks: Block[], update: ToolCall): boolean {
+/**
+ * Merge a later event of a call into its speaker's open block; false where
+ * none is open. A child's call never merges into the parent's or another
+ * child's, even under the same call id or title.
+ */
+function mergeTool(blocks: Block[], event: AgentEventDto): boolean {
+  const update = toolOf(event.payload, UNNAMED_TOOL)
   const index = blocks.findLastIndex(
     (block) =>
       block.type === "tool" &&
+      sameSpeaker(block, event) &&
       !isTerminal(block.tool.status) &&
       (update.id ? block.tool.id === update.id : block.tool.title === update.title),
   )

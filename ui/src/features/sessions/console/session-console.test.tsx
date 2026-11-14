@@ -432,3 +432,166 @@ it("drops the loaded pages when a fresh snapshot replaces the transcript", async
   expect(within(transcript()).queryByText("older prompt")).toBeNull()
   within(transcript()).getByText("fresh")
 })
+
+const EXPLORER = { id: "child-1", title: "Explorer" }
+const TESTER = { id: "child-2", title: "Tester" }
+
+/** A `subagent_update` as the daemon stores it (021). */
+function update(child: { id: string; title: string }, state: string, cancel = false) {
+  return event("subagent_update", {
+    subagent: { ...child, description: `${child.title} task` },
+    state,
+    capabilities: { cancel },
+  })
+}
+
+function bar() {
+  return screen.getByRole("tablist", { name: "Console views" })
+}
+
+function tabs() {
+  return within(bar())
+    .getAllByRole("tab")
+    .map((tab) => `${tab.textContent}${tab.getAttribute("aria-selected") === "true" ? " *" : ""}`)
+}
+
+it("shows the bar only with a child, listing main and each child with its mark", () => {
+  const { source } = renderConsole([event("agent_message", { text: "hello" })])
+  expect(screen.queryByRole("tablist", { name: "Console views" })).toBeNull()
+
+  act(() => {
+    source.emit("event", update(EXPLORER, "running"))
+    source.emit("event", update(TESTER, "running"))
+    source.emit("event", update(TESTER, "failed"))
+    source.emit("event", event("subagent_update", { subagent: { id: "child-3", title: "Idle" } }))
+    source.emit(
+      "event",
+      event("permission_request", {
+        tool_name: "Bash",
+        subagent: EXPLORER,
+        options: [{ optionId: "allow", name: "Allow" }],
+      }),
+    )
+  })
+
+  expect(tabs()).toEqual(["main *", "● Explorer ?", "✗ Tester", "◇ Idle"])
+})
+
+it("marks a completed and a cancelled child", () => {
+  renderConsole([update(EXPLORER, "completed"), update(TESTER, "cancelled")])
+
+  expect(tabs()).toEqual(["main *", "✓ Explorer", "⊘ Tester"])
+})
+
+it("switches the view with Tab, Shift-Tab and a click, in bar order, wrapping around", async () => {
+  const user = userEvent.setup()
+  renderConsole([update(EXPLORER, "running"), update(TESTER, "running")])
+
+  fireEvent.keyDown(input(), { key: "Tab" })
+  expect(tabs()).toEqual(["main", "● Explorer *", "● Tester"])
+  await waitFor(() => expect(document.activeElement).not.toBe(document.body))
+  fireEvent.keyDown(document.activeElement as Element, { key: "Tab" })
+  expect(tabs()).toEqual(["main", "● Explorer", "● Tester *"])
+  fireEvent.keyDown(document.activeElement as Element, { key: "Tab" })
+  expect(tabs()).toEqual(["main *", "● Explorer", "● Tester"])
+  fireEvent.keyDown(input(), { key: "Tab", shiftKey: true })
+  expect(tabs()).toEqual(["main", "● Explorer", "● Tester *"])
+
+  await user.click(screen.getByRole("tab", { name: /Explorer/ }))
+  expect(tabs()).toEqual(["main", "● Explorer *", "● Tester"])
+})
+
+it("leaves Tab alone in a session with no child", () => {
+  renderConsole()
+
+  expect(fireEvent.keyDown(input(), { key: "Tab" })).toBe(true)
+})
+
+it("shows a child's own events read-only, and its questions and lines in main", async () => {
+  const user = userEvent.setup()
+  renderConsole([
+    event("agent_message", { text: "parent says" }),
+    update(EXPLORER, "running"),
+    event("agent_message", { text: "child says", subagent: EXPLORER }),
+    event("permission_request", {
+      tool_name: "Bash",
+      subagent: EXPLORER,
+      options: [{ optionId: "allow", name: "Allow" }],
+    }),
+  ])
+
+  within(transcript()).getByText("◇ subagent Explorer · Explorer task")
+  within(transcript()).getByText("Permission · Bash · asked by subagent Explorer")
+  expect(within(transcript()).queryByText("child says")).toBeNull()
+  await user.click(screen.getByRole("option", { name: /Allow/ }))
+  await waitFor(() => expect(posts[0]?.body).toBe(JSON.stringify({ text: "allow" })))
+
+  await user.click(screen.getByRole("tab", { name: /Explorer/ }))
+
+  within(transcript()).getByText("child says")
+  expect(within(transcript()).queryByText("parent says")).toBeNull()
+  expect(within(transcript()).queryByText(/asked by subagent/)).toBeNull()
+  expect(screen.queryByRole("textbox", { name: "Message the agent" })).toBeNull()
+  screen.getByText("read-only · tab next view · esc back")
+})
+
+it("goes back to main on Escape from a child that may not be cancelled", async () => {
+  const user = userEvent.setup()
+  renderConsole([update(EXPLORER, "running")], "running")
+  await user.click(screen.getByRole("tab", { name: /Explorer/ }))
+
+  fireEvent.keyDown(screen.getByRole("tab", { name: /Explorer/ }), { key: "Escape" })
+
+  expect(tabs()).toEqual(["main *", "● Explorer"])
+  expect(posts).toHaveLength(0)
+})
+
+it("cancels a running child that may be cancelled on Escape, and shows a refusal in its view", async () => {
+  const user = userEvent.setup()
+  answer(() => errorResponse(409, "subagent_not_cancellable", "the subagent has ended"))
+  renderConsole([update(EXPLORER, "running", true)], "running")
+  await user.click(screen.getByRole("tab", { name: /Explorer/ }))
+  screen.getByText("read-only · tab next view · esc cancel")
+
+  fireEvent.keyDown(screen.getByRole("tab", { name: /Explorer/ }), { key: "Escape" })
+
+  await within(transcript()).findByText(/the subagent has ended/)
+  expect(posts).toEqual([
+    {
+      path: `/v1/sessions/${SESSION_ID}/console/cancel`,
+      body: JSON.stringify({ subagent_id: "child-1" }),
+    },
+  ])
+  expect(tabs()).toEqual(["main", "● Explorer *"])
+})
+
+it("says how many subagents run", () => {
+  const { source } = renderConsole([update(EXPLORER, "running"), update(TESTER, "running")])
+  screen.getByText("running 2 subagents")
+
+  act(() => source.emit("event", update(TESTER, "completed")))
+  screen.getByText("running 1 subagent")
+
+  act(() => source.emit("event", update(EXPLORER, "completed")))
+  expect(screen.queryByText(/running \d subagent/)).toBeNull()
+})
+
+it("rebuilds the bar and the views from the snapshot of a reconnect", async () => {
+  const user = userEvent.setup()
+  const { source } = renderConsole([
+    update(EXPLORER, "running"),
+    event("agent_message", { text: "old child", subagent: EXPLORER }),
+  ])
+  await user.click(screen.getByRole("tab", { name: /Explorer/ }))
+
+  act(() =>
+    source.emit("snapshot", [
+      update(TESTER, "running"),
+      event("agent_message", { text: "new child", subagent: TESTER }),
+    ]),
+  )
+
+  expect(tabs()).toEqual(["main *", "● Tester"])
+  await user.click(screen.getByRole("tab", { name: /Tester/ }))
+  within(transcript()).getByText("new child")
+})
