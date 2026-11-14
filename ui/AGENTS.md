@@ -418,7 +418,7 @@ stream (008). It lives in `src/features/sessions/console/`:
   the session's, so it stays in `main`.
 - `console-view-state.ts` retains, in memory and per daemon address and
   session, what a console keeps while it is off screen: the draft, the
-  scroll position, whether it follows, the view shown, the fold and a fold
+  scroll position, whether it follows, the view shown and a fold
   preference per block id. Write to it through `updateViewState`; a pane
   mounted again reads it back.
 - `composer-menu.tsx` is the plus menu: the agent's commands and the session
@@ -444,13 +444,21 @@ stream (008). It lives in `src/features/sessions/console/`:
   be cancelled.
 
 The console also has the CLI pane's extras (spec 015, rules 23a to 23f): a
-fold toggle (header control and Ctrl-O), the agent's slash commands as a
+individual block disclosures (no global fold controls or global fold state), the agent's slash commands as a
 suggestion list over the input, a status row, a `queued` block for a sent
 prompt, and a footer of keys. `transcript.ts` holds their state
 (`availableCommands`, `queuedPrompts`, the launches' token totals and the
 turn's start); `blocks.tsx`, `composer.tsx` and `status.tsx` draw it.
 
-Escape inside the console cancels a running turn and never reaches the pane
+`workspace.tsx` measures the console panel: selected tool details sit beside
+the conversation at 880 CSS pixels or wider, and use a modal drawer below that.
+Tool and permission rows stay compact and selection never follows newer calls.
+Permission response controls open in the same details area; questions stay in the conversation.
+Ctrl-O has
+no handler in the shared browser and desktop console.
+
+Escape inside tool or permission details closes them and returns focus to the selected row.
+Escape elsewhere inside the console cancels a running turn and never reaches the pane
 or the modal. ⌘Escape moves the keyboard to the panel's Close button or the
 modal's Collapse button. The tests drive the console through the
 `EventSource` stand-in in `src/test/event-source.ts`.

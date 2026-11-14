@@ -207,9 +207,9 @@ export function QuestionCard({
     return (
       <section
         aria-label={`Question · ${block.hint}`}
-        className="relative border-l border-purple-500 pl-9 text-xs"
+        className="relative rounded-md bg-muted/30 py-1 pr-2 pl-7 text-xs"
       >
-        <CircleHelpIcon aria-hidden className="absolute top-2 left-3 size-3.5 text-purple-500" />
+        <CircleHelpIcon aria-hidden className="absolute top-2 left-1.5 size-3.5 text-purple-500" />
         <Foldable
           folded={folded}
           onToggle={() => onToggle(block.id, folded)}
@@ -217,7 +217,8 @@ export function QuestionCard({
             <SummaryLine
               start={
                 <>
-                  <span className="font-medium text-foreground">Question · {block.hint}</span>
+                  <span className="block font-medium text-foreground">Question · {block.hint}</span>
+                  <span className="block text-foreground">{question.text}</span>
                   <span aria-hidden> ↳ </span>
                   <span>{outcome(resolution, false, live)}</span>
                 </>
@@ -235,9 +236,9 @@ export function QuestionCard({
   return (
     <section
       aria-label={`Question · ${block.hint}`}
-      className="relative border-l border-purple-500 py-2 pr-3 pl-9 text-xs"
+      className="relative rounded-md bg-muted/30 py-2 pr-2 pl-7 text-xs"
     >
-      <CircleHelpIcon aria-hidden className="absolute top-2.5 left-3 size-3.5 text-purple-500" />
+      <CircleHelpIcon aria-hidden className="absolute top-2.5 left-1.5 size-3.5 text-purple-500" />
       <div className="font-medium [&_[data-summary-end]]:font-mono [&_[data-summary-end]]:font-normal [&_[data-summary-end]]:text-muted-foreground">
         <SummaryLine start={<>Question · {block.hint}</>} end={[time]} />
       </div>

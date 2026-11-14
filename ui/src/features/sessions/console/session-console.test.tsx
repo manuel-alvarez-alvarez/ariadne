@@ -64,7 +64,6 @@ beforeEach(() => {
     draft: "",
     scrollTop: 0,
     following: true,
-    folded: true,
     blockFolds: {},
     shown: undefined,
     failed: [],
@@ -112,12 +111,11 @@ it("reads the console stream and draws the snapshot as blocks", () => {
   expect(within(transcript()).getByText("Fixed").tagName).toBe("STRONG")
 })
 
-it("folds a prompt the daemon sent into a summary that names it", () => {
+it("keeps developer prompts expanded and identifies their role", () => {
   renderConsole([event("user_prompt_submit", { text: "Resume\nthe work", source: "daemon" })])
-
-  const summary = within(transcript()).getByRole("button", { name: /daemon prompt · Resume/ })
-  expect(summary.getAttribute("aria-expanded")).toBe("false")
-  expect(within(transcript()).queryByText("the work")).toBeNull()
+  within(transcript()).getByText("Developer")
+  within(transcript()).getByText(/the work/)
+  expect(within(transcript()).queryByRole("button")).toBeNull()
 })
 
 it("extends the transcript with each event and replaces it with a new snapshot", () => {
@@ -214,7 +212,8 @@ it("answers a permission from its picker with the keyboard, and shows who decide
     ],
   })
   const { source } = renderConsole([request], "running")
-  within(transcript()).getByText("rm -rf build")
+  fireEvent.click(within(transcript()).getByRole("button", { name: /Permission/ }))
+  screen.getByText("rm -rf build")
   const picker = screen.getByRole("listbox", { name: "Answer the permission" })
 
   fireEvent.keyDown(picker, { key: "ArrowDown" })
@@ -240,30 +239,27 @@ it("answers a permission from its picker with the keyboard, and shows who decide
     ),
   )
   expect(screen.queryByRole("listbox", { name: "Answer the permission" })).toBeNull()
-  within(transcript()).getByText("Reject · decided by console")
+  screen.getByText("Reject · decided by console")
 })
 
-it("folds a permission when it is answered, even with the console unfolded", async () => {
-  const user = userEvent.setup()
+it("keeps an answered permission compact and opens its details on selection", () => {
   const request = event("permission_request", {
     acp: { toolCallId: "call-1", title: "Bash", rawInput: { command: "rm -rf build" } },
     options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
   })
   const { source } = renderConsole([request], "running")
-  await user.click(screen.getByRole("button", { name: "Unfold" }))
-  expect(transcript().textContent).toContain("rm -rf build")
-
+  expect(transcript().textContent).not.toContain("rm -rf build")
   act(() =>
     source.emit(
       "event",
       event("permission.replied", { option_id: "allow", decided_by: "console" }),
     ),
   )
-
-  within(transcript()).getByText("Allow · decided by console")
-  expect(transcript().textContent).not.toContain("rm -rf build")
-  await user.click(within(transcript()).getByRole("button", { name: /Permission · Bash/ }))
-  expect(transcript().textContent).toContain("rm -rf build")
+  within(transcript()).getByText("Allow")
+  fireEvent.click(within(transcript()).getByRole("button", { name: /Permission · Bash/ }))
+  const drawer = screen.getByRole("dialog", { name: "Permission details" })
+  expect(drawer.querySelector("code")?.textContent).toBe("rm -rf build")
+  within(drawer).getByText("Allow · decided by console")
 })
 
 it.each([
@@ -279,6 +275,7 @@ it.each([
 
   fireEvent.keyDown(input(), { key: "Enter", ...init })
 
+  fireEvent.click(within(transcript()).getByRole("button", { name: /Permission/ }))
   // An answer marks its option as being sent at once, before its POST.
   expect(screen.getByRole("option", { name: /Allow/ }).getAttribute("aria-disabled")).toBe("false")
   expect(posts).toHaveLength(0)
@@ -293,6 +290,7 @@ it("picks a permission option with a click", async () => {
     }),
   ])
 
+  fireEvent.click(within(transcript()).getByRole("button", { name: /Permission/ }))
   await user.click(screen.getByRole("option", { name: /Allow/ }))
 
   await waitFor(() => expect(posts[0]?.body).toBe(JSON.stringify({ text: "allow" })))
@@ -587,9 +585,11 @@ it("shows a child's own events read-only, and its questions and lines in main", 
   within(transcript()).getByText("◇ subagent Explorer · Explorer task")
   within(transcript()).getByText("Permission · Bash · asked by subagent Explorer")
   expect(within(transcript()).queryByText("child says")).toBeNull()
+  fireEvent.click(within(transcript()).getByRole("button", { name: /Permission/ }))
   await user.click(screen.getByRole("option", { name: /Allow/ }))
   await waitFor(() => expect(posts[0]?.body).toBe(JSON.stringify({ text: "allow" })))
 
+  fireEvent.click(screen.getByRole("button", { name: "Close permission details" }))
   await user.click(screen.getByRole("tab", { name: /Explorer/ }))
 
   within(transcript()).getByText("child says")
@@ -685,7 +685,7 @@ function foldedActivity() {
   ]
 }
 
-it("marks prompts and tool states with borders and icons", () => {
+it("identifies prompts and tool states without left borders", () => {
   renderConsole([
     event("user_prompt_submit", { text: "hello" }),
     event("tool_call_update", {
@@ -696,80 +696,51 @@ it("marks prompts and tool states with borders and icons", () => {
     }),
   ])
   const prompt = transcript().querySelector('[data-block="prompt"]')
-  expect(prompt?.querySelector(".border-blue-500 svg")).not.toBeNull()
+  expect(prompt?.textContent).toContain("You")
+  expect(transcript().querySelector(".border-l")).toBeNull()
   const tools = transcript().querySelectorAll('[data-block="tool"]')
-  expect(tools[0]?.querySelector(".border-green-500 [data-tool-kind=read]")).not.toBeNull()
-  expect(tools[1]?.querySelector(".border-red-500 [data-tool-kind=edit]")).not.toBeNull()
+  expect(tools[0]?.querySelector("[data-tool-kind=read]")).not.toBeNull()
+  expect(tools[1]?.querySelector("[data-tool-kind=edit]")).not.toBeNull()
 })
 
-it("folds tool details, thoughts and daemon prompts together, starting folded, from the header and Ctrl-O", async () => {
-  const user = userEvent.setup()
+it("folds thoughts while prompts stay expanded and tool rows stay compact", () => {
   renderConsole(foldedActivity())
-
   const log = within(transcript())
-  expect(log.queryByText(/prompt 6/)).toBeNull()
-  expect(log.queryByText(/out 7/)).toBeNull()
-  expect(log.queryByText("+add 25")).toBeNull()
+  log.getByText(/prompt 6/)
   expect(log.queryByText(/the options/)).toBeNull()
-  log.getByRole("button", { name: /Bash/ })
-
-  await user.click(screen.getByRole("button", { name: "Unfold" }))
-  expect(log.getByText(/prompt 10/)).not.toBeNull()
-  expect(log.getByText(/out 1\b/)).not.toBeNull()
-  expect(log.getByText("+add 30")).not.toBeNull()
+  fireEvent.click(within(transcript()).getByRole("button", { name: /thought · pondering/ }))
+  log.getByText(/prompt 10/)
   log.getByText(/the options/)
-
-  fireEvent.keyDown(input(), { key: "o", ctrlKey: true })
-  screen.getByRole("button", { name: "Unfold" })
-  expect(log.queryByText(/out 6\b/)).toBeNull()
+  expect(log.queryByText("+add 30")).toBeNull()
+  expect(log.queryByRole("button", { name: "Copy output" })).toBeNull()
+  fireEvent.click(within(transcript()).getByRole("button", { name: /thought · pondering/ }))
+  expect(log.queryByText(/the options/)).toBeNull()
 })
 
-it("folds one block on its own header and keeps the choice across a remount and a stream update", async () => {
-  const user = userEvent.setup()
+it("folds one thought and keeps the choice across a remount and a stream update", () => {
   const activity = foldedActivity()
   const { source } = renderConsole(activity)
-  const log = within(transcript())
-
-  const bash = log.getByRole("button", { name: /Bash/ })
-  await user.click(bash)
-  expect(bash.getAttribute("aria-expanded")).toBe("true")
-  log.getByText(/out 3\b/)
-  expect(log.queryByText("+add 5")).toBeNull()
-
+  const thought = within(transcript()).getByRole("button", { name: /thought · pondering/ })
+  fireEvent.click(thought)
+  expect(thought.getAttribute("aria-expanded")).toBe("true")
   act(() => source.emit("event", event("agent_message", { text: "later" })))
-  expect(log.getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded")).toBe("true")
-
+  expect(thought.getAttribute("aria-expanded")).toBe("true")
   cleanup()
   stubEventSource()
   renderConsole(activity)
   expect(
-    within(transcript()).getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded"),
+    within(transcript())
+      .getByRole("button", { name: /thought · pondering/ })
+      .getAttribute("aria-expanded"),
   ).toBe("true")
-  expect(
-    within(transcript()).getByRole("button", { name: /Edit/ }).getAttribute("aria-expanded"),
-  ).toBe("false")
 })
 
-it("lets a keyboard open a fold and leaves its content's Copy control from folding it", async () => {
-  const user = userEvent.setup()
-  renderConsole(foldedActivity())
-  const log = within(transcript())
-
-  log.getByRole("button", { name: /Bash/ }).focus()
-  await user.keyboard("{Enter}")
-  expect(log.getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded")).toBe("true")
-
-  await user.click(log.getByRole("button", { name: "Copy output" }))
-  expect(log.getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded")).toBe("true")
-})
-
-it("draws no scroll area inside the transcript, and wraps long code", async () => {
-  const user = userEvent.setup()
+it("draws no scroll area inside the transcript, and wraps long code", () => {
   renderConsole([
     ...foldedActivity(),
     event("agent_message", { text: "```ts\nconst x = 1\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |" }),
   ])
-  await user.click(screen.getByRole("button", { name: "Unfold" }))
+  fireEvent.click(within(transcript()).getByRole("button", { name: /thought · pondering/ }))
 
   const inner = Array.from(transcript().querySelectorAll("*")).filter((node) =>
     /(^|\s)(overflow-(auto|scroll|x-auto|y-auto)|max-h-)/.test(node.getAttribute("class") ?? ""),
@@ -966,17 +937,6 @@ it("places the status below the input without a keyboard hint footer", () => {
   expect(screen.queryByText(/enter send/)).toBeNull()
 })
 
-it("folds on Ctrl-O from a header control, not only from the input", () => {
-  renderConsole()
-  const expand = screen.getByRole("button", { name: "Expand the console" })
-
-  fireEvent.keyDown(expand, { key: "o", ctrlKey: true })
-  screen.getByRole("button", { name: "Fold" })
-
-  fireEvent.keyDown(screen.getByRole("button", { name: "Fold" }), { key: "o", ctrlKey: true })
-  screen.getByRole("button", { name: "Unfold" })
-})
-
 it("reopens the suggestions on the next edit after Escape closed them", () => {
   const { source } = renderConsole()
   listCommands(source, [{ name: "init", description: "Set up" }])
@@ -1064,8 +1024,8 @@ function questionCard() {
 
 function expectQuestionMarker(card: HTMLElement) {
   const block = card.closest('[data-block="question"]')
-  expect(block?.querySelectorAll(".border-l")).toHaveLength(1)
-  expect(card.classList.contains("border-purple-500")).toBe(true)
+  expect(block?.querySelectorAll(".border-l")).toHaveLength(0)
+  expect(card.querySelectorAll(".lucide-circle-help")).toHaveLength(1)
   expect(card.querySelector(".lucide-circle-help")).not.toBeNull()
 }
 
@@ -1172,7 +1132,7 @@ const ANSWERED = () => [
   }),
 ]
 
-it("folds an answered question to its hint and outcome, and a click shows it closed", async () => {
+it("folds an answered question with its text and chosen option", async () => {
   const user = userEvent.setup()
   renderConsole(ANSWERED())
   const card = questionCard()
@@ -1180,11 +1140,11 @@ it("folds an answered question to its hint and outcome, and a click shows it clo
   const header = within(card).getByRole("button", { name: /Pick a base/ })
   expect(header.getAttribute("aria-expanded")).toBe("false")
   within(header).getByText(/Answered · Next/)
-  expect(within(card).queryByText("Which base branch should the task land on?")).toBeNull()
+  within(header).getByText("Which base branch should the task land on?")
   expect(within(card).queryByRole("button", { name: /^Main/ })).toBeNull()
 
   await user.click(header)
-  within(card).getByText("Which base branch should the task land on?")
+  expect(within(card).getAllByText("Which base branch should the task land on?")).toHaveLength(2)
   expect(within(card).getByRole("button", { name: /^Main/ })).toHaveProperty("disabled", true)
   expect(within(card).queryByRole("textbox", { name: "Your own answer" })).toBeNull()
 })
@@ -1382,7 +1342,7 @@ it("keeps the block the reader is on in place when a block above it changes heig
 
   // Unfolding a block above pushes the message down 120px; the reader stays on it.
   messageTop = 160
-  await user.click(within(log).getByRole("button", { name: /Bash/ }))
+  await user.click(within(log).getByRole("button", { name: /thought · pondering/ }))
 
   expect(top).toBe(220)
   vi.restoreAllMocks()
