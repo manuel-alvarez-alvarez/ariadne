@@ -765,15 +765,13 @@ impl AriadneMcp {
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
         let mut pull: serde_json::Value = self.get(&self.pull_request_path("").await?).await?;
-        let repository: serde_json::Value = self
-            .get(&format!(
-                "/v1/repositories/{}",
-                pull["repository_id"].as_str().unwrap_or_default()
-            ))
-            .await?;
-        let session: serde_json::Value = self
-            .get(&format!("/v1/sessions/{}", self.session_id))
-            .await?;
+        let repository_path = format!(
+            "/v1/repositories/{}",
+            pull["repository_id"].as_str().unwrap_or_default()
+        );
+        let session_path = format!("/v1/sessions/{}", self.session_id);
+        let (repository, session): (serde_json::Value, serde_json::Value) =
+            tokio::try_join!(self.get(&repository_path), self.get(&session_path))?;
         pull["worktree_path"] = session["worktree_path"].clone();
         pull["repository_path"] = repository["path"].clone();
         pull["login"] = repository["forge"]["login"].clone();
@@ -986,7 +984,12 @@ impl AriadneMcp {
             return Err(McpError::invalid_params("a message needs a body", None));
         }
         let path = self.task_path(task_id.clone(), "/messages")?;
-        let (to_actor, to_agent_id) = addressee(to, &self.agents_of(task_id).await?)?;
+        // The orchestrator is addressed by name: no agent id, so no task read.
+        let agents = match to.eq_ignore_ascii_case("orchestrator") {
+            true => Vec::new(),
+            false => self.agents_of(task_id).await?,
+        };
+        let (to_actor, to_agent_id) = addressee(to, &agents)?;
         let request = SendMessageRequest {
             to_actor,
             to_agent_id,
@@ -1067,11 +1070,8 @@ mod tests {
             row.clone(),
             row.clone(),
             row,
-            found.clone(),
             "[]".into(),
-            found.clone(),
             "{}".into(),
-            found,
             "{}".into(),
         ])
         .await;
@@ -1110,10 +1110,13 @@ mod tests {
         .expect("report");
 
         let seen = seen.lock().expect("lock").clone();
-        let calls: Vec<(String, String)> = seen
+        let mut calls: Vec<(String, String)> = seen
             .iter()
             .map(|s| (s.method.clone(), s.path.clone()))
             .collect();
+        // The repository and the session are read at the same time, so
+        // their order is not fixed.
+        calls[2..4].sort();
         let find = (
             "GET".to_string(),
             "/v1/pull-requests?task=01TASK&role=author".to_string(),
@@ -1125,27 +1128,78 @@ mod tests {
                 ("GET".into(), "/v1/pull-requests/01PR".into()),
                 ("GET".into(), "/v1/repositories/01R".into()),
                 ("GET".into(), "/v1/sessions/01SESSION".into()),
-                find.clone(),
                 (
                     "GET".into(),
                     "/v1/pull-requests/01PR/comments?unanswered_only=true".into()
                 ),
-                find.clone(),
                 (
                     "POST".into(),
                     "/v1/pull-requests/01PR/comments/01C/reply".into()
                 ),
-                find,
                 ("POST".into(), "/v1/pull-requests/01PR/report".into()),
             ]
         );
-        let reply: serde_json::Value = serde_json::from_str(&seen[7].body).expect("json");
+        let reply: serde_json::Value = serde_json::from_str(&seen[5].body).expect("json");
         assert_eq!(reply, serde_json::json!({"body": "Renamed it."}));
-        let report: serde_json::Value = serde_json::from_str(&seen[9].body).expect("json");
+        let report: serde_json::Value = serde_json::from_str(&seen[6].body).expect("json");
         assert_eq!(
             report,
             serde_json::json!({"ready": true, "head_sha": "abc", "reviewed_sha": null})
         );
+    }
+
+    /// The first lookup that finds the request keeps its id, so a later
+    /// request tool makes no lookup. Every read of the request stays live.
+    #[tokio::test]
+    async fn a_found_request_id_is_kept_and_no_later_tool_looks_it_up() {
+        let found = r#"{"pull_requests":[{"id":"01PR"}],"next_cursor":null}"#.to_string();
+        let (endpoint, seen) =
+            recording_daemon_answering_in_turn(vec![found, "[]".into(), "[]".into()]).await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        for _ in 0..2 {
+            mcp.list_comments(Parameters(ListCommentsReq {
+                unanswered_only: None,
+            }))
+            .await
+            .expect("list the comments");
+        }
+        let paths: Vec<String> = seen
+            .lock()
+            .expect("lock")
+            .iter()
+            .map(|s| s.path.clone())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "/v1/pull-requests?task=01TASK&role=author",
+                "/v1/pull-requests/01PR/comments",
+                "/v1/pull-requests/01PR/comments",
+            ]
+        );
+    }
+
+    /// A lookup that finds no request keeps nothing: the next call looks up
+    /// again.
+    #[tokio::test]
+    async fn a_lookup_that_finds_no_request_is_made_again() {
+        let (endpoint, seen) =
+            recording_daemon_answering(r#"{"pull_requests":[],"next_cursor":null}"#).await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        for _ in 0..2 {
+            mcp.list_comments(Parameters(ListCommentsReq {
+                unanswered_only: None,
+            }))
+            .await
+            .expect_err("no request yet");
+        }
+        assert_eq!(seen.lock().expect("lock").len(), 2);
     }
 
     /// The daemon withdraws a request with a bare `204`, and the tool reads
@@ -1850,6 +1904,9 @@ mod tests {
                 .expect("json");
         assert_eq!(sent["to_actor"], serde_json::json!("orchestrator"));
         assert_eq!(sent["to_agent_id"], serde_json::Value::Null);
+        let seen = seen.lock().expect("lock");
+        assert_eq!(seen.len(), 1, "a message to the orchestrator reads no task");
+        assert_eq!(seen[0].method, "POST");
     }
 
     /// A `to` that names nobody is refused here, with the columns that would

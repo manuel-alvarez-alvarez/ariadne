@@ -132,6 +132,10 @@ pub(crate) struct AriadneMcp {
     /// The request a review session reviews. A column's agent finds the
     /// request its task opened through the daemon instead (005).
     pull_request_id: Option<String>,
+    /// The id of the request this task opened, kept after the first lookup
+    /// that finds it. A lookup that finds none keeps nothing. The server
+    /// keeps the id only: every read of the request stays live (013).
+    found_pull_request_id: std::sync::Arc<std::sync::OnceLock<String>>,
     /// The index of the skills this session loads, as the launcher renders
     /// it (`ARIADNE_SKILL_INDEX`). None where the session loads no skill.
     skill_index: Option<String>,
@@ -158,6 +162,7 @@ impl AriadneMcp {
             goal_id,
             task_id: std::env::var("ARIADNE_TASK_ID").ok(),
             pull_request_id,
+            found_pull_request_id: Default::default(),
             skill_index: std::env::var("ARIADNE_SKILL_INDEX").ok(),
             tool_router: Self::tool_router(),
         })
@@ -175,7 +180,14 @@ impl AriadneMcp {
     async fn pull_request_path(&self, tail: &str) -> Result<String, McpError> {
         let id = match &self.pull_request_id {
             Some(id) => id.clone(),
-            None => self.task_pull_request().await?,
+            None => match self.found_pull_request_id.get() {
+                Some(id) => id.clone(),
+                None => {
+                    let id = self.task_pull_request().await?;
+                    let _ = self.found_pull_request_id.set(id.clone());
+                    id
+                }
+            },
         };
         Ok(format!("/v1/pull-requests/{id}{tail}"))
     }
@@ -535,6 +547,7 @@ pub(crate) mod tests {
             goal_id: (!pull_request).then(|| "01GOAL".into()),
             task_id: (!pull_request).then(|| "01TASK".into()),
             pull_request_id: pull_request.then(|| "01PR".into()),
+            found_pull_request_id: Default::default(),
             skill_index: Some(skill_index),
             tool_router: AriadneMcp::tool_router(),
         }
