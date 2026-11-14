@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-11-08
+updated: 2026-11-14
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -15,6 +15,7 @@ tests:
   - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-daemon/src/agents/mod.rs
   - crates/ariadne-daemon/tests/it/home_skills.rs
+  - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/workflow_steps.rs
   - crates/ariadne-daemon/tests/it/prompts.rs
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
@@ -293,7 +294,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     with one skill's document stale or missing.
 
     Each successful sync also links every skill folder, one link per name,
-    into `<native-home>/.claude/skills` for Claude Code and OpenCode and
+    into `<native-home>/.claude/skills` for Claude Code and OpenCode (`opencode` and `opencode-v2`) and
     `<native-home>/.agents/skills` for Codex and OpenCode, except a skill
     with no document, shipped or written, or one of blank space only: a
     dropped skill an old staffing still names (rule 7) keeps its shared
@@ -503,6 +504,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
   the outcome, and left untouched while the other directory
   continues syncing (`home_skills.rs::the_home_skill_copy_tracks_the_catalog_and_its_documents`,
   `::a_user_native_skill_collision_is_logged_and_left_untouched`).
+- A launch of `claude-acp`, `codex-acp`, `opencode` and `opencode-v2` gets
+  the skill index in its system prompt and MCP instructions, and the run
+  directory's `skills` link
+  (`acp_runtime.rs::every_supported_agent_launches_with_the_mcp_server_and_the_skills`).
 - A dropped skill an old staffing still names keeps its empty shared copy
   and is linked into neither native directory, a link left there before
   included (`home_skills.rs::a_dropped_skill_kept_for_an_old_staffing_is_not_linked_natively`).

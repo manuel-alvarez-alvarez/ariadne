@@ -3745,7 +3745,12 @@ mod tests {
 
     #[test]
     fn opencode_config_content_matches_the_acp_mcp_entry() {
-        for (agent_id, resume) in [("opencode", false), ("opencode-acp", true)] {
+        for (agent_id, resume) in [
+            ("opencode", false),
+            ("opencode-acp", true),
+            ("opencode-v2", false),
+            ("opencode-v2", true),
+        ] {
             let dir = tempfile::tempdir().unwrap();
             let ctx = crate::agents::SpawnCtx {
                 session_id: "01sessionxxxxxxxxxxxxxxxxx".into(),

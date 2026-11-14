@@ -1560,6 +1560,40 @@ async fn a_legacy_opencode_acp_probe_also_deletes_its_catalog_session() {
     );
 }
 
+/// The `opencode-v2` id gets the same close and delete as `opencode`, in
+/// that order, on the session id `session/new` returned.
+#[tokio::test]
+async fn an_opencode_v2_probe_also_closes_and_deletes_its_catalog_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["session_id"] = json!("v2-catalog-session");
+    setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("opencode-v2", &agent).await;
+
+    agent.clear_messages();
+    let agents = h.launcher.registry.refresh().await;
+    assert_eq!(agents[0].status, ariadne_api::agents::AcpAgentStatus::Ready);
+    let messages = agent.messages();
+    assert_eq!(
+        messages
+            .iter()
+            .filter_map(|message| message["method"].as_str())
+            .collect::<Vec<_>>(),
+        [
+            "initialize",
+            "session/new",
+            "session/close",
+            "cli/session/delete"
+        ]
+    );
+    assert_eq!(messages[2]["params"]["sessionId"], "v2-catalog-session");
+    assert_eq!(
+        messages[3]["args"],
+        json!(["session", "delete", "v2-catalog-session"])
+    );
+}
+
 /// A catalog rejected for want of a model option still deletes the session
 /// `session/new` returned: the cleanup runs after the probe ends, whether
 /// the probe accepted the agent or not.

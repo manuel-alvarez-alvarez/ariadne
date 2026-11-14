@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-11-13
+updated: 2026-11-14
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
@@ -70,8 +70,8 @@ beside it, which reads what this spec's rule 14 already decided and never
 changes it (024).
 
 Discovery closes each catalog session when the agent advertises `session/close`.
-For OpenCode — the shipped registry id `opencode`, and the legacy
-`opencode-acp` a configured agent may still carry — it then runs the
+For OpenCode — the shipped registry ids `opencode` and `opencode-v2`, and
+the legacy `opencode-acp` a configured agent may still carry — it then runs the
 registry entry's program as `session delete <session id>` with the probe's
 launch environment and a discovery timeout, on the session id the probe's
 `session/new` returned, once, after the probe ends whether it accepted the
@@ -415,6 +415,8 @@ it leaves nothing to delete.
   (`acp_discovery.rs::an_opencode_probe_closes_and_deletes_its_catalog_session`).
 - The legacy `opencode-acp` id gets the same cleanup
   (`acp_discovery.rs::a_legacy_opencode_acp_probe_also_deletes_its_catalog_session`).
+- The `opencode-v2` id gets the same close and delete, in that order
+  (`acp_discovery.rs::an_opencode_v2_probe_also_closes_and_deletes_its_catalog_session`).
 - A catalog rejected for want of a model option still deletes the session
   `session/new` returned
   (`acp_discovery.rs::a_rejected_opencode_catalog_still_deletes_its_session`).

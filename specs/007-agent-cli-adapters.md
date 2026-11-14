@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-11-13
+updated: 2026-11-14
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -176,7 +176,7 @@ skill says (017).
    Every `codex-acp` process also carries `INITIAL_AGENT_MODE` set to
    `agent-full-access`, so its sessions never hand an approval to Codex's
    guardian sub-agent. The setting applies to that process only and does not
-   edit the user's Codex configuration. Every staffed `opencode` and legacy
+   edit the user's Codex configuration. Every staffed `opencode`, `opencode-v2` and legacy
    `opencode-acp` process also carries `OPENCODE_CONFIG_CONTENT`. Its JSON has
    one `mcp.ariadne` local entry; its command array holds the launch file's
    command and arguments, and its environment equals that MCP server's
@@ -223,7 +223,13 @@ skill says (017).
 
 - OpenCode gets one process MCP entry equal to the ACP server on spawn and
   resume, and other agents get no such setting
-  (`acp.rs::opencode_config_content_matches_the_acp_mcp_entry`).
+  (`acp.rs::opencode_config_content_matches_the_acp_mcp_entry`, which covers
+  `opencode`, `opencode-acp` and `opencode-v2`).
+- A launch of `claude-acp`, `codex-acp`, `opencode` and `opencode-v2` sends
+  the `ariadne` MCP server in `session/new`, `session/resume` and
+  `session/load`, with the skill index in its system prompt and its MCP
+  instructions, and the run directory's `skills` link
+  (`acp_runtime.rs::every_supported_agent_launches_with_the_mcp_server_and_the_skills`).
 
 - A registry agent carries the `icon` URL of the index, and a configured
   agent's `icon` is null

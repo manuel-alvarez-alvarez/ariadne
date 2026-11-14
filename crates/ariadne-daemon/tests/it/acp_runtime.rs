@@ -17,7 +17,8 @@ use ariadne_core::SessionStatus;
 use ariadne_store::{AgentPin, EventFilter};
 
 use common::acp::{
-    StubAcpAgent, discovery_settled, pid_is_alive, registry_home, script, stub_acp_agent,
+    StubAcpAgent, discovery_accepted, discovery_settled, pid_is_alive, registry_home,
+    registry_home_as, script, stub_acp_agent,
 };
 use common::{Cast, Harness, TIMEOUT, eventually, harness, sh};
 
@@ -913,4 +914,105 @@ async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
         !stub.process_is_alive()
     })
     .await;
+}
+
+/// The four agents Ariadne supports, as registry ids.
+const SUPPORTED_AGENTS: [&str; 4] = ["claude-acp", "codex-acp", "opencode", "opencode-v2"];
+
+/// What a launch of `agent_id` told its agent: the ariadne MCP server with
+/// the skill index in its environment, and the skill index and the skill
+/// documents in reach of the session.
+async fn assert_launch_carries_mcp_and_skills(
+    h: &Harness,
+    session: &ariadne_store::AgentSession,
+    mcp_servers: &Value,
+    agent_id: &str,
+) {
+    assert_eq!(mcp_servers[0]["name"], "ariadne", "{agent_id}");
+    assert_eq!(
+        mcp_servers[0]["args"],
+        json!(["mcp", "serve"]),
+        "{agent_id}"
+    );
+    let link = h.launcher.cfg.run_dir.join(&session.id).join("skills");
+    let staffed = h
+        .store
+        .agent_skills(session.task_agent_id.as_deref().unwrap())
+        .await
+        .unwrap();
+    assert!(!staffed.is_empty(), "{agent_id}: the column is staffed");
+    let mut expected =
+        String::from("Your skills. Read the document of a skill before you do the work it covers:");
+    for skill in &staffed {
+        expected.push_str(&format!(
+            "\n- {}: {} ({})",
+            skill.name,
+            skill.summary(),
+            link.join(&skill.name).join("SKILL.md").display()
+        ));
+    }
+    let index = mcp_servers[0]["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|variable| variable["name"] == "ARIADNE_SKILL_INDEX")
+        .unwrap_or_else(|| panic!("{agent_id}: no skill index in the MCP instructions"));
+    assert_eq!(index["value"], expected, "{agent_id}: MCP instructions");
+    let launch = h.launch_file(&session.id).unwrap();
+    assert!(
+        launch.system_prompt.contains(&expected),
+        "{agent_id}: {}",
+        launch.system_prompt
+    );
+    assert!(
+        link.join("coding/SKILL.md").is_file(),
+        "{agent_id}: the run directory's skills link"
+    );
+}
+
+/// Every supported agent gets the ariadne MCP server, the skill index in
+/// its system prompt and MCP instructions, and the run directory's `skills`
+/// link, on a new session, on `session/resume` and on `session/load`.
+#[tokio::test]
+async fn every_supported_agent_launches_with_the_mcp_server_and_the_skills() {
+    for agent_id in SUPPORTED_AGENTS {
+        for load in [false, true] {
+            let mut scripted = script();
+            scripted["stored_sessions"] = json!(["stub-session"]);
+            if load {
+                scripted["capabilities"] = json!({"loadSession": true});
+            }
+            let agent_dir = tempfile::tempdir().unwrap();
+            let stub = stub_acp_agent(agent_dir.path(), scripted);
+            let h = harness()
+                .home(registry_home_as(&stub, agent_id))
+                .discover_agents()
+                .await;
+            discovery_accepted(&h, &stub, agent_id).await;
+            h.git_repo("repo");
+            let cast = h.cast_pinned(&format!("{agent_id}:test-model")).await;
+            let session = spawned_idle(&h, &cast).await;
+
+            let new = &stub.calls_of("session/new")[0];
+            assert_launch_carries_mcp_and_skills(&h, &session, &new["mcpServers"], agent_id).await;
+
+            h.launcher.kill_session(&session.id).await.unwrap();
+            h.launcher
+                .revive_session(&session.id, Some("carry on"))
+                .await
+                .unwrap();
+            let method = if load {
+                "session/load"
+            } else {
+                "session/resume"
+            };
+            eventually(TIMEOUT, "the resumed turn to end", || async {
+                stub.calls_of("session/prompt").len() == 2
+            })
+            .await;
+            let resumed = &stub.calls_of(method)[0];
+            assert_launch_carries_mcp_and_skills(&h, &session, &resumed["mcpServers"], agent_id)
+                .await;
+        }
+    }
 }

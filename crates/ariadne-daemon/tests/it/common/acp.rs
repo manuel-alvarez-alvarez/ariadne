@@ -299,12 +299,17 @@ pub(crate) fn pid_is_alive(pid: u32) -> bool {
 /// A home whose `config.toml` registers the stub as the agent `stub`, for a
 /// harness built over it with [`super::HarnessBuilder::home`].
 pub(crate) fn registry_home(stub: &StubAcpAgent) -> PathBuf {
+    registry_home_as(stub, "stub")
+}
+
+/// The same, with the stub registered under `agent_id`.
+pub(crate) fn registry_home_as(stub: &StubAcpAgent, agent_id: &str) -> PathBuf {
     let home = Path::new(&stub.bin).parent().unwrap().join("home");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
         home.join("config.toml"),
         format!(
-            "[[acp_agents]]\nid = \"stub\"\ncommand = [{:?}]\n",
+            "[[acp_agents]]\nid = {agent_id:?}\ncommand = [{:?}]\n",
             stub.bin
         ),
     )

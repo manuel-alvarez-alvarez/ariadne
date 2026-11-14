@@ -914,11 +914,11 @@ async fn read_catalog(
     })
 }
 
-/// Whether `id` names OpenCode: the shipped registry id, or the legacy
-/// `opencode-acp` a configured agent may still carry over from before the
-/// rename.
+/// Whether `id` names OpenCode: the shipped registry id, `opencode-v2`, or
+/// the legacy `opencode-acp` a configured agent may still carry over from
+/// before the rename.
 pub(crate) fn is_opencode(id: &str) -> bool {
-    id == "opencode" || id == "opencode-acp"
+    matches!(id, "opencode" | "opencode-acp" | "opencode-v2")
 }
 
 /// Delete the database row left by OpenCode's catalog session. This runs
