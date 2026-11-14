@@ -80,7 +80,7 @@ and the ACP runtime that reports the agent events (021).
    an `operation` (029) that opened none carries its goal's request URL
    instead, in the response only: the stored `tasks.pr_url` stays null, so no
    daemon reader of it changes
-   (`pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`).
+   (`pull_request_reviews.rs::a_review_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it`).
 4. Every write emits a **fat event**: the changed entity, whole, so a client
    can apply it without a re-fetch. A task transition carries the transition
    that caused it, whether it came through HTTP or from the scheduler.
