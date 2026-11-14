@@ -82,8 +82,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `agents`, and refuses `default` as a model — a model is required, and
      `default` stays legal for the effort alone), `list_models` (which holds
      only the models it can staff an agent on, each with its `agent_id`, its
-     efforts and the user-set `rank` the staffing ladder reads — `null`
-     where the user set none — and narrows to one `agent_id` on request:
+     efforts and the user-set `rank` the staffing ladder reads — no `rank`
+     field where the user set none — and narrows to one `agent_id` on request:
      011), `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
      `cancel_task`, `switch_session` (which moves a session, named by the
      `session_id` `get_task` carries beside its agent, to the model or agent
@@ -190,6 +190,20 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 13. `mark_ready_for_review` takes a hex `head_sha` and posts it to the route in 026 rule 27.
     The agent and keeper seats list this tool. The daemon applies the seat rules in 032 rule 17.
     Reviewer and orchestrator seats do not list or call this tool.
+14. Every tool result is compact JSON on one line. It leaves out each
+    object field whose value is `null`, an empty array or an empty object, at
+    every depth; `false`, `0` and a string stay. A write answers a short
+    acknowledgement, not the full task or goal:
+    - `complete_step`, `fail_step`, `fail_task`, `retry_task` and
+      `cancel_task` answer the task's `id`, `status` and `step`.
+    - `create_task` and `update_task` answer the same three, and for each
+      agent its `step`, `model`, `effort` and `skills`.
+    - `open_pull_request` answers the task's `id`, `status`, `step` and
+      `pr_url`.
+    - `finalize_plan` and `complete_goal` answer the goal's `id` and `status`.
+
+    A tool description that names an empty field says it is left out: a model
+    with no rank has no `rank` field.
 
 ## Acceptance criteria
 
@@ -317,6 +331,14 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::send_message_tells_agents_to_end_the_turn_after_a_question`).
 - `withdraw_wait_for_user` reads the daemon's bodyless `204` as success
   (`tools.rs::withdraw_wait_for_user_reads_a_204_as_success`).
+
+- A result is compact and drops empty fields at every depth
+  (`tools.rs::a_result_is_compact_and_drops_empty_fields_at_every_depth`);
+  a write answers its short acknowledgement
+  (`tools.rs::a_write_answers_a_short_acknowledgement`,
+  `::a_created_task_answers_its_standing_and_its_staffing`), and a model
+  with no rank has no `rank` field
+  (`::the_rank_of_each_model_reaches_the_orchestrator`).
 
 - The readiness tool posts the supplied head:
   `tools.rs::marking_ready_posts_the_confirmed_head`.

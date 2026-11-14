@@ -441,6 +441,44 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
         .join(", ")
 }
 
+/// The acknowledgement of a write on a task: where the task now stands.
+fn task_ack(task: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"id": task["id"], "status": task["status"], "step": task["step"]})
+}
+
+/// The acknowledgement of `create_task` and `update_task`: the task's
+/// standing, and what each agent of it was staffed with.
+fn task_staffing_ack(task: &serde_json::Value) -> serde_json::Value {
+    let mut ack = task_ack(task);
+    ack["agents"] = task["agents"]
+        .as_array()
+        .map(|agents| {
+            agents
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "step": a["step"],
+                        "model": a["model"],
+                        "effort": a["effort"],
+                        "skills": a["skills"],
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    ack
+}
+
+fn pull_request_ack(task: &serde_json::Value) -> serde_json::Value {
+    let mut ack = task_ack(task);
+    ack["pr_url"] = task["pr_url"].clone();
+    ack
+}
+
+fn goal_ack(goal: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"id": goal["id"], "status": goal["status"]})
+}
+
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
@@ -490,16 +528,16 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<CompleteStepReq>,
     ) -> Result<CallToolResult, McpError> {
-        json_result(
-            self.post(
+        let task = self
+            .post(
                 &self.task_path(None, "/step/complete")?,
                 &CompleteStepRequest {
                     reason: req.reason,
                     merge_commit: req.merge_commit,
                 },
             )
-            .await?,
-        )
+            .await?;
+        json_result(task_ack(&task))
     }
 
     #[tool(
@@ -509,13 +547,13 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<FailStepReq>,
     ) -> Result<CallToolResult, McpError> {
-        json_result(
-            self.post(
+        let task = self
+            .post(
                 &self.task_path(None, "/step/fail")?,
                 &FailStepRequest { reason: req.reason },
             )
-            .await?,
-        )
+            .await?;
+        json_result(task_ack(&task))
     }
 
     // ---- orchestrator ----
@@ -527,8 +565,8 @@ impl AriadneMcp {
     ) -> Result<CallToolResult, McpError> {
         let agents = staffing(req.agents)?;
         let path = format!("/v1/goals/{}/tasks", self.goal()?);
-        json_result(
-            self.post(
+        let task = self
+            .post(
                 &path,
                 &CreateTaskRequest {
                     title: req.title,
@@ -538,8 +576,8 @@ impl AriadneMcp {
                     depends_on: req.depends_on.unwrap_or_default(),
                 },
             )
-            .await?,
-        )
+            .await?;
+        json_result(task_staffing_ack(&task))
     }
 
     #[tool(description = "Edit a task that is pending, ready or failed.")]
@@ -555,16 +593,16 @@ impl AriadneMcp {
             depends_on: req.depends_on,
         };
         let path = format!("/v1/tasks/{}", req.task_id);
-        json_result(
-            self.client
-                .patch_json(&path, &body)
-                .await
-                .map_err(to_mcp_err)?,
-        )
+        let task: serde_json::Value = self
+            .client
+            .patch_json(&path, &body)
+            .await
+            .map_err(to_mcp_err)?;
+        json_result(task_staffing_ack(&task))
     }
 
     #[tool(
-        description = "List the agents and models an agent can run on. Each entry gives:\n- its `id`, `<agent>:<model>`, and the description its agent gave\n- `efforts`, each an id and what it buys, one `default`\n- `rank`, the standing the user set: `frontier`, `balanced`, `fast`, `local` or `null`, a ladder from `fast` up"
+        description = "List the agents and models an agent can run on. Each entry gives:\n- its `id`, `<agent>:<model>`, and its agent's description\n- `efforts`, each an id and what it buys, one `default`\n- `rank`, the user's standing: `frontier`, `balanced`, `fast` or `local`, a ladder from `fast` up; no rank, no field"
     )]
     async fn list_models(
         &self,
@@ -610,7 +648,8 @@ impl AriadneMcp {
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
         let path = format!("/v1/goals/{}/finalize", self.goal()?);
-        json_result(self.post(&path, &FinalizePlanRequest {}).await?)
+        let goal = self.post(&path, &FinalizePlanRequest {}).await?;
+        json_result(goal_ack(&goal))
     }
 
     #[tool(
@@ -639,7 +678,8 @@ impl AriadneMcp {
         Parameters(req): Parameters<TaskId>,
     ) -> Result<CallToolResult, McpError> {
         let path = format!("/v1/tasks/{}/retry", req.task_id);
-        json_result(self.post(&path, &serde_json::json!({})).await?)
+        let task = self.post(&path, &serde_json::json!({})).await?;
+        json_result(task_ack(&task))
     }
 
     #[tool(
@@ -650,7 +690,8 @@ impl AriadneMcp {
         Parameters(req): Parameters<TaskId>,
     ) -> Result<CallToolResult, McpError> {
         let path = format!("/v1/tasks/{}/cancel", req.task_id);
-        json_result(self.post(&path, &serde_json::json!({})).await?)
+        let task = self.post(&path, &serde_json::json!({})).await?;
+        json_result(task_ack(&task))
     }
 
     #[tool(
@@ -688,7 +729,8 @@ impl AriadneMcp {
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
         let path = format!("/v1/goals/{}/complete", self.goal()?);
-        json_result(self.post(&path, &CompleteGoalRequest {}).await?)
+        let goal = self.post(&path, &CompleteGoalRequest {}).await?;
+        json_result(goal_ack(&goal))
     }
 
     // ---- agent ----
@@ -707,10 +749,10 @@ impl AriadneMcp {
                 None,
             ));
         }
-        json_result(
-            self.transition(TaskStatus::Failed, Some(reason.to_string()))
-                .await?,
-        )
+        let task = self
+            .transition(TaskStatus::Failed, Some(reason.to_string()))
+            .await?;
+        json_result(task_ack(&task))
     }
 
     #[tool(
@@ -721,16 +763,16 @@ impl AriadneMcp {
         Parameters(req): Parameters<OpenPullRequestReq>,
     ) -> Result<CallToolResult, McpError> {
         let path = self.task_path(None, "/pull-request")?;
-        json_result(
-            self.post(
+        let task = self
+            .post(
                 &path,
                 &OpenPullRequestRequest {
                     title: req.title,
                     body: req.body,
                 },
             )
-            .await?,
-        )
+            .await?;
+        json_result(pull_request_ack(&task))
     }
 
     #[tool(
@@ -2315,7 +2357,7 @@ mod tests {
                     models[0]["efforts"][1]["description"],
                     serde_json::json!("greater depth")
                 );
-                assert_eq!(models[1]["efforts"], serde_json::json!([]));
+                assert!(models[1].get("efforts").is_none());
             }
         }
     }
@@ -2326,7 +2368,7 @@ mod tests {
     /// The rank is the only thing in the catalog about cost, so a staffing
     /// rule that reads it needs both halves: the value on every entry, and a
     /// description that names the four ranks and the direction of the ladder.
-    /// An unranked entry comes through as `null`, which is the orchestrator's
+    /// An unranked entry has no `rank` field, which is the orchestrator's
     /// cue to size that model from its description instead.
     #[tokio::test]
     async fn the_rank_of_each_model_reaches_the_orchestrator() {
@@ -2352,12 +2394,15 @@ mod tests {
         let models: Vec<serde_json::Value> =
             serde_json::from_str(&text.text).expect("the catalog is json");
         assert_eq!(
-            models.iter().map(|m| m["rank"].clone()).collect::<Vec<_>>(),
+            models
+                .iter()
+                .map(|m| m.get("rank").cloned())
+                .collect::<Vec<_>>(),
             [
-                serde_json::json!("frontier"),
-                serde_json::json!("fast"),
-                serde_json::json!("local"),
-                serde_json::Value::Null,
+                Some(serde_json::json!("frontier")),
+                Some(serde_json::json!("fast")),
+                Some(serde_json::json!("local")),
+                None,
             ]
         );
 
@@ -2368,8 +2413,9 @@ mod tests {
             .expect("the tool");
         let description = tool.description.expect("the description").to_string();
         for part in [
-            "`rank`, the standing the user set",
-            "`frontier`, `balanced`, `fast`, `local` or `null`",
+            "`rank`, the user's standing",
+            "`frontier`, `balanced`, `fast` or `local`",
+            "no rank, no field",
             "a ladder from `fast` up",
         ] {
             assert!(
@@ -2478,5 +2524,112 @@ mod tests {
         }))
         .expect("a body written as `message`");
         assert_eq!(req.body, "The bound is the caller's.");
+    }
+
+    async fn text_of(answered: CallToolResult) -> String {
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the result came back as something other than text");
+        };
+        text.text.clone()
+    }
+
+    /// A result is one compact line, and a field that holds nothing is left
+    /// out at every depth, while `false`, `0` and a string stay.
+    #[tokio::test]
+    async fn a_result_is_compact_and_drops_empty_fields_at_every_depth() {
+        let answered = json_result(serde_json::json!({
+            "a": null, "b": [], "c": {}, "d": false, "e": 0, "f": "",
+            "g": {"h": null, "i": [], "j": 1, "k": [{"l": null, "m": "x"}]},
+            "n": [null]
+        }))
+        .expect("a result");
+        assert_eq!(
+            text_of(answered).await,
+            r#"{"d":false,"e":0,"f":"","g":{"j":1,"k":[{"m":"x"}]},"n":[null]}"#
+        );
+    }
+
+    /// Each write on a task answers its `id`, `status` and `step` and
+    /// nothing else; a goal write answers its `id` and `status`.
+    #[tokio::test]
+    async fn a_write_answers_a_short_acknowledgement() {
+        const TASK: &str = r#"{"id":"01TASK","status":"in_progress","step":"review",
+            "title":"T","description":"D","agents":[],"merge_commit":null}"#;
+        let (endpoint, _) = recording_daemon_answering(TASK).await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let done = mcp
+            .complete_step(Parameters(CompleteStepReq {
+                reason: "Done.".into(),
+                merge_commit: None,
+            }))
+            .await
+            .expect("complete");
+        assert_eq!(
+            text_of(done).await,
+            r#"{"id":"01TASK","status":"in_progress","step":"review"}"#
+        );
+
+        const PULL: &str = r#"{"id":"01TASK","status":"in_progress","step":"pr",
+            "pr_url":"https://example.test/pull/1","title":"T","agents":[]}"#;
+        let (endpoint, _) = recording_daemon_answering(PULL).await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let opened = mcp
+            .open_pull_request(Parameters(OpenPullRequestReq {
+                title: "T".into(),
+                body: "B".into(),
+            }))
+            .await
+            .expect("open");
+        assert_eq!(
+            text_of(opened).await,
+            r#"{"id":"01TASK","pr_url":"https://example.test/pull/1","status":"in_progress","step":"pr"}"#
+        );
+
+        const GOAL: &str = r#"{"id":"01GOAL","status":"active","title":"G","steps":[]}"#;
+        let (endpoint, _) = recording_daemon_answering(GOAL).await;
+        let finalized = orchestrator_at(&endpoint)
+            .finalize_plan(Parameters(Empty {}))
+            .await
+            .expect("finalize");
+        assert_eq!(
+            text_of(finalized).await,
+            r#"{"id":"01GOAL","status":"active"}"#
+        );
+    }
+
+    /// `create_task` answers the task's standing and what each agent was
+    /// staffed with.
+    #[tokio::test]
+    async fn a_created_task_answers_its_standing_and_its_staffing() {
+        const TASK: &str = r#"{"id":"01TASK","status":"pending","step":null,"title":"T",
+            "agents":[{"id":"01A","step":"develop","model":"codex-acp:m","effort":null,
+            "brief":null,"skills":["coding"]}]}"#;
+        let (endpoint, _) = recording_daemon_answering(TASK).await;
+        let created = orchestrator_at(&endpoint)
+            .create_task(Parameters(CreateTaskReq {
+                title: "T".into(),
+                description: "D".into(),
+                repo_id: None,
+                agents: vec![AgentReq {
+                    step: "develop".into(),
+                    skills: None,
+                    model: "codex-acp:m".into(),
+                    effort: None,
+                    brief: None,
+                }],
+                depends_on: None,
+            }))
+            .await
+            .expect("create");
+        assert_eq!(
+            text_of(created).await,
+            r#"{"agents":[{"model":"codex-acp:m","skills":["coding"],"step":"develop"}],"id":"01TASK","status":"pending"}"#
+        );
     }
 }

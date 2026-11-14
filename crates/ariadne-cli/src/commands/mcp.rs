@@ -275,10 +275,30 @@ fn to_mcp_err(e: ClientError) -> McpError {
     }
 }
 
-fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
+/// A result is compact JSON with no empty field: an object field whose value
+/// is `null`, an empty array or an empty object is left out at every depth,
+/// so a reader finds a field only where it holds something.
+fn json_result(mut v: serde_json::Value) -> Result<CallToolResult, McpError> {
+    drop_empty_fields(&mut v);
     Ok(CallToolResult::success(vec![ContentBlock::text(
-        serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string()),
+        serde_json::to_string(&v).unwrap_or_else(|_| v.to_string()),
     )]))
+}
+
+fn drop_empty_fields(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(fields) => {
+            fields.values_mut().for_each(drop_empty_fields);
+            fields.retain(|_, field| match field {
+                serde_json::Value::Null => false,
+                serde_json::Value::Array(items) => !items.is_empty(),
+                serde_json::Value::Object(inner) => !inner.is_empty(),
+                _ => true,
+            });
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(drop_empty_fields),
+        _ => {}
+    }
 }
 
 /// Whether a session gets an answer to a question: the orchestrator writes a
