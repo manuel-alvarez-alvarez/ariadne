@@ -19,7 +19,7 @@ import { beforeEach, expect, it } from "vitest"
 
 import type { GoalDto } from "@/api"
 import { useSettingsStore } from "@/stores/settings"
-import { aGoal, aRepository, aTask } from "@/test/fixtures"
+import { aGoal, aRepository } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalsListPage } from "./goals-list-page"
 
@@ -273,99 +273,78 @@ it("shows a load failure, not a refresh warning, when nothing was ever cached", 
   expect(screen.queryByText("Could not refresh goals")).toBeNull()
 })
 
-it("narrows by title and repository, and lists one row per goal that opens its panel", async () => {
-  const web = aRepository({ id: "repo-web", path: "/dev/web" })
-  const api = aRepository({ id: "repo-api", path: "/dev/api" })
+it("narrows the board by title, and names only the search when nothing matches", async () => {
   stubDaemon([
-    aGoal({ id: "g1", title: "Fix login", repos: [web, api] }),
-    aGoal({ id: "g2", title: "Fix billing", repos: [api] }),
-    aGoal({ id: "g3", title: "Write docs", repos: [web] }),
+    aGoal({ id: "g1", title: "Fix login" }),
+    aGoal({ id: "g2", title: "Fix billing" }),
+    aGoal({ id: "g3", title: "Write docs" }),
   ])
-  useSettingsStore.setState({ goalsView: "board" })
   const user = userEvent.setup()
   renderBoard("/goals")
 
-  await user.click(await screen.findByRole("button", { name: "List" }))
-  expect(await screen.findAllByRole("link")).toHaveLength(3)
-  expect(JSON.parse(localStorage.getItem("ariadne.settings") ?? "{}")).toMatchObject({
-    state: { goalsView: "list" },
-  })
-
+  await screen.findByLabelText("Collapse Write docs")
   await user.type(screen.getByLabelText("Search goals by title"), "fix")
-  await user.click(screen.getByRole("button", { name: "Filter by repository" }))
-  await user.click(await screen.findByRole("menuitemcheckbox", { name: "/dev/web" }))
-  const rows = await screen.findAllByRole("link")
-  expect(rows).toHaveLength(1)
-  expect(rows[0]?.textContent).toContain("Fix login")
-  expect(rows[0]?.getAttribute("href")).toContain("g1")
+  expect(screen.getByLabelText("Collapse Fix login")).toBeTruthy()
+  expect(screen.getByLabelText("Collapse Fix billing")).toBeTruthy()
+  expect(screen.queryByLabelText("Collapse Write docs")).toBeNull()
+
+  await user.type(screen.getByLabelText("Search goals by title"), "zzz")
+  await screen.findByText("Nothing matches this search. Clear it to see more.")
 })
 
-it("counts cancelled tasks in a row's total and keeps the status filter when a row opens its panel", async () => {
-  stubDaemon([aGoal({ id: "g1", title: "Fix login" })])
+it("matches the title alone, not a repository path", async () => {
+  const web = aRepository({ id: "repo-web", path: "/dev/webshop" })
+  stubDaemon([
+    aGoal({ id: "g1", title: "Fix login", repos: [web] }),
+    aGoal({ id: "g2", title: "Write docs", repos: [web] }),
+  ])
+  const user = userEvent.setup()
+  renderBoard("/goals")
+
+  await screen.findByLabelText("Collapse Fix login")
+  await user.type(screen.getByLabelText("Search goals by title"), "webshop")
+  await screen.findByText("Nothing matches this search. Clear it to see more.")
+  expect(screen.queryByLabelText("Collapse Fix login")).toBeNull()
+})
+
+it("narrows by the title search within the selected statuses", async () => {
+  const goals = [
+    aGoal({ id: "g1", title: "Fix login", status: "active" }),
+    aGoal({ id: "g2", title: "Fix billing", status: "completed" }),
+    aGoal({ id: "g3", title: "Write docs", status: "active" }),
+  ]
   daemonFetch.mockImplementation((input: Request | string | URL) => {
     const url = new URL(
       typeof input === "string" ? input : input instanceof URL ? input : input.url,
     )
+    const statuses = url.searchParams.get("status")?.split(",")
     const body =
       url.pathname === "/v1/goals"
-        ? [aGoal({ id: "g1", title: "Fix login" })]
-        : url.pathname === "/v1/tasks"
-          ? [
-              aTask({ id: "t1", goal_id: "g1", status: "finished" }),
-              aTask({ id: "t2", goal_id: "g1", status: "cancelled" }),
-            ]
-          : []
+        ? goals.filter((goal) => !statuses || statuses.includes(goal.status))
+        : []
     return Promise.resolve(jsonResponse(body))
   })
-  useSettingsStore.setState({ goalsView: "list" })
+  const user = userEvent.setup()
   renderBoard("/goals?status=active")
 
-  const row = await screen.findByRole("link", { name: /Fix login/ })
-  expect(row.textContent).toContain("1/2 tasks")
-  expect(row.getAttribute("href")).toContain("status=active")
-  expect(row.getAttribute("href")).toContain("goal=g1")
+  await screen.findByLabelText("Collapse Write docs")
+  await user.type(screen.getByLabelText("Search goals by title"), "fix")
+  expect(screen.getByLabelText("Collapse Fix login")).toBeTruthy()
+  expect(screen.queryByLabelText("Collapse Write docs")).toBeNull()
+  expect(screen.queryByLabelText("Collapse Fix billing")).toBeNull()
+
+  await user.click(screen.getByRole("button", { name: "All" }))
+  await screen.findByLabelText(/^(Collapse|Expand) Fix billing$/)
+  expect(screen.getByLabelText("Collapse Fix login")).toBeTruthy()
+  expect(screen.queryByLabelText("Collapse Write docs")).toBeNull()
 })
 
-it("keeps the selected repository named after a status change drops it from the goals", async () => {
-  const web = aRepository({ id: "repo-web", path: "/dev/web" })
-  stubDaemon([aGoal({ id: "g1", repos: [web] })])
-  const user = userEvent.setup()
+it("has no Board/List toggle and no repository filter", async () => {
+  stubDaemon([aGoal({ id: "g1", repos: [aRepository({ id: "repo-web", path: "/dev/web" })] })])
   renderBoard("/goals")
-  await user.click(await screen.findByRole("button", { name: "Filter by repository" }))
-  await user.click(await screen.findByRole("menuitemcheckbox", { name: "/dev/web" }))
 
-  stubDaemon([])
-  await user.click(screen.getByRole("button", { name: "Finished" }))
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Filter by repository" }).textContent).toBe("web"),
-  )
-})
-
-it("keeps cached list rows under a retryable warning when the task refresh fails", async () => {
-  stubDaemon([aGoal({ id: "g1", title: "Fix login" })])
-  useSettingsStore.setState({ goalsView: "list" })
-  const user = userEvent.setup()
-  const { queryClient } = renderScreen(<GoalsListPage />, { route: "/goals" })
-  await screen.findByText("Fix login")
-
-  daemonFetch.mockImplementation((input: Request | string | URL) => {
-    const url = new URL(
-      typeof input === "string" ? input : input instanceof URL ? input : input.url,
-    )
-    return Promise.resolve(
-      url.pathname === "/v1/tasks"
-        ? errorResponse(503, "unavailable", "daemon is busy")
-        : jsonResponse(
-            url.pathname === "/v1/goals" ? [aGoal({ id: "g1", title: "Fix login" })] : [],
-          ),
-    )
-  })
-  await queryClient.invalidateQueries({ queryKey: ["tasks"] })
-
-  await screen.findByText("Could not refresh tasks")
-  expect(screen.getByText("Fix login")).toBeTruthy()
-
-  stubDaemon([aGoal({ id: "g1", title: "Fix login" })])
-  await user.click(screen.getByRole("button", { name: "Retry" }))
-  await waitFor(() => expect(screen.queryByText("Could not refresh tasks")).toBeNull())
+  await screen.findByLabelText(/^Collapse /)
+  expect(screen.queryByRole("button", { name: "List" })).toBeNull()
+  expect(screen.queryByRole("button", { name: "Board" })).toBeNull()
+  expect(screen.queryByRole("button", { name: "Filter by repository" })).toBeNull()
 })

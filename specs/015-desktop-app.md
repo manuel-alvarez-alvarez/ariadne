@@ -887,14 +887,10 @@ Out: the daemon endpoints themselves (012).
     the guide's secondary action. The goal tabs and the header's New task
     action stay as they were.
 
-49. The goals screen has a title-only search and a single-repository filter,
-    with "All repositories" to clear it. A goal matches a repository when it
-    includes it, even if it also uses others. Both combine with the status
-    filters and apply to the Board and the List. A Board/List toggle is
-    remembered on the device and opens on Board. The List shows one row per
-    goal with status, completed/total tasks, attention count and repositories;
-    selecting a row opens the goal panel and never expands tasks. A failed
-    refresh keeps cached rows in both views under the retryable warning.
+49. The goals screen shows only the board: one swimlane per goal, with no
+    List view, no Board/List toggle and no repository filter. A title-only
+    search combines with the status filters to narrow the board, and an empty
+    search result says that nothing matches the search.
 
 ## Acceptance criteria
 
@@ -1619,11 +1615,14 @@ Out: the daemon endpoints themselves (012).
   `::keeps the cached task and its empty history under warnings, and a retry clears them`,
   `::keeps the cached task and its empty messages under warnings, and a retry clears them`,
   `::keeps cached table rows under the warning, and shows a load error with none`).
-- Goals search, repository filter and the remembered List view
-  (`ui/src/features/goals/goals-list-page.test.tsx::narrows by title and repository, and lists one row per goal that opens its panel`,
-  `::counts cancelled tasks in a row's total and keeps the status filter when a row opens its panel`,
-  `::keeps the selected repository named after a status change drops it from the goals`,
-  `::keeps cached list rows under a retryable warning when the task refresh fails`).
+- The goals screen narrows the board by title, names only the search when
+  nothing matches, and has no Board/List toggle or repository filter
+  (`ui/src/features/goals/goals-list-page.test.tsx::narrows the board by title, and names only the search when nothing matches`,
+  `::has no Board/List toggle and no repository filter`); the search matches
+  the title alone, never a repository path, and combines with the status
+  filters
+  (`::matches the title alone, not a repository path`,
+  `::narrows by the title search within the selected statuses`).
 
 ## Known gap
 

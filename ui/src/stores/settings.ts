@@ -36,9 +36,6 @@ interface SettingsState {
    */
   goalStatusFilter: string
   setGoalStatusFilter: (value: string) => void
-  /** Whether the goals screen draws the board or the compact list; the board first. */
-  goalsView: "board" | "list"
-  setGoalsView: (view: "board" | "list") => void
   /**
    * The filters the sessions screen was last left with, each spelled the
    * way its own param spells it: `"failed"`, `"live"` or `"attention"` for the
@@ -93,8 +90,6 @@ export const useSettingsStore = create<SettingsState>()(
       setDiagnosticsEnabled: (diagnosticsEnabled) => set({ diagnosticsEnabled }),
       goalStatusFilter: DEFAULT_GOAL_STATUS_FILTER,
       setGoalStatusFilter: (value) => set({ goalStatusFilter: value }),
-      goalsView: "board",
-      setGoalsView: (goalsView) => set({ goalsView }),
       sessionStatusFilter: "",
       setSessionStatusFilter: (value) => set({ sessionStatusFilter: value }),
       sessionSeatFilter: "",
@@ -129,7 +124,6 @@ export const useSettingsStore = create<SettingsState>()(
         baseUrl: state.baseUrl,
         diagnosticsEnabled: state.diagnosticsEnabled,
         goalStatusFilter: state.goalStatusFilter,
-        goalsView: state.goalsView,
         sessionStatusFilter: state.sessionStatusFilter,
         sessionSeatFilter: state.sessionSeatFilter,
         sessionGoalFilter: state.sessionGoalFilter,
