@@ -535,10 +535,9 @@ Out: the daemon endpoints themselves (012).
     its content sits outside the button, so selecting it, a link in it and
     a Copy control never toggle it. A block's own choice is a fold
     preference kept under its id (24i) and survives stream updates, the view
-    changing and a remount. One toggle serves the whole console: a control
-    in the console's header and the plus menu flip foldable conversation
+    changing and a remount. The plus menu retains Expand all and Collapse all to flip foldable conversation
     blocks and clear their individual choices. Tool rows and details are independent
-    of folding. The header says `Unfold` while folded and `Fold` while unfolded.
+    of folding. The header has no Fold/Unfold button in embedded or expanded views.
     Ctrl-O has no handler in either browser or desktop console, embedded or expanded.
     The terminal console keeps its existing Ctrl-O behavior.
 23a1. Conversation and tool details scroll independently. A message, a tool's

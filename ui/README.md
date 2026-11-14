@@ -116,7 +116,7 @@ Close details with its button or Escape; focus returns to the selected row.
 `Pending request` opens permission response controls in the shared details area,
 including subagent permissions. For questions, it closes the drawer and reveals the card.
 Ctrl-O has no action in this console.
-The fold controls affect thoughts and resolved questions, independently of tool selection.
+The header has no Fold/Unfold button. The plus-menu fold controls affect thoughts and resolved questions, independently of tool selection.
 User, developer and assistant messages always remain expanded. Unanswered questions
 stay open; answered summaries keep the question and selected answer. Secondary
 activity is compact and indented, with icons and labels instead of left borders.

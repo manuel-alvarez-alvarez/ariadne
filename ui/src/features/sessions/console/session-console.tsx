@@ -926,9 +926,6 @@ function ConsolePane({
             </span>
           ) : null}
         </span>
-        <Button size="xs" variant="ghost" onClick={() => toggleFold.current()}>
-          {folded ? "Unfold" : "Fold"}
-        </Button>
         {onExpand ? (
           <Button size="icon-xs" variant="ghost" onClick={onExpand} aria-label="Expand the console">
             <Maximize2Icon />

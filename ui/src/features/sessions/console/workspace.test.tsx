@@ -81,7 +81,7 @@ it("keeps compact tool rows and streams only the selected tool into adjacent det
   act(() => source.emit("event", tool("Build", "updated output")))
   within(details).getByText(/updated output/)
   expect(within(log()).getAllByRole("button")).toHaveLength(2)
-  fireEvent.click(screen.getByRole("button", { name: "Unfold" }))
+  toggleAllFromMenu()
   expect(within(log()).queryByText("updated output")).toBeNull()
 })
 
@@ -122,7 +122,7 @@ it("leaves Ctrl-O unhandled in embedded and expanded consoles", () => {
   const press = (target: HTMLElement) => {
     expect(fireEvent.keyDown(target, { key: "o", ctrlKey: true })).toBe(true)
     expect(within(log()).queryByText(/first\nsecond/)).toBeNull()
-    screen.getByRole("button", { name: "Unfold" })
+    expect(screen.queryByRole("button", { name: "Unfold" })).toBeNull()
   }
   press(screen.getByRole("textbox", { name: "Message the agent" }))
   press(screen.getByRole("button", { name: "Expand the console" }))
@@ -289,8 +289,8 @@ it("keeps user developer and assistant messages visible when folding activity", 
     event("agent_message", { text: "Assistant message in full" }),
   ])
   for (const label of ["You", "Developer", "Assistant"]) within(log()).getByText(label)
-  fireEvent.click(screen.getByRole("button", { name: "Unfold" }))
-  fireEvent.click(screen.getByRole("button", { name: "Fold" }))
+  toggleAllFromMenu()
+  toggleAllFromMenu()
   for (const text of [
     "User message in full",
     "Developer message in full",
@@ -377,3 +377,15 @@ it("keeps tool selection when a permission arrives and opens its drawer only on 
     within(log()).getByRole("button", { name: /Permission · Deploy/ }),
   )
 })
+
+it("omits the global fold header button in embedded and expanded consoles", () => {
+  renderConsole()
+  expect(screen.queryByRole("button", { name: /^(Fold|Unfold)$/ })).toBeNull()
+  fireEvent.click(screen.getByRole("button", { name: "Expand the console" }))
+  expect(screen.queryByRole("button", { name: /^(Fold|Unfold)$/ })).toBeNull()
+})
+
+function toggleAllFromMenu() {
+  fireEvent.click(screen.getByRole("button", { name: "Commands and session actions" }))
+  fireEvent.click(screen.getByRole("button", { name: /^(Expand all|Collapse all)$/ }))
+}

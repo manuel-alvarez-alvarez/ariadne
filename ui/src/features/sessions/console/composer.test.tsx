@@ -373,26 +373,27 @@ it("copies only the loaded transcript of the view shown, and names that scope", 
 it("expands and collapses everything from the menu", async () => {
   const user = userEvent.setup()
   mount()
-  screen.getByRole("button", { name: "Unfold" })
+  expect(screen.queryByRole("button", { name: "Unfold" })).toBeNull()
 
   await openMenu(user)
   await user.click(screen.getByRole("button", { name: "Expand all" }))
 
-  screen.getByRole("button", { name: "Fold" })
+  expect(screen.queryByRole("button", { name: "Fold" })).toBeNull()
   expect(readViewState(consoleViewKey("http://127.0.0.1:7676", SESSION_ID)).folded).toBe(false)
 })
 
 it("brings a session's draft and fold back after the console is unmounted", () => {
   mount()
   fireEvent.change(input(), { target: { value: "half a thought" } })
-  fireEvent.click(screen.getByRole("button", { name: "Unfold" }))
+  toggleAllFromMenu()
   cleanup()
   stubEventSource()
 
   mount()
 
   expect(input().value).toBe("half a thought")
-  screen.getByRole("button", { name: "Fold" })
+  expect(readViewState(consoleViewKey("http://127.0.0.1:7676", SESSION_ID)).folded).toBe(false)
+  expect(screen.queryByRole("button", { name: "Fold" })).toBeNull()
 })
 
 it("keeps each daemon's and each session's state apart", () => {
@@ -659,3 +660,8 @@ it("puts the block the reader was on back in place when new events move the page
   // Blocks: oldest, older, newest, extra. newest is third, so its top is 200 - top.
   await waitFor(() => expect(state.top).toBe(250))
 })
+
+function toggleAllFromMenu() {
+  fireEvent.click(screen.getByRole("button", { name: "Commands and session actions" }))
+  fireEvent.click(screen.getByRole("button", { name: /^(Expand all|Collapse all)$/ }))
+}
