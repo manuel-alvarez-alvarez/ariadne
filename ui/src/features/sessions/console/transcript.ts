@@ -85,10 +85,12 @@ export interface Transcript {
   running: boolean
   /** Every event id folded in, so an event delivered twice is folded once. */
   seen: ReadonlySet<string>
+  /** Every event folded in, oldest first, so an older page can be folded before them. */
+  events: readonly AgentEventDto[]
 }
 
 export function emptyTranscript(): Transcript {
-  return { blocks: [], running: false, seen: new Set() }
+  return { blocks: [], running: false, seen: new Set(), events: [] }
 }
 
 /** The transcript a `snapshot` opens on, in place of whatever was shown. */
@@ -102,7 +104,32 @@ export function applyEvent(transcript: Transcript, event: AgentEventDto): Transc
   const seen = new Set(transcript.seen).add(event.id)
   const blocks = transcript.blocks.slice()
   fold(blocks, event)
-  return { blocks, running: running(transcript.running, event.kind), seen }
+  return {
+    blocks,
+    running: running(transcript.running, event.kind),
+    seen,
+    events: [...transcript.events, event],
+  }
+}
+
+/** The id of the oldest event folded in, where one is; the cursor of an older page. */
+export function oldestEventId(transcript: Transcript): string | undefined {
+  let oldest: string | undefined
+  for (const id of transcript.seen) if (oldest === undefined || id < oldest) oldest = id
+  return oldest
+}
+
+/**
+ * A page of events older than all the transcript holds, oldest first, folded
+ * in before the events already shown, so a call or a run of text that spans
+ * the page boundary folds as one block. The console's own error blocks stay.
+ */
+export function prependEvents(transcript: Transcript, events: AgentEventDto[]): Transcript {
+  const fresh = events.filter((event) => !transcript.seen.has(event.id))
+  if (fresh.length === 0) return transcript
+  const folded = [...fresh, ...transcript.events].reduce(applyEvent, emptyTranscript())
+  const local = transcript.blocks.filter((block) => block.id.startsWith("local:"))
+  return { ...folded, blocks: [...folded.blocks, ...local] }
 }
 
 /** An error the console itself met, such as a send the daemon refused. */

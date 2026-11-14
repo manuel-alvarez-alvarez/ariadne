@@ -44,8 +44,10 @@ import {
   type Block,
   emptyTranscript,
   isTerminal,
+  oldestEventId,
   type PermissionOption,
   pendingPermission,
+  prependEvents,
   type Transcript,
 } from "./transcript"
 
@@ -94,6 +96,15 @@ export function SessionConsole({
   )
 }
 
+/** The events an older page holds at most, the daemon's cap. */
+const HISTORY_PAGE = 200
+
+/** How near the top, in pixels, still counts as reaching the oldest block shown. */
+const TOP_SLACK_PX = 8
+
+/** Where the load of older events stands; `start` is the session's first event shown. */
+type History = { state: "idle" | "loading" | "start" } | { state: "error"; message: string }
+
 /** How near the bottom, in pixels, still counts as reading the newest block. */
 const FOLLOW_SLACK_PX = 24
 
@@ -124,11 +135,66 @@ function ConsolePane({
   const field = useRef<HTMLTextAreaElement>(null)
   const collapseButton = useRef<HTMLButtonElement>(null)
   const following = useRef(true)
+  const [history, setHistory] = useState<History>({ state: "idle" })
+  // Bumped when a snapshot or a new session replaces the transcript, so a page
+  // still loading for the old one is dropped.
+  const generation = useRef(0)
+  const loading = useRef(false)
+  const reached = useRef(false)
+  const latestTranscript = useRef(transcript)
+  latestTranscript.current = transcript
+  /** The scroll box's size before a prepend, to keep the reader's place after it. */
+  const anchor = useRef<{ height: number; top: number } | null>(null)
+
+  const resetHistory = useCallback(() => {
+    generation.current += 1
+    loading.current = false
+    reached.current = false
+    anchor.current = null
+    setHistory({ state: "idle" })
+  }, [])
+
+  const loadOlder = useCallback(async () => {
+    if (loading.current || reached.current) return
+    const before = oldestEventId(latestTranscript.current)
+    if (before === undefined) return
+    const mine = generation.current
+    loading.current = true
+    setHistory({ state: "loading" })
+    try {
+      const page = await unwrap(
+        api().GET("/v1/events", {
+          params: {
+            query: { session: sessionId, order: "desc", before, limit: HISTORY_PAGE },
+          },
+        }),
+      )
+      if (generation.current !== mine) return
+      loading.current = false
+      if (page.length === 0) {
+        reached.current = true
+        setHistory({ state: "start" })
+        return
+      }
+      const el = log.current
+      anchor.current = el ? { height: el.scrollHeight, top: el.scrollTop } : null
+      setTranscript((current) => prependEvents(current, page.slice().reverse()))
+      setHistory({ state: "idle" })
+    } catch (error) {
+      if (generation.current !== mine) return
+      loading.current = false
+      setHistory({ state: "error", message: describeError(error) })
+    }
+  }, [sessionId])
 
   useEffect(() => {
     setTranscript(emptyTranscript())
+    resetHistory()
     const stream = new ConsoleStream(consoleStreamUrl(baseUrl, sessionId), {
-      onSnapshot: (events) => setTranscript((current) => applySnapshot(current, events)),
+      onSnapshot: (events) => {
+        resetHistory()
+        setTranscript((current) => applySnapshot(current, events))
+      },
       onEvent: (event) => setTranscript((current) => applyEvent(current, event)),
       onStatus: (next, error) => {
         setStreamStatus(next)
@@ -137,7 +203,7 @@ function ConsolePane({
     })
     stream.start()
     return () => stream.stop()
-  }, [baseUrl, sessionId])
+  }, [baseUrl, sessionId, resetHistory])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the focus request is read once, on arrival
   useEffect(() => {
@@ -148,7 +214,11 @@ function ConsolePane({
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new transcript is what moves the bottom
   useLayoutEffect(() => {
     const el = log.current
-    if (el && following.current) el.scrollTop = el.scrollHeight
+    if (!el) return
+    const kept = anchor.current
+    anchor.current = null
+    if (kept) el.scrollTop = kept.top + (el.scrollHeight - kept.height)
+    else if (following.current) el.scrollTop = el.scrollHeight
   }, [transcript])
 
   const live = isLiveStatus(status)
@@ -281,6 +351,7 @@ function ConsolePane({
         ) : null}
       </div>
       <div ref={body} className="flex min-h-0 flex-1 flex-col">
+        <HistoryLine history={history} onRetry={() => void loadOlder()} />
         <div
           ref={log}
           role="log"
@@ -289,6 +360,7 @@ function ConsolePane({
           onScroll={(event) => {
             const el = event.currentTarget
             following.current = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK_PX
+            if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
           }}
         >
           {transcript.blocks.map((block) => (
@@ -341,6 +413,34 @@ function ConsolePane({
       </div>
     </div>
   )
+}
+
+function HistoryLine({ history, onRetry }: { history: History; onRetry: () => void }) {
+  if (history.state === "loading") {
+    return (
+      <div
+        role="status"
+        className="flex items-center gap-1.5 border-b px-3 py-1 font-mono text-xs text-muted-foreground"
+      >
+        <Loader2Icon className="size-3 animate-spin" aria-hidden />
+        Loading older events…
+      </div>
+    )
+  }
+  if (history.state === "error") {
+    return (
+      <div
+        role="alert"
+        className="flex items-center gap-2 border-b px-3 py-1 font-mono text-xs text-status-danger-fg"
+      >
+        Could not load older events: {history.message}
+        <Button size="xs" variant="outline" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+    )
+  }
+  return null
 }
 
 function StreamStatusLine({

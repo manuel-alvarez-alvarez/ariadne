@@ -320,3 +320,115 @@ it("follows the newest block while the reader is at the bottom", () => {
   act(() => source.emit("event", event("agent_message", { text: "three" })))
   expect(top).toBe(100)
 })
+
+/** The scroll box of the transcript, sized and positioned by the test. */
+function sizeLog(log: HTMLElement, state: { height: number; top: number }) {
+  Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => state.height })
+  Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 200 })
+  Object.defineProperty(log, "scrollTop", {
+    configurable: true,
+    get: () => state.top,
+    set: (value: number) => {
+      state.top = value
+    },
+  })
+}
+
+const historyUrls: URL[] = []
+
+/** Answer `GET /v1/events` with each page in turn, or with an error where one is an Error. */
+function pages(...replies: (AgentEventDto[] | Error)[]) {
+  historyUrls.length = 0
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    historyUrls.push(new URL(request.url))
+    const reply = replies.shift() ?? []
+    if (reply instanceof Error) return errorResponse(500, "internal", reply.message)
+    return Response.json(reply)
+  })
+}
+
+function scrollToTop(log: HTMLElement, state: { top: number }) {
+  state.top = 0
+  fireEvent.scroll(log)
+}
+
+it("loads one older page when scrolled to the top, and keeps the reader's place", async () => {
+  const older = [event("user_prompt_submit", { text: "older prompt" })]
+  const first = event("agent_message", { text: "newest" })
+  renderConsole([first])
+  const state = { height: 1000, top: 300 }
+  sizeLog(transcript(), state)
+  // The page makes the box 400px taller once it is drawn.
+  Object.defineProperty(transcript(), "scrollHeight", {
+    configurable: true,
+    get: () => (screen.queryByText("older prompt") ? 1400 : 1000),
+  })
+  pages([...older].reverse())
+
+  scrollToTop(transcript(), state)
+
+  await within(transcript()).findByText("older prompt")
+  expect(historyUrls).toHaveLength(1)
+  const query = historyUrls[0]?.searchParams
+  expect(historyUrls[0]?.pathname).toBe("/v1/events")
+  expect(Object.fromEntries(query ?? [])).toEqual({
+    session: SESSION_ID,
+    order: "desc",
+    before: first.id,
+    limit: "200",
+  })
+  expect(state.top).toBe(400)
+  expect(screen.queryByRole("log")?.textContent).toContain("newest")
+})
+
+it("shows a loading state, then an error with a retry that loads the page", async () => {
+  const user = userEvent.setup()
+  renderConsole([event("agent_message", { text: "newest" })])
+  const state = { height: 1000, top: 0 }
+  sizeLog(transcript(), state)
+  pages(new Error("boom"), [event("user_prompt_submit", { text: "older prompt" })])
+
+  scrollToTop(transcript(), state)
+  screen.getByText("Loading older events…")
+  await screen.findByText(/Could not load older events/)
+
+  await user.click(screen.getByRole("button", { name: "Retry" }))
+  await within(transcript()).findByText("older prompt")
+  expect(historyUrls).toHaveLength(2)
+})
+
+it("stops fetching once an empty page marks the start, until a reconnect", async () => {
+  const { source } = renderConsole([event("agent_message", { text: "newest" })])
+  const state = { height: 1000, top: 0 }
+  sizeLog(transcript(), state)
+  pages([])
+
+  scrollToTop(transcript(), state)
+  await waitFor(() => expect(historyUrls).toHaveLength(1))
+  await waitFor(() => expect(screen.queryByText("Loading older events…")).toBeNull())
+  scrollToTop(transcript(), state)
+  scrollToTop(transcript(), state)
+  expect(historyUrls).toHaveLength(1)
+
+  // A fresh snapshot replaces the transcript, and the pages load again.
+  pages([event("user_prompt_submit", { text: "older prompt" })])
+  act(() => source.emit("snapshot", [event("agent_message", { text: "fresh" })]))
+  scrollToTop(transcript(), state)
+  await within(transcript()).findByText("older prompt")
+  expect(historyUrls).toHaveLength(1)
+})
+
+it("drops the loaded pages when a fresh snapshot replaces the transcript", async () => {
+  const { source } = renderConsole([event("agent_message", { text: "newest" })])
+  const state = { height: 1000, top: 0 }
+  sizeLog(transcript(), state)
+  pages([event("user_prompt_submit", { text: "older prompt" })])
+  scrollToTop(transcript(), state)
+  await within(transcript()).findByText("older prompt")
+
+  act(() => source.emit("snapshot", [event("agent_message", { text: "fresh" })]))
+
+  expect(within(transcript()).queryByText("older prompt")).toBeNull()
+  within(transcript()).getByText("fresh")
+})

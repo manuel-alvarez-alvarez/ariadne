@@ -8,7 +8,14 @@ import { expect, it } from "vitest"
 
 import type { AgentEventDto } from "@/api"
 
-import { applyEvent, applySnapshot, type Block, emptyTranscript } from "./transcript"
+import {
+  applyEvent,
+  applySnapshot,
+  type Block,
+  emptyTranscript,
+  oldestEventId,
+  prependEvents,
+} from "./transcript"
 
 let next = 0
 
@@ -292,4 +299,52 @@ it("leaves a parent's open block open when a child's whole arrives", () => {
 
   expect(transcript.blocks[0]).toMatchObject({ text: "parent", open: true })
   expect(transcript.blocks[1]).toMatchObject({ text: "child", open: false })
+})
+
+it("merges a call whose start is in an older page with its end already shown", () => {
+  const prompt = event("user_prompt_submit", { text: "go" })
+  const start = event("pre_tool_use", {
+    tool_name: "Bash",
+    acp: { toolCallId: "call-1", status: "in_progress" },
+  })
+  const end = event("post_tool_use", {
+    tool_name: "Bash",
+    acp: { toolCallId: "call-1", status: "completed" },
+  })
+  const after = event("agent_message", { text: "done" })
+  const shown = applySnapshot(emptyTranscript(), [end, after])
+
+  const full = prependEvents(shown, [prompt, start])
+
+  expect(full.blocks.map((block) => block.type)).toEqual(["prompt", "tool", "message"])
+  expect(full.blocks[1]).toMatchObject({
+    id: start.id,
+    tool: { id: "call-1", title: "Bash", status: "completed" },
+  })
+  expect(oldestEventId(full)).toBe(prompt.id)
+})
+
+it("prepends an older page once, and leaves the shown transcript as it was", () => {
+  const older = event("user_prompt_submit", { text: "first" })
+  const shown = applySnapshot(emptyTranscript(), [event("agent_message", { text: "later" })])
+
+  const full = prependEvents(shown, [older])
+
+  expect(shown.blocks).toHaveLength(1)
+  expect(prependEvents(full, [older])).toBe(full)
+})
+
+it("folds a message and a call that span the page boundary into one block each", () => {
+  const start = event("pre_tool_use", { tool_name: "Bash" })
+  const chunk = event("agent_message_chunk", { text: "Hello " })
+  const more = event("agent_message_chunk", { text: "world" })
+  const whole = event("agent_message", { text: "Hello world" })
+  const end = event("post_tool_use", { tool_name: "Bash", acp: { status: "completed" } })
+  const shown = applySnapshot(emptyTranscript(), [more, whole, end])
+
+  const full = prependEvents(shown, [start, chunk])
+
+  expect(full.blocks.map((block) => block.type)).toEqual(["tool", "message"])
+  expect(full.blocks[0]).toMatchObject({ tool: { title: "Bash", status: "completed" } })
+  expect(full.blocks[1]).toMatchObject({ text: "Hello world", open: false })
 })

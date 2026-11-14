@@ -336,6 +336,16 @@ Out: the daemon endpoints themselves (012).
     A block keeps its first event id, and a subagent's block is tagged with
     the child's title. The transcript follows the newest block while the
     reader is at the bottom of it.
+    A scroll to the top of the transcript loads the events older than the
+    ones shown: one page of
+    `GET /v1/events?session=<id>&order=desc&before=<oldest event id>&limit=200`,
+    folded in before the blocks, with the reader's scroll position kept. A
+    call whose `pre_tool_use` is in that page and whose later events are
+    already shown is one block. The pane shows a loading line while a page
+    loads, and an error with a Retry where the fetch fails. An empty page
+    marks the start of the session, and nothing more is fetched until a
+    fresh snapshot replaces the transcript, which also drops the pages
+    loaded.
 22. An input box posts a prompt as `{"text"}` to
     `POST /v1/sessions/{id}/console/input`: Enter sends it, and Shift+Enter
     adds a line. A failed post, a `409` included, adds an error block. The
@@ -1181,6 +1191,15 @@ Out: the daemon endpoints themselves (012).
   `::extends the transcript with each event and replaces it with a new snapshot`,
   `::says it reconnects after a resync and takes the fresh snapshot without duplicates`,
   `::closes the stream when it leaves the screen`).
+- A scroll to the top loads one older page and keeps the reader's place,
+  merges a call across the page boundary into one block, shows loading and
+  an error with a retry, stops at an empty page, and starts over on a fresh
+  snapshot
+  (`ui/src/features/sessions/console/session-console.test.tsx::loads one older page when scrolled to the top, and keeps the reader's place`,
+  `::shows a loading state, then an error with a retry that loads the page`,
+  `::stops fetching once an empty page marks the start, until a reconnect`,
+  `::drops the loaded pages when a fresh snapshot replaces the transcript`,
+  `ui/src/features/sessions/console/transcript.test.ts::merges a call whose start is in an older page with its end already shown`).
 - The input sends on Enter and adds a line on Shift+Enter, a refused send
   adds an error block, and the box is disabled with a reason when the
   session is not live
