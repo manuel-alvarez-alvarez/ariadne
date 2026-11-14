@@ -110,6 +110,13 @@ subagents, the bar of views is one Tab stop: the arrow keys move along it. A
 console keeps each session's draft, scroll place and folds while you expand it,
 collapse it or change tabs, until the app restarts.
 
+Tool rows open details beside the conversation when the panel has enough space,
+or in a drawer when narrow. New activity keeps the selected call open.
+Close details with its button or Escape; focus returns to the selected row.
+`Pending request` reveals a question or permission, including a subagent's,
+and closes the details drawer. Ctrl-O has no action in this console.
+The fold controls affect conversation blocks, independently of tool selection.
+
 The two ⌘ chords answer to **either** modifier, on every platform: the app runs
 in a Tauri WebView and in a browser tab, and a chord that silently does nothing
 because the platform was sniffed wrong is worse than one that answers to both.

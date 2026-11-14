@@ -702,65 +702,50 @@ it("marks prompts and tool states with borders and icons", () => {
   expect(tools[1]?.querySelector(".border-red-500 [data-tool-kind=edit]")).not.toBeNull()
 })
 
-it("folds tool details, thoughts and daemon prompts together, starting folded, from the header and Ctrl-O", async () => {
-  const user = userEvent.setup()
+it("folds thoughts and daemon prompts from the header while tool rows stay compact", () => {
   renderConsole(foldedActivity())
-
   const log = within(transcript())
   expect(log.queryByText(/prompt 6/)).toBeNull()
-  expect(log.queryByText(/out 7/)).toBeNull()
-  expect(log.queryByText("+add 25")).toBeNull()
   expect(log.queryByText(/the options/)).toBeNull()
-  log.getByRole("button", { name: /Bash/ })
-
-  await user.click(screen.getByRole("button", { name: "Unfold" }))
-  expect(log.getByText(/prompt 10/)).not.toBeNull()
-  expect(log.getByText(/out 1\b/)).not.toBeNull()
-  expect(log.getByText("+add 30")).not.toBeNull()
+  fireEvent.click(screen.getByRole("button", { name: "Unfold" }))
+  log.getByText(/prompt 10/)
   log.getByText(/the options/)
-
-  fireEvent.keyDown(input(), { key: "o", ctrlKey: true })
-  screen.getByRole("button", { name: "Unfold" })
-  expect(log.queryByText(/out 6\b/)).toBeNull()
+  expect(log.queryByText("+add 30")).toBeNull()
+  expect(log.queryByRole("button", { name: "Copy output" })).toBeNull()
+  fireEvent.click(screen.getByRole("button", { name: "Fold" }))
+  expect(log.queryByText(/the options/)).toBeNull()
 })
 
-it("folds one block on its own header and keeps the choice across a remount and a stream update", async () => {
-  const user = userEvent.setup()
+it("folds one thought and keeps the choice across a remount and a stream update", () => {
   const activity = foldedActivity()
   const { source } = renderConsole(activity)
-  const log = within(transcript())
-
-  const bash = log.getByRole("button", { name: /Bash/ })
-  await user.click(bash)
-  expect(bash.getAttribute("aria-expanded")).toBe("true")
-  log.getByText(/out 3\b/)
-  expect(log.queryByText("+add 5")).toBeNull()
-
+  const thought = within(transcript()).getByRole("button", { name: /thought · pondering/ })
+  fireEvent.click(thought)
+  expect(thought.getAttribute("aria-expanded")).toBe("true")
   act(() => source.emit("event", event("agent_message", { text: "later" })))
-  expect(log.getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded")).toBe("true")
-
+  expect(thought.getAttribute("aria-expanded")).toBe("true")
   cleanup()
   stubEventSource()
   renderConsole(activity)
   expect(
-    within(transcript()).getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded"),
+    within(transcript())
+      .getByRole("button", { name: /thought · pondering/ })
+      .getAttribute("aria-expanded"),
   ).toBe("true")
-  expect(
-    within(transcript()).getByRole("button", { name: /Edit/ }).getAttribute("aria-expanded"),
-  ).toBe("false")
 })
 
-it("lets a keyboard open a fold and leaves its content's Copy control from folding it", async () => {
+it("lets a keyboard open a daemon prompt fold without copying closing it", async () => {
   const user = userEvent.setup()
-  renderConsole(foldedActivity())
+  renderConsole([
+    event("user_prompt_submit", { text: "Run this\n```sh\necho hello\n```", source: "daemon" }),
+  ])
   const log = within(transcript())
-
-  log.getByRole("button", { name: /Bash/ }).focus()
+  const prompt = log.getByRole("button", { name: /daemon prompt/ })
+  prompt.focus()
   await user.keyboard("{Enter}")
-  expect(log.getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded")).toBe("true")
-
-  await user.click(log.getByRole("button", { name: "Copy output" }))
-  expect(log.getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded")).toBe("true")
+  expect(prompt.getAttribute("aria-expanded")).toBe("true")
+  await user.click(log.getByRole("button", { name: /Copy/ }))
+  expect(prompt.getAttribute("aria-expanded")).toBe("true")
 })
 
 it("draws no scroll area inside the transcript, and wraps long code", async () => {
@@ -964,17 +949,6 @@ it("places the status below the input without a keyboard hint footer", () => {
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy()
   expect(screen.queryByText(/enter send/)).toBeNull()
-})
-
-it("folds on Ctrl-O from a header control, not only from the input", () => {
-  renderConsole()
-  const expand = screen.getByRole("button", { name: "Expand the console" })
-
-  fireEvent.keyDown(expand, { key: "o", ctrlKey: true })
-  screen.getByRole("button", { name: "Fold" })
-
-  fireEvent.keyDown(screen.getByRole("button", { name: "Fold" }), { key: "o", ctrlKey: true })
-  screen.getByRole("button", { name: "Unfold" })
 })
 
 it("reopens the suggestions on the next edit after Escape closed them", () => {
@@ -1382,7 +1356,7 @@ it("keeps the block the reader is on in place when a block above it changes heig
 
   // Unfolding a block above pushes the message down 120px; the reader stays on it.
   messageTop = 160
-  await user.click(within(log).getByRole("button", { name: /Bash/ }))
+  await user.click(within(log).getByRole("button", { name: /thought · pondering/ }))
 
   expect(top).toBe(220)
   vi.restoreAllMocks()

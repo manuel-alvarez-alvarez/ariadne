@@ -97,23 +97,6 @@ export function SummaryLine({
   )
 }
 
-/** Whether an element's text is cut by its width, kept current as it resizes. */
-function useCut(text: string): [(element: HTMLElement | null) => void, boolean] {
-  const [element, setElement] = useState<HTMLElement | null>(null)
-  const [cut, setCut] = useState(false)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: new text may not resize the element, so it measures again
-  useEffect(() => {
-    if (!element) return
-    const measure = () => setCut(element.scrollWidth > element.clientWidth)
-    measure()
-    if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [element, text])
-  return [setElement, cut]
-}
-
 /** What a person typed is a message: set apart and full size, with the time it was sent. */
 export function PromptBox({
   text,
@@ -125,7 +108,7 @@ export function PromptBox({
   time?: string
 }) {
   return (
-    <div className="flex items-start gap-2 border-l border-blue-500 px-3 py-2">
+    <div className="flex items-start gap-2 rounded-r-md border-l border-blue-500 bg-muted/30 px-3 py-3">
       <ChevronRightIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-blue-500" />
       <div className="min-w-0 flex-1">
         {queued ? (
@@ -301,7 +284,7 @@ function BlockBody({
         </ul>
       )
     case "tool":
-      return <ToolBlock block={block} folded={folded} onToggle={onToggle} />
+      return <ToolDetails block={block} />
     case "permission": {
       const answer = block.answer
         ? block.answer.decidedBy
@@ -376,75 +359,92 @@ function BlockBody({
   }
 }
 
-/** A tool call: one header line, and a body where it has anything to show or its header is cut. */
-function ToolBlock({
+/** One selectable activity row. Tool content lives in the details workspace. */
+export const ToolRow = memo(function ToolRow({
   block,
-  folded,
-  onToggle,
+  selected,
+  onSelect,
 }: {
   block: Extract<Block, { type: "tool" }>
-  folded: boolean
-  onToggle: () => void
+  selected: boolean
+  onSelect: (id: string, trigger: HTMLButtonElement) => void
 }) {
   const { tool } = block
   const subject = tool.subject ?? tool.title
-  const [startRef, cut] = useCut(subject)
-  const [now, setNow] = useState(() => Date.now())
+  const [now, setNow] = useState(Date.now)
   useEffect(() => {
     if (tool.endedAt || tool.status !== "in_progress") return
-    setNow(Date.now())
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [tool.endedAt, tool.status])
-  // A read's subject names its file, so its input says nothing more.
-  const input = tool.kind === "read" ? undefined : tool.inputText
-  const summary = (
-    <SummaryLine
-      title={`${subject}\n${formatStamp(block.createdAt)}`}
-      startRef={startRef}
-      start={
-        <>
-          <span className="mr-1.5 inline-flex items-center gap-1.5 align-[-2px]">
-            <ToolStatus status={tool.status} />
-          </span>
-          <span className="font-medium text-foreground">{subject}</span>
-        </>
-      }
-      end={[
-        duration(
-          tool.startedAt,
-          tool.endedAt ?? (tool.status === "in_progress" ? new Date(now).toISOString() : undefined),
-        ),
-      ]}
-    />
-  )
-  if (!input && !tool.output && !tool.diff && !cut) {
-    return (
-      <div className="flex items-start gap-1.5 px-2 py-1 font-mono text-xs text-muted-foreground">
-        <span className="min-w-0 flex-1">{summary}</span>
-      </div>
-    )
-  }
   return (
-    <Foldable folded={folded} onToggle={onToggle} summary={summary}>
-      <div className="space-y-1">
-        {input?.includes(subject) ? null : (
-          <p data-tool-subject className="font-mono text-xs break-words whitespace-pre-wrap">
-            {subject}
-          </p>
+    <div data-block="tool" data-block-id={block.id}>
+      <button
+        type="button"
+        aria-pressed={selected}
+        onClick={(event) => onSelect(block.id, event.currentTarget)}
+        title={`${subject}\n${formatStamp(block.createdAt)}`}
+        className={cn(
+          "flex w-full min-w-0 items-center gap-2 rounded-md border-l px-3 py-2 text-left font-mono text-xs text-muted-foreground outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50",
+          tool.status === "failed"
+            ? "border-red-500"
+            : tool.status === "completed"
+              ? "border-green-500"
+              : "border-muted-foreground/50",
+          selected && "bg-muted text-foreground",
         )}
-        {input ? <CodeBlock code={input} language={tool.inputLanguage} caption="input" /> : null}
-        {tool.output ? (
-          <CodeBlock
-            code={tool.output}
-            language={tool.outputLanguage}
-            firstLine={tool.firstLine}
-            caption="output"
-          />
-        ) : null}
-        {tool.diff ? <CodeBlock code={tool.diff} diff caption="diff" /> : null}
+      >
+        <ToolKind kind={tool.kind} />
+        <ToolStatus status={tool.status} />
+        <span className="shrink-0 max-w-1/3 truncate font-medium text-foreground">
+          {firstLine(tool.title)}
+        </span>
+        <span className="min-w-0 flex-1 truncate">
+          {subject === tool.title ? firstLine(tool.output ?? "") : firstLine(subject)}
+        </span>
+        <span data-summary-end className="shrink-0 tabular-nums">
+          {duration(
+            tool.startedAt,
+            tool.endedAt ??
+              (tool.status === "in_progress" ? new Date(now).toISOString() : undefined),
+          )}
+        </span>
+      </button>
+    </div>
+  )
+})
+
+/** Existing input, output and code changes, with shared highlighting and copy controls. */
+function ToolDetails({ block }: { block: Extract<Block, { type: "tool" }> }) {
+  const { tool } = block
+  const subject = tool.subject ?? tool.title
+  const input = tool.kind === "read" ? undefined : tool.inputText
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+        <ToolStatus status={tool.status} />
+        <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{tool.title}</span>
+        <span className="shrink-0">{formatClock(block.createdAt)}</span>
       </div>
-    </Foldable>
+      {input?.includes(subject) ? null : (
+        <p data-tool-subject className="font-mono text-xs break-words whitespace-pre-wrap">
+          {subject}
+        </p>
+      )}
+      {input ? <CodeBlock code={input} language={tool.inputLanguage} caption="input" /> : null}
+      {tool.output ? (
+        <CodeBlock
+          code={tool.output}
+          language={tool.outputLanguage}
+          firstLine={tool.firstLine}
+          caption="output"
+        />
+      ) : null}
+      {tool.diff ? <CodeBlock code={tool.diff} diff caption="diff" /> : null}
+      {!input && !tool.output && !tool.diff ? (
+        <p className="text-xs text-muted-foreground">No input, output or code changes available.</p>
+      ) : null}
+    </div>
   )
 }
 

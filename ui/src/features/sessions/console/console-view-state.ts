@@ -35,7 +35,7 @@ export type ConsoleViewState = {
   oldest: string | undefined
   /** True while the reader is at the newest block. */
   following: boolean
-  /** The whole console's fold: true folds long output and diffs. */
+  /** The conversation's fold: thoughts, daemon prompts and resolved requests. */
   folded: boolean
   /** A fold preference per block id; a block with none follows `folded`. */
   blockFolds: Record<string, boolean>

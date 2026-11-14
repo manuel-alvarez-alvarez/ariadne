@@ -444,13 +444,19 @@ stream (008). It lives in `src/features/sessions/console/`:
   be cancelled.
 
 The console also has the CLI pane's extras (spec 015, rules 23a to 23f): a
-fold toggle (header control and Ctrl-O), the agent's slash commands as a
+fold toggle (header and plus-menu controls for conversation blocks), the agent's slash commands as a
 suggestion list over the input, a status row, a `queued` block for a sent
 prompt, and a footer of keys. `transcript.ts` holds their state
 (`availableCommands`, `queuedPrompts`, the launches' token totals and the
 turn's start); `blocks.tsx`, `composer.tsx` and `status.tsx` draw it.
 
-Escape inside the console cancels a running turn and never reaches the pane
+`workspace.tsx` measures the console panel: selected tool details sit beside
+the conversation at 880 CSS pixels or wider, and use a modal drawer below that.
+Tool rows stay compact and selection never follows newer calls. Ctrl-O has
+no handler in the shared browser and desktop console.
+
+Escape inside tool details closes them and returns focus to the selected row.
+Escape elsewhere inside the console cancels a running turn and never reaches the pane
 or the modal. ⌘Escape moves the keyboard to the panel's Close button or the
 modal's Collapse button. The tests drive the console through the
 `EventSource` stand-in in `src/test/event-source.ts`.

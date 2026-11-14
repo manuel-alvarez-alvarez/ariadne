@@ -148,7 +148,7 @@ export function Composer({
   }
 
   return (
-    <div className="flex items-end gap-2 border-t p-2">
+    <div className="m-3 mt-2 flex items-end gap-2 rounded-lg border bg-background p-2 shadow-xs">
       {menu}
       <div className="min-w-0 flex-1">
         <textarea
@@ -167,7 +167,7 @@ export function Composer({
           onChange={(event) => onChange(event.target.value, event.target.selectionStart)}
           onSelect={(event) => onSelect(event.currentTarget.selectionStart)}
           onKeyDown={onKeyDown}
-          className="block w-full resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+          className="block w-full resize-none rounded-md border border-transparent bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
         />
         {live ? null : (
           <p className="pt-1 text-xs text-muted-foreground">
