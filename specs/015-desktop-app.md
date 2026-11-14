@@ -449,6 +449,12 @@ Out: the daemon endpoints themselves (012).
     snapshot's page — so a reload never hides it; an older page that brings
     its line in draws it in place instead. A failed read shows its error
     with a Retry that reads the list again.
+    In `main` of a live session an open card, a restored one included,
+    draws after every later block, directly above the composer: text, tool
+    calls, notes, queued prompts and failed sends that come after the
+    question draw above it. A card that closes draws in its own place in
+    the transcript, by its event order. A child's view and a session that
+    is not live draw every card in event order.
 23. The console uses the app's own tokens, in both themes. An Expand control
     opens it in a near-fullscreen modal, and its Collapse control restores
     it to the panel; each move closes the old stream and opens a fresh one.
@@ -1605,7 +1611,11 @@ Out: the daemon endpoints themselves (012).
   `::shows a question's clock time at the right end of its header`,
   `::restores a pending question older than the snapshot page on a load and a reconnect`,
   `::draws a pending question once where the snapshot already holds it, and closed where it closed`,
-  `::shows a failed read of the pending questions, and its Retry restores them`),
+  `::shows a failed read of the pending questions, and its Retry restores them`,
+  `::keeps an open question below every later block, directly above the input`,
+  `::draws a closed question in its own place, by its event order`,
+  `::draws an open question of a finished session in its event order`,
+  `::keeps a restored pending question below every later block`),
   and the transcript folds a question and its resolution into one card,
   keeps a hint-only request a note, and replays a withdrawn question closed
   (`ui/src/features/sessions/console/transcript.test.ts::folds a structured question into one card that its resolution closes`,

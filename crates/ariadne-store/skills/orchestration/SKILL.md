@@ -33,7 +33,8 @@ Use `research` when the user asks a question and wants no plan.
 
    Put the title, context and question in the text. Put each option, with
    its consequence, in `options`. Put the pick in `recommended_option_id`,
-   and the reason in `recommendation_reason`.
+   and the reason in `recommendation_reason`. Write no text after the call,
+   and end the turn.
 
    Ask nothing a column settles, such as review or landing.
 

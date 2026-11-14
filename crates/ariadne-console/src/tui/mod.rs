@@ -418,6 +418,10 @@ impl Console {
         // dropped counts from its own prompt again, and a turn that began
         // while the stream was down counts from its prompt, not the old one.
         let mut finished = self.settled();
+        // The replay pins each open question as the live stream did, so a
+        // question that closed while the stream was down keeps the place of
+        // its close. A session that ends with the snapshot pins none.
+        let pinning = !self.ends_with(events);
         let mut parent = Vec::new();
         let mut children = Vec::new();
         self.commands = Vec::new();
@@ -438,7 +442,10 @@ impl Console {
                 continue;
             }
             self.follow_asking(event);
-            absorb(&mut parent, event);
+            match pinning {
+                true => absorb_over_questions(&mut parent, event),
+                false => absorb(&mut parent, event),
+            }
             self.follow_turn(event, now);
             self.follow_usage(event);
         }
@@ -494,6 +501,50 @@ impl Console {
         self.apply_own(event, now);
         if parked {
             std::mem::swap(&mut self.items, &mut self.parked);
+        }
+        self.pin_questions();
+    }
+
+    /// Keep each open `wait_for_user` question of the session's own after
+    /// every later block (031): it waits on the user, so it draws in the live
+    /// area right over the input, and the blocks written after it go above
+    /// it and into the scrollback. A question that closes stays where it
+    /// is then, after the blocks before its close. A session that has ended
+    /// keeps its questions in event order.
+    ///
+    /// The parent's blocks kept while a child's view is on the screen are
+    /// drawn whole when that view comes back, so all of them may move.
+    fn pin_questions(&mut self) {
+        if self.has_ended() {
+            return;
+        }
+        let (items, from) = match self.in_child() {
+            true => (&mut self.parked, 0),
+            false => (&mut self.items, self.committed),
+        };
+        pin_questions(items, from, &mut self.pending);
+    }
+
+    /// Whether the session has ended once `events` are folded in: the
+    /// status the header has, moved as [`Console::follow_turn`] moves it.
+    fn ends_with(&self, events: &[AgentEventDto]) -> bool {
+        let status = match self.ended {
+            true => Some(self.header.status.as_str()),
+            false => events
+                .iter()
+                .filter_map(|event| status_of(&event.kind))
+                .next_back()
+                .or(Some(self.header.status.as_str())),
+        };
+        matches!(status, Some("exited" | "failed"))
+    }
+
+    /// Where the open questions pinned after every block start in `items`:
+    /// its end where none is pinned.
+    fn pinned_from(&self) -> usize {
+        match self.has_ended() || self.in_child() {
+            true => self.items.len(),
+            false => waiting_at(&self.items),
         }
     }
 
@@ -562,7 +613,8 @@ impl Console {
                     *pending += grown;
                 }
             }
-            None => absorb(&mut self.items, event),
+            None if self.has_ended() => absorb(&mut self.items, event),
+            None => absorb_over_questions(&mut self.items, event),
         }
     }
 
@@ -633,11 +685,11 @@ impl Console {
         self.invalidate_blocks();
         // A typed prompt the daemon refused is never confirmed: it is no
         // longer queued, and holds nothing after it out of the scrollback.
-        if self
-            .pending
-            .back()
-            .is_some_and(|at| at + 1 == self.items.len())
-        {
+        if self.pending.back().is_some_and(|at| {
+            self.items[at + 1..]
+                .iter()
+                .all(|item| matches!(item, TranscriptItem::UserQuestion { closed: None, .. }))
+        }) {
             self.pending.pop_back();
         }
         self.items.push(TranscriptItem::Error {
@@ -650,6 +702,7 @@ impl Console {
             text: text.to_string(),
             ai_note: None,
         });
+        self.pin_questions();
         self.set_turn(Turn::Idle, Instant::now());
     }
 
@@ -829,6 +882,7 @@ impl Console {
             source: Some("console".into()),
             prompt_kind: None,
         });
+        self.pin_questions();
         // A prompt typed while a turn runs is queued behind it: the status
         // row still says what that turn is doing.
         if !self.turn.running() {
@@ -860,12 +914,14 @@ impl Console {
     /// It never goes backwards: what is in the scrollback is in the
     /// scrollback, whatever a fresh snapshot makes of the items around it.
     fn settled(&self) -> usize {
+        // The open questions pinned after every block are not what is being
+        // written: the block before them is.
+        let blocks = self.pinned_from();
         let writing = self.view_running()
-            || self
-                .items
+            || self.items[..blocks]
                 .last()
                 .is_some_and(|last| is_open(last, true) || is_open(last, false));
-        let mut end = self.items.len().saturating_sub(usize::from(writing));
+        let mut end = blocks.saturating_sub(usize::from(writing));
         if let Some(pending) = self.pending.front().filter(|_| !self.in_child()) {
             // The turn a queued prompt waits behind is still writing the
             // block before the prompt, chunk by chunk: that block is the one
@@ -877,6 +933,9 @@ impl Console {
             // leaves one — will never end: it holds nothing back after that.
             let open = match item {
                 TranscriptItem::PermissionQuestion { answer, .. } => answer.is_none(),
+                // An open question waits over the input (031). It is pinned
+                // after every block, so it holds back no other block.
+                TranscriptItem::UserQuestion { closed: None, .. } => !self.has_ended(),
                 TranscriptItem::ToolCall { tool, .. } => {
                     self.view_running() && !transcript::tool_is_terminal(tool.status.as_deref())
                 }
@@ -1247,6 +1306,60 @@ fn absorb(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
         }
         items.push(item);
     }
+}
+
+/// Whether a block is a `wait_for_user` question that waits for an answer.
+fn is_waiting(item: &TranscriptItem) -> bool {
+    matches!(item, TranscriptItem::UserQuestion { closed: None, .. })
+}
+
+/// Where the run of open questions at the end of `items` starts.
+fn waiting_at(items: &[TranscriptItem]) -> usize {
+    items.len()
+        - items
+            .iter()
+            .rev()
+            .take_while(|item| is_waiting(item))
+            .count()
+}
+
+/// [`absorb`] under the open questions pinned at the end of `items`: the
+/// event folds into the blocks before them, so a chunk still grows the
+/// block it belongs to, and a question it asks goes after them. Only a
+/// close looks among the questions, for the one it closes, which then
+/// stays where it is.
+fn absorb_over_questions(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
+    if event.kind == "agent_request.resolved" {
+        absorb(items, event);
+        return;
+    }
+    let held = items.split_off(waiting_at(items));
+    let before = items.len();
+    absorb(items, event);
+    let (asked, written): (Vec<_>, Vec<_>) =
+        items.drain(before.min(items.len())..).partition(is_waiting);
+    items.extend(written);
+    items.extend(held);
+    items.extend(asked);
+}
+
+/// Move each `wait_for_user` question from `from` on that waits for an
+/// answer after every other block, in its order. `pending` keeps pointing
+/// at the prompts it pointed at.
+fn pin_questions(items: &mut Vec<TranscriptItem>, from: usize, pending: &mut VecDeque<usize>) {
+    let mut pinned = Vec::new();
+    let mut at = from;
+    while at < items.len() {
+        if !is_waiting(&items[at]) {
+            at += 1;
+            continue;
+        }
+        pinned.push(items.remove(at));
+        for prompt in pending.iter_mut().filter(|prompt| **prompt > at) {
+            *prompt -= 1;
+        }
+    }
+    items.extend(pinned);
 }
 
 /// Whether this block is still taking chunks of the kind asked for.

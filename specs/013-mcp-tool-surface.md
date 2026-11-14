@@ -257,8 +257,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     recipient needs no follow-up question."
   - `wait_for_user` says "Put the options, your pick and its reason in
     `options`, `recommended_option_id` and `recommendation_reason`, not in
-    its text or your reply.", and its schema lists `recommendation_reason`
-    with its doc.
+    its text or your reply." and "Write no text after the call, and end the
+    turn." (031), and its schema lists `recommendation_reason` with its doc.
   - The `submit_review` `body` doc is "Leave it empty."
   - The `Priority` doc is "The severity: P0 is a critical risk, P1 is a
     proven defect, P2 is optional."

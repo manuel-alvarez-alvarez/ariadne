@@ -1549,6 +1549,260 @@ mod tests {
         assert_eq!(said, expected, "each line of it once, in order: {history}");
     }
 
+    /// A `wait_for_user` question with two options (031).
+    fn asked() -> AgentEventDto {
+        event(
+            "agent_request",
+            "Pick a base",
+            json!({"request_id": "01RQ", "hint": "Pick a base", "question": {
+                "text": "Which base branch?",
+                "options": [{"id": "main", "label": "Main"}, {"id": "next", "label": "Next"}],
+                "recommended_option_id": "main"
+            }}),
+        )
+    }
+
+    fn resolved() -> AgentEventDto {
+        event(
+            "agent_request.resolved",
+            "answered",
+            json!({"request_id": "01RQ", "resolution": "answered",
+                   "answer": {"option_id": "next", "text": "Next"}}),
+        )
+    }
+
+    /// `count` lines of the agent's text, `name-001` on.
+    fn said(name: &str, count: usize) -> AgentEventDto {
+        let text: String = (1..=count).map(|n| format!("- {name}-{n:03}\n")).collect();
+        event("agent_message", name, json!({"text": text}))
+    }
+
+    /// Where each of `marks` is first found in `shown`, row by row, and how
+    /// many rows hold it.
+    fn found(shown: &str, marks: &[&str]) -> Vec<(usize, usize)> {
+        let rows = lines(shown);
+        marks
+            .iter()
+            .map(|mark| {
+                let at = rows.iter().position(|row| row.contains(mark));
+                let count = rows.iter().filter(|row| row.contains(mark)).count();
+                (
+                    at.unwrap_or_else(|| panic!("{mark} is shown: {shown}")),
+                    count,
+                )
+            })
+            .collect()
+    }
+
+    /// An open question stays in the live area right over the input, and the
+    /// blocks the agent writes after it go above it and into the scrollback.
+    #[test]
+    fn an_open_question_stays_over_the_input_while_later_blocks_go_into_the_scrollback() {
+        let mut terminal = super::open(|| TestBackend::new(72, 24)).unwrap();
+        let mut console = Console::new(header());
+        console.snapshot(&[prompt("go"), asked()]);
+        console.show(&mut terminal).unwrap();
+        console.apply(&said("after", 30));
+        console.apply(&event("stop", "stop", json!({"stop_reason": "end_turn"})));
+        console.show(&mut terminal).unwrap();
+
+        let screen = rows(terminal.backend().under().buffer());
+        let screen = lines(&screen);
+        let last = screen.len() - usize::from(PINNED) - 1;
+        let hint = screen
+            .iter()
+            .position(|row| row.contains("waiting for you · Pick a base"))
+            .unwrap_or_else(|| panic!("the question is on the screen: {screen:#?}"));
+        assert!(
+            screen[hint - 2].ends_with("after-030") && screen[hint - 1].is_empty(),
+            "the later block ends right above the question: {screen:#?}"
+        );
+        assert!(
+            screen[hint..=last]
+                .iter()
+                .any(|row| row.contains("Type a number, or your own answer.")),
+            "the question ends over the status row: {screen:#?}"
+        );
+        let scrollback = rows(terminal.backend().under().scrollback());
+        assert!(
+            scrollback.contains("after-001") && !scrollback.contains("Pick a base"),
+            "the later lines leave through the top, the question does not: {scrollback}"
+        );
+    }
+
+    /// A question that closes goes into the scrollback once, after the
+    /// blocks that came before its close and before the ones after it.
+    #[test]
+    fn a_closed_question_goes_into_the_scrollback_once_after_the_blocks_before_its_close() {
+        let mut terminal = super::open(|| TestBackend::new(72, 24)).unwrap();
+        let mut console = Console::new(header());
+        console.snapshot(&[prompt("go"), asked(), said("before", 3)]);
+        console.show(&mut terminal).unwrap();
+        console.apply(&resolved());
+        console.apply(&said("after", 40));
+        console.apply(&event("stop", "stop", json!({"stop_reason": "end_turn"})));
+        console.show(&mut terminal).unwrap();
+
+        let shown = history(&terminal);
+        let at = found(
+            &shown,
+            &[
+                "before-003",
+                "waiting for you · Pick a base",
+                "answered · Next",
+                "after-001",
+            ],
+        );
+        assert!(
+            at[0].0 < at[1].0 && at[2].0 < at[3].0,
+            "before the close, the question, then after it: {shown}"
+        );
+        assert_eq!(
+            (at[1].1, at[2].1),
+            (1, 1),
+            "the question shows once: {shown}"
+        );
+        assert!(
+            rows(terminal.backend().under().scrollback()).contains("answered · Next"),
+            "the closed question is in the scrollback: {shown}"
+        );
+    }
+
+    /// The chunks the agent writes under an open question make one block,
+    /// a message and a thought alike, and the block stays out of the
+    /// scrollback while it is written.
+    #[test]
+    fn chunks_under_an_open_question_make_one_block_that_is_written_whole() {
+        for kind in ["agent_message_chunk", "agent_thought_chunk"] {
+            let mut terminal = super::open(|| TestBackend::new(72, 24)).unwrap();
+            let mut console = Console::new(header());
+            console.snapshot(&[prompt("go"), asked()]);
+            let chunk = |n: usize| {
+                event(
+                    kind,
+                    &format!("{n}"),
+                    json!({"text": format!("- part-{n:03}\n")}),
+                )
+            };
+            for n in 1..=30 {
+                console.apply(&chunk(n));
+                console.show(&mut terminal).unwrap();
+            }
+
+            let scrollback = rows(terminal.backend().under().scrollback());
+            assert!(
+                !scrollback.contains("part-"),
+                "{kind}: the block in work keeps its head: {scrollback}"
+            );
+            let screen = rows(terminal.backend().under().buffer());
+            let screen = lines(&screen);
+            let hint = screen
+                .iter()
+                .position(|row| row.contains("waiting for you · Pick a base"))
+                .unwrap_or_else(|| panic!("{kind}: the question is on the screen: {screen:#?}"));
+            assert!(
+                screen[hint - 2].ends_with("part-030") && screen[hint - 1].is_empty(),
+                "{kind}: the block ends right above the question: {screen:#?}"
+            );
+            let marked = screen[..hint]
+                .iter()
+                .filter(|row| row.contains("part-") && !row.starts_with("  "))
+                .count();
+            assert!(marked <= 1, "{kind}: one block, one marker: {screen:#?}");
+
+            console.apply(&event("stop", "stop", json!({"stop_reason": "end_turn"})));
+            console.close(&mut terminal).unwrap();
+            let shown = history(&terminal);
+            let parts: Vec<&str> = shown
+                .lines()
+                .filter_map(|line| line.find("part-").map(|at| &line[at..]))
+                .collect();
+            let expected: Vec<String> = (1..=30).map(|n| format!("part-{n:03}")).collect();
+            assert_eq!(parts, expected, "{kind}: each line once, in order: {shown}");
+            assert_eq!(
+                shown
+                    .lines()
+                    .filter(|line| line.contains("part-") && !line.starts_with("  "))
+                    .count(),
+                1,
+                "{kind}: one block: {shown}"
+            );
+        }
+    }
+
+    /// A question that closed while the stream was down keeps its close
+    /// position on the replay: after the blocks before its close, before
+    /// the ones after it.
+    #[test]
+    fn a_question_closed_while_the_stream_was_down_keeps_its_close_position() {
+        let mut terminal = super::open(|| TestBackend::new(72, 24)).unwrap();
+        let mut console = Console::new(header());
+        let first = [prompt("go"), asked(), said("before", 3)];
+        console.snapshot(&first);
+        console.show(&mut terminal).unwrap();
+
+        console.dropped();
+        let mut replay = first.to_vec();
+        replay.extend([
+            said("more", 2),
+            resolved(),
+            said("after", 40),
+            event("stop", "stop", json!({"stop_reason": "end_turn"})),
+        ]);
+        console.snapshot(&replay);
+        console.live();
+        console.show(&mut terminal).unwrap();
+        console.close(&mut terminal).unwrap();
+
+        let shown = history(&terminal);
+        let at = found(
+            &shown,
+            &["before-003", "more-002", "answered · Next", "after-001"],
+        );
+        assert!(
+            at[0].0 < at[1].0 && at[1].0 < at[2].0 && at[2].0 < at[3].0,
+            "the blocks before the close, the question, then the ones after it: {shown}"
+        );
+        assert_eq!(
+            found(&shown, &["waiting for you · Pick a base"])[0].1,
+            1,
+            "the question shows once: {shown}"
+        );
+    }
+
+    /// A question still open at the close goes into the terminal once,
+    /// after every block, as it stands.
+    #[test]
+    fn a_question_open_at_the_close_is_written_once_after_every_block() {
+        let mut terminal = pane();
+        let mut console = Console::new(header());
+        console.snapshot(&[prompt("go"), asked(), said("later", 2)]);
+        console.show(&mut terminal).unwrap();
+
+        console.close(&mut terminal).unwrap();
+
+        let shown = history(&terminal);
+        let at = found(&shown, &["later-002", "waiting for you · Pick a base"]);
+        assert!(at[0].0 < at[1].0, "the question comes last: {shown}");
+        assert_eq!(at[1].1, 1, "once: {shown}");
+    }
+
+    /// A finished session draws its questions in event order.
+    #[test]
+    fn a_finished_session_draws_its_questions_in_event_order() {
+        let mut terminal = pane();
+        let mut console = Console::new(Header {
+            status: "exited".into(),
+            ..header()
+        });
+        console.snapshot(&[prompt("go"), asked(), said("later", 2)]);
+        console.show(&mut terminal).unwrap();
+
+        let shown = history(&terminal);
+        let at = found(&shown, &["waiting for you · Pick a base", "later-001"]);
+        assert!(at[0].0 < at[1].0, "the question keeps its place: {shown}");
+    }
+
     #[test]
     fn the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read() {
         let mut terminal = super::open(Mute::new).unwrap();
