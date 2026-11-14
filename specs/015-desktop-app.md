@@ -486,7 +486,7 @@ Out: the daemon endpoints themselves (012).
     line and of a prompt, and the full date and time on hover of any block.
     `BlockView` is memoized, and it compares a question card or a permission
     picker by its props, so a streamed chunk re-renders only the block it
-    changes. A card or a picker whose own state changes renders again. A message, a person's prompt, a plan, a
+    changes. A card or a picker whose own state changes renders again. A message, a person's prompt, a plan and a
     question never fold, and a pending permission never folds. An unfolded daemon prompt is
     Markdown, and its summary line stays plain text. The whole summary is one button
     with `aria-expanded`, so a click, Enter or Space opens that block alone;
