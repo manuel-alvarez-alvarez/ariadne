@@ -514,9 +514,6 @@ Out: the daemon endpoints themselves (012).
     bottom by scrolling does too. Streaming, older pages loading and folds
     leave the offset of a reader who scrolled away, and keep a following
     reader at the newest output, a resized panel too.
-    Screenshots of the console in both themes, narrow and wide, with folded
-    activity, expanded long output, wide code, a question, a send failure and
-    Jump to latest are in `specs/evidence/015-console-polish/`.
 23b. The latest `available_commands_update` event replaces the command
     list, whole: a later list, an empty one included, replaces the earlier
     one. A list whose payload carries a `subagent`, of any value, is ignored, and the event
