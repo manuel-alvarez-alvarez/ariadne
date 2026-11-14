@@ -2533,6 +2533,16 @@ mod tests {
         text.text.clone()
     }
 
+    /// Asserts that a result is compact JSON that holds `expected`. The key
+    /// order depends on whether another crate turns on `preserve_order`, so
+    /// the keys are compared as a value.
+    fn assert_compact_json(text: &str, expected: &str) {
+        let value: serde_json::Value = serde_json::from_str(text).expect("the result is JSON");
+        assert_eq!(serde_json::to_string(&value).expect("write"), text);
+        let expected: serde_json::Value = serde_json::from_str(expected).expect("JSON");
+        assert_eq!(value, expected);
+    }
+
     /// A result is one compact line, and a field that holds nothing is left
     /// out at every depth, while `false`, `0` and a string stay.
     #[tokio::test]
@@ -2586,9 +2596,9 @@ mod tests {
             }))
             .await
             .expect("open");
-        assert_eq!(
-            text_of(opened).await,
-            r#"{"id":"01TASK","pr_url":"https://example.test/pull/1","status":"in_progress","step":"pr"}"#
+        assert_compact_json(
+            &text_of(opened).await,
+            r#"{"id":"01TASK","pr_url":"https://example.test/pull/1","status":"in_progress","step":"pr"}"#,
         );
 
         const GOAL: &str = r#"{"id":"01GOAL","status":"active","title":"G","steps":[]}"#;
@@ -2627,9 +2637,9 @@ mod tests {
             }))
             .await
             .expect("create");
-        assert_eq!(
-            text_of(created).await,
-            r#"{"agents":[{"model":"codex-acp:m","skills":["coding"],"step":"develop"}],"id":"01TASK","status":"pending"}"#
+        assert_compact_json(
+            &text_of(created).await,
+            r#"{"agents":[{"model":"codex-acp:m","skills":["coding"],"step":"develop"}],"id":"01TASK","status":"pending"}"#,
         );
     }
 
@@ -2689,9 +2699,9 @@ mod tests {
             }))
             .await
             .expect("update");
-        assert_eq!(
-            text_of(updated).await,
-            r#"{"agents":[{"effort":"high","model":"codex-acp:m","skills":["coding"],"step":"develop"}],"id":"01TASK","status":"failed","step":"develop"}"#
+        assert_compact_json(
+            &text_of(updated).await,
+            r#"{"agents":[{"effort":"high","model":"codex-acp:m","skills":["coding"],"step":"develop"}],"id":"01TASK","status":"failed","step":"develop"}"#,
         );
 
         const GOAL: &str = r#"{"id":"01GOAL","status":"completed","title":"G","steps":[]}"#;
