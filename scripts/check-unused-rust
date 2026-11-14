@@ -48,6 +48,9 @@ IGNORED = {
     "crates/ariadne-api/src/pull_requests.rs: FailedCheckDto": (
         "the element type of the public field `PullRequestDto::failed_checks`; utoipa names it"
     ),
+    "crates/ariadne-console/src/transcript.rs: QuestionChoice": (
+        "the element type of `TranscriptItem::UserQuestion::options`; its renderers read it"
+    ),
     "crates/ariadne-store/src/defaults.rs: BuiltinSkill": (
         "the element type of the public `BUILTIN_SKILLS`; its callers read the fields"
     ),

@@ -35,7 +35,7 @@ mod usage;
 mod webhooks;
 mod workflows;
 
-pub use agent_requests::AgentRequest;
+pub use agent_requests::{AgentRequest, ClaimSettlement};
 pub use ai_permissions::AiPermissionSettingsUpdate;
 pub use change::Change;
 pub use dashboards::NewDashboard;

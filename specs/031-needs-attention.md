@@ -1,7 +1,7 @@
 ---
 id: needs-attention
 status: current
-updated: 2026-11-13
+updated: 2026-11-14
 areas: [api, daemon, cli, ui]
 commits: []
 tests:
@@ -18,6 +18,9 @@ tests:
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-console/src/transcript.rs
+  - crates/ariadne-daemon/src/http/agent_requests.rs
+  - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/attention.rs
   - crates/ariadne-cli/src/commands/attention/board.rs
@@ -496,39 +499,105 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     changes to add one. `agent_requests` and `pull_requests` are complete
     producers, below.
 
-11. An agent creates a request only with `wait_for_user` (013), and then
-    asks the user in its reply — plain turn text, which the console draws as
-    the conversation it is, under the note the call left (rule 12);
-    punctuation, idle turns, and agent messages create none. The call comes
-    first: the text an agent writes after its last tool call is the text it
-    writes to the user, and one that asked before the call left its
-    questions in its thinking. The tool carries a `hint`, not the question:
-    one line for this list, at most 100 characters
-    (`http::agent_requests::HINT_MAX_CHARS`).
+11. An agent creates a request only with `wait_for_user` (013); punctuation,
+    idle turns, and agent messages create none. The tool carries a `hint`
+    and, optionally, the whole `question`
+    (`ariadne_api::attention::AgentQuestion`): its `text`, its `options`, each
+    with a stable `id`, a `label` and an optional `description`, and an
+    optional `recommended_option_id`. A question with no options takes a
+    typed answer. A hint-only call stays legal. The hint is one line for this
+    list, at most 100 characters (`http::agent_requests::HINT_MAX_CHARS`);
     `POST /v1/sessions/{id}/agent-requests` refuses a longer or a multi-line
-    summary with `400`, in words that send the question back to the reply,
-    and opens nothing — a hint that could carry the question would move the
-    question out of the console, which is exactly what the recorded
-    requests of the first days did. A repeated pending hint is one request,
-    and each request targets its session console.
+    summary with `400`, in words that send the question to the `question`
+    field, and opens nothing. It also refuses, with `400`, a question with
+    empty text, an option with no `id` or `label`, an option `id` given
+    twice, and a `recommended_option_id` that names no option. A repeated
+    pending hint is one request, and each request targets its session
+    console. A repeat keeps the question the request holds: one with no
+    question raises it again as it is, and one that adds a question to a
+    hint-only request or changes its question is refused with `409`,
+    changes nothing and records no line, so a card is never answered with
+    options it does not show; the agent withdraws the request first, or
+    gives the new question another hint. This list shows the hint alone; the question is the console's.
     Opening a request also records one `agent_request` event in the
-    session's own stream, with the `request_id` and the `hint`, so a console
-    shows the wait right above the question that follows it; the daemon's one-line
+    session's own stream, with the `request_id`, the `hint` and the
+    `question` where there is one, so a console draws the whole question
+    without the agent writing it again in its reply; the daemon's one-line
     summary of it is `waiting for you · <hint>`, and the event moves neither
     the session's status nor its attention flag (012 rule 9) — the pending
     row is what this list reads. A repeat of a pending hint records no
-    second event.
-12. Console input answers every pending request of that session. At the end
+    second event. The registration call returns at once; the turn goes on
+    and ends as any turn does, and the answer reaches a later turn as a
+    prompt.
+12. `POST /v1/sessions/{session_id}/agent-requests/{request_id}/answer`
+    answers one request with `{"option_id"}`, an option of its question, or
+    `{"text"}`, the user's own answer; a body with both, neither, empty text
+    or an unknown option is refused with `400`, a request of another session
+    with `404`, and a session that is not live with `409`. A request that is
+    no longer pending — answered, withdrawn, expired, or claimed by another
+    answer — is refused with `409` and the code `agent_request_closed`, and
+    sends nothing. The request is claimed first (`resolution` `claimed`), so
+    two answers never both reach the agent, and a turn end, a withdrawal or
+    another answer cannot close it while its answer is on the way. A turn
+    that ends meanwhile, and would have expired it, marks the claim
+    `claimed_expired`.
+    The answer then goes to the agent as a fresh console prompt, never as a
+    permission reply: `The user answered your question.`, the question, and
+    the picked option's label, id and description, or the typed text. Where
+    the prompt cannot reach the agent, the route answers `409`, and the
+    request opens again so the user can retry — unless a turn ended
+    meanwhile that would have expired it, or a newer request took its hint:
+    then it expires. A delivered answer is answered whatever ended
+    meanwhile. The answer route and typed console input settle a claim the
+    same way (`http::agent_requests::deliver_claimed`). The row keeps how it closed
+    (`resolution`: `answered`, `withdrawn` or `expired`) and the recorded
+    answer (`{"option_id"?, "text"}`), and every close records one
+    `agent_request.resolved` event with the `request_id`, the `resolution`
+    and the `answer`, which moves neither status nor attention and reads as
+    `answered · <answer>`, `question withdrawn` or `question expired`. A
+    console folds it into the question, so a reload, a reconnect or a
+    history replay draws the question closed, never answerable again. One
+    lock (`AcpRuntime::agent_request_lock`) holds every change of a request
+    together with its event — an open, an answer from its claim on, a
+    withdrawal, a turn's expiry — so a request's `agent_request` event is
+    always recorded before any `agent_request.resolved` event for it. A
+    turn's expiry is one statement, so a claim never settles between its
+    halves. A console opens on the newest page of events (008), which may
+    not hold the line of a question still pending: `GET
+    /v1/sessions/{id}/agent-requests` lists the session's pending requests,
+    oldest first, each with its `id`, `summary`, `question` and
+    `created_at` (`AgentRequestDto`), and Ariadne Desktop reads it with
+    every snapshot (015 rule 22a). The list and the terminal's restore read
+    under the same request lock a claim is settled under, so neither misses
+    a request whose answer is on its way and then fails to reach the agent. The terminal console's snapshot puts each
+    pending question it lacks in front, as an `agent_request` line under the
+    request's own id (`http::agent_requests::with_pending_questions`), so a
+    reload or a reconnect never hides a question that still waits.
+    Console input answers the newest pending request of that session alone,
+    and every other request stays pending until it is answered, withdrawn
+    or expired. The request is claimed before anything is sent: where
+    another action closes it first, the next newest is taken, and with none
+    left the input is a plain prompt. Where the prompt cannot reach the
+    agent, the claim settles as the answer route's does. The typed
+    text is the answer; a number, an option id or an option label (any
+    case) picks that option of the request's question, whose meaning the
+    agent reads in place of the bare text. Input while a
+    permission request waits answers the permission alone and leaves every
+    request pending. At the end
     of a turn, every pending request that `wait_for_user` did not raise or
-    re-raise in that turn is answered too, including where the turn ended by
+    re-raise in that turn expires, including where the turn ended by
     cancellation or error. A repeated hint keeps its request, id and `since`;
     a new hint that does not re-raise the older one leaves only its new
     request. Withdrawal
     (`withdraw_wait_for_user`) answers only its named request. A pending
     human permission is an item; an automatic decision is not. Each request
     change publishes `session_updated`.
-    The CLI console draws the `agent_request` event as a dim note,
-    `waiting for you · <hint>`, above the question the agent then writes. A permission the
+    The CLI console draws a hint-only `agent_request` event as a dim note,
+    `waiting for you · <hint>`, and one with a question as readable text:
+    the note, the question, each option by its number with `(recommended)`
+    beside the agent's pick, and `Type a number, or your own answer.` until
+    its resolution replaces that line with how it closed. Ariadne Desktop
+    draws it as a card (015 rule 22a). A permission the
     daemon raised on one of Ariadne's own MCP tools and *allowed* by itself —
     by its mode, the AI permission model or a learned rule, never at the
     console — leaves no permission block in the console: the call's own
@@ -694,8 +763,32 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
   `::a_cancelled_turn_ends_an_unraised_wait`,
   `::an_error_turn_ends_an_unraised_wait`).
 - A hint over one line or over 100 characters is refused with the words that
-  send the question to the reply, opens nothing, and one of exactly 100 is
-  accepted (`attention.rs::a_hint_that_tries_to_carry_the_question_is_refused`).
+  send the question to the `question` field, opens nothing, and one of
+  exactly 100 is accepted
+  (`attention.rs::a_hint_that_tries_to_carry_the_question_is_refused`).
+- The whole question rides with its hint into the console while this list
+  keeps the hint, and a recommendation that names no option is refused
+  (`attention.rs::a_question_rides_with_its_hint_into_the_console`,
+  `agent_requests::tests::a_question_is_refused_where_its_options_do_not_add_up`).
+- A picked option reaches the agent once, with the question and its
+  meaning, and closes the request with its answer recorded; a second
+  answer is refused with `agent_request_closed` and sends no prompt
+  (`attention.rs::a_picked_option_reaches_the_agent_once_and_closes_the_request`,
+  `agent_requests::tests::the_prompt_names_the_question_and_the_meaning_of_the_answer`).
+- A withdrawn request and another session's request take no answer, and a
+  custom answer reaches the agent as typed text
+  (`attention.rs::a_withdrawn_request_takes_no_answer_and_a_custom_answer_is_sent`);
+  a request takes one answer and keeps how it closed
+  (`store.rs::a_request_takes_one_answer_and_keeps_how_it_closed`).
+- Typed console text picks an option of the pending question by number, id
+  or label
+  (`attention.rs::typed_console_text_picks_an_option_of_the_pending_question`,
+  `agent_requests::tests::typed_text_picks_an_option_by_number_id_or_label`).
+- A resolution reads as how the request closed and moves nothing
+  (`classify.rs::a_resolved_request_reads_as_how_it_closed_and_moves_nothing`),
+  and the CLI console draws a question as numbered choices that its
+  resolution closes in place
+  (`ariadne-console::transcript::tests::a_question_reads_as_numbered_choices_and_closes_in_place`).
 - Opening a request records one `agent_request` event with its hint in the
   session's console, once however often the pending hint is repeated
   (`attention.rs::a_request_records_its_hint_in_the_sessions_console_once`);
@@ -710,12 +803,45 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
   (`::an_automatic_permission_on_an_ariadne_tool_leaves_no_block`).
 - The tool is `wait_for_user` with a `hint`, listed to every seat, and every
   seat's session rules and its description say that a turn that ends without
-  the call ends the wait, after telling it to call first and ask in the reply
+  the call ends the wait, after telling it to put the question in the call's
+  `question` field, and the tool posts the hint and the question
+  (`tools.rs::wait_for_user_posts_the_hint_and_the_question`)
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`,
   `mcp.rs::only_the_orchestrator_is_told_to_ask`).
-- Console input answers every request of its session while preserving another
-  session's request, and withdrawal answers its named request alone
-  (`attention.rs::console_input_answers_every_request_of_its_session`),
+- Console input answers the newest request of its session alone, an older
+  one expiring with the turn that does not raise it again, while another
+  session's request stays, and withdrawal answers its named request alone
+  (`attention.rs::console_input_answers_only_the_newest_request_of_its_session`,
+  `::typed_input_answers_only_the_newest_of_two_pending_questions`); typed
+  input claims its request before it sends, opens it again where the prompt
+  cannot reach the agent, and closes a question once against a racing
+  withdrawal
+  (`::typed_input_that_cannot_reach_the_agent_leaves_its_request_open`,
+  `::typed_input_and_a_racing_withdrawal_close_a_question_once`,
+  `store.rs::a_request_takes_one_answer_and_keeps_how_it_closed`), and the
+  answer route opens its request again where the prompt cannot reach the
+  agent (`attention.rs::an_answer_that_cannot_reach_the_agent_leaves_its_request_open`);
+  an undelivered claim opens again only where no turn ended meanwhile that
+  expired it, and a delivered one stays answered
+  (`store.rs::a_failed_delivery_reopens_a_claim_only_where_no_turn_expired_it`),
+- A question older than the console's page is listed as pending with its
+  whole question until it is answered
+  (`attention.rs::a_question_older_than_the_console_page_is_listed_as_pending`),
+  and the terminal snapshot puts it in front, open, once
+  (`agent_requests::tests::a_terminal_snapshot_restores_a_pending_question_older_than_its_page`);
+  both keep the question while a failed answer races them
+  (`attention.rs::the_pending_list_racing_a_failed_answer_keeps_the_question`,
+  `agent_requests::tests::a_terminal_snapshot_racing_a_failed_answer_keeps_the_question`).
+- A question opened while the user types replays with its opening line
+  before its close, and closed
+  (`attention.rs::a_question_opened_during_typed_input_replays_closed`);
+  a turn's expiry racing an undelivered claim always expires it
+  (`store.rs::a_turn_expiry_racing_an_undelivered_claim_always_expires_it`).
+- A repeated hint that adds or changes the question is refused, records no
+  line, and leaves the old options and their meanings in force, while a
+  repeat with no question or the same question keeps the request
+  (`attention.rs::a_repeated_hint_with_another_question_is_refused`,
+  `store.rs::a_repeated_hint_with_another_question_is_refused`),
   and another session cannot create or withdraw its request
   (`attention.rs::another_session_cannot_create_or_withdraw_a_request`).
 - A waiting permission targets its session console, while an automatic

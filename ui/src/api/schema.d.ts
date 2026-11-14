@@ -1090,7 +1090,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * The requests of a session that still wait for an answer, oldest first.
+         * @description A console opens on the newest page of events (`GET /console`), and a
+         *     question asked before that page has no opening line in it. The console
+         *     reads this list with each snapshot, and draws every pending question it
+         *     does not already hold, so a reload or a reconnect never hides one.
+         */
+        get: operations["sessions_list_agent_requests"];
         put?: never;
         post: operations["sessions_create"];
         delete?: never;
@@ -1316,6 +1323,33 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["sessions_withdraw"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{session_id}/agent-requests/{request_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer one request: the option of its question the user picked, or the
+         *     text the user typed.
+         * @description The answer reaches the agent as a fresh console prompt — sent at once if
+         *     the agent is between turns, or queued behind the turn that runs — and is
+         *     never read as the answer to a pending permission. A request that is no
+         *     longer pending (answered, withdrawn, or expired with the turn that asked
+         *     it) is refused with `409` and the code `agent_request_closed`, and sends
+         *     nothing. Where the prompt cannot reach the agent, the request opens again
+         *     so the user can retry.
+         */
+        post: operations["sessions_answer_agent_request"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1828,6 +1862,41 @@ export interface components {
             summary: string;
             task_id?: string | null;
         };
+        /** @description A question an agent asks the user through `wait_for_user` (031). */
+        AgentQuestion: {
+            /** @description The answers the user can pick. With none, the user types the answer. */
+            options?: components["schemas"]["AgentQuestionOption"][];
+            /** @description The `id` of the option the agent recommends. */
+            recommended_option_id?: string | null;
+            /** @description The question, with the context the user needs to answer it. */
+            text: string;
+        };
+        /** @description One answer the user can pick. */
+        AgentQuestionOption: {
+            /** @description What the answer means, or what it causes. */
+            description?: string | null;
+            /** @description A stable id, unique in the question. */
+            id: string;
+            /** @description The short name of the answer. */
+            label: string;
+        };
+        /**
+         * @description One pending request of a session, as `GET .../agent-requests` lists it:
+         *     what a console restores a question card from when its opening event is
+         *     older than the page the console opened on.
+         */
+        AgentRequestDto: {
+            created_at: string;
+            id: string;
+            question?: components["schemas"]["AgentQuestion"] | null;
+            /** @description The one-line hint. */
+            summary: string;
+        };
+        /**
+         * @description How a request closed, as its `agent_request.resolved` event says.
+         * @enum {string}
+         */
+        AgentRequestResolution: "answered" | "withdrawn" | "expired";
         /**
          * @description What one staffed agent spent on a task, named the way a reader addresses
          *     it: an agent has no name of its own, so its column and its skills are what
@@ -1898,6 +1967,13 @@ export interface components {
             thresholds_default: boolean;
             /** @description Whether the checkpoints of the last good install are on disk. */
             weights_present: boolean;
+        };
+        /** @description The user's answer to one request: an option of its question, or text. */
+        AnswerAgentRequest: {
+            /** @description The `id` of the option the user picked. */
+            option_id?: string | null;
+            /** @description The answer the user typed. */
+            text?: string | null;
         };
         /**
          * @description Body of
@@ -2107,10 +2183,11 @@ export interface components {
         };
         /** @description An agent's flag that it waits for the user (`wait_for_user`, 013). */
         CreateAgentRequest: {
+            question?: components["schemas"]["AgentQuestion"] | null;
             /**
              * @description One line for the Needs attention list, at most 100 characters. The
-             *     question itself is in the agent's reply; a summary that runs longer,
-             *     or over more than one line, is refused.
+             *     question itself goes in `question`; a summary that runs longer, or
+             *     over more than one line, is refused.
              */
             summary: string;
         };
@@ -5907,6 +5984,33 @@ export interface operations {
             };
         };
     };
+    sessions_list_agent_requests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRequestDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     sessions_create: {
         parameters: {
             query?: never;
@@ -6215,6 +6319,49 @@ export interface operations {
         requestBody?: never;
         responses: {
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_answer_agent_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description The answer was recorded and sent to the agent */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

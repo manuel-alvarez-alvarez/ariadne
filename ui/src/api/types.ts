@@ -98,3 +98,6 @@ export type DomainEvent = Schemas["DomainEvent"]
 export type DomainEventKind = DomainEvent["event"]
 
 export type PullRequestDto = components["schemas"]["PullRequestDto"]
+
+export type AgentQuestion = Schemas["AgentQuestion"]
+export type AgentRequestDto = Schemas["AgentRequestDto"]

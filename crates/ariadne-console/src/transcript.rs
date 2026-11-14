@@ -290,6 +290,19 @@ pub enum TranscriptItem {
         meta: ItemMeta,
         text: String,
     },
+    /// A question the agent asked through `wait_for_user` (031), with the
+    /// options the user can pick and, once it closed, how.
+    UserQuestion {
+        meta: ItemMeta,
+        request_id: String,
+        hint: String,
+        question: String,
+        options: Vec<QuestionChoice>,
+        recommended: Option<String>,
+        /// How it closed: `answered · <answer>`, `question withdrawn` or
+        /// `question expired`. None while it waits for an answer.
+        closed: Option<String>,
+    },
     Error {
         meta: ItemMeta,
         text: String,
@@ -318,9 +331,66 @@ impl TranscriptItem {
             | Self::ToolCall { meta, .. }
             | Self::PermissionQuestion { meta, .. }
             | Self::SystemNote { meta, .. }
+            | Self::UserQuestion { meta, .. }
             | Self::Error { meta, .. }
             | Self::Raw { meta, .. } => meta,
         }
+    }
+}
+
+/// One answer a question offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuestionChoice {
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
+}
+
+impl TranscriptItem {
+    /// A question as the lines a person reads: the hint, the question, each
+    /// option by its number, and how to answer or how it closed.
+    pub fn question_lines(&self) -> Vec<String> {
+        let Self::UserQuestion {
+            hint,
+            question,
+            options,
+            recommended,
+            closed,
+            ..
+        } = self
+        else {
+            return Vec::new();
+        };
+        let mut lines = vec![format!("waiting for you · {hint}")];
+        lines.extend(question.lines().map(str::to_string));
+        for (index, option) in options.iter().enumerate() {
+            let mut line = format!("  {}. {}", index + 1, option.label);
+            if let Some(description) = &option.description {
+                line.push_str(&format!(" — {description}"));
+            }
+            if recommended.as_deref() == Some(option.id.as_str()) {
+                line.push_str(" (recommended)");
+            }
+            lines.push(line);
+        }
+        lines.push(match closed {
+            Some(closed) => closed.clone(),
+            None if options.is_empty() => "Type your answer.".into(),
+            None => "Type a number, or your own answer.".into(),
+        });
+        lines
+    }
+}
+
+/// How a request closed, as its `agent_request.resolved` event says.
+fn resolution_note(payload: &Value) -> String {
+    match string_at(payload, "/resolution").as_deref() {
+        Some("answered") => match string_at(payload, "/answer/text") {
+            Some(answer) => format!("answered · {answer}"),
+            None => "answered".into(),
+        },
+        Some(other) => format!("question {other}"),
+        None => "question closed".into(),
     }
 }
 
@@ -406,6 +476,30 @@ impl From<&AgentEventDto> for TranscriptItem {
             // The agent flagged that it waits for the user (031). The
             // question is the agent's text that follows this line; the hint
             // is the one the Needs attention list shows, so the two read as one.
+            "agent_request" if event.payload.get("question").is_some_and(Value::is_object) => {
+                Self::UserQuestion {
+                    meta,
+                    request_id: string_at(&event.payload, "/request_id").unwrap_or_default(),
+                    hint: string_at(&event.payload, "/hint").unwrap_or_default(),
+                    question: string_at(&event.payload, "/question/text").unwrap_or_default(),
+                    options: event
+                        .payload
+                        .pointer("/question/options")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|option| {
+                            Some(QuestionChoice {
+                                id: string_at(option, "/id")?,
+                                label: string_at(option, "/label")?,
+                                description: string_at(option, "/description"),
+                            })
+                        })
+                        .collect(),
+                    recommended: string_at(&event.payload, "/question/recommended_option_id"),
+                    closed: None,
+                }
+            }
             "agent_request" => Self::SystemNote {
                 meta,
                 text: match string_at(&event.payload, "/hint") {
@@ -536,6 +630,21 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
             tool.ended_at = Some(event.created_at.clone());
         }
         meta.kinds.push(event.kind.clone());
+        return;
+    }
+    // A request that closed closes its question's card, and adds no block:
+    // a replay draws the card closed, never open again.
+    if event.kind == "agent_request.resolved" {
+        let request = string_at(&event.payload, "/request_id");
+        if let Some(TranscriptItem::UserQuestion { closed, meta, .. }) =
+            items.iter_mut().rev().find(|previous| {
+                matches!(previous, TranscriptItem::UserQuestion { request_id, .. }
+                    if Some(request_id) == request.as_ref())
+            })
+        {
+            *closed = Some(resolution_note(&event.payload));
+            meta.kinds.push(event.kind.clone());
+        }
         return;
     }
     if event.kind == "permission.replied" {
@@ -959,6 +1068,48 @@ mod tests {
             matches!(&items[0], TranscriptItem::SystemNote { text, .. }
                 if text == "waiting for you · Approve the plan?"),
             "{items:?}"
+        );
+    }
+
+    /// A structured question reads as text: the hint, the question, each
+    /// option by its number with the recommendation marked, and how to
+    /// answer. Its resolution closes it in place and adds no block.
+    #[test]
+    fn a_question_reads_as_numbered_choices_and_closes_in_place() {
+        let mut events = vec![event(
+            "request",
+            "agent_request",
+            json!({"request_id": "01RQ", "hint": "Pick a base", "question": {
+                "text": "Which base branch?",
+                "options": [
+                    {"id": "main", "label": "Main", "description": "Land on the trunk."},
+                    {"id": "next", "label": "Next"}
+                ],
+                "recommended_option_id": "main"
+            }}),
+        )];
+        let items = fold(&events);
+        assert_eq!(
+            items[0].question_lines(),
+            [
+                "waiting for you · Pick a base",
+                "Which base branch?",
+                "  1. Main — Land on the trunk. (recommended)",
+                "  2. Next",
+                "Type a number, or your own answer.",
+            ]
+        );
+        events.push(event(
+            "resolved",
+            "agent_request.resolved",
+            json!({"request_id": "01RQ", "resolution": "answered",
+                   "answer": {"option_id": "next", "text": "Next"}}),
+        ));
+        let items = fold(&events);
+        assert_eq!(items.len(), 1, "{items:?}");
+        assert_eq!(
+            items[0].question_lines().last().map(String::as_str),
+            Some("answered · Next")
         );
     }
 

@@ -149,6 +149,9 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
     {
         return finish(&format!("waiting for you · {hint}"));
     }
+    if kind == super::agent_requests::AGENT_REQUEST_RESOLVED_EVENT {
+        return finish(&agent_request_resolution_summary(payload));
+    }
     let text = tool_call_summary(payload)
         .or_else(|| {
             (kind == "post_tool_use")
@@ -157,6 +160,19 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
         })
         .or_else(|| agent_text(kind, payload));
     finish(&text.unwrap_or_else(|| "…".to_string()))
+}
+
+/// How a request closed: `answered · <answer>`, `question withdrawn` or
+/// `question expired`.
+fn agent_request_resolution_summary(payload: &serde_json::Value) -> String {
+    match non_empty_str(payload.get("resolution")) {
+        Some("answered") => match payload.pointer("/answer/text").and_then(|t| t.as_str()) {
+            Some(answer) => format!("answered · {answer}"),
+            None => "answered".into(),
+        },
+        Some(other) => format!("question {other}"),
+        None => "question closed".into(),
+    }
 }
 
 /// An answered permission request: the option chosen and who chose it, and,
@@ -411,6 +427,27 @@ mod tests {
         let payload = json!({"error_event_id": "01EV", "category": "exhausted"});
         assert_eq!(status_for_event("session.diagnosis"), None);
         assert_eq!(attention_for_event("session.diagnosis", &payload), None);
+    }
+
+    /// The line a request leaves when it closes says how, and moves
+    /// neither the status nor the attention flag (031).
+    #[test]
+    fn a_resolved_request_reads_as_how_it_closed_and_moves_nothing() {
+        let answered = serde_json::json!({"request_id": "01RQ", "resolution": "answered", "answer": {"option_id": "main", "text": "Main"}});
+        assert_eq!(status_for_event("agent_request.resolved"), None);
+        assert_eq!(
+            attention_for_event("agent_request.resolved", &answered),
+            None
+        );
+        assert_eq!(
+            summarize("agent_request.resolved", &answered),
+            "answered · Main"
+        );
+        let expired = serde_json::json!({"request_id": "01RQ", "resolution": "expired"});
+        assert_eq!(
+            summarize("agent_request.resolved", &expired),
+            "question expired"
+        );
     }
 
     /// An `agent_request` is the daemon's own line in the session's stream,

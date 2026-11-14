@@ -292,13 +292,13 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
-            "To ask the user, call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions. A turn that ends without the call ends the wait."
+            "To ask the user, call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
         McpSeat::Agent => {
-            "Ask the user only where the task cannot continue without a user answer. Call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions. A turn that ends without the call ends the wait."
+            "Ask the user only where the task cannot continue without a user answer. Call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
         McpSeat::PullRequestReviewer | McpSeat::PullRequestKeeper => {
-            "Ask the user only where the request cannot continue without a user answer. Call `wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking. Do not use it for agent questions. A turn that ends without the call ends the wait."
+            "Ask the user only where the request cannot continue without a user answer. Call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
     }
 }
@@ -983,7 +983,9 @@ pub(crate) mod tests {
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
         let instructions = orchestrator.get_info().instructions.expect("instructions");
-        assert!(instructions.contains("call `wait_for_user` with a one-line hint first."));
+        assert!(
+            instructions.contains("call `wait_for_user` with a one-line hint and the question")
+        );
 
         for seat in SEATS {
             let mcp = server_at(
@@ -997,7 +999,7 @@ pub(crate) mod tests {
             );
             assert!(
                 instructions.contains(
-                    "`wait_for_user` with a one-line hint first. Then write the question in your reply, not in your thinking"
+                    "`wait_for_user` with a one-line hint and the question in its `question` field."
                 ),
                 "{seat:?}: the user reads the question in the console: {instructions}"
             );
@@ -1196,7 +1198,7 @@ pub(crate) mod tests {
         for (rule, markers, owners) in [
             (
                 "asking the user",
-                &["the question in your reply"][..],
+                &["its `question` field", "in `question`"][..],
                 &[
                     "orchestrator session rules",
                     "agent session rules",

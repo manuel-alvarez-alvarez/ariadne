@@ -13,7 +13,7 @@
  * the session's own, `main`, or one child's (008 rules 30 to 35).
  */
 
-import type { AgentEventDto } from "@/api"
+import type { AgentEventDto, AgentQuestion } from "@/api"
 
 interface Subagent {
   id: string
@@ -79,11 +79,28 @@ export type Block =
       options: PermissionOption[]
       answer?: { optionId?: string; name: string; decidedBy?: string }
     })
+  | (BlockBase & {
+      type: "question"
+      /** The request the question belongs to: what an answer is posted for. */
+      requestId: string
+      /** The one line the Needs attention list shows for it. */
+      hint: string
+      question: AgentQuestion
+      /** How the request closed; none while it waits for an answer. */
+      resolution?: QuestionResolution
+    })
   | (BlockBase & { type: "note"; text: string })
   /** A line of `main` for a child's announcement or its end. */
   | (BlockBase & { type: "child"; text: string })
   | (BlockBase & { type: "error"; text: string; diagnosis?: string })
   | (BlockBase & { type: "raw"; kind: string; summary: string })
+
+/** How a question's request closed, as its `agent_request.resolved` event says. */
+export interface QuestionResolution {
+  state: "answered" | "withdrawn" | "expired"
+  /** The picked option's label, or the text the user typed. */
+  answer?: string
+}
 
 /** One child the agent announced, as its latest `subagent_update` said. */
 interface ChildAgent extends Subagent {
@@ -128,6 +145,8 @@ export interface Transcript {
   queuedPrompts: QueuedPrompt[]
   /** The latest totals each launch reported on a `stop`, by launch. */
   launches: Readonly<Record<string, TokenTotals>>
+  /** Every request an `agent_request.resolved` event closed, whether or not its question is shown. */
+  closedRequests: ReadonlySet<string>
   /** Every event id folded in, so an event delivered twice is folded once. */
   seen: ReadonlySet<string>
   /** Every event folded in, oldest first, so an older page can be folded before them. */
@@ -148,6 +167,7 @@ export function emptyTranscript(): Transcript {
     availableCommands: [],
     queuedPrompts: [],
     launches: {},
+    closedRequests: new Set(),
     seen: new Set(),
     events: [],
   }
@@ -195,6 +215,7 @@ export function applyEvent(transcript: Transcript, event: AgentEventDto): Transc
     turnStartedAt: now ? (transcript.turnStartedAt ?? event.created_at) : undefined,
     queuedPrompts: unqueue(transcript.queuedPrompts, event),
     launches: event.kind === "stop" ? launchesOf(transcript.launches, event) : transcript.launches,
+    closedRequests: closedBy(transcript.closedRequests, event),
     seen,
     events: [...transcript.events, event],
   }
@@ -226,6 +247,7 @@ export function prependEvents(transcript: Transcript, events: AgentEventDto[]): 
     events: folded.events,
     availableCommands: folded.availableCommands,
     launches: folded.launches,
+    closedRequests: folded.closedRequests,
   }
 }
 
@@ -462,6 +484,9 @@ function fold(blocks: Block[], event: AgentEventDto): void {
     case "permission.replied":
       foldReply(blocks, event)
       return
+    case RESOLVED_KIND:
+      foldResolution(blocks, event)
+      return
     case "session.diagnosis":
       foldDiagnosis(blocks, event)
       return
@@ -531,6 +556,15 @@ function blockOf(event: AgentEventDto): Block {
       return { ...base, type: "note", text: "context compacted" }
     case "agent_request": {
       const hint = str(payload, "hint")
+      const question = questionOf(at(payload, "question"))
+      if (question)
+        return {
+          ...base,
+          type: "question",
+          requestId: str(payload, "request_id") ?? event.id,
+          hint: hint ?? "",
+          question,
+        }
       return { ...base, type: "note", text: hint ? `waiting for you · ${hint}` : "waiting for you" }
     }
     case "permission.replied":
@@ -541,6 +575,52 @@ function blockOf(event: AgentEventDto): Block {
       }
     default:
       return { ...base, type: "raw", kind: event.kind, summary: event.summary }
+  }
+}
+
+const RESOLVED_KIND = "agent_request.resolved"
+
+function closedBy(closed: ReadonlySet<string>, event: AgentEventDto): ReadonlySet<string> {
+  const requestId = event.kind === RESOLVED_KIND ? str(event.payload, "request_id") : undefined
+  return requestId === undefined ? closed : new Set(closed).add(requestId)
+}
+
+/** A question as the daemon recorded it, where the payload holds one. */
+function questionOf(value: unknown): AgentQuestion | undefined {
+  const text = str(value, "text")
+  if (text === undefined) return undefined
+  const options = list(value, "options").flatMap((option) => {
+    const id = str(option, "id")
+    const label = str(option, "label")
+    if (id === undefined || label === undefined) return []
+    const description = str(option, "description")
+    return [description === undefined ? { id, label } : { id, label, description }]
+  })
+  const recommended = str(value, "recommended_option_id")
+  return recommended === undefined
+    ? { text, options }
+    : { text, options, recommended_option_id: recommended }
+}
+
+/**
+ * A request that closed closes its question's card, and adds no block: a
+ * replay or a reload draws the card closed, never answerable again.
+ */
+function foldResolution(blocks: Block[], event: AgentEventDto): void {
+  const requestId = str(event.payload, "request_id")
+  const index = blocks.findLastIndex(
+    (block) => block.type === "question" && block.requestId === requestId,
+  )
+  const block = blocks[index]
+  if (block?.type !== "question") return
+  const state = str(event.payload, "resolution")
+  const answer = str(event.payload, "answer", "text")
+  blocks[index] = {
+    ...block,
+    resolution: {
+      state: state === "withdrawn" || state === "expired" ? state : "answered",
+      ...(answer === undefined ? {} : { answer }),
+    },
   }
 }
 

@@ -364,12 +364,25 @@ fn frames(state: AppState, id: String) -> impl Stream<Item = Result<Frame>> {
         let id = id.clone();
         async move {
             match link {
-                Link::Fresh => match open_console(&state, id).await {
-                    Ok((snapshot, merge)) => {
-                        Some((Ok(Frame::Snapshot(snapshot)), Link::Open(merge)))
+                Link::Fresh => {
+                    let opened = match open_console(&state, id.clone()).await {
+                        Ok((snapshot, merge)) => super::agent_requests::with_pending_questions(
+                            &state.store,
+                            &state.launcher.acp,
+                            &id,
+                            snapshot,
+                        )
+                        .await
+                        .map(|snapshot| (snapshot, merge)),
+                        Err(error) => Err(error),
+                    };
+                    match opened {
+                        Ok((snapshot, merge)) => {
+                            Some((Ok(Frame::Snapshot(snapshot)), Link::Open(merge)))
+                        }
+                        Err(error) => Some((Err(error.into()), Link::Ended)),
                     }
-                    Err(error) => Some((Err(error.into()), Link::Ended)),
-                },
+                }
                 Link::Open(mut merge) => match merge.next().await {
                     Some(Ok(dto)) => Some((Ok(Frame::Event(dto)), Link::Open(merge))),
                     Some(Err(_)) => Some((Ok(Frame::Dropped), Link::Fresh)),

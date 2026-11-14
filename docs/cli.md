@@ -397,15 +397,28 @@ the rest of the command or the diff under it — and then its choices; pick one
 with the arrow keys or its number key. The rest of the command draws in your
 terminal's own foreground, not dimmed. See [Permission modes](permissions.md).
 When an agent asks you a question, it calls `wait_for_user` with a one-line
-hint, then writes the whole question in its reply in the console, as any other
-turn: a numbered list of the open points and their options. The hint is what
-the Needs attention list shows, and the console draws it above the question as
-`waiting for you · <hint>`. The daemon
-refuses a hint over 100 characters or over more than one line, so the question
-is never hidden inside the call. Answer by typing in the console; that input
-answers every question the session has open. A later turn keeps a question
-only when it calls `wait_for_user` again with its hint. Otherwise, the turn
-ending ends the wait.
+hint and the question: its text, the options you can pick, and the option it
+recommends. The hint is what the Needs attention list shows. The console
+draws the question under `waiting for you · <hint>`, with each option by its
+number and `(recommended)` beside the agent's pick:
+
+```
+● waiting for you · Pick a base branch
+  Which base branch should the task land on?
+    1. Main — Land on the trunk. (recommended)
+    2. Next
+  Type a number, or your own answer.
+```
+
+Type a number, an option's id or its label to pick that option; the agent
+reads the option and what it means. Anything else you type is your own
+answer. Your input answers the newest open question alone, and that
+question then shows how it closed: `answered · <answer>`, `question
+withdrawn` or `question expired`. While a permission request is open, your
+input answers the permission and leaves the question open. The daemon
+refuses a hint over 100 characters or over more than one line. A later turn
+keeps a question only when it calls `wait_for_user` again with its hint.
+Otherwise, the turn ending ends the wait.
 
 ```
 ─ permission ───────────────────────────────────

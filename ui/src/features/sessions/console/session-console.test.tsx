@@ -30,16 +30,36 @@ function event(kind: string, payload: unknown = {}): AgentEventDto {
   }
 }
 
+/** The session's pending requests, as `GET .../agent-requests` lists them with each snapshot. */
+let pendingList: unknown[] = []
+/** How many reads of the pending requests fail before one succeeds. */
+let pendingFailures = 0
+
+/** The read of the pending requests every snapshot makes, answered apart from the routes under test. */
+function pendingRead(request: Request): Response | undefined {
+  if (request.method !== "GET" || !new URL(request.url).pathname.endsWith("/agent-requests"))
+    return undefined
+  if (pendingFailures > 0) {
+    pendingFailures -= 1
+    return errorResponse(503, "unavailable", "the daemon is busy")
+  }
+  return Response.json(pendingList)
+}
+
 function answer(reply: () => Response = () => new Response(null, { status: 204 })) {
   posts.length = 0
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
+    const listed = pendingRead(request)
+    if (listed) return listed
     posts.push({ path: new URL(request.url).pathname, body: await request.text() })
     return reply()
   })
 }
 
 beforeEach(() => {
+  pendingList = []
+  pendingFailures = 0
   stubEventSource()
   answer()
 })
@@ -225,7 +245,7 @@ it.each([
 
   // An answer marks its option as being sent at once, before its POST.
   expect(screen.getByRole("option", { name: /Allow/ }).getAttribute("aria-disabled")).toBe("false")
-  expect(daemonFetch).not.toHaveBeenCalled()
+  expect(posts).toHaveLength(0)
 })
 
 it("picks a permission option with a click", async () => {
@@ -341,6 +361,8 @@ function pages(...replies: (AgentEventDto[] | Error)[]) {
   historyUrls.length = 0
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
+    const listed = pendingRead(request)
+    if (listed) return listed
     historyUrls.push(new URL(request.url))
     const reply = replies.shift() ?? []
     if (reply instanceof Error) return errorResponse(500, "internal", reply.message)
@@ -831,7 +853,9 @@ it("leaves nothing queued when the echo of the second send comes before the firs
     refuse = resolve
   })
   let calls = 0
-  daemonFetch.mockImplementation(async () => {
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const listed = pendingRead(input instanceof Request ? input : new Request(input, init))
+    if (listed) return listed
     calls += 1
     if (calls > 1) return new Response(null, { status: 204 })
     await refused
@@ -849,4 +873,164 @@ it("leaves nothing queued when the echo of the second send comes before the firs
   await within(transcript()).findByText(/the first send was refused/)
   expect(within(transcript()).queryByText("queued")).toBeNull()
   expect(within(transcript()).getAllByText("again")).toHaveLength(1)
+})
+
+const QUESTION_EVENT = () =>
+  event("agent_request", {
+    request_id: "01RQ",
+    hint: "Pick a base",
+    question: {
+      text: "Which base branch should the task land on?",
+      options: [
+        { id: "main", label: "Main", description: "Land on the trunk." },
+        { id: "next", label: "Next" },
+      ],
+      recommended_option_id: "main",
+    },
+  })
+
+const ANSWER_PATH = `/v1/sessions/${SESSION_ID}/agent-requests/01RQ/answer`
+
+function questionCard() {
+  return screen.getByRole("region", { name: "Question · Pick a base" })
+}
+
+it("draws a question as a card and submits a clicked choice at once to its request", async () => {
+  renderConsole([QUESTION_EVENT()])
+  const card = questionCard()
+  within(card).getByText("Which base branch should the task land on?")
+  within(card).getByText("Recommended: Main")
+  within(card).getByText("Land on the trunk.")
+
+  await userEvent.click(within(card).getByRole("button", { name: /^Next/ }))
+
+  await waitFor(() => expect(posts).toEqual([{ path: ANSWER_PATH, body: '{"option_id":"next"}' }]))
+  await within(card).findByText("Answer sent")
+  expect(within(card).getByRole("button", { name: /^Main/ })).toHaveProperty("disabled", true)
+})
+
+it("shows a failed answer on the card and keeps it answerable for another attempt", async () => {
+  answer(() => errorResponse(409, "conflict", "no ACP agent is running"))
+  renderConsole([QUESTION_EVENT()])
+  const card = questionCard()
+
+  await userEvent.click(within(card).getByRole("button", { name: /^Main/ }))
+  await within(card).findByRole("alert")
+  expect(within(card).getByRole("alert").textContent).toContain("no ACP agent is running")
+
+  answer()
+  await userEvent.click(within(card).getByRole("button", { name: /^Main/ }))
+  await waitFor(() => expect(posts).toEqual([{ path: ANSWER_PATH, body: '{"option_id":"main"}' }]))
+  await waitFor(() => expect(within(card).queryByRole("alert")).toBeNull())
+})
+
+it("submits a custom answer as text", async () => {
+  renderConsole([QUESTION_EVENT()])
+  const card = questionCard()
+
+  fireEvent.change(within(card).getByRole("textbox", { name: "Your own answer" }), {
+    target: { value: "release" },
+  })
+  await userEvent.click(within(card).getByRole("button", { name: "Answer" }))
+
+  await waitFor(() => expect(posts).toEqual([{ path: ANSWER_PATH, body: '{"text":"release"}' }]))
+})
+
+it("draws an answered question closed, with no choice to submit again", () => {
+  renderConsole([
+    QUESTION_EVENT(),
+    event("agent_request.resolved", {
+      request_id: "01RQ",
+      resolution: "answered",
+      answer: { option_id: "next", text: "Next" },
+    }),
+  ])
+  const card = questionCard()
+
+  within(card).getByText("Answered · Next")
+  expect(within(card).getByRole("button", { name: /^Main/ })).toHaveProperty("disabled", true)
+  expect(within(card).queryByRole("textbox", { name: "Your own answer" })).toBeNull()
+})
+
+const PENDING = {
+  id: "01RQ",
+  summary: "Pick a base",
+  created_at: "2026-11-14T09:00:00Z",
+  question: {
+    text: "Which base branch should the task land on?",
+    options: [
+      { id: "main", label: "Main", description: "Land on the trunk." },
+      { id: "next", label: "Next" },
+    ],
+    recommended_option_id: "main",
+  },
+}
+
+/** A page of later events that draw nothing: turns that ended the way turns end. */
+function quietPage(count: number) {
+  return Array.from({ length: count }, () => event("stop", { stop_reason: "end_turn" }))
+}
+
+it("restores a pending question older than the snapshot page on a load and a reconnect", async () => {
+  pendingList = [PENDING]
+  const later = quietPage(205)
+  const { source } = renderConsole(later)
+  await screen.findByRole("region", { name: "Question · Pick a base" })
+
+  vi.useFakeTimers()
+  act(() => source.emit("resync", { missed: 1 }))
+  act(() => vi.advanceTimersByTime(500))
+  vi.useRealTimers()
+  act(() => {
+    latestSource().succeed()
+    latestSource().emit("snapshot", later)
+  })
+  const card = await screen.findByRole("region", { name: "Question · Pick a base" })
+  expect(screen.getAllByRole("region", { name: "Question · Pick a base" })).toHaveLength(1)
+
+  await userEvent.click(within(card).getByRole("button", { name: /^Next/ }))
+  await waitFor(() => expect(posts).toEqual([{ path: ANSWER_PATH, body: '{"option_id":"next"}' }]))
+
+  act(() =>
+    latestSource().emit(
+      "event",
+      event("agent_request.resolved", {
+        request_id: "01RQ",
+        resolution: "answered",
+        answer: { option_id: "next", text: "Next" },
+      }),
+    ),
+  )
+  await waitFor(() =>
+    expect(screen.queryByRole("region", { name: "Question · Pick a base" })).toBeNull(),
+  )
+})
+
+it("draws a pending question once where the snapshot already holds it, and closed where it closed", async () => {
+  pendingList = [PENDING]
+  renderConsole([
+    QUESTION_EVENT(),
+    event("agent_request.resolved", { request_id: "01RQ", resolution: "withdrawn" }),
+  ])
+  await waitFor(() => expect(daemonFetch).toHaveBeenCalled())
+  // Let the pending list's answer land before the cards are counted.
+  await act(async () => {})
+
+  const cards = screen.getAllByRole("region", { name: "Question · Pick a base" })
+  expect(cards).toHaveLength(1)
+  within(cards[0] as HTMLElement).getByText("Withdrawn by the agent")
+})
+
+it("shows a failed read of the pending questions, and its Retry restores them", async () => {
+  pendingList = [PENDING]
+  pendingFailures = 1
+  renderConsole(quietPage(205))
+
+  const alert = await screen.findByRole("alert")
+  expect(alert.textContent).toContain("Could not read the pending questions: the daemon is busy")
+  expect(screen.queryByRole("region", { name: "Question · Pick a base" })).toBeNull()
+
+  await userEvent.click(within(alert).getByRole("button", { name: "Retry" }))
+  await screen.findByRole("region", { name: "Question · Pick a base" })
+  expect(screen.queryByText(/Could not read the pending questions/)).toBeNull()
 })

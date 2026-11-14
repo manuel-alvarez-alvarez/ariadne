@@ -358,6 +358,26 @@ Out: the daemon endpoints themselves (012).
     click answers, and the answer is posted as `{"text": "<optionId>"}` to
     the same input route. The reply shows the chosen option and who decided
     (`decided_by`).
+22a. An `agent_request` event that carries a `question` (031 rule 11) is a
+    question card (`console/questions.tsx`): the hint, the question text,
+    `Recommended: <label>`, one button per option with its description, and
+    a field for a custom answer. A click on an option submits at once.
+    Every answer posts `{"option_id"}` or `{"text"}` to
+    `POST /v1/sessions/{id}/agent-requests/{request_id}/answer` for the
+    card's own request, never to the input route. A failed post shows its
+    error on the card, which stays answerable for another attempt; an
+    accepted one shows `Answer sent` until the request's
+    `agent_request.resolved` event closes the card as `Answered · <answer>`,
+    `Withdrawn by the agent` or `Expired`. A closed card, a card replayed
+    from history and a card of a session that is not live take no answer.
+    A hint-only request stays the note `waiting for you · <hint>`.
+    With every snapshot, a reconnect's included, the console reads the
+    session's pending requests (`GET /v1/sessions/{id}/agent-requests`) and
+    draws a card, after the transcript, for each pending question the
+    transcript neither shows nor has seen closed — one asked before the
+    snapshot's page — so a reload never hides it; an older page that brings
+    its line in draws it in place instead. A failed read shows its error
+    with a Retry that reads the list again.
 23. The console uses the app's own tokens, in both themes. An Expand control
     opens it in a near-fullscreen modal, and its Collapse control restores
     it to the panel; each move closes the old stream and opens a fresh one.
@@ -1314,6 +1334,22 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/console/session-console.test.tsx::answers a permission from its picker with the keyboard, and shows who decided`,
   `::picks a permission option with a click`,
   `::answers no permission on %s from an empty input`).
+- A question is a card whose clicked choice posts at once to its own
+  request's answer route; a failed post shows on the card and a retry
+  succeeds; a custom answer posts as text; an answered card takes no answer
+  (rule 22a)
+  (`ui/src/features/sessions/console/session-console.test.tsx::draws a question as a card and submits a clicked choice at once to its request`,
+  `::shows a failed answer on the card and keeps it answerable for another attempt`,
+  `::submits a custom answer as text`,
+  `::draws an answered question closed, with no choice to submit again`,
+  `::restores a pending question older than the snapshot page on a load and a reconnect`,
+  `::draws a pending question once where the snapshot already holds it, and closed where it closed`,
+  `::shows a failed read of the pending questions, and its Retry restores them`),
+  and the transcript folds a question and its resolution into one card,
+  keeps a hint-only request a note, and replays a withdrawn question closed
+  (`ui/src/features/sessions/console/transcript.test.ts::folds a structured question into one card that its resolution closes`,
+  `::keeps a hint-only request a note, and a resolution of it adds no block`,
+  `::replays a withdrawn question closed, so it is never answerable again`).
 - The console expands into a near-fullscreen modal and collapses back on a
   fresh stream, keeps the modal open on Escape inside it and closes the
   modal on Escape outside it, and ⌘Escape moves focus to Collapse

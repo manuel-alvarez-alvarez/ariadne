@@ -31,6 +31,9 @@ Use `research` when the user asks a question and wants no plan.
    - One direct question, at the end. Word it so a "yes" accepts the
      recommendation.
 
+   Put the title, context and question in the question text. Give each
+   option its consequence as its description. Recommend your pick.
+
    Ask nothing a column settles, such as review or landing.
 
    Done when no point is open.

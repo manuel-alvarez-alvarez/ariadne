@@ -130,7 +130,82 @@ pub struct AttentionListDto {
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct CreateAgentRequest {
     /// One line for the Needs attention list, at most 100 characters. The
-    /// question itself is in the agent's reply; a summary that runs longer,
-    /// or over more than one line, is refused.
+    /// question itself goes in `question`; a summary that runs longer, or
+    /// over more than one line, is refused.
     pub summary: String,
+    /// The whole question, which the console shows as a card. Without it,
+    /// the request is the hint alone.
+    #[serde(default)]
+    pub question: Option<AgentQuestion>,
+}
+
+/// A question an agent asks the user through `wait_for_user` (031).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AgentQuestion {
+    /// The question, with the context the user needs to answer it.
+    pub text: String,
+    /// The answers the user can pick. With none, the user types the answer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<AgentQuestionOption>,
+    /// The `id` of the option the agent recommends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_option_id: Option<String>,
+}
+
+/// One answer the user can pick.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AgentQuestionOption {
+    /// A stable id, unique in the question.
+    pub id: String,
+    /// The short name of the answer.
+    pub label: String,
+    /// What the answer means, or what it causes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// One pending request of a session, as `GET .../agent-requests` lists it:
+/// what a console restores a question card from when its opening event is
+/// older than the page the console opened on.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AgentRequestDto {
+    pub id: String,
+    /// The one-line hint.
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<AgentQuestion>,
+    pub created_at: String,
+}
+
+/// The user's answer to one request: an option of its question, or text.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct AnswerAgentRequest {
+    /// The `id` of the option the user picked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub option_id: Option<String>,
+    /// The answer the user typed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+/// How a request closed, as its `agent_request.resolved` event says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRequestResolution {
+    /// The user answered it.
+    Answered,
+    /// The agent withdrew it.
+    Withdrawn,
+    /// The turn ended, or a later one, without the agent asking it again.
+    Expired,
+}
+
+impl AgentRequestResolution {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Answered => "answered",
+            Self::Withdrawn => "withdrawn",
+            Self::Expired => "expired",
+        }
+    }
 }

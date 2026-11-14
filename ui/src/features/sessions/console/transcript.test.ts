@@ -625,3 +625,55 @@ it("leaves no stale entry when an echo takes a failed send's entry before its fa
   // The first send's failure then finds its own entry gone, and clears the stale one.
   expect(dequeuePrompt(echoed, "q1", "again").queuedPrompts).toEqual([])
 })
+
+const QUESTION = {
+  text: "Which base branch?",
+  options: [
+    { id: "main", label: "Main", description: "Land on the trunk." },
+    { id: "next", label: "Next" },
+  ],
+  recommended_option_id: "main",
+}
+
+it("folds a structured question into one card that its resolution closes", () => {
+  const blocks = fold([
+    event("agent_request", { request_id: "01RQ", hint: "Pick a base", question: QUESTION }),
+    event("agent_request.resolved", {
+      request_id: "01RQ",
+      resolution: "answered",
+      answer: { option_id: "next", text: "Next" },
+    }),
+  ])
+
+  expect(blocks).toHaveLength(1)
+  expect(blocks[0]).toMatchObject({
+    type: "question",
+    requestId: "01RQ",
+    hint: "Pick a base",
+    question: QUESTION,
+    resolution: { state: "answered", answer: "Next" },
+  })
+})
+
+it("keeps a hint-only request a note, and a resolution of it adds no block", () => {
+  const blocks = fold([
+    event("agent_request", { request_id: "01RQ", hint: "Approve the plan?" }),
+    event("agent_request.resolved", { request_id: "01RQ", resolution: "expired" }),
+  ])
+
+  expect(blocks).toEqual([
+    expect.objectContaining({ type: "note", text: "waiting for you · Approve the plan?" }),
+  ])
+})
+
+it("replays a withdrawn question closed, so it is never answerable again", () => {
+  const events = [
+    event("agent_request", { request_id: "01RQ", hint: "Pick a base", question: QUESTION }),
+    event("agent_request.resolved", { request_id: "01RQ", resolution: "withdrawn" }),
+  ]
+  const replayed = applySnapshot(applySnapshot(emptyTranscript(), events), events)
+
+  expect(replayed.blocks).toEqual([
+    expect.objectContaining({ type: "question", resolution: { state: "withdrawn" } }),
+  ])
+})

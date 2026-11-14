@@ -175,8 +175,35 @@ pub(super) struct SendMessageReq {
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct WaitForUserReq {
     /// One short line for the Needs attention list, under 100 characters.
-    /// Not the question: the question follows, in your reply.
+    /// Not the question: put the question in `question`.
     pub hint: String,
+    /// The question that the console shows to the user.
+    pub question: Option<UserQuestion>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct UserQuestion {
+    /// The question, with the context that the user needs to answer it.
+    pub text: String,
+    /// The answers that the user can pick. Give none for a typed answer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<UserQuestionOption>,
+    /// The `id` of the option that you recommend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_option_id: Option<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(super) struct UserQuestionOption {
+    /// A short id that is unique in the question.
+    pub id: String,
+    /// The short name of the answer.
+    pub label: String,
+    /// What the answer causes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -414,7 +441,7 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Flag that you wait for the user. Call it before you ask. Then write the question in your reply and end your turn. A turn that ends without the call ends the wait."
+        description = "Flag that you wait for the user, and ask your question in `question`. The console shows the question and its options, so do not write them again in your reply. Then end your turn. A turn that ends without the call ends the wait."
     )]
     async fn wait_for_user(
         &self,
@@ -423,7 +450,7 @@ impl AriadneMcp {
         json_result(
             self.post(
                 &format!("/v1/sessions/{}/agent-requests", self.session_id),
-                &serde_json::json!({"summary": req.hint}),
+                &serde_json::json!({"summary": req.hint, "question": req.question}),
             )
             .await?,
         )
@@ -1137,6 +1164,46 @@ mod tests {
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].method, "POST");
         assert_eq!(seen[0].path, "/v1/sessions/01SESSION/agent-requests/01REQ");
+    }
+
+    /// The tool posts the hint and the whole question, so the console can
+    /// draw the question as a card.
+    #[tokio::test]
+    async fn wait_for_user_posts_the_hint_and_the_question() {
+        let (endpoint, seen) = recording_daemon_answering(r#"{"id":"01REQ"}"#).await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.wait_for_user(Parameters(WaitForUserReq {
+            hint: "Pick a base".into(),
+            question: Some(UserQuestion {
+                text: "Which base?".into(),
+                options: vec![UserQuestionOption {
+                    id: "main".into(),
+                    label: "Main".into(),
+                    description: None,
+                }],
+                recommended_option_id: Some("main".into()),
+            }),
+        }))
+        .await
+        .expect("the request opens");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen[0].path, "/v1/sessions/01SESSION/agent-requests");
+        let body: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "summary": "Pick a base",
+                "question": {
+                    "text": "Which base?",
+                    "options": [{"id": "main", "label": "Main"}],
+                    "recommended_option_id": "main"
+                }
+            })
+        );
     }
 
     /// An agent whose task opened no request yet is told to open one, and

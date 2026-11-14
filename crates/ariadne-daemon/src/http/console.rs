@@ -627,16 +627,57 @@ pub(super) async fn take_input(state: &AppState, id: &str, text: String) -> ApiR
             session.status
         )));
     }
-    let requests = state.store.pending_agent_request_ids(id).await?;
-    state
-        .launcher
-        .acp
-        .send_input(id, text)
-        .map_err(|e| ApiError::conflict(e.to_string()))?;
-    state.store.clear_session_attention(id).await?;
-    state.store.answer_agent_requests(id, &requests).await?;
-    state.notify_scheduler_session(id);
-    Ok(())
+    // A permission answer is not a question's answer (031): it leaves every
+    // pending request as it is.
+    if state.launcher.acp.permission_pending(id) {
+        state
+            .launcher
+            .acp
+            .send_input(id, text)
+            .map_err(|e| ApiError::conflict(e.to_string()))?;
+        state.store.clear_session_attention(id).await?;
+        state.notify_scheduler_session(id);
+        return Ok(());
+    }
+    use super::agent_requests::{Answer, deliver_claimed, question_of};
+    // Typed text answers the newest pending request alone, and leaves every
+    // other one pending. A number, an id or a label picks an option of its
+    // question, whose meaning the agent then reads. The request is claimed
+    // before anything is sent: one that another action closes first is never
+    // answered, and the next newest is taken in its place.
+    let requests = state.launcher.acp.agent_request_lock().await;
+    let claimed = loop {
+        let Some(newest) = state.store.pending_session_agent_requests(id).await?.pop() else {
+            break None;
+        };
+        let question = question_of(&newest);
+        let answer = Answer::typed(question.as_ref(), &text);
+        if let Some(row) = state
+            .store
+            .claim_agent_request(&newest.id, id, &answer.record().to_string())
+            .await?
+        {
+            break Some((row, question, answer));
+        }
+    };
+    let Some((row, question, answer)) = claimed else {
+        drop(requests);
+        state
+            .launcher
+            .acp
+            .send_input(id, text)
+            .map_err(|e| ApiError::conflict(e.to_string()))?;
+        state.store.clear_session_attention(id).await?;
+        state.notify_scheduler_session(id);
+        return Ok(());
+    };
+    let prompt = match answer {
+        Answer::Option { .. } => answer.prompt(&row, question.as_ref()),
+        Answer::Text(_) => text,
+    };
+    // An answer is a prompt, never a permission reply, even where a
+    // permission request opened since the check above.
+    deliver_claimed(state, &row, &answer, prompt).await
 }
 
 /// Cancel the turn a session is running, or one subagent of it.

@@ -2,7 +2,7 @@
 
 pub use events::ingest_event;
 
-mod agent_requests;
+pub(crate) mod agent_requests;
 mod attention;
 mod caller;
 mod catalog;
@@ -168,7 +168,7 @@ impl AppState {
         sessions::list,
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
         console::snapshot, console::stream, console::input, console::cancel,
-        agent_requests::create, agent_requests::withdraw,
+        agent_requests::create, agent_requests::list, agent_requests::withdraw, agent_requests::answer,
         terminal::terminal,
         events::list, stream::stream,
         models::list,
@@ -187,7 +187,9 @@ impl AppState {
         ariadne_api::attention::AttentionProducer, ariadne_api::attention::AttentionCause,
         ariadne_api::attention::AttentionSubjectDto,
         ariadne_api::attention::AttentionSubjectKind, ariadne_api::attention::AttentionTarget,
-        ariadne_api::attention::CreateAgentRequest,
+        ariadne_api::attention::CreateAgentRequest, ariadne_api::attention::AgentQuestion,
+        ariadne_api::attention::AgentQuestionOption, ariadne_api::attention::AnswerAgentRequest,
+        ariadne_api::attention::AgentRequestResolution, ariadne_api::attention::AgentRequestDto,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
@@ -379,11 +381,15 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}/console/input", post(console::input))
         .route(
             "/v1/sessions/{id}/agent-requests",
-            post(agent_requests::create),
+            post(agent_requests::create).get(agent_requests::list),
         )
         .route(
             "/v1/sessions/{session_id}/agent-requests/{request_id}",
             post(agent_requests::withdraw),
+        )
+        .route(
+            "/v1/sessions/{session_id}/agent-requests/{request_id}/answer",
+            post(agent_requests::answer),
         )
         .route("/v1/sessions/{id}/console/cancel", post(console::cancel))
         .route(

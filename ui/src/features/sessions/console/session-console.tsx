@@ -47,7 +47,7 @@ import {
   useState,
 } from "react"
 
-import { api, type SessionStatus, unwrap } from "@/api"
+import { type AgentRequestDto, api, type SessionStatus, unwrap } from "@/api"
 import { Markdown } from "@/components/markdown"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
@@ -56,6 +56,7 @@ import { useBaseUrl } from "@/stores/settings"
 
 import { isLiveStatus } from "../session-display"
 import { ConsoleStream, type ConsoleStreamStatus, consoleStreamUrl } from "./console-stream"
+import { pendingRequests, QuestionCard, restoredQuestions } from "./questions"
 import {
   type AgentCommand,
   appendError,
@@ -167,6 +168,12 @@ function ConsolePane({
 }) {
   const baseUrl = useBaseUrl()
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript)
+  /** The session's pending requests, as read with the last snapshot. */
+  const [requests, setRequests] = useState<AgentRequestDto[]>([])
+  /** Why the last read of the pending requests failed; none once one succeeds. */
+  const [requestsError, setRequestsError] = useState<string | null>(null)
+  /** Counts the reads of the pending requests, so only the latest one lands. */
+  const reads = useRef(0)
   const [streamStatus, setStreamStatus] = useState<ConsoleStreamStatus>("connecting")
   const [streamError, setStreamError] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
@@ -238,13 +245,33 @@ function ConsolePane({
     }
   }, [sessionId])
 
+  // A question older than the snapshot's page still waits: the pending
+  // requests are read again with every snapshot, a reconnect's too, and a
+  // failed read says so with a Retry rather than hide those questions.
+  const readRequests = useCallback(() => {
+    const read = ++reads.current
+    pendingRequests(sessionId).then(
+      (listed) => {
+        if (read !== reads.current) return
+        setRequests(listed)
+        setRequestsError(null)
+      },
+      (error) => {
+        if (read === reads.current) setRequestsError(describeError(error))
+      },
+    )
+  }, [sessionId])
+
   useEffect(() => {
     setTranscript(emptyTranscript())
+    setRequests([])
+    setRequestsError(null)
     resetHistory()
     const stream = new ConsoleStream(consoleStreamUrl(baseUrl, sessionId), {
       onSnapshot: (events) => {
         resetHistory()
         setTranscript((current) => applySnapshot(current, events))
+        readRequests()
       },
       onEvent: (event) => setTranscript((current) => applyEvent(current, event)),
       onStatus: (next, error) => {
@@ -253,8 +280,11 @@ function ConsolePane({
       },
     })
     stream.start()
-    return () => stream.stop()
-  }, [baseUrl, sessionId, resetHistory])
+    return () => {
+      reads.current += 1
+      stream.stop()
+    }
+  }, [baseUrl, sessionId, resetHistory, readRequests])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the focus request is read once, on arrival
   useEffect(() => {
@@ -564,7 +594,9 @@ function ConsolePane({
               block={block}
               folded={folded}
               picker={
-                block.type === "permission" && block.id === pendingId ? (
+                block.type === "question" ? (
+                  <QuestionCard sessionId={sessionId} block={block} live={live} />
+                ) : block.type === "permission" && block.id === pendingId ? (
                   <PermissionPicker
                     options={block.options}
                     selected={selected}
@@ -577,6 +609,27 @@ function ConsolePane({
               }
             />
           ))}
+          {requestsError ? (
+            <div
+              role="alert"
+              className="flex items-center gap-2 rounded-md border border-status-danger/40 px-3 py-1 font-mono text-xs text-status-danger-fg"
+            >
+              Could not read the pending questions: {requestsError}
+              <Button size="xs" variant="outline" onClick={readRequests}>
+                Retry
+              </Button>
+            </div>
+          ) : null}
+          {child
+            ? null
+            : restoredQuestions(requests, transcript).map((block) => (
+                <BlockView
+                  key={block.id}
+                  block={block}
+                  folded={folded}
+                  picker={<QuestionCard sessionId={sessionId} block={block} live={live} />}
+                />
+              ))}
           {transcript.queuedPrompts.map((prompt) => (
             <div key={prompt.id} data-block="prompt">
               <PromptBox text={prompt.text} queued />
@@ -1004,6 +1057,8 @@ function BlockBody({
           )}
         </div>
       )
+    case "question":
+      return picker
     case "note":
       return <div className="font-mono text-xs text-muted-foreground">· {block.text}</div>
     case "child":

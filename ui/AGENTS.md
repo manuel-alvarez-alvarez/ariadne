@@ -420,7 +420,13 @@ stream (008). It lives in `src/features/sessions/console/`:
   control. A prompt and a permission pick both post `{"text"}` to
   `POST /v1/sessions/{id}/console/input`. A cancel posts
   `POST /v1/sessions/{id}/console/cancel` with no body. A failed post adds an
-  error block. A session with subagents shows a bar of views, as the CLI
+  error block. `questions.tsx` draws a `wait_for_user` question as a card,
+  and posts its answer to the request's own
+  `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`, never to the
+  input route; a failed answer shows on the card. With every snapshot it
+  reads `GET /v1/sessions/{id}/agent-requests` and restores a card for a
+  pending question older than the snapshot's page. A session with subagents
+  shows a bar of views, as the CLI
   attach pane does (008 rules 30 to 36). Tab and Shift-Tab switch the view,
   and a child's view is read-only. Escape there goes back to `main`, or
   posts `{"subagent_id"}` to the cancel route for a running child that may

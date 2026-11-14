@@ -394,7 +394,7 @@ async fn a_hint_that_tries_to_carry_the_question_is_refused() {
     assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
     let text = String::from_utf8_lossy(&body).to_string();
     assert!(
-        text.contains("write the question in your reply"),
+        text.contains("put the question in its `question` field"),
         "the refusal tells the agent where the question goes: {text}"
     );
     let (status, _) = h
@@ -485,8 +485,11 @@ async fn agent_messages_and_idle_turns_raise_no_agent_request() {
     assert!(list.items.is_empty());
 }
 
+/// Console input answers the newest request of its session alone: an older
+/// request of the session, and another session's request, stay unanswered.
+/// Withdrawal answers its named request alone.
 #[tokio::test]
-async fn console_input_answers_every_request_of_its_session() {
+async fn console_input_answers_only_the_newest_request_of_its_session() {
     let h = harness().await;
     let first = h.lone_session("first-request").await;
     let second = h.lone_session("second-request").await;
@@ -497,10 +500,10 @@ async fn console_input_answers_every_request_of_its_session() {
             serde_json::json!({"summary": summary}),
         )
     };
-    let first_id: serde_json::Value = h
+    let older: serde_json::Value = h
         .json(create(&first, "First question"), axum::http::StatusCode::OK)
         .await;
-    let _: serde_json::Value = h
+    let newest: serde_json::Value = h
         .json(
             create(&first, "Second question"),
             axum::http::StatusCode::OK,
@@ -521,14 +524,37 @@ async fn console_input_answers_every_request_of_its_session() {
         ))
         .await;
     assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let row = |id: &serde_json::Value| {
+        let id = id["id"].as_str().unwrap().to_string();
+        let session = first.id.clone();
+        let store = h.store.clone();
+        async move {
+            store
+                .session_agent_request(&id, &session)
+                .await
+                .unwrap()
+                .unwrap()
+        }
+    };
+    let answered = row(&newest).await;
+    assert_eq!(answered.resolution.as_deref(), Some("answered"));
+    assert_eq!(answered.answer.as_deref(), Some(r#"{"text":"the answer"}"#));
+    // The older request is never answered by that input: it waits, or
+    // expires with the turn the answer started.
+    assert_ne!(row(&older).await.resolution.as_deref(), Some("answered"));
+    eventually(TIMEOUT, "the answered turn to end", || async {
+        h.session_status(&first).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(row(&older).await.resolution.as_deref(), Some("expired"));
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items.len(), 1);
     assert_eq!(list.items[0].summary, "Other session question");
 
-    let second_id: serde_json::Value = h
+    let third: serde_json::Value = h
         .json(create(&first, "Third question"), axum::http::StatusCode::OK)
         .await;
-    let request_id = second_id["id"].as_str().unwrap();
+    let request_id = third["id"].as_str().unwrap();
     let (status, _) = h
         .send(as_session(
             &format!("/v1/sessions/{}/agent-requests/{request_id}", first.id),
@@ -540,7 +566,6 @@ async fn console_input_answers_every_request_of_its_session() {
     let list: AttentionListDto = h.get("/v1/attention").await;
     assert_eq!(list.items.len(), 1);
     assert_eq!(list.items[0].summary, "Other session question");
-    assert_ne!(first_id["id"], second_id["id"]);
 }
 
 #[tokio::test]
@@ -2986,4 +3011,686 @@ async fn a_ready_claim_on_a_request_no_task_keeps_raises_no_readiness_item() {
 
     let list = ariadne_daemon::attention::collect(&h.store, &h.launcher).await;
     assert_eq!(list.items, Vec::new(), "{:?}", list.items);
+}
+
+fn base_question() -> serde_json::Value {
+    serde_json::json!({
+        "summary": "Pick a base branch",
+        "question": {
+            "text": "Which base branch should the task land on?",
+            "options": [
+                {"id": "main", "label": "Main", "description": "Land on the trunk."},
+                {"id": "next", "label": "Next"}
+            ],
+            "recommended_option_id": "main"
+        }
+    })
+}
+
+async fn console_events(
+    h: &Harness,
+    session: &ariadne_store::AgentSession,
+    kind: &str,
+) -> Vec<ariadne_api::events::AgentEventDto> {
+    let events: Vec<ariadne_api::events::AgentEventDto> =
+        h.get(&format!("/v1/sessions/{}/console", session.id)).await;
+    events
+        .into_iter()
+        .filter(|event| event.kind == kind)
+        .collect()
+}
+
+async fn prompts_sent(h: &Harness, session: &ariadne_store::AgentSession) -> Vec<String> {
+    console_events(h, session, "user_prompt_submit")
+        .await
+        .iter()
+        .filter_map(|event| event.payload["text"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// The whole question rides with its hint into the console, while the Needs
+/// attention list keeps the hint alone.
+#[tokio::test]
+async fn a_question_rides_with_its_hint_into_the_console() {
+    let h = harness().await;
+    let session = h.lone_session("structured-question").await;
+    let _: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/sessions/{}/agent-requests", session.id),
+                &session.id,
+                base_question(),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items[0].summary, "Pick a base branch");
+    let waits = console_events(&h, &session, "agent_request").await;
+    assert_eq!(waits[0].payload["question"], base_question()["question"]);
+
+    let mut unknown = base_question();
+    unknown["summary"] = serde_json::json!("Another hint");
+    unknown["question"]["recommended_option_id"] = serde_json::json!("other");
+    let (status, _) = h
+        .send(as_session(
+            &format!("/v1/sessions/{}/agent-requests", session.id),
+            &session.id,
+            unknown,
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+}
+
+/// A picked option reaches the agent with its meaning, closes the request
+/// with the answer recorded, and a second answer is refused and sends no
+/// second prompt.
+#[tokio::test]
+async fn a_picked_option_reaches_the_agent_once_and_closes_the_request() {
+    let h = harness().await;
+    let session = h.lone_session("answered-question").await;
+    let created: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/sessions/{}/agent-requests", session.id),
+                &session.id,
+                base_question(),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let request_id = created["id"].as_str().unwrap();
+    let answer = format!(
+        "/v1/sessions/{}/agent-requests/{request_id}/answer",
+        session.id
+    );
+    h.agent_runs(&session).await;
+
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &answer,
+            serde_json::json!({"option_id": "ghost"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &answer,
+            serde_json::json!({"option_id": "main"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let expected = "The user answered your question.\nQuestion: Which base branch should the task land on?\nAnswer: Main (option `main`): Land on the trunk.";
+    eventually(TIMEOUT, "the answer to reach the agent", || async {
+        prompts_sent(&h, &session).await == [expected]
+    })
+    .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.items.is_empty(), "{list:?}");
+    let resolved = console_events(&h, &session, "agent_request.resolved").await;
+    assert_eq!(resolved.len(), 1, "{resolved:?}");
+    assert_eq!(resolved[0].payload["request_id"], request_id);
+    assert_eq!(resolved[0].payload["resolution"], "answered");
+    assert_eq!(
+        resolved[0].payload["answer"],
+        serde_json::json!({"option_id": "main", "text": "Main"})
+    );
+
+    let (status, body) = h
+        .send(crate::common::post_json(
+            &answer,
+            serde_json::json!({"text": "again"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"]["code"], "agent_request_closed");
+    assert_eq!(prompts_sent(&h, &session).await, [expected]);
+}
+
+/// A withdrawn request, and a request of another session, take no answer.
+/// A custom answer reaches the agent as typed text.
+#[tokio::test]
+async fn a_withdrawn_request_takes_no_answer_and_a_custom_answer_is_sent() {
+    let h = harness().await;
+    let session = h.lone_session("withdrawn-question").await;
+    let other = h.lone_session("other-question").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    let withdrawn: serde_json::Value = h
+        .json(
+            as_session(&path, &session.id, base_question()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let withdrawn = withdrawn["id"].as_str().unwrap();
+    let (status, _) = h
+        .send(as_session(
+            &format!("{path}/{withdrawn}"),
+            &session.id,
+            serde_json::json!({}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    h.agent_runs(&session).await;
+    let (status, body) = h
+        .send(crate::common::post_json(
+            &format!("{path}/{withdrawn}/answer"),
+            serde_json::json!({"option_id": "main"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"]["code"], "agent_request_closed");
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!(
+                "/v1/sessions/{}/agent-requests/{withdrawn}/answer",
+                other.id
+            ),
+            serde_json::json!({"option_id": "main"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    let resolved = console_events(&h, &session, "agent_request.resolved").await;
+    assert_eq!(resolved[0].payload["resolution"], "withdrawn");
+
+    let open: serde_json::Value = h
+        .json(
+            as_session(
+                &path,
+                &session.id,
+                serde_json::json!({"summary": "Name the release",
+                    "question": {"text": "What is the release name?"}}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("{path}/{}/answer", open["id"].as_str().unwrap()),
+            serde_json::json!({"text": "Aurora"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the custom answer to reach the agent", || async {
+        prompts_sent(&h, &session).await
+            == ["The user answered your question.\nQuestion: What is the release name?\nAnswer: Aurora"]
+    })
+    .await;
+}
+
+/// Typed console text answers the pending question through the same
+/// lifecycle: its number picks an option, whose meaning the agent reads.
+#[tokio::test]
+async fn typed_console_text_picks_an_option_of_the_pending_question() {
+    let h = harness().await;
+    let session = h.lone_session("typed-question").await;
+    let created: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/sessions/{}/agent-requests", session.id),
+                &session.id,
+                base_question(),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    h.agent_runs(&session).await;
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/sessions/{}/console/input", session.id),
+            serde_json::json!({"text": "2"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the typed answer to reach the agent", || async {
+        prompts_sent(&h, &session).await
+            == ["The user answered your question.\nQuestion: Which base branch should the task land on?\nAnswer: Next (option `next`)"]
+    })
+    .await;
+    let resolved = console_events(&h, &session, "agent_request.resolved").await;
+    assert_eq!(resolved[0].payload["request_id"], created["id"]);
+    assert_eq!(
+        resolved[0].payload["answer"],
+        serde_json::json!({"option_id": "next", "text": "Next"})
+    );
+}
+
+/// With two questions pending, a typed number picks an option of the newest
+/// one alone; the older question keeps no answer.
+#[tokio::test]
+async fn typed_input_answers_only_the_newest_of_two_pending_questions() {
+    let h = harness().await;
+    let session = h.lone_session("two-questions").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    let older: serde_json::Value = h
+        .json(
+            as_session(
+                &path,
+                &session.id,
+                serde_json::json!({"summary": "Pick a size", "question": {
+                    "text": "Which size?",
+                    "options": [{"id": "small", "label": "Small"}, {"id": "large", "label": "Large"}]
+                }}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let newest: serde_json::Value = h
+        .json(
+            as_session(&path, &session.id, base_question()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    h.agent_runs(&session).await;
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/sessions/{}/console/input", session.id),
+            serde_json::json!({"text": "1"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the typed answer to reach the agent", || async {
+        prompts_sent(&h, &session).await
+            == ["The user answered your question.\nQuestion: Which base branch should the task land on?\nAnswer: Main (option `main`): Land on the trunk."]
+    })
+    .await;
+    let answered: Vec<_> = console_events(&h, &session, "agent_request.resolved")
+        .await
+        .into_iter()
+        .filter(|event| event.payload["resolution"] == "answered")
+        .collect();
+    assert_eq!(answered.len(), 1, "{answered:?}");
+    assert_eq!(answered[0].payload["request_id"], newest["id"]);
+    let older = h
+        .store
+        .session_agent_request(older["id"].as_str().unwrap(), &session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(older.answer, None);
+    assert_ne!(older.resolution.as_deref(), Some("answered"));
+}
+
+/// Typed input claims its request before it sends anything: where the
+/// prompt cannot reach the agent, the request opens again and records no
+/// answer, so the user can retry.
+#[tokio::test]
+async fn typed_input_that_cannot_reach_the_agent_leaves_its_request_open() {
+    let h = harness().await;
+    let session = h.lone_session("unreached-question").await;
+    let created: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/sessions/{}/agent-requests", session.id),
+                &session.id,
+                base_question(),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("/v1/sessions/{}/console/input", session.id),
+            serde_json::json!({"text": "1"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    let row = h
+        .store
+        .session_agent_request(created["id"].as_str().unwrap(), &session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.answered_at, None);
+    assert_eq!(row.answer, None);
+    assert!(
+        console_events(&h, &session, "agent_request.resolved")
+            .await
+            .is_empty()
+    );
+}
+
+/// Typed input and a withdrawal that race over one question never both
+/// win: either the question is answered and its answer reaches the agent,
+/// or it is withdrawn and no answer prompt is sent for it.
+#[tokio::test]
+async fn typed_input_and_a_racing_withdrawal_close_a_question_once() {
+    let h = harness().await;
+    let session = h.lone_session("raced-question").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    h.agent_runs(&session).await;
+    let answer_prompt = "The user answered your question.\nQuestion: Which base branch should the task land on?\nAnswer: Next (option `next`)";
+    for round in 0..8 {
+        let created: serde_json::Value = h
+            .json(
+                as_session(&path, &session.id, base_question()),
+                axum::http::StatusCode::OK,
+            )
+            .await;
+        let request_id = created["id"].as_str().unwrap().to_string();
+        let ((typed, _), (withdrawn, _)) = tokio::join!(
+            h.send(crate::common::post_json(
+                &format!("/v1/sessions/{}/console/input", session.id),
+                serde_json::json!({"text": "2"}),
+            )),
+            h.send(as_session(
+                &format!("{path}/{request_id}"),
+                &session.id,
+                serde_json::json!({}),
+            )),
+        );
+        assert_eq!(typed, axum::http::StatusCode::NO_CONTENT, "round {round}");
+        assert_eq!(
+            withdrawn,
+            axum::http::StatusCode::NO_CONTENT,
+            "round {round}"
+        );
+        let row = h
+            .store
+            .session_agent_request(&request_id, &session.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let closes: Vec<_> = console_events(&h, &session, "agent_request.resolved")
+            .await
+            .into_iter()
+            .filter(|event| event.payload["request_id"] == request_id.as_str())
+            .collect();
+        assert_eq!(closes.len(), 1, "round {round}: {closes:?}");
+        assert_eq!(
+            closes[0].payload["resolution"].as_str(),
+            row.resolution.as_deref(),
+            "round {round}"
+        );
+        let answers = || async {
+            prompts_sent(&h, &session)
+                .await
+                .iter()
+                .filter(|text| text.as_str() == answer_prompt)
+                .count()
+        };
+        let answered_so_far = console_events(&h, &session, "agent_request.resolved")
+            .await
+            .iter()
+            .filter(|event| event.payload["resolution"] == "answered")
+            .count();
+        eventually(TIMEOUT, "every typed input to reach the agent", || async {
+            prompts_sent(&h, &session).await.len() == round + 1
+        })
+        .await;
+        assert_eq!(answers().await, answered_so_far, "round {round}");
+        eventually(TIMEOUT, "the round's turn to end", || async {
+            h.session_status(&session).await == SessionStatus::Idle
+        })
+        .await;
+    }
+}
+
+/// A repeated hint keeps the question its request holds. A repeat that adds
+/// a question to a hint-only wait, or changes its options, is refused with
+/// `409` and records no second line, so the console shows what an answer is
+/// checked against, and the old options keep their old meanings.
+#[tokio::test]
+async fn a_repeated_hint_with_another_question_is_refused() {
+    let h = harness().await;
+    let session = h.lone_session("repeated-question").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    let hint_only: serde_json::Value = h
+        .json(
+            as_session(
+                &path,
+                &session.id,
+                serde_json::json!({"summary": "Pick a base branch"}),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let (status, body) = h
+        .send(as_session(&path, &session.id, base_question()))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    let text = String::from_utf8_lossy(&body).to_string();
+    assert!(text.contains("another question"), "{text}");
+    let waits = console_events(&h, &session, "agent_request").await;
+    assert_eq!(waits.len(), 1, "{waits:?}");
+    assert!(waits[0].payload.get("question").is_none());
+    h.agent_runs(&session).await;
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("{path}/{}/answer", hint_only["id"].as_str().unwrap()),
+            serde_json::json!({"option_id": "main"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+
+    let other = h.lone_session("changed-question").await;
+    let path = format!("/v1/sessions/{}/agent-requests", other.id);
+    let asked: serde_json::Value = h
+        .json(
+            as_session(&path, &other.id, base_question()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let mut changed = base_question();
+    changed["question"]["options"] = serde_json::json!([{"id": "release", "label": "Release"}]);
+    changed["question"]["recommended_option_id"] = serde_json::json!("release");
+    let (status, _) = h.send(as_session(&path, &other.id, changed)).await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    let waits = console_events(&h, &other, "agent_request").await;
+    assert_eq!(waits.len(), 1, "{waits:?}");
+    assert_eq!(waits[0].payload["question"], base_question()["question"]);
+    h.agent_runs(&other).await;
+    let answer = format!("{path}/{}/answer", asked["id"].as_str().unwrap());
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &answer,
+            serde_json::json!({"option_id": "release"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &answer,
+            serde_json::json!({"option_id": "main"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the old option's meaning to reach the agent", || async {
+        prompts_sent(&h, &other).await
+            == ["The user answered your question.\nQuestion: Which base branch should the task land on?\nAnswer: Main (option `main`): Land on the trunk."]
+    })
+    .await;
+}
+
+/// The answer route claims its request before it sends: where the prompt
+/// cannot reach the agent, the request opens again with no answer, and a
+/// retry once the agent runs is answered.
+#[tokio::test]
+async fn an_answer_that_cannot_reach_the_agent_leaves_its_request_open() {
+    let h = harness().await;
+    let session = h.lone_session("unreached-answer").await;
+    let created: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/sessions/{}/agent-requests", session.id),
+                &session.id,
+                base_question(),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let request_id = created["id"].as_str().unwrap();
+    let answer = format!(
+        "/v1/sessions/{}/agent-requests/{request_id}/answer",
+        session.id
+    );
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &answer,
+            serde_json::json!({"option_id": "main"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    let row = h
+        .store
+        .session_agent_request(request_id, &session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.answered_at, None);
+    assert_eq!(row.answer, None);
+    assert!(
+        console_events(&h, &session, "agent_request.resolved")
+            .await
+            .is_empty()
+    );
+
+    h.agent_runs(&session).await;
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &answer,
+            serde_json::json!({"option_id": "main"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+}
+
+/// A question opened while the user types never has its close recorded
+/// before its opening line: a replay of the console folds every closed
+/// question closed, and none answerable.
+#[tokio::test]
+async fn a_question_opened_during_typed_input_replays_closed() {
+    let h = harness().await;
+    let session = h.lone_session("raced-creation").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    h.agent_runs(&session).await;
+    for round in 0..8 {
+        let mut question = base_question();
+        question["summary"] = serde_json::json!(format!("Round {round}"));
+        let ((created, _), (typed, _)) = tokio::join!(
+            h.send(as_session(&path, &session.id, question)),
+            h.send(crate::common::post_json(
+                &format!("/v1/sessions/{}/console/input", session.id),
+                serde_json::json!({"text": "1"}),
+            )),
+        );
+        assert_eq!(created, axum::http::StatusCode::OK, "round {round}");
+        assert_eq!(typed, axum::http::StatusCode::NO_CONTENT, "round {round}");
+    }
+    eventually(TIMEOUT, "every typed input to reach the agent", || async {
+        prompts_sent(&h, &session).await.len() == 8
+    })
+    .await;
+    eventually(TIMEOUT, "the last turn to end", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let mut events: Vec<ariadne_api::events::AgentEventDto> =
+        h.get(&format!("/v1/sessions/{}/console", session.id)).await;
+    events.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut opened = std::collections::HashSet::new();
+    for event in &events {
+        let request = event.payload["request_id"].as_str().unwrap_or_default();
+        match event.kind.as_str() {
+            "agent_request" => {
+                opened.insert(request.to_string());
+            }
+            "agent_request.resolved" => {
+                assert!(opened.contains(request), "closed before opened: {events:?}")
+            }
+            _ => {}
+        }
+    }
+    let open: Vec<_> = ariadne_console::transcript::fold(&events)
+        .into_iter()
+        .filter(|item| {
+            matches!(
+                item,
+                ariadne_console::transcript::TranscriptItem::UserQuestion { closed: None, .. }
+            )
+        })
+        .collect();
+    let pending = h.store.pending_agent_requests().await.unwrap();
+    assert_eq!(open.len(), pending.len(), "{open:?}");
+}
+
+/// A question asked before the page a console opens on is still listed as
+/// pending, with its whole question, so a reload or a reconnect restores
+/// its card; an answered one leaves the list.
+#[tokio::test]
+async fn a_question_older_than_the_console_page_is_listed_as_pending() {
+    let h = harness().await;
+    let session = h.lone_session("old-question").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    let created: serde_json::Value = h
+        .json(
+            as_session(&path, &session.id, base_question()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    for index in 0..210 {
+        h.ingest(
+            &session,
+            "agent_message",
+            serde_json::json!({"text": format!("line {index}")}),
+        )
+        .await;
+    }
+    assert!(
+        console_events(&h, &session, "agent_request")
+            .await
+            .is_empty()
+    );
+
+    let pending: Vec<ariadne_api::attention::AgentRequestDto> = h.get(&path).await;
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(pending[0].id, created["id"].as_str().unwrap());
+    assert_eq!(pending[0].summary, "Pick a base branch");
+    assert_eq!(
+        serde_json::to_value(&pending[0].question).unwrap(),
+        base_question()["question"]
+    );
+
+    h.agent_runs(&session).await;
+    let (status, _) = h
+        .send(crate::common::post_json(
+            &format!("{path}/{}/answer", pending[0].id),
+            serde_json::json!({"option_id": "main"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let pending: Vec<ariadne_api::attention::AgentRequestDto> = h.get(&path).await;
+    assert!(pending.is_empty(), "{pending:?}");
+}
+
+/// The pending list raced against an answer that claims the question and
+/// then cannot reach the agent always holds the question: the list reads
+/// under the lock the claim is settled under.
+#[tokio::test]
+async fn the_pending_list_racing_a_failed_answer_keeps_the_question() {
+    let h = harness().await;
+    let session = h.lone_session("raced-list").await;
+    let path = format!("/v1/sessions/{}/agent-requests", session.id);
+    let created: serde_json::Value = h
+        .json(
+            as_session(&path, &session.id, base_question()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let request_id = created["id"].as_str().unwrap();
+    for round in 0..16 {
+        let ((answered, _), listed) = tokio::join!(
+            h.send(crate::common::post_json(
+                &format!("{path}/{request_id}/answer"),
+                serde_json::json!({"option_id": "main"}),
+            )),
+            h.get::<Vec<ariadne_api::attention::AgentRequestDto>>(&path),
+        );
+        assert_eq!(answered, axum::http::StatusCode::CONFLICT, "round {round}");
+        assert_eq!(listed.len(), 1, "round {round}: {listed:?}");
+        assert_eq!(listed[0].id, request_id, "round {round}");
+    }
 }

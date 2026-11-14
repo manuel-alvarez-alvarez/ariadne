@@ -100,6 +100,15 @@ pub(crate) mod render {
             TranscriptItem::SystemNote { meta, text } => {
                 text_block(meta, "SYSTEM", DIM, text, DIM, width, color)
             }
+            TranscriptItem::UserQuestion { meta, .. } => text_block(
+                meta,
+                "QUESTION",
+                DIM,
+                &item.question_lines().join("\n"),
+                Style::default(),
+                width,
+                color,
+            ),
             TranscriptItem::Error {
                 meta,
                 text,

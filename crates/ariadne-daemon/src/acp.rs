@@ -208,6 +208,13 @@ struct Inner {
     /// long as the last one already held it, never on anything of its
     /// own.
     goal_attention: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes every change of an agent request with the event that
+    /// records it (031): an open and its `agent_request` event, and each
+    /// close — an answer, a withdrawal, a turn's expiry — and its
+    /// `agent_request.resolved` event. No close can then land between a
+    /// request's row and its opening event, so a replay never meets a
+    /// resolution before the request it closes.
+    agent_requests: tokio::sync::Mutex<()>,
 }
 
 /// The branch one session works on, shared between the runtime and the
@@ -623,6 +630,7 @@ impl AcpRuntime {
                 exhausted_patterns: crate::config::default_exhausted_patterns(),
                 failure_diagnosis: None,
                 goal_attention: Arc::new(tokio::sync::Mutex::new(())),
+                agent_requests: tokio::sync::Mutex::new(()),
             }),
         }
     }
@@ -1055,6 +1063,45 @@ impl AcpRuntime {
                 kind: None,
             })
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
+    }
+
+    /// Hold while an agent request changes and its event is recorded.
+    pub(crate) async fn agent_request_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.inner.agent_requests.lock().await
+    }
+
+    /// Queue `text` as a console prompt, whatever else the agent waits on:
+    /// the answer to a question (031) is never the reply to a permission.
+    pub(crate) fn send_prompt_input(&self, session_id: &str, text: String) -> Result<()> {
+        let prompts = {
+            let running = self.inner.running.lock().expect("acp registry lock");
+            running
+                .get(session_id)
+                .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?
+                .prompts
+                .clone()
+        };
+        prompts
+            .send(Prompt {
+                text,
+                source: PromptSource::Console,
+                delivery: None,
+                kind: None,
+            })
+            .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
+    }
+
+    /// Whether the session's agent waits on a permission answer now, so
+    /// console input goes to it rather than to a question.
+    pub(crate) fn permission_pending(&self, session_id: &str) -> bool {
+        let running = self.inner.running.lock().expect("acp registry lock");
+        running.get(session_id).is_some_and(|agent| {
+            agent
+                .permission
+                .lock()
+                .expect("ACP permission lock")
+                .is_some()
+        })
     }
 
     /// The turn whose `wait_for_user` call the session is making now. A
@@ -3217,12 +3264,26 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
         }
         turn.running = false;
     }
-    rpc.sink
-        .runtime
-        .inner
-        .store
+    let store = &rpc.sink.runtime.inner.store;
+    let requests = rpc.sink.runtime.inner.agent_requests.lock().await;
+    let expired = store
         .finish_agent_request_turn(&rpc.sink.session_id, &turn_id)
         .await?;
+    // A console card closes with its request, so a replay never offers it.
+    for request_id in expired {
+        if let Err(error) = crate::http::agent_requests::record_resolution(
+            store,
+            &rpc.sink.session_id,
+            &request_id,
+            ariadne_api::attention::AgentRequestResolution::Expired,
+            None,
+        )
+        .await
+        {
+            tracing::warn!(session = %rpc.sink.session_id, error = ?error.body, "recording an expired request failed");
+        }
+    }
+    drop(requests);
     rpc.turn.lock().await.agent_request_turn_id = None;
     let response = response?;
     if response

@@ -65,12 +65,15 @@ attention and watchdogs](../specs/009-scheduler-attention-and-watchdogs.md)
 for the rules, and [Needs attention](../specs/031-needs-attention.md) for
 the item shape and the producers that fill it.
 
-When an agent needs a human decision, it flags the wait with a one-line hint,
-then asks in its console, as a turn of the conversation. Needs attention shows
-that hint and the agent console. Run the listed `ariadne attach <session-id>`
-command to read the question and answer it. Your input answers every open
-question of that session. A later turn keeps a question only when it calls
-`wait_for_user` again; otherwise, ending the turn ends the wait.
+When an agent needs a human decision, it calls `wait_for_user` with a
+one-line hint and the question: its text, the options to pick from, and the
+option it recommends. Needs attention shows that hint and the agent console.
+In Ariadne Desktop, the console draws the question as a card: click an option
+to answer at once, or type an answer of your own. In the terminal, run the
+listed `ariadne attach <session-id>` command, then type an option's number or
+your own answer. Your input answers the newest open question of that session alone. A
+later turn keeps a question only when it calls `wait_for_user` again;
+otherwise, ending the turn ends the wait, and the card closes for good.
 
 `attach` revives an ended Ariadne session before it opens the console.
 The session keeps its work and conversation. [Resuming a

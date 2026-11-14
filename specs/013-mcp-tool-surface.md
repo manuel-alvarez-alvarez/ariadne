@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-11-08
+updated: 2026-11-14
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -51,18 +51,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    the task cannot go on without the answer, and a pull request reviewer or
    keeper where the request cannot. The rule names no channel — the seat's own
    playbook already says how to ask. Every seat is told to call
-   `wait_for_user` with a one-line hint first, and then to write the
-   question in its reply, as reply text and not in its thinking: the
-   question is turn text, which the console draws as the conversation it
-   is, and the tool asks nothing of its own. The call comes first because
-   the text an agent writes after its last tool call is the text it writes
-   to the user; what it writes before one tends to stay in its thinking,
-   which one orchestrator's questions did. Its `hint` is one line for the
-   Needs attention list, and the daemon refuses one that is longer than a
-   line or than 100 characters (031 rule 11), so the question cannot move
-    into the call. A turn that ends without `wait_for_user` ends the wait;
+   `wait_for_user` with a one-line hint and the question in its `question`
+   field, with options where the user picks one and a recommended option:
+   the console draws that question whole (031 rule 11), so the agent does
+   not write it again in its reply, and the tool description says so. Its
+   `hint` is one line for the Needs attention list, and the daemon refuses
+   one that is longer than a line or than 100 characters (031 rule 11), so
+   the question cannot move into the hint. A turn that ends without
+   `wait_for_user` ends the wait;
     repeating its hint keeps the same request, while console input answers
-    every pending request of that session (031 rule 12).
+    the newest pending request of that session (031 rule 12).
     `withdraw_wait_for_user` takes the flag down again. The daemon answers a
     withdrawal `204`, with no body, and the tool reads that as success
     rather than a decoding failure (014).
@@ -227,8 +225,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::every_session_is_told_how_ariadne_is_reached`), only the
   orchestrator is told to ask, and a column's agent is told to work alone
   and ask only where the task cannot go on without the answer, and every
-  seat is told to call `wait_for_user` first and then write the whole
-  question in its reply
+  seat is told to call `wait_for_user` with the question in its `question`
+  field
   (`::only_the_orchestrator_is_told_to_ask`), and no session is told of a
   conversation (`::no_session_is_told_of_a_conversation`).
 - Every session is told to load a deferred tool before it calls it
