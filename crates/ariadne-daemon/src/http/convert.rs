@@ -294,10 +294,15 @@ pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<Task
     let depends_on = store.list_task_dependencies(&task.id).await?;
     let usage = task_usage(store, &task.id, &agents).await?;
     let reason = store.ended_reason(&task).await?;
-    let operation = store
-        .get_goal(&task.goal_id)
-        .await?
-        .pull_request_operation();
+    let goal = store.get_goal(&task.goal_id).await?;
+    let operation = goal.pull_request_operation();
+    // A review or babysit task works on its goal's request without opening
+    // one, so the response names that request; the stored `pr_url` stays as
+    // it is. A task that opened its own request keeps its own.
+    let mut task = task;
+    if operation.is_some() && task.pr_url.is_none() {
+        task.pr_url = goal.pr_url;
+    }
     Ok(task_dto(
         task, agents, sessions, depends_on, usage, reason, operation,
     ))

@@ -36,7 +36,9 @@ pub struct TaskDto {
     /// The commit the task landed as, where its last column reported one.
     pub merge_commit: Option<String>,
     /// URL of the pull or merge request the task's `pr` column opened, once
-    /// it has; null for a task landed directly.
+    /// it has; null for a task landed directly. On a review or babysit task
+    /// (one with an `operation`) that opened none, the goal's own request, in
+    /// the response only.
     pub pr_url: Option<String>,
     /// Why a `failed` or `cancelled` task ended — an agent's own `fail_task`
     /// reason, a dependency that never landed, a cancelled goal. Null for
