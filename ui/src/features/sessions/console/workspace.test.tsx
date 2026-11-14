@@ -390,3 +390,68 @@ it("omits the conversation strip while retaining the named transcript in both vi
   screen.getByRole("log", { name: "Console transcript" })
   expect(screen.queryByText("Conversation", { exact: true })).toBeNull()
 })
+
+it.each([false, true])(
+  "keeps hidden permission keys in the composer with another tool selected: %s",
+  async (otherTool) => {
+    const user = userEvent.setup()
+    renderConsole([
+      tool("Build"),
+      event("permission_request", {
+        tool_name: "Deploy",
+        options: [
+          { optionId: "allow", name: "Allow" },
+          { optionId: "deny", name: "Deny" },
+        ],
+      }),
+    ])
+    if (otherTool) fireEvent.click(within(log()).getByRole("button", { name: /Build/ }))
+    const posts: string[] = []
+    daemonFetch.mockImplementation(async (request: Request) => {
+      if (request.method !== "GET") posts.push(await request.text())
+      return Response.json([])
+    })
+    const field = screen.getByRole("textbox", { name: "Message the agent" })
+    await user.click(field)
+    await user.keyboard("{Enter}")
+    expect(posts).toEqual([])
+    await user.keyboard("12")
+    expect((field as HTMLTextAreaElement).value).toBe("12")
+    expect(posts).toEqual([])
+  },
+)
+
+it("hands empty composer keys to the displayed pending permission", async () => {
+  const user = userEvent.setup()
+  renderConsole([
+    event("permission_request", {
+      tool_name: "Deploy",
+      options: [
+        { optionId: "allow", name: "Allow" },
+        { optionId: "deny", name: "Deny" },
+      ],
+    }),
+  ])
+  fireEvent.click(within(log()).getByRole("button", { name: /Permission/ }))
+  const posts: string[] = []
+  daemonFetch.mockImplementation(async (request: Request) => {
+    if (request.method !== "GET") posts.push(await request.text())
+    return Response.json([])
+  })
+  await user.click(screen.getByRole("textbox", { name: "Message the agent" }))
+  await user.keyboard("2{Enter}")
+  expect(posts).toEqual(['{"text":"deny"}'])
+})
+
+it("types digits normally with permission details closed", async () => {
+  const user = userEvent.setup()
+  renderConsole([
+    event("permission_request", {
+      tool_name: "Deploy",
+      options: [{ optionId: "allow", name: "Allow" }],
+    }),
+  ])
+  const field = screen.getByRole("textbox", { name: "Message the agent" })
+  await user.type(field, "123456789")
+  expect((field as HTMLTextAreaElement).value).toBe("123456789")
+})

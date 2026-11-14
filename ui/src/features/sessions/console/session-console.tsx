@@ -750,8 +750,14 @@ function ConsolePane({
       (event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229)
     )
       return
-    // An empty input hands its keys to a waiting question, as the CLI does.
-    if (draft.length === 0 && pickKey(event)) return
+    // Permission shortcuts belong only to the displayed pending picker.
+    if (
+      draft.length === 0 &&
+      tool?.type === "permission" &&
+      tool.id === pendingId &&
+      pickKey(event)
+    )
+      return
     if (suggestKey(event)) return
     if (event.key === "Enter") {
       event.preventDefault()

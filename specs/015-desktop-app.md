@@ -375,7 +375,9 @@ Out: the daemon endpoints themselves (012).
     options as a picker: Up, Down or 1 to 9 select an option, Enter or a
     click answers, and the answer is posted as `{"text": "<optionId>"}` to
     the same input route. The reply shows the chosen option and who decided
-    (`decided_by`).
+    (`decided_by`). An empty composer delegates permission keys only while the matching
+    pending permission picker is displayed in details. With details closed or another item selected,
+    Enter cannot answer that permission and digits remain ordinary input. Waiting-question behavior is unchanged.
 22b. The composer (`console/composer.tsx`) starts at one line and grows with
     newlines and pasted text to six lines, then scrolls inside. Send is an icon
     button with a tooltip at its right edge, aligned with its last line and never
