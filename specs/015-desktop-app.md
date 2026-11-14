@@ -495,7 +495,8 @@ Out: the daemon endpoints themselves (012).
     A successful Ariadne `wait_for_user` call is hidden only when its returned
     request id matches a displayed question card; failed and unmatched calls stay visible.
     User, developer (daemon) prompts and assistant messages never fold. Role labels
-    identify them at the main conversation margin. Thoughts retain individual folds.
+    identify them at the main conversation margin. Developer prompts have no individual
+    fold control or saved fold preference. Thoughts retain individual folds.
     Questions use a purple marker and subtle background; pending questions never fold.
     Entries have no colored left borders. Secondary icons align with the first text line.
     Conversation messages have 12px separation; activity rows use 4px gaps and compact padding.
@@ -517,8 +518,8 @@ Out: the daemon endpoints themselves (012).
     picker by its props, so a streamed chunk re-renders only the block it
     changes. A card or a picker whose own state changes renders again. A message, a person's prompt, a plan, a
     pending permission and an open question never fold; a closed question folds
-    (rule 22a). A developer prompt is
-    Markdown, and its summary line stays plain text. The whole summary is one button
+    (rule 22a). Developer prompts render their full Markdown. A foldable block's
+    summary stays plain text. The whole summary is one button
     with `aria-expanded`, so a click, Enter or Space opens that block alone;
     its content sits outside the button, so selecting it, a link in it and
     a Copy control never toggle it. A block's own choice is a fold
