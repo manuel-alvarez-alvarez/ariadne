@@ -1,5 +1,80 @@
 # Changelog
 
+## [2.0.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v1.0.0...v2.0.0) (2026-11-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ui:** remove outside and loose sessions from the desktop app
+* **daemon:** POST /v1/sessions and POST /v1/outside-sessions/resume are removed. GET /v1/sessions no longer accepts kind or refresh, and SessionPageDto no longer has snapshot_at. SessionDto no longer has title. The session_list capability and the no_adoption degradation are removed. The ariadne session new command and the --kind and --refresh options of session ls are removed. Migration 0002 deletes sessions with no goal, task or seat.
+
+### ✨ Features
+
+* **api:** page the pull request list and load more on scroll ([#235](https://github.com/manuel-alvarez-alvarez/ariadne/issues/235)) ([cd408d3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/cd408d394574defd2c9c80b55b4d26682c24cf72))
+* **api:** show each coding agent's icon ([2a199b1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2a199b1af5dbb5d652bbf8925597e1aa50ccb548))
+* **console:** ask structured questions through wait_for_user ([757653d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/757653d5f84374687bbf38f072869a9ef5794790))
+* **console:** give a recommendation a reason and show options once ([#248](https://github.com/manuel-alvarez-alvarez/ariadne/issues/248)) ([484fb88](https://github.com/manuel-alvarez-alvarez/ariadne/commit/484fb887199f196825b61cf4d3c4f49acfcd3bff))
+* **console:** keep an open question above the input ([#250](https://github.com/manuel-alvarez-alvarez/ariadne/issues/250)) ([96ffff8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/96ffff893da6c51ddd0a4bfe669f67ce4cc74195))
+* **console:** make composer input and session actions reliable ([5f2c1a3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5f2c1a3f06e0b34e596e28f3d4f48a4b66eeebd9))
+* **console:** make transcript entries easier to scan ([80c0926](https://github.com/manuel-alvarez-alvarez/ariadne/commit/80c09265a096a9e0fefb749a24ed3bc227df892c))
+* **daemon:** remove outside and loose sessions ([d6b8996](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d6b8996108fa4ce98714c4c7c73681c7eb47a62f))
+* **mcp:** narrow list_tasks to its goal and trim task reads ([#252](https://github.com/manuel-alvarez-alvarez/ariadne/issues/252)) ([36bd2ee](https://github.com/manuel-alvarez-alvarez/ariadne/commit/36bd2ee1bfdda235a2bd2c2aae61c5ac67817ebf))
+* **mcp:** return compact results and short acknowledgements for writes ([#253](https://github.com/manuel-alvarez-alvarez/ariadne/issues/253)) ([e848e94](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e848e948801c3ba9476ac28ffb4262b48cd6aa9f))
+* **ui:** add a filterable attention drawer behind View all ([#242](https://github.com/manuel-alvarez-alvarez/ariadne/issues/242)) ([d52b7c5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d52b7c56f248137d0fbb1b7b3b3669cb40e23e1e))
+* **ui:** add conversation and tool details to the console ([#255](https://github.com/manuel-alvarez-alvarez/ariadne/issues/255)) ([8a5e53f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8a5e53f4776e91a10d4efdbf19310977651c28b4))
+* **ui:** add file search and navigation to the expanded task diff ([#243](https://github.com/manuel-alvarez-alvarez/ariadne/issues/243)) ([9e31928](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9e31928a0275a34809f1b226ab4c415b8e01bd65))
+* **ui:** add the fold toggle, slash commands and status row to the web console ([cbaca6b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/cbaca6ba267ccf051c8db3f80bbaf872d44d7f80))
+* **ui:** explain recorded task blockers above task facts ([#241](https://github.com/manuel-alvarez-alvarez/ariadne/issues/241)) ([4d1ff4c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4d1ff4c26846134a168aacfc64be4c141ef2208f))
+* **ui:** filter goals by title and repository with a remembered list view ([#245](https://github.com/manuel-alvarez-alvarez/ariadne/issues/245)) ([adbcfca](https://github.com/manuel-alvarez-alvarez/ariadne/commit/adbcfcac16ba9b188d225aeb51f37eb4f85ef8e6))
+* **ui:** fold console blocks independently and show readable code ([9c5ec90](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9c5ec901deafb2e75434705b6d3109ca05d1aa86))
+* **ui:** guide planning goals to the orchestrator conversation ([#240](https://github.com/manuel-alvarez-alvarez/ariadne/issues/240)) ([aa52598](https://github.com/manuel-alvarez-alvarez/ariadne/commit/aa52598b00108709c85dbfa029358bfa75b6ecab))
+* **ui:** highlight console code with CodeMirror's grammars ([ba500db](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ba500db82529eea446f2706576692dbd53a84429))
+* **ui:** keep cached content visible when a refresh fails ([#244](https://github.com/manuel-alvarez-alvarez/ariadne/issues/244)) ([aa2d7f4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/aa2d7f475227e758e4833cea17e7e3e87fa05550))
+* **ui:** keep the composer and status rows compact ([bbfa47e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bbfa47ecc4ebdc2da005fd482624abca5559f43e))
+* **ui:** load older console history when scrolled to the top ([f4b0a20](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f4b0a202c2eaf44df6215b5ca63a816162e848db))
+* **ui:** make active goals easier to scan ([d83d519](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d83d519b4e9eb5a78564172573c90ebd2e3ae200))
+* **ui:** make needs attention available from header ([f5a2b9f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f5a2b9f7b6e6f42c174cc0154300c69a59758c17))
+* **ui:** make task cards readable with workflow and token details ([71b428c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/71b428c7d33e94c6d7eefba62055d4f603ef5892))
+* **ui:** pick the model in three columns: agent, model, effort ([b65f6b8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b65f6b8f6d7bdf1fe073eff67b49f63fe367418d))
+* **ui:** remove outside and loose sessions from the desktop app ([f90330a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f90330a57b76d74a6b452551bdd4c64baf38db67))
+* **ui:** render prompts and question text as Markdown ([8bf610c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8bf610c75d5fbac9f368bbeba1b5d2f361a69797))
+* **ui:** render the session console natively in the desktop app ([64a72ec](https://github.com/manuel-alvarez-alvarez/ariadne/commit/64a72ec57c0d0eea6fe3b3fd711a3754e88517c5))
+* **ui:** show a session's subagents as views in the console ([d2acd03](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d2acd03f1afd6f1c30106610df184652414edf02))
+* **ui:** show a tool call as one readable block ([0394816](https://github.com/manuel-alvarez-alvarez/ariadne/commit/039481677e4dd3993ae2b2cd6629372b3c75047f))
+* **ui:** show an answered question once ([4cfe0c5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4cfe0c59e8d4c81abf7345697b28556665d2845d))
+* **ui:** show compact PR links and open external links without confirmation ([#246](https://github.com/manuel-alvarez-alvarez/ariadne/issues/246)) ([253abe2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/253abe2e77663dcde03d197e1a500655a921e50b))
+* **ui:** show each task as a lean two-line card with a step track ([5e3f6f5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5e3f6f571a0fd9d77cbf3c8be0cfcd09373d7ee3))
+* **ui:** show goal tasks in one area ([73cbaea](https://github.com/manuel-alvarez-alvarez/ariadne/commit/73cbaea939a39fd6af18620424a194bdeb6923b8))
+* **ui:** show model and token totals on task cards ([444a899](https://github.com/manuel-alvarez-alvarez/ariadne/commit/444a899a5cbc9da57ae40e3d83a615cf025d479e))
+* **ui:** show task card tokens with the goal's token figure ([62ae5d6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/62ae5d6590db72750f59b373a13efba31d528761))
+* **ui:** show the goals board as two global columns with one slim lane per goal ([6750e73](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6750e73b4f868523012a7521ade7e7f8155d1f77))
+* **ui:** show the goals screen as a board only ([5ed0458](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5ed0458a678a139e180aa53de70d2772ba40bf48))
+* **ui:** show the pull request on review and babysit task cards ([#249](https://github.com/manuel-alvarez-alvarez/ariadne/issues/249)) ([3a33eb2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3a33eb24e5a96f1e2bb7b6c8ba4f94db4b3d1f8c))
+* **ui:** show tool call details in session transcripts ([5c038c9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5c038c94c40311ef9410b32754cdca31f640a903))
+* **ui:** show tool calls and permissions in one-line headers ([#247](https://github.com/manuel-alvarez-alvarez/ariadne/issues/247)) ([59e5ac4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/59e5ac4fddc9c4ac672e3c5ce9a9116e9f9d76b0))
+* **ui:** simplify the console transcript and show live tool duration ([402b07d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/402b07d7254aefea30f1fd192407b3ddb39c8886))
+* **ui:** widen task cards with workflow progress and last activity ([6053e4d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6053e4d49be2656807b7502d71de99b7e9cde8ec))
+
+
+### 🐛 Bug fixes
+
+* **daemon:** give opencode-v2 the ariadne MCP server and prove each agent's launch ([bd49a8c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bd49a8c6d924ffe911f2bf21fcecb3ad562552da))
+* **daemon:** let an agent's last tool call return before its session is killed ([0ab8e59](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0ab8e5903b7d70d50c8d9dce20239eaff7e2869e))
+* **daemon:** start an asked review on a draft request ([00ebe42](https://github.com/manuel-alvarez-alvarez/ariadne/commit/00ebe428c3733c8b4f509bea21e56007939b0131))
+* **forge:** read open pull requests without a 502 from GitHub ([#236](https://github.com/manuel-alvarez-alvarez/ariadne/issues/236)) ([198855b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/198855b161c9615dfafe9d5f9d6fa5253bea3d0e))
+* **install:** install the dashboard packages before the desktop build ([be07f86](https://github.com/manuel-alvarez-alvarez/ariadne/commit/be07f868d37d892530438245bc0d0cbf061a7de1))
+* **store:** open databases that kept the removed loose sessions' rows ([5c0f2bc](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5c0f2bc577b9c37e576530f0be6f6259ad4b9e42))
+* **ui:** clarify goals board column divider ([1d17ca5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1d17ca524b7ec8148073f172a7d6247232d4791b))
+* **ui:** keep line numbers on one row in code blocks ([#251](https://github.com/manuel-alvarez-alvarez/ariadne/issues/251)) ([8718139](https://github.com/manuel-alvarez-alvarez/ariadne/commit/87181397a0ddafdc33baa4af6ac837d7025986a7))
+* **ui:** restore compact task cards ([82412b6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/82412b645c32cb0639cf9d82903bfc11b22d6d1b))
+* **ui:** separate workflow step and model from token totals on task cards ([8bb1d94](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8bb1d94b6f7d6758108abfdbbdddc33c00e691a3))
+* **ui:** style scrollbars to the theme on Linux ([879b9b2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/879b9b25f85b67558c205dd2591d75da457a2d27))
+
+
+### ⚡ Performance
+
+* **mcp:** keep the request id and drop extra daemon reads ([#254](https://github.com/manuel-alvarez-alvarez/ariadne/issues/254)) ([173a999](https://github.com/manuel-alvarez-alvarez/ariadne/commit/173a9995c6c6bf81c290a49e3861d2ebfd4df9f2))
+
 ## [1.0.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.11.0...v1.0.0) (2026-11-08)
 
 
