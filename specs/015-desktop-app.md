@@ -426,13 +426,42 @@ Out: the daemon endpoints themselves (012).
     is now focused.
     The console has the extras of the CLI's attach pane
     (`crates/ariadne-console/src/tui/`), rules 23a to 23f.
-23a. One fold toggle serves the whole console. Folded, it keeps the last 4
-    lines of a tool's output, the first 24 lines of a diff and the first 6
-    lines of a daemon prompt, and says how many lines it hides. The console
-    starts folded on each open. A control in the console's header and
-    Ctrl-O from anywhere in the console, the header's controls included,
-    flip it, and the control names the
-    state it flips to: `Unfold` while folded, `Fold` while unfolded.
+23a. A tool call with output or a diff, a thought and a daemon prompt each
+    fold into one summary line: the tool's status, kind, title and line
+    count; `thought ·` and the thought's first line; `daemon prompt ·`, its
+    first line and its line count. A message, a person's prompt, a plan, a
+    permission and a question never fold. The whole summary is one button
+    with `aria-expanded`, so a click, Enter or Space opens that block alone;
+    its content sits outside the button, so selecting it, a link in it and
+    a Copy control never toggle it. A block's own choice is a fold
+    preference kept under its id (24i) and survives stream updates, the view
+    changing and a remount. One toggle serves the whole console: a control
+    in the console's header and Ctrl-O from anywhere in the console, the
+    header's controls included, flip every block and clear the individual
+    choices, and the control names the state it flips to: `Unfold` while
+    folded, `Fold` while unfolded. The console starts folded on each open.
+23a1. The transcript is the console's only scroll box. A message, a tool's
+    output, a command, a diff, a table, a thought and a question card grow
+    with their content and wrap a wide line; none has an `overflow` or a
+    `max-height` of its own. The composer keeps its own six-line cap.
+23a2. Code is a `CodeBlock` (`components/code-block.tsx`), in the Markdown
+    renderer's fenced blocks and in the console's tool output, commands and
+    diffs. It shows the language label where `lib/highlight.ts` knows the
+    language (a fence's name, or the extension of the file a `read` tool
+    names), colors comments, strings, numbers and keywords with the app's
+    status tokens in both themes, and shows an unknown language as plain
+    text. A diff keeps the green added and red removed lines, and a hunk
+    header muted. Copy puts the original text on the clipboard.
+23a3. A reader who scrolls more than a few pixels from the newest output
+    stops following and gets a `Jump to latest` button over the transcript,
+    marked `New output` once the transcript changed since. The button
+    follows the newest output again and clears the mark; returning to the
+    bottom by scrolling does too. Streaming, older pages loading and folds
+    leave the offset of a reader who scrolled away, and keep a following
+    reader at the newest output, a resized panel too.
+    Screenshots of the console in both themes, narrow and wide, with folded
+    activity, expanded long output, wide code, a question, a send failure and
+    Jump to latest are in `specs/evidence/015-console-polish/`.
 23b. The latest `available_commands_update` event replaces the command
     list, whole: a later list, an empty one included, replaces the earlier
     one. A list whose payload carries a `subagent`, of any value, is ignored, and the event
@@ -1382,6 +1411,21 @@ Out: the daemon endpoints themselves (012).
   `::opens the switch dialog from the menu`,
   `::copies only the loaded transcript of the view shown, and names that scope`,
   `::expands and collapses everything from the menu`).
+- The console folds tool details, thoughts and daemon prompts into summaries,
+  each on its own header, keeps the choice, and draws no nested scroll area
+  (rules 23a to 23a3)
+  (`ui/src/features/sessions/console/session-console.test.tsx::folds a prompt the daemon sent into a summary that names it`,
+  `::folds tool details, thoughts and daemon prompts together, starting folded, from the header and Ctrl-O`,
+  `::folds one block on its own header and keeps the choice across a remount and a stream update`,
+  `::lets a keyboard open a fold and leaves its content's Copy control from folding it`,
+  `::draws no scroll area inside the transcript, and wraps long code`,
+  `::labels and highlights a fenced block of a known language, and leaves an unknown one plain`,
+  `::copies the code as written, not the highlighted markup`,
+  `::offers Jump to latest with an unread marker once the reader scrolls away`,
+  `::keeps the block the reader is on in place when a block above it changes height`,
+  `::copies a fenced block's trailing blank lines as written`,
+  `ui/src/lib/highlight.test.ts::names the kind of each comment, string, number and keyword, and loses no text`,
+  `::returns an unknown language as one plain token`).
 - The console retains a session's draft, fold and place apart per daemon and
   session, and keeps one open stream while shown (rule 24i)
   (`ui/src/features/sessions/console/composer.test.tsx::brings a session's draft and fold back after the console is unmounted`,

@@ -5,7 +5,7 @@
  * an `EventSource` stand-in, and the input and cancel routes on the fetch stub.
  */
 
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
@@ -111,10 +111,12 @@ it("reads the console stream and draws the snapshot as blocks", () => {
   expect(within(transcript()).getByText("Fixed").tagName).toBe("STRONG")
 })
 
-it("marks a prompt the daemon sent", () => {
-  renderConsole([event("user_prompt_submit", { text: "Resume", source: "daemon" })])
+it("folds a prompt the daemon sent into a summary that names it", () => {
+  renderConsole([event("user_prompt_submit", { text: "Resume\nthe work", source: "daemon" })])
 
-  within(transcript()).getByText("daemon")
+  const summary = within(transcript()).getByRole("button", { name: /daemon prompt · Resume/ })
+  expect(summary.getAttribute("aria-expanded")).toBe("false")
+  expect(within(transcript()).queryByText("the work")).toBeNull()
 })
 
 it("extends the transcript with each event and replaces it with a new snapshot", () => {
@@ -637,9 +639,8 @@ it("rebuilds the bar and the views from the snapshot of a reconnect", async () =
 const lines = (count: number, label = "line") =>
   Array.from({ length: count }, (_, index) => `${label} ${index + 1}`).join("\n")
 
-it("folds output, diffs and daemon prompts together, starting folded, from the header and Ctrl-O", async () => {
-  const user = userEvent.setup()
-  renderConsole([
+function foldedActivity() {
+  return [
     event("user_prompt_submit", { text: lines(10, "prompt"), source: "daemon" }),
     event("tool_call_update", {
       acp: {
@@ -656,24 +657,141 @@ it("folds output, diffs and daemon prompts together, starting folded, from the h
         content: [{ type: "diff", path: "a.ts", patch: { text: `@@\n${lines(30, "+add")}` } }],
       },
     }),
-  ])
+    event("agent_thought", { text: "pondering\nthe options" }),
+  ]
+}
+
+it("folds tool details, thoughts and daemon prompts together, starting folded, from the header and Ctrl-O", async () => {
+  const user = userEvent.setup()
+  renderConsole(foldedActivity())
 
   const log = within(transcript())
-  expect(log.getByText(/prompt 6/)).not.toBeNull()
-  expect(log.queryByText(/prompt 7/)).toBeNull()
-  expect(log.getByText(/out 10/)).not.toBeNull()
-  expect(log.queryByText(/out 6\b/)).toBeNull()
-  expect(log.getByText(/out 7/)).not.toBeNull()
+  expect(log.queryByText(/prompt 6/)).toBeNull()
+  expect(log.queryByText(/out 7/)).toBeNull()
   expect(log.queryByText("+add 25")).toBeNull()
+  expect(log.queryByText(/the options/)).toBeNull()
+  log.getByRole("button", { name: /Bash · 10 lines/ })
 
   await user.click(screen.getByRole("button", { name: "Unfold" }))
   expect(log.getByText(/prompt 10/)).not.toBeNull()
   expect(log.getByText(/out 1\b/)).not.toBeNull()
   expect(log.getByText("+add 30")).not.toBeNull()
+  log.getByText(/the options/)
 
   fireEvent.keyDown(input(), { key: "o", ctrlKey: true })
   screen.getByRole("button", { name: "Unfold" })
   expect(log.queryByText(/out 6\b/)).toBeNull()
+})
+
+it("folds one block on its own header and keeps the choice across a remount and a stream update", async () => {
+  const user = userEvent.setup()
+  const activity = foldedActivity()
+  const { source } = renderConsole(activity)
+  const log = within(transcript())
+
+  const bash = log.getByRole("button", { name: /Bash/ })
+  await user.click(bash)
+  expect(bash.getAttribute("aria-expanded")).toBe("true")
+  log.getByText(/out 3\b/)
+  expect(log.queryByText("+add 5")).toBeNull()
+
+  act(() => source.emit("event", event("agent_message", { text: "later" })))
+  expect(log.getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded")).toBe("true")
+
+  cleanup()
+  stubEventSource()
+  renderConsole(activity)
+  expect(
+    within(transcript()).getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded"),
+  ).toBe("true")
+  expect(
+    within(transcript()).getByRole("button", { name: /Edit/ }).getAttribute("aria-expanded"),
+  ).toBe("false")
+})
+
+it("lets a keyboard open a fold and leaves its content's Copy control from folding it", async () => {
+  const user = userEvent.setup()
+  renderConsole(foldedActivity())
+  const log = within(transcript())
+
+  log.getByRole("button", { name: /Bash/ }).focus()
+  await user.keyboard("{Enter}")
+  expect(log.getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded")).toBe("true")
+
+  await user.click(log.getByRole("button", { name: "Copy code" }))
+  expect(log.getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded")).toBe("true")
+})
+
+it("draws no scroll area inside the transcript, and wraps long code", async () => {
+  const user = userEvent.setup()
+  renderConsole([
+    ...foldedActivity(),
+    event("agent_message", { text: "```ts\nconst x = 1\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |" }),
+  ])
+  await user.click(screen.getByRole("button", { name: "Unfold" }))
+
+  const inner = Array.from(transcript().querySelectorAll("*")).filter((node) =>
+    /(^|\s)(overflow-(auto|scroll|x-auto|y-auto)|max-h-)/.test(node.getAttribute("class") ?? ""),
+  )
+  expect(inner).toEqual([])
+  const code = within(transcript()).getAllByText(/const/)[0]
+  expect(code?.closest("pre")?.className).toContain("whitespace-pre-wrap")
+})
+
+it("labels and highlights a fenced block of a known language, and leaves an unknown one plain", () => {
+  renderConsole([
+    event("agent_message", { text: "```rust\nfn main() {}\n```\n\n```mystery\nfn main() {}\n```" }),
+  ])
+  const blocks = Array.from(transcript().querySelectorAll("[data-code-block]"))
+
+  expect(blocks[0]?.querySelector("[data-code-language]")?.textContent).toBe("Rust")
+  expect(blocks[0]?.querySelector("code span")?.textContent).toBe("fn")
+  expect(blocks[1]?.querySelector("[data-code-language]")?.textContent).toBe("")
+  expect(blocks[1]?.querySelector("code span")).toBeNull()
+})
+
+it("copies the code as written, not the highlighted markup", async () => {
+  const written: string[] = []
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    clipboard: { writeText: async (text: string) => void written.push(text) },
+  })
+  renderConsole([event("agent_message", { text: "```ts\nconst x = 'a' // note\n```" })])
+
+  fireEvent.click(within(transcript()).getByRole("button", { name: "Copy TypeScript code" }))
+
+  await waitFor(() => expect(written).toEqual(["const x = 'a' // note"]))
+  vi.unstubAllGlobals()
+})
+
+it("offers Jump to latest with an unread marker once the reader scrolls away", async () => {
+  const user = userEvent.setup()
+  const { source } = renderConsole([event("agent_message", { text: "one" })])
+  const log = transcript()
+  let top = 0
+  Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => 1000 })
+  Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 200 })
+  Object.defineProperty(log, "scrollTop", {
+    configurable: true,
+    get: () => top,
+    set: (value: number) => {
+      top = value
+    },
+  })
+  expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull()
+
+  top = 100
+  fireEvent.scroll(log)
+  screen.getByRole("button", { name: /Jump to latest/ })
+  expect(screen.queryByText("New output")).toBeNull()
+
+  act(() => source.emit("event", event("agent_message", { text: "two" })))
+  expect(top).toBe(100)
+  screen.getByText("New output")
+
+  await user.click(screen.getByRole("button", { name: /Jump to latest/ }))
+  expect(top).toBe(1000)
+  expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull()
 })
 
 function listCommands(source: FakeEventSource, commands: object[]) {
@@ -1051,4 +1169,61 @@ it("shows a failed read of the pending questions, and its Retry restores them", 
   await userEvent.click(within(alert).getByRole("button", { name: "Retry" }))
   await screen.findByRole("region", { name: "Question · Pick a base" })
   expect(screen.queryByText(/Could not read the pending questions/)).toBeNull()
+})
+
+it("keeps the block the reader is on in place when a block above it changes height", async () => {
+  const user = userEvent.setup()
+  const activity = foldedActivity()
+  renderConsole([...activity, event("agent_message", { text: "reading here" })])
+  const log = transcript()
+  let top = 100
+  Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => 1000 })
+  Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 200 })
+  Object.defineProperty(log, "scrollTop", {
+    configurable: true,
+    get: () => top,
+    set: (value: number) => {
+      top = value
+    },
+  })
+  // The message sits 40px below the top of the box; the blocks before it are above it.
+  let messageTop = 40
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const at = this.dataset.block === "message" ? messageTop : this.dataset.blockId ? -500 : 0
+    return {
+      top: at,
+      bottom: at + 20,
+      left: 0,
+      right: 0,
+      width: 0,
+      height: 20,
+      x: 0,
+      y: at,
+      toJSON() {},
+    }
+  })
+  fireEvent.scroll(log)
+
+  // Unfolding a block above pushes the message down 120px; the reader stays on it.
+  messageTop = 160
+  await user.click(within(log).getByRole("button", { name: /Bash/ }))
+
+  expect(top).toBe(220)
+  vi.restoreAllMocks()
+})
+
+it("copies a fenced block's trailing blank lines as written", () => {
+  const written: string[] = []
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    clipboard: { writeText: async (text: string) => void written.push(text) },
+  })
+  renderConsole([event("agent_message", { text: "```\nlast line\n\n\n```" })])
+
+  fireEvent.click(within(transcript()).getByRole("button", { name: "Copy code" }))
+
+  expect(written).toEqual(["last line\n\n"])
+  vi.unstubAllGlobals()
 })

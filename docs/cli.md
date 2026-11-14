@@ -444,6 +444,22 @@ and who decided. If the daemon goes away mid-session, the console says it is
 reconnecting, and shows the session afresh once it is back. The agent receives
 the same input whichever console you use.
 
+In the desktop console, your messages and the agent's replies are the main
+text, and questions stand out as cards. Tool calls, thoughts and daemon
+prompts start folded into one summary line: click the line, or focus it and
+press Enter or Space, to open that block alone. `Unfold` and `Fold` in the
+header, Ctrl-O, and the plus menu's `Expand all` and `Collapse all` change
+every block at once. The folds stay as you left them when the stream updates,
+when you expand the console, and when you switch tabs.
+
+Code in a reply, a tool's output and a diff show in full and wrap at the edge
+of the panel; only the transcript scrolls. A code block shows its language
+when it has one, colors comments, strings, numbers and keywords for the
+common languages, and has a `Copy` button that copies the code as written.
+Diffs keep their green and red lines. When you scroll up to read, the console
+stays where you are, and `Jump to latest` appears, with `New output` once
+more has arrived; click it to follow the live output again.
+
 ## Work with tasks
 
 ```sh

@@ -24,6 +24,13 @@
  * switch the view; the bar is one Tab stop. A child's view is read-only: Escape there goes back to `main`, or
  * cancels the child where it runs and said it may be cancelled.
  *
+ * The transcript is the console's one scroll box: blocks, code and diffs grow
+ * with their content and wrap, and none scrolls inside. Tool details, thoughts
+ * and daemon prompts fold, each on its own header, into a summary line; the
+ * folds are retained with the rest of the view. A reader who scrolls away from
+ * the newest output gets a Jump to latest button, marked when output has come
+ * in since.
+ *
  * The extras the CLI's attach pane has (`crates/ariadne-console/src/tui/`):
  * one fold toggle, the agent's slash commands as a suggestion list over the
  * input, a status row, a sent prompt shown at once as `queued`, and a footer
@@ -31,6 +38,7 @@
  */
 
 import {
+  ArrowDownIcon,
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
   Loader2Icon,
@@ -53,11 +61,13 @@ import {
 import { toast } from "sonner"
 
 import { type AgentRequestDto, api, type SessionDto, type SessionStatus, unwrap } from "@/api"
+import { CodeBlock } from "@/components/code-block"
 import { Markdown } from "@/components/markdown"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { copyText } from "@/lib/clipboard"
 import { cn, describeError, formatTokens } from "@/lib/format"
+import { languageForPath } from "@/lib/highlight"
 import { useBaseUrl } from "@/stores/settings"
 
 import { SwitchSessionDialog, useResumeAction } from "../session-actions"
@@ -72,6 +82,7 @@ import {
   updateViewState,
   watchViewState,
 } from "./console-view-state"
+import { Foldable } from "./foldable"
 import {
   answerRequest,
   openQuestion,
@@ -102,10 +113,8 @@ import {
   view,
 } from "./transcript"
 
-/** How many lines a folded console keeps of each kind of text. */
-const FOLDED_OUTPUT_LINES = 4
-const FOLDED_DIFF_LINES = 24
-const FOLDED_PROMPT_LINES = 6
+/** The characters of a thought or a daemon prompt its folded summary quotes. */
+const SUMMARY_CHARS = 90
 
 /** The most commands the suggestion list shows. */
 const SUGGESTIONS = 8
@@ -263,6 +272,12 @@ function ConsolePane({
   const collapseButton = useRef<HTMLButtonElement>(null)
   const root = useRef<HTMLDivElement>(null)
   const following = useRef(readViewState(key).following)
+  /** True while the reader is away from the newest output, and whether any came in since. */
+  const [away, setAway] = useState(() => !readViewState(key).following)
+  const [unread, setUnread] = useState(false)
+  const seen = useRef(transcript)
+  /** The block the reader was last on, and where its top sat, for layout changes above it. */
+  const placed = useRef<ConsoleViewState["anchor"]>(undefined)
   const [history, setHistory] = useState<History>({ state: "idle" })
   // Bumped when a snapshot or a new session replaces the transcript, so a page
   // still loading for the old one is dropped.
@@ -406,8 +421,59 @@ function ConsolePane({
       anchored.current = undefined
       restore.current = null
     } else if (kept) el.scrollTop = kept.top + (el.scrollHeight - kept.height)
-    else if (following.current) el.scrollTop = el.scrollHeight
+    else if (following.current) pin(el, pinned)
+    else if (seen.current !== transcript) setUnread(true)
+    seen.current = transcript
   }, [transcript, history])
+
+  // A fold changes what is below the reader's place: a reader at the newest
+  // output stays there.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a fold is the trigger, the effect reads no value from it
+  useLayoutEffect(() => {
+    const el = log.current
+    if (el && following.current && restore.current === null) pin(el, pinned)
+  }, [folded, blockFolds])
+
+  // Blocks above a reader who scrolled away change height when they fold,
+  // unfold or take output; the block the reader was on stays where it was.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the changes are the trigger, the effect reads none of them
+  useLayoutEffect(() => {
+    const el = log.current
+    const place = placed.current
+    if (!el || !place || following.current || restore.current !== null) return
+    const at = blockOffset(el, place.blockId)
+    if (at !== undefined && at !== place.offset) el.scrollTop += at - place.offset
+  }, [transcript, folded, blockFolds])
+
+  // A panel that is resized, or a block that grows after it is drawn, keeps a
+  // following reader at the newest output too.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: new blocks are the trigger, so they are observed
+  useEffect(() => {
+    const el = log.current
+    if (!el || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(() => {
+      if (following.current && restore.current === null) pin(el, pinned)
+    })
+    observer.observe(el)
+    for (const inner of Array.from(el.children)) observer.observe(inner)
+    return () => observer.disconnect()
+  }, [transcript.blocks.length])
+
+  const pinned = useRef<number | null>(null)
+
+  const jumpToLatest = () => {
+    const el = log.current
+    if (!el) return
+    following.current = true
+    pin(el, pinned)
+    setAway(false)
+    setUnread(false)
+    updateViewState(keyRef.current, {
+      scrollTop: el.scrollTop,
+      anchor: firstInView(el),
+      following: true,
+    })
+  }
 
   // Load older pages until the history the reader had open is back.
   useEffect(() => {
@@ -742,6 +808,13 @@ function ConsolePane({
     return () => el.removeEventListener("keydown", onKey)
   }, [])
 
+  /** Fold or unfold one block, and keep the choice with the console's view. */
+  const toggleBlock = useCallback((id: string, folded: boolean) => {
+    const next = { ...readViewState(keyRef.current).blockFolds, [id]: !folded }
+    setBlockFolds(next)
+    updateViewState(keyRef.current, { blockFolds: next })
+  }, [])
+
   /** Fold or unfold everything, individual preferences included. */
   const toggleFold = useRef(() => {})
   toggleFold.current = () => {
@@ -797,7 +870,7 @@ function ConsolePane({
         className,
       )}
     >
-      <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5 font-mono text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b px-3 py-1.5 font-mono text-xs text-muted-foreground">
         <span role="status" className="flex min-w-0 items-center gap-3">
           <StreamStatusLine status={streamStatus} error={streamError} />
           {runningChildren > 0 ? (
@@ -834,71 +907,44 @@ function ConsolePane({
       </div>
       <div ref={body} tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
         <HistoryLine history={history} onRetry={() => void loadOlder()} />
-        <div
-          ref={log}
-          role="log"
-          aria-label="Console transcript"
-          className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3"
-          onScroll={(event) => {
-            const el = event.currentTarget
-            // A restore of the reader's place waits on the blocks: until it
-            // lands, a scroll is the box shrinking, not the reader.
-            if (restore.current !== null) return
-            following.current = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK_PX
-            updateViewState(keyRef.current, {
-              scrollTop: el.scrollTop,
-              anchor: firstInView(el),
-              following: following.current,
-            })
-            if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
-          }}
-        >
-          {blocks.map((block) => (
-            <BlockView
-              key={block.id}
-              block={block}
-              folded={blockFolds[block.id] ?? folded}
-              picker={
-                block.type === "question" ? (
-                  <QuestionCard
-                    sessionId={sessionId}
-                    block={block}
-                    live={live}
-                    sent={answered.has(block.requestId)}
-                    onAnswered={markAnswered}
-                  />
-                ) : block.type === "permission" && block.id === pendingId ? (
-                  <PermissionPicker
-                    options={block.options}
-                    selected={selected}
-                    answering={answering}
-                    onSelect={setSelected}
-                    onAnswer={answer}
-                    onKeyDown={pickKey}
-                  />
-                ) : null
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={log}
+            role="log"
+            aria-label="Console transcript"
+            className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3"
+            onScroll={(event) => {
+              const el = event.currentTarget
+              // A restore of the reader's place waits on the blocks: until it
+              // lands, a scroll is the box shrinking, not the reader.
+              if (restore.current !== null) return
+              // Our own scroll to the newest output lands after the content may
+              // have grown again; it is not the reader leaving.
+              placed.current = firstInView(el)
+              if (el.scrollTop === pinned.current) {
+                pinned.current = null
+              } else {
+                following.current =
+                  el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK_PX
+                setAway(!following.current)
+                if (following.current) setUnread(false)
               }
-            />
-          ))}
-          {requestsError ? (
-            <div
-              role="alert"
-              className="flex items-center gap-2 rounded-md border border-status-danger/40 px-3 py-1 font-mono text-xs text-status-danger-fg"
-            >
-              Could not read the pending questions: {requestsError}
-              <Button size="xs" variant="outline" onClick={readRequests}>
-                Retry
-              </Button>
-            </div>
-          ) : null}
-          {child
-            ? null
-            : restored.map((block) => (
-                <BlockView
-                  key={block.id}
-                  block={block}
-                  folded={blockFolds[block.id] ?? folded}
-                  picker={
+              updateViewState(keyRef.current, {
+                scrollTop: el.scrollTop,
+                anchor: firstInView(el),
+                following: following.current,
+              })
+              if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
+            }}
+          >
+            {blocks.map((block) => (
+              <BlockView
+                key={block.id}
+                block={block}
+                folded={blockFolds[block.id] ?? folded}
+                onToggle={toggleBlock}
+                picker={
+                  block.type === "question" ? (
                     <QuestionCard
                       sessionId={sessionId}
                       block={block}
@@ -906,22 +952,82 @@ function ConsolePane({
                       sent={answered.has(block.requestId)}
                       onAnswered={markAnswered}
                     />
-                  }
-                />
-              ))}
-          {transcript.queuedPrompts.map((prompt) => (
-            <div key={prompt.id} data-block="prompt">
-              <PromptBox text={prompt.text} queued />
-            </div>
-          ))}
-          {failed.map((one) => (
-            <FailedMessage
-              key={one.id}
-              one={one}
-              onRetry={() => retry(one)}
-              onEdit={() => editFailed(one)}
-            />
-          ))}
+                  ) : block.type === "permission" && block.id === pendingId ? (
+                    <PermissionPicker
+                      options={block.options}
+                      selected={selected}
+                      answering={answering}
+                      onSelect={setSelected}
+                      onAnswer={answer}
+                      onKeyDown={pickKey}
+                    />
+                  ) : null
+                }
+              />
+            ))}
+            {requestsError ? (
+              <div
+                role="alert"
+                className="flex items-center gap-2 rounded-md border border-status-danger/40 px-3 py-1 font-mono text-xs text-status-danger-fg"
+              >
+                Could not read the pending questions: {requestsError}
+                <Button size="xs" variant="outline" onClick={readRequests}>
+                  Retry
+                </Button>
+              </div>
+            ) : null}
+            {child
+              ? null
+              : restored.map((block) => (
+                  <BlockView
+                    key={block.id}
+                    block={block}
+                    folded={blockFolds[block.id] ?? folded}
+                    onToggle={toggleBlock}
+                    picker={
+                      <QuestionCard
+                        sessionId={sessionId}
+                        block={block}
+                        live={live}
+                        sent={answered.has(block.requestId)}
+                        onAnswered={markAnswered}
+                      />
+                    }
+                  />
+                ))}
+            {transcript.queuedPrompts.map((prompt) => (
+              <div key={prompt.id} data-block="prompt">
+                <PromptBox text={prompt.text} queued />
+              </div>
+            ))}
+            {failed.map((one) => (
+              <FailedMessage
+                key={one.id}
+                one={one}
+                onRetry={() => retry(one)}
+                onEdit={() => editFailed(one)}
+              />
+            ))}
+          </div>
+          {away ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={jumpToLatest}
+              className="absolute right-3 bottom-2 shadow-md"
+            >
+              <ArrowDownIcon />
+              Jump to latest
+              {unread ? (
+                <span
+                  role="status"
+                  className="rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground"
+                >
+                  New output
+                </span>
+              ) : null}
+            </Button>
+          ) : null}
         </div>
         {children.length > 0 ? (
           <ViewBar
@@ -951,9 +1057,9 @@ function ConsolePane({
           </div>
         ) : (
           <>
-            <div className="flex items-end gap-2 border-t p-2">
+            <div className="flex flex-wrap items-end gap-2 border-t p-2">
               {menu}
-              <div className="min-w-0 flex-1">
+              <div className="min-w-48 flex-1 basis-48">
                 <textarea
                   ref={field}
                   aria-label="Message the agent"
@@ -1044,6 +1150,15 @@ function FailedMessage({
       </div>
     </div>
   )
+}
+
+/**
+ * Scroll to the newest output, and remember where to: the scroll event that
+ * follows is ours, not the reader's. A box with nothing to scroll sends none.
+ */
+function pin(el: HTMLElement, pinned: { current: number | null }) {
+  el.scrollTop = el.scrollHeight
+  pinned.current = el.scrollTop > 0 ? el.scrollTop : null
 }
 
 /** Where the top of block `blockId` sits below the top of the scroll box, if it is drawn. */
@@ -1297,56 +1412,27 @@ function Footer({ hints }: { hints: string[] }) {
   )
 }
 
-/** The lines a fold keeps of a text, and how many it hides. */
-function clip(
-  text: string,
-  folded: boolean,
-  limit: number,
-  keep: "first" | "last",
-): { text: string; hidden: number } {
-  const lines = text.split("\n")
-  if (lines.at(-1) === "") lines.pop()
-  if (!folded || lines.length <= limit) return { text, hidden: 0 }
-  const shown = keep === "first" ? lines.slice(0, limit) : lines.slice(-limit)
-  return { text: shown.join("\n"), hidden: lines.length - limit }
+/** The first line of a text, cut where a summary line has room for it. */
+function firstLine(text: string): string {
+  const line = text.split("\n").find((one) => one.trim() !== "") ?? ""
+  return line.length > SUMMARY_CHARS ? `${line.slice(0, SUMMARY_CHARS).trimEnd()}…` : line.trim()
 }
 
-function Hidden({ count, keep }: { count: number; keep: "first" | "last" }) {
-  if (count === 0) return null
-  const noun = count === 1 ? "line" : "lines"
-  return (
-    <div className="font-mono text-[11px] text-muted-foreground">
-      … {count} {keep === "first" ? "more" : "earlier"} {noun} folded
-    </div>
-  )
+function lineCount(text: string): string {
+  const count = text.replace(/\n$/, "").split("\n").length
+  return `${count} ${count === 1 ? "line" : "lines"}`
 }
 
-function PromptBox({
-  text,
-  daemon,
-  queued,
-  folded = false,
-}: {
-  text: string
-  daemon?: boolean
-  queued?: boolean
-  folded?: boolean
-}) {
-  const shown = clip(text, folded && daemon === true, FOLDED_PROMPT_LINES, "first")
+/** What a person typed is a message: set apart and full size. */
+function PromptBox({ text, queued }: { text: string; queued?: boolean }) {
   return (
-    <div className="rounded-md border-l-2 border-primary bg-muted/50 px-3 py-2">
-      {daemon ? (
-        <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
-          daemon
-        </span>
-      ) : null}
+    <div className="rounded-md border-l-2 border-primary bg-primary/10 px-3 py-2">
       {queued ? (
         <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
           queued
         </span>
       ) : null}
-      <p className="whitespace-pre-wrap break-words">{shown.text}</p>
-      <Hidden count={shown.hidden} keep="first" />
+      <p className="whitespace-pre-wrap break-words">{text}</p>
     </div>
   )
 }
@@ -1387,10 +1473,12 @@ function BlockView({
   block,
   picker,
   folded,
+  onToggle,
 }: {
   block: Block
   picker: ReactNode
   folded: boolean
+  onToggle: (id: string, folded: boolean) => void
 }) {
   return (
     <div data-block={block.type} data-block-id={block.id}>
@@ -1399,7 +1487,12 @@ function BlockView({
           ↳ {block.subagent.title}
         </div>
       ) : null}
-      <BlockBody block={block} picker={picker} folded={folded} />
+      <BlockBody
+        block={block}
+        picker={picker}
+        folded={folded}
+        onToggle={() => onToggle(block.id, folded)}
+      />
     </div>
   )
 }
@@ -1408,18 +1501,43 @@ function BlockBody({
   block,
   picker,
   folded,
+  onToggle,
 }: {
   block: Block
   picker: ReactNode
   folded: boolean
+  onToggle: () => void
 }) {
   switch (block.type) {
     case "prompt":
-      return <PromptBox text={block.text} daemon={block.daemon} folded={folded} />
+      return block.daemon ? (
+        <Foldable
+          folded={folded}
+          onToggle={onToggle}
+          className="rounded-md border-l-2 bg-muted/40"
+          summary={
+            <>
+              daemon prompt · {firstLine(block.text)} · {lineCount(block.text)}
+            </>
+          }
+        >
+          <p className="whitespace-pre-wrap break-words">{block.text}</p>
+        </Foldable>
+      ) : (
+        <PromptBox text={block.text} />
+      )
     case "message":
       return <Markdown>{block.text}</Markdown>
     case "thought":
-      return <Markdown className="text-muted-foreground italic">{block.text}</Markdown>
+      return (
+        <Foldable
+          folded={folded}
+          onToggle={onToggle}
+          summary={<>thought · {firstLine(block.text)}</>}
+        >
+          <Markdown className="text-muted-foreground italic">{block.text}</Markdown>
+        </Foldable>
+      )
     case "plan":
       return (
         <ul className="space-y-0.5 font-mono text-xs">
@@ -1434,26 +1552,46 @@ function BlockBody({
           ))}
         </ul>
       )
-    case "tool":
-      return (
-        <div className="rounded-md border px-3 py-2 font-mono text-xs">
-          <div className="flex flex-wrap items-center gap-x-2">
-            <ToolStatus status={block.tool.status} />
-            {block.tool.kind ? (
-              <span className="text-muted-foreground">{block.tool.kind}</span>
-            ) : null}
-            <span className="min-w-0 break-words font-medium">{block.tool.title}</span>
-          </div>
-          {block.tool.output ? <Output text={block.tool.output} folded={folded} /> : null}
-          {block.tool.diff ? <Diff text={block.tool.diff} folded={folded} /> : null}
-        </div>
+    case "tool": {
+      const { tool } = block
+      const body = tool.output || tool.diff
+      const summary = (
+        <>
+          <ToolStatus status={tool.status} />
+          {tool.kind ? ` · ${tool.kind}` : null}
+          {" · "}
+          <span className="font-medium text-foreground">{tool.title}</span>
+          {body ? ` · ${lineCount(body)}` : null}
+        </>
       )
+      if (!body) {
+        return (
+          <div className="rounded-md border px-2 py-1 font-mono text-xs text-muted-foreground">
+            {summary}
+          </div>
+        )
+      }
+      // A file the tool read is shown in the file's language.
+      const language =
+        tool.kind === "read" ? languageForPath(tool.title.split(/\s+/).at(-1) ?? "") : undefined
+      return (
+        <Foldable
+          folded={folded}
+          onToggle={onToggle}
+          summary={summary}
+          className="rounded-md border"
+        >
+          {tool.output ? <Output text={tool.output} language={language} /> : null}
+          {tool.diff ? <Diff text={tool.diff} /> : null}
+        </Foldable>
+      )
+    }
     case "permission":
       return (
         <div className="rounded-md border border-status-warn/40 bg-status-warn-soft/30 px-3 py-2 text-xs">
           <div className="font-medium">Permission · {block.title}</div>
           {block.command ? <Output text={block.command} /> : null}
-          {block.diff ? <Diff text={block.diff} folded={folded} /> : null}
+          {block.diff ? <Diff text={block.diff} /> : null}
           {block.answer ? (
             <div className="pt-1 font-mono text-muted-foreground">
               <span aria-hidden>↳ </span>
@@ -1500,42 +1638,14 @@ function ToolStatus({ status }: { status?: string }) {
   return <span className={tone}>{status ?? "pending"}</span>
 }
 
-/** Output keeps its last lines where folded: what a command ended on. `folded` is absent for a command. */
-function Output({ text, folded = false }: { text: string; folded?: boolean }) {
-  const shown = clip(text, folded, FOLDED_OUTPUT_LINES, "last")
-  return (
-    <div className="mt-1.5">
-      <Hidden count={shown.hidden} keep="last" />
-      <pre className="max-h-64 overflow-auto rounded bg-muted/50 p-2 font-mono text-xs whitespace-pre-wrap break-words">
-        {shown.text}
-      </pre>
-    </div>
-  )
+/** A tool's output or a command, whole: it grows with its content and wraps, and never scrolls inside. */
+function Output({ text, language }: { text: string; language?: string }) {
+  return <CodeBlock code={text} language={language} className="mt-1.5" />
 }
 
-/** A diff keeps its first lines where folded. */
-function Diff({ text, folded }: { text: string; folded: boolean }) {
-  const shown = clip(text, folded, FOLDED_DIFF_LINES, "first")
-  return (
-    <div className="mt-1.5">
-      <pre className="max-h-64 overflow-auto rounded bg-muted/50 p-2 font-mono text-xs">
-        {shown.text.split("\n").map((line, index) => (
-          <div
-            // biome-ignore lint/suspicious/noArrayIndexKey: the lines of one diff, never reordered
-            key={index}
-            className={cn(
-              line.startsWith("+") && !line.startsWith("+++") && "text-status-done-fg",
-              line.startsWith("-") && !line.startsWith("---") && "text-status-danger-fg",
-              line.startsWith("@@") && "text-muted-foreground",
-            )}
-          >
-            {line || " "}
-          </div>
-        ))}
-      </pre>
-      <Hidden count={shown.hidden} keep="first" />
-    </div>
-  )
+/** A file change, with its added and removed lines colored. */
+function Diff({ text }: { text: string }) {
+  return <CodeBlock code={text} diff className="mt-1.5" />
 }
 
 function PermissionPicker({

@@ -9,9 +9,11 @@
  * were thought of.
  */
 
+import { Children, isValidElement, type ReactNode } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
+import { CodeBlock } from "@/components/code-block"
 import { cn } from "@/lib/format"
 
 const PROSE = [
@@ -25,14 +27,22 @@ const PROSE = [
   "[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5",
   "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-3",
   "[&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs",
-  "[&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:bg-muted/50 [&_pre]:p-3",
   "[&_pre_code]:bg-transparent [&_pre_code]:p-0",
   "[&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground",
   "[&_hr]:my-4 [&_hr]:border-t",
   "[&_table]:w-full [&_table]:border-collapse [&_table]:text-left",
-  "[&_th]:border-b [&_th]:py-1 [&_th]:pr-3 [&_th]:font-medium",
-  "[&_td]:border-b [&_td]:py-1 [&_td]:pr-3 [&_td]:align-top",
+  "[&_th]:border-b [&_th]:py-1 [&_th]:pr-3 [&_th]:font-medium [&_th]:[overflow-wrap:break-word]",
+  "[&_td]:border-b [&_td]:py-1 [&_td]:pr-3 [&_td]:align-top [&_td]:[overflow-wrap:anywhere]",
+  "[&_img]:max-w-full",
 ].join(" ")
+
+/** The text of a fenced block's `code` child, and the language its fence names. */
+function fence(children: ReactNode): { code: string; language: string | undefined } | undefined {
+  const child = Children.toArray(children)[0]
+  if (!isValidElement<{ className?: string; children?: ReactNode }>(child)) return undefined
+  const code = Children.toArray(child.props.children).join("").replace(/\n$/, "")
+  return { code, language: /language-([\w+#-]+)/.exec(child.props.className ?? "")?.[1] }
+}
 
 export function Markdown({ children, className }: { children: string; className?: string }) {
   return (
@@ -40,6 +50,16 @@ export function Markdown({ children, className }: { children: string; className?
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          // A fenced block is code: highlighted where the language is known,
+          // with its Copy control, and never a scroll area of its own.
+          pre: ({ children: content }) => {
+            const block = fence(content)
+            return block ? (
+              <CodeBlock code={block.code} language={block.language} />
+            ) : (
+              <pre>{content}</pre>
+            )
+          },
           // Anything an agent links to is outside the app; keep the webview on
           // the app and hand the URL to the browser instead.
           a: ({ children: content, ...props }) => (
