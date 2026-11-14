@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, screen, within } from "@testing-library/react"
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it, vi } from "vitest"
 import type { AgentEventDto } from "@/api"
@@ -501,9 +501,9 @@ it.each([1000, 500])(
       }),
     ])
     act(() => resize(width))
-    fireEvent.click(within(log()).getByRole("button", { name: /Permission/ }))
+    await user.click(within(log()).getByRole("button", { name: /Permission/ }))
     const picker = screen.getByRole("listbox", { name: "Answer the permission" })
-    expect(document.activeElement).toBe(picker)
+    await waitFor(() => expect(document.activeElement).toBe(picker))
     if (width === 500) {
       // The modal drawer keeps the background composer outside the accessible dialog.
       expect(screen.queryByRole("textbox", { name: "Message the agent" })).toBeNull()
