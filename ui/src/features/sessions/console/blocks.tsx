@@ -60,7 +60,7 @@ function duration(from: string | undefined, to: string | undefined): string | un
  * where it does not fit, and shows that full text on hover; `startRef` hands
  * the cut element out, for a caller that measures it.
  */
-function SummaryLine({
+export function SummaryLine({
   start,
   end,
   title,

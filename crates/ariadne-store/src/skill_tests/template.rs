@@ -100,6 +100,7 @@ fn no_skill_names_a_timer_or_a_poll() {
 ///
 /// The template adds sibling routing, completion boundaries, and explicit mutation limits.
 /// Orchestration moves from 4650 to 5200 for eleven completion boundaries and routing.
+/// It moves to 5250 to name the `wait_for_user` field of each part of a question.
 /// Debugging moves from 2700 to 2900 for routing and limits.
 /// Architecture review moves from 2380 to 2800 for routing, limits, and completion boundaries.
 /// Migration moves from 2000 to 2200 for routing and two completion boundaries.
@@ -118,7 +119,7 @@ fn no_skill_names_a_timer_or_a_poll() {
 fn skill_size_caps_hold() {
     const TOTAL: usize = 45_500;
     let cap = |name: &str| match name {
-        "orchestration" => 5200,
+        "orchestration" => 5250,
         "debugging" => 2900,
         "code-review" => 7900,
         "coding" => 5400,

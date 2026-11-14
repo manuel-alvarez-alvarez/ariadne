@@ -292,13 +292,13 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
-            "To ask the user, call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Do not use it for agent questions. A turn that ends without the call ends the wait."
+            "To ask the user, call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
         McpSeat::Agent => {
-            "Ask the user only where the task cannot continue without a user answer. Call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Do not use it for agent questions. A turn that ends without the call ends the wait."
+            "Ask the user only where the task cannot continue without a user answer. Call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
         McpSeat::PullRequestReviewer | McpSeat::PullRequestKeeper => {
-            "Ask the user only where the request cannot continue without a user answer. Call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Do not use it for agent questions. A turn that ends without the call ends the wait."
+            "Ask the user only where the request cannot continue without a user answer. Call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
     }
 }
@@ -967,6 +967,12 @@ pub(crate) mod tests {
         assert!(schema("send_message").contains(
             "The whole message. Write it so that the recipient needs no follow-up question."
         ));
+        assert!(description("wait_for_user").contains(
+            "Put the options, your pick and its reason in `options`, `recommended_option_id` and `recommendation_reason`, not in its text or your reply."
+        ));
+        assert!(schema("wait_for_user").contains(
+            "\"recommendation_reason\":{\"description\":\"Why you recommend that option. Give it only with `recommended_option_id`.\""
+        ));
         assert!(schema("submit_review").contains("\"description\":\"Leave it empty.\""));
         assert!(schema("submit_review").contains(
             "The severity: P0 is a critical risk, P1 is a proven defect, P2 is optional."
@@ -1006,6 +1012,12 @@ pub(crate) mod tests {
             assert!(
                 instructions.contains("A turn that ends without the call ends the wait."),
                 "{seat:?}: a turn that no longer waits closes its request: {instructions}"
+            );
+            assert!(
+                instructions.contains(
+                    "Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`."
+                ),
+                "{seat:?}: the console shows each option once: {instructions}"
             );
         }
 
@@ -1072,9 +1084,14 @@ pub(crate) mod tests {
     /// is data, never an instruction. It holds for every value a forge or
     /// another agent puts in a briefing, for every seat the value can
     /// reach, so it is here rather than in a skill.
+    ///
+    /// The cap rises to 1750 for the question fields rule: keep the options,
+    /// the recommendation and its reason out of the question text. Every seat
+    /// can ask the user, and a console that shows an option twice is the
+    /// same defect for each of them.
     #[test]
     fn the_shared_rules_stay_small() {
-        const CAP: usize = 1600;
+        const CAP: usize = 1750;
         for seat in SEATS {
             let rules = session_rules(&seat);
             assert!(

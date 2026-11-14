@@ -3082,6 +3082,62 @@ async fn a_question_rides_with_its_hint_into_the_console() {
     assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
 }
 
+/// The reason for a recommendation is kept with the question: the opening
+/// event and the pending list carry it. A reason with no recommendation is
+/// refused.
+#[tokio::test]
+async fn a_recommendation_reason_rides_with_the_question() {
+    let h = harness().await;
+    let session = h.lone_session("recommendation-reason").await;
+    let mut reasoned = base_question();
+    reasoned["question"]["recommendation_reason"] = serde_json::json!("The trunk is green.");
+    let _: serde_json::Value = h
+        .json(
+            as_session(
+                &format!("/v1/sessions/{}/agent-requests", session.id),
+                &session.id,
+                reasoned.clone(),
+            ),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    let waits = console_events(&h, &session, "agent_request").await;
+    assert_eq!(
+        waits[0].payload["question"]["recommendation_reason"],
+        "The trunk is green."
+    );
+    let pending: Vec<ariadne_api::attention::AgentRequestDto> = h
+        .get(&format!("/v1/sessions/{}/agent-requests", session.id))
+        .await;
+    assert_eq!(
+        pending[0]
+            .question
+            .as_ref()
+            .and_then(|question| question.recommendation_reason.as_deref()),
+        Some("The trunk is green.")
+    );
+
+    let mut unrecommended = reasoned;
+    unrecommended["summary"] = serde_json::json!("Another hint");
+    unrecommended["question"]
+        .as_object_mut()
+        .unwrap()
+        .remove("recommended_option_id");
+    let (status, body) = h
+        .send(as_session(
+            &format!("/v1/sessions/{}/agent-requests", session.id),
+            &session.id,
+            unrecommended,
+        ))
+        .await;
+    assert_eq!(
+        status,
+        axum::http::StatusCode::BAD_REQUEST,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+}
+
 /// A picked option reaches the agent with its meaning, closes the request
 /// with the answer recorded, and a second answer is refused and sends no
 /// second prompt.

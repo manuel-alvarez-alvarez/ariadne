@@ -192,6 +192,9 @@ pub(super) struct UserQuestion {
     /// The `id` of the option that you recommend.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_option_id: Option<String>,
+    /// Why you recommend that option. Give it only with `recommended_option_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommendation_reason: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -441,7 +444,7 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Flag that you wait for the user, and ask your question in `question`. The console shows the question and its options, so do not write them again in your reply. Then end your turn. A turn that ends without the call ends the wait."
+        description = "Flag that you wait for the user, and ask your question in `question`. Put the options, your pick and its reason in `options`, `recommended_option_id` and `recommendation_reason`, not in its text or your reply. Then end your turn. A turn that ends without the call ends the wait."
     )]
     async fn wait_for_user(
         &self,
@@ -1185,6 +1188,7 @@ mod tests {
                     description: None,
                 }],
                 recommended_option_id: Some("main".into()),
+                recommendation_reason: Some("The trunk is green.".into()),
             }),
         }))
         .await
@@ -1200,7 +1204,8 @@ mod tests {
                 "question": {
                     "text": "Which base?",
                     "options": [{"id": "main", "label": "Main"}],
-                    "recommended_option_id": "main"
+                    "recommended_option_id": "main",
+                    "recommendation_reason": "The trunk is green."
                 }
             })
         );

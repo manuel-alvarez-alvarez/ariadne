@@ -31,8 +31,9 @@ Use `research` when the user asks a question and wants no plan.
    - One direct question, at the end. Word it so a "yes" accepts the
      recommendation.
 
-   Put the title, context and question in the question text. Give each
-   option its consequence as its description. Recommend your pick.
+   Put the title, context and question in the text. Put each option, with
+   its consequence, in `options`. Put the pick in `recommended_option_id`,
+   and the reason in `recommendation_reason`.
 
    Ask nothing a column settles, such as review or landing.
 

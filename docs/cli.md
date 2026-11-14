@@ -397,15 +397,15 @@ the rest of the command or the diff under it — and then its choices; pick one
 with the arrow keys or its number key. The rest of the command draws in your
 terminal's own foreground, not dimmed. See [Permission modes](permissions.md).
 When an agent asks you a question, it calls `wait_for_user` with a one-line
-hint and the question: its text, the options you can pick, and the option it
-recommends. The hint is what the Needs attention list shows. The console
-draws the question under `waiting for you · <hint>`, with each option by its
-number and `(recommended)` beside the agent's pick:
+hint and the question: its text, the options you can pick, the option it
+recommends, and why. The hint is what the Needs attention list shows. The
+console draws the question under `waiting for you · <hint>`, with each option
+by its number and `(recommended)` and the reason beside the agent's pick:
 
 ```
 ● waiting for you · Pick a base branch
   Which base branch should the task land on?
-    1. Main — Land on the trunk. (recommended)
+    1. Main — Land on the trunk. (recommended) · The trunk is green.
     2. Next
   Type a number, or your own answer.
 ```

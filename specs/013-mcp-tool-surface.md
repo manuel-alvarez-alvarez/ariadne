@@ -54,7 +54,13 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    `wait_for_user` with a one-line hint and the question in its `question`
    field, with options where the user picks one and a recommended option:
    the console draws that question whole (031 rule 11), so the agent does
-   not write it again in its reply, and the tool description says so. Its
+   not write it again in its reply, and the tool description says so. The
+   session rules of every seat and the tool description also keep the
+   options, the recommendation and its reason out of the question text: they
+   go in `options`, `recommended_option_id` and the optional
+   `recommendation_reason`, whose schema doc is "Why you recommend that
+   option. Give it only with `recommended_option_id`." The console shows
+   each of them once. Its
    `hint` is one line for the Needs attention list, and the daemon refuses
    one that is longer than a line or than 100 characters (031 rule 11), so
    the question cannot move into the hint. A turn that ends without
@@ -226,7 +232,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   orchestrator is told to ask, and a column's agent is told to work alone
   and ask only where the task cannot go on without the answer, and every
   seat is told to call `wait_for_user` with the question in its `question`
-  field
+  field, and to keep the options, the recommendation and its reason out of
+  the question text
   (`::only_the_orchestrator_is_told_to_ask`), and no session is told of a
   conversation (`::no_session_is_told_of_a_conversation`).
 - Every session is told to load a deferred tool before it calls it
@@ -248,6 +255,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   - `open_pull_request` says it "returns" the URL, not "answers" it.
   - The `send_message` `body` doc is "The whole message. Write it so that the
     recipient needs no follow-up question."
+  - `wait_for_user` says "Put the options, your pick and its reason in
+    `options`, `recommended_option_id` and `recommendation_reason`, not in
+    its text or your reply.", and its schema lists `recommendation_reason`
+    with its doc.
   - The `submit_review` `body` doc is "Leave it empty."
   - The `Priority` doc is "The severity: P0 is a critical risk, P1 is a
     proven defect, P2 is optional."

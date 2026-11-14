@@ -640,10 +640,12 @@ function questionOf(value: unknown): AgentQuestion | undefined {
     const description = str(option, "description")
     return [description === undefined ? { id, label } : { id, label, description }]
   })
+  const question: AgentQuestion = { text, options }
   const recommended = str(value, "recommended_option_id")
-  return recommended === undefined
-    ? { text, options }
-    : { text, options, recommended_option_id: recommended }
+  if (recommended !== undefined) question.recommended_option_id = recommended
+  const reason = str(value, "recommendation_reason")
+  if (reason !== undefined) question.recommendation_reason = reason
+  return question
 }
 
 /**
