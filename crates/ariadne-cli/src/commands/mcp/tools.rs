@@ -1814,7 +1814,7 @@ mod tests {
     /// columns once, and keeps a summary of each task.
     #[tokio::test]
     async fn listing_tasks_gives_the_goal_columns_once_and_task_summaries() {
-        let task = r#"{"id":"01T","goal_id":"01GOAL","title":"t","description":"d","status":"running","step":"develop","depends_on":[],"branch":"b","pr_url":null,"reason":null,"stalled":false,"agents":[{"step":"develop"}],"usage":{"total":{}},"created_at":"x","updated_at":"y"}"#;
+        let task = r#"{"id":"01T","goal_id":"01GOAL","repo_id":"01R","title":"t","description":"d","status":"running","step":"develop","depends_on":["01D"],"branch":"b","worktree_path":"/w","pr_url":"https://x/1","reason":"why","stalled":true,"merge_commit":"abc","agents":[{"step":"develop","id":"01A","skills":["coding"],"model":"m","effort":"high","brief":"br","session_id":"01S"}],"usage":{"total":{}},"created_at":"x","updated_at":"y"}"#;
         let (endpoint, seen) = recording_daemon_answering_in_turn(vec![
             format!("[{task}]"),
             r#"{"steps":[{"id":"develop"}]}"#.into(),
@@ -1830,28 +1830,34 @@ mod tests {
         assert_eq!(seen[0].path, "/v1/tasks?goal=01GOAL");
         let body: serde_json::Value =
             serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
-        assert_eq!(body["goal_steps"][0]["id"], "develop");
-        let entry = body["tasks"][0].as_object().unwrap();
-        for key in [
-            "description",
-            "usage",
-            "created_at",
-            "updated_at",
-            "goal_id",
-            "goal_steps",
-        ] {
-            assert!(!entry.contains_key(key), "{key}");
-        }
-        assert_eq!(entry["agents"][0]["step"], "develop");
-        assert_eq!(entry["id"], "01T");
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "goal_steps": [{"id": "develop"}],
+                "tasks": [{
+                    "id": "01T",
+                    "title": "t",
+                    "status": "running",
+                    "step": "develop",
+                    "depends_on": ["01D"],
+                    "branch": "b",
+                    "pr_url": "https://x/1",
+                    "reason": "why",
+                    "stalled": true,
+                    "agents": [{"step":"develop","id":"01A","skills":["coding"],"model":"m","effort":"high","brief":"br","session_id":"01S"}]
+                }]
+            })
+        );
     }
 
-    /// `get_task` keeps the goal columns and drops usage and timestamps.
+    /// `get_task` keeps the goal columns and every other field, and drops
+    /// usage and timestamps.
     #[tokio::test]
     async fn reading_a_task_drops_usage_and_timestamps() {
-        let (endpoint, _) = recording_daemon_answering(
-            r#"{"goal_id":"01GOAL","title":"t","steps":[],"usage":{},"created_at":"x","updated_at":"y"}"#,
-        )
+        let (endpoint, _) = recording_daemon_answering_in_turn(vec![
+            r#"{"id":"01T","goal_id":"01GOAL","repo_id":"01R","title":"t","description":"d","status":"running","step":"develop","depends_on":["01D"],"branch":"b","worktree_path":"/w","pr_url":null,"reason":null,"stalled":false,"merge_commit":null,"agents":[{"step":"develop","id":"01A"}],"usage":{"total":{}},"created_at":"x","updated_at":"y"}"#.into(),
+            r#"{"steps":[{"id":"develop"}]}"#.into(),
+        ])
         .await;
         let mcp = server_at(
             McpSeat::Agent,
@@ -1863,11 +1869,17 @@ mod tests {
             .unwrap();
         let body: serde_json::Value =
             serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
-        assert_eq!(body["title"], "t");
-        assert!(body.get("goal_steps").is_some());
-        for key in ["usage", "created_at", "updated_at"] {
-            assert!(body.get(key).is_none(), "{key}");
-        }
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "id": "01T", "goal_id": "01GOAL", "repo_id": "01R", "title": "t",
+                "description": "d", "status": "running", "step": "develop",
+                "depends_on": ["01D"], "branch": "b", "worktree_path": "/w",
+                "pr_url": null, "reason": null, "stalled": false, "merge_commit": null,
+                "agents": [{"step": "develop", "id": "01A"}],
+                "goal_steps": [{"id": "develop"}]
+            })
+        );
     }
 
     /// One verb, and it names the column it is for: the message goes to the
