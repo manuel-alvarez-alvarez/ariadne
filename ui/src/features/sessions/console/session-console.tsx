@@ -37,13 +37,7 @@
  * of the keys the state takes.
  */
 
-import {
-  ArrowDownIcon,
-  ChevronsDownUpIcon,
-  ChevronsUpDownIcon,
-  Maximize2Icon,
-  Minimize2Icon,
-} from "lucide-react"
+import { ArrowDownIcon, Maximize2Icon, Minimize2Icon } from "lucide-react"
 import {
   type KeyboardEvent,
   useCallback,
@@ -904,7 +898,6 @@ function ConsolePane({
           onClick={() => toggleFold.current()}
           aria-keyshortcuts="Control+O"
         >
-          {folded ? <ChevronsUpDownIcon /> : <ChevronsDownUpIcon />}
           {folded ? "Unfold" : "Fold"}
         </Button>
         {onExpand ? (
@@ -931,7 +924,7 @@ function ConsolePane({
             ref={log}
             role="log"
             aria-label="Console transcript"
-            className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-3"
+            className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3"
             onScroll={(event) => {
               const el = event.currentTarget
               // A restore of the reader's place waits on the blocks: until it
@@ -1035,23 +1028,12 @@ function ConsolePane({
             onShow={(to, keepFocus) => showView(to, keepFocus)}
           />
         ) : null}
-        <StatusRow
-          status={status}
-          turn={
-            running
-              ? { tool: runningTool(transcript), seconds: elapsedSeconds(turnStartedAt, now) }
-              : undefined
-          }
-          tokens={tokenTotals(transcript, usage)}
-        />
         <Composer
           fieldRef={field}
           menu={menu}
           draft={draft}
           live={live}
           running={running}
-          asking={pending !== undefined}
-          folded={folded}
           question={question !== undefined}
           child={child ? { cancellable: childCancellable } : undefined}
           suggestions={suggestions}
@@ -1062,6 +1044,15 @@ function ConsolePane({
           onPick={(command) => complete(command.name)}
           onSend={send}
           onStop={cancel}
+        />
+        <StatusRow
+          status={status}
+          turn={
+            running
+              ? { tool: runningTool(transcript), seconds: elapsedSeconds(turnStartedAt, now) }
+              : undefined
+          }
+          tokens={tokenTotals(transcript, usage)}
         />
       </div>
       {session ? (

@@ -685,6 +685,23 @@ function foldedActivity() {
   ]
 }
 
+it("marks prompts and tool states with borders and icons", () => {
+  renderConsole([
+    event("user_prompt_submit", { text: "hello" }),
+    event("tool_call_update", {
+      acp: { toolCallId: "done", title: "Read", kind: "read", status: "completed" },
+    }),
+    event("tool_call_update", {
+      acp: { toolCallId: "bad", title: "Edit", kind: "edit", status: "failed" },
+    }),
+  ])
+  const prompt = transcript().querySelector('[data-block="prompt"]')
+  expect(prompt?.querySelector(".border-blue-500 svg")).not.toBeNull()
+  const tools = transcript().querySelectorAll('[data-block="tool"]')
+  expect(tools[0]?.querySelector(".border-green-500 [data-tool-kind=read]")).not.toBeNull()
+  expect(tools[1]?.querySelector(".border-red-500 [data-tool-kind=edit]")).not.toBeNull()
+})
+
 it("folds tool details, thoughts and daemon prompts together, starting folded, from the header and Ctrl-O", async () => {
   const user = userEvent.setup()
   renderConsole(foldedActivity())
@@ -940,25 +957,13 @@ it("removes the queued prompt and adds an error block when the send fails", asyn
   within(transcript()).getByText("ship it")
 })
 
-it("names the keys of the state in the footer", () => {
-  const { source } = renderConsole()
-  screen.getByText(/enter send/)
-  expect(screen.queryByText(/esc cancel/)).toBeNull()
-
-  act(() => source.emit("event", event("user_prompt_submit", { text: "go" })))
-  screen.getByText(/esc cancel/)
-
-  act(() =>
-    source.emit(
-      "event",
-      event("permission_request", {
-        tool_name: "Edit",
-        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
-      }),
-    ),
-  )
-  screen.getByText(/up\/down or 1-9 choose · enter answer/)
-  expect(screen.queryByText(/esc cancel/)).toBeNull()
+it("places the status below the input without a keyboard hint footer", () => {
+  renderConsole()
+  expect(
+    input().compareDocumentPosition(screen.getByLabelText("Session status")) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy()
+  expect(screen.queryByText(/enter send/)).toBeNull()
 })
 
 it("folds on Ctrl-O from a header control, not only from the input", () => {
@@ -1056,6 +1061,29 @@ const ANSWER_PATH = `/v1/sessions/${SESSION_ID}/agent-requests/01RQ/answer`
 function questionCard() {
   return screen.getByRole("region", { name: "Question · Pick a base" })
 }
+
+function expectQuestionMarker(card: HTMLElement) {
+  const block = card.closest('[data-block="question"]')
+  expect(block?.querySelectorAll(".border-l")).toHaveLength(1)
+  expect(card.classList.contains("border-purple-500")).toBe(true)
+  expect(card.querySelector(".lucide-circle-help")).not.toBeNull()
+}
+
+it("shows one purple question marker before and after resolution", () => {
+  const { source } = renderConsole([QUESTION_EVENT()])
+  expectQuestionMarker(questionCard())
+  act(() =>
+    source.emit(
+      "event",
+      event("agent_request.resolved", {
+        request_id: "01RQ",
+        resolution: "answered",
+        answer: { option_id: "next", text: "Next" },
+      }),
+    ),
+  )
+  expectQuestionMarker(questionCard())
+})
 
 it("draws a question as a card and submits a clicked choice at once to its request", async () => {
   renderConsole([QUESTION_EVENT()])
@@ -1237,6 +1265,12 @@ const PENDING = {
 function quietPage(count: number) {
   return Array.from({ length: count }, () => event("stop", { stop_reason: "end_turn" }))
 }
+
+it("shows the question marker for a pending request outside history", async () => {
+  pendingList = [PENDING]
+  renderConsole(quietPage(205))
+  expectQuestionMarker(await screen.findByRole("region", { name: "Question · Pick a base" }))
+})
 
 it("restores a pending question older than the snapshot page on a load and a reconnect", async () => {
   pendingList = [PENDING]

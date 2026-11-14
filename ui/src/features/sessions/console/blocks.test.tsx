@@ -2,7 +2,7 @@
 
 /**
  * The console's blocks, drawn from the transcript the console stream folds:
- * a tool call as one frame, its sections, its summary line and every
+ * a tool call with its border, sections, summary line and every
  * block's time.
  */
 
@@ -87,13 +87,15 @@ const edit = () =>
 const framed = (node: Element) =>
   /(^|\s)(border|border-[blrtxy]|bg-[\w/[\]-]+)(\s|$)/.test(node.getAttribute("class") ?? "")
 
-it("draws a tool call without a frame, with its input, output and diff under their captions", () => {
+it("draws a tool call with a left border and captioned sections", () => {
   const { container } = drawn(edit())
 
   const frames = Array.from(container.querySelectorAll("*")).filter(
     (node) => node.tagName !== "BUTTON" && framed(node),
   )
-  expect(frames).toHaveLength(0)
+  expect(frames).toHaveLength(1)
+  expect(frames[0]?.classList.contains("border-l")).toBe(true)
+  expect(frames[0]?.classList.contains("border-green-500")).toBe(true)
   const sections = Array.from(container.querySelectorAll("[data-code-block]"))
   expect(
     sections.map((section) => section.querySelector("[data-code-caption]")?.textContent),
@@ -127,7 +129,7 @@ it("copies one section's text from its icon-only control and never toggles the f
   expect(onToggle).not.toHaveBeenCalled()
 })
 
-it("names a call's status, kind and subject at the left of its summary, and duration at the right", () => {
+it("places the tool icon after its border and status beside its subject", () => {
   const blocks = fold(
     call("run", { title: "Bash", kind: "execute", status: "pending" }, at(9, 5, 7), {
       command: "cargo test\n--all",
@@ -138,13 +140,14 @@ it("names a call's status, kind and subject at the left of its summary, and dura
       at(9, 5, 7, 340),
     ),
   )
-  drawn(blocks[0] as Block, true)
+  const { container } = drawn(blocks[0] as Block, true)
 
+  const marker = container.querySelector(".border-l")
+  expect(marker?.firstElementChild?.querySelector("[data-tool-kind=execute]")).not.toBeNull()
   const summary = screen.getByRole("button", { expanded: false })
-  expect(summary.querySelector("[data-tool-kind]")?.getAttribute("data-tool-kind")).toBe("execute")
   expect(within(summary).getByText("cargo test").className).toContain("text-foreground")
   expect(summary.querySelector("[data-summary-end]")?.textContent).toBe("340ms")
-  expect(summary.textContent).toMatch(/^completedexecutecargo test/)
+  expect(summary.textContent).toMatch(/^completedcargo test/)
 })
 
 it("gives every ACP kind its own icon and any other kind one more", () => {

@@ -469,12 +469,16 @@ Out: the daemon endpoints themselves (012).
 23a. A tool call with an input, an output or a diff, a thought and a daemon
     prompt each fold into one summary line: `thought ·` and the thought's
     first line; `daemon prompt ·`, its first line and its line count. A tool
-    call's summary shows at its left the status mark, one icon per ACP kind
+    call's summary shows at its left one icon per ACP kind
     (`read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`,
-    and one more for any other kind) and the subject (rule 21). At its right
+    and one more for any other kind), the status mark and the subject (rule 21). At its right
     end, muted, it shows elapsed duration (`340ms`, `2.1s`, `1m 04s`),
     updated while the call runs and frozen when it completes or fails.
-    Tool rows have no outline and use compact spacing. A successful Ariadne
+    Entries have a plain background, a thin colored left border and a kind icon.
+    Prompts use blue, permissions orange, questions purple, and errors red.
+    Tools use gray while pending or running, red on failure and green on completion.
+    Other entries use gray. Fold buttons have no chevrons, retain hover and focus
+    feedback, and work with a click, Enter or Space. The user prompt chevron remains. A successful Ariadne
     `wait_for_user` call is hidden only when its returned request id matches
     a displayed question card. The recorded events remain intact; failed and
     unmatched calls stay visible (proved by `ui/src/features/sessions/console/transcript.test.ts::hides only a successful question call with its matching card`). Unfolded, a tool shows its input, output and
@@ -563,7 +567,7 @@ Out: the daemon endpoints themselves (012).
     the next edit of the input opens it again. A
     picked command is sent as plain text through `/console/input`, as every
     prompt is.
-23d. A status row (`console/status.tsx`) above the input shows the session's status, and while a
+23d. A status row (`console/status.tsx`) below the input shows the session's status, and while a
     turn runs a spinner with `thinking` or `running <tool>` (the tool's first line,
     cut with an ellipsis, whole on hover) and a turn clock
     counted from the `created_at` of the turn's first event. It shows the
@@ -577,9 +581,7 @@ Out: the daemon endpoints themselves (012).
     block of that send alone, even where an identical prompt is queued
     beside it, and where the echo of a later identical send came first, the
     failure clears the entry that echo left behind. A snapshot keeps a queued prompt it does not yet hold.
-23f. A footer under the input names the keys of the state: idle
-    (`enter send`), running (`esc cancel`) and a permission question
-    (`up/down or 1-9 choose`, `enter answer`), each with the fold key.
+23f. The status row replaces the keyboard-hint footer. Keyboard shortcuts remain available.
 24. A `resync` or a dropped stream is retried on the event stream's
     backoff, and the pane says it is reconnecting meanwhile. The fresh
     snapshot replaces the transcript, so no block shows twice.
@@ -1534,12 +1536,12 @@ Out: the daemon endpoints themselves (012).
   `::keeps the tints of a diff's added, removed and hunk-header lines`,
   `::draws a fence in one light frame, its label and an icon-only Copy on one caption line`,
   `::draws a captioned block bare, under a caption that names the section and the language`).
-- A tool call has no outline, with its input, output and diff under captions,
-  and a summary of status, kind, subject and elapsed duration; `BlockView` re-renders only the block a chunk
+- A tool call has a colored left border, with its input, output and diff under captions,
+  its kind icon after the border, and a summary of status, subject and elapsed duration; `BlockView` re-renders only the block a chunk
   changes (rules 23a and 23a2)
-  (`ui/src/features/sessions/console/blocks.test.tsx::draws a tool call without a frame, with its input, output and diff under their captions`,
+  (`ui/src/features/sessions/console/blocks.test.tsx::draws a tool call with a left border and captioned sections`,
   `::copies one section's text from its icon-only control and never toggles the fold`,
-  `::names a call's status, kind and subject at the left of its summary, and duration at the right`,
+  `::places the tool icon after its border and status beside its subject`,
   `::gives every ACP kind its own icon and any other kind one more`,
   `::says how long a call took in the unit that fits it, once it has ended`,
   `::updates a running tool duration and freezes it on completion`,
@@ -1669,8 +1671,13 @@ Out: the daemon endpoints themselves (012).
   `::leaves no stale entry when an echo takes a failed send's entry before its failure arrives`,
   `ui/src/features/sessions/console/session-console.test.tsx::takes back only the failed send when the same prompt is sent twice at once`,
   `::leaves nothing queued when the echo of the second send comes before the first send's failure`).
-- The footer names the keys of the state
-  (`ui/src/features/sessions/console/session-console.test.tsx::names the keys of the state in the footer`).
+- Open, resolved and restored questions have one purple border and question icon
+  (`ui/src/features/sessions/console/session-console.test.tsx::shows one purple question marker before and after resolution`,
+  `::shows the question marker for a pending request outside history`).
+- Prompt and tool borders and icons identify their state
+  (`ui/src/features/sessions/console/session-console.test.tsx::marks prompts and tool states with borders and icons`).
+- The status row follows the input and replaces the keyboard-hint footer
+  (`ui/src/features/sessions/console/session-console.test.tsx::places the status below the input without a keyboard hint footer`).
 - The blocked banner says where to answer, says to resume an agent that is
   gone, and shows for no other reason
   (`ui/src/features/sessions/session-blocked-banner.test.tsx::says what a permission prompt is waiting for, and where to answer it`,

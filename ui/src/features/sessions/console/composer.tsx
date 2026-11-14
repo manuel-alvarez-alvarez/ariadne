@@ -72,33 +72,9 @@ function SuggestionList({
   )
 }
 
-function footerHints(state: {
-  live: boolean
-  running: boolean
-  asking: boolean
-  folded: boolean
-}): string[] {
-  const keys = state.asking
-    ? ["up/down or 1-9 choose", "enter answer"]
-    : state.running
-      ? ["esc cancel", "enter send", "shift+enter newline"]
-      : state.live
-        ? ["enter send", "shift+enter newline"]
-        : []
-  return [...keys, state.folded ? "ctrl-o unfold" : "ctrl-o fold"]
-}
-
-function Footer({ hints }: { hints: string[] }) {
-  return (
-    <p className="border-t px-3 py-1 font-mono text-[11px] text-muted-foreground">
-      {hints.join(" · ")}
-    </p>
-  )
-}
-
 /**
  * The composer row: the menu, the message box with its suggestions, the Stop
- * and Send controls and the footer of keys. A child's view has no input, so
+ * and Send controls. A child's view has no input, so
  * there it is a line that says so.
  */
 export function Composer({
@@ -107,8 +83,6 @@ export function Composer({
   draft,
   live,
   running,
-  asking,
-  folded,
   question,
   child,
   suggestions,
@@ -127,8 +101,6 @@ export function Composer({
   live: boolean
   running: boolean
   /** A permission question waits for a pick. */
-  asking: boolean
-  folded: boolean
   /** A `wait_for_user` question waits for an answer. */
   question: boolean
   /** The child whose view is shown; none for `main`. */
@@ -176,73 +148,70 @@ export function Composer({
   }
 
   return (
-    <>
-      <div className="flex items-end gap-2 border-t p-2">
-        {menu}
-        <div className="min-w-0 flex-1">
-          <textarea
-            ref={fieldRef}
-            aria-label="Message the agent"
-            value={draft}
-            disabled={!live}
-            rows={1}
-            placeholder={
-              !live
-                ? undefined
-                : question
-                  ? "Answer the question. Enter sends your answer."
-                  : "Message the agent. Enter sends, Shift+Enter adds a line."
-            }
-            onChange={(event) => onChange(event.target.value, event.target.selectionStart)}
-            onSelect={(event) => onSelect(event.currentTarget.selectionStart)}
-            onKeyDown={onKeyDown}
-            className="block w-full resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-          />
-          {live ? null : (
-            <p className="pt-1 text-xs text-muted-foreground">
-              This session has ended. Resume it to talk to it.
-            </p>
-          )}
-          {suggestions ? (
-            <SuggestionList commands={suggestions} picked={picked} onPick={onPick} />
-          ) : null}
-        </div>
-        {running ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="icon"
-                  variant="outline"
-                  onClick={onStop}
-                  aria-label="Stop the turn"
-                  className="shrink-0"
-                />
-              }
-            >
-              <SquareIcon />
-            </TooltipTrigger>
-            <TooltipContent>Stop the turn</TooltipContent>
-          </Tooltip>
+    <div className="flex items-end gap-2 border-t p-2">
+      {menu}
+      <div className="min-w-0 flex-1">
+        <textarea
+          ref={fieldRef}
+          aria-label="Message the agent"
+          value={draft}
+          disabled={!live}
+          rows={1}
+          placeholder={
+            !live
+              ? undefined
+              : question
+                ? "Answer the question. Enter sends your answer."
+                : "Message the agent. Enter sends, Shift+Enter adds a line."
+          }
+          onChange={(event) => onChange(event.target.value, event.target.selectionStart)}
+          onSelect={(event) => onSelect(event.currentTarget.selectionStart)}
+          onKeyDown={onKeyDown}
+          className="block w-full resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+        {live ? null : (
+          <p className="pt-1 text-xs text-muted-foreground">
+            This session has ended. Resume it to talk to it.
+          </p>
+        )}
+        {suggestions ? (
+          <SuggestionList commands={suggestions} picked={picked} onPick={onPick} />
         ) : null}
+      </div>
+      {running ? (
         <Tooltip>
           <TooltipTrigger
             render={
               <Button
                 size="icon"
-                onClick={onSend}
-                disabled={!live || draft.trim().length === 0}
-                aria-label="Send"
+                variant="outline"
+                onClick={onStop}
+                aria-label="Stop the turn"
                 className="shrink-0"
               />
             }
           >
-            <SendIcon />
+            <SquareIcon />
           </TooltipTrigger>
-          <TooltipContent>Send</TooltipContent>
+          <TooltipContent>Stop the turn</TooltipContent>
         </Tooltip>
-      </div>
-      <Footer hints={footerHints({ live, running, asking, folded })} />
-    </>
+      ) : null}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="icon"
+              onClick={onSend}
+              disabled={!live || draft.trim().length === 0}
+              aria-label="Send"
+              className="shrink-0"
+            />
+          }
+        >
+          <SendIcon />
+        </TooltipTrigger>
+        <TooltipContent>Send</TooltipContent>
+      </Tooltip>
+    </div>
   )
 }

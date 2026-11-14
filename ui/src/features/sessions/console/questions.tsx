@@ -13,7 +13,7 @@
  * request's `agent_request.resolved` event, which closes it for good.
  */
 
-import { Loader2Icon } from "lucide-react"
+import { CircleHelpIcon, Loader2Icon } from "lucide-react"
 import { type FormEvent, useState } from "react"
 
 import { type AgentRequestDto, api, unwrap } from "@/api"
@@ -207,8 +207,9 @@ export function QuestionCard({
     return (
       <section
         aria-label={`Question · ${block.hint}`}
-        className="rounded-md border border-status-active/40 bg-status-active-soft/30 text-xs"
+        className="relative border-l border-purple-500 pl-9 text-xs"
       >
+        <CircleHelpIcon aria-hidden className="absolute top-2 left-3 size-3.5 text-purple-500" />
         <Foldable
           folded={folded}
           onToggle={() => onToggle(block.id, folded)}
@@ -234,8 +235,9 @@ export function QuestionCard({
   return (
     <section
       aria-label={`Question · ${block.hint}`}
-      className="rounded-md border border-status-active/40 bg-status-active-soft/30 px-3 py-2 text-xs"
+      className="relative border-l border-purple-500 py-2 pr-3 pl-9 text-xs"
     >
+      <CircleHelpIcon aria-hidden className="absolute top-2.5 left-3 size-3.5 text-purple-500" />
       <div className="font-medium [&_[data-summary-end]]:font-mono [&_[data-summary-end]]:font-normal [&_[data-summary-end]]:text-muted-foreground">
         <SummaryLine start={<>Question · {block.hint}</>} end={[time]} />
       </div>

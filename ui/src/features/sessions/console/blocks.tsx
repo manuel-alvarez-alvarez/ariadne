@@ -1,16 +1,23 @@
 import {
   BrainIcon,
   CheckIcon,
+  ChevronRightIcon,
   CircleIcon,
   FileTextIcon,
+  GitBranchIcon,
   GlobeIcon,
+  InfoIcon,
+  ListIcon,
   Loader2Icon,
   type LucideIcon,
+  MessageSquareIcon,
   MoveRightIcon,
   PencilIcon,
   SearchIcon,
+  ShieldIcon,
   TerminalIcon,
   Trash2Icon,
+  TriangleAlertIcon,
   WrenchIcon,
   XIcon,
 } from "lucide-react"
@@ -118,22 +125,25 @@ export function PromptBox({
   time?: string
 }) {
   return (
-    <div className="rounded-md border-l-2 border-primary bg-primary/10 px-3 py-2">
-      {queued ? (
-        <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
-          queued
-        </span>
-      ) : null}
-      <div className="flex items-start gap-3">
-        <Markdown className="min-w-0 flex-1">{text}</Markdown>
-        {time ? (
-          <span
-            data-block-time
-            className="shrink-0 pt-0.5 font-mono text-[11px] text-muted-foreground tabular-nums"
-          >
-            {time}
+    <div className="flex items-start gap-2 border-l border-blue-500 px-3 py-2">
+      <ChevronRightIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-blue-500" />
+      <div className="min-w-0 flex-1">
+        {queued ? (
+          <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
+            queued
           </span>
         ) : null}
+        <div className="flex items-start gap-3">
+          <Markdown className="min-w-0 flex-1">{text}</Markdown>
+          {time ? (
+            <span
+              data-block-time
+              className="shrink-0 pt-0.5 font-mono text-[11px] text-muted-foreground tabular-nums"
+            >
+              {time}
+            </span>
+          ) : null}
+        </div>
       </div>
     </div>
   )
@@ -170,6 +180,27 @@ export const BlockView = memo(function BlockView({
   folded,
   onToggle,
 }: BlockViewProps) {
+  const icons = {
+    message: MessageSquareIcon,
+    thought: BrainIcon,
+    plan: ListIcon,
+    permission: ShieldIcon,
+    note: InfoIcon,
+    child: GitBranchIcon,
+    error: TriangleAlertIcon,
+    raw: FileTextIcon,
+    prompt: TerminalIcon,
+  } as const
+  const Icon = block.type === "tool" || block.type === "question" ? null : icons[block.type]
+  const decorated = block.type !== "question" && (block.type !== "prompt" || block.daemon)
+  const tone =
+    block.type === "permission"
+      ? "border-orange-500"
+      : block.type === "error" || (block.type === "tool" && block.tool.status === "failed")
+        ? "border-red-500"
+        : block.type === "tool" && block.tool.status === "completed"
+          ? "border-green-500"
+          : "border-muted-foreground/50"
   return (
     <div data-block={block.type} data-block-id={block.id} title={formatStamp(block.createdAt)}>
       {block.subagent ? (
@@ -177,12 +208,25 @@ export const BlockView = memo(function BlockView({
           ↳ {block.subagent.title}
         </div>
       ) : null}
-      <BlockBody
-        block={block}
-        picker={picker}
-        folded={folded}
-        onToggle={() => onToggle(block.id, folded)}
-      />
+      <div
+        className={cn(decorated && "flex items-start gap-2 border-l px-3 py-1", decorated && tone)}
+      >
+        {block.type === "tool" ? (
+          <div className="mt-1.5">
+            <ToolKind kind={block.tool.kind} />
+          </div>
+        ) : decorated && Icon ? (
+          <Icon aria-hidden className="mt-1.5 size-3.5 shrink-0 text-muted-foreground" />
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <BlockBody
+            block={block}
+            picker={picker}
+            folded={folded}
+            onToggle={() => onToggle(block.id, folded)}
+          />
+        </div>
+      </div>
     </div>
   )
 }, sameBlockView)
@@ -214,7 +258,6 @@ function BlockBody({
         <Foldable
           folded={folded}
           onToggle={onToggle}
-          className="rounded-md border-l-2 bg-muted/40"
           summary={
             <SummaryLine
               start={
@@ -279,7 +322,7 @@ function BlockBody({
           ) : null}
         </>
       )
-      const frame = "rounded-md border border-status-warn/40 bg-status-warn-soft/30 text-xs"
+      const frame = "text-xs"
       if (!answer) {
         return (
           <div className={cn(frame, "px-3 py-2")}>
@@ -319,7 +362,7 @@ function BlockBody({
       return <div className="font-mono text-xs text-muted-foreground">{block.text}</div>
     case "error":
       return (
-        <div className="rounded-md border border-status-danger/40 bg-status-danger-soft/40 px-3 py-2 text-xs text-status-danger-fg">
+        <div className="px-2 py-1 text-xs text-status-danger-fg">
           <p className="whitespace-pre-wrap break-words">{block.text}</p>
           {block.diagnosis ? <p className="pt-1 text-muted-foreground">{block.diagnosis}</p> : null}
         </div>
@@ -363,7 +406,6 @@ function ToolBlock({
         <>
           <span className="mr-1.5 inline-flex items-center gap-1.5 align-[-2px]">
             <ToolStatus status={tool.status} />
-            <ToolKind kind={tool.kind} />
           </span>
           <span className="font-medium text-foreground">{subject}</span>
         </>
@@ -379,7 +421,6 @@ function ToolBlock({
   if (!input && !tool.output && !tool.diff && !cut) {
     return (
       <div className="flex items-start gap-1.5 px-2 py-1 font-mono text-xs text-muted-foreground">
-        <span aria-hidden className="size-3.5 shrink-0" />
         <span className="min-w-0 flex-1">{summary}</span>
       </div>
     )
