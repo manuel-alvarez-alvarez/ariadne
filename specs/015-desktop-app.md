@@ -1523,7 +1523,7 @@ Out: the daemon endpoints themselves (012).
   `::keeps a draft of only spaces and newlines when a menu command is inserted`,
   `::opens the switch dialog from the menu`,
   `::copies only the loaded transcript of the view shown, and names that scope`,
-  `::expands and collapses everything from the menu`).
+  `::omits global fold actions from the menu`).
 - The console folds thoughts into summaries,
   each on its own header, keeps the choice, and draws no nested scroll area
   (rules 23a to 23a3)
@@ -1574,9 +1574,9 @@ Out: the daemon endpoints themselves (012).
   `ui/src/features/sessions/console/session-console.test.tsx::keeps an answered permission compact and opens its details on selection`,
   `ui/src/features/sessions/console/session-console-renders.test.tsx::draws a question card again for its own change, not for a message streamed after it`,
   `::draws a permission picker again for its own change, not for a message streamed after it`).
-- The console retains a session's draft, fold and place apart per daemon and
+- The console retains a session's draft, individual fold preferences and place apart per daemon and
   session, and keeps one open stream while shown (rule 24i)
-  (`ui/src/features/sessions/console/composer.test.tsx::brings a session's draft and fold back after the console is unmounted`,
+  (`ui/src/features/sessions/console/composer.test.tsx::brings a session's draft back after the console is unmounted`,
   `::keeps each daemon's and each session's state apart`,
   `::restores the reader's place, not the bottom, when the console comes back`,
   `::brings back the older page the reader had loaded, and their place in it, after the console expands`,
