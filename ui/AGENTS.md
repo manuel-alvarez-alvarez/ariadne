@@ -424,8 +424,11 @@ stream (008). It lives in `src/features/sessions/console/`:
 - `composer-menu.tsx` is the plus menu: the agent's commands and the session
   actions. Switch and Resume are `SwitchSessionDialog` and `useResumeAction`
   from `../session-actions.tsx`, the same ones the session panel uses.
-- `session-console.tsx` draws the blocks, the input box and the stop
-  control. A prompt and a permission pick both post `{"text"}` to
+- `session-console.tsx` holds the pane's state, stream, scroll and keyboard
+  logic only; it draws no block, composer or status markup of its own.
+  `blocks.tsx` draws the blocks, `composer.tsx` the composer row (the input
+  box, suggestions, Send and Stop, footer) and `status.tsx` the status row,
+  the view bar, the stream and history lines and a failed send. A prompt and a permission pick both post `{"text"}` to
   `POST /v1/sessions/{id}/console/input`. A cancel posts
   `POST /v1/sessions/{id}/console/cancel` with no body. A failed post is kept
   in the transcript with Retry and Edit. `questions.tsx` draws a `wait_for_user` question as a card,
@@ -445,7 +448,7 @@ fold toggle (header control and Ctrl-O), the agent's slash commands as a
 suggestion list over the input, a status row, a `queued` block for a sent
 prompt, and a footer of keys. `transcript.ts` holds their state
 (`availableCommands`, `queuedPrompts`, the launches' token totals and the
-turn's start); `session-console.tsx` draws it.
+turn's start); `blocks.tsx`, `composer.tsx` and `status.tsx` draw it.
 
 Escape inside the console cancels a running turn and never reaches the pane
 or the modal. ⌘Escape moves the keyboard to the panel's Close button or the

@@ -320,6 +320,8 @@ Out: the daemon endpoints themselves (012).
 21. Every session is shown in its console, a transcript the app draws from
     the daemon's console stream (`GET /v1/sessions/{id}/console/stream`,
     008). A `snapshot` replaces the transcript, and each `event` extends it.
+    The pane's state, stream, scroll and keys are `console/session-console.tsx`;
+    the blocks are drawn by `console/blocks.tsx`.
     The events fold into blocks as the CLI's transcript folds them: a user
     prompt, with a daemon prompt (`source: "daemon"`) marked as such; the
     agent's message as markdown; a thought as dimmed markdown; a plan's
@@ -358,8 +360,8 @@ Out: the daemon endpoints themselves (012).
     click answers, and the answer is posted as `{"text": "<optionId>"}` to
     the same input route. The reply shows the chosen option and who decided
     (`decided_by`).
-22b. The composer starts at one line and grows with newlines and pasted text
-    to six lines, then scrolls inside. A Send control sits beside it,
+22b. The composer (`console/composer.tsx`) starts at one line and grows with
+    newlines and pasted text to six lines, then scrolls inside. A Send control sits beside it,
     disabled while the draft is blank or the session is not live, and Stop
     stays beside it while a turn runs. Enter sends and Shift+Enter adds a
     line; an Enter that ends an input-method composition does neither, and a
@@ -477,7 +479,7 @@ Out: the daemon endpoints themselves (012).
     the next edit of the input opens it again. A
     picked command is sent as plain text through `/console/input`, as every
     prompt is.
-23d. A status row above the input shows the session's status, and while a
+23d. A status row (`console/status.tsx`) above the input shows the session's status, and while a
     turn runs a spinner with `thinking` or `running <tool>` and a turn clock
     counted from the `created_at` of the turn's first event. It shows the
     token totals `↑in ↓out`: the sum over the launches of the latest
@@ -497,7 +499,7 @@ Out: the daemon endpoints themselves (012).
     backoff, and the pane says it is reconnecting meanwhile. The fresh
     snapshot replaces the transcript, so no block shows twice.
 24a. The console shows a session's subagents as the CLI attach pane does
-    (008 rules 30 to 36). A `subagent_update` announces a child on its first
+    (008 rules 30 to 36; the bar is `ViewBar` in `console/status.tsx`). A `subagent_update` announces a child on its first
     `subagent.id`. A bar above the input shows only while the session has a
     child. It lists `main`, then each child in announcement order, with the
     mark of its state: `●` running, `✓` completed, `✗` failed, `⊘`

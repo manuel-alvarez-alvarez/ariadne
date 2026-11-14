@@ -41,16 +41,11 @@ import {
   ArrowDownIcon,
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
-  Loader2Icon,
   Maximize2Icon,
   Minimize2Icon,
-  PlugZapIcon,
-  SendIcon,
-  SquareIcon,
 } from "lucide-react"
 import {
   type KeyboardEvent,
-  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -61,17 +56,16 @@ import {
 import { toast } from "sonner"
 
 import { type AgentRequestDto, api, type SessionDto, type SessionStatus, unwrap } from "@/api"
-import { CodeBlock } from "@/components/code-block"
-import { Markdown } from "@/components/markdown"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { copyText } from "@/lib/clipboard"
-import { cn, describeError, formatTokens } from "@/lib/format"
-import { languageForPath } from "@/lib/highlight"
+import { cn, describeError } from "@/lib/format"
 import { useBaseUrl } from "@/stores/settings"
 
 import { SwitchSessionDialog, useResumeAction } from "../session-actions"
 import { isLiveStatus } from "../session-display"
+import { BlockView, PermissionPicker, PromptBox } from "./blocks"
+import { Composer, suggest } from "./composer"
 import { ComposerMenu } from "./composer-menu"
 import { ConsoleStream, type ConsoleStreamStatus, consoleStreamUrl } from "./console-stream"
 import {
@@ -82,7 +76,6 @@ import {
   updateViewState,
   watchViewState,
 } from "./console-view-state"
-import { Foldable } from "./foldable"
 import {
   answerRequest,
   openQuestion,
@@ -91,36 +84,32 @@ import {
   restoredQuestions,
 } from "./questions"
 import {
-  type AgentCommand,
+  elapsedSeconds,
+  FailedMessage,
+  type History,
+  HistoryLine,
+  StatusRow,
+  StreamStatusLine,
+  ViewBar,
+} from "./status"
+import {
   appendError,
   applyEvent,
   applySnapshot,
-  type Block,
   blocksText,
   dequeuePrompt,
   emptyTranscript,
-  isTerminal,
   oldestEventId,
   type PermissionOption,
   pendingPermission,
   prependEvents,
   queuePrompt,
   runningTool,
-  stateMark,
   type TokenTotals,
   type Transcript,
   tokenTotals,
   view,
 } from "./transcript"
-
-/** The characters of a thought or a daemon prompt its folded summary quotes. */
-const SUMMARY_CHARS = 90
-
-/** The most commands the suggestion list shows. */
-const SUGGESTIONS = 8
-
-/** The lines the composer grows to before it scrolls inside. */
-const COMPOSER_LINES = 6
 
 /** Numbers the sends of every console, so a retained failure never shares an id with a new send. */
 let sendCount = 0
@@ -195,9 +184,6 @@ const HISTORY_PAGE = 200
 
 /** How near the top, in pixels, still counts as reaching the oldest block shown. */
 const TOP_SLACK_PX = 8
-
-/** Where the load of older events stands; `start` is the session's first event shown. */
-type History = { state: "idle" | "loading" | "start" } | { state: "error"; message: string }
 
 /** How near the bottom, in pixels, still counts as reading the newest block. */
 const FOLLOW_SLACK_PX = 24
@@ -567,24 +553,6 @@ function ConsolePane({
       caret.current = null
     }
   }, [draft])
-
-  // The composer is one line, grows with its text to six, then scrolls inside.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the draft is what changes the height
-  useLayoutEffect(() => {
-    const el = field.current
-    if (!el) return
-    const style = getComputedStyle(el)
-    const line = Number.parseFloat(style.lineHeight) || 20
-    const chrome =
-      Number.parseFloat(style.paddingTop || "0") +
-      Number.parseFloat(style.paddingBottom || "0") +
-      Number.parseFloat(style.borderTopWidth || "0") +
-      Number.parseFloat(style.borderBottomWidth || "0")
-    const most = line * COMPOSER_LINES + chrome
-    el.style.height = "auto"
-    el.style.height = `${Math.min(el.scrollHeight, most)}px`
-    el.style.overflowY = el.scrollHeight > most ? "auto" : "hidden"
-  }, [draft, child])
 
   // A question restored from the requests list was asked before the page in
   // view, so it comes first: the composer answers the newest.
@@ -1046,70 +1014,25 @@ function ConsolePane({
           }
           tokens={tokenTotals(transcript, usage)}
         />
-        {child ? (
-          <div className="border-t px-3 py-2 font-mono text-xs text-muted-foreground">
-            <div className="flex items-center gap-2">
-              {menu}
-              <span>
-                read-only · arrows switch view · {childCancellable ? "esc cancel" : "esc back"}
-              </span>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-end gap-2 border-t p-2">
-              {menu}
-              <div className="min-w-48 flex-1 basis-48">
-                <textarea
-                  ref={field}
-                  aria-label="Message the agent"
-                  value={draft}
-                  disabled={!live}
-                  rows={1}
-                  placeholder={
-                    !live
-                      ? undefined
-                      : question
-                        ? "Answer the question. Enter sends your answer."
-                        : "Message the agent. Enter sends, Shift+Enter adds a line."
-                  }
-                  onChange={(event) => edit(event.target.value, event.target.selectionStart)}
-                  onSelect={(event) => setCursor(event.currentTarget.selectionStart)}
-                  onKeyDown={onFieldKey}
-                  className="block w-full resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-                />
-                {live ? null : (
-                  <p className="pt-1 text-xs text-muted-foreground">
-                    This session has ended. Resume it to talk to it.
-                  </p>
-                )}
-                {suggestions ? (
-                  <SuggestionList
-                    commands={suggestions}
-                    picked={pickedSuggestion}
-                    onPick={(command) => complete(command.name)}
-                  />
-                ) : null}
-              </div>
-              {running ? (
-                <Button size="sm" variant="outline" onClick={cancel} aria-label="Stop the turn">
-                  <SquareIcon />
-                  Stop
-                </Button>
-              ) : null}
-              <Button
-                size="sm"
-                onClick={send}
-                disabled={!live || draft.trim().length === 0}
-                aria-label="Send"
-              >
-                <SendIcon />
-                Send
-              </Button>
-            </div>
-            <Footer hints={footerHints({ live, running, asking: pending !== undefined, folded })} />
-          </>
-        )}
+        <Composer
+          fieldRef={field}
+          menu={menu}
+          draft={draft}
+          live={live}
+          running={running}
+          asking={pending !== undefined}
+          folded={folded}
+          question={question !== undefined}
+          child={child ? { cancellable: childCancellable } : undefined}
+          suggestions={suggestions}
+          picked={pickedSuggestion}
+          onChange={edit}
+          onSelect={setCursor}
+          onKeyDown={onFieldKey}
+          onPick={(command) => complete(command.name)}
+          onSend={send}
+          onStop={cancel}
+        />
       </div>
       {session ? (
         <SwitchSessionDialog
@@ -1119,35 +1042,6 @@ function ConsolePane({
           onSwitched={onSwitched}
         />
       ) : null}
-    </div>
-  )
-}
-
-function FailedMessage({
-  one,
-  onRetry,
-  onEdit,
-}: {
-  one: FailedSend
-  onRetry: () => void
-  onEdit: () => void
-}) {
-  return (
-    <div
-      role="alert"
-      data-block="failed"
-      className="space-y-1.5 rounded-md border border-status-danger/40 bg-status-danger-soft/40 px-3 py-2 text-xs"
-    >
-      <p className="text-status-danger-fg">{one.message}</p>
-      <p className="whitespace-pre-wrap break-words text-sm">{one.text}</p>
-      <div className="flex gap-1.5">
-        <Button size="xs" variant="outline" onClick={onRetry}>
-          Retry
-        </Button>
-        <Button size="xs" variant="outline" onClick={onEdit}>
-          Edit
-        </Button>
-      </div>
     </div>
   )
 }
@@ -1178,521 +1072,4 @@ function firstInView(log: HTMLElement): { blockId: string; offset: number } | un
       return { blockId: block.dataset.blockId, offset: rect.top - top }
   }
   return undefined
-}
-
-function HistoryLine({ history, onRetry }: { history: History; onRetry: () => void }) {
-  if (history.state === "loading") {
-    return (
-      <div
-        role="status"
-        className="flex items-center gap-1.5 border-b px-3 py-1 font-mono text-xs text-muted-foreground"
-      >
-        <Loader2Icon className="size-3 animate-spin" aria-hidden />
-        Loading older events…
-      </div>
-    )
-  }
-  if (history.state === "error") {
-    return (
-      <div
-        role="alert"
-        className="flex items-center gap-2 border-b px-3 py-1 font-mono text-xs text-status-danger-fg"
-      >
-        Could not load older events: {history.message}
-        <Button size="xs" variant="outline" onClick={onRetry}>
-          Retry
-        </Button>
-      </div>
-    )
-  }
-  return null
-}
-
-/**
- * The views of a session with subagents: `main`, then each child with the
- * mark of its state. The bar is one stop in the Tab order: the arrow keys,
- * Home and End move between its views inside it.
- */
-function ViewBar({
-  agents,
-  shown,
-  asking,
-  onShow,
-}: {
-  agents: Transcript["subagents"]
-  shown: string | undefined
-  /** The child whose permission question waits. */
-  asking: string | undefined
-  onShow: (to: string | undefined, keepFocus?: boolean) => void
-}) {
-  const bar = useRef<HTMLDivElement>(null)
-  const views = [
-    { id: undefined, label: "main" },
-    ...agents.map((one) => ({
-      id: one.id,
-      label: `${stateMark(one.state)} ${one.title}${one.id === asking ? " ?" : ""}`,
-    })),
-  ]
-  const at = Math.max(
-    views.findIndex((one) => one.id === shown),
-    0,
-  )
-
-  function onKeyDown(event: KeyboardEvent) {
-    const last = views.length - 1
-    const to =
-      event.key === "ArrowRight"
-        ? (at + 1) % views.length
-        : event.key === "ArrowLeft"
-          ? (at + last) % views.length
-          : event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? last
-              : undefined
-    if (to === undefined) return
-    event.preventDefault()
-    onShow(views[to]?.id, true)
-    bar.current?.querySelectorAll<HTMLElement>('[role="tab"]')[to]?.focus()
-  }
-
-  return (
-    <div
-      ref={bar}
-      role="tablist"
-      aria-label="Console views"
-      onKeyDown={onKeyDown}
-      className="flex flex-wrap gap-1 border-t px-2 py-1 font-mono text-xs"
-    >
-      {views.map((one, index) => (
-        <button
-          key={one.id ?? ""}
-          type="button"
-          role="tab"
-          aria-selected={one.id === shown}
-          tabIndex={index === at ? 0 : -1}
-          onClick={() => onShow(one.id)}
-          className={cn(
-            "rounded px-1.5 py-0.5 outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
-            one.id === shown
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:bg-muted",
-          )}
-        >
-          {one.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-/** The commands a typed `/word` names, while the cursor is still in that word. */
-function suggest(
-  commands: AgentCommand[],
-  draft: string,
-  cursor: number,
-): AgentCommand[] | undefined {
-  if (commands.length === 0 || !draft.startsWith("/") || /\s/.test(draft.slice(0, cursor))) {
-    return undefined
-  }
-  const typed = (draft.split(/\s/)[0] ?? "").slice(1).toLowerCase()
-  const matching = commands.filter((command) => command.name.toLowerCase().includes(typed))
-  const first = matching.filter((command) => command.name.toLowerCase().startsWith(typed))
-  return [...first, ...matching.filter((command) => !first.includes(command))].slice(0, SUGGESTIONS)
-}
-
-function SuggestionList({
-  commands,
-  picked,
-  onPick,
-}: {
-  commands: AgentCommand[]
-  picked: number
-  onPick: (command: AgentCommand) => void
-}) {
-  if (commands.length === 0) {
-    return <p className="pt-1 font-mono text-xs text-muted-foreground">no matching command</p>
-  }
-  return (
-    <div
-      role="listbox"
-      aria-label="Slash commands"
-      className="mt-1 space-y-0.5 rounded-md border p-1 font-mono text-xs"
-    >
-      {commands.map((command, index) => (
-        <div
-          key={command.name}
-          role="option"
-          aria-selected={index === picked}
-          tabIndex={-1}
-          // A press must not take the keyboard from the composer, and a tap
-          // or a click completes the command for editing.
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={() => onPick(command)}
-          onKeyDown={() => undefined}
-          className={cn(
-            "flex cursor-pointer items-baseline gap-2 rounded px-2 py-1.5 hover:bg-muted",
-            index === picked && "bg-primary text-primary-foreground hover:bg-primary",
-          )}
-        >
-          <span className="shrink-0">/{command.name}</span>
-          <span className="min-w-0 truncate opacity-70">{command.description}</span>
-          {command.hint ? <span className="shrink-0 opacity-70">{command.hint}</span> : null}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function elapsedSeconds(since: string | undefined, now: number): number | undefined {
-  if (since === undefined) return undefined
-  const started = Date.parse(since)
-  return Number.isNaN(started) ? undefined : Math.max(0, Math.floor((now - started) / 1000))
-}
-
-/** `12s`, or `1m 04s` past a minute: the CLI's turn clock. */
-function clock(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`
-  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`
-}
-
-function StatusRow({
-  status,
-  turn,
-  tokens,
-}: {
-  status: SessionStatus
-  turn?: { tool?: string; seconds?: number }
-  tokens: TokenTotals
-}) {
-  const spent = tokens.input > 0 || tokens.output > 0
-  return (
-    <section
-      aria-label="Session status"
-      className="flex items-center gap-3 border-t px-3 py-1 font-mono text-xs text-muted-foreground"
-    >
-      <span>{status}</span>
-      {turn ? (
-        <span className="flex items-center gap-1.5">
-          <Loader2Icon className="size-3 animate-spin" aria-hidden />
-          {turn.tool === undefined ? "thinking" : `running ${turn.tool}`}
-          {turn.seconds === undefined ? null : <span>{clock(turn.seconds)}</span>}
-        </span>
-      ) : null}
-      {spent ? (
-        <span className="ml-auto">
-          ↑{formatTokens(tokens.input)} ↓{formatTokens(tokens.output)}
-        </span>
-      ) : null}
-    </section>
-  )
-}
-
-function footerHints(state: {
-  live: boolean
-  running: boolean
-  asking: boolean
-  folded: boolean
-}): string[] {
-  const keys = state.asking
-    ? ["up/down or 1-9 choose", "enter answer"]
-    : state.running
-      ? ["esc cancel", "enter send", "shift+enter newline"]
-      : state.live
-        ? ["enter send", "shift+enter newline"]
-        : []
-  return [...keys, state.folded ? "ctrl-o unfold" : "ctrl-o fold"]
-}
-
-function Footer({ hints }: { hints: string[] }) {
-  return (
-    <p className="border-t px-3 py-1 font-mono text-[11px] text-muted-foreground">
-      {hints.join(" · ")}
-    </p>
-  )
-}
-
-/** The first line of a text, cut where a summary line has room for it. */
-function firstLine(text: string): string {
-  const line = text.split("\n").find((one) => one.trim() !== "") ?? ""
-  return line.length > SUMMARY_CHARS ? `${line.slice(0, SUMMARY_CHARS).trimEnd()}…` : line.trim()
-}
-
-function lineCount(text: string): string {
-  const count = text.replace(/\n$/, "").split("\n").length
-  return `${count} ${count === 1 ? "line" : "lines"}`
-}
-
-/** What a person typed is a message: set apart and full size. */
-function PromptBox({ text, queued }: { text: string; queued?: boolean }) {
-  return (
-    <div className="rounded-md border-l-2 border-primary bg-primary/10 px-3 py-2">
-      {queued ? (
-        <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
-          queued
-        </span>
-      ) : null}
-      <p className="whitespace-pre-wrap break-words">{text}</p>
-    </div>
-  )
-}
-
-function StreamStatusLine({
-  status,
-  error,
-}: {
-  status: ConsoleStreamStatus
-  error: string | null
-}) {
-  if (status === "reconnecting") {
-    return (
-      <span className="flex items-center gap-1.5 text-status-danger-fg">
-        <PlugZapIcon className="size-3" />
-        Lost the console, reconnecting…
-        {error ? <span className="text-muted-foreground">({error})</span> : null}
-      </span>
-    )
-  }
-  if (status === "connecting") {
-    return (
-      <span className="flex items-center gap-1.5">
-        <Loader2Icon className="size-3 animate-spin" aria-hidden />
-        Connecting to the session's console…
-      </span>
-    )
-  }
-  return (
-    <span className="flex items-center gap-1.5">
-      <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-status-done" aria-hidden />
-      Live
-    </span>
-  )
-}
-
-function BlockView({
-  block,
-  picker,
-  folded,
-  onToggle,
-}: {
-  block: Block
-  picker: ReactNode
-  folded: boolean
-  onToggle: (id: string, folded: boolean) => void
-}) {
-  return (
-    <div data-block={block.type} data-block-id={block.id}>
-      {block.subagent ? (
-        <div className="pb-0.5 font-mono text-[11px] text-muted-foreground">
-          ↳ {block.subagent.title}
-        </div>
-      ) : null}
-      <BlockBody
-        block={block}
-        picker={picker}
-        folded={folded}
-        onToggle={() => onToggle(block.id, folded)}
-      />
-    </div>
-  )
-}
-
-function BlockBody({
-  block,
-  picker,
-  folded,
-  onToggle,
-}: {
-  block: Block
-  picker: ReactNode
-  folded: boolean
-  onToggle: () => void
-}) {
-  switch (block.type) {
-    case "prompt":
-      return block.daemon ? (
-        <Foldable
-          folded={folded}
-          onToggle={onToggle}
-          className="rounded-md border-l-2 bg-muted/40"
-          summary={
-            <>
-              daemon prompt · {firstLine(block.text)} · {lineCount(block.text)}
-            </>
-          }
-        >
-          <p className="whitespace-pre-wrap break-words">{block.text}</p>
-        </Foldable>
-      ) : (
-        <PromptBox text={block.text} />
-      )
-    case "message":
-      return <Markdown>{block.text}</Markdown>
-    case "thought":
-      return (
-        <Foldable
-          folded={folded}
-          onToggle={onToggle}
-          summary={<>thought · {firstLine(block.text)}</>}
-        >
-          <Markdown className="text-muted-foreground italic">{block.text}</Markdown>
-        </Foldable>
-      )
-    case "plan":
-      return (
-        <ul className="space-y-0.5 font-mono text-xs">
-          {block.entries.map((entry, index) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: a plan's entries have no id, and are replaced whole
-            <li key={index} className={cn(entry.status === "completed" && "text-muted-foreground")}>
-              <span aria-hidden className="pr-1.5">
-                {PLAN_MARKS[entry.status] ?? "○"}
-              </span>
-              {entry.content} <span className="text-muted-foreground">· {entry.status}</span>
-            </li>
-          ))}
-        </ul>
-      )
-    case "tool": {
-      const { tool } = block
-      const body = tool.output || tool.diff
-      const summary = (
-        <>
-          <ToolStatus status={tool.status} />
-          {tool.kind ? ` · ${tool.kind}` : null}
-          {" · "}
-          <span className="font-medium text-foreground">{tool.title}</span>
-          {body ? ` · ${lineCount(body)}` : null}
-        </>
-      )
-      if (!body) {
-        return (
-          <div className="rounded-md border px-2 py-1 font-mono text-xs text-muted-foreground">
-            {summary}
-          </div>
-        )
-      }
-      // A file the tool read is shown in the file's language.
-      const language =
-        tool.kind === "read" ? languageForPath(tool.title.split(/\s+/).at(-1) ?? "") : undefined
-      return (
-        <Foldable
-          folded={folded}
-          onToggle={onToggle}
-          summary={summary}
-          className="rounded-md border"
-        >
-          {tool.output ? <Output text={tool.output} language={language} /> : null}
-          {tool.diff ? <Diff text={tool.diff} /> : null}
-        </Foldable>
-      )
-    }
-    case "permission":
-      return (
-        <div className="rounded-md border border-status-warn/40 bg-status-warn-soft/30 px-3 py-2 text-xs">
-          <div className="font-medium">Permission · {block.title}</div>
-          {block.command ? <Output text={block.command} /> : null}
-          {block.diff ? <Diff text={block.diff} /> : null}
-          {block.answer ? (
-            <div className="pt-1 font-mono text-muted-foreground">
-              <span aria-hidden>↳ </span>
-              {block.answer.decidedBy
-                ? `${block.answer.name} · decided by ${block.answer.decidedBy}`
-                : block.answer.name}
-            </div>
-          ) : (
-            picker
-          )}
-        </div>
-      )
-    case "question":
-      return picker
-    case "note":
-      return <div className="font-mono text-xs text-muted-foreground">· {block.text}</div>
-    case "child":
-      return <div className="font-mono text-xs text-muted-foreground">{block.text}</div>
-    case "error":
-      return (
-        <div className="rounded-md border border-status-danger/40 bg-status-danger-soft/40 px-3 py-2 text-xs text-status-danger-fg">
-          <p className="whitespace-pre-wrap break-words">{block.text}</p>
-          {block.diagnosis ? <p className="pt-1 text-muted-foreground">{block.diagnosis}</p> : null}
-        </div>
-      )
-    case "raw":
-      return (
-        <div className="font-mono text-xs text-muted-foreground">
-          {block.kind} · {block.summary}
-        </div>
-      )
-  }
-}
-
-const PLAN_MARKS: Record<string, string> = { completed: "✓", in_progress: "◐", pending: "○" }
-
-function ToolStatus({ status }: { status?: string }) {
-  const tone =
-    status === "failed"
-      ? "text-status-danger-fg"
-      : isTerminal(status)
-        ? "text-status-done-fg"
-        : "text-status-active-fg"
-  return <span className={tone}>{status ?? "pending"}</span>
-}
-
-/** A tool's output or a command, whole: it grows with its content and wraps, and never scrolls inside. */
-function Output({ text, language }: { text: string; language?: string }) {
-  return <CodeBlock code={text} language={language} className="mt-1.5" />
-}
-
-/** A file change, with its added and removed lines colored. */
-function Diff({ text }: { text: string }) {
-  return <CodeBlock code={text} diff className="mt-1.5" />
-}
-
-function PermissionPicker({
-  options,
-  selected,
-  answering,
-  onSelect,
-  onAnswer,
-  onKeyDown,
-}: {
-  options: PermissionOption[]
-  selected: number
-  answering: string | null
-  onSelect: (index: number) => void
-  onAnswer: (option: PermissionOption) => void
-  onKeyDown: (event: KeyboardEvent) => boolean
-}) {
-  return (
-    <div
-      role="listbox"
-      aria-label="Answer the permission"
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      className="mt-2 space-y-0.5 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-    >
-      {options.map((option, index) => (
-        <div
-          key={option.id}
-          role="option"
-          aria-selected={index === selected}
-          aria-disabled={answering !== null}
-          tabIndex={-1}
-          onMouseEnter={() => onSelect(index)}
-          onClick={() => answering === null && onAnswer(option)}
-          onKeyDown={() => undefined}
-          className={cn(
-            "flex cursor-pointer items-center gap-2 rounded px-2 py-1 font-mono",
-            index === selected ? "bg-primary text-primary-foreground" : "hover:bg-muted",
-          )}
-        >
-          <span className="w-4 text-right opacity-70">{index + 1}.</span>
-          {option.name}
-          {answering === option.id ? (
-            <Loader2Icon className="size-3 animate-spin" aria-hidden />
-          ) : null}
-        </div>
-      ))}
-    </div>
-  )
 }
