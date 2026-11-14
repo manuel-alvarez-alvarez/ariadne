@@ -455,3 +455,65 @@ it("types digits normally with permission details closed", async () => {
   await user.type(field, "123456789")
   expect((field as HTMLTextAreaElement).value).toBe("123456789")
 })
+
+it.each([1000, 500])("stops permission shortcuts after closing details at %spx", async (width) => {
+  const user = userEvent.setup()
+  renderConsole([
+    event("permission_request", {
+      tool_name: "Deploy",
+      options: [
+        { optionId: "allow", name: "Allow" },
+        { optionId: "deny", name: "Deny" },
+      ],
+    }),
+  ])
+  act(() => resize(width))
+  fireEvent.click(within(log()).getByRole("button", { name: /Permission/ }))
+  fireEvent.click(screen.getByRole("button", { name: "Close permission details" }))
+  const posts: string[] = []
+  daemonFetch.mockImplementation(async (request: Request) => {
+    if (request.method !== "GET") posts.push(await request.text())
+    return Response.json([])
+  })
+  const field = screen.getByRole("textbox", { name: "Message the agent" })
+  await user.click(field)
+  // Ordinary empty Enter is handled by the composer, but must not answer a permission.
+  await user.keyboard("{Enter}")
+  expect(posts).toEqual([])
+  for (const key of ["ArrowUp", "ArrowDown", "1", "2"])
+    expect(fireEvent.keyDown(field, { key })).toBe(true)
+  await user.keyboard("12")
+  expect((field as HTMLTextAreaElement).value).toBe("12")
+  expect(posts).toEqual([])
+})
+
+it.each([1000, 500])(
+  "answers through the visible permission picker's own keys at %spx",
+  async (width) => {
+    const user = userEvent.setup()
+    renderConsole([
+      event("permission_request", {
+        tool_name: "Deploy",
+        options: [
+          { optionId: "allow", name: "Allow" },
+          { optionId: "deny", name: "Deny" },
+        ],
+      }),
+    ])
+    act(() => resize(width))
+    fireEvent.click(within(log()).getByRole("button", { name: /Permission/ }))
+    const picker = screen.getByRole("listbox", { name: "Answer the permission" })
+    expect(document.activeElement).toBe(picker)
+    if (width === 500) {
+      // The modal drawer keeps the background composer outside the accessible dialog.
+      expect(screen.queryByRole("textbox", { name: "Message the agent" })).toBeNull()
+    }
+    const posts: string[] = []
+    daemonFetch.mockImplementation(async (request: Request) => {
+      if (request.method !== "GET") posts.push(await request.text())
+      return Response.json([])
+    })
+    await user.keyboard("2{ArrowUp}{ArrowDown}{Enter}")
+    expect(posts).toEqual(['{"text":"deny"}'])
+  },
+)
