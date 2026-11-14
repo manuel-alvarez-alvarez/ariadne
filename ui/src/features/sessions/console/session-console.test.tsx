@@ -670,7 +670,7 @@ it("folds tool details, thoughts and daemon prompts together, starting folded, f
   expect(log.queryByText(/out 7/)).toBeNull()
   expect(log.queryByText("+add 25")).toBeNull()
   expect(log.queryByText(/the options/)).toBeNull()
-  log.getByRole("button", { name: /Bash · 10 lines/ })
+  log.getByRole("button", { name: /Bash\s*10 lines/ })
 
   await user.click(screen.getByRole("button", { name: "Unfold" }))
   expect(log.getByText(/prompt 10/)).not.toBeNull()
@@ -718,7 +718,7 @@ it("lets a keyboard open a fold and leaves its content's Copy control from foldi
   await user.keyboard("{Enter}")
   expect(log.getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded")).toBe("true")
 
-  await user.click(log.getByRole("button", { name: "Copy code" }))
+  await user.click(log.getByRole("button", { name: "Copy output" }))
   expect(log.getByRole("button", { name: /Bash/ }).getAttribute("aria-expanded")).toBe("true")
 })
 

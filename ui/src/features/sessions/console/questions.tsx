@@ -34,6 +34,9 @@ export async function pendingRequests(sessionId: string): Promise<AgentRequestDt
   return Array.isArray(listed) ? listed : []
 }
 
+/** The card of each request read, so a request read once keeps one block and its card does not render again. */
+const cards = new WeakMap<AgentRequestDto, QuestionBlock>()
+
 /**
  * The cards to restore: each pending question the transcript neither shows
  * nor has seen closed since the list was read. An older page that brings its
@@ -46,20 +49,23 @@ export function restoredQuestions(
   const shown = new Set(
     transcript.blocks.flatMap((block) => (block.type === "question" ? [block.requestId] : [])),
   )
-  return requests.flatMap((request) =>
-    request.question && !shown.has(request.id) && !transcript.closedRequests.has(request.id)
-      ? [
-          {
-            id: `pending:${request.id}`,
-            createdAt: request.created_at,
-            type: "question" as const,
-            requestId: request.id,
-            hint: request.summary,
-            question: request.question,
-          },
-        ]
-      : [],
-  )
+  return requests.flatMap((request) => {
+    const { question } = request
+    if (!question || shown.has(request.id) || transcript.closedRequests.has(request.id)) return []
+    let card = cards.get(request)
+    if (!card) {
+      card = {
+        id: `pending:${request.id}`,
+        createdAt: request.created_at,
+        type: "question",
+        requestId: request.id,
+        hint: request.summary,
+        question,
+      }
+      cards.set(request, card)
+    }
+    return [card]
+  })
 }
 
 /**

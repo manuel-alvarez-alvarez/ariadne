@@ -649,9 +649,9 @@ function ConsolePane({
     return true
   }
 
-  function markAnswered(requestId: string) {
+  const markAnswered = useCallback((requestId: string) => {
     setAnswered((now) => new Set(now).add(requestId))
-  }
+  }, [])
 
   function answer(option: PermissionOption) {
     setAnswering(option.id)
@@ -710,6 +710,13 @@ function ConsolePane({
     event.preventDefault()
     return true
   }
+
+  // The picker's handlers keep one identity, so a block whose picker did not
+  // change is not drawn again (`BlockView` compares its picker's props).
+  const picks = useRef({ answer, pickKey })
+  picks.current = { answer, pickKey }
+  const answerPick = useCallback((option: PermissionOption) => picks.current.answer(option), [])
+  const pickerKey = useCallback((event: KeyboardEvent) => picks.current.pickKey(event), [])
 
   function onFieldKey(event: KeyboardEvent<HTMLTextAreaElement>) {
     // Shift+Enter is a new line, and an Enter that ends a composition is the
@@ -926,8 +933,8 @@ function ConsolePane({
                       selected={selected}
                       answering={answering}
                       onSelect={setSelected}
-                      onAnswer={answer}
-                      onKeyDown={pickKey}
+                      onAnswer={answerPick}
+                      onKeyDown={pickerKey}
                     />
                   ) : null
                 }

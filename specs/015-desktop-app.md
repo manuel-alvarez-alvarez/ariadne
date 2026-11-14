@@ -445,10 +445,26 @@ Out: the daemon endpoints themselves (012).
     is now focused.
     The console has the extras of the CLI's attach pane
     (`crates/ariadne-console/src/tui/`), rules 23a to 23f.
-23a. A tool call with output or a diff, a thought and a daemon prompt each
-    fold into one summary line: the tool's status, kind, title and line
-    count; `thought ·` and the thought's first line; `daemon prompt ·`, its
-    first line and its line count. A message, a person's prompt, a plan, a
+23a. A tool call with an input, an output or a diff, a thought and a daemon
+    prompt each fold into one summary line: `thought ·` and the thought's
+    first line; `daemon prompt ·`, its first line and its line count. A tool
+    call's summary shows at its left the status mark, one icon per ACP kind
+    (`read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`,
+    and one more for any other kind) and the subject (rule 21). At its right
+    end, muted, it shows the output's line count, the duration once the call
+    has ended (`340ms`, `2.1s`, `1m 04s`) and the call's time as `HH:MM:SS`.
+    A tool call is one frame. Unfolded, it shows its input, its output and
+    its diff, in that order, each bare under a muted caption line (rule
+    23a2): `input`, `output` or `diff`, then the language label where one is
+    known. A `read` shows no input, because its subject names the file. A
+    `read` output with a first line number has a line-number gutter that
+    starts there, and the numbers are not part of the selected or copied
+    text. A permission shows its command bare under `command · Shell`.
+    Every block shows its time: a muted `HH:MM:SS` at the right of a summary
+    line and of a prompt, and the full date and time on hover of any block.
+    `BlockView` is memoized, and it compares a question card or a permission
+    picker by its props, so a streamed chunk re-renders only the block it
+    changes. A card or a picker whose own state changes renders again. A message, a person's prompt, a plan, a
     permission and a question never fold. The whole summary is one button
     with `aria-expanded`, so a click, Enter or Space opens that block alone;
     its content sits outside the button, so selecting it, a link in it and
@@ -476,7 +492,13 @@ Out: the daemon endpoints themselves (012).
     grammar has loaded. The tokens of one text, language and theme are
     computed once. An unknown language is plain text with no label. A diff
     keeps the green added and red removed lines, and a hunk header muted.
-    Copy puts the original text on the clipboard.
+    Code has one frame, never a frame inside a frame. A fenced block in a
+    message or a thought keeps one light frame, with its language label and
+    an icon-only Copy on one caption line, and no header bar. Inside a tool
+    call or a permission, the block's `caption` prop names the section: the
+    code then has no border, background or header bar of its own, and its
+    caption line ends with the same icon-only Copy. Copy puts the section's
+    original text on the clipboard and never toggles a fold.
 23a3. A reader who scrolls more than a few pixels from the newest output
     stops following and gets a `Jump to latest` button over the transcript,
     marked `New output` once the transcript changed since. The button
@@ -1468,7 +1490,24 @@ Out: the daemon endpoints themselves (012).
   `ui/src/components/code-block.test.tsx::shows the plain text first and the same text highlighted once the grammar loads`,
   `::shows a language the data does not know as plain text with no label`,
   `::shows a fence named after an object property as plain text`,
-  `::keeps the tints of a diff's added, removed and hunk-header lines`).
+  `::keeps the tints of a diff's added, removed and hunk-header lines`,
+  `::draws a fence in one light frame, its label and an icon-only Copy on one caption line`,
+  `::draws a captioned block bare, under a caption that names the section and the language`).
+- A tool call is one frame with its input, output and diff under captions,
+  a summary of status, kind, subject, count, duration and time, and every
+  block shows its time; `BlockView` re-renders only the block a chunk
+  changes (rules 23a and 23a2)
+  (`ui/src/features/sessions/console/blocks.test.tsx::draws a tool call in one frame, with its input, output and diff bare under their captions`,
+  `::copies one section's text from its icon-only control and never toggles the fold`,
+  `::names a call's status, kind and subject at the left of its summary, and its count, duration and time at the right`,
+  `::gives every ACP kind its own icon and any other kind one more`,
+  `::says how long a call took in the unit that fits it, once it has ended`,
+  `::shows a read's output with no input, in its file's language, numbered from its first line outside the text`,
+  `::shows a permission's command as shell`,
+  `::shows every block's time: the clock on a prompt and a summary line, and the full date on hover`,
+  `::re-renders only the block a streamed chunk changes`,
+  `ui/src/features/sessions/console/session-console-renders.test.tsx::draws a question card again for its own change, not for a message streamed after it`,
+  `::draws a permission picker again for its own change, not for a message streamed after it`).
 - The console retains a session's draft, fold and place apart per daemon and
   session, and keeps one open stream while shown (rule 24i)
   (`ui/src/features/sessions/console/composer.test.tsx::brings a session's draft and fold back after the console is unmounted`,

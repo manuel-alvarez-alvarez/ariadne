@@ -265,6 +265,23 @@ export function formatAbsolute(iso: string | null | undefined): string {
   return date ? ABSOLUTE.format(date) : iso
 }
 
+const STAMP = new Intl.DateTimeFormat(LOCALE, { dateStyle: "full", timeStyle: "medium" })
+
+/** `Saturday, November 14, 2026 at 8:30:15 AM` — the stamp to the second, for a hover. */
+export function formatStamp(iso: string): string {
+  const date = parseDate(iso)
+  return date ? STAMP.format(date) : iso
+}
+
+/** `08:30:15` — the time of day on the 24-hour clock, the way a console's lines read it. */
+export function formatClock(iso: string): string {
+  const date = parseDate(iso)
+  if (!date) return iso
+  return [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map((part) => String(part).padStart(2, "0"))
+    .join(":")
+}
+
 /** `3 minutes ago` — the glanceable form; the absolute stamp is the hint behind it. */
 export function formatRelative(iso: string, now: number = Date.now()): string {
   const date = parseDate(iso)

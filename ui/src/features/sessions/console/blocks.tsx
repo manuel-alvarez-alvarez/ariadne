@@ -1,13 +1,27 @@
-import { Loader2Icon } from "lucide-react"
-import type { KeyboardEvent, ReactNode } from "react"
+import {
+  BrainIcon,
+  CheckIcon,
+  CircleIcon,
+  FileTextIcon,
+  GlobeIcon,
+  Loader2Icon,
+  type LucideIcon,
+  MoveRightIcon,
+  PencilIcon,
+  SearchIcon,
+  TerminalIcon,
+  Trash2Icon,
+  WrenchIcon,
+  XIcon,
+} from "lucide-react"
+import { isValidElement, type KeyboardEvent, memo, type ReactNode } from "react"
 
 import { CodeBlock } from "@/components/code-block"
 import { Markdown } from "@/components/markdown"
-import { cn } from "@/lib/format"
-import { languageForPath } from "@/lib/highlight"
+import { cn, formatClock, formatStamp } from "@/lib/format"
 
 import { Foldable } from "./foldable"
-import { type Block, isTerminal, type PermissionOption } from "./transcript"
+import type { Block, PermissionOption } from "./transcript"
 
 /** The characters of a thought or a daemon prompt its folded summary quotes. */
 const SUMMARY_CHARS = 90
@@ -23,8 +37,41 @@ function lineCount(text: string): string {
   return `${count} ${count === 1 ? "line" : "lines"}`
 }
 
-/** What a person typed is a message: set apart and full size. */
-export function PromptBox({ text, queued }: { text: string; queued?: boolean }) {
+/** How long a call took, in the unit that fits it, as the CLI's pane says it. */
+function duration(from: string | undefined, to: string | undefined): string | undefined {
+  if (from === undefined || to === undefined) return undefined
+  const ms = Date.parse(to) - Date.parse(from)
+  if (Number.isNaN(ms) || ms < 0) return undefined
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  return `${Math.floor(ms / 60_000)}m ${String(Math.floor((ms % 60_000) / 1000)).padStart(2, "0")}s`
+}
+
+/** A summary line: what the block is at the left, and its muted facts and time at the right end. */
+function SummaryLine({ start, end }: { start: ReactNode; end: (string | undefined)[] }) {
+  return (
+    <span className="flex min-w-0 items-start gap-3">
+      <span className="min-w-0 flex-1 break-words">{start}</span>
+      <span data-summary-end className="flex shrink-0 gap-2 tabular-nums">
+        {end.map((fact, index) =>
+          // biome-ignore lint/suspicious/noArrayIndexKey: each place is one fact, never reordered
+          fact ? <span key={index}>{fact}</span> : null,
+        )}
+      </span>
+    </span>
+  )
+}
+
+/** What a person typed is a message: set apart and full size, with the time it was sent. */
+export function PromptBox({
+  text,
+  queued,
+  time,
+}: {
+  text: string
+  queued?: boolean
+  time?: string
+}) {
   return (
     <div className="rounded-md border-l-2 border-primary bg-primary/10 px-3 py-2">
       {queued ? (
@@ -32,24 +79,54 @@ export function PromptBox({ text, queued }: { text: string; queued?: boolean }) 
           queued
         </span>
       ) : null}
-      <p className="whitespace-pre-wrap break-words">{text}</p>
+      <div className="flex items-start gap-3">
+        <p className="min-w-0 flex-1 whitespace-pre-wrap break-words">{text}</p>
+        {time ? (
+          <span
+            data-block-time
+            className="shrink-0 pt-0.5 font-mono text-[11px] text-muted-foreground tabular-nums"
+          >
+            {time}
+          </span>
+        ) : null}
+      </div>
     </div>
   )
 }
 
-export function BlockView({
-  block,
-  picker,
-  folded,
-  onToggle,
-}: {
+/** Whether two pickers draw the same: the same node, or one element type with the same props. */
+function samePicker(before: ReactNode, after: ReactNode): boolean {
+  if (Object.is(before, after)) return true
+  if (!isValidElement(before) || !isValidElement(after)) return false
+  if (before.type !== after.type || before.key !== after.key) return false
+  const was = before.props as Record<string, unknown>
+  const now = after.props as Record<string, unknown>
+  const keys = Object.keys(was)
+  return (
+    keys.length === Object.keys(now).length && keys.every((key) => Object.is(was[key], now[key]))
+  )
+}
+
+type BlockViewProps = {
   block: Block
   picker: ReactNode
   folded: boolean
   onToggle: (id: string, folded: boolean) => void
-}) {
+}
+
+/**
+ * One block of the transcript. Memoized: the transcript keeps every block it
+ * did not change, and a picker is compared by its props, so a streamed chunk
+ * re-renders the one block it grows.
+ */
+export const BlockView = memo(function BlockView({
+  block,
+  picker,
+  folded,
+  onToggle,
+}: BlockViewProps) {
   return (
-    <div data-block={block.type} data-block-id={block.id}>
+    <div data-block={block.type} data-block-id={block.id} title={formatStamp(block.createdAt)}>
       {block.subagent ? (
         <div className="pb-0.5 font-mono text-[11px] text-muted-foreground">
           ↳ {block.subagent.title}
@@ -62,6 +139,15 @@ export function BlockView({
         onToggle={() => onToggle(block.id, folded)}
       />
     </div>
+  )
+}, sameBlockView)
+
+function sameBlockView(before: BlockViewProps, after: BlockViewProps): boolean {
+  return (
+    before.block === after.block &&
+    before.folded === after.folded &&
+    before.onToggle === after.onToggle &&
+    samePicker(before.picker, after.picker)
   )
 }
 
@@ -76,6 +162,7 @@ function BlockBody({
   folded: boolean
   onToggle: () => void
 }) {
+  const time = formatClock(block.createdAt)
   switch (block.type) {
     case "prompt":
       return block.daemon ? (
@@ -84,15 +171,20 @@ function BlockBody({
           onToggle={onToggle}
           className="rounded-md border-l-2 bg-muted/40"
           summary={
-            <>
-              daemon prompt · {firstLine(block.text)} · {lineCount(block.text)}
-            </>
+            <SummaryLine
+              start={
+                <>
+                  daemon prompt · {firstLine(block.text)} · {lineCount(block.text)}
+                </>
+              }
+              end={[time]}
+            />
           }
         >
           <p className="whitespace-pre-wrap break-words">{block.text}</p>
         </Foldable>
       ) : (
-        <PromptBox text={block.text} />
+        <PromptBox text={block.text} time={time} />
       )
     case "message":
       return <Markdown>{block.text}</Markdown>
@@ -101,7 +193,7 @@ function BlockBody({
         <Foldable
           folded={folded}
           onToggle={onToggle}
-          summary={<>thought · {firstLine(block.text)}</>}
+          summary={<SummaryLine start={<>thought · {firstLine(block.text)}</>} end={[time]} />}
         >
           <Markdown className="text-muted-foreground italic">{block.text}</Markdown>
         </Foldable>
@@ -122,26 +214,34 @@ function BlockBody({
       )
     case "tool": {
       const { tool } = block
-      const body = tool.output || tool.diff
+      // A read's subject names its file, so its input says nothing more.
+      const input = tool.kind === "read" ? undefined : tool.inputText
       const summary = (
-        <>
-          <ToolStatus status={tool.status} />
-          {tool.kind ? ` · ${tool.kind}` : null}
-          {" · "}
-          <span className="font-medium text-foreground">{tool.title}</span>
-          {body ? ` · ${lineCount(body)}` : null}
-        </>
+        <SummaryLine
+          start={
+            <>
+              <span className="mr-1.5 inline-flex items-center gap-1.5 align-[-2px]">
+                <ToolStatus status={tool.status} />
+                <ToolKind kind={tool.kind} />
+              </span>
+              <span className="font-medium text-foreground">{tool.subject ?? tool.title}</span>
+            </>
+          }
+          end={[
+            tool.output ? lineCount(tool.output) : undefined,
+            duration(tool.startedAt, tool.endedAt),
+            formatClock(tool.startedAt ?? block.createdAt),
+          ]}
+        />
       )
-      if (!body) {
+      if (!input && !tool.output && !tool.diff) {
         return (
-          <div className="rounded-md border px-2 py-1 font-mono text-xs text-muted-foreground">
-            {summary}
+          <div className="flex items-start gap-1.5 rounded-md border px-2 py-1 font-mono text-xs text-muted-foreground">
+            <span aria-hidden className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">{summary}</span>
           </div>
         )
       }
-      // A file the tool read is shown in the file's language.
-      const language =
-        tool.kind === "read" ? languageForPath(tool.title.split(/\s+/).at(-1) ?? "") : undefined
       return (
         <Foldable
           folded={folded}
@@ -149,8 +249,20 @@ function BlockBody({
           summary={summary}
           className="rounded-md border"
         >
-          {tool.output ? <Output text={tool.output} language={language} /> : null}
-          {tool.diff ? <Diff text={tool.diff} /> : null}
+          <div className="space-y-2.5">
+            {input ? (
+              <CodeBlock code={input} language={tool.inputLanguage} caption="input" />
+            ) : null}
+            {tool.output ? (
+              <CodeBlock
+                code={tool.output}
+                language={tool.outputLanguage}
+                firstLine={tool.firstLine}
+                caption="output"
+              />
+            ) : null}
+            {tool.diff ? <CodeBlock code={tool.diff} diff caption="diff" /> : null}
+          </div>
         </Foldable>
       )
     }
@@ -158,8 +270,12 @@ function BlockBody({
       return (
         <div className="rounded-md border border-status-warn/40 bg-status-warn-soft/30 px-3 py-2 text-xs">
           <div className="font-medium">Permission · {block.title}</div>
-          {block.command ? <Output text={block.command} /> : null}
-          {block.diff ? <Diff text={block.diff} /> : null}
+          {block.command ? (
+            <CodeBlock code={block.command} language="shell" caption="command" className="mt-1.5" />
+          ) : null}
+          {block.diff ? (
+            <CodeBlock code={block.diff} diff caption="diff" className="mt-1.5" />
+          ) : null}
           {block.answer ? (
             <div className="pt-1 font-mono text-muted-foreground">
               <span aria-hidden>↳ </span>
@@ -196,24 +312,45 @@ function BlockBody({
 
 const PLAN_MARKS: Record<string, string> = { completed: "✓", in_progress: "◐", pending: "○" }
 
+/** The mark of a call's status, with its name for a screen reader. */
 function ToolStatus({ status }: { status?: string }) {
-  const tone =
+  const [Icon, tone] =
     status === "failed"
-      ? "text-status-danger-fg"
-      : isTerminal(status)
-        ? "text-status-done-fg"
-        : "text-status-active-fg"
-  return <span className={tone}>{status ?? "pending"}</span>
+      ? [XIcon, "text-status-danger-fg"]
+      : status === "completed"
+        ? [CheckIcon, "text-status-done-fg"]
+        : status === "in_progress"
+          ? [Loader2Icon, "animate-spin text-status-active-fg"]
+          : [CircleIcon, "text-muted-foreground"]
+  return (
+    <>
+      <Icon aria-hidden className={cn("size-3.5 shrink-0", tone)} />
+      <span className="sr-only">{status ?? "pending"}</span>
+    </>
+  )
 }
 
-/** A tool's output or a command, whole: it grows with its content and wraps, and never scrolls inside. */
-function Output({ text, language }: { text: string; language?: string }) {
-  return <CodeBlock code={text} language={language} className="mt-1.5" />
+/** One icon per ACP kind, so the eye tells a command from a read from an edit before a word. */
+const KIND_ICONS: Record<string, LucideIcon> = {
+  read: FileTextIcon,
+  edit: PencilIcon,
+  delete: Trash2Icon,
+  move: MoveRightIcon,
+  search: SearchIcon,
+  execute: TerminalIcon,
+  think: BrainIcon,
+  fetch: GlobeIcon,
 }
 
-/** A file change, with its added and removed lines colored. */
-function Diff({ text }: { text: string }) {
-  return <CodeBlock code={text} diff className="mt-1.5" />
+function ToolKind({ kind }: { kind?: string }) {
+  const Icon =
+    (kind !== undefined && Object.hasOwn(KIND_ICONS, kind) && KIND_ICONS[kind]) || WrenchIcon
+  return (
+    <span data-tool-kind={kind ?? "other"} title={kind ?? "other"} className="inline-flex">
+      <Icon aria-hidden className="size-3.5 shrink-0" />
+      <span className="sr-only">{kind ?? "other"}</span>
+    </span>
+  )
 }
 
 export function PermissionPicker({

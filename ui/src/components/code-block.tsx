@@ -1,7 +1,10 @@
 /**
- * A block of code the way the console and the Markdown renderer show it: the
- * language where it is known, a Copy control, and the code itself, highlighted
- * where its language is known and plain where it is not.
+ * A block of code the way the console and the Markdown renderer show it: one
+ * caption line with the language where it is known and an icon-only Copy
+ * control, then the code itself, highlighted where its language is known and
+ * plain where it is not. A fence has one light frame. A block with a
+ * `caption` is a section of a block that frames it, so it has no frame of its
+ * own, and its caption names the section first.
  *
  * The code is plain text until its language's grammar has loaded, then the
  * same text in CodeMirror's tokens, coloured by `HIGHLIGHT_STYLES`, the
@@ -14,7 +17,7 @@
 
 import { CopyIcon } from "lucide-react"
 import { useTheme } from "next-themes"
-import { useEffect, useMemo, useState } from "react"
+import { type CSSProperties, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -28,6 +31,8 @@ import {
   loadGrammar,
 } from "@/lib/highlight"
 import { HIGHLIGHT_STYLES } from "@/lib/highlight-style"
+
+type Token = ReturnType<typeof highlight>[number]
 
 /** The newest highlighted texts, so a block mounted again does not parse again. */
 const CACHE_SIZE = 200
@@ -67,24 +72,68 @@ function useGrammar(language: string | undefined) {
   return grammar
 }
 
-function HighlightedCode({ code, language }: { code: string; language: string | undefined }) {
+/** The runs of `code`: its highlight tokens once its grammar has loaded, else the text whole. */
+function useTokens(code: string, language: string | undefined): Token[] {
   const dark = useTheme().resolvedTheme === "dark"
   const grammar = useGrammar(language)
-  const tokens = useMemo(
-    () => (language && grammar ? cachedHighlight(language, code, grammar, dark) : undefined),
+  return useMemo(
+    () => (language && grammar ? cachedHighlight(language, code, grammar, dark) : [{ text: code }]),
     [language, code, grammar, dark],
   )
-  if (!tokens) return code
-  return tokens.map((token, index) =>
-    token.className ? (
-      // biome-ignore lint/suspicious/noArrayIndexKey: the tokens of one text, never reordered
-      <span key={index} className={token.className}>
-        {token.text}
-      </span>
-    ) : (
-      token.text
-    ),
+}
+
+function run(token: Token, key: number) {
+  return token.className ? (
+    <span key={key} className={token.className}>
+      {token.text}
+    </span>
+  ) : (
+    token.text
   )
+}
+
+/** The tokens split at every line break, each line's break kept at its end. */
+function tokenLines(tokens: Token[]): Token[][] {
+  const lines: Token[][] = [[]]
+  for (const token of tokens) {
+    const parts = token.text.split("\n")
+    parts.forEach((text, index) => {
+      const last = index === parts.length - 1
+      const line = lines.at(-1) as Token[]
+      const piece = last ? text : `${text}\n`
+      if (piece !== "") line.push({ ...token, text: piece })
+      if (!last) lines.push([])
+    })
+  }
+  if (lines.length > 1 && lines.at(-1)?.length === 0) lines.pop()
+  return lines
+}
+
+function HighlightedCode({
+  code,
+  language,
+  firstLine,
+}: {
+  code: string
+  language: string | undefined
+  firstLine?: number
+}) {
+  const tokens = useTokens(code, language)
+  if (firstLine === undefined) return tokens.map(run)
+  const lines = tokenLines(tokens)
+  const width = String(firstLine + lines.length - 1).length
+  // The number is the line's generated content, so a selection and a copy skip it.
+  return lines.map((line, index) => (
+    <div
+      // biome-ignore lint/suspicious/noArrayIndexKey: the lines of one text, never reordered
+      key={index}
+      data-line={firstLine + index}
+      style={{ "--gutter": `${width}ch` } as CSSProperties}
+      className="flex min-h-lh before:w-(--gutter) before:shrink-0 before:pr-3 before:text-right before:text-muted-foreground/70 before:content-[attr(data-line)] before:select-none"
+    >
+      <span className="min-w-0 flex-1">{line.map(run)}</span>
+    </div>
+  ))
 }
 
 function lineTone(line: string): string | undefined {
@@ -98,6 +147,8 @@ export function CodeBlock({
   code,
   language,
   diff = false,
+  caption,
+  firstLine,
   className,
 }: {
   code: string
@@ -105,22 +156,47 @@ export function CodeBlock({
   language?: string
   /** Color the lines as a unified diff. */
   diff?: boolean
+  /**
+   * The section this code is of a block that frames it, such as `input` or
+   * `output`: the code is then bare, with no frame of its own, under a caption
+   * that names the section and then the language.
+   */
+  caption?: string
+  /** Number the lines from this one, in a gutter outside the text. */
+  firstLine?: number
   className?: string
 }) {
   const known = diff ? "diff" : knownLanguage(language)
   const label = diff ? "diff" : known ? languageLabel(known) : undefined
+  const copyLabel = caption ? `Copy ${caption}` : label ? `Copy ${label} code` : "Copy code"
   return (
     <div
       data-code-block
-      className={cn("rounded-md border bg-muted/50 font-mono text-xs", className)}
+      className={cn(
+        "min-w-0 font-mono text-xs",
+        caption === undefined && "rounded-md border border-border/60",
+        className,
+      )}
     >
-      <div className="flex items-center justify-between gap-2 border-b px-2 py-0.5 text-[11px] text-muted-foreground">
-        <span data-code-language>{label ?? ""}</span>
+      <div
+        data-code-caption
+        className={cn(
+          "flex items-center gap-2 text-[11px] text-muted-foreground",
+          caption === undefined && "px-2 pt-0.5",
+        )}
+      >
+        <span className="min-w-0 flex-1 truncate">
+          {caption}
+          {caption && label && label !== caption ? <span aria-hidden> · </span> : null}
+          <span data-code-language>{label === caption ? "" : (label ?? "")}</span>
+        </span>
         <Button
           type="button"
-          size="xs"
+          size="icon-xs"
           variant="ghost"
-          aria-label={label ? `Copy ${label} code` : "Copy code"}
+          className="size-5"
+          aria-label={copyLabel}
+          title={copyLabel}
           onClick={() =>
             void copyText(code).then((copied) =>
               copied ? toast.success("Code copied") : toast.error("Could not copy the code"),
@@ -128,11 +204,15 @@ export function CodeBlock({
           }
         >
           <CopyIcon />
-          Copy
         </Button>
       </div>
-      <pre className="m-0 min-w-0 p-2 whitespace-pre-wrap break-words">
-        <code className="bg-transparent p-0">
+      <pre
+        className={cn(
+          "m-0 min-w-0 whitespace-pre-wrap break-words",
+          caption === undefined ? "px-2 pt-0.5 pb-2" : "pt-0.5",
+        )}
+      >
+        <code className="p-0">
           {diff ? (
             code.split("\n").map((line, index) => (
               <div
@@ -144,7 +224,7 @@ export function CodeBlock({
               </div>
             ))
           ) : (
-            <HighlightedCode code={code} language={known} />
+            <HighlightedCode code={code} language={known} firstLine={firstLine} />
           )}
         </code>
       </pre>

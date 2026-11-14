@@ -807,7 +807,7 @@ function mergeTool(blocks: Block[], event: AgentEventDto): boolean {
   return true
 }
 
-export function isTerminal(status: string | undefined): boolean {
+function isTerminal(status: string | undefined): boolean {
   return status === "completed" || status === "failed"
 }
 

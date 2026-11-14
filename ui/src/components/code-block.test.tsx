@@ -43,6 +43,38 @@ it("keeps the tints of a diff's added, removed and hunk-header lines", () => {
   ])
 })
 
+/** Whether a class list sets a border or a background of its own, not on hover or focus. */
+const framed = (node: Element) =>
+  /(^|\s)(border|border-[blrtxy]|bg-[\w/[\]-]+)(\s|$)/.test(node.getAttribute("class") ?? "")
+
+it("draws a fence in one light frame, its label and an icon-only Copy on one caption line", () => {
+  const { container, getByRole } = render(<CodeBlock code="let x = 1" language="ts" />)
+  const block = container.querySelector("[data-code-block]") as HTMLElement
+
+  expect(framed(block)).toBe(true)
+  const inner = Array.from(block.querySelectorAll("*")).filter(
+    (node) => node.tagName !== "BUTTON" && framed(node),
+  )
+  expect(inner).toEqual([])
+  const copy = getByRole("button", { name: "Copy TypeScript code" })
+  expect(copy.textContent).toBe("")
+  expect(copy.closest("[data-code-caption]")?.textContent).toBe("TypeScript")
+})
+
+it("draws a captioned block bare, under a caption that names the section and the language", () => {
+  const { container, getByRole } = render(
+    <CodeBlock code='{"a": 1}' language="json" caption="output" />,
+  )
+  const nodes = [
+    container.querySelector("[data-code-block]"),
+    ...container.querySelectorAll("[data-code-block] *"),
+  ]
+
+  expect(nodes.filter((node) => node && node.tagName !== "BUTTON" && framed(node))).toEqual([])
+  expect(container.querySelector("[data-code-caption]")?.textContent).toBe("output · JSON")
+  expect(getByRole("button", { name: "Copy output" }).textContent).toBe("")
+})
+
 it("shows a fence named after an object property as plain text", () => {
   for (const language of ["constructor", "__proto__"]) {
     const { container, unmount } = render(<CodeBlock code="x" language={language} />)
