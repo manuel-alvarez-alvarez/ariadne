@@ -507,10 +507,10 @@ Out: the daemon endpoints themselves (012).
     Thought summaries have no additional padding inside their activity row.
     Conversation messages have 12px separation; activity rows use 4px gaps and compact padding.
     The composer shares the conversation margin, with a compact pending-request control above it.
-    A permission's header (`Permission ·` and the call) keeps one
-    line the same way, with its time at the right end. A pending permission
-    shows its header, command, diff, AI note and picker open, whatever the
-    fold. An answered permission keeps a compact conversation row with its chosen answer.
+    A permission row shows `Permission ·`, the call, and its pending state or chosen answer.
+    Its timestamp appears on hover. Selecting a pending permission shows its header, command,
+    diff, AI note and picker in details, regardless of the conversation fold state.
+    An answered permission keeps a compact conversation row with its chosen answer.
     Its selected details retain the command, diff and decision source. The detail body can
     fold locally; selecting another item resets this preference. No permission detail preference is persisted.
     The AI note is the TUI's (`AI said ask · allow 62%,
@@ -1988,3 +1988,6 @@ account of the sessions screen in particular rests on reading
 
 Interaction reference: [Introducing Devin](https://docs.devin.ai/get-started/devin-intro),
 for conversation beside selected activity details. Ariadne retains its own components and themes.
+
+The user’s later Develop instruction places permission requests in the details pane or drawer, like tools.
+This overrides the original requirement to keep permission responses inline. Questions remain in the conversation.
