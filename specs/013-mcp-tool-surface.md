@@ -250,7 +250,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::the_tool_texts_read_as_the_spec_words_them`):
   - `report_pull_request` is "Tell Ariadne the state of your request. Set
     `ready` when readiness changes. Set `reviewed_sha` after a review round."
-  - `list_tasks` says "with the columns and agents of each task".
+  - `list_tasks` says "as a summary".
   - `list_models` says "an agent", not "a slot".
   - `open_pull_request` says it "returns" the URL, not "answers" it.
   - The `send_message` `body` doc is "The whole message. Write it so that the
@@ -320,6 +320,15 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 
 - The readiness tool posts the supplied head:
   `tools.rs::marking_ready_posts_the_confirmed_head`.
+- `list_tasks` asks `GET /v1/tasks?goal=<goal id>` and returns `goal_steps`,
+  the goal columns once, and `tasks`. Each task holds `id`, `title`,
+  `status`, `step`, `depends_on`, `branch`, `pr_url`, `reason`, `stalled`
+  and `agents`, with each agent as `get_task` gives it. It holds no
+  `description`, `usage`, timestamps or goal columns
+  (`tools.rs::listing_tasks_gives_the_goal_columns_once_and_task_summaries`).
+- `get_task` gives the task with `goal_steps` and without `usage`,
+  `created_at` and `updated_at`
+  (`tools.rs::reading_a_task_drops_usage_and_timestamps`).
 - Seat lists include readiness for agents and keepers alone:
   `mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`.
 
