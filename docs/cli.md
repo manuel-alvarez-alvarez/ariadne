@@ -452,13 +452,16 @@ and available code changes. New calls do not change your selection.
 Close the details with its close button or Escape to return to the selected row.
 The embedded and expanded consoles use the same layout.
 
-Questions and permissions stay in the conversation. Use `Pending request`
-near the composer to reveal a request and focus its response control.
-The drawer also offers this control; using it closes the drawer.
+Questions stay in the conversation. Permission rows open their command, diff,
+and response controls beside the conversation, or in the right drawer on narrow panels.
+Use `Pending request` to open a permission and focus its picker. For a question,
+this control closes the drawer and reveals the question in the conversation.
 This works for subagent requests too.
 
 User, developer and assistant messages always remain expanded. Role labels identify
-them; compact secondary activity sits slightly indented, without left borders.
+them. Assistant headers have a bot icon and subtle background; Developer headers
+have a code icon, muted background and fine outline. Both stay fully expanded.
+Compact secondary activity sits slightly indented, without left borders.
 Pending questions stay open. Answered questions can fold to show the question
 and chosen answer together. Thoughts still fold individually. `Unfold` and `Fold` in
 the header, and the plus menu's `Expand all` and `Collapse all`, change

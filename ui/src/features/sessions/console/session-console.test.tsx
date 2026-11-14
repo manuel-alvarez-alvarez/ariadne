@@ -213,7 +213,8 @@ it("answers a permission from its picker with the keyboard, and shows who decide
     ],
   })
   const { source } = renderConsole([request], "running")
-  within(transcript()).getByText("rm -rf build")
+  fireEvent.click(within(transcript()).getByRole("button", { name: /Permission/ }))
+  screen.getByText("rm -rf build")
   const picker = screen.getByRole("listbox", { name: "Answer the permission" })
 
   fireEvent.keyDown(picker, { key: "ArrowDown" })
@@ -239,30 +240,28 @@ it("answers a permission from its picker with the keyboard, and shows who decide
     ),
   )
   expect(screen.queryByRole("listbox", { name: "Answer the permission" })).toBeNull()
-  within(transcript()).getByText("Reject · decided by console")
+  screen.getByText("Reject · decided by console")
 })
 
-it("folds a permission when it is answered, even with the console unfolded", async () => {
-  const user = userEvent.setup()
+it("keeps an answered permission compact and opens its details on selection", () => {
   const request = event("permission_request", {
     acp: { toolCallId: "call-1", title: "Bash", rawInput: { command: "rm -rf build" } },
     options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
   })
   const { source } = renderConsole([request], "running")
-  await user.click(screen.getByRole("button", { name: "Unfold" }))
-  expect(transcript().textContent).toContain("rm -rf build")
-
+  fireEvent.click(screen.getByRole("button", { name: "Unfold" }))
+  expect(transcript().textContent).not.toContain("rm -rf build")
   act(() =>
     source.emit(
       "event",
       event("permission.replied", { option_id: "allow", decided_by: "console" }),
     ),
   )
-
-  within(transcript()).getByText("Allow · decided by console")
-  expect(transcript().textContent).not.toContain("rm -rf build")
-  await user.click(within(transcript()).getByRole("button", { name: /Permission · Bash/ }))
-  expect(transcript().textContent).toContain("rm -rf build")
+  within(transcript()).getByText("Allow")
+  fireEvent.click(within(transcript()).getByRole("button", { name: /Permission · Bash/ }))
+  const drawer = screen.getByRole("dialog", { name: "Permission details" })
+  expect(drawer.querySelector("code")?.textContent).toBe("rm -rf build")
+  within(drawer).getByText("Allow · decided by console")
 })
 
 it.each([
@@ -278,6 +277,7 @@ it.each([
 
   fireEvent.keyDown(input(), { key: "Enter", ...init })
 
+  fireEvent.click(within(transcript()).getByRole("button", { name: /Permission/ }))
   // An answer marks its option as being sent at once, before its POST.
   expect(screen.getByRole("option", { name: /Allow/ }).getAttribute("aria-disabled")).toBe("false")
   expect(posts).toHaveLength(0)
@@ -292,6 +292,7 @@ it("picks a permission option with a click", async () => {
     }),
   ])
 
+  fireEvent.click(within(transcript()).getByRole("button", { name: /Permission/ }))
   await user.click(screen.getByRole("option", { name: /Allow/ }))
 
   await waitFor(() => expect(posts[0]?.body).toBe(JSON.stringify({ text: "allow" })))
@@ -586,9 +587,11 @@ it("shows a child's own events read-only, and its questions and lines in main", 
   within(transcript()).getByText("◇ subagent Explorer · Explorer task")
   within(transcript()).getByText("Permission · Bash · asked by subagent Explorer")
   expect(within(transcript()).queryByText("child says")).toBeNull()
+  fireEvent.click(within(transcript()).getByRole("button", { name: /Permission/ }))
   await user.click(screen.getByRole("option", { name: /Allow/ }))
   await waitFor(() => expect(posts[0]?.body).toBe(JSON.stringify({ text: "allow" })))
 
+  fireEvent.click(screen.getByRole("button", { name: "Close permission details" }))
   await user.click(screen.getByRole("tab", { name: /Explorer/ }))
 
   within(transcript()).getByText("child says")

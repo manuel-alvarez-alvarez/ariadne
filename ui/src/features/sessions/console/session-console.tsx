@@ -56,7 +56,7 @@ import { useBaseUrl } from "@/stores/settings"
 
 import { SwitchSessionDialog, useResumeAction } from "../session-actions"
 import { isLiveStatus } from "../session-display"
-import { BlockView, PermissionPicker, PromptBox, ToolRow } from "./blocks"
+import { BlockView, PermissionPicker, PermissionRow, PromptBox, ToolRow } from "./blocks"
 import { Composer, suggest } from "./composer"
 import { ComposerMenu } from "./composer-menu"
 import { ConsoleStream, type ConsoleStreamStatus, consoleStreamUrl } from "./console-stream"
@@ -515,23 +515,6 @@ function ConsolePane({
     setAnswering(null)
   }, [pendingId])
 
-  // A permission folds when it is answered, whatever the console's fold is;
-  // the block's own choice, made while it waited, stays.
-  const askedId = useRef<string>(undefined)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only a permission leaving the pending place folds
-  useEffect(() => {
-    const was = askedId.current
-    askedId.current = pendingId
-    if (was === undefined || was === pendingId) return
-    const block = transcript.blocks.find((one) => one.id === was)
-    if (block?.type !== "permission" || !block.answer) return
-    const kept = readViewState(keyRef.current).blockFolds
-    if (kept[was] !== undefined) return
-    const next = { ...kept, [was]: true }
-    setBlockFolds(next)
-    updateViewState(keyRef.current, { blockFolds: next })
-  }, [pendingId])
-
   const fail = useCallback((what: string, error: unknown) => {
     setTranscript((current) => appendError(current, `${what}: ${describeError(error)}`))
   }, [])
@@ -873,8 +856,8 @@ function ConsolePane({
     setSelectedTool(id)
   }, [])
   const tool = blocks.find(
-    (block): block is Extract<typeof block, { type: "tool" }> =>
-      block.type === "tool" && block.id === selectedTool,
+    (block): block is Extract<typeof block, { type: "tool" | "permission" }> =>
+      (block.type === "tool" || block.type === "permission") && block.id === selectedTool,
   )
   const pendingQuestion = live
     ? openQuestion([...restoredQuestions(requests, transcript), ...transcript.blocks], answered)
@@ -895,12 +878,17 @@ function ConsolePane({
     )
   }
 
-  function revealRequest() {
+  function revealRequest(trigger: HTMLButtonElement) {
     if (!request) return
     requestFocus.current = request.id
     setRequestReveal((value) => value + 1)
     setSelectedTool(undefined)
     showView(request.subagent?.id, true)
+    if (request.type === "permission") {
+      requestFocus.current = undefined
+      toolTrigger.current = trigger
+      setSelectedTool(request.id)
+    }
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: reveal once after the requested view renders
   useLayoutEffect(() => {
@@ -915,7 +903,7 @@ function ConsolePane({
         size="sm"
         variant="secondary"
         className="h-7 justify-start text-xs"
-        onClick={revealRequest}
+        onClick={(event) => revealRequest(event.currentTarget)}
       >
         Pending request · {request.type === "permission" ? "Permission" : "Question"}
       </Button>
@@ -961,9 +949,22 @@ function ConsolePane({
       <div ref={body} tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
         <ConsoleWorkspace
           tool={tool}
+          requestReveal={requestReveal}
           onClose={() => setSelectedTool(undefined)}
           trigger={toolTrigger}
-          pendingControl={pendingControl}
+          picker={
+            tool?.type === "permission" && tool.id === pendingId ? (
+              <PermissionPicker
+                options={tool.options}
+                selected={selected}
+                answering={answering}
+                onSelect={setSelected}
+                onAnswer={answerPick}
+                onKeyDown={pickerKey}
+              />
+            ) : null
+          }
+          pendingControl={tool?.id === request?.id ? null : pendingControl}
           returnTarget={requestTarget}
         >
           <div className="border-b px-3 py-1.5 text-xs font-medium text-muted-foreground">
@@ -1008,6 +1009,13 @@ function ConsolePane({
                     selected={tool?.id === block.id}
                     onSelect={selectTool}
                   />
+                ) : block.type === "permission" ? (
+                  <PermissionRow
+                    key={block.id}
+                    block={block}
+                    selected={tool?.id === block.id}
+                    onSelect={selectTool}
+                  />
                 ) : block.type === "question" ? (
                   card(block)
                 ) : (
@@ -1016,18 +1024,7 @@ function ConsolePane({
                     block={block}
                     folded={blockFolds[block.id] ?? folded}
                     onToggle={toggleBlock}
-                    picker={
-                      block.type === "permission" && block.id === pendingId ? (
-                        <PermissionPicker
-                          options={block.options}
-                          selected={selected}
-                          answering={answering}
-                          onSelect={setSelected}
-                          onAnswer={answerPick}
-                          onKeyDown={pickerKey}
-                        />
-                      ) : null
-                    }
+                    picker={null}
                   />
                 ),
               )}

@@ -121,10 +121,12 @@ it("draws a permission picker again for its own change, not for a message stream
       ],
     }),
   ])
+  const log = transcript()
+  fireEvent.click(within(log).getByRole("button", { name: /Permission/ }))
   renders.picker = 0
 
   act(() => source.emit("event", event("agent_message_chunk", { text: "waiting" })))
-  within(transcript()).getByText("waiting")
+  within(log).getByText("waiting")
   expect(renders.picker).toBe(0)
 
   const picker = screen.getByRole("listbox", { name: "Answer the permission" })

@@ -113,12 +113,16 @@ collapse it or change tabs, until the app restarts.
 Tool rows open details beside the conversation when the panel has enough space,
 or in a drawer when narrow. New activity keeps the selected call open.
 Close details with its button or Escape; focus returns to the selected row.
-`Pending request` reveals a question or permission, including a subagent's,
-and closes the details drawer. Ctrl-O has no action in this console.
-The fold controls affect thoughts and resolved requests, independently of tool selection.
+`Pending request` opens permission response controls in the shared details area,
+including subagent permissions. For questions, it closes the drawer and reveals the card.
+Ctrl-O has no action in this console.
+The fold controls affect thoughts and resolved questions, independently of tool selection.
 User, developer and assistant messages always remain expanded. Unanswered questions
 stay open; answered summaries keep the question and selected answer. Secondary
 activity is compact and indented, with icons and labels instead of left borders.
+
+Assistant messages use a bot icon and subtle accent background. Developer prompts
+use a code icon, muted background and fine outline; their labels remain visible in both themes.
 
 The two ⌘ chords answer to **either** modifier, on every platform: the app runs
 in a Tauri WebView and in a browser tab, and a chord that silently does nothing

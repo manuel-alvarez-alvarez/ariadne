@@ -371,7 +371,7 @@ Out: the daemon endpoints themselves (012).
     running turn shows a Stop control that posts
     `POST /v1/sessions/{id}/console/cancel` with no body, and Escape inside
     the console cancels it too. A `permission_request` with no
-    `permission.replied` yet shows the call, its command or diff, and its
+    `permission.replied` yet has a selectable conversation row. Its details show the call, command or diff, and its
     options as a picker: Up, Down or 1 to 9 select an option, Enter or a
     click answers, and the answer is posted as `{"text": "<optionId>"}` to
     the same input route. The reply shows the chosen option and who decided
@@ -487,15 +487,20 @@ Out: the daemon endpoints themselves (012).
     to the selected row when available. Escape inside details closes details
     without cancelling a turn or closing the surrounding console.
     Selection is local to the mounted console and clears when switching views.
-    Questions and permissions stay in the conversation. A Pending request
-    control near the composer reveals the pending permission or newest unanswered
-    question, switches to its view, scrolls it into view, and focuses its response
-    control. The drawer repeats this control and closes when it is used.
+    Questions stay in the conversation. Permissions use compact selectable rows;
+    their command, diff, AI note and response picker open in the same details area as tools.
+    New permissions never replace the current selection automatically. The Pending request
+    control opens the pending permission and focuses its picker. For questions, it switches
+    to the question's view, closes the drawer, scrolls to the card and focuses its response.
+    The drawer repeats this control unless it already shows the pending permission.
     Requests from subagents keep their existing answer routes.
     A successful Ariadne `wait_for_user` call is hidden only when its returned
     request id matches a displayed question card; failed and unmatched calls stay visible.
     User, developer (daemon) prompts and assistant messages never fold. Role labels
-    identify them at the main conversation margin. Developer prompts have no individual
+    identify them at the main conversation margin. Assistant headers have a bot icon and
+    an accent-token background. Developer headers have a code icon, muted-token background
+    and subtle border-token outline. Labels and icon shapes distinguish roles without color alone.
+    Developer prompts have no individual
     fold control or saved fold preference. Thoughts retain individual folds.
     Questions use a purple marker and subtle background; pending questions never fold.
     Entries have no colored left borders. Secondary icons align with the first text line.
@@ -504,11 +509,10 @@ Out: the daemon endpoints themselves (012).
     A permission's header (`Permission ·` and the call) keeps one
     line the same way, with its time at the right end. A pending permission
     shows its header, command, diff, AI note and picker open, whatever the
-    fold. An answered permission folds to one line when the reply
-    arrives, whatever the console's fold, its header and its
-    answer (`decided by` where the payload names one); a click unfolds the
-    command, the diff and the AI note, and the choice is kept per block
-    like the others. The AI note is the TUI's (`AI said ask · allow 62%,
+    fold. An answered permission keeps a compact conversation row with its chosen answer.
+    Its selected details retain the command, diff and decision source. The detail body can
+    fold locally; selecting another item resets this preference. No permission detail preference is persisted.
+    The AI note is the TUI's (`AI said ask · allow 62%,
     deny 5% · danger 21% (allow up to 5%, deny from 65%)`), shown where the
     request carries one. A permission shows its command bare under
     `command · Shell`.
@@ -1562,7 +1566,7 @@ Out: the daemon endpoints themselves (012).
   `::allows selecting a call even when it has no content`,
   `::keeps a permission header on one line with its time, and shows the AI note`,
   `::keeps a pending permission open whatever the fold, and folds an answered one to one line`,
-  `ui/src/features/sessions/console/session-console.test.tsx::folds a permission when it is answered, even with the console unfolded`,
+  `ui/src/features/sessions/console/session-console.test.tsx::keeps an answered permission compact and opens its details on selection`,
   `ui/src/features/sessions/console/session-console-renders.test.tsx::draws a question card again for its own change, not for a message streamed after it`,
   `::draws a permission picker again for its own change, not for a message streamed after it`).
 - The console retains a session's draft, fold and place apart per daemon and
@@ -1654,11 +1658,13 @@ Out: the daemon endpoints themselves (012).
   `::keeps selected details when resizing between a drawer and adjacent details`,
   `::uses the same selectable details in an expanded console`,
   `::reveals a subagent question and sends its answer through the request route`,
-  `::returns from a child view to answer its pending permission in the conversation`,
+  `::returns from a child view to answer its pending permission in details`,
   `::shows existing input output and code changes in details without expanding the activity row`,
   `::keeps parent and child calls with the same tool id separate`,
   `::keeps user developer and assistant messages visible when folding activity`,
-  `::keeps the question and chosen option in an answered question summary`).
+  `::keeps the question and chosen option in an answered question summary`,
+  `::opens permission response controls in details and keeps the conversation compact`,
+  `::keeps tool selection when a permission arrives and opens its drawer only on request`).
 - The latest command list replaces the earlier one, an empty list and all,
   and a subagent's list is ignored
   (`ui/src/features/sessions/console/transcript.test.ts::replaces the command list with each later one, an empty list included`,

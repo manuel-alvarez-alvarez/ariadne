@@ -189,7 +189,7 @@ it("reveals a subagent question and sends its answer through the request route",
   expect(posted[0]).toContain('/agent-requests/question-1/answer {"option_id":"main"}')
 })
 
-it("returns from a child view to answer its pending permission in the conversation", async () => {
+it("returns from a child view to answer its pending permission in details", async () => {
   const child = { id: "child", title: "Explorer" }
   renderConsole([
     event("subagent_update", { subagent: child, state: "running" }),
@@ -319,4 +319,61 @@ it("keeps the question and chosen option in an answered question summary", () =>
     name: /Which branch should receive this change/,
   })
   expect(summary.textContent).toContain("Answered · Main")
+})
+
+it("opens permission response controls in details and keeps the conversation compact", async () => {
+  const source = renderConsole([
+    event("permission_request", {
+      tool_name: "Bash",
+      tool_input: { command: "deploy production" },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    }),
+  ])
+  expect(within(log()).queryByRole("listbox")).toBeNull()
+  fireEvent.click(within(log()).getByRole("button", { name: /Permission/ }))
+  const details = screen.getByRole("complementary", { name: "Permission details" })
+  const picker = within(details).getByRole("listbox", { name: "Answer the permission" })
+  expect(document.activeElement).toBe(picker)
+  within(details).getByText("deploy production")
+  const posted: string[] = []
+  daemonFetch.mockImplementation(async (input: Request) => {
+    if (input.method === "GET") return Response.json([])
+    posted.push(await input.text())
+    return new Response(null, { status: 204 })
+  })
+  await userEvent.click(within(picker).getByRole("option", { name: /Allow/ }))
+  expect(posted).toEqual(['{"text":"allow"}'])
+  act(() =>
+    source.emit(
+      "event",
+      event("permission.replied", { option_id: "allow", decided_by: "console" }),
+    ),
+  )
+  expect(within(details).queryByRole("listbox")).toBeNull()
+})
+
+it("keeps tool selection when a permission arrives and opens its drawer only on request", async () => {
+  const user = userEvent.setup()
+  const source = renderConsole()
+  act(() => resize(500))
+  fireEvent.click(within(log()).getByRole("button", { name: /Build/ }))
+  act(() =>
+    source.emit(
+      "event",
+      event("permission_request", {
+        tool_name: "Deploy",
+        options: [{ optionId: "allow", name: "Allow" }],
+      }),
+    ),
+  )
+  const tools = screen.getByRole("dialog", { name: "Tool details" })
+  fireEvent.click(within(tools).getByRole("button", { name: /Pending request/ }))
+  const permission = screen.getByRole("dialog", { name: "Permission details" })
+  expect(document.activeElement).toBe(within(permission).getByRole("listbox"))
+  await user.keyboard("{Escape}")
+  expect(screen.queryByRole("dialog", { name: "Permission details" })).toBeNull()
+  screen.getByRole("textbox", { name: "Message the agent" })
+  expect(document.activeElement).toBe(
+    within(log()).getByRole("button", { name: /Permission · Deploy/ }),
+  )
 })

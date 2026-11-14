@@ -1,11 +1,16 @@
 import { XIcon } from "lucide-react"
-import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react"
+import {
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { BlockView } from "./blocks"
 import type { Block } from "./transcript"
-
-const keepDetailsOpen = () => {}
 
 /** Both console sizes use the available panel width, not the browser width. */
 export function ConsoleWorkspace({
@@ -15,11 +20,15 @@ export function ConsoleWorkspace({
   trigger,
   pendingControl,
   returnTarget,
+  picker,
+  requestReveal,
 }: {
   children: ReactNode
-  tool: Extract<Block, { type: "tool" }> | undefined
+  tool: Extract<Block, { type: "tool" | "permission" }> | undefined
   onClose: () => void
   trigger: RefObject<HTMLElement | null>
+  requestReveal: number
+  picker?: ReactNode
   pendingControl: ReactNode
   returnTarget: () => HTMLElement | null
 }) {
@@ -37,21 +46,44 @@ export function ConsoleWorkspace({
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
+  const [detailsFolded, setDetailsFolded] = useState(false)
+  const toggleDetails = useCallback(() => setDetailsFolded((value) => !value), [])
+  const title = tool?.type === "permission" ? "Permission details" : "Tool details"
+  const closeLabel = `Close ${title.toLowerCase()}`
+  const focusDetails = () =>
+    (
+      detailsScroll.current?.querySelector<HTMLElement>('[role="listbox"]') ?? close.current
+    )?.focus()
+  const lastSelected = useRef<string | undefined>(undefined)
+  if (tool) lastSelected.current = tool.id
   const id = tool?.id
+  // biome-ignore lint/correctness/useExhaustiveDependencies: focus follows a deliberate selection or layout change
   useLayoutEffect(() => {
-    if (id && wide) {
-      close.current?.focus()
+    setDetailsFolded(false)
+    if (id) {
+      focusDetails()
       if (detailsScroll.current) detailsScroll.current.scrollTop = 0
     }
-  }, [id, wide])
-  const restoreFocus = () =>
-    (returnTarget() ?? (trigger.current?.isConnected ? trigger.current : root.current))?.focus()
+  }, [id, wide, requestReveal])
+  const restoreFocus = () => {
+    const row = Array.from(root.current?.querySelectorAll<HTMLElement>("[data-block-id]") ?? [])
+      .find((element) => element.dataset.blockId === lastSelected.current)
+      ?.querySelector<HTMLButtonElement>("button")
+    const target =
+      returnTarget() ?? (trigger.current?.isConnected ? trigger.current : (row ?? root.current))
+    target?.focus()
+  }
   function dismiss() {
     onClose()
     restoreFocus()
   }
   const content = tool ? (
-    <BlockView block={tool} picker={null} folded={false} onToggle={keepDetailsOpen} />
+    <BlockView
+      block={tool}
+      picker={picker ?? null}
+      folded={detailsFolded}
+      onToggle={toggleDetails}
+    />
   ) : null
   return (
     <div
@@ -64,7 +96,7 @@ export function ConsoleWorkspace({
       {wide ? (
         tool ? (
           <aside
-            aria-label="Tool details"
+            aria-label={title}
             className="flex min-h-0 w-[40%] min-w-0 flex-col border-l bg-muted/10"
             onKeyDownCapture={(event) => {
               if (event.key === "Escape" && !event.metaKey) {
@@ -75,13 +107,13 @@ export function ConsoleWorkspace({
             }}
           >
             <div className="flex items-center justify-between border-b px-3 py-1.5">
-              <h3 className="font-medium">Tool details</h3>
+              <h3 className="font-medium">{title}</h3>
               <Button
                 ref={close}
                 size="icon-xs"
                 variant="ghost"
                 onClick={dismiss}
-                aria-label="Close tool details"
+                aria-label={closeLabel}
               >
                 <XIcon />
               </Button>
@@ -99,6 +131,10 @@ export function ConsoleWorkspace({
           }}
         >
           <SheetContent
+            ref={detailsScroll}
+            initialFocus={() =>
+              detailsScroll.current?.querySelector<HTMLElement>('[role="listbox"]') ?? close.current
+            }
             showCloseButton={false}
             finalFocus={() => {
               restoreFocus()
@@ -109,12 +145,13 @@ export function ConsoleWorkspace({
             }}
           >
             <div className="flex items-center justify-between">
-              <SheetTitle>Tool details</SheetTitle>
+              <SheetTitle>{title}</SheetTitle>
               <Button
+                ref={close}
                 size="icon-xs"
                 variant="ghost"
                 onClick={onClose}
-                aria-label="Close tool details"
+                aria-label={closeLabel}
               >
                 <XIcon />
               </Button>

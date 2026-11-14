@@ -1,7 +1,9 @@
 import {
+  BotIcon,
   BrainIcon,
   CheckIcon,
   CircleIcon,
+  CodeIcon,
   FileTextIcon,
   GitBranchIcon,
   GlobeIcon,
@@ -104,8 +106,16 @@ export function PromptBox({
   role?: string
 }) {
   return (
-    <div className="py-1">
-      <div className="mb-1 text-xs font-semibold text-foreground">{role}</div>
+    <div
+      className={cn(
+        "rounded-md px-2 py-1.5",
+        role === "Developer" && "border border-border/70 bg-muted/40",
+      )}
+    >
+      <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-foreground">
+        {role === "Developer" ? <CodeIcon aria-hidden className="size-3.5 shrink-0" /> : null}
+        {role}
+      </div>
       <div className="min-w-0 flex-1">
         {queued ? (
           <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
@@ -188,7 +198,8 @@ export const BlockView = memo(function BlockView({
       ) : null}
       <div
         className={cn(
-          decorated && "ml-4 flex items-start gap-2 py-0.5",
+          decorated && "flex items-start gap-2 py-0.5",
+          decorated && block.type !== "permission" && "ml-4",
           block.type === "tool" && "flex items-start gap-2",
         )}
       >
@@ -243,8 +254,11 @@ function BlockBody({
       return <PromptBox text={block.text} time={time} role={block.daemon ? "Developer" : "You"} />
     case "message":
       return (
-        <div className="py-1">
-          <div className="mb-1 text-xs font-semibold">Assistant</div>
+        <div className="rounded-md bg-accent/30 px-2 py-1.5">
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
+            <BotIcon aria-hidden className="size-3.5 shrink-0" />
+            Assistant
+          </div>
           <Markdown>{block.text}</Markdown>
         </div>
       )
@@ -297,7 +311,7 @@ function BlockBody({
       const frame = "text-xs"
       if (!answer) {
         return (
-          <div className={cn(frame, "px-3 py-2")}>
+          <div className={cn(frame, "space-y-2")}>
             <div className="font-medium">
               <SummaryLine
                 start={headline}
@@ -347,6 +361,42 @@ function BlockBody({
       )
   }
 }
+
+/** Permission activity opens its response controls in the shared details workspace. */
+export const PermissionRow = memo(function PermissionRow({
+  block,
+  selected,
+  onSelect,
+}: {
+  block: Extract<Block, { type: "permission" }>
+  selected: boolean
+  onSelect: (id: string, trigger: HTMLButtonElement) => void
+}) {
+  return (
+    <div data-block="permission" data-block-id={block.id}>
+      <button
+        type="button"
+        aria-pressed={selected}
+        onClick={(event) => onSelect(block.id, event.currentTarget)}
+        className={cn(
+          "ml-4 flex w-[calc(100%-1rem)] min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-xs outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50",
+          selected && "bg-muted",
+          !block.answer && "text-orange-500",
+        )}
+        title={`${block.title}\n${formatStamp(block.createdAt)}`}
+      >
+        <ShieldIcon aria-hidden className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate text-foreground">Permission · {block.title}</span>
+        <span
+          title={block.answer?.name}
+          className="max-w-1/3 shrink-0 truncate text-muted-foreground"
+        >
+          {block.answer?.name ?? "Needs approval"}
+        </span>
+      </button>
+    </div>
+  )
+})
 
 /** One selectable activity row. Tool content lives in the details workspace. */
 export const ToolRow = memo(function ToolRow({

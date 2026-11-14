@@ -452,10 +452,12 @@ turn's start); `blocks.tsx`, `composer.tsx` and `status.tsx` draw it.
 
 `workspace.tsx` measures the console panel: selected tool details sit beside
 the conversation at 880 CSS pixels or wider, and use a modal drawer below that.
-Tool rows stay compact and selection never follows newer calls. Ctrl-O has
+Tool and permission rows stay compact and selection never follows newer calls.
+Permission response controls open in the same details area; questions stay in the conversation.
+Ctrl-O has
 no handler in the shared browser and desktop console.
 
-Escape inside tool details closes them and returns focus to the selected row.
+Escape inside tool or permission details closes them and returns focus to the selected row.
 Escape elsewhere inside the console cancels a running turn and never reaches the pane
 or the modal. ⌘Escape moves the keyboard to the panel's Close button or the
 modal's Collapse button. The tests drive the console through the
