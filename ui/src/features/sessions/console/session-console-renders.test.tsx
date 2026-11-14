@@ -59,7 +59,6 @@ beforeEach(() => {
     draft: "",
     scrollTop: 0,
     following: true,
-    folded: true,
     blockFolds: {},
     shown: undefined,
     failed: [],

@@ -418,7 +418,7 @@ stream (008). It lives in `src/features/sessions/console/`:
   the session's, so it stays in `main`.
 - `console-view-state.ts` retains, in memory and per daemon address and
   session, what a console keeps while it is off screen: the draft, the
-  scroll position, whether it follows, the view shown, the fold and a fold
+  scroll position, whether it follows, the view shown and a fold
   preference per block id. Write to it through `updateViewState`; a pane
   mounted again reads it back.
 - `composer-menu.tsx` is the plus menu: the agent's commands and the session
@@ -444,7 +444,7 @@ stream (008). It lives in `src/features/sessions/console/`:
   be cancelled.
 
 The console also has the CLI pane's extras (spec 015, rules 23a to 23f): a
-fold toggle (plus-menu controls for conversation blocks; no header fold button), the agent's slash commands as a
+individual block disclosures (no global fold controls or global fold state), the agent's slash commands as a
 suggestion list over the input, a status row, a `queued` block for a sent
 prompt, and a footer of keys. `transcript.ts` holds their state
 (`availableCommands`, `queuedPrompts`, the launches' token totals and the

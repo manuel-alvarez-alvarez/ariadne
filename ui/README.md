@@ -102,7 +102,7 @@ Regenerating the API types after a daemon change is covered in
 In a session's console, Enter sends and Shift+Enter adds a line; the composer
 grows to six lines and then scrolls. The plus menu beside it searches the
 agent's slash commands and offers Switch agent/model, Resume once the session
-has ended, Expand or Collapse all, and Copy loaded transcript, which copies
+has ended, and Copy loaded transcript, which copies
 only what the console has loaded for the view shown. A command from the menu
 or the suggestion list goes into the composer for you to edit; it is not sent.
 A message the daemon refuses stays in the transcript with Retry and Edit. With
@@ -116,7 +116,7 @@ Close details with its button or Escape; focus returns to the selected row.
 `Pending request` opens permission response controls in the shared details area,
 including subagent permissions. For questions, it closes the drawer and reveals the card.
 Ctrl-O has no action in this console.
-The header has no Fold/Unfold button. The plus-menu fold controls affect thoughts and resolved questions, independently of tool selection.
+Neither the header nor the plus menu has global fold controls. Thoughts and resolved questions retain individual disclosures and preferences.
 User, developer and assistant messages always remain expanded. Unanswered questions
 stay open; answered summaries keep the question and selected answer. Secondary
 activity is compact and indented, with icons and labels instead of left borders.

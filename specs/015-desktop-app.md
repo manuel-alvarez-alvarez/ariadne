@@ -402,8 +402,7 @@ Out: the daemon endpoints themselves (012).
 22e. A plus menu beside the composer searches, by name and description, the
     agent's commands (rule 23b) and these actions: Switch agent/model, where
     the session's goal is not cancelled; Resume, only while the session is
-    not live; Expand all or Collapse all for foldable conversation blocks,
-    which also clears their individual folds; and `Copy loaded transcript (<view>)`, which copies the blocks
+    not live; and `Copy loaded transcript (<view>)`, which copies the blocks
     the console has loaded for the view shown, `main` or the child's title,
     as text and nothing older. Switch and Resume are the session actions of
     the session panel (`session-actions.tsx`), with the same dialog, toasts
@@ -535,9 +534,9 @@ Out: the daemon endpoints themselves (012).
     its content sits outside the button, so selecting it, a link in it and
     a Copy control never toggle it. A block's own choice is a fold
     preference kept under its id (24i) and survives stream updates, the view
-    changing and a remount. The plus menu retains Expand all and Collapse all to flip foldable conversation
-    blocks and clear their individual choices. Tool rows and details are independent
-    of folding. The header has no Fold/Unfold button in embedded or expanded views.
+    changing and a remount. Foldable blocks start folded without an individual preference.
+    Tool rows and details are independent of folding. Neither the header nor the plus menu
+    offers global fold controls in embedded or expanded views; no global fold state is retained.
     Ctrl-O has no handler in either browser or desktop console, embedded or expanded.
     The terminal console keeps its existing Ctrl-O behavior.
 23a1. Conversation and tool details scroll independently. A message, a tool's
@@ -641,7 +640,7 @@ Out: the daemon endpoints themselves (012).
 24i. The console retains, in memory and per daemon address and session
     (`console/console-view-state.ts`): the draft, the transcript's scroll
     position and whether it follows the newest block, the view shown, the
-    refused messages, the console's fold and a fold preference per block id. Expanding the
+    refused messages and a fold preference per block id. Expanding the
     console, collapsing it, and leaving the tab and coming back restore
     them; another session or another daemon starts with its own. A reader
     who scrolled up comes back to that place, not the bottom: the pane
@@ -1667,7 +1666,7 @@ Out: the daemon endpoints themselves (012).
   `::returns from a child view to answer its pending permission in details`,
   `::shows existing input output and code changes in details without expanding the activity row`,
   `::keeps parent and child calls with the same tool id separate`,
-  `::keeps user developer and assistant messages visible when folding activity`,
+  `::keeps user developer and assistant messages always visible`,
   `::keeps the question and chosen option in an answered question summary`,
   `::opens permission response controls in details and keeps the conversation compact`,
   `::keeps tool selection when a permission arrives and opens its drawer only on request`).

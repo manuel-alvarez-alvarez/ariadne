@@ -64,7 +64,6 @@ beforeEach(() => {
     draft: "",
     scrollTop: 0,
     following: true,
-    folded: true,
     blockFolds: {},
     shown: undefined,
     failed: [],
@@ -249,7 +248,6 @@ it("keeps an answered permission compact and opens its details on selection", ()
     options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
   })
   const { source } = renderConsole([request], "running")
-  toggleAllFromMenu()
   expect(transcript().textContent).not.toContain("rm -rf build")
   act(() =>
     source.emit(
@@ -710,12 +708,12 @@ it("folds thoughts while prompts stay expanded and tool rows stay compact", () =
   const log = within(transcript())
   log.getByText(/prompt 6/)
   expect(log.queryByText(/the options/)).toBeNull()
-  toggleAllFromMenu()
+  fireEvent.click(within(transcript()).getByRole("button", { name: /thought · pondering/ }))
   log.getByText(/prompt 10/)
   log.getByText(/the options/)
   expect(log.queryByText("+add 30")).toBeNull()
   expect(log.queryByRole("button", { name: "Copy output" })).toBeNull()
-  toggleAllFromMenu()
+  fireEvent.click(within(transcript()).getByRole("button", { name: /thought · pondering/ }))
   expect(log.queryByText(/the options/)).toBeNull()
 })
 
@@ -742,7 +740,7 @@ it("draws no scroll area inside the transcript, and wraps long code", () => {
     ...foldedActivity(),
     event("agent_message", { text: "```ts\nconst x = 1\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |" }),
   ])
-  toggleAllFromMenu()
+  fireEvent.click(within(transcript()).getByRole("button", { name: /thought · pondering/ }))
 
   const inner = Array.from(transcript().querySelectorAll("*")).filter((node) =>
     /(^|\s)(overflow-(auto|scroll|x-auto|y-auto)|max-h-)/.test(node.getAttribute("class") ?? ""),
@@ -1363,8 +1361,3 @@ it("copies a fenced block's trailing blank lines as written", () => {
   expect(written).toEqual(["last line\n\n"])
   vi.unstubAllGlobals()
 })
-
-function toggleAllFromMenu() {
-  fireEvent.click(screen.getByRole("button", { name: "Commands and session actions" }))
-  fireEvent.click(screen.getByRole("button", { name: /^(Expand all|Collapse all)$/ }))
-}

@@ -464,8 +464,7 @@ Assistant headers have a bot icon, subtle muted background and faint solid inset
 have a code icon, a slightly deeper shade of the same muted background and solid inset border ring. Both stay fully expanded.
 Compact secondary activity sits slightly indented, without left borders.
 Pending questions stay open. Answered questions can fold to show the question
-and chosen answer together. Thoughts still fold individually. The header has no Fold/Unfold button. The plus menu's `Expand all` and `Collapse all` change
-foldable conversation blocks. Tool rows stay compact. Ctrl-O has no action
+and chosen answer together. Thoughts still fold individually. There are no global fold controls in the header or plus menu. Tool rows stay compact. Ctrl-O has no action
 in the browser or desktop console; it still works in the terminal console.
 Drafts, history, and conversation fold preferences remain available when you
 expand the console or change tabs. See [spec 015](../specs/015-desktop-app.md).

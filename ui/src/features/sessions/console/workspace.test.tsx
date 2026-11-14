@@ -81,7 +81,6 @@ it("keeps compact tool rows and streams only the selected tool into adjacent det
   act(() => source.emit("event", tool("Build", "updated output")))
   within(details).getByText(/updated output/)
   expect(within(log()).getAllByRole("button")).toHaveLength(2)
-  toggleAllFromMenu()
   expect(within(log()).queryByText("updated output")).toBeNull()
 })
 
@@ -282,15 +281,13 @@ it("closes a nested details drawer without closing the expanded console or cance
   ).toBe(false)
 })
 
-it("keeps user developer and assistant messages visible when folding activity", () => {
+it("keeps user developer and assistant messages always visible", () => {
   renderConsole([
     event("user_prompt_submit", { text: "User message in full" }),
     event("user_prompt_submit", { text: "Developer message in full", source: "daemon" }),
     event("agent_message", { text: "Assistant message in full" }),
   ])
   for (const label of ["You", "Developer", "Assistant"]) within(log()).getByText(label)
-  toggleAllFromMenu()
-  toggleAllFromMenu()
   for (const text of [
     "User message in full",
     "Developer message in full",
@@ -384,8 +381,3 @@ it("omits the global fold header button in embedded and expanded consoles", () =
   fireEvent.click(screen.getByRole("button", { name: "Expand the console" }))
   expect(screen.queryByRole("button", { name: /^(Fold|Unfold)$/ })).toBeNull()
 })
-
-function toggleAllFromMenu() {
-  fireEvent.click(screen.getByRole("button", { name: "Commands and session actions" }))
-  fireEvent.click(screen.getByRole("button", { name: /^(Expand all|Collapse all)$/ }))
-}

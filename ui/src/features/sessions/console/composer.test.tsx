@@ -34,7 +34,6 @@ function resetViewStates() {
       anchor: undefined,
       oldest: undefined,
       following: true,
-      folded: true,
       blockFolds: {},
       shown: undefined,
       failed: [],
@@ -338,7 +337,7 @@ it("hides Resume while the session is live, and Switch where it cannot switch", 
 
   expect(screen.queryByRole("button", { name: "Resume" })).toBeNull()
   expect(screen.queryByRole("button", { name: "Switch agent/model" })).toBeNull()
-  screen.getByRole("button", { name: "Expand all" })
+  expect(screen.queryByRole("button", { name: "Expand all" })).toBeNull()
 })
 
 it("opens the switch dialog from the menu", async () => {
@@ -370,29 +369,22 @@ it("copies only the loaded transcript of the view shown, and names that scope", 
   vi.unstubAllGlobals()
 })
 
-it("expands and collapses everything from the menu", async () => {
+it("omits global fold actions from the menu", async () => {
   const user = userEvent.setup()
   mount()
-  expect(screen.queryByRole("button", { name: "Unfold" })).toBeNull()
-
   await openMenu(user)
-  await user.click(screen.getByRole("button", { name: "Expand all" }))
-
-  expect(screen.queryByRole("button", { name: "Fold" })).toBeNull()
-  expect(readViewState(consoleViewKey("http://127.0.0.1:7676", SESSION_ID)).folded).toBe(false)
+  expect(screen.queryByRole("button", { name: /^(Expand all|Collapse all)$/ })).toBeNull()
 })
 
-it("brings a session's draft and fold back after the console is unmounted", () => {
+it("brings a session's draft back after the console is unmounted", () => {
   mount()
   fireEvent.change(input(), { target: { value: "half a thought" } })
-  toggleAllFromMenu()
   cleanup()
   stubEventSource()
 
   mount()
 
   expect(input().value).toBe("half a thought")
-  expect(readViewState(consoleViewKey("http://127.0.0.1:7676", SESSION_ID)).folded).toBe(false)
   expect(screen.queryByRole("button", { name: "Fold" })).toBeNull()
 })
 
@@ -660,8 +652,3 @@ it("puts the block the reader was on back in place when new events move the page
   // Blocks: oldest, older, newest, extra. newest is third, so its top is 200 - top.
   await waitFor(() => expect(state.top).toBe(250))
 })
-
-function toggleAllFromMenu() {
-  fireEvent.click(screen.getByRole("button", { name: "Commands and session actions" }))
-  fireEvent.click(screen.getByRole("button", { name: /^(Expand all|Collapse all)$/ }))
-}

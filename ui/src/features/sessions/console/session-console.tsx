@@ -228,7 +228,6 @@ function ConsolePane({
   const toolTrigger = useRef<HTMLElement | null>(null)
   const [requestReveal, setRequestReveal] = useState(0)
   const requestFocus = useRef<string | undefined>(undefined)
-  const [folded, setFolded] = useState(() => readViewState(key).folded)
   const [blockFolds, setBlockFolds] = useState(() => readViewState(key).blockFolds)
   const [cursor, setCursor] = useState(0)
   const [suggested, setSuggested] = useState(0)
@@ -282,7 +281,6 @@ function ConsolePane({
     setLoadedKey(key)
     const kept = readViewState(key)
     setDraft(kept.draft)
-    setFolded(kept.folded)
     setBlockFolds(kept.blockFolds)
     setShown(kept.shown)
     setFailed(kept.failed)
@@ -419,7 +417,7 @@ function ConsolePane({
   useLayoutEffect(() => {
     const el = log.current
     if (el && following.current && restore.current === null) pin(el, pinned)
-  }, [folded, blockFolds])
+  }, [blockFolds])
 
   // Blocks above a reader who scrolled away change height when they fold,
   // unfold or take output; the block the reader was on stays where it was.
@@ -430,7 +428,7 @@ function ConsolePane({
     if (!el || !place || following.current || restore.current !== null) return
     const at = blockOffset(el, place.blockId)
     if (at !== undefined && at !== place.offset) el.scrollTop += at - place.offset
-  }, [transcript, folded, blockFolds])
+  }, [transcript, blockFolds])
 
   // A panel that is resized, or a block that grows after it is drawn, keeps a
   // following reader at the newest output too.
@@ -569,7 +567,7 @@ function ConsolePane({
     <BlockView
       key={block.id}
       block={block}
-      folded={blockFolds[block.id] ?? folded}
+      folded={blockFolds[block.id] ?? true}
       onToggle={toggleBlock}
       picker={
         <QuestionCard
@@ -578,7 +576,7 @@ function ConsolePane({
           live={live}
           sent={answered.has(block.requestId)}
           onAnswered={markAnswered}
-          folded={blockFolds[block.id] ?? folded}
+          folded={blockFolds[block.id] ?? true}
           onToggle={toggleBlock}
         />
       }
@@ -816,15 +814,6 @@ function ConsolePane({
     updateViewState(keyRef.current, { blockFolds: next })
   }, [])
 
-  /** Fold or unfold everything, individual preferences included. */
-  const toggleFold = useRef(() => {})
-  toggleFold.current = () => {
-    const next = !folded
-    setFolded(next)
-    setBlockFolds({})
-    updateViewState(keyRef.current, { folded: next, blockFolds: {} })
-  }
-
   const resume = useResumeAction(onResumed)
   const viewName = child ? child.title : "main"
   const menu = (
@@ -836,8 +825,6 @@ function ConsolePane({
       onSwitch={session && canSwitch ? () => setSwitchOpen(true) : undefined}
       onResume={live ? undefined : () => resume.resume(sessionId)}
       resumePending={resume.pending}
-      folded={folded}
-      onToggleFold={() => toggleFold.current()}
       copyLabel={`Copy loaded transcript (${viewName})`}
       onCopy={() => {
         void copyText(blocksText(blocks)).then((copied) =>
@@ -1019,7 +1006,7 @@ function ConsolePane({
                   <BlockView
                     key={block.id}
                     block={block}
-                    folded={blockFolds[block.id] ?? folded}
+                    folded={blockFolds[block.id] ?? true}
                     onToggle={toggleBlock}
                     picker={null}
                   />
