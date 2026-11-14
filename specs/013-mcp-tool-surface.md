@@ -119,7 +119,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      stored, so each request read is the forge's now (026). Each request
      tool finds the request through
      `GET /v1/pull-requests?task=<id>&role=author`, and says to call
-     `open_pull_request` first where there is none. No agent tool resolves a
+     `open_pull_request` first where there is none. The server keeps the
+     id of the first lookup that finds a request, and later request tools
+     make no lookup. A lookup that finds none keeps nothing. A session with
+     `ARIADNE_PULL_REQUEST_ID` makes no lookup. The server keeps only the
+     id: every read of the request stays live. `get_pull_request` reads the
+     request first, then the repository and the session at the same time. No agent tool resolves a
      thread.
    - **pull request reviewer** — a session with `ARIADNE_PULL_REQUEST_ID`
      set and seat `reviewer` (029): `get_pull_request`, `get_diff` (on a
@@ -179,7 +184,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     a column of the task's workflow, which names the agent that staffs it;
     the body is taken as `body` or as `message`. A refusal names every
     column with its agent, so the sender picks a reader rather than guessing
-    again. A message is a question, an answer, or a blocker report — the
+    again. A message to `orchestrator` makes no task read; an address that
+    names a column reads the task to find its agent. A message is a question, an answer, or a blocker report — the
     stop rule's own call (006) — and nothing else. After a question, end
     your turn. Do not poll `read_messages`. Ariadne delivers the answer as
     a new turn.
@@ -264,7 +270,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::the_tool_texts_read_as_the_spec_words_them`):
   - `report_pull_request` is "Tell Ariadne the state of your request. Set
     `ready` when readiness changes. Set `reviewed_sha` after a review round."
-  - `list_tasks` says "with the columns and agents of each task".
+  - `list_tasks` says "as a summary".
   - `list_models` says "an agent", not "a slot".
   - `open_pull_request` says it "returns" the URL, not "answers" it.
   - The `send_message` `body` doc is "The whole message. Write it so that the
@@ -291,6 +297,18 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::the_agents_request_tools_call_the_routes_of_the_request_its_task_opened`),
   and say to open one where there is none
   (`tools.rs::an_agent_with_no_request_is_told_to_open_one`).
+- The first lookup that finds the request keeps its id, and a lookup that
+  finds none keeps nothing
+  (`tools.rs::a_found_request_id_is_kept_and_no_later_tool_looks_it_up`,
+  `::a_lookup_that_finds_no_request_is_made_again`). A review or keeper
+  session makes no lookup
+  (`tools.rs::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`).
+  `get_pull_request` reads the request, then the repository and the session
+  (`tools.rs::the_agents_request_tools_call_the_routes_of_the_request_its_task_opened`),
+  and starts the last two reads before either is answered
+  (`tools.rs::the_repository_and_session_reads_start_before_either_is_answered`).
+- A message to `orchestrator` makes no task read
+  (`tools.rs::the_orchestrator_is_addressed_by_name_and_needs_no_agent_id`).
 - The pull request reviewer seat lists its ten tools and no task or
   message tool
   (`mcp.rs::the_pull_request_reviewer_seat_lists_its_tools_and_no_task_or_message_tool`);
@@ -343,6 +361,15 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 
 - The readiness tool posts the supplied head:
   `tools.rs::marking_ready_posts_the_confirmed_head`.
+- `list_tasks` asks `GET /v1/tasks?goal=<goal id>` and returns `goal_steps`,
+  the goal columns once, and `tasks`. Each task holds `id`, `title`,
+  `status`, `step`, `depends_on`, `branch`, `pr_url`, `reason`, `stalled`
+  and `agents`, with each agent as `get_task` gives it. It holds no
+  `description`, `usage`, timestamps or goal columns
+  (`tools.rs::listing_tasks_gives_the_goal_columns_once_and_task_summaries`).
+- `get_task` gives the task with `goal_steps` and without `usage`,
+  `created_at` and `updated_at`
+  (`tools.rs::reading_a_task_drops_usage_and_timestamps`).
 - Seat lists include readiness for agents and keepers alone:
   `mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`.
 
