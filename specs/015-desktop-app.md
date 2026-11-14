@@ -335,6 +335,16 @@ Out: the daemon endpoints themselves (012).
     `agent_thought_chunk` events build one open block per speaker — the
     session or one subagent — and that speaker's stored `agent_message` or
     `agent_thought` closes it without repeating its text.
+    Every block also keeps the `created_at` of its first event. A tool call
+    block carries what a reader needs to read it: its locations, its start and
+    end time, a subject derived as the CLI's pane does (the command's first
+    line, `path:line`, `pattern in path`, the URL, else the title), its input
+    as the whole command or as two-space JSON, and its output formatted — an
+    object or JSON text pretty-printed and marked `json`, a `read`'s numbered
+    fence and line prefixes removed with the first line number kept, and the
+    language of a `read` taken from its file's extension; an image is one
+    `[image]` line. `session.switched` and `session.pin_fallback` are notes
+    with their summary, and a `usage_update` draws no block.
     A block keeps its first event id, and a subagent's block is tagged with
     the child's title. The transcript follows the newest block while the
     reader is at the bottom of it.

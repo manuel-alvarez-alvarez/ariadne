@@ -14,6 +14,11 @@
  */
 
 import type { AgentEventDto, AgentQuestion } from "@/api"
+import { languageForPath } from "@/lib/highlight"
+
+import { elapsed } from "./elapsed"
+
+export * from "./elapsed"
 
 interface Subagent {
   id: string
@@ -23,6 +28,8 @@ interface Subagent {
 interface BlockBase {
   /** The id of the event this block opened on; `local:<n>` for a local block. */
   id: string
+  /** The `created_at` of the event this block opened on; the time a local block was added. */
+  createdAt: string
   subagent?: Subagent
 }
 
@@ -48,6 +55,26 @@ interface ToolCall {
   output?: string
   /** The file change as a unified diff. */
   diff?: string
+  /** What the call is about: the command, the path, the pattern, the URL, else the title. */
+  subject?: string
+  /** The files the call names, as the ACP call lists them. */
+  locations?: ToolLocation[]
+  /** The `created_at` of the call's first event. */
+  startedAt?: string
+  /** The `created_at` of the update that gave it a terminal status. */
+  endedAt?: string
+  /** The whole command for `execute`, else the input as JSON; none for an empty input. */
+  inputText?: string
+  inputLanguage?: "shell" | "json"
+  /** The language of `output`: `json`, or the file's for a `read`. */
+  outputLanguage?: string
+  /** The number a `read` output's first line carried before its prefixes were removed. */
+  firstLine?: number
+}
+
+interface ToolLocation {
+  path: string
+  line?: number
 }
 
 export type Block =
@@ -341,7 +368,13 @@ export function dequeuePrompt(transcript: Transcript, id: string, text: string):
 export function appendError(transcript: Transcript, text: string, child?: Subagent): Transcript {
   // No event opened it, so its id is local, and unique among the blocks.
   const id = `local:${transcript.blocks.length}`
-  const block: Block = { type: "error", id, text, ...(child ? { subagent: child } : {}) }
+  const block: Block = {
+    type: "error",
+    id,
+    createdAt: new Date().toISOString(),
+    text,
+    ...(child ? { subagent: child } : {}),
+  }
   return { ...transcript, blocks: [...transcript.blocks, block] }
 }
 
@@ -395,13 +428,19 @@ function followChild(subagents: ChildAgent[], blocks: Block[], event: AgentEvent
   if (!known) {
     const task = str(event.payload, "subagent", "description")
     const text = `${stateMark(undefined)} subagent ${child.title}`
-    blocks.push({ id: event.id, type: "child", text: task ? `${text} · ${task}` : text })
+    blocks.push({
+      id: event.id,
+      createdAt: event.created_at,
+      type: "child",
+      text: task ? `${text} · ${task}` : text,
+    })
   }
   if (state !== was.state && state !== undefined && ENDED_STATES.has(state)) {
     const text = `${stateMark(state)} subagent ${child.title} ${state}`
     const took = elapsed(was.announcedAt, event.created_at)
     blocks.push({
       id: `${event.id}:end`,
+      createdAt: event.created_at,
       type: "child",
       text: took === undefined ? text : `${text} · ${took}`,
     })
@@ -418,15 +457,6 @@ function childAt(subagents: ChildAgent[], event: AgentEventDto, id: string): num
 
 function titleOf(event: AgentEventDto, id: string): string {
   return str(event.payload, "subagent", "title") || id
-}
-
-/** The time from one stored instant to a later one, as the CLI's clock reads it. */
-function elapsed(from: string, to: string): string | undefined {
-  const ms = Date.parse(to) - Date.parse(from)
-  if (Number.isNaN(ms) || ms < 0) return undefined
-  const seconds = Math.floor(ms / 1000)
-  if (seconds < 60) return `${seconds}s`
-  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`
 }
 
 /** The child an event's payload names, where it names one. */
@@ -490,6 +520,8 @@ function fold(blocks: Block[], event: AgentEventDto): void {
     case "session.diagnosis":
       foldDiagnosis(blocks, event)
       return
+    case "usage_update":
+      return
     case "tool_call_update":
     case "post_tool_use":
       if (mergeTool(blocks, event)) return
@@ -526,7 +558,7 @@ function blockOf(event: AgentEventDto): Block {
     case "pre_tool_use":
     case "post_tool_use":
     case "tool_call_update":
-      return { ...base, type: "tool", tool: toolOf(payload, UNNAMED_TOOL) }
+      return { ...base, type: "tool", tool: openTool(event) }
     case "permission_request": {
       const tool = toolOf(payload, event.summary)
       const asker = childOf(event)
@@ -552,6 +584,9 @@ function blockOf(event: AgentEventDto): Block {
       return { ...base, type: "note", text: "session ended" }
     case "stop":
       return { ...base, type: "note", text: stopNote(str(payload, "stop_reason")) }
+    case "session.switched":
+    case "session.pin_fallback":
+      return { ...base, type: "note", text: event.summary }
     case "compaction_update":
       return { ...base, type: "note", text: "context compacted" }
     case "agent_request": {
@@ -626,7 +661,8 @@ function foldResolution(blocks: Block[], event: AgentEventDto): void {
 
 function baseOf(event: AgentEventDto): BlockBase {
   const child = askedOfTheSession(event.kind) ? undefined : childOf(event)
-  return child ? { id: event.id, subagent: child } : { id: event.id }
+  const base = { id: event.id, createdAt: event.created_at }
+  return child ? { ...base, subagent: child } : base
 }
 
 function childOf(event: AgentEventDto): Subagent | undefined {
@@ -749,9 +785,18 @@ function mergeTool(blocks: Block[], event: AgentEventDto): boolean {
   if (update.title !== UNNAMED_TOOL) tool.title = update.title
   if (update.kind !== undefined) tool.kind = update.kind
   if (update.input !== undefined) tool.input = update.input
-  if (update.output !== undefined) tool.output = update.output
+  if (update.locations !== undefined) tool.locations = update.locations
   if (update.diff !== undefined) tool.diff = update.diff
   if (update.status !== undefined) tool.status = update.status
+  if (isTerminal(update.status)) tool.endedAt ??= event.created_at
+  Object.assign(tool, describe(tool))
+  if (update.output !== undefined) {
+    tool.output = update.output
+    tool.outputLanguage = update.outputLanguage
+    tool.firstLine = undefined
+  }
+  // A new kind, location or input changes how the output reads, so shape it again.
+  Object.assign(tool, shapeOutput(tool))
   blocks[index] = { ...block, tool }
   return true
 }
@@ -770,8 +815,136 @@ function toolOf(payload: unknown, fallback: string): ToolCall {
     kind: str(acp, "kind"),
     status: str(acp, "status"),
     input: input ?? undefined,
-    output: toolOutput(acp),
+    ...toolOutput(acp),
     diff: toolDiff(acp),
+    locations: locationsOf(acp),
+  }
+}
+
+/** The call of a first event, with everything the renderers read derived. */
+function openTool(event: AgentEventDto): ToolCall {
+  const tool = toolOf(event.payload, UNNAMED_TOOL)
+  tool.startedAt = event.created_at
+  if (isTerminal(tool.status)) tool.endedAt = event.created_at
+  return { ...tool, ...describe(tool), ...shapeOutput(tool) }
+}
+
+function locationsOf(acp: unknown): ToolLocation[] | undefined {
+  const found = list(acp, "locations").flatMap((entry): ToolLocation[] => {
+    const path = str(entry, "path")
+    if (path === undefined) return []
+    const line = at(entry, "line")
+    return [typeof line === "number" ? { path, line } : { path }]
+  })
+  return found.length > 0 ? found : undefined
+}
+
+/** The subject and the input of a call, as its title, kind, input and locations make them. */
+function describe(tool: ToolCall): Pick<ToolCall, "subject" | "inputText" | "inputLanguage"> {
+  const command = tool.kind === "execute" ? commandOf(tool.input) : undefined
+  const empty =
+    tool.input === undefined ||
+    tool.input === null ||
+    tool.input === "" ||
+    (typeof tool.input === "object" && Object.keys(tool.input).length === 0)
+  const input =
+    command !== undefined
+      ? { inputText: command, inputLanguage: "shell" as const }
+      : empty
+        ? {}
+        : { inputText: JSON.stringify(tool.input, null, 2), inputLanguage: "json" as const }
+  return { subject: subjectOf(tool), ...input }
+}
+
+/** What a call is about, as the CLI's pane says it (`blocks.rs` `subject`). */
+function subjectOf(tool: ToolCall): string {
+  const input = tool.input
+  const first = tool.locations?.[0]
+  let named: string | undefined
+  switch (tool.kind) {
+    case "execute":
+      named = commandOf(input)?.split("\n")[0]
+      break
+    case "read":
+    case "edit":
+    case "delete":
+    case "move": {
+      const path = field(input, ["path", "file_path", "filePath", "file"]) ?? first?.path
+      if (path === undefined) break
+      const inputLine = at(input, "line")
+      const line =
+        typeof inputLine === "number" ? inputLine : first?.path === path ? first.line : undefined
+      named = line === undefined ? path : `${path}:${line}`
+      break
+    }
+    case "search": {
+      const pattern = field(input, ["pattern", "query", "regex"])
+      if (pattern === undefined) break
+      const path = field(input, ["path", "file_path", "directory", "cwd"]) ?? first?.path
+      named = path === undefined ? pattern : `${pattern} in ${path}`
+      break
+    }
+    case "fetch":
+      named = field(input, ["url"])
+      break
+  }
+  let head = named ?? tool.title
+  const elsewhere = (tool.locations ?? [])
+    .filter((location) => !head.includes(location.path))
+    .map((location) =>
+      location.line === undefined ? location.path : `${location.path}:${location.line}`,
+    )
+  if (elsewhere.length > 0) head += ` (${elsewhere.join(", ")})`
+  return head
+}
+
+/** The first of `keys` the input carries as a string. */
+function field(input: unknown, keys: string[]): string | undefined {
+  return keys.map((key) => str(input, key)).find((found) => found !== undefined)
+}
+
+/** A `read`'s fence and line-number prefixes removed, and every output's language set. */
+function shapeOutput(tool: ToolCall): Pick<ToolCall, "output" | "outputLanguage" | "firstLine"> {
+  const output = tool.output
+  if (tool.kind === "read") {
+    const path = tool.locations?.[0]?.path ?? str(tool.input, "file_path")
+    const language = path === undefined ? undefined : languageForPath(path)
+    const stripped = output === undefined ? undefined : stripNumbered(output)
+    const firstLine = stripped?.firstLine ?? tool.firstLine
+    const text = stripped?.text ?? output
+    const pretty = firstLine === undefined ? prettyJson(text) : undefined
+    return {
+      output: pretty ?? text,
+      outputLanguage: language ?? (pretty === undefined ? tool.outputLanguage : "json"),
+      firstLine,
+    }
+  }
+  const pretty = tool.outputLanguage === undefined ? prettyJson(output) : undefined
+  if (pretty !== undefined) return { output: pretty, outputLanguage: "json" }
+  return { output, outputLanguage: tool.outputLanguage }
+}
+
+/** Text that starts with `{` or `[` and parses as JSON, written with two-space indents. */
+function prettyJson(text: string | undefined): string | undefined {
+  if (text === undefined || !/^\s*[{[]/.test(text)) return undefined
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return undefined
+  }
+}
+
+/** Claude Code's Read: a fence around lines that start with a number and a tab. */
+function stripNumbered(output: string): { text: string; firstLine: number } | undefined {
+  const lines = output.split("\n")
+  if (!lines[0]?.startsWith("```")) return undefined
+  const end = lines.length > 1 && lines.at(-1)?.trim() === "```" ? -1 : undefined
+  const body = lines.slice(1, end)
+  const prefix = /^\s*(\d+)\t/
+  if (body.length === 0 || !body.every((line) => prefix.test(line))) return undefined
+  return {
+    text: body.map((line) => line.replace(prefix, "")).join("\n"),
+    firstLine: Number(prefix.exec(body[0] as string)?.[1]),
   }
 }
 
@@ -783,18 +956,23 @@ function commandOf(input: unknown): string | undefined {
 }
 
 /** The text of the call's `content` entries, else its `rawOutput` as text. */
-function toolOutput(acp: unknown): string | undefined {
-  const text = list(acp, "content")
-    .filter((entry) => str(entry, "type") === "content")
-    .map((entry) => str(entry, "content", "text") ?? "")
-    .filter((line) => line.length > 0)
-  if (text.length > 0) return text.join("\n")
+function toolOutput(acp: unknown): Pick<ToolCall, "output" | "outputLanguage"> {
+  const text = list(acp, "content").flatMap((entry) => {
+    if (str(entry, "type") !== "content") return []
+    if (str(entry, "content", "type") === "image") {
+      const mime = str(entry, "content", "mimeType")
+      return [mime === undefined ? "[image]" : `[image] ${mime}`]
+    }
+    return [str(entry, "content", "text") ?? ""]
+  })
+  const lines = text.filter((line) => line.length > 0)
+  if (lines.length > 0) return { output: lines.join("\n") }
   const raw = at(acp, "rawOutput")
-  if (raw === undefined || raw === null) return undefined
-  if (typeof raw === "string") return raw
-  const streams = [str(raw, "stdout"), str(raw, "stderr")].filter((stream) => !!stream)
-  if (streams.length > 0) return streams.join("\n")
-  return JSON.stringify(raw)
+  if (raw === undefined || raw === null) return {}
+  if (typeof raw === "string") return { output: raw }
+  if (typeof raw === "object")
+    return { output: JSON.stringify(raw, null, 2), outputLanguage: "json" }
+  return { output: JSON.stringify(raw) }
 }
 
 /** The agent's patch under a file header, or the lines between old and new text. */
@@ -941,6 +1119,8 @@ function blockText(block: Block): string {
     case "tool":
       return [
         `[${block.tool.status ?? "pending"}] ${block.tool.kind ? `${block.tool.kind} ` : ""}${block.tool.title}`,
+        block.tool.subject === block.tool.title ? undefined : block.tool.subject,
+        block.tool.inputText,
         block.tool.output,
         block.tool.diff,
       ]

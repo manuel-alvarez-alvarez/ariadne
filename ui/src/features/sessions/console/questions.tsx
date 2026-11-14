@@ -51,6 +51,7 @@ export function restoredQuestions(
       ? [
           {
             id: `pending:${request.id}`,
+            createdAt: request.created_at,
             type: "question" as const,
             requestId: request.id,
             hint: request.summary,

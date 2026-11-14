@@ -13,6 +13,7 @@ import {
   applySnapshot,
   type Block,
   dequeuePrompt,
+  elapsed,
   emptyTranscript,
   oldestEventId,
   prependEvents,
@@ -676,4 +677,157 @@ it("replays a withdrawn question closed, so it is never answerable again", () =>
   expect(replayed.blocks).toEqual([
     expect.objectContaining({ type: "question", resolution: { state: "withdrawn" } }),
   ])
+})
+
+function call(
+  acp: Record<string, unknown>,
+  at = "2026-11-14T10:00:00Z",
+  kind = "tool_call_update",
+) {
+  return { ...event(kind, { acp: { toolCallId: "c1", ...acp } }), created_at: at }
+}
+
+it("stamps every block with the time of the event it opened on", () => {
+  const prompt = {
+    ...event("user_prompt_submit", { text: "hi" }),
+    created_at: "2026-11-14T10:00:01Z",
+  }
+  expect(fold([prompt])[0]?.createdAt).toBe("2026-11-14T10:00:01Z")
+})
+
+it("carries a call's subject, locations, input and timing", () => {
+  const blocks = fold([
+    call(
+      {
+        kind: "execute",
+        title: "Bash",
+        status: "in_progress",
+        rawInput: { command: "ls -la\necho hi" },
+        locations: [{ path: "/a.ts", line: 3 }],
+      },
+      "2026-11-14T10:00:00Z",
+    ),
+    call({ status: "completed" }, "2026-11-14T10:00:02Z"),
+  ])
+  const tool = blocks[0]?.type === "tool" ? blocks[0].tool : undefined
+  expect(tool).toMatchObject({
+    subject: "ls -la (/a.ts:3)",
+    inputText: "ls -la\necho hi",
+    inputLanguage: "shell",
+    startedAt: "2026-11-14T10:00:00Z",
+    endedAt: "2026-11-14T10:00:02Z",
+    locations: [{ path: "/a.ts", line: 3 }],
+  })
+  expect(elapsed(tool?.startedAt ?? "", tool?.endedAt ?? "")).toBe("2s")
+})
+
+it("names a read, a search and a fetch by what they touch", () => {
+  const subject = (acp: Record<string, unknown>) => {
+    const block = fold([call({ toolCallId: "x", ...acp })])[0]
+    return block?.type === "tool" ? block.tool.subject : undefined
+  }
+  expect(
+    subject({
+      kind: "read",
+      title: "Read",
+      rawInput: { file_path: "/a.ts" },
+      locations: [{ path: "/a.ts", line: 9 }],
+    }),
+  ).toBe("/a.ts:9")
+  expect(
+    subject({ kind: "search", title: "Grep", rawInput: { pattern: "foo", path: "src" } }),
+  ).toBe("foo in src")
+  expect(subject({ kind: "fetch", title: "Web", rawInput: { url: "https://x.y" } })).toBe(
+    "https://x.y",
+  )
+  expect(subject({ kind: "other", title: "Thing", rawInput: {} })).toBe("Thing")
+})
+
+it("pretty-prints json input and output, and marks the language", () => {
+  const block = fold([
+    call({
+      kind: "other",
+      title: "T",
+      rawInput: { a: 1 },
+      rawOutput: { b: [2] },
+      status: "completed",
+    }),
+  ])[0]
+  const tool = block?.type === "tool" ? block.tool : undefined
+  expect(tool?.inputText).toBe('{\n  "a": 1\n}')
+  expect(tool?.inputLanguage).toBe("json")
+  expect(tool?.output).toBe('{\n  "b": [\n    2\n  ]\n}')
+  expect(tool?.outputLanguage).toBe("json")
+  const text = fold([
+    call({
+      kind: "other",
+      title: "T",
+      content: [{ type: "content", content: { type: "text", text: '{"a":1}' } }],
+    }),
+  ])[0]
+  expect(text?.type === "tool" && text.tool.output).toBe('{\n  "a": 1\n}')
+  expect(tool?.startedAt).toBeDefined()
+})
+
+it("strips a numbered fence from a read and keeps the first line number", () => {
+  const out = "```\n  7\tconst a = 1\n  8\tconst b = 2\n```"
+  const block = fold([
+    call({
+      kind: "read",
+      title: "Read",
+      rawInput: { file_path: "/x/a.ts" },
+      content: [{ type: "content", content: { type: "text", text: out } }],
+    }),
+  ])[0]
+  expect(block?.type === "tool" && block.tool).toMatchObject({
+    output: "const a = 1\nconst b = 2",
+    firstLine: 7,
+    outputLanguage: "typescript",
+  })
+})
+
+it("counts an image as one output line", () => {
+  const block = fold([
+    call({ content: [{ type: "content", content: { type: "image", mimeType: "image/png" } }] }),
+  ])[0]
+  expect(block?.type === "tool" && block.tool.output).toBe("[image] image/png")
+})
+
+it("notes the daemon's switch events, draws no usage update, and keeps unknown kinds", () => {
+  const blocks = fold([
+    event("session.switched"),
+    event("session.pin_fallback"),
+    event("usage_update"),
+    event("mystery"),
+  ])
+  expect(blocks.map((block) => block.type)).toEqual(["note", "note", "raw"])
+  expect(blocks[0]).toMatchObject({ text: "session.switched summary" })
+})
+
+it("formats an object output as json even when it holds stdout, and a read's too", () => {
+  const tool = (acp: Record<string, unknown>) => {
+    const block = fold([call(acp)])[0]
+    return block?.type === "tool" ? block.tool : undefined
+  }
+  const out = tool({ kind: "execute", title: "Bash", rawOutput: { stdout: "hi" } })
+  expect(out).toMatchObject({ output: '{\n  "stdout": "hi"\n}', outputLanguage: "json" })
+  const read = tool({ kind: "read", title: "Read", rawOutput: { a: 1 } })
+  expect(read).toMatchObject({ output: '{\n  "a": 1\n}', outputLanguage: "json" })
+})
+
+it("sets a read's language again when a later update names its file", () => {
+  const blocks = fold([
+    call({ kind: "read", title: "Read", status: "in_progress", rawOutput: "const a = 1" }),
+    call({ locations: [{ path: "/x/a.ts" }] }),
+  ])
+  expect(blocks[0]?.type === "tool" && blocks[0].tool.outputLanguage).toBe("typescript")
+})
+
+it("keeps the time of the first terminal update as the end", () => {
+  const blocks = fold([
+    call({ title: "T", status: "in_progress" }, "2026-11-14T10:00:00Z"),
+    call({ status: "failed" }, "2026-11-14T10:00:05Z"),
+    call({ status: "completed" }, "2026-11-14T10:00:09Z"),
+  ])
+  expect(blocks[0]?.type === "tool" && blocks[0].tool.endedAt).toBe("2026-11-14T10:00:05Z")
 })
