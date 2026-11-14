@@ -500,8 +500,9 @@ Out: the daemon endpoints themselves (012).
     request id matches a displayed question card; failed and unmatched calls stay visible.
     User, developer (daemon) prompts and assistant messages never fold. Role labels
     identify them at the main conversation margin. Assistant headers have a bot icon and
-    an accent-token background. Developer headers have a code icon, muted-token background
-    and subtle inset border-token outline. You headers have a person icon and subtle muted-token background, including queued prompts.
+    an accent-token background with a faint solid inset border-token ring.
+    Developer headers have a code icon, muted-token background and a subtle dashed inset border-token outline.
+    You headers have a person icon, faint primary-token background and solid inset primary-token ring, including queued prompts.
     All three role icons share one horizontal position beside their headers, independent of message height.
     Labels and icon shapes distinguish roles without color alone.
     Developer prompts have no individual
