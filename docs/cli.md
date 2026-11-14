@@ -420,17 +420,16 @@ Bash
 Two rules frame the question. Once you answer, the console keeps only the
 question, the call's head line and `↳` with the option you chose.
 
-The desktop app shows the same console in a session's detail view, in a
-terminal emulator. The daemon draws the pane above into it, so everything on
-this page works there the same way: the input box and its keys, Escape to
-cancel a turn, the picker for a permission request. Ctrl-C twice or Ctrl-D
-closes that console and leaves the session running; the Reopen button opens
-it again. ⌘V on macOS, or Ctrl+Shift+V, pastes into the input box, and ⌘C or
-Ctrl+Shift+C copies what is selected in the pane. The pane takes the app's
-colours and font in both themes, redraws at the new size when its panel is
-resized, and keeps the transcript in its scrollback. If the daemon goes away
-mid-session the pane says it is reconnecting, and draws the console afresh
-once it is back. The agent receives the same input whichever console you use.
+The desktop app shows a session's console in its detail view, drawn by the
+app from the same events. It shows the same blocks: your prompts, the agent's
+messages and thoughts, plans, tool calls with their output and diff, and
+notes. Type in the input box at the bottom: Enter sends, and Shift+Enter adds
+a line. While a turn runs, the Cancel button or Escape in the console cancels
+it. A permission request shows its options as a picker: ↑, ↓ or a number key
+selects, and Enter or a click answers. The answer then shows the option chosen
+and who decided. If the daemon goes away mid-session, the console says it is
+reconnecting, and shows the session afresh once it is back. The agent receives
+the same input whichever console you use.
 
 ## Work with tasks
 

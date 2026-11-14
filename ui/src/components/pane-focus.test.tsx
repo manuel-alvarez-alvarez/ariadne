@@ -4,9 +4,9 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 import { qk } from "@/api"
 import { GoalSwimlanes } from "@/features/goals/goal-swimlanes"
+import { stubEventSource } from "@/test/event-source"
 import { aGoal, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
-import { stubWebSocket } from "@/test/web-socket"
 import { DetailPanels } from "./detail-panels"
 
 const goal = aGoal({ id: "g1", title: "Focus goal", status: "active" })
@@ -14,7 +14,7 @@ const task = aTask({ id: "t1", goal_id: goal.id, title: "Focus task" })
 const session = aSession({ id: "s1", goal_id: goal.id })
 
 beforeEach(() => {
-  stubWebSocket()
+  stubEventSource()
   daemonFetch.mockImplementation((input) => {
     const request = input instanceof Request ? input : new Request(String(input))
     const path = new URL(request.url).pathname

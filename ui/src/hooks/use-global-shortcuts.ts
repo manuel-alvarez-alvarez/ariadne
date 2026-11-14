@@ -22,7 +22,7 @@
  * palette, then the panel stack), and Base UI's dialogs already close the
  * topmost one; a global handler would close two layers at a time. A
  * console's own ⌘Escape — leaving it for the pane or the modal around it —
- * is bound in `session-terminal.tsx`, not here.
+ * is bound in `features/sessions/console/session-console.tsx`, not here.
  */
 
 import { useEffect, useRef } from "react"

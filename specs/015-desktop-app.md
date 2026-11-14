@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-13
+updated: 2026-11-14
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -317,53 +317,54 @@ Out: the daemon endpoints themselves (012).
     above their tabs — `text-xs`, three columns at `sm` and four at `lg`, no
     card frame — rather than the framed grid further down an entity's own
     screen; a stepped task's own workflow section is rule 40's.
-21. Every session is shown in its console, as the CLI draws it: a terminal
-    emulator (xterm.js) on the daemon's terminal socket
-    (`GET /v1/sessions/{id}/console/terminal`, 008), in which the daemon
-    runs the console of 008's rules 22 to 29 itself. The pane sends its
-    size before anything else — the daemon draws nothing until it has one
-    — and again on every refit, writes every binary frame into the
-    emulator as it is, and the emulator's scrollback is the transcript's
-    history. What the input box, Escape, the permission picker and the
-    line-editing keys do is the console's own, the same for the CLI and
-    for the pane. Every open resets the emulator first, since each
-    connection draws the console whole. An Expand control opens the console
-    in a near-fullscreen modal, and its Collapse control restores it to the
-    panel. Each move closes the old socket before it opens a fresh socket,
-    refits the emulator, and sends the new size before input. Focused Escape
-    remains console input in the panel and in the modal alike; Escape
-    outside the console closes the panel or the modal. ⌘Escape leaves a
-    focused console without sending it Escape or closing anything itself: it
-    moves focus to the panel's Close button, or to the modal's Collapse
-    button, so the plain Escape that follows closes what is now focused.
-22. Every key press is sent as a `key` message, the DOM key mapped one to
-    one onto crossterm's code and modifiers — a printable character as
-    itself, the named keys by name, F1 to F12 by number, Shift+Tab as
-    `back_tab` — and every paste as a `paste` with its text; xterm.js's own
-    key handling is bypassed. Three things are left to the browser rather
-    than sent: a bare modifier, a chord held with the command key on
-    macOS, and Ctrl+Shift+C and Ctrl+Shift+V, so copying the selection and
-    the paste event that becomes the `paste` keep working. Option on macOS
-    reads the letter off the physical key, so Alt-B is a word left there
-    too. Keys typed before the socket is open go nowhere.
-23. The pane takes the app's colours and font from the tokens the rest of
-    the UI is drawn in, in both themes, re-read when the theme switches:
-    the six named terminal colours map onto the status ramp. It fills the
-    box it is given, refits when that box changes, and the daemon redraws
-    at the new size. It draws on WebGL where the webview has a context, so
-    box-drawing glyphs — the input box's rules, a table's rule — are the
-    emulator's own and join into one line; without one it keeps the DOM
-    renderer, which takes them from the font.
-24. A drop of the socket is retried on the event stream's backoff, and the
-    pane says it is reconnecting meanwhile. A close the daemon meant — the
-    session ended, Ctrl-C twice, Ctrl-D — ends the console instead: the
-    pane says the console closed, or that the session ended when the
-    daemon's last status frame said so, and a Reopen button opens another.
+21. Every session is shown in its console, a transcript the app draws from
+    the daemon's console stream (`GET /v1/sessions/{id}/console/stream`,
+    008). A `snapshot` replaces the transcript, and each `event` extends it.
+    The events fold into blocks as the CLI's transcript folds them: a user
+    prompt, with a daemon prompt (`source: "daemon"`) marked as such; the
+    agent's message as markdown; a thought as dimmed markdown; a plan's
+    entries with their status; one tool call block per `tool_call_id`,
+    merged across `pre_tool_use`, `tool_call_update` and `post_tool_use`,
+    with its status, kind, title, output text and diff; a system note for a
+    session's start and end, a cancelled or other non-`end_turn` stop,
+    compaction and an `agent_request` hint; an error, with the note of the
+    `session.diagnosis` whose `error_event_id` names it; and `kind · summary`
+    for a kind it does not know. Live `agent_message_chunk` and
+    `agent_thought_chunk` events build one open block per speaker — the
+    session or one subagent — and that speaker's stored `agent_message` or
+    `agent_thought` closes it without repeating its text.
+    A block keeps its first event id, and a subagent's block is tagged with
+    the child's title. The transcript follows the newest block while the
+    reader is at the bottom of it.
+22. An input box posts a prompt as `{"text"}` to
+    `POST /v1/sessions/{id}/console/input`: Enter sends it, and Shift+Enter
+    adds a line. A failed post, a `409` included, adds an error block. The
+    box is disabled, with the reason, while the session is not live. A
+    running turn shows a cancel control that posts
+    `POST /v1/sessions/{id}/console/cancel` with no body, and Escape inside
+    the console cancels it too. A `permission_request` with no
+    `permission.replied` yet shows the call, its command or diff, and its
+    options as a picker: Up, Down or 1 to 9 select an option, Enter or a
+    click answers, and the answer is posted as `{"text": "<optionId>"}` to
+    the same input route. The reply shows the chosen option and who decided
+    (`decided_by`).
+23. The console uses the app's own tokens, in both themes. An Expand control
+    opens it in a near-fullscreen modal, and its Collapse control restores
+    it to the panel; each move closes the old stream and opens a fresh one.
+    Escape inside the console belongs to the console in the panel and in
+    the modal alike; Escape outside the console closes the panel or the
+    modal. ⌘Escape leaves the console without cancelling or closing
+    anything itself: it moves focus to the panel's Close button, or to the
+    modal's Collapse button, so the plain Escape that follows closes what
+    is now focused.
+24. A `resync` or a dropped stream is retried on the event stream's
+    backoff, and the pane says it is reconnecting meanwhile. The fresh
+    snapshot replaces the transcript, so no block shows twice.
 25. A session's view has two tabs over one space: the console, open by
     default, and the agent activity feed. The tab is in the URL (`?tab=`);
     the console's tab is `terminal` on the wire, so an older link still
     opens it. A tab value that is not one of the two opens the console.
-    Leaving the console's tab closes its socket, and coming back opens a
+    Leaving the console's tab closes its stream, and coming back opens a
     new one.
 26. The sessions list shows the pin the session was launched on
     (`<agent>:<model>`): the row cuts the model id in the middle when needed,
@@ -371,8 +372,8 @@ Out: the daemon endpoints themselves (012).
     (`ui/src/features/sessions/sessions-list.test.tsx::keeps the effort beside
     a middle-cut model and gives the row a whole-pin hint`).
 27. A row of the Needs attention popover for an agent blocked on a permission or an
-    input prompt opens that session's console with `?focus=`, so the terminal
-    takes the keyboard on arrival.
+    input prompt opens that session's console with `?focus=`, so the
+    console's input box takes the keyboard on arrival.
 27a. The Needs attention popover has a View all action that opens a wider
     drawer over the same attention list, order and targets, and leaves the
     popover as it was
@@ -398,7 +399,8 @@ Out: the daemon endpoints themselves (012).
     ended while blocked is told to resume first. No other attention reason
     shows the banner.
 29. The typed keyboard chords (`n`, `g` then a letter, `?`, `[`) are ignored
-    while a field, an editor or a session's terminal has the keyboard. The
+    while a field, an editor or a session console's input box has the
+    keyboard. The
     held ⌘ chords (⌘K, ⌘,) are not: they fire from a field or a session's
     console too, the same as every browser's own ⌘K, but neither fires
     while a dialog or a menu is up.
@@ -789,7 +791,7 @@ Out: the daemon endpoints themselves (012).
     system's default browser instead of the webview, which otherwise ignores
     `target="_blank"` and has no opener wired in. The handler permits only
     `http:`, `https:` and `mailto:` anchors; it stops every other scheme. It
-    opens the target directly, with no confirmation. The terminal's OSC 8 links use that same handler. An in-app
+    opens the target directly, with no confirmation. A link in the console's markdown is such an anchor. An in-app
     link, whose href resolves onto the app's own origin, is left alone.
     Outside Tauri — the Vite dev server, and every test — the handler does
     nothing and a plain browser's own link behavior applies.
@@ -1137,43 +1139,82 @@ Out: the daemon endpoints themselves (012).
   `::narrows the rows to the sessions active until a day`,
   `::narrows the rows to the titles a search matches, ignoring case`,
   `::starts no session of its own`).
-- The terminal pane sends its size before anything else, and nothing typed
-  before the socket is open
-  (`ui/src/features/sessions/session-terminal.test.tsx::sends its size before anything else`).
-- The terminal opens in a near-fullscreen modal, closes its previous socket
-  before its modal socket opens and resizes, restores a fresh panel socket on
-  collapse, and gives a focused console Escape in the panel and in the modal
-  alike, while Escape outside the console still closes the pane or dismisses
-  the modal
-  (`ui/src/features/sessions/session-terminal.test.tsx::expands the console into a near-fullscreen modal`,
-  `::closes the panel socket before opening and resizing the modal console`,
-  `::collapses the modal console into the panel on a fresh socket`,
-  `::keeps the modal open when focused Escape belongs to the console`,
-  `::closes the modal when Escape occurs outside the console`,
+- The console folds the events of the stream into its blocks: prompts, a
+  daemon prompt marked, message and thought, a plan, one block per tool call
+  with its output and diff, the system notes, an error with its diagnosis,
+  an unknown kind as its summary, a subagent's tag and a block's first event id
+  (`ui/src/features/sessions/console/transcript.test.ts::folds a prompt, marking one the daemon sent`,
+  `::folds the agent's message and thought, and a plan with its statuses`,
+  `::merges every event of one tool call into one block`,
+  `::reads a tool call's diff from a patch or from its old and new text`,
+  `::notes a session's start and end, a stop other than end_turn, compaction and a request`,
+  `::reads a diagnosis onto the error it names, and an unknown kind as its summary`,
+  `::tags a subagent's block with its id and title`,
+  `::keeps a block's first event id`).
+- Live chunks build one open block that the stored whole closes without
+  repeating it, a late chunk of a closed turn is dropped, and a child's
+  chunks and whole stay apart from the parent's
+  (`ui/src/features/sessions/console/transcript.test.ts::builds one open block from live chunks, closed by the stored whole without repeating it`,
+  `::drops a late chunk of a turn its whole already closed`,
+  `::keeps a parent's and a child's interleaved %s runs apart`,
+  `::leaves a parent's open block open when a child's whole arrives`).
+- A permission shows its call, command and options, then its reply; one on
+  Ariadne's own tool that the daemon allowed is dropped
+  (`ui/src/features/sessions/console/transcript.test.ts::asks a permission with its call, command and options, then shows the reply`,
+  `::drops a permission on Ariadne's own tool that the daemon allowed`).
+- A snapshot replaces the transcript, an event it already holds is added
+  once, and a turn runs from its prompt to its stop
+  (`ui/src/features/sessions/console/transcript.test.ts::replaces the transcript with a snapshot, and adds an event it already holds once`,
+  `::says a turn runs from its prompt until its stop`).
+- The stream client reads the session's console stream, hands over the
+  snapshot and each event, and reconnects on the backoff after a `resync`
+  or a drop
+  (`ui/src/features/sessions/console/console-stream.test.ts::reads the console stream of the session`,
+  `::hands over the snapshot and every event after it`,
+  `::reconnects on the backoff after a resync`,
+  `::reconnects on the backoff after a drop, and stops for good on stop`).
+- The console draws the snapshot, marks a daemon prompt, extends and
+  replaces its transcript, says it reconnects and takes the fresh snapshot
+  without duplicates, and closes its stream when it leaves the screen
+  (`ui/src/features/sessions/console/session-console.test.tsx::reads the console stream and draws the snapshot as blocks`,
+  `::marks a prompt the daemon sent`,
+  `::extends the transcript with each event and replaces it with a new snapshot`,
+  `::says it reconnects after a resync and takes the fresh snapshot without duplicates`,
+  `::closes the stream when it leaves the screen`).
+- The input sends on Enter and adds a line on Shift+Enter, a refused send
+  adds an error block, and the box is disabled with a reason when the
+  session is not live
+  (`ui/src/features/sessions/console/session-console.test.tsx::sends a prompt on Enter, and Shift+Enter adds a line`,
+  `::adds an error block when the daemon refuses the prompt`,
+  `::disables the input with a reason when the session is not live`).
+- A running turn is cancelled from its control and from Escape inside the
+  console
+  (`ui/src/features/sessions/console/session-console.test.tsx::cancels a running turn from its control and from Escape inside the console`).
+- A permission is answered from its picker with the keys or a click, and
+  the reply shows who decided; Shift+Enter and a composing Enter in an
+  empty input answer nothing
+  (`ui/src/features/sessions/console/session-console.test.tsx::answers a permission from its picker with the keyboard, and shows who decided`,
+  `::picks a permission option with a click`,
+  `::answers no permission on %s from an empty input`).
+- The console expands into a near-fullscreen modal and collapses back on a
+  fresh stream, keeps the modal open on Escape inside it and closes the
+  modal on Escape outside it, and ⌘Escape moves focus to Collapse
+  (`ui/src/features/sessions/console/session-console.test.tsx::expands into a near-fullscreen modal and collapses back on a fresh stream`,
+  `::keeps the modal open on Escape inside the console, and closes it on Escape outside`,
+  `::moves focus to Collapse on ⌘Escape and cancels nothing`,
   `ui/src/components/panel-sheet.test.tsx::leaves Escape on the board alone and returns focus when the pane closes`).
-- ⌘Escape leaves a focused console for the Collapse button in the modal,
-  sending nothing to the agent and closing neither by itself
-  (`ui/src/features/sessions/session-terminal.test.tsx::moves focus to Collapse on ⌘Escape, and sends nothing to the console`).
-- The bytes of a binary frame appear in the terminal
-  (`ui/src/features/sessions/session-terminal.test.tsx::writes the bytes of a binary frame into the terminal`).
-- A key press is sent as a `key` message with its code and modifiers — a
-  character, Ctrl+Enter, Shift+Tab, Option-B, F5 — a bare modifier and a
-  command-key chord are not, and a paste is sent as a `paste`
-  (`ui/src/features/sessions/session-terminal.test.tsx::sends a key press as a key message, and a paste as a paste message`).
-- A dropped socket says reconnecting, dials again within the backoff, and
-  the new connection opens with the size again
-  (`ui/src/features/sessions/session-terminal.test.tsx::says it is reconnecting after a drop, and dials again`).
-- A close the daemon meant ends the console rather than retrying, says the
-  session ended when the last status frame said so, and Reopen dials again
-  (`ui/src/features/sessions/session-terminal.test.tsx::ends the console on a close the daemon meant, and a button opens another`).
+- The input takes the keyboard on arrival when asked, and the transcript
+  follows the newest block only while the reader is at the bottom
+  (`ui/src/features/sessions/console/session-console.test.tsx::gives the input the keyboard when asked to on arrival`,
+  `::follows the newest block while the reader is at the bottom`).
 - The blocked banner says where to answer, says to resume an agent that is
   gone, and shows for no other reason
   (`ui/src/features/sessions/session-blocked-banner.test.tsx::says what a permission prompt is waiting for, and where to answer it`,
   `::asks for an answer when the agent asked a question`,
   `::says the agent is gone rather than pointing at the console`,
   `::stays out of the way of every other reason`).
-- The typed chords stand aside for a session's terminal, which types through
-  a textarea
+- The typed chords stand aside for a session console's input box, a
+  textarea
   (`ui/src/lib/shortcuts.test.ts::is true for form fields, the console's textarea included`,
   `ui/src/components/keyboard-shortcuts-dialog.test.tsx::says what the two vocabularies are, since neither is guessable`).
 - ⌘K opens the command palette from a text field and from a session's
@@ -1410,8 +1451,6 @@ Out: the daemon endpoints themselves (012).
   container, and a `PR` fallback when no number can be read from the URL
   (`ui/src/components/pr-link.test.tsx::shows a compact number and keeps the full destination`,
   `::falls back to a compact label when the number is unknown`).
-- A terminal OSC 8 link opens directly through the same opener
-  (`ui/src/features/sessions/session-terminal.test.tsx::opens an OSC 8 link outside the app without confirmation`).
 - A failed refresh keeps the cached goals on the board under a retryable
   warning that clears after a successful retry, while a read that never loaded
   shows the load error

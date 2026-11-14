@@ -11,7 +11,7 @@
  * the bottom of. The console is the tab that is open by default, since it is
  * why one opens a session at all.
  *
- * Switching tabs unmounts the console, which closes its socket. That is the
+ * Switching tabs unmounts the console, which closes its stream. That is the
  * same trade `task-sessions.tsx` already takes for the selection itself:
  * every connection draws the newest page of the transcript afresh, so coming back costs a
  * reconnect and shows the same thing, where keeping it mounted would hold a
@@ -26,8 +26,8 @@
  *
  * The metadata comes from the query cache, which the event dispatcher keeps
  * current — a session going idle or being killed elsewhere updates this view
- * without a refetch. The console is the exception: it is a terminal, not
- * cacheable state, and owns its own connection (see `session-terminal.tsx`).
+ * without a refetch. The console is the exception: it is a live transcript,
+ * not cacheable state, and owns its own stream (see `console/session-console.tsx`).
  *
  * The facts are dense, like the goal and task panels' own, and a chevron
  * folds them to the one line that still says what the console beneath them
@@ -38,7 +38,7 @@
  *
  * This view is a flex column of a height its parent gives it: the tabs block
  * grows to fill whatever is left under the facts, and the console tab's
- * content grows inside *that*, so the terminal can ask for `h-full` and get a
+ * content grows inside *that*, so the console can ask for `h-full` and get a
  * real number rather than its own fallback height. The console takes the
  * space the pane leaves, even when the pane is short.
  */
@@ -68,6 +68,7 @@ import { sessionCopyEntries } from "@/lib/clipboard"
 import { formatTokens } from "@/lib/format"
 import { paths, usePanelSessionTo, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
 
+import { SessionConsole } from "./console/session-console"
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
 import { SessionBlockedBanner } from "./session-blocked-banner"
@@ -77,7 +78,6 @@ import {
   sessionHeading,
   shownAttention,
 } from "./session-display"
-import { SessionTerminal } from "./session-terminal"
 
 /**
  * The session panel's own header: the breadcrumb back to whichever goal or
@@ -316,7 +316,7 @@ export function SessionDetailView({
       {/* `min-h-0 flex-1` so this block, not the view's own height, is what
           grows to fill the panel — and the console tab's content below
           inherits the same contract, which is how it ends up with a real
-          height to hand `SessionTerminal` instead of its own fallback. */}
+          height to hand `SessionConsole` instead of its own fallback. */}
       <Tabs
         value={tab}
         onValueChange={(value) => setTab(value as Tab)}
@@ -327,7 +327,7 @@ export function SessionDetailView({
           <TabsTrigger value="activity">Agent activity</TabsTrigger>
         </TabsList>
         <TabsContent value="terminal" className="min-h-0 flex flex-1 flex-col pt-3">
-          <SessionTerminal
+          <SessionConsole
             sessionId={session.id}
             status={session.status}
             autoFocus={focusTerminal}

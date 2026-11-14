@@ -253,17 +253,17 @@ async function main() {
   await orchestratorRow.waitFor()
   await page.waitForTimeout(2_000)
   await orchestratorRow.click()
-  const terminal = page.getByLabel("Console terminal")
-  await terminal.waitFor()
+  const input = page.getByRole("textbox", { name: "Message the agent" })
+  await input.waitFor()
   // Time for the daemon to spawn the stub and for it to read the repository
   // and ask its question, which the console then draws.
   await page.waitForTimeout(3_000)
 
-  // The same answer assets/demo.tape types into the CLI's own console — the
-  // UI's console is the same bytes, in a terminal emulator (see
-  // ui/src/features/sessions/session-terminal.tsx), so the same keystrokes
-  // apply here too.
-  await terminal.click()
+  // The same answer assets/demo.tape types into the CLI's own console, typed
+  // into the UI console's input box (see
+  // ui/src/features/sessions/console/session-console.tsx), where Enter sends
+  // it too.
+  await input.click()
   await page.keyboard.type(ORCHESTRATOR_ANSWER, { delay: 45 })
   // Held once typed, before it is sent, and again once the stub's
   // acknowledgement has had time to render.

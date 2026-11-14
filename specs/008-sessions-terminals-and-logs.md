@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-10-24
+updated: 2026-11-14
 areas: [daemon, cli, ui]
 commits: [e4816cf6, 39937143, a69b953f, 7880c022, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -49,7 +49,7 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 15. `GET /v1/sessions/{id}/console/terminal` upgrades a known session to the terminal WebSocket.
 16. Closing the terminal socket leaves the session alive, and session completion closes its sockets.
 17. The terminal accepts resize, key, and paste messages and redraws at the client size.
-18. See [015](015-desktop-app.md) for the desktop terminal client.
+18. See [015](015-desktop-app.md) for the desktop console, which reads the console stream and posts to the input and cancel routes rather than the terminal WebSocket.
 19. The CLI attach pane renders the transcript, follows the console stream, and posts input.
 20. The attach pane keeps the status, input, and footer rows pinned below its transcript.
 21. The console folds updates of an open tool call into its existing transcript block.
@@ -97,4 +97,6 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 - crates/ariadne-daemon/src/http/sessions.rs
 - crates/ariadne-console/src/tui/mod.rs
 - crates/ariadne-console/src/tui/subagents.rs
-- ui/src/features/sessions/session-terminal.tsx
+- ui/src/features/sessions/console/console-stream.ts
+- ui/src/features/sessions/console/transcript.ts
+- ui/src/features/sessions/console/session-console.tsx

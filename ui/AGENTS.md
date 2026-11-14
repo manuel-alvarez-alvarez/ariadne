@@ -125,11 +125,9 @@ commands never reach it. One root-level step does reach it: `cargo machete
 See the root [`AGENTS.md`](../AGENTS.md#checks) for installing the hooks and
 running one by hand.
 
-The suite needs no daemon and no agent. The daemon is a stubbed `fetch`, a
-stubbed `EventSource` and a stubbed `WebSocket` (`src/test/`), and a session's
-console is the real xterm.js on that socket stand-in, fed the bytes a test
-writes — jsdom lays nothing out, so the grid keeps xterm's default 80 by 24
-and what it drew is read back off its rows. Do not put a mock of that weight in
+The suite needs no daemon and no agent. The daemon is a stubbed `fetch` and a
+stubbed `EventSource` (`src/test/`), and a session's console is fed the
+console stream events a test emits on that stand-in. Do not put a heavy mock in
 `src/test/setup.ts`: a mock there slows every file, and the dialog tests then
 time out.
 
@@ -190,7 +188,7 @@ src/
     issues/        the Forge tab of open issues from an enabled repository's
                    forge, and filling a goal dialog from one
     sessions/      the sessions screen, the session panel and its console: a
-                   terminal pane on the daemon's terminal socket
+                   transcript of the daemon's console stream
     models/        the pin picker, the model catalog and the agent summary
     skills/        skills screen: the catalog, and the document each one is
     workflows/     the Workflows screen: the catalog, the document editor, and
@@ -380,8 +378,8 @@ only came up after failed attempts included — and the daemon's `resync`
 control event (sent just before it hangs up on a client that fell behind)
 invalidate *everything* (`src/events/stream.test.ts` pins both). Reconnection
 itself — capped exponential backoff with jitter — is
-`src/events/reconnecting-stream.ts`, shared with the daemon-log stream and, on
-the same backoff, a session's console socket; `DomainEventStream` adds the
+`src/events/reconnecting-stream.ts`, shared with the daemon-log stream and a
+session's console stream; `DomainEventStream` adds the
 protocol and publishes its state through `useStreamStore`.
 
 An `EventSource` can sit `OPEN` with no `error` while the daemon is gone, so
@@ -401,35 +399,30 @@ places until it is handled.
 
 ### The session console
 
-A session's console is the CLI's console, the same bytes, in a terminal
-emulator: `src/features/sessions/session-terminal.tsx` is an xterm.js
-terminal (`@xterm/xterm`, fitted to its box by `@xterm/addon-fit`) on
-`GET /v1/sessions/{id}/console/terminal`, the WebSocket over which the daemon
-draws the console it runs itself (008). The pieces:
+A session's console is drawn by the app, in React, from the daemon's console
+stream (008). It lives in `src/features/sessions/console/`:
 
-- `terminal-socket.ts` dials the socket and retries a drop on the event
-  stream's backoff. The message shapes are `ariadne-api`'s
-  `TerminalClientMessage` and `TerminalServerMessage`, written out by hand: a
-  WebSocket has no body for the OpenAPI document to name them in, so the
-  generated schema carries only the path. A close the daemon meant — the
-  session ended, Ctrl-C twice, Ctrl-D — ends the console and is not retried;
-  the pane offers Reopen instead.
-- `terminal-keys.ts` maps a DOM key event onto the protocol's `key` message:
-  crossterm's code and modifiers. xterm.js's own key handling is bypassed, so
-  what a key means is decided once, on the daemon, for the CLI and the pane
-  alike. A command-key chord and Ctrl+Shift+C / Ctrl+Shift+V are left to the
-  browser (copy, and the paste event the pane sends as a `paste`); Option on
-  macOS reads the letter off the physical key, so Alt-B is a word left there
-  too.
-- `terminal-theme.ts` reads the pane's colours and font off the app's tokens
-  in `index.css`, in both themes: the six named colours map onto the status
-  ramp, and `oklch()` is converted to hex, since xterm.js parses it only
-  through a canvas.
+- `console-stream.ts` reads `GET /v1/sessions/{id}/console/stream`, a
+  `ReconnectingEventStream`. A `snapshot` carries the newest page of stored
+  events and the running turn's text so far, and an `event` carries each
+  later one. A `resync` or a drop reconnects on the event stream's backoff,
+  and the next snapshot replaces the transcript, so no block shows twice.
+- `transcript.ts` is the pure model. It folds the events into blocks as the
+  CLI's transcript does (`crates/ariadne-console/src/transcript.rs`): one
+  tool call block per `tool_call_id`, live chunks in one open block that the
+  stored whole closes, a permission and its reply in one block, and a
+  diagnosis on the error it names. A block keeps its first event id, and the
+  `subagent` that spoke, where the payload names one.
+- `session-console.tsx` draws the blocks, the input box and the cancel
+  control. A prompt and a permission pick both post `{"text"}` to
+  `POST /v1/sessions/{id}/console/input`. A cancel posts
+  `POST /v1/sessions/{id}/console/cancel` with no body. A failed post adds an
+  error block.
 
-The pane sends its size first — the daemon draws nothing before it — and on
-every refit, and resets the emulator on every open, since each connection
-draws the console whole. `src/test/web-socket.ts` is the stand-in the tests
-drive it through.
+Escape inside the console cancels a running turn and never reaches the pane
+or the modal. ⌘Escape moves the keyboard to the panel's Close button or the
+modal's Collapse button. The tests drive the console through the
+`EventSource` stand-in in `src/test/event-source.ts`.
 
 ### Routes
 
@@ -502,8 +495,7 @@ deep link has to resolve client-side.
 
 Chords are bound once, by the shell, in `src/hooks/use-global-shortcuts.ts` —
 `window`, bubble phase, skipped when the keystroke was already handled or is
-going into a text field, an editor, or a session's terminal (xterm.js types
-through a hidden textarea). The typed
+going into a text field, an editor, or a session console's input box. The typed
 chords are skipped inside a dialog or a menu too, where a bare letter belongs
 to whatever is on top. `Escape` is deliberately *not* bound:
 it belongs to whatever is on top. `PanelSheet` handles it inside the docked

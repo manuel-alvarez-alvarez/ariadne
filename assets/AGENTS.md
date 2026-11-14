@@ -85,8 +85,8 @@ history rules live in the root [`AGENTS.md`](../AGENTS.md).
   `demo.tape` types — typed at a visible speed rather than filled in one
   frame — and the orchestrator pinned to that same stub, opens its console
   from the goal panel's Sessions tab and types the same answer `demo.tape`
-  types (the UI's console is the CLI's own console, the same bytes, in a
-  terminal emulator — see `ui/src/features/sessions/session-terminal.tsx`),
+  types into the console's input box (see
+  `ui/src/features/sessions/console/session-console.tsx`),
   then runs `seed-demo-goal.py` the same way to add the same tasks and
   finalize, and opens one of them. It drives the UI dev server with
   Playwright, at twice the device pixel density so the GIF's downscaled text

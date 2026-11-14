@@ -6,20 +6,14 @@
  *
  * Outside Tauri — Vite's dev server, and every test — `isTauri()` is false
  * and the click is left alone, so a plain browser keeps its normal link
- * behavior (including `target="_blank"`). The terminal calls the returned
- * opener for OSC 8 links.
+ * behavior (including `target="_blank"`).
  */
 
 import { isTauri } from "@tauri-apps/api/core"
 import { openUrl } from "@tauri-apps/plugin-opener"
-import { useCallback, useEffect } from "react"
+import { useEffect } from "react"
 
 const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"])
-
-interface OpenExternalLinks {
-  /** Opens an allowed URL straight in the system browser. */
-  openExternalLink: (href: string) => void
-}
 
 /** An anchor is external when it does not resolve onto the app's own origin. */
 function isExternalAnchor(anchor: HTMLAnchorElement): boolean {
@@ -35,18 +29,9 @@ function isAllowedExternalUrl(href: string): boolean {
   }
 }
 
-export function useOpenExternalLinks({
-  listen = true,
-}: {
-  listen?: boolean
-} = {}): OpenExternalLinks {
-  const openExternalLink = useCallback((href: string) => {
-    if (!isTauri() || !isAllowedExternalUrl(href)) return
-    void openUrl(href)
-  }, [])
-
+export function useOpenExternalLinks(): void {
   useEffect(() => {
-    if (!listen || !isTauri()) return
+    if (!isTauri()) return
 
     function onClick(event: MouseEvent) {
       if (event.defaultPrevented) return
@@ -59,12 +44,10 @@ export function useOpenExternalLinks({
       }
 
       event.preventDefault()
-      if (event.button === 0) openExternalLink(anchor.href)
+      if (event.button === 0) void openUrl(anchor.href)
     }
 
     document.addEventListener("click", onClick)
     return () => document.removeEventListener("click", onClick)
-  }, [listen, openExternalLink])
-
-  return { openExternalLink }
+  }, [])
 }

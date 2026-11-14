@@ -1,13 +1,12 @@
 /**
  * An `EventSource` that reconnects on its own terms.
  *
- * Two streams in this app need one — the domain events and the daemon's log —
- * and both had written the same machinery for themselves: open, close the old
- * source first, retry with capped exponential backoff and jitter, cancel the
- * pending retry on stop. Written twice they drifted in the details that only
- * show up when a daemon restarts. A session's console is a WebSocket rather
- * than an `EventSource` (`features/sessions/terminal-socket.ts`), and it
- * retries on the same backoff.
+ * Three streams in this app need one — the domain events, the daemon's log
+ * and a session's console (`features/sessions/console/console-stream.ts`).
+ * The first two had written the same machinery for themselves: open, close
+ * the old source first, retry with capped exponential backoff and jitter,
+ * cancel the pending retry on stop. Written twice they drifted in the details
+ * that only show up when a daemon restarts.
  *
  * The browser's own reconnect is deliberately not used by any of them. It
  * cannot be told apart from a clean end, it gives the consumer no way to know a
@@ -17,7 +16,7 @@
  * listens for, and the words it reports its state in.
  */
 
-export const INITIAL_BACKOFF_MS = 500
+const INITIAL_BACKOFF_MS = 500
 
 /** The three states a connection is in, in whatever words the consumer uses. */
 interface StreamStates<S extends string> {
@@ -153,6 +152,14 @@ export abstract class ReconnectingEventStream<S extends string> {
    */
   protected noteFrame(): void {
     this.#armIdle()
+  }
+
+  /**
+   * The server said this connection is over — a `resync` before it hangs up —
+   * so it is closed and opened again on the backoff, as a drop would be.
+   */
+  protected retry(reason: string): void {
+    this.#scheduleRetry(reason)
   }
 
   /**
