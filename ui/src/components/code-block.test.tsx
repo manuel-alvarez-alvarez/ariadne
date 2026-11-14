@@ -43,6 +43,20 @@ it("keeps the tints of a diff's added, removed and hunk-header lines", () => {
   ])
 })
 
+it.each([
+  { firstLine: 1, digits: 1 },
+  { firstLine: 100, digits: 3 },
+  { firstLine: 10000, digits: 5 },
+])(
+  "sizes the line-number gutter for $digits-digit numbers plus its right padding",
+  ({ firstLine, digits }) => {
+    const { container } = render(<CodeBlock code="a" firstLine={firstLine} />)
+    const row = container.querySelector("[data-line]") as HTMLElement
+
+    expect(row.style.getPropertyValue("--gutter")).toBe(`calc(${digits}ch + 0.75rem)`)
+  },
+)
+
 /** Whether a class list sets a border or a background of its own, not on hover or focus. */
 const framed = (node: Element) =>
   /(^|\s)(border|border-[blrtxy]|bg-[\w/[\]-]+)(\s|$)/.test(node.getAttribute("class") ?? "")
