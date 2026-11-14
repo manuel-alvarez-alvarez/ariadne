@@ -182,7 +182,7 @@ impl super::Scheduler {
     }
 
     /// The goal of an operation on a request, held to the request (029,
-    /// 032): it completes when the request merges or closes, and cancels
+    /// 032): it completes when the request merges, fails on close, and cancels
     /// where the ask is gone — a stop whose own write did not finish — or
     /// where its task was ended by hand, which also takes the ask down.
     /// Answers the open goal's owner, where one stays open. An ask made
@@ -211,7 +211,11 @@ impl super::Scheduler {
                     &pull.repository_id,
                     pull.number,
                     operation,
-                    PrOperationEnd::Completed,
+                    if pull.state == "merged" {
+                        PrOperationEnd::Completed
+                    } else {
+                        PrOperationEnd::Failed
+                    },
                     &format!("the request {}", pull.state),
                 )
                 .await?;

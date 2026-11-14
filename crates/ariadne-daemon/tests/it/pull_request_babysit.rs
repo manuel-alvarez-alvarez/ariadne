@@ -1663,6 +1663,47 @@ async fn a_merged_request_completes_its_babysit_goal_and_task() {
     .await;
 }
 
+/// A closed request fails its task and leaves the failure visible.
+#[tokio::test]
+async fn a_closed_request_fails_its_babysit_task() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    h.flush_scheduler().await;
+    let asked: Value = h
+        .json(
+            babysit(&repo, 1, json!({"asked": true, "model": PIN})),
+            StatusCode::OK,
+        )
+        .await;
+    let id = asked["id"].as_str().unwrap().to_string();
+    let session = idle_keeper(&h, &id).await;
+    let goal = babysit_goal(&h, &repo).await;
+    let task_id = session.task_id.clone().unwrap();
+
+    stub.reprogram(script(&Shown {
+        state: "CLOSED",
+        ..Shown::open(&head)
+    }));
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "the task to fail", async || {
+        h.flush_scheduler().await;
+        h.status(&task_id).await == ariadne_core::TaskStatus::Failed
+    })
+    .await;
+    assert_eq!(
+        h.store.get_goal(&goal.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Active
+    );
+    eventually(TIMEOUT, "the keeper to end", async || {
+        !h.session_status(&session).await.is_live()
+    })
+    .await;
+}
+
 /// The babysit column's band decides which models a babysit accepts: a model
 /// the user ranked outside it, or never ranked, is refused and starts no
 /// goal.
