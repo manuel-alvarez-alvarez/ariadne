@@ -12,6 +12,7 @@ import {
   applyEvent,
   applySnapshot,
   type Block,
+  blocksText,
   dequeuePrompt,
   elapsed,
   emptyTranscript,
@@ -54,6 +55,36 @@ it("folds a prompt, marking one the daemon sent", () => {
     ["Resume", true],
     ["(prompt text not recorded)", false],
   ])
+})
+
+it("draws no prompt block for the prompt that delivers an answer", () => {
+  const blocks = fold([
+    event("user_prompt_submit", { text: "Fix the bug", source: "console" }),
+    event("user_prompt_submit", {
+      text: "The user answered your question.",
+      source: "console",
+      request_id: "req-1",
+      prompt_kind: "answer_delivery",
+    }),
+  ])
+
+  expect(blocks.map((block) => block.type === "prompt" && block.text)).toEqual(["Fix the bug"])
+  expect(blocksText(blocks)).toBe("> Fix the bug")
+})
+
+it("keeps a queued prompt when a delivery prompt carries the same text", () => {
+  let transcript = queuePrompt(emptyTranscript(), "Main", "queued:1")
+  transcript = applyEvent(
+    transcript,
+    event("user_prompt_submit", { text: "Main", source: "console", request_id: "req-1" }),
+  )
+  expect(transcript.queuedPrompts).toHaveLength(1)
+
+  transcript = applyEvent(
+    transcript,
+    event("user_prompt_submit", { text: "Main", source: "console" }),
+  )
+  expect(transcript.queuedPrompts).toHaveLength(0)
 })
 
 it("folds the agent's message and thought, and a plan with its statuses", () => {

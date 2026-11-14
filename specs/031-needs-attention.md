@@ -543,7 +543,12 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     `claimed_expired`.
     The answer then goes to the agent as a fresh console prompt, never as a
     permission reply: `The user answered your question.`, the question, and
-    the picked option's label, id and description, or the typed text. Where
+    the picked option's label, id and description, or the typed text. The
+    `user_prompt_submit` event of that prompt carries the request's id as
+    `request_id` and the `prompt_kind` `answer_delivery`, beside the
+    `source` `console`; a reader tells it from a typed prompt by those
+    fields, never by its text, and the text the agent receives is the same.
+    Where
     the prompt cannot reach the agent, the route answers `409`, and the
     request opens again so the user can retry — unless a turn ended
     meanwhile that would have expired it, or a newer request took its hint:
@@ -783,6 +788,7 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
 - Typed console text picks an option of the pending question by number, id
   or label
   (`attention.rs::typed_console_text_picks_an_option_of_the_pending_question`,
+  which also reads the delivery prompt's `request_id` and `prompt_kind`,
   `agent_requests::tests::typed_text_picks_an_option_by_number_id_or_label`).
 - A resolution reads as how the request closed and moves nothing
   (`classify.rs::a_resolved_request_reads_as_how_it_closed_and_moves_nothing`),

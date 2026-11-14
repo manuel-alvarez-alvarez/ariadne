@@ -299,6 +299,8 @@ function unqueue(queued: QueuedPrompt[], event: AgentEventDto): QueuedPrompt[] {
   if (event.kind !== "user_prompt_submit" || str(event.payload, "source") !== "console") {
     return queued
   }
+  // An answer's delivery prompt is not an echo of anything typed here.
+  if (str(event.payload, "request_id") !== undefined) return queued
   const text = str(event.payload, "text")
   const index = queued.findIndex((prompt) => prompt.text === text && event.id > prompt.after)
   return index === -1 ? queued : queued.filter((_, at) => at !== index)
@@ -501,6 +503,10 @@ function fold(blocks: Block[], event: AgentEventDto): void {
   const payload = event.payload
   // A turn that ended the way turns end says nothing a reader needs.
   if (event.kind === "stop" && str(payload, "stop_reason") === END_TURN) return
+
+  // The prompt that carries an answer to the agent: the question's own card
+  // shows the answer, so this one draws nothing.
+  if (event.kind === "user_prompt_submit" && str(payload, "request_id") !== undefined) return
 
   switch (event.kind) {
     case "agent_message_chunk":

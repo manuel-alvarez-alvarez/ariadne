@@ -335,7 +335,10 @@ pub(super) async fn deliver_claimed(
     prompt: String,
 ) -> ApiResult<()> {
     let session_id = claimed.session_id.as_str();
-    let sent = state.launcher.acp.send_prompt_input(session_id, prompt);
+    let sent = state
+        .launcher
+        .acp
+        .send_prompt_input(session_id, prompt, Some(claimed.id.clone()));
     let settled = state
         .store
         .settle_agent_request_claim(claimed, sent.is_ok())
@@ -684,7 +687,7 @@ mod tests {
                     .unwrap()
                     .expect("the question is pending");
                 tokio::task::yield_now().await;
-                let sent = acp.send_prompt_input(&session, "x".into());
+                let sent = acp.send_prompt_input(&session, "x".into(), None);
                 assert!(sent.is_err(), "no agent runs here");
                 store
                     .settle_agent_request_claim(&claimed, false)

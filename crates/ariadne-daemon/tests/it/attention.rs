@@ -3249,6 +3249,10 @@ async fn typed_console_text_picks_an_option_of_the_pending_question() {
             == ["The user answered your question.\nQuestion: Which base branch should the task land on?\nAnswer: Next (option `next`)"]
     })
     .await;
+    let delivered = console_events(&h, &session, "user_prompt_submit").await;
+    assert_eq!(delivered[0].payload["request_id"], created["id"]);
+    assert_eq!(delivered[0].payload["prompt_kind"], "answer_delivery");
+    assert_eq!(delivered[0].payload["source"], "console");
     let resolved = console_events(&h, &session, "agent_request.resolved").await;
     assert_eq!(resolved[0].payload["request_id"], created["id"]);
     assert_eq!(

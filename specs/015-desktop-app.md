@@ -381,7 +381,8 @@ Out: the daemon endpoints themselves (012).
     answers the newest such question, one restored from the pending list
     included: its text posts as `{"text"}` to that
     request's own answer route and never to the input route, and shows no
-    `queued` block. The card then shows `Answer sent`, and the next message
+    `queued` block, and the delivery prompt that follows draws none (rule
+    22a). The card then shows `Answer sent`, and the next message
     goes to the input route. A permission pick and a normal message keep the
     input route.
 22d. A message the daemon refuses leaves the queue and stays in the
@@ -421,6 +422,10 @@ Out: the daemon endpoints themselves (012).
     `agent_request.resolved` event closes the card as `Answered · <answer>`,
     `Withdrawn by the agent` or `Expired`. A closed card, a card replayed
     from history and a card of a session that is not live take no answer.
+    The prompt that delivers the answer to the agent (a `user_prompt_submit`
+    that carries a `request_id`, 031 rule 12) draws no prompt block, and
+    `blocksText` leaves it out, so an answered question shows once, as its
+    card; the CLI attach pane still draws it.
     A hint-only request stays the note `waiting for you · <hint>`.
     With every snapshot, a reconnect's included, the console reads the
     session's pending requests (`GET /v1/sessions/{id}/agent-requests`) and
@@ -1408,6 +1413,8 @@ Out: the daemon endpoints themselves (012).
   `::sends with Enter and the Send control, and keeps a newline, a composition and a paste`,
   `::offers Stop beside Send while a turn runs`,
   `::draws Send and Stop as icons without a label, on a row that never wraps`).
+- The prompt that delivers an answer draws no block (rule 22a)
+  (`ui/src/features/sessions/console/transcript.test.ts::draws no prompt block for the prompt that delivers an answer`).
 - The composer answers an open question on its request's own route (rule 22c)
   (`ui/src/features/sessions/console/composer.test.tsx::answers an open question from the composer on that request's own route`,
   `::answers a question restored from the requests list from the composer`,

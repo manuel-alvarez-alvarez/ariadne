@@ -251,6 +251,10 @@ impl Drop for LaunchGate {
     }
 }
 
+/// The `prompt_kind` of the prompt that carries a user's answer to an agent
+/// request (031).
+const ANSWER_DELIVERY: &str = "answer_delivery";
+
 /// Where a prompt came from, as `user_prompt_submit` reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PromptSource {
@@ -280,6 +284,10 @@ struct Prompt {
     /// The lifecycle kind of a daemon prompt that has one, recorded as
     /// `prompt_kind` on `user_prompt_submit`.
     kind: Option<PromptKind>,
+    /// The agent request (031) this prompt delivers the answer to, recorded
+    /// as `request_id` on `user_prompt_submit` beside the `prompt_kind`
+    /// `answer_delivery`.
+    answers: Option<String>,
 }
 
 /// What a daemon prompt hands over that the store records as handed, claimed
@@ -958,6 +966,7 @@ impl AcpRuntime {
             source: PromptSource::Daemon,
             delivery,
             kind,
+            answers: None,
         });
         if sent.is_err()
             && let Some(key) = &key
@@ -1061,6 +1070,7 @@ impl AcpRuntime {
                 source: PromptSource::Console,
                 delivery: None,
                 kind: None,
+                answers: None,
             })
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
@@ -1072,7 +1082,15 @@ impl AcpRuntime {
 
     /// Queue `text` as a console prompt, whatever else the agent waits on:
     /// the answer to a question (031) is never the reply to a permission.
-    pub(crate) fn send_prompt_input(&self, session_id: &str, text: String) -> Result<()> {
+    ///
+    /// `answers` names the request the text answers; the prompt's event
+    /// carries it as `request_id`, so a reader tells it from typed input.
+    pub(crate) fn send_prompt_input(
+        &self,
+        session_id: &str,
+        text: String,
+        answers: Option<String>,
+    ) -> Result<()> {
         let prompts = {
             let running = self.inner.running.lock().expect("acp registry lock");
             running
@@ -1087,6 +1105,7 @@ impl AcpRuntime {
                 source: PromptSource::Console,
                 delivery: None,
                 kind: None,
+                answers,
             })
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
@@ -2713,6 +2732,7 @@ async fn run_protocol(
             source: PromptSource::Daemon,
             delivery: None,
             kind: None,
+            answers: None,
         };
         prompt_once(rpc, &session_id, &prompt).await?;
     }
@@ -3220,7 +3240,11 @@ async fn prompt_once(rpc: &mut Rpc, session_id: &str, prompt: &Prompt) -> Result
                 "prompt": full,
                 "text": prompt.text,
                 "source": prompt.source.as_str(),
-                "prompt_kind": prompt.kind.map(|kind| kind.as_str()),
+                "prompt_kind": match (&prompt.answers, prompt.kind) {
+                    (Some(_), _) => Some(ANSWER_DELIVERY),
+                    (None, kind) => kind.map(|kind| kind.as_str()),
+                },
+                "request_id": prompt.answers,
             }),
         )
         .await;
