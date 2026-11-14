@@ -24,7 +24,7 @@
  * cancels the child where it runs and said it may be cancelled.
  *
  * Conversation and selected tool details scroll independently. Code wraps
- * within both. Thoughts and daemon prompts retain their fold preferences.
+ * within both. Thoughts and resolved requests retain their fold preferences.
  * A reader who scrolls away from
  * the newest output gets a Jump to latest button, marked when output has come
  * in since.
@@ -910,8 +910,13 @@ function ConsolePane({
     target?.focus()
   }, [requestReveal])
   const pendingControl = request ? (
-    <div className="border-t px-3 py-2">
-      <Button size="sm" variant="secondary" onClick={revealRequest}>
+    <div className="px-3 pt-1">
+      <Button
+        size="sm"
+        variant="secondary"
+        className="h-7 justify-start text-xs"
+        onClick={revealRequest}
+      >
         Pending request · {request.type === "permission" ? "Permission" : "Question"}
       </Button>
     </div>
@@ -961,7 +966,7 @@ function ConsolePane({
           pendingControl={pendingControl}
           returnTarget={requestTarget}
         >
-          <div className="border-b px-4 py-2 text-xs font-medium text-muted-foreground">
+          <div className="border-b px-3 py-1.5 text-xs font-medium text-muted-foreground">
             Conversation
           </div>
           <HistoryLine history={history} onRetry={() => void loadOlder()} />
@@ -970,7 +975,7 @@ function ConsolePane({
               ref={log}
               role="log"
               aria-label="Console transcript"
-              className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4"
+              className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-2 [&>[data-block=prompt]]:mt-3 [&>[data-block=message]]:mt-3 [&>[data-block=question]]:mt-3"
               onScroll={(event) => {
                 const el = event.currentTarget
                 // A restore of the reader's place waits on the blocks: until it

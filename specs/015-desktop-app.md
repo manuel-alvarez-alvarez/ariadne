@@ -331,7 +331,7 @@ Out: the daemon endpoints themselves (012).
     session's start and end, a cancelled or other non-`end_turn` stop,
     compaction and an `agent_request` hint; an error, with the note of the
     `session.diagnosis` whose `error_event_id` names it; and `kind · summary`
-    for a kind it does not know. A person's prompt, an unfolded daemon prompt
+    for a kind it does not know. A person's prompt, a developer prompt
     and a question card's text are Markdown, drawn by `components/markdown.tsx`
     as a message is: `h1` to `h3` in a visible scale above body text, lists
     with their nesting, task-list checkboxes, `del`, `kbd` and inline code
@@ -432,8 +432,8 @@ Out: the daemon endpoints themselves (012).
     `agent_request.resolved` event closes the card as `Answered · <answer>`,
     `Withdrawn by the agent` or `Expired`. A closed card, a card replayed
     from history and a card of a session that is not live take no answer.
-    An answered, withdrawn or expired card folds to one line, its hint and
-    its outcome; a click unfolds its text and its options. Its fold is a
+    An answered, withdrawn or expired card folds to a summary with its hint,
+    full question text and outcome (including the selected answer); a click unfolds its text and its options. Its fold is a
     preference kept under its block id, as every other block's (rule 24i).
     An open card never folds.
     The prompt that delivers the answer to the agent (a `user_prompt_submit`
@@ -468,15 +468,15 @@ Out: the daemon endpoints themselves (012).
     (`crates/ariadne-console/src/tui/`), rules 23a to 23f.
 23a. The browser and desktop consoles share a conversation and details workspace,
     in embedded and expanded views. At a panel width of at least 880 CSS pixels,
-    selected tool details occupy 45% of the workspace beside the conversation.
+    selected tool details occupy 40% of the workspace beside the conversation.
     Narrower panels open a modal details drawer. Panel resizing changes the
     presentation without changing the selected call.
     Each tool has one compact, selectable row with its kind icon, status mark,
     name, short subject (or output summary), and elapsed duration. The full
     subject and timestamp appear on hover. Status is also available to screen
     readers. A running duration updates until completion or failure.
-    Tool rows keep their colored left borders: gray while pending or running,
-    red on failure, green on completion. Selecting a row with a click, Enter,
+    Tool rows have no left border. Status icons and semantic text colors identify
+    running, failed and completed calls. Secondary activity is indented 16px. Selecting a row with a click, Enter,
     or Space opens that call's details and focuses Close tool details.
     Details show the existing input, output and diff under their captions,
     in that order. A read omits its redundant input and keeps numbered output
@@ -494,9 +494,12 @@ Out: the daemon endpoints themselves (012).
     Requests from subagents keep their existing answer routes.
     A successful Ariadne `wait_for_user` call is hidden only when its returned
     request id matches a displayed question card; failed and unmatched calls stay visible.
-    Thoughts and daemon prompts still fold into summaries. Their individual
-    preferences are retained. Prompts use blue, permissions orange, questions
-    purple, and errors red. Other entries use gray.
+    User, developer (daemon) prompts and assistant messages never fold. Role labels
+    identify them at the main conversation margin. Thoughts retain individual folds.
+    Questions use a purple marker and subtle background; pending questions never fold.
+    Entries have no colored left borders. Secondary icons align with the first text line.
+    Conversation messages have 12px separation; activity rows use 4px gaps and compact padding.
+    The composer shares the conversation margin, with a compact pending-request control above it.
     A permission's header (`Permission ·` and the call) keeps one
     line the same way, with its time at the right end. A pending permission
     shows its header, command, diff, AI note and picker open, whatever the
@@ -514,7 +517,7 @@ Out: the daemon endpoints themselves (012).
     picker by its props, so a streamed chunk re-renders only the block it
     changes. A card or a picker whose own state changes renders again. A message, a person's prompt, a plan, a
     pending permission and an open question never fold; a closed question folds
-    (rule 22a). An unfolded daemon prompt is
+    (rule 22a). A developer prompt is
     Markdown, and its summary line stays plain text. The whole summary is one button
     with `aria-expanded`, so a click, Enter or Space opens that block alone;
     its content sits outside the button, so selecting it, a link in it and
@@ -1511,13 +1514,12 @@ Out: the daemon endpoints themselves (012).
   `::opens the switch dialog from the menu`,
   `::copies only the loaded transcript of the view shown, and names that scope`,
   `::expands and collapses everything from the menu`).
-- The console folds thoughts and daemon prompts into summaries,
+- The console folds thoughts into summaries,
   each on its own header, keeps the choice, and draws no nested scroll area
   (rules 23a to 23a3)
-  (`ui/src/features/sessions/console/session-console.test.tsx::folds a prompt the daemon sent into a summary that names it`,
-  `::folds thoughts and daemon prompts from the header while tool rows stay compact`,
+  (`ui/src/features/sessions/console/session-console.test.tsx::keeps developer prompts expanded and identifies their role`,
+  `::folds thoughts while prompts stay expanded and tool rows stay compact`,
   `::folds one thought and keeps the choice across a remount and a stream update`,
-  `::lets a keyboard open a daemon prompt fold without copying closing it`,
   `::draws no scroll area inside the transcript, and wraps long code`,
   `::labels and highlights a fenced block of a known language, and leaves an unknown one plain`,
   `::copies the code as written, not the highlighted markup`,
@@ -1541,10 +1543,10 @@ Out: the daemon endpoints themselves (012).
   `::keeps the tints of a diff's added, removed and hunk-header lines`,
   `::draws a fence in one light frame, its label and an icon-only Copy on one caption line`,
   `::draws a captioned block bare, under a caption that names the section and the language`).
-- A tool call has a colored left border, with its input, output and diff under captions,
-  its kind icon after the border, and a summary of status, subject and elapsed duration; `BlockView` re-renders only the block a chunk
+- A tool call has status icons, with its input, output and diff under captions,
+  its kind icon beside the name, and a summary of status, subject and elapsed duration; `BlockView` re-renders only the block a chunk
   changes (rules 23a and 23a2)
-  (`ui/src/features/sessions/console/blocks.test.tsx::draws a tool call with a left border and captioned sections`,
+  (`ui/src/features/sessions/console/blocks.test.tsx::draws tool details with captioned sections and no left border`,
   `::copies one section's text from its icon-only control and never toggles the fold`,
   `::places the tool kind and status before its name and short summary`,
   `::gives every ACP kind its own icon and any other kind one more`,
@@ -1599,11 +1601,11 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/console/session-console.test.tsx::answers a permission from its picker with the keyboard, and shows who decided`,
   `::picks a permission option with a click`,
   `::answers no permission on %s from an empty input`).
-- A prompt, an unfolded daemon prompt and a question's text render as
+- A prompt, a developer prompt and a question's text render as
   Markdown, with a single newline kept and a fence a `CodeBlock` (rules 21,
   22a and 23a)
   (`ui/src/features/sessions/console/blocks.test.tsx::renders a prompt as Markdown: headings, task lists, a fenced block, and a single newline still breaks`,
-  `::renders an unfolded daemon prompt as Markdown and keeps its summary plain`,
+  `::renders developer prompts as full Markdown without a fold`,
   `::draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text`,
   `ui/src/features/sessions/console/session-console.test.tsx::renders a question's text as Markdown, with a fence as a code block`).
 - A question is a card whose clicked choice posts at once to its own
@@ -1613,7 +1615,7 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/console/session-console.test.tsx::draws a question as a card and submits a clicked choice at once to its request`,
   `::shows a failed answer on the card and keeps it answerable for another attempt`,
   `::submits a custom answer as text`,
-  `::folds an answered question to its hint and outcome, and a click shows it closed`,
+  `::folds an answered question with its text and chosen option`,
   `::keeps a closed question's fold across a remount`,
   `::folds a withdrawn and an expired question, and never an open one`,
   `::shows the reason for a recommendation under the recommended option, once`,
@@ -1653,7 +1655,9 @@ Out: the daemon endpoints themselves (012).
   `::reveals a subagent question and sends its answer through the request route`,
   `::returns from a child view to answer its pending permission in the conversation`,
   `::shows existing input output and code changes in details without expanding the activity row`,
-  `::keeps parent and child calls with the same tool id separate`).
+  `::keeps parent and child calls with the same tool id separate`,
+  `::keeps user developer and assistant messages visible when folding activity`,
+  `::keeps the question and chosen option in an answered question summary`).
 - The latest command list replaces the earlier one, an empty list and all,
   and a subagent's list is ignored
   (`ui/src/features/sessions/console/transcript.test.ts::replaces the command list with each later one, an empty list included`,
@@ -1683,11 +1687,11 @@ Out: the daemon endpoints themselves (012).
   `::leaves no stale entry when an echo takes a failed send's entry before its failure arrives`,
   `ui/src/features/sessions/console/session-console.test.tsx::takes back only the failed send when the same prompt is sent twice at once`,
   `::leaves nothing queued when the echo of the second send comes before the first send's failure`).
-- Open, resolved and restored questions have one purple border and question icon
+- Open, resolved and restored questions have one purple question icon and no left border
   (`ui/src/features/sessions/console/session-console.test.tsx::shows one purple question marker before and after resolution`,
   `::shows the question marker for a pending request outside history`).
-- Prompt and tool borders and icons identify their state
-  (`ui/src/features/sessions/console/session-console.test.tsx::marks prompts and tool states with borders and icons`).
+- Role labels and tool status icons identify messages and activity
+  (`ui/src/features/sessions/console/session-console.test.tsx::identifies prompts and tool states without left borders`).
 - The status row follows the input and replaces the keyboard-hint footer
   (`ui/src/features/sessions/console/session-console.test.tsx::places the status below the input without a keyboard hint footer`).
 - The blocked banner says where to answer, says to resume an agent that is

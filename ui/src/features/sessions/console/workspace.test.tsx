@@ -281,3 +281,42 @@ it("closes a nested details drawer without closing the expanded console or cance
     ),
   ).toBe(false)
 })
+
+it("keeps user developer and assistant messages visible when folding activity", () => {
+  renderConsole([
+    event("user_prompt_submit", { text: "User message in full" }),
+    event("user_prompt_submit", { text: "Developer message in full", source: "daemon" }),
+    event("agent_message", { text: "Assistant message in full" }),
+  ])
+  for (const label of ["You", "Developer", "Assistant"]) within(log()).getByText(label)
+  fireEvent.click(screen.getByRole("button", { name: "Unfold" }))
+  fireEvent.click(screen.getByRole("button", { name: "Fold" }))
+  for (const text of [
+    "User message in full",
+    "Developer message in full",
+    "Assistant message in full",
+  ])
+    within(log()).getByText(text)
+})
+
+it("keeps the question and chosen option in an answered question summary", () => {
+  renderConsole([
+    event("agent_request", {
+      request_id: "q",
+      hint: "Choose",
+      question: {
+        text: "Which branch should receive this change?",
+        options: [{ id: "main", label: "Main" }],
+      },
+    }),
+    event("agent_request.resolved", {
+      request_id: "q",
+      resolution: "answered",
+      answer: { option_id: "main", text: "Main" },
+    }),
+  ])
+  const summary = within(log()).getByRole("button", {
+    name: /Which branch should receive this change/,
+  })
+  expect(summary.textContent).toContain("Answered · Main")
+})

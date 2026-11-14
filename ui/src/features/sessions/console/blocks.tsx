@@ -1,7 +1,6 @@
 import {
   BrainIcon,
   CheckIcon,
-  ChevronRightIcon,
   CircleIcon,
   FileTextIcon,
   GitBranchIcon,
@@ -44,11 +43,6 @@ const SUMMARY_CHARS = 90
 function firstLine(text: string): string {
   const line = text.split("\n").find((one) => one.trim() !== "") ?? ""
   return line.length > SUMMARY_CHARS ? `${line.slice(0, SUMMARY_CHARS).trimEnd()}…` : line.trim()
-}
-
-function lineCount(text: string): string {
-  const count = text.replace(/\n$/, "").split("\n").length
-  return `${count} ${count === 1 ? "line" : "lines"}`
 }
 
 /** How long a call took, in the unit that fits it, as the CLI's pane says it. */
@@ -102,14 +96,16 @@ export function PromptBox({
   text,
   queued,
   time,
+  role = "You",
 }: {
   text: string
   queued?: boolean
   time?: string
+  role?: string
 }) {
   return (
-    <div className="flex items-start gap-2 rounded-r-md border-l border-blue-500 bg-muted/30 px-3 py-3">
-      <ChevronRightIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-blue-500" />
+    <div className="py-1">
+      <div className="mb-1 text-xs font-semibold text-foreground">{role}</div>
       <div className="min-w-0 flex-1">
         {queued ? (
           <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
@@ -175,15 +171,14 @@ export const BlockView = memo(function BlockView({
     prompt: TerminalIcon,
   } as const
   const Icon = block.type === "tool" || block.type === "question" ? null : icons[block.type]
-  const decorated = block.type !== "question" && (block.type !== "prompt" || block.daemon)
-  const tone =
-    block.type === "permission"
-      ? "border-orange-500"
-      : block.type === "error" || (block.type === "tool" && block.tool.status === "failed")
-        ? "border-red-500"
-        : block.type === "tool" && block.tool.status === "completed"
-          ? "border-green-500"
-          : "border-muted-foreground/50"
+  const decorated = !["question", "prompt", "message", "tool"].includes(block.type)
+  const labels: Record<string, string> = {
+    note: "Info",
+    child: "Subagent",
+    error: "Error",
+    raw: "Event",
+    plan: "Plan",
+  }
   return (
     <div data-block={block.type} data-block-id={block.id} title={formatStamp(block.createdAt)}>
       {block.subagent ? (
@@ -192,16 +187,24 @@ export const BlockView = memo(function BlockView({
         </div>
       ) : null}
       <div
-        className={cn(decorated && "flex items-start gap-2 border-l px-3 py-1", decorated && tone)}
+        className={cn(
+          decorated && "ml-4 flex items-start gap-2 py-0.5",
+          block.type === "tool" && "flex items-start gap-2",
+        )}
       >
         {block.type === "tool" ? (
-          <div className="mt-1.5">
+          <div className="mt-0.5">
             <ToolKind kind={block.tool.kind} />
           </div>
         ) : decorated && Icon ? (
-          <Icon aria-hidden className="mt-1.5 size-3.5 shrink-0 text-muted-foreground" />
+          <Icon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
         ) : null}
         <div className="min-w-0 flex-1">
+          {labels[block.type] ? (
+            <span className="mr-1 text-xs font-medium text-muted-foreground">
+              {labels[block.type]}
+            </span>
+          ) : null}
           <BlockBody
             block={block}
             picker={picker}
@@ -237,28 +240,14 @@ function BlockBody({
   const time = formatClock(block.createdAt)
   switch (block.type) {
     case "prompt":
-      return block.daemon ? (
-        <Foldable
-          folded={folded}
-          onToggle={onToggle}
-          summary={
-            <SummaryLine
-              start={
-                <>
-                  daemon prompt · {firstLine(block.text)} · {lineCount(block.text)}
-                </>
-              }
-              end={[time]}
-            />
-          }
-        >
-          <Markdown>{block.text}</Markdown>
-        </Foldable>
-      ) : (
-        <PromptBox text={block.text} time={time} />
-      )
+      return <PromptBox text={block.text} time={time} role={block.daemon ? "Developer" : "You"} />
     case "message":
-      return <Markdown>{block.text}</Markdown>
+      return (
+        <div className="py-1">
+          <div className="mb-1 text-xs font-semibold">Assistant</div>
+          <Markdown>{block.text}</Markdown>
+        </div>
+      )
     case "thought":
       return (
         <Foldable
@@ -295,10 +284,10 @@ function BlockBody({
       const body = (
         <>
           {block.command ? (
-            <CodeBlock code={block.command} language="shell" caption="command" className="mt-1.5" />
+            <CodeBlock code={block.command} language="shell" caption="command" className="mt-0.5" />
           ) : null}
           {block.diff ? (
-            <CodeBlock code={block.diff} diff caption="diff" className="mt-1.5" />
+            <CodeBlock code={block.diff} diff caption="diff" className="mt-0.5" />
           ) : null}
           {block.aiNote ? (
             <div className="pt-1 font-mono text-muted-foreground">{block.aiNote}</div>
@@ -340,7 +329,7 @@ function BlockBody({
     case "question":
       return picker
     case "note":
-      return <div className="font-mono text-xs text-muted-foreground">· {block.text}</div>
+      return <span className="font-mono text-xs text-muted-foreground">{block.text}</span>
     case "child":
       return <div className="font-mono text-xs text-muted-foreground">{block.text}</div>
     case "error":
@@ -385,12 +374,12 @@ export const ToolRow = memo(function ToolRow({
         onClick={(event) => onSelect(block.id, event.currentTarget)}
         title={`${subject}\n${formatStamp(block.createdAt)}`}
         className={cn(
-          "flex w-full min-w-0 items-center gap-2 rounded-md border-l px-3 py-2 text-left font-mono text-xs text-muted-foreground outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50",
+          "flex w-[calc(100%-1rem)] ml-4 min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left font-mono text-xs text-muted-foreground outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50",
           tool.status === "failed"
-            ? "border-red-500"
+            ? "text-status-danger-fg"
             : tool.status === "completed"
-              ? "border-green-500"
-              : "border-muted-foreground/50",
+              ? "text-status-done-fg"
+              : "text-muted-foreground",
           selected && "bg-muted text-foreground",
         )}
       >
@@ -420,10 +409,12 @@ function ToolDetails({ block }: { block: Extract<Block, { type: "tool" }> }) {
   const subject = tool.subject ?? tool.title
   const input = tool.kind === "read" ? undefined : tool.inputText
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 [&_pre]:leading-relaxed">
       <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
         <ToolStatus status={tool.status} />
-        <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{tool.title}</span>
+        <h4 className="min-w-0 flex-1 font-sans text-sm font-semibold text-foreground break-words whitespace-pre-wrap">
+          {tool.title}
+        </h4>
         <span className="shrink-0">{formatClock(block.createdAt)}</span>
       </div>
       {input?.includes(subject) ? null : (

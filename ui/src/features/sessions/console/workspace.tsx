@@ -65,7 +65,7 @@ export function ConsoleWorkspace({
         tool ? (
           <aside
             aria-label="Tool details"
-            className="flex min-h-0 w-[45%] min-w-0 flex-col border-l bg-muted/10"
+            className="flex min-h-0 w-[40%] min-w-0 flex-col border-l bg-muted/10"
             onKeyDownCapture={(event) => {
               if (event.key === "Escape" && !event.metaKey) {
                 event.preventDefault()
@@ -74,7 +74,7 @@ export function ConsoleWorkspace({
               }
             }}
           >
-            <div className="flex items-center justify-between border-b px-4 py-2">
+            <div className="flex items-center justify-between border-b px-3 py-1.5">
               <h3 className="font-medium">Tool details</h3>
               <Button
                 ref={close}
@@ -86,7 +86,7 @@ export function ConsoleWorkspace({
                 <XIcon />
               </Button>
             </div>
-            <div ref={detailsScroll} className="min-h-0 flex-1 overflow-y-auto p-4">
+            <div ref={detailsScroll} className="min-h-0 flex-1 overflow-y-auto p-3">
               {content}
             </div>
           </aside>

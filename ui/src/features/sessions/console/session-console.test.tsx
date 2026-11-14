@@ -112,12 +112,11 @@ it("reads the console stream and draws the snapshot as blocks", () => {
   expect(within(transcript()).getByText("Fixed").tagName).toBe("STRONG")
 })
 
-it("folds a prompt the daemon sent into a summary that names it", () => {
+it("keeps developer prompts expanded and identifies their role", () => {
   renderConsole([event("user_prompt_submit", { text: "Resume\nthe work", source: "daemon" })])
-
-  const summary = within(transcript()).getByRole("button", { name: /daemon prompt · Resume/ })
-  expect(summary.getAttribute("aria-expanded")).toBe("false")
-  expect(within(transcript()).queryByText("the work")).toBeNull()
+  within(transcript()).getByText("Developer")
+  within(transcript()).getByText(/the work/)
+  expect(within(transcript()).queryByRole("button")).toBeNull()
 })
 
 it("extends the transcript with each event and replaces it with a new snapshot", () => {
@@ -685,7 +684,7 @@ function foldedActivity() {
   ]
 }
 
-it("marks prompts and tool states with borders and icons", () => {
+it("identifies prompts and tool states without left borders", () => {
   renderConsole([
     event("user_prompt_submit", { text: "hello" }),
     event("tool_call_update", {
@@ -696,16 +695,17 @@ it("marks prompts and tool states with borders and icons", () => {
     }),
   ])
   const prompt = transcript().querySelector('[data-block="prompt"]')
-  expect(prompt?.querySelector(".border-blue-500 svg")).not.toBeNull()
+  expect(prompt?.textContent).toContain("You")
+  expect(transcript().querySelector(".border-l")).toBeNull()
   const tools = transcript().querySelectorAll('[data-block="tool"]')
-  expect(tools[0]?.querySelector(".border-green-500 [data-tool-kind=read]")).not.toBeNull()
-  expect(tools[1]?.querySelector(".border-red-500 [data-tool-kind=edit]")).not.toBeNull()
+  expect(tools[0]?.querySelector("[data-tool-kind=read]")).not.toBeNull()
+  expect(tools[1]?.querySelector("[data-tool-kind=edit]")).not.toBeNull()
 })
 
-it("folds thoughts and daemon prompts from the header while tool rows stay compact", () => {
+it("folds thoughts while prompts stay expanded and tool rows stay compact", () => {
   renderConsole(foldedActivity())
   const log = within(transcript())
-  expect(log.queryByText(/prompt 6/)).toBeNull()
+  log.getByText(/prompt 6/)
   expect(log.queryByText(/the options/)).toBeNull()
   fireEvent.click(screen.getByRole("button", { name: "Unfold" }))
   log.getByText(/prompt 10/)
@@ -732,20 +732,6 @@ it("folds one thought and keeps the choice across a remount and a stream update"
       .getByRole("button", { name: /thought · pondering/ })
       .getAttribute("aria-expanded"),
   ).toBe("true")
-})
-
-it("lets a keyboard open a daemon prompt fold without copying closing it", async () => {
-  const user = userEvent.setup()
-  renderConsole([
-    event("user_prompt_submit", { text: "Run this\n```sh\necho hello\n```", source: "daemon" }),
-  ])
-  const log = within(transcript())
-  const prompt = log.getByRole("button", { name: /daemon prompt/ })
-  prompt.focus()
-  await user.keyboard("{Enter}")
-  expect(prompt.getAttribute("aria-expanded")).toBe("true")
-  await user.click(log.getByRole("button", { name: /Copy/ }))
-  expect(prompt.getAttribute("aria-expanded")).toBe("true")
 })
 
 it("draws no scroll area inside the transcript, and wraps long code", async () => {
@@ -1038,8 +1024,8 @@ function questionCard() {
 
 function expectQuestionMarker(card: HTMLElement) {
   const block = card.closest('[data-block="question"]')
-  expect(block?.querySelectorAll(".border-l")).toHaveLength(1)
-  expect(card.classList.contains("border-purple-500")).toBe(true)
+  expect(block?.querySelectorAll(".border-l")).toHaveLength(0)
+  expect(card.querySelectorAll(".lucide-circle-help")).toHaveLength(1)
   expect(card.querySelector(".lucide-circle-help")).not.toBeNull()
 }
 
@@ -1146,7 +1132,7 @@ const ANSWERED = () => [
   }),
 ]
 
-it("folds an answered question to its hint and outcome, and a click shows it closed", async () => {
+it("folds an answered question with its text and chosen option", async () => {
   const user = userEvent.setup()
   renderConsole(ANSWERED())
   const card = questionCard()
@@ -1154,11 +1140,11 @@ it("folds an answered question to its hint and outcome, and a click shows it clo
   const header = within(card).getByRole("button", { name: /Pick a base/ })
   expect(header.getAttribute("aria-expanded")).toBe("false")
   within(header).getByText(/Answered · Next/)
-  expect(within(card).queryByText("Which base branch should the task land on?")).toBeNull()
+  within(header).getByText("Which base branch should the task land on?")
   expect(within(card).queryByRole("button", { name: /^Main/ })).toBeNull()
 
   await user.click(header)
-  within(card).getByText("Which base branch should the task land on?")
+  expect(within(card).getAllByText("Which base branch should the task land on?")).toHaveLength(2)
   expect(within(card).getByRole("button", { name: /^Main/ })).toHaveProperty("disabled", true)
   expect(within(card).queryByRole("textbox", { name: "Your own answer" })).toBeNull()
 })

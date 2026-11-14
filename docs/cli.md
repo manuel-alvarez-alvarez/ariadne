@@ -457,7 +457,10 @@ near the composer to reveal a request and focus its response control.
 The drawer also offers this control; using it closes the drawer.
 This works for subagent requests too.
 
-Thoughts and daemon prompts still fold individually. `Unfold` and `Fold` in
+User, developer and assistant messages always remain expanded. Role labels identify
+them; compact secondary activity sits slightly indented, without left borders.
+Pending questions stay open. Answered questions can fold to show the question
+and chosen answer together. Thoughts still fold individually. `Unfold` and `Fold` in
 the header, and the plus menu's `Expand all` and `Collapse all`, change
 foldable conversation blocks. Tool rows stay compact. Ctrl-O has no action
 in the browser or desktop console; it still works in the terminal console.

@@ -92,15 +92,13 @@ const edit = () =>
 const framed = (node: Element) =>
   /(^|\s)(border|border-[blrtxy]|bg-[\w/[\]-]+)(\s|$)/.test(node.getAttribute("class") ?? "")
 
-it("draws a tool call with a left border and captioned sections", () => {
+it("draws tool details with captioned sections and no left border", () => {
   const { container } = drawn(edit())
 
   const frames = Array.from(container.querySelectorAll("*")).filter(
     (node) => node.tagName !== "BUTTON" && framed(node),
   )
-  expect(frames).toHaveLength(1)
-  expect(frames[0]?.classList.contains("border-l")).toBe(true)
-  expect(frames[0]?.classList.contains("border-green-500")).toBe(true)
+  expect(frames).toHaveLength(0)
   const sections = Array.from(container.querySelectorAll("[data-code-block]"))
   expect(
     sections.map((section) => section.querySelector("[data-code-caption]")?.textContent),
@@ -143,7 +141,7 @@ it("places the tool kind and status before its name and short summary", () => {
   const { container } = render(row(block as Block))
   const summary = screen.getByRole("button", { pressed: false })
   expect(summary.textContent).toContain("executependingBashcargo test")
-  expect(container.querySelector(".border-l [data-tool-kind=execute]")).not.toBeNull()
+  expect(container.querySelector("[data-tool-kind=execute]")).not.toBeNull()
 })
 
 it("gives every ACP kind its own icon and any other kind one more", () => {
@@ -283,12 +281,13 @@ it("renders a prompt as Markdown: headings, task lists, a fenced block, and a si
   expect(paragraph?.parentElement?.className).toContain("[&_p]:whitespace-pre-wrap")
 })
 
-it("renders an unfolded daemon prompt as Markdown and keeps its summary plain", () => {
+it("renders developer prompts as full Markdown without a fold", () => {
   const [block] = fold(event("user_prompt_submit", { text: "## Resume\n- one", source: "daemon" }))
   const { container } = drawn(block as Block, false)
 
   expect(container.querySelector("h2")?.textContent).toBe("Resume")
-  expect(screen.getByRole("button").querySelector("h2")).toBeNull()
+  expect(screen.queryByRole("button")).toBeNull()
+  screen.getByText("Developer")
 })
 
 it("draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text", () => {
