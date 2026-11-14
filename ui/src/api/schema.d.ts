@@ -3548,10 +3548,9 @@ export interface components {
             operation?: components["schemas"]["PrOperation"] | null;
             /**
              * @description URL of the pull or merge request the task's `pr` column opened, once
-             *     it has; null for a task landed directly.
-             *     On a review or babysit task (one
-             *     with an `operation`) that opened none, the goal's own request, in the
-             *     response only.
+             *     it has; null for a task landed directly. On a review or babysit task
+             *     (one with an `operation`) that opened none, the goal's own request, in
+             *     the response only.
              */
             pr_url?: string | null;
             /**

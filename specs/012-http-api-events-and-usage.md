@@ -76,6 +76,11 @@ and the ACP runtime that reports the agent events (021).
    alike — is accepted only as a hex sha of 7 to 64 characters and refused
    otherwise with 422 `invalid_request`, since a later call hands it to git as
    the commit a `merged` or `request-merged` gate verifies (030).
+   `TaskDto.pr_url` is the request the task's `pr` column opened. A task with
+   an `operation` (029) that opened none carries its goal's request URL
+   instead, in the response only: the stored `tasks.pr_url` stays null, so no
+   daemon reader of it changes
+   (`pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`).
 4. Every write emits a **fat event**: the changed entity, whole, so a client
    can apply it without a re-fetch. A task transition carries the transition
    that caused it, whether it came through HTTP or from the scheduler.

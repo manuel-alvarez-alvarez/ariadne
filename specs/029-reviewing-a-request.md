@@ -199,10 +199,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     - `GoalDto.pull_request`, `TaskDto.operation` and
       `PullRequestDto.operations` name the operation, the request, and the
       goal and task of each open one; the desktop's request panel links the
-      goal, and `pr show` prints it. A task with an `operation` that opened
-      no request of its own carries the goal's request URL as `TaskDto.pr_url`
-      in every response; the stored `tasks.pr_url` is unchanged
-      (`pull_request_reviews.rs`'s operation goal test).
+      goal, and `pr show` prints it.
 
 ## Tools and routes
 

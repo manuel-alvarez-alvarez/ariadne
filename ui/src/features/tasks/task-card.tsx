@@ -36,7 +36,7 @@ import { useId } from "react"
 import { Link } from "react-router-dom"
 
 import type { TaskDto, WorkflowStepDto } from "@/api"
-import { PrLink } from "@/components/pr-link"
+import { PrLink, pullRequestNumber, pullRequestText } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
 import { When, whenHint } from "@/components/when"
@@ -57,6 +57,9 @@ import { findStep, stepTitle } from "./steps"
  * Every hint is read off the link's description instead ({@link cardHints}).
  */
 const NOT_A_STOP = -1
+
+/** How the PR link and its slot give way on a narrow card: both shrink, and neither takes more than 40% of the row. */
+const PR_LINK_SIZING = "min-w-0 max-w-[40%] shrink"
 
 /** The last activity time, short on a narrow card and in full on a wide one. */
 function ActivityTime({ at, hintTabIndex }: { at: string; hintTabIndex: number }) {
@@ -79,17 +82,20 @@ function ActivityTime({ at, hintTabIndex }: { at: string; hintTabIndex: number }
   )
 }
 
-/** An invisible stand-in the size of the {@link PrLink} for `url`, in the link's own row. */
+/**
+ * An invisible stand-in the size of the {@link PrLink} for `url`, in the link's
+ * own row. It shrinks and is capped exactly as the link is, so the two take
+ * the same width at every card width.
+ */
 function PrLinkSlot({ url }: { url: string }) {
-  const digits = /\/(?:pulls?|merge_requests)\/(\d+)/.exec(url)?.[1]
   return (
     <span
       aria-hidden
       data-pr-slot
-      className="invisible inline-flex h-4 shrink-0 items-center gap-1"
+      className={`invisible inline-flex h-4 items-center gap-1 ${PR_LINK_SIZING}`}
     >
       <GitPullRequestIcon className="size-3.5 shrink-0" />
-      <span>{digits ? `#${digits}` : "PR"}</span>
+      <span className="min-w-0 truncate">{pullRequestText(pullRequestNumber(url))}</span>
     </span>
   )
 }
@@ -202,7 +208,7 @@ export function TaskCard({
           {/* Holds the PR link's place in this row, so the token figure is
               the part that gives way; the real anchor is laid over it below. */}
           {task.pr_url && <PrLinkSlot url={task.pr_url} />}
-          <span className="shrink-0">
+          <span className="min-w-0 shrink truncate">
             <ActivityTime at={activity} hintTabIndex={NOT_A_STOP} />
           </span>
         </div>
@@ -229,9 +235,9 @@ export function TaskCard({
             url={task.pr_url}
             context={task.title}
             tabIndex={NOT_A_STOP}
-            className="pointer-events-auto h-4 shrink-0 text-muted-foreground hover:text-foreground"
+            className={`pointer-events-auto h-4 text-muted-foreground hover:text-foreground ${PR_LINK_SIZING}`}
           />
-          <span aria-hidden className="invisible shrink-0">
+          <span aria-hidden className="invisible min-w-0 shrink truncate">
             <ActivityTime at={activity} hintTabIndex={NOT_A_STOP} />
           </span>
         </div>

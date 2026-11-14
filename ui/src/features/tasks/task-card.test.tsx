@@ -158,11 +158,23 @@ it("links the pull request between the token figure and the time, and takes one 
   const row = document.querySelector("[data-pr-slot]")?.parentElement as HTMLElement
   expect(row.children).toHaveLength(3)
   expect(row.children[0]?.className).toContain("flex-1")
-  expect(row.children[1]?.className).toContain("shrink-0")
-  expect(row.children[2]?.className).toContain("shrink-0")
+  // Both end items shrink and the link is capped, so a narrow card cuts the
+  // figure first and then bounds the two, rather than overflowing.
+  expect(row.children[1]?.className).toContain("max-w-[40%]")
+  expect(row.children[1]?.className).toContain("shrink")
+  expect(row.children[1]?.className).not.toContain("shrink-0")
+  expect(row.children[2]?.className).toContain("shrink")
+  expect(row.children[2]?.className).not.toContain("shrink-0")
   expect(pr.parentElement?.className).toContain("bottom-1.5")
   const links = screen.getAllByRole("link")
   expect(links.filter((link) => link.getAttribute("tabindex") !== "-1")).toHaveLength(1)
+})
+
+it("sizes the slot like the link, for a URL with no request number", () => {
+  card({ pr_url: "https://github.com/o/r/pull/123abc" })
+  const pr = screen.getByRole("link", { name: /^Pull request/ })
+  expect(pr.textContent).toBe("PR")
+  expect(document.querySelector("[data-pr-slot]")?.textContent).toBe("PR")
 })
 
 it("shows no pull request link without a pr_url, and no branch", () => {
