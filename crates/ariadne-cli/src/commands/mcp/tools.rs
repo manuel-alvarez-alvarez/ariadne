@@ -1182,10 +1182,6 @@ mod tests {
         );
     }
 
-    /// How long the test below waits for the daemon to see both reads before
-    /// it calls them sequential. A pass never waits this long.
-    const BOTH_READS_STARTED: std::time::Duration = std::time::Duration::from_secs(10);
-
     /// A daemon that answers neither the repository read nor the session read
     /// until both have arrived, each on a connection of its own.
     async fn daemon_holding_two_reads_until_both_arrive() -> String {
@@ -1242,13 +1238,12 @@ mod tests {
             McpSeat::Agent,
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
-        let read = tokio::time::timeout(
-            BOTH_READS_STARTED,
-            mcp.get_pull_request(Parameters(Empty {})),
-        )
-        .await
-        .expect("both reads reach the daemon before either is answered")
-        .expect("read the request");
+        // Read one after the other, the first read is never answered, and the
+        // client's own request timeout ends the call with an error.
+        let read = mcp
+            .get_pull_request(Parameters(Empty {}))
+            .await
+            .expect("both reads reach the daemon before either is answered");
         let ContentBlock::Text(text) = &read.content[0] else {
             panic!("the request came back as something other than text");
         };
