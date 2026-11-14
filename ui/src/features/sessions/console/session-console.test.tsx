@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 import type { AgentEventDto } from "@/api"
+import { formatClock } from "@/lib/format"
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
 
@@ -1037,7 +1038,7 @@ it("draws a question as a card and submits a clicked choice at once to its reque
   renderConsole([QUESTION_EVENT()])
   const card = questionCard()
   within(card).getByText("Which base branch should the task land on?")
-  within(card).getByText("Recommended: Main")
+  expect(within(card).queryByText(/Recommended:/)).toBeNull()
   within(card).getByText("Land on the trunk.")
 
   await userEvent.click(within(card).getByRole("button", { name: /^Next/ }))
@@ -1045,6 +1046,28 @@ it("draws a question as a card and submits a clicked choice at once to its reque
   await waitFor(() => expect(posts).toEqual([{ path: ANSWER_PATH, body: '{"option_id":"next"}' }]))
   await within(card).findByText("Answer sent")
   expect(within(card).getByRole("button", { name: /^Main/ })).toHaveProperty("disabled", true)
+})
+
+it("shows the reason for a recommendation under the recommended option, once", () => {
+  const asked = QUESTION_EVENT()
+  const question = (asked.payload as { question: Record<string, unknown> }).question
+  question.recommendation_reason = "The trunk is green."
+  renderConsole([asked])
+  const card = questionCard()
+
+  const main = within(card).getByRole("button", { name: /^Main/ })
+  within(main).getByText("recommended")
+  within(main).getByText("The trunk is green.")
+  expect(within(card).getAllByText("The trunk is green.")).toHaveLength(1)
+  expect(within(card).queryByText(/Recommended:/)).toBeNull()
+})
+
+it("shows a question's clock time at the right end of its header", () => {
+  renderConsole([QUESTION_EVENT()])
+  const card = questionCard()
+
+  const end = card.querySelector("[data-summary-end]")
+  expect(end?.textContent).toBe(formatClock("2026-11-14T10:00:00Z"))
 })
 
 it("renders a question's text as Markdown, with a fence as a code block", () => {
@@ -1089,20 +1112,60 @@ it("submits a custom answer as text", async () => {
   await waitFor(() => expect(posts).toEqual([{ path: ANSWER_PATH, body: '{"text":"release"}' }]))
 })
 
-it("draws an answered question closed, with no choice to submit again", () => {
-  renderConsole([
-    QUESTION_EVENT(),
-    event("agent_request.resolved", {
-      request_id: "01RQ",
-      resolution: "answered",
-      answer: { option_id: "next", text: "Next" },
-    }),
-  ])
+const ANSWERED = () => [
+  QUESTION_EVENT(),
+  event("agent_request.resolved", {
+    request_id: "01RQ",
+    resolution: "answered",
+    answer: { option_id: "next", text: "Next" },
+  }),
+]
+
+it("folds an answered question to its hint and outcome, and a click shows it closed", async () => {
+  const user = userEvent.setup()
+  renderConsole(ANSWERED())
   const card = questionCard()
 
-  within(card).getByText("Answered · Next")
+  const header = within(card).getByRole("button", { name: /Pick a base/ })
+  expect(header.getAttribute("aria-expanded")).toBe("false")
+  within(header).getByText(/Answered · Next/)
+  expect(within(card).queryByText("Which base branch should the task land on?")).toBeNull()
+  expect(within(card).queryByRole("button", { name: /^Main/ })).toBeNull()
+
+  await user.click(header)
+  within(card).getByText("Which base branch should the task land on?")
   expect(within(card).getByRole("button", { name: /^Main/ })).toHaveProperty("disabled", true)
   expect(within(card).queryByRole("textbox", { name: "Your own answer" })).toBeNull()
+})
+
+it("keeps a closed question's fold across a remount", async () => {
+  const user = userEvent.setup()
+  const events = ANSWERED()
+  renderConsole(events)
+  await user.click(within(questionCard()).getByRole("button", { name: /Pick a base/ }))
+
+  cleanup()
+  stubEventSource()
+  renderConsole(events)
+  const header = within(questionCard()).getByRole("button", { name: /Pick a base/ })
+  expect(header.getAttribute("aria-expanded")).toBe("true")
+})
+
+it("folds a withdrawn and an expired question, and never an open one", () => {
+  renderConsole([
+    QUESTION_EVENT(),
+    event("agent_request.resolved", { request_id: "01RQ", resolution: "expired" }),
+  ])
+  const header = within(questionCard()).getByRole("button", { name: /Pick a base/ })
+  expect(header.getAttribute("aria-expanded")).toBe("false")
+  within(header).getByText(/Expired: the turn that asked it ended/)
+
+  cleanup()
+  stubEventSource()
+  renderConsole([QUESTION_EVENT()])
+  const card = questionCard()
+  expect(within(card).queryByRole("button", { name: /Pick a base/ })).toBeNull()
+  within(card).getByRole("button", { name: /^Main/ })
 })
 
 const PENDING = {

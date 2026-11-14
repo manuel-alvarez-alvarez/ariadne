@@ -417,9 +417,13 @@ Out: the daemon endpoints themselves (012).
     ellipsis, whole on hover, and the list never scrolls sideways. The menu also shows in a child's view, with the
     actions alone.
 22a. An `agent_request` event that carries a `question` (031 rule 11) is a
-    question card (`console/questions.tsx`): the hint, the question text,
-    `Recommended: <label>`, one button per option with its description, and
-    a field for a custom answer. A click on an option submits at once.
+    question card (`console/questions.tsx`): a header with the hint and the
+    block's clock time at its right end, as a tool call's summary line has
+    it, the question text, one button per option with its description, and
+    a field for a custom answer. The recommended option's button carries a
+    `recommended` badge, and the question's `recommendation_reason`, where
+    it has one, under its description; the card has no separate
+    recommendation line. A click on an option submits at once.
     Every answer posts `{"option_id"}` or `{"text"}` to
     `POST /v1/sessions/{id}/agent-requests/{request_id}/answer` for the
     card's own request, never to the input route. A failed post shows its
@@ -428,6 +432,10 @@ Out: the daemon endpoints themselves (012).
     `agent_request.resolved` event closes the card as `Answered · <answer>`,
     `Withdrawn by the agent` or `Expired`. A closed card, a card replayed
     from history and a card of a session that is not live take no answer.
+    An answered, withdrawn or expired card folds to one line, its hint and
+    its outcome; a click unfolds its text and its options. Its fold is a
+    preference kept under its block id, as every other block's (rule 24i).
+    An open card never folds.
     The prompt that delivers the answer to the agent (a `user_prompt_submit`
     that carries a `request_id`, 031 rule 12) draws no prompt block, and
     `blocksText` leaves it out, so an answered question shows once, as its
@@ -472,7 +480,8 @@ Out: the daemon endpoints themselves (012).
     `BlockView` is memoized, and it compares a question card or a permission
     picker by its props, so a streamed chunk re-renders only the block it
     changes. A card or a picker whose own state changes renders again. A message, a person's prompt, a plan, a
-    permission and a question never fold. An unfolded daemon prompt is
+    permission and an open question never fold; a closed question folds
+    (rule 22a). An unfolded daemon prompt is
     Markdown, and its summary line stays plain text. The whole summary is one button
     with `aria-expanded`, so a click, Enter or Space opens that block alone;
     its content sits outside the button, so selecting it, a link in it and
@@ -1564,13 +1573,18 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/console/session-console.test.tsx::draws a question as a card and submits a clicked choice at once to its request`,
   `::shows a failed answer on the card and keeps it answerable for another attempt`,
   `::submits a custom answer as text`,
-  `::draws an answered question closed, with no choice to submit again`,
+  `::folds an answered question to its hint and outcome, and a click shows it closed`,
+  `::keeps a closed question's fold across a remount`,
+  `::folds a withdrawn and an expired question, and never an open one`,
+  `::shows the reason for a recommendation under the recommended option, once`,
+  `::shows a question's clock time at the right end of its header`,
   `::restores a pending question older than the snapshot page on a load and a reconnect`,
   `::draws a pending question once where the snapshot already holds it, and closed where it closed`,
   `::shows a failed read of the pending questions, and its Retry restores them`),
   and the transcript folds a question and its resolution into one card,
   keeps a hint-only request a note, and replays a withdrawn question closed
   (`ui/src/features/sessions/console/transcript.test.ts::folds a structured question into one card that its resolution closes`,
+  `::keeps the reason for a question's recommendation`,
   `::keeps a hint-only request a note, and a resolution of it adds no block`,
   `::replays a withdrawn question closed, so it is never answerable again`).
 - The console expands into a near-fullscreen modal and collapses back on a

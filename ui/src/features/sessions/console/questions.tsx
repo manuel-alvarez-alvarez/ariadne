@@ -1,7 +1,9 @@
 /**
  * The card a question an agent asked through `wait_for_user` is drawn as
- * (031): the question, one button per option, the recommendation, and a
- * field for an answer of the user's own.
+ * (031): a header with the hint and the clock time, the question, one button
+ * per option with the recommendation and its reason on its own button, and a
+ * field for an answer of the user's own. A closed card folds to its header
+ * and its outcome, and keeps that fold per block as the other blocks do.
  *
  * Every answer goes to `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`
  * for this card's own request, never to the console input route, so it can
@@ -17,8 +19,10 @@ import { type FormEvent, useState } from "react"
 import { type AgentRequestDto, api, unwrap } from "@/api"
 import { Markdown } from "@/components/markdown"
 import { Button } from "@/components/ui/button"
-import { describeError } from "@/lib/format"
+import { describeError, formatClock } from "@/lib/format"
 
+import { SummaryLine } from "./blocks"
+import { Foldable } from "./foldable"
 import type { Block, QuestionResolution, Transcript } from "./transcript"
 
 type QuestionBlock = Extract<Block, { type: "question" }>
@@ -110,6 +114,8 @@ export function QuestionCard({
   live,
   sent = false,
   onAnswered,
+  folded,
+  onToggle,
 }: {
   sessionId: string
   block: QuestionBlock
@@ -119,6 +125,10 @@ export function QuestionCard({
   sent?: boolean
   /** Told when this card's own answer is accepted. */
   onAnswered?: (requestId: string) => void
+  /** The block's fold: a closed card folds to one line, an open one never. */
+  folded: boolean
+  /** Fold or unfold the block, as `BlockView` does. */
+  onToggle: (id: string, folded: boolean) => void
 }) {
   const [submitting, setSubmitting] = useState<Submitting>({ state: "idle" })
   const [error, setError] = useState<string | null>(null)
@@ -148,16 +158,10 @@ export function QuestionCard({
     void submit("custom", { text })
   }
 
-  return (
-    <section
-      aria-label={`Question · ${block.hint}`}
-      className="rounded-md border border-status-active/40 bg-status-active-soft/30 px-3 py-2 text-xs"
-    >
-      <div className="font-medium">Question · {block.hint}</div>
+  const time = formatClock(block.createdAt)
+  const body = (
+    <>
       <Markdown className="pt-1">{question.text}</Markdown>
-      {recommended ? (
-        <p className="pt-1 text-muted-foreground">Recommended: {recommended.label}</p>
-      ) : null}
       {options.length > 0 ? (
         <div className="flex flex-col gap-1 pt-2">
           {options.map((option) => (
@@ -182,12 +186,57 @@ export function QuestionCard({
                 {option.description ? (
                   <span className="font-normal opacity-80">{option.description}</span>
                 ) : null}
+                {option.id === recommended?.id && question.recommendation_reason ? (
+                  <span className="font-normal italic opacity-80">
+                    {question.recommendation_reason}
+                  </span>
+                ) : null}
               </span>
             </Button>
           ))}
         </div>
       ) : null}
-      {resolution === undefined && live && !sent ? (
+    </>
+  )
+
+  if (resolution !== undefined) {
+    return (
+      <section
+        aria-label={`Question · ${block.hint}`}
+        className="rounded-md border border-status-active/40 bg-status-active-soft/30 text-xs"
+      >
+        <Foldable
+          folded={folded}
+          onToggle={() => onToggle(block.id, folded)}
+          summary={
+            <SummaryLine
+              start={
+                <>
+                  <span className="font-medium text-foreground">Question · {block.hint}</span>
+                  <span aria-hidden> ↳ </span>
+                  <span>{outcome(resolution, false, live)}</span>
+                </>
+              }
+              end={[time]}
+            />
+          }
+        >
+          {body}
+        </Foldable>
+      </section>
+    )
+  }
+
+  return (
+    <section
+      aria-label={`Question · ${block.hint}`}
+      className="rounded-md border border-status-active/40 bg-status-active-soft/30 px-3 py-2 text-xs"
+    >
+      <div className="font-medium [&_[data-summary-end]]:font-mono [&_[data-summary-end]]:font-normal [&_[data-summary-end]]:text-muted-foreground">
+        <SummaryLine start={<>Question · {block.hint}</>} end={[time]} />
+      </div>
+      {body}
+      {live && !sent ? (
         <form onSubmit={submitCustom} className="flex gap-1.5 pt-2">
           <input
             aria-label="Your own answer"
@@ -228,18 +277,7 @@ function Outcome({
   accepted: boolean
   live: boolean
 }) {
-  const text =
-    resolution?.state === "answered"
-      ? `Answered${resolution.answer ? ` · ${resolution.answer}` : ""}`
-      : resolution?.state === "withdrawn"
-        ? "Withdrawn by the agent"
-        : resolution?.state === "expired"
-          ? "Expired: the turn that asked it ended"
-          : accepted
-            ? "Answer sent"
-            : live
-              ? undefined
-              : "Not answered: the session ended"
+  const text = outcome(resolution, accepted, live)
   if (text === undefined) return null
   return (
     <div className="pt-1.5 font-mono text-muted-foreground">
@@ -247,4 +285,23 @@ function Outcome({
       {text}
     </div>
   )
+}
+
+/** How the card's request closed, or what became of an answer to it. */
+function outcome(
+  resolution: QuestionResolution | undefined,
+  accepted: boolean,
+  live: boolean,
+): string | undefined {
+  return resolution?.state === "answered"
+    ? `Answered${resolution.answer ? ` · ${resolution.answer}` : ""}`
+    : resolution?.state === "withdrawn"
+      ? "Withdrawn by the agent"
+      : resolution?.state === "expired"
+        ? "Expired: the turn that asked it ended"
+        : accepted
+          ? "Answer sent"
+          : live
+            ? undefined
+            : "Not answered: the session ended"
 }

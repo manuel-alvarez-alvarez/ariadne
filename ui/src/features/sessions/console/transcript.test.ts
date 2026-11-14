@@ -687,6 +687,15 @@ it("folds a structured question into one card that its resolution closes", () =>
   })
 })
 
+it("keeps the reason for a question's recommendation", () => {
+  const question = { ...QUESTION, recommendation_reason: "The trunk is green." }
+  const blocks = fold([
+    event("agent_request", { request_id: "01RQ", hint: "Pick a base", question }),
+  ])
+
+  expect(blocks[0]).toMatchObject({ type: "question", question })
+})
+
 it("keeps a hint-only request a note, and a resolution of it adds no block", () => {
   const blocks = fold([
     event("agent_request", { request_id: "01RQ", hint: "Approve the plan?" }),

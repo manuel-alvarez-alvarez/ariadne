@@ -48,7 +48,7 @@ function duration(from: string | undefined, to: string | undefined): string | un
 }
 
 /** A summary line: what the block is at the left, and its muted facts and time at the right end. */
-function SummaryLine({ start, end }: { start: ReactNode; end: (string | undefined)[] }) {
+export function SummaryLine({ start, end }: { start: ReactNode; end: (string | undefined)[] }) {
   return (
     <span className="flex min-w-0 items-start gap-3">
       <span className="min-w-0 flex-1 break-words">{start}</span>

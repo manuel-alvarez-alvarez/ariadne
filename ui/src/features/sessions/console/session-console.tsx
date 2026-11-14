@@ -926,6 +926,8 @@ function ConsolePane({
                       live={live}
                       sent={answered.has(block.requestId)}
                       onAnswered={markAnswered}
+                      folded={blockFolds[block.id] ?? folded}
+                      onToggle={toggleBlock}
                     />
                   ) : block.type === "permission" && block.id === pendingId ? (
                     <PermissionPicker
@@ -966,6 +968,8 @@ function ConsolePane({
                         live={live}
                         sent={answered.has(block.requestId)}
                         onAnswered={markAnswered}
+                        folded={blockFolds[block.id] ?? folded}
+                        onToggle={toggleBlock}
                       />
                     }
                   />

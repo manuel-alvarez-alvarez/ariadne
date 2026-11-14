@@ -175,6 +175,7 @@ pub(super) async fn with_pending_questions(
 
 /// A question the console can draw and the user can answer: text, options
 /// with distinct ids and labels, and a recommendation that names one of them.
+/// A reason comes only with the recommendation it explains.
 fn check_question(question: &AgentQuestion) -> ApiResult<()> {
     if question.text.trim().is_empty() {
         return Err(ApiError::bad_request("the question text cannot be empty"));
@@ -199,6 +200,11 @@ fn check_question(question: &AgentQuestion) -> ApiResult<()> {
         return Err(ApiError::bad_request(format!(
             "`recommended_option_id` names `{recommended}`, which is not an option"
         )));
+    }
+    if question.recommendation_reason.is_some() && question.recommended_option_id.is_none() {
+        return Err(ApiError::bad_request(
+            "`recommendation_reason` needs a `recommended_option_id`",
+        ));
     }
     Ok(())
 }
@@ -518,6 +524,7 @@ mod tests {
                 },
             ],
             recommended_option_id: Some("main".into()),
+            recommendation_reason: Some("The trunk is green.".into()),
         }
     }
 
@@ -705,13 +712,19 @@ mod tests {
         }
     }
 
-    /// A recommendation must name an option, and option ids are distinct.
+    /// A recommendation must name an option, a reason needs a
+    /// recommendation, and option ids are distinct.
     #[test]
     fn a_question_is_refused_where_its_options_do_not_add_up() {
         assert!(check_question(&question()).is_ok());
         let mut unknown = question();
         unknown.recommended_option_id = Some("other".into());
         assert!(check_question(&unknown).is_err());
+        let mut unexplained = question();
+        unexplained.recommended_option_id = None;
+        assert!(check_question(&unexplained).is_err());
+        unexplained.recommendation_reason = None;
+        assert!(check_question(&unexplained).is_ok());
         let mut twice = question();
         twice.options[1].id = "main".into();
         assert!(check_question(&twice).is_err());
@@ -722,6 +735,7 @@ mod tests {
             text: "Name the release.".into(),
             options: Vec::new(),
             recommended_option_id: None,
+            recommendation_reason: None,
         };
         assert!(check_question(&typed).is_ok());
     }
