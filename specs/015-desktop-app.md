@@ -361,9 +361,10 @@ Out: the daemon endpoints themselves (012).
     the same input route. The reply shows the chosen option and who decided
     (`decided_by`).
 22b. The composer (`console/composer.tsx`) starts at one line and grows with
-    newlines and pasted text to six lines, then scrolls inside. A Send control sits beside it,
-    disabled while the draft is blank or the session is not live, and Stop
-    stays beside it while a turn runs. Enter sends and Shift+Enter adds a
+    newlines and pasted text to six lines, then scrolls inside. Send is an icon
+    button with a tooltip at its right edge, aligned with its last line and never
+    wrapping under it, disabled while the draft is blank or the session is not
+    live, and Stop is one beside it while a turn runs. Enter sends and Shift+Enter adds a
     line; an Enter that ends an input-method composition does neither, and a
     pasted text keeps its lines.
 22c. While a question card (rule 22a) waits for an answer, the composer
@@ -395,7 +396,8 @@ Out: the daemon endpoints themselves (012).
     has the keyboard. Every entry is a button, so a click, a tap and the
     keyboard reach it: the search field takes the keyboard on opening, Down
     walks the entries, Up returns to the field and Enter in the field picks
-    the first match. The menu also shows in a child's view, with the
+    the first match. A long command name or copy label is cut with an
+    ellipsis, whole on hover, and the list never scrolls sideways. The menu also shows in a child's view, with the
     actions alone.
 22a. An `agent_request` event that carries a `question` (031 rule 11) is a
     question card (`console/questions.tsx`): the hint, the question text,
@@ -480,11 +482,12 @@ Out: the daemon endpoints themselves (012).
     picked command is sent as plain text through `/console/input`, as every
     prompt is.
 23d. A status row (`console/status.tsx`) above the input shows the session's status, and while a
-    turn runs a spinner with `thinking` or `running <tool>` and a turn clock
+    turn runs a spinner with `thinking` or `running <tool>` (the tool's first line,
+    cut with an ellipsis, whole on hover) and a turn clock
     counted from the `created_at` of the turn's first event. It shows the
     token totals `↑in ↓out`: the sum over the launches of the latest
     `ariadne_usage` of each launch's `stop`, or the session's own usage
-    where that is more, each count apart.
+    where that is more, each count apart, at the right end. The row is one line at every width.
 23e. A sent prompt shows at once as a user prompt block tagged `queued`.
     The `user_prompt_submit` with `source: "console"` and the same text,
     newer than the send, replaces it: an older echo, such as one a resync
@@ -1387,7 +1390,8 @@ Out: the daemon endpoints themselves (012).
   a newline, a composition and a paste (rule 22b)
   (`ui/src/features/sessions/console/composer.test.tsx::starts at one line, grows with its text to six lines, then scrolls inside`,
   `::sends with Enter and the Send control, and keeps a newline, a composition and a paste`,
-  `::offers Stop beside Send while a turn runs`).
+  `::offers Stop beside Send while a turn runs`,
+  `::draws Send and Stop as icons without a label, on a row that never wraps`).
 - The composer answers an open question on its request's own route (rule 22c)
   (`ui/src/features/sessions/console/composer.test.tsx::answers an open question from the composer on that request's own route`,
   `::answers a question restored from the requests list from the composer`,
@@ -1404,7 +1408,8 @@ Out: the daemon endpoints themselves (012).
 - The plus menu inserts a command for editing, offers Resume only when the
   session ended and Switch only where it can, expands and collapses all, and
   copies the loaded transcript of the view shown (rule 22e)
-  (`ui/src/features/sessions/console/composer.test.tsx::inserts a menu command in front of the draft for editing, and hands the composer focus`,
+  (`ui/src/features/sessions/console/composer.test.tsx::cuts a long command name and the copy label in the menu, whole on hover, with no sideways scroll`,
+  `::inserts a menu command in front of the draft for editing, and hands the composer focus`,
   `::picks a menu entry with the keyboard`,
   `::completes a suggestion on a click, keeping the composer's focus`,
   `::offers Resume only once the session has ended, and resumes through the existing route`,
@@ -1512,7 +1517,8 @@ Out: the daemon endpoints themselves (012).
   totals
   (`ui/src/features/sessions/console/session-console.test.tsx::shows the status, the turn with its clock, and the token totals`,
   `ui/src/features/sessions/console/transcript.test.ts::totals the latest usage of each launch, never below the session's own`,
-  `::starts the turn clock at the turn's first event and names the open tool`).
+  `::starts the turn clock at the turn's first event and names the open tool`,
+  `ui/src/features/sessions/console/status.test.tsx::shows only the first line of a multiline tool name, whole on hover, with the tokens at the right end`).
 - A sent prompt shows as queued until its console echo replaces it, and a
   failed send removes it
   (`ui/src/features/sessions/console/session-console.test.tsx::shows a sent prompt as queued until the console echo replaces it`,

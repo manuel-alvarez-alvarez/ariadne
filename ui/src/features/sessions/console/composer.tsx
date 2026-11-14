@@ -3,6 +3,7 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react"
 import { useLayoutEffect } from "react"
 
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/format"
 
 import type { AgentCommand } from "./transcript"
@@ -176,9 +177,9 @@ export function Composer({
 
   return (
     <>
-      <div className="flex flex-wrap items-end gap-2 border-t p-2">
+      <div className="flex items-end gap-2 border-t p-2">
         {menu}
-        <div className="min-w-48 flex-1 basis-48">
+        <div className="min-w-0 flex-1">
           <textarea
             ref={fieldRef}
             aria-label="Message the agent"
@@ -207,20 +208,39 @@ export function Composer({
           ) : null}
         </div>
         {running ? (
-          <Button size="sm" variant="outline" onClick={onStop} aria-label="Stop the turn">
-            <SquareIcon />
-            Stop
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon"
+                  variant="outline"
+                  onClick={onStop}
+                  aria-label="Stop the turn"
+                  className="shrink-0"
+                />
+              }
+            >
+              <SquareIcon />
+            </TooltipTrigger>
+            <TooltipContent>Stop the turn</TooltipContent>
+          </Tooltip>
         ) : null}
-        <Button
-          size="sm"
-          onClick={onSend}
-          disabled={!live || draft.trim().length === 0}
-          aria-label="Send"
-        >
-          <SendIcon />
-          Send
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="icon"
+                onClick={onSend}
+                disabled={!live || draft.trim().length === 0}
+                aria-label="Send"
+                className="shrink-0"
+              />
+            }
+          >
+            <SendIcon />
+          </TooltipTrigger>
+          <TooltipContent>Send</TooltipContent>
+        </Tooltip>
       </div>
       <Footer hints={footerHints({ live, running, asking, folded })} />
     </>

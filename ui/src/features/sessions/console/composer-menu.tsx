@@ -172,7 +172,7 @@ export function ComposerMenu({
           onChange={(event) => setSearch(event.target.value)}
           onKeyDown={onSearchKey}
         />
-        <div ref={list} className="max-h-64 overflow-y-auto">
+        <div ref={list} className="max-h-64 overflow-x-hidden overflow-y-auto">
           {shown.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">Nothing matches.</p>
           ) : (
@@ -182,10 +182,17 @@ export function ComposerMenu({
                 type="button"
                 onClick={() => pick(entry)}
                 onKeyDown={onItemKey}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 [&_svg]:size-4 [&_svg]:shrink-0"
+                title={entry.detail === undefined ? entry.label : `${entry.label} ${entry.detail}`}
+                className="flex w-full min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 [&_svg]:size-4 [&_svg]:shrink-0"
               >
                 {entry.icon}
-                <span className={entry.detail === undefined ? "min-w-0" : "shrink-0 font-mono"}>
+                <span
+                  className={
+                    entry.detail === undefined
+                      ? "min-w-0 truncate"
+                      : "max-w-40 shrink-0 truncate font-mono"
+                  }
+                >
                   {entry.label}
                 </span>
                 {entry.detail ? (

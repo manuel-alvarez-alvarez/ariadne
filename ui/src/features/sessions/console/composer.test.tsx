@@ -150,6 +150,19 @@ it("offers Stop beside Send while a turn runs", () => {
   screen.getByRole("button", { name: "Send" })
 })
 
+it("draws Send and Stop as icons without a label, on a row that never wraps", () => {
+  mount([event("user_prompt_submit", { text: "go" })], "running")
+
+  const send = screen.getByRole("button", { name: "Send" })
+  const stop = screen.getByRole("button", { name: "Stop the turn" })
+  expect(send.textContent).toBe("")
+  expect(stop.textContent).toBe("")
+  expect(send.querySelector("svg")).not.toBeNull()
+  expect(stop.querySelector("svg")).not.toBeNull()
+  expect(send.parentElement?.className).not.toContain("flex-wrap")
+  expect(send.parentElement?.lastElementChild).toBe(send)
+})
+
 it("keeps a refused message with Retry, and Retry sends the same text without touching the draft", async () => {
   const user = userEvent.setup()
   let refuse = true
@@ -232,6 +245,30 @@ function commands(source: FakeEventSource) {
     ),
   )
 }
+
+it("cuts a long command name and the copy label in the menu, whole on hover, with no sideways scroll", async () => {
+  const user = userEvent.setup()
+  const long = `${"very-long-command-".repeat(6)}end`
+  const { source } = mount()
+  act(() =>
+    source.emit(
+      "event",
+      event("available_commands_update", {
+        available_commands: [{ name: long, description: "Does a long thing" }],
+      }),
+    ),
+  )
+
+  await openMenu(user)
+
+  const command = screen.getByRole("button", { name: new RegExp(long) })
+  expect(command.getAttribute("title")).toBe(`/${long} Does a long thing`)
+  expect(command.querySelector("span")?.className).toContain("truncate")
+  const copy = screen.getByRole("button", { name: "Copy loaded transcript (main)" })
+  expect(copy.getAttribute("title")).toBe("Copy loaded transcript (main)")
+  expect(copy.querySelector("span")?.className).toContain("truncate")
+  expect(command.parentElement?.className).toContain("overflow-x-hidden")
+})
 
 it("inserts a menu command in front of the draft for editing, and hands the composer focus", async () => {
   const user = userEvent.setup()

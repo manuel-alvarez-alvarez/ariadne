@@ -3,6 +3,7 @@ import { type KeyboardEvent, useRef } from "react"
 
 import type { SessionStatus } from "@/api"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn, formatTokens } from "@/lib/format"
 
 import type { ConsoleStreamStatus } from "./console-stream"
@@ -168,22 +169,34 @@ export function StatusRow({
   turn?: { tool?: string; seconds?: number }
   tokens: TokenTotals
 }) {
+  const firstLine = turn?.tool?.split("\n")[0] ?? ""
   const spent = tokens.input > 0 || tokens.output > 0
   return (
     <section
       aria-label="Session status"
-      className="flex items-center gap-3 border-t px-3 py-1 font-mono text-xs text-muted-foreground"
+      className="flex items-center gap-3 whitespace-nowrap border-t px-3 py-1 font-mono text-xs text-muted-foreground"
     >
-      <span>{status}</span>
+      <span className="shrink-0">{status}</span>
       {turn ? (
-        <span className="flex items-center gap-1.5">
-          <Loader2Icon className="size-3 animate-spin" aria-hidden />
-          {turn.tool === undefined ? "thinking" : `running ${turn.tool}`}
-          {turn.seconds === undefined ? null : <span>{clock(turn.seconds)}</span>}
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Loader2Icon className="size-3 shrink-0 animate-spin" aria-hidden />
+          {turn.tool === undefined ? (
+            "thinking"
+          ) : (
+            <Tooltip>
+              <TooltipTrigger render={<span className="min-w-0 truncate" />}>
+                running {firstLine}
+              </TooltipTrigger>
+              <TooltipContent className="break-words">{turn.tool}</TooltipContent>
+            </Tooltip>
+          )}
+          {turn.seconds === undefined ? null : (
+            <span className="shrink-0">{clock(turn.seconds)}</span>
+          )}
         </span>
       ) : null}
       {spent ? (
-        <span className="ml-auto">
+        <span className="ml-auto shrink-0">
           ↑{formatTokens(tokens.input)} ↓{formatTokens(tokens.output)}
         </span>
       ) : null}
