@@ -614,21 +614,17 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List every task of the goal, with the columns and agents of each task. The goal columns give each one's ranks and gate. This shows where the goal stands."
+        description = "List every task of the goal as a summary. The result has `goal_steps`, the goal columns once, and `tasks`. A task gives no description and no usage. Use `get_task` to read one task."
     )]
     async fn list_tasks(
         &self,
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
-        let path = format!("/v1/tasks?goal_id={}", self.goal()?);
-        let mut tasks: serde_json::Value = self.get(&path).await?;
-        let goal: serde_json::Value = self.get(&format!("/v1/goals/{}", self.goal()?)).await?;
-        if let Some(tasks) = tasks.as_array_mut() {
-            for task in tasks {
-                task["goal_steps"] = goal["steps"].clone();
-            }
-        }
-        json_result(tasks)
+        let goal_id = self.goal()?;
+        let tasks: Vec<serde_json::Value> = self.get(&format!("/v1/tasks?goal={goal_id}")).await?;
+        let goal: serde_json::Value = self.get(&format!("/v1/goals/{goal_id}")).await?;
+        let tasks: Vec<serde_json::Value> = tasks.iter().map(task_summary).collect();
+        json_result(serde_json::json!({"goal_steps": goal["steps"], "tasks": tasks}))
     }
 
     #[tool(
@@ -958,6 +954,26 @@ impl AriadneMcp {
     }
 }
 
+/// The fields of a task that `list_tasks` keeps.
+fn task_summary(task: &serde_json::Value) -> serde_json::Value {
+    let mut summary = serde_json::Map::new();
+    for key in [
+        "id",
+        "title",
+        "status",
+        "step",
+        "depends_on",
+        "branch",
+        "pr_url",
+        "reason",
+        "stalled",
+        "agents",
+    ] {
+        summary.insert(key.into(), task[key].clone());
+    }
+    summary.into()
+}
+
 impl AriadneMcp {
     /// Read one task and append the copied goal columns that explain its
     /// column ids, preferred ranks and gates.
@@ -970,6 +986,11 @@ impl AriadneMcp {
             ))
             .await?;
         task["goal_steps"] = goal["steps"].clone();
+        if let Some(task) = task.as_object_mut() {
+            for key in ["usage", "created_at", "updated_at"] {
+                task.remove(key);
+            }
+        }
         json_result(task)
     }
 
@@ -1787,6 +1808,78 @@ mod tests {
         assert_eq!(seen[0].path, "/v1/tasks/01TASK");
         assert_eq!(seen[1].method, "GET");
         assert_eq!(seen[1].path, "/v1/goals/01GOAL");
+    }
+
+    /// `list_tasks` asks for its goal's tasks with `goal`, reads the goal
+    /// columns once, and keeps a summary of each task.
+    #[tokio::test]
+    async fn listing_tasks_gives_the_goal_columns_once_and_task_summaries() {
+        let task = r#"{"id":"01T","goal_id":"01GOAL","repo_id":"01R","title":"t","description":"d","status":"running","step":"develop","depends_on":["01D"],"branch":"b","worktree_path":"/w","pr_url":"https://x/1","reason":"why","stalled":true,"merge_commit":"abc","agents":[{"step":"develop","id":"01A","skills":["coding"],"model":"m","effort":"high","brief":"br","session_id":"01S"}],"usage":{"total":{}},"created_at":"x","updated_at":"y"}"#;
+        let (endpoint, seen) = recording_daemon_answering_in_turn(vec![
+            format!("[{task}]"),
+            r#"{"steps":[{"id":"develop"}]}"#.into(),
+        ])
+        .await;
+        let mcp = server_at(
+            McpSeat::Orchestrator,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let result = mcp.list_tasks(Parameters(Empty {})).await.expect("list");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen[0].path, "/v1/tasks?goal=01GOAL");
+        let body: serde_json::Value =
+            serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "goal_steps": [{"id": "develop"}],
+                "tasks": [{
+                    "id": "01T",
+                    "title": "t",
+                    "status": "running",
+                    "step": "develop",
+                    "depends_on": ["01D"],
+                    "branch": "b",
+                    "pr_url": "https://x/1",
+                    "reason": "why",
+                    "stalled": true,
+                    "agents": [{"step":"develop","id":"01A","skills":["coding"],"model":"m","effort":"high","brief":"br","session_id":"01S"}]
+                }]
+            })
+        );
+    }
+
+    /// `get_task` keeps the goal columns and every other field, and drops
+    /// usage and timestamps.
+    #[tokio::test]
+    async fn reading_a_task_drops_usage_and_timestamps() {
+        let (endpoint, _) = recording_daemon_answering_in_turn(vec![
+            r#"{"id":"01T","goal_id":"01GOAL","repo_id":"01R","title":"t","description":"d","status":"running","step":"develop","depends_on":["01D"],"branch":"b","worktree_path":"/w","pr_url":null,"reason":null,"stalled":false,"merge_commit":null,"agents":[{"step":"develop","id":"01A"}],"usage":{"total":{}},"created_at":"x","updated_at":"y"}"#.into(),
+            r#"{"steps":[{"id":"develop"}]}"#.into(),
+        ])
+        .await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let result = mcp
+            .get_task(Parameters(TaskIdOpt { task_id: None }))
+            .await
+            .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "id": "01T", "goal_id": "01GOAL", "repo_id": "01R", "title": "t",
+                "description": "d", "status": "running", "step": "develop",
+                "depends_on": ["01D"], "branch": "b", "worktree_path": "/w",
+                "pr_url": null, "reason": null, "stalled": false, "merge_commit": null,
+                "agents": [{"step": "develop", "id": "01A"}],
+                "goal_steps": [{"id": "develop"}]
+            })
+        );
     }
 
     /// One verb, and it names the column it is for: the message goes to the

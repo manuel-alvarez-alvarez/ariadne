@@ -961,7 +961,7 @@ pub(crate) mod tests {
             description("report_pull_request"),
             "Tell Ariadne the state of your request. Set `ready` when readiness changes. Set `reviewed_sha` after a review round."
         );
-        assert!(description("list_tasks").contains("with the columns and agents of each task"));
+        assert!(description("list_tasks").contains("as a summary"));
         assert!(description("list_models").contains("models an agent can run on"));
         assert!(description("open_pull_request").contains("returns the URL"));
         assert!(schema("send_message").contains(
