@@ -45,7 +45,8 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    open: `wait_for_user` with a one-line hint for the Needs attention list
    and the question in its `question` field (031 rule 11): the title, the
    context and the direct question in its text, each option with its
-   consequence as its description, and the pick as its recommended option. It asks one question
+   consequence as its description, the pick as its recommended option, and
+   the reason for the pick as its `recommendation_reason`. It asks one question
    at a time, and waits for the answer before it asks the next one. Each
    question names its position, such as "Question 2 of 3"; gives the context
    the user needs, with no earlier turn required; lists two or more labeled

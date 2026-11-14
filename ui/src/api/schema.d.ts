@@ -1868,6 +1868,11 @@ export interface components {
             options?: components["schemas"]["AgentQuestionOption"][];
             /** @description The `id` of the option the agent recommends. */
             recommended_option_id?: string | null;
+            /**
+             * @description Why the agent recommends that option. It needs
+             *     `recommended_option_id`.
+             */
+            recommendation_reason?: string | null;
             /** @description The question, with the context the user needs to answer it. */
             text: string;
         };

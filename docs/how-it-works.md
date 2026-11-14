@@ -66,8 +66,8 @@ for the rules, and [Needs attention](../specs/031-needs-attention.md) for
 the item shape and the producers that fill it.
 
 When an agent needs a human decision, it calls `wait_for_user` with a
-one-line hint and the question: its text, the options to pick from, and the
-option it recommends. Needs attention shows that hint and the agent console.
+one-line hint and the question: its text, the options to pick from, the
+option it recommends, and why. Needs attention shows that hint and the agent console.
 In Ariadne Desktop, the console draws the question as a card: click an option
 to answer at once, or type an answer of your own. In the terminal, run the
 listed `ariadne attach <session-id>` command, then type an option's number or

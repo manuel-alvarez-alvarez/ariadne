@@ -503,15 +503,19 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     idle turns, and agent messages create none. The tool carries a `hint`
     and, optionally, the whole `question`
     (`ariadne_api::attention::AgentQuestion`): its `text`, its `options`, each
-    with a stable `id`, a `label` and an optional `description`, and an
-    optional `recommended_option_id`. A question with no options takes a
+    with a stable `id`, a `label` and an optional `description`, an
+    optional `recommended_option_id`, and an optional `recommendation_reason`
+    that says why the agent picks it. The daemon stores the reason with the
+    question, returns it on `GET /v1/sessions/{id}/agent-requests`, and
+    carries it on the `agent_request` event. A question with no options takes a
     typed answer. A hint-only call stays legal. The hint is one line for this
     list, at most 100 characters (`http::agent_requests::HINT_MAX_CHARS`);
     `POST /v1/sessions/{id}/agent-requests` refuses a longer or a multi-line
     summary with `400`, in words that send the question to the `question`
     field, and opens nothing. It also refuses, with `400`, a question with
     empty text, an option with no `id` or `label`, an option `id` given
-    twice, and a `recommended_option_id` that names no option. A repeated
+    twice, a `recommended_option_id` that names no option, and a
+    `recommendation_reason` with no `recommended_option_id`. A repeated
     pending hint is one request, and each request targets its session
     console. A repeat keeps the question the request holds: one with no
     question raises it again as it is, and one that adds a question to a
@@ -600,7 +604,8 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     The CLI console draws a hint-only `agent_request` event as a dim note,
     `waiting for you · <hint>`, and one with a question as readable text:
     the note, the question, each option by its number with `(recommended)`
-    beside the agent's pick, and `Type a number, or your own answer.` until
+    beside the agent's pick, then ` · <reason>` where the question gives a
+    `recommendation_reason`, and `Type a number, or your own answer.` until
     its resolution replaces that line with how it closed. Ariadne Desktop
     draws it as a card (015 rule 22a). A permission the
     daemon raised on one of Ariadne's own MCP tools and *allowed* by itself —
@@ -775,6 +780,10 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
   keeps the hint, and a recommendation that names no option is refused
   (`attention.rs::a_question_rides_with_its_hint_into_the_console`,
   `agent_requests::tests::a_question_is_refused_where_its_options_do_not_add_up`).
+- The reason for a recommendation rides on the `agent_request` event and the
+  pending list, and a reason with no recommendation is refused
+  (`attention.rs::a_recommendation_reason_rides_with_the_question`,
+  `agent_requests::tests::a_question_is_refused_where_its_options_do_not_add_up`).
 - A picked option reaches the agent once, with the question and its
   meaning, and closes the request with its answer recorded; a second
   answer is refused with `agent_request_closed` and sends no prompt
@@ -794,7 +803,9 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
   (`classify.rs::a_resolved_request_reads_as_how_it_closed_and_moves_nothing`),
   and the CLI console draws a question as numbered choices that its
   resolution closes in place
-  (`ariadne-console::transcript::tests::a_question_reads_as_numbered_choices_and_closes_in_place`).
+  (`ariadne-console::transcript::tests::a_question_reads_as_numbered_choices_and_closes_in_place`),
+  with the reason for a recommendation after `(recommended)` on its line
+  (`ariadne-console::transcript::tests::a_recommendation_reason_follows_the_recommended_option`).
 - Opening a request records one `agent_request` event with its hint in the
   session's console, once however often the pending hint is repeated
   (`attention.rs::a_request_records_its_hint_in_the_sessions_console_once`);

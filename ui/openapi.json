@@ -4351,6 +4351,13 @@
             ],
             "description": "The `id` of the option the agent recommends."
           },
+          "recommendation_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the agent recommends that option. It needs\n`recommended_option_id`."
+          },
           "text": {
             "type": "string",
             "description": "The question, with the context the user needs to answer it."

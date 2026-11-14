@@ -299,6 +299,8 @@ pub enum TranscriptItem {
         question: String,
         options: Vec<QuestionChoice>,
         recommended: Option<String>,
+        /// Why the agent recommends that option.
+        recommendation_reason: Option<String>,
         /// How it closed: `answered · <answer>`, `question withdrawn` or
         /// `question expired`. None while it waits for an answer.
         closed: Option<String>,
@@ -348,13 +350,15 @@ pub struct QuestionChoice {
 
 impl TranscriptItem {
     /// A question as the lines a person reads: the hint, the question, each
-    /// option by its number, and how to answer or how it closed.
+    /// option by its number with the recommendation and its reason, and how
+    /// to answer or how it closed.
     pub fn question_lines(&self) -> Vec<String> {
         let Self::UserQuestion {
             hint,
             question,
             options,
             recommended,
+            recommendation_reason,
             closed,
             ..
         } = self
@@ -370,6 +374,9 @@ impl TranscriptItem {
             }
             if recommended.as_deref() == Some(option.id.as_str()) {
                 line.push_str(" (recommended)");
+                if let Some(reason) = recommendation_reason {
+                    line.push_str(&format!(" · {reason}"));
+                }
             }
             lines.push(line);
         }
@@ -497,6 +504,10 @@ impl From<&AgentEventDto> for TranscriptItem {
                         })
                         .collect(),
                     recommended: string_at(&event.payload, "/question/recommended_option_id"),
+                    recommendation_reason: string_at(
+                        &event.payload,
+                        "/question/recommendation_reason",
+                    ),
                     closed: None,
                 }
             }
@@ -1110,6 +1121,35 @@ mod tests {
         assert_eq!(
             items[0].question_lines().last().map(String::as_str),
             Some("answered · Next")
+        );
+    }
+
+    /// The reason for a recommendation follows `(recommended)` on the line
+    /// of the option it recommends, and adds no line.
+    #[test]
+    fn a_recommendation_reason_follows_the_recommended_option() {
+        let items = fold(&[event(
+            "request",
+            "agent_request",
+            json!({"request_id": "01RQ", "hint": "Pick a base", "question": {
+                "text": "Which base branch?",
+                "options": [
+                    {"id": "main", "label": "Main", "description": "Land on the trunk."},
+                    {"id": "next", "label": "Next"}
+                ],
+                "recommended_option_id": "main",
+                "recommendation_reason": "The trunk is green."
+            }}),
+        )]);
+        assert_eq!(
+            items[0].question_lines(),
+            [
+                "waiting for you · Pick a base",
+                "Which base branch?",
+                "  1. Main — Land on the trunk. (recommended) · The trunk is green.",
+                "  2. Next",
+                "Type a number, or your own answer.",
+            ]
         );
     }
 

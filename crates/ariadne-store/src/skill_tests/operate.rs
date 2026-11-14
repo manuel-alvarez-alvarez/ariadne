@@ -392,7 +392,9 @@ fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
 /// room to answer one at a time, which is what this guards against. The
 /// direct question is worded so a "yes" accepts the recommendation,
 /// which is what lets the user agree in one word. The parts go in the
-/// structured fields of `wait_for_user`, which the console draws as a card.
+/// structured fields of `wait_for_user`, which the console draws as a card:
+/// the options and the recommendation with its reason go in their own
+/// fields, so the card shows each of them once.
 #[test]
 fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
     let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
@@ -407,8 +409,9 @@ fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
         "A recommendation, with one reason.",
         "One direct question, at the end.",
         "Word it so a \"yes\" accepts the recommendation.",
-        "Put the title, context and question in the question text.",
-        "Give each option its consequence as its description.",
+        "Put the title, context and question in the text.",
+        "Put each option, with its consequence, in `options`.",
+        "Put the pick in `recommended_option_id`, and the reason in `recommendation_reason`.",
         "\"Two short questions fit in one turn.\" -> Ask one; the user answers each one with its full context.",
     ] {
         assert!(

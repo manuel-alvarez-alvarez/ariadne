@@ -150,6 +150,10 @@ pub struct AgentQuestion {
     /// The `id` of the option the agent recommends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_option_id: Option<String>,
+    /// Why the agent recommends that option. It needs
+    /// `recommended_option_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommendation_reason: Option<String>,
 }
 
 /// One answer the user can pick.
