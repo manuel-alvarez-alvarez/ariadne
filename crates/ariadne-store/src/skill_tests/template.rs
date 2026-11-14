@@ -334,21 +334,18 @@ fn every_skill_obeys_the_template() {
                 skill.name
             );
         }
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = manifest_dir()
             .join("skills")
             .join(skill.name)
             .join("SKILL.md");
-        assert_eq!(std::fs::read_to_string(path).unwrap(), document);
+        let read =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert_eq!(read, document);
     }
     for (old, new) in MERGED_SKILLS {
         assert!(default_skill_document(old).is_none());
         assert!(default_skill_document(new).is_some());
-        assert!(
-            !std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("skills")
-                .join(old)
-                .exists()
-        );
+        assert!(!manifest_dir().join("skills").join(old).exists());
     }
 }
 
@@ -391,4 +388,14 @@ fn each_rule_is_stated_in_exactly_one_briefing() {
             "the {name} skill repeats its seat's own \"{phrase}\""
         );
     }
+}
+
+/// The crate's directory, as the test runner sets it for this run. Not
+/// `env!("CARGO_MANIFEST_DIR")`: a test binary built in another checkout
+/// that shares the target directory, such as the pre-push hook's temporary
+/// one, keeps that checkout's path, which may no longer exist.
+fn manifest_dir() -> std::path::PathBuf {
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .expect("the test runner sets CARGO_MANIFEST_DIR")
+        .into()
 }

@@ -49,12 +49,15 @@ impl super::Scheduler {
                 // Post-merge cleanup (idempotent), then wake dependents.
                 // Worktrees and the branch go by default; set
                 // delete_merged_worktrees = false to keep merged work around
-                // for inspection.
+                // for inspection. The agent whose `complete_step` finished
+                // the task ends its turn before its kill, and the worktree
+                // goes once it is gone.
                 self.launcher
                     .cleanup_task(
                         &task.id,
                         self.launcher.cfg.delete_merged_worktrees,
                         self.launcher.cfg.delete_merged_branches,
+                        true,
                     )
                     .await?;
                 // The request this task opened, if it has one, is nobody's
@@ -73,8 +76,13 @@ impl super::Scheduler {
             TaskStatus::Failed | TaskStatus::Cancelled => {
                 // Kill leftover agents; always keep worktrees and branch — a
                 // failed or cancelled task may hold uncommitted work worth
-                // salvaging, and a failed one may be retried into it.
-                self.launcher.cleanup_task(&task.id, false, false).await?;
+                // salvaging, and a failed one may be retried into it. A
+                // failed task's agent ends its turn first, as a finished
+                // one's does; a cancel is the user's, and kills at once.
+                let let_turn_end = task.status() == TaskStatus::Failed;
+                self.launcher
+                    .cleanup_task(&task.id, false, false, let_turn_end)
+                    .await?;
                 return Ok(());
             }
             TaskStatus::Pending => {

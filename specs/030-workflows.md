@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-11-13
+updated: 2026-11-14
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
@@ -282,6 +282,12 @@ every other kebab-case word in it; the wire spells the same gate
    Finished, failed and cancelled tasks stop every task agent. A finished
    task uses the configured worktree cleanup; a failed or cancelled task
    keeps its worktree, so the work is recoverable.
+   A finished or failed task's agent keeps its running turn, so the step
+   call that ended the task returns its result to the agent. The daemon
+   kills the agent when that turn stops, or when `Timeouts::turn_end_grace`
+   runs out, whichever comes first. An agent with no running turn is killed
+   at once. A user's cancel of a task or a goal kills its agents at once. A
+   finished task's worktree and branch go after its agent processes exit.
 8. The orchestrator briefing names the workflow and one line per column — its
    id, title, skills, capability band and gate — where it named the landing
    before (003 rule 1, `ORCHESTRATOR_BRIEFING`'s `{workflow}` and
@@ -487,6 +493,20 @@ every other kebab-case word in it; the wire spells the same gate
   `::each_rule_is_stated_in_exactly_one_briefing`).
 - Only the current column is nudged, and cancellation stops all task agents
   (`workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
+- The `complete_step` that finishes a task and the first column's
+  `fail_step` return inside the agent's turn. The agent is killed once that
+  turn stops, and a finished task's worktree goes after it
+  (`workflow_steps.rs::a_finishing_step_call_lets_the_turn_end_before_the_kill`,
+  `::a_first_column_failure_lets_the_turn_end_before_the_kill`). The
+  worktree stays until an agent slow to honour its kill exits
+  (`workflow_steps.rs::a_finished_tasks_worktree_waits_for_its_agent_to_exit`).
+- A turn that does not stop is killed when `Timeouts::turn_end_grace` runs
+  out, and an agent with no running turn is killed at once
+  (`workflow_steps.rs::a_turn_that_does_not_stop_is_killed_when_the_grace_runs_out`,
+  `::an_agent_with_no_running_turn_is_killed_at_once`).
+- A user's cancel of a task or a goal kills a running turn at once
+  (`workflow_steps.rs::a_cancelled_task_kills_its_running_turn_at_once`,
+  `::a_cancelled_goal_kills_its_running_turn_at_once`).
 - A failed prompt hand-off retains its delivery and retries once
   (`workflow_steps.rs::a_step_briefing_survives_a_closed_prompt_channel`).
 - A pass behind a completion leaves the next column's briefing to that

@@ -270,7 +270,7 @@ async fn the_watch_goes_with_the_worktree() {
         .await
         .unwrap();
     h.launcher
-        .cleanup_task(&task.id, true, false)
+        .cleanup_task(&task.id, true, false, false)
         .await
         .unwrap();
 

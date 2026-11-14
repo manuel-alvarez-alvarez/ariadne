@@ -170,6 +170,10 @@ struct Inner {
     running: Mutex<HashMap<String, RunningAgent>>,
     /// Sessions the user reopened after their work ended.
     user_resumed: Mutex<HashSet<String>>,
+    /// Sessions whose kill waits on the end of their running turn, or
+    /// whose killed agent process is not reaped yet
+    /// ([`AcpRuntime::hold_kill`]).
+    held_kills: Mutex<HashSet<String>>,
     /// Agents taken down whose driver has not reaped them yet, by Ariadne
     /// session id, each beside its launch id. A launch waits on these as
     /// well as on the agent it takes down itself: a kill followed by a
@@ -610,6 +614,7 @@ impl AcpRuntime {
                 transcripts,
                 running: Mutex::new(HashMap::new()),
                 user_resumed: Mutex::default(),
+                held_kills: Mutex::default(),
                 ending: Mutex::new(HashMap::new()),
                 branches: Mutex::default(),
                 scheduler: OnceLock::new(),
@@ -726,6 +731,79 @@ impl AcpRuntime {
             .turn
             .clone();
         Some(turn.lock().await.running)
+    }
+
+    /// What resolves once the session's running turn stops, or once
+    /// [`Timeouts::turn_end_grace`] runs out, whichever comes first. `None`
+    /// where no turn runs here for the session: nothing is left to wait on.
+    pub(crate) async fn turn_end(
+        &self,
+        session_id: &str,
+    ) -> Option<impl Future<Output = ()> + Send + use<>> {
+        // The follower goes on before the turn is read: a turn sets
+        // `running` false before it reports its end, so a turn read running
+        // here reports that end to this follower.
+        let (turn, mut reports) = {
+            let running = self.inner.running.lock().expect("acp registry lock");
+            let agent = running.get(session_id)?;
+            let (follower, reports) = mpsc::unbounded_channel();
+            agent
+                .reports
+                .lock()
+                .expect("turn report followers lock")
+                .push(follower);
+            (agent.turn.clone(), reports)
+        };
+        if !turn.lock().await.running {
+            return None;
+        }
+        let grace = self.inner.timeouts.turn_end_grace;
+        Some(async move {
+            let stopped = async {
+                while let Some(report) = reports.recv().await {
+                    if report == TurnReport::TurnEnded {
+                        break;
+                    }
+                }
+            };
+            let _ = tokio::time::timeout(grace, stopped).await;
+        })
+    }
+
+    /// Mark the session as one whose kill waits on its turn. False where a
+    /// kill already waits for it.
+    pub(crate) fn hold_kill(&self, session_id: &str) -> bool {
+        self.inner
+            .held_kills
+            .lock()
+            .expect("held kills lock")
+            .insert(session_id.to_string())
+    }
+
+    /// Whether a kill waits on the session: on its turn, or on the reap of
+    /// its agent process.
+    pub(crate) fn is_kill_held(&self, session_id: &str) -> bool {
+        self.inner
+            .held_kills
+            .lock()
+            .expect("held kills lock")
+            .contains(session_id)
+    }
+
+    /// The session's kill waits no more.
+    pub(crate) fn release_kill(&self, session_id: &str) {
+        self.inner
+            .held_kills
+            .lock()
+            .expect("held kills lock")
+            .remove(session_id);
+    }
+
+    /// Wake the scheduler for a task, where a scheduler runs.
+    pub(crate) fn wake_task(&self, task_id: &str) {
+        if let Some(tx) = self.inner.scheduler.get() {
+            let _ = tx.send(SchedEvent::TaskChanged(task_id.to_string()));
+        }
     }
 
     /// Queue an option change ahead of the next prompt. A running turn does

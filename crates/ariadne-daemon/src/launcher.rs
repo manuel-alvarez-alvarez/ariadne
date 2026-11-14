@@ -1053,18 +1053,43 @@ impl Launcher {
     /// the driver is still cancelling the turn, and a resume must not start
     /// beside it.
     pub async fn kill_session(&self, session_id: &str) -> Result<()> {
-        let session = self.store.get_session(session_id).await?;
-        let (reaped, gate) = self.acp.kill_gated(&session.id);
-        if session.status().is_live() {
-            self.store
-                .set_session_status(session_id, SessionStatus::Exited)
-                .await?;
-            tokio::spawn(async move {
-                reaped.await;
-                drop(gate);
-            });
+        kill_session(&self.store, &self.acp, session_id).await
+    }
+
+    /// Kill a session once its running turn stops, or once
+    /// [`crate::timeouts::Timeouts::turn_end_grace`] runs out, whichever
+    /// comes first. The step call that ended the task is a tool call of
+    /// that turn, and its result reaches the agent before the kill does. A
+    /// session with no running turn is killed at once.
+    ///
+    /// Answers whether the kill still waits. Once the agent process is
+    /// reaped, the scheduler is woken for the task, so its cleanup can go
+    /// on: a worktree removed while the agent still runs is one it may
+    /// still write to.
+    async fn kill_session_after_turn(&self, session_id: &str, task_id: &str) -> Result<bool> {
+        if !self.acp.hold_kill(session_id) {
+            return Ok(true);
         }
-        Ok(())
+        let turn_end = self.acp.turn_end(session_id).await;
+        if turn_end.is_some() {
+            tracing::info!(task = %task_id, session = %session_id, "cleanup: the agent's turn ends before its kill");
+        }
+        let (store, acp) = (self.store.clone(), self.acp.clone());
+        let (session_id, task_id) = (session_id.to_string(), task_id.to_string());
+        tokio::spawn(async move {
+            if let Some(turn_end) = turn_end {
+                turn_end.await;
+            }
+            match kill_gated_session(&store, &acp, &session_id).await {
+                Ok(reaped) => reaped.await,
+                Err(e) => {
+                    tracing::warn!(session = %session_id, error = %e, "cleanup: killing the agent session failed");
+                }
+            }
+            acp.release_kill(&session_id);
+            acp.wake_task(&task_id);
+        });
+        Ok(true)
     }
 
     /// Follow the branch of every task that already has a worktree.
@@ -1097,11 +1122,18 @@ impl Launcher {
     /// `remove_worktrees = false` keeps the worktree on disk (and therefore
     /// also the branch — the worktree has it checked out, which pins it) so
     /// finished or cancelled work can be inspected later.
+    ///
+    /// `let_turn_end` lets a session's running turn end before its kill
+    /// ([`Self::kill_session_after_turn`]): for a task an agent's own step
+    /// call ended. The worktree and the branch stay until every such
+    /// session is gone; the kill wakes the scheduler, whose next pass here
+    /// removes them.
     pub async fn cleanup_task(
         &self,
         task_id: &str,
         remove_worktrees: bool,
         delete_branch: bool,
+        let_turn_end: bool,
     ) -> Result<()> {
         let task = self.store.get_task(task_id).await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
@@ -1110,6 +1142,7 @@ impl Launcher {
         // something anybody is following it for.
         self.branches.unwatch(task_id);
 
+        let mut kill_waits = false;
         for session in self
             .store
             .list_sessions(SessionFilter {
@@ -1122,13 +1155,24 @@ impl Launcher {
             if self.acp.is_user_resumed(&session.id) {
                 continue;
             }
+            if let_turn_end {
+                if self
+                    .kill_session_after_turn(&session.id, &task.id)
+                    .await
+                    .unwrap_or(false)
+                {
+                    kill_waits = true;
+                }
+                continue;
+            }
             if self.acp.is_running(&session.id) {
                 tracing::info!(task = %task.id, session = %session.id, "cleanup: killing agent session");
             }
             self.kill_session(&session.id).await.ok();
         }
 
-        if !remove_worktrees
+        if kill_waits
+            || !remove_worktrees
             || self
                 .store
                 .list_sessions(SessionFilter {
@@ -1137,7 +1181,11 @@ impl Launcher {
                 })
                 .await?
                 .iter()
-                .any(|session| self.acp.is_user_resumed(&session.id))
+                .any(|session| {
+                    // A held kill reads its session exited before the
+                    // agent process is reaped: the worktree waits on it.
+                    self.acp.is_user_resumed(&session.id) || self.acp.is_kill_held(&session.id)
+                })
         {
             return Ok(());
         }
@@ -1205,6 +1253,33 @@ impl Launcher {
         }
         Ok(())
     }
+}
+
+/// Kill a session's agent process and mark the session exited
+/// ([`Launcher::kill_session`]).
+async fn kill_session(store: &Store, acp: &AcpRuntime, session_id: &str) -> Result<()> {
+    tokio::spawn(kill_gated_session(store, acp, session_id).await?);
+    Ok(())
+}
+
+/// [`kill_session`], answering with what resolves once the agent process is
+/// reaped. The session's next launch waits until then.
+async fn kill_gated_session(
+    store: &Store,
+    acp: &AcpRuntime,
+    session_id: &str,
+) -> Result<impl Future<Output = ()> + Send + use<>> {
+    let session = store.get_session(session_id).await?;
+    let (reaped, gate) = acp.kill_gated(&session.id);
+    if session.status().is_live() {
+        store
+            .set_session_status(session_id, SessionStatus::Exited)
+            .await?;
+    }
+    Ok(async move {
+        reaped.await;
+        drop(gate);
+    })
 }
 
 /// A review session: its worktree detached at the request's head, its row,

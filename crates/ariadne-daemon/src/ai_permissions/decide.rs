@@ -362,10 +362,18 @@ mod tests {
 
     /// Each fixture line preserves the winner's model, normalized state,
     /// questions and derived facts for one request.
+    /// The recorded requests, under the crate's directory as the test runner
+    /// sets it for this run. Not `env!("CARGO_MANIFEST_DIR")`: a test binary
+    /// built in another checkout that shares the target directory, such as
+    /// the pre-push hook's temporary one, keeps that checkout's path.
+    fn fixture_path() -> std::path::PathBuf {
+        Path::new(&std::env::var_os("CARGO_MANIFEST_DIR").expect("the test runner sets it"))
+            .join("src/ai_permissions/fixtures/requests.jsonl")
+    }
+
     #[test]
     fn every_fixture_request_builds_its_recorded_contract() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/ai_permissions/fixtures/requests.jsonl");
+        let path = fixture_path();
         let fixture = std::fs::read_to_string(path).unwrap();
         let mut checked = 0;
         for line in fixture.lines().filter(|line| !line.trim().is_empty()) {
@@ -440,8 +448,7 @@ mod tests {
     /// using the server response path.
     #[test]
     fn recorded_answers_map_to_the_winner_danger_values() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/ai_permissions/fixtures/requests.jsonl");
+        let path = fixture_path();
         let fixture = std::fs::read_to_string(path).unwrap();
         let mut checked = 0;
         for line in fixture.lines().filter(|line| !line.trim().is_empty()) {

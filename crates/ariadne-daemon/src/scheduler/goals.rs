@@ -169,7 +169,12 @@ impl super::Scheduler {
     async fn remove_tasks_worktree(&self, task_id: &str) {
         let _ = self
             .launcher
-            .cleanup_task(task_id, self.launcher.cfg.delete_merged_worktrees, false)
+            .cleanup_task(
+                task_id,
+                self.launcher.cfg.delete_merged_worktrees,
+                false,
+                false,
+            )
             .await;
     }
 

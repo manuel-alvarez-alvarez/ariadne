@@ -475,8 +475,17 @@ async fn the_pr_column_opens_the_request_once_and_keeps_it() {
     // task's own immediate request reconciliation, not the fallback tick.
     h.flush_scheduler().await;
     assert!(h.store.get_pull_request(id).await.is_err());
-    assert!(!std::path::Path::new(agent.worktree_path.as_deref().unwrap()).exists());
-    assert!(sh(path, &format!("git branch --list {}", task.branch)).is_empty());
+    // The worktree and the branch go once the agent's process is reaped,
+    // which the flush does not wait for (030 rule 7).
+    let worktree = std::path::Path::new(agent.worktree_path.as_deref().unwrap());
+    eventually(
+        TIMEOUT,
+        "the worktree and the branch to be removed",
+        || async {
+            !worktree.exists() && sh(path, &format!("git branch --list {}", task.branch)).is_empty()
+        },
+    )
+    .await;
     for session in h
         .store
         .list_sessions(SessionFilter {

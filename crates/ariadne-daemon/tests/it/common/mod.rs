@@ -158,10 +158,12 @@ pub(crate) fn harness() -> HarnessBuilder {
         // A test that does not name the debounce itself must not pay its
         // production wait on every wake. The stub accepts a cancellation at
         // once, so tests that do not inspect the grace itself need not pay
-        // the production five seconds to take an ending session down.
+        // the production five seconds to take an ending session down, nor
+        // the production thirty for a task's last turn to end.
         // `forge_rate_limit.rs` sets its observable window itself.
         timeouts: Timeouts {
             cancel_grace: RUNS_OUT,
+            turn_end_grace: RUNS_OUT,
             forge_wake_debounce: Duration::from_millis(1),
             ..Timeouts::default()
         },

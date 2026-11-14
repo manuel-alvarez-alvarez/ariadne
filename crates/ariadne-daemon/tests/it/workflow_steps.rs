@@ -1,6 +1,10 @@
-use crate::common::{Harness, TIMEOUT, as_session, eventually, sh, test_pin, with_forge};
+use crate::common::{
+    Harness, QUIET, TIMEOUT, acp, as_session, eventually, sh, test_pin, with_forge,
+};
 use ariadne_api::sessions::SessionDto;
+use ariadne_core::SessionStatus;
 use ariadne_core::{Actor, GoalStatus, Seat, TaskStatus};
+use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::{
     AgentSession, NewGoal, NewSession, NewTask, NewTaskAgent, SessionFilter, Task,
 };
@@ -1503,4 +1507,253 @@ async fn invalid_stored_columns_return_goal_errors() {
             .await;
         assert!(refused.error.message.contains(field));
     }
+}
+
+/// A daemon whose task agents wait on their turn for as long as no test
+/// does: a kill before the turn stops is a kill the turn did not ask for.
+async fn patient_harness() -> Harness {
+    harness()
+        .scheduler()
+        .timeouts(Timeouts {
+            turn_end_grace: TIMEOUT * 4,
+            ..Timeouts::default()
+        })
+        .await
+}
+
+/// A one-column task whose agent sits in its briefing turn until the test
+/// creates the returned file: the column is the first and the last, so its
+/// agent can end the task with either step call.
+async fn held_in_its_turn(h: &Harness) -> (Task, AgentSession, std::path::PathBuf) {
+    held_turn(h, false).await
+}
+
+/// [`held_in_its_turn`], with an agent that ignores a cancel where
+/// `ignores_cancel` says so: it stays up through its kill until the test
+/// releases the turn.
+async fn held_turn(h: &Harness, ignores_cancel: bool) -> (Task, AgentSession, std::path::PathBuf) {
+    let release = h.at("release-turn");
+    let mut script = acp::script();
+    script["prompts"] = json!([{
+        "wait_for": release.display().to_string(),
+        "updates": [],
+        "ignore_cancel": ignores_cancel,
+    }]);
+    h.agent.reprogram(script);
+    let path = h.git_repo("single-repo");
+    let repo = h.repository(&path).await;
+    h.store
+        .create_workflow(ariadne_store::NewWorkflow {
+            name: "single".into(),
+            document: "workflow single\n build[Build]\n".into(),
+        })
+        .await
+        .unwrap();
+    let goal = h
+        .store
+        .create_goal(NewGoal {
+            workflow: Some("single".into()),
+            title: "End the task".into(),
+            description: "Do the work.".into(),
+            issue_url: None,
+            repository_ids: vec![repo.id.clone()],
+            pin: test_pin(),
+        })
+        .await
+        .unwrap();
+    let task = h
+        .store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id,
+            title: "Build".into(),
+            description: "Do the work.".into(),
+            agents: vec![NewTaskAgent::new("build", Vec::<String>::new(), test_pin())],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_goal_status(&goal.id, GoalStatus::Active)
+        .await
+        .unwrap();
+    h.notify(&task.id);
+    let session = session_at(h, &task, "build").await;
+    eventually(TIMEOUT, "the briefing turn to be held", || async {
+        release.with_extension("reached").exists()
+    })
+    .await;
+    (task, session, release)
+}
+
+/// Whether the daemon sent the agent a `session/cancel`: what a kill of a
+/// running turn sends first.
+fn cancelled(h: &Harness) -> bool {
+    h.agent.methods().iter().any(|m| m == "session/cancel")
+}
+
+/// The agent the task's ending left standing, after a listen: running, its
+/// turn not cancelled, and its session live.
+async fn still_in_its_turn(h: &Harness, session: &AgentSession) {
+    tokio::time::sleep(QUIET).await;
+    assert!(h.launcher.acp.is_running(&session.id));
+    assert!(!cancelled(h));
+    assert!(h.session_status(session).await.is_live());
+}
+
+/// The agent gone and its session exited.
+async fn killed(h: &Harness, session: &AgentSession) {
+    eventually(TIMEOUT, "the agent to be killed", || async {
+        !h.launcher.acp.is_running(&session.id)
+            && h.session_status(session).await == SessionStatus::Exited
+    })
+    .await;
+}
+
+/// The `complete_step` that finishes a task returns inside the agent's
+/// turn, and the agent is killed once that turn stops. The finished task's
+/// worktree goes after the agent does.
+#[tokio::test]
+async fn a_finishing_step_call_lets_the_turn_end_before_the_kill() {
+    let h = patient_harness().await;
+    let (task, session, release) = held_in_its_turn(&h).await;
+    let worktree = std::path::PathBuf::from(session.worktree_path.clone().unwrap());
+    let finished = call(&h, &task, &session, "complete", "The work is done.").await;
+    assert_eq!(finished["status"], "finished");
+    still_in_its_turn(&h, &session).await;
+    assert!(worktree.exists());
+    std::fs::write(&release, "1").unwrap();
+    killed(&h, &session).await;
+    assert!(!cancelled(&h));
+    eventually(TIMEOUT, "the worktree to be removed", || async {
+        !worktree.exists()
+    })
+    .await;
+}
+
+/// The `fail_step` of the first column fails the task inside the agent's
+/// turn, and the agent is killed once that turn stops. The failed task
+/// keeps its worktree.
+#[tokio::test]
+async fn a_first_column_failure_lets_the_turn_end_before_the_kill() {
+    let h = patient_harness().await;
+    let (task, session, release) = held_in_its_turn(&h).await;
+    let failed = call(&h, &task, &session, "fail", "The input is missing.").await;
+    assert_eq!(failed["status"], "failed");
+    still_in_its_turn(&h, &session).await;
+    std::fs::write(&release, "1").unwrap();
+    killed(&h, &session).await;
+    assert!(!cancelled(&h));
+    assert!(std::path::Path::new(session.worktree_path.as_deref().unwrap()).exists());
+}
+
+/// A turn that does not stop is killed once
+/// [`Timeouts::turn_end_grace`] runs out.
+#[tokio::test]
+async fn a_turn_that_does_not_stop_is_killed_when_the_grace_runs_out() {
+    let h = harness()
+        .scheduler()
+        .timeouts(Timeouts {
+            turn_end_grace: crate::common::RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .await;
+    let (task, session, _release) = held_in_its_turn(&h).await;
+    let finished = call(&h, &task, &session, "complete", "The work is done.").await;
+    assert_eq!(finished["status"], "finished");
+    killed(&h, &session).await;
+    eventually(TIMEOUT, "the turn to be cancelled", || async {
+        cancelled(&h)
+    })
+    .await;
+}
+
+/// A finished task's worktree stays until its agent process exits: an agent
+/// slow to honour its kill still runs in it.
+#[tokio::test]
+async fn a_finished_tasks_worktree_waits_for_its_agent_to_exit() {
+    let h = harness()
+        .scheduler()
+        .timeouts(Timeouts {
+            turn_end_grace: crate::common::RUNS_OUT,
+            cancel_grace: TIMEOUT * 4,
+            ..Timeouts::default()
+        })
+        .await;
+    let (task, session, release) = held_turn(&h, true).await;
+    let worktree = std::path::PathBuf::from(session.worktree_path.clone().unwrap());
+    let finished = call(&h, &task, &session, "complete", "The work is done.").await;
+    assert_eq!(finished["status"], "finished");
+    killed(&h, &session).await;
+    eventually(TIMEOUT, "the turn to be cancelled", || async {
+        cancelled(&h)
+    })
+    .await;
+    // A pass over the task while the agent still runs: its session reads
+    // exited, and the worktree still waits on the process.
+    h.notify(&task.id);
+    h.flush_scheduler().await;
+    tokio::time::sleep(QUIET).await;
+    assert!(worktree.exists());
+    std::fs::write(&release, "1").unwrap();
+    eventually(TIMEOUT, "the worktree to be removed", || async {
+        !worktree.exists()
+    })
+    .await;
+}
+
+/// A session whose turn already stopped is killed at once: the grace,
+/// longer than the test waits, is not waited out.
+#[tokio::test]
+async fn an_agent_with_no_running_turn_is_killed_at_once() {
+    let h = patient_harness().await;
+    let task = stepped(&h).await;
+    let develop = session_at(&h, &task, "develop").await;
+    eventually(TIMEOUT, "the briefing turn to stop", || async {
+        h.store
+            .count_session_events(&develop.id, "stop")
+            .await
+            .unwrap()
+            > 0
+    })
+    .await;
+    let failed = call(&h, &task, &develop, "fail", "The input is missing.").await;
+    assert_eq!(failed["status"], "failed");
+    killed(&h, &develop).await;
+}
+
+/// A user's cancel of a task kills its agent mid-turn at once.
+#[tokio::test]
+async fn a_cancelled_task_kills_its_running_turn_at_once() {
+    let h = patient_harness().await;
+    let (task, session, _release) = held_in_its_turn(&h).await;
+    let _: Value = h
+        .json(
+            post_json(&format!("/v1/tasks/{}/cancel", task.id), json!({})),
+            StatusCode::OK,
+        )
+        .await;
+    killed(&h, &session).await;
+    eventually(TIMEOUT, "the turn to be cancelled", || async {
+        cancelled(&h)
+    })
+    .await;
+}
+
+/// A user's cancel of a goal kills its task agent mid-turn at once.
+#[tokio::test]
+async fn a_cancelled_goal_kills_its_running_turn_at_once() {
+    let h = patient_harness().await;
+    let (task, session, _release) = held_in_its_turn(&h).await;
+    let _: Value = h
+        .json(
+            post_json(&format!("/v1/goals/{}/cancel", task.goal_id), json!({})),
+            StatusCode::OK,
+        )
+        .await;
+    killed(&h, &session).await;
+    eventually(TIMEOUT, "the turn to be cancelled", || async {
+        cancelled(&h)
+    })
+    .await;
 }

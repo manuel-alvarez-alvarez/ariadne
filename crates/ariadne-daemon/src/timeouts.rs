@@ -39,11 +39,19 @@ pub struct Timeouts {
     ///
     /// The prompt response a cancel draws is the only report of what that
     /// turn spent: an agent killed mid-turn — a relaunch that hands a column's
-    /// agent its return, a cleanup after the last `complete_step` — otherwise takes the turn's
+    /// agent its return, a cleanup whose `turn_end_grace` ran out — otherwise takes the turn's
     /// tokens with it. An adapter that honours `session/cancel` answers
     /// within a second; one that does not is killed when this runs out, as it
     /// was before.
     pub cancel_grace: Duration,
+    /// How long the agent of a task that its own step call ended keeps its
+    /// running turn before the daemon kills it.
+    ///
+    /// The `complete_step` or `fail_step` that ends a task is a tool call
+    /// inside that turn: a kill at once reaches the agent before the call's
+    /// result does. The agent is killed when the turn stops, or when this
+    /// runs out, whichever comes first.
+    pub turn_end_grace: Duration,
     /// How long one discovery ACP exchange and its OpenCode delete may each
     /// take.
     pub probe: Duration,
@@ -122,6 +130,7 @@ impl Default for Timeouts {
     fn default() -> Self {
         Self {
             cancel_grace: Duration::from_secs(5),
+            turn_end_grace: Duration::from_secs(30),
             probe: Duration::from_secs(5),
             registry_download: Duration::from_secs(30),
             ai_permissions_serve_start: Duration::from_secs(120),
