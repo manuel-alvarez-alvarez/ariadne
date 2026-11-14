@@ -1,8 +1,9 @@
 import {
+  BotIcon,
   BrainIcon,
   CheckIcon,
-  ChevronRightIcon,
   CircleIcon,
+  CodeIcon,
   FileTextIcon,
   GitBranchIcon,
   GlobeIcon,
@@ -18,6 +19,7 @@ import {
   TerminalIcon,
   Trash2Icon,
   TriangleAlertIcon,
+  UserIcon,
   WrenchIcon,
   XIcon,
 } from "lucide-react"
@@ -44,11 +46,6 @@ const SUMMARY_CHARS = 90
 function firstLine(text: string): string {
   const line = text.split("\n").find((one) => one.trim() !== "") ?? ""
   return line.length > SUMMARY_CHARS ? `${line.slice(0, SUMMARY_CHARS).trimEnd()}…` : line.trim()
-}
-
-function lineCount(text: string): string {
-  const count = text.replace(/\n$/, "").split("\n").length
-  return `${count} ${count === 1 ? "line" : "lines"}`
 }
 
 /** How long a call took, in the unit that fits it, as the CLI's pane says it. */
@@ -97,36 +94,31 @@ export function SummaryLine({
   )
 }
 
-/** Whether an element's text is cut by its width, kept current as it resizes. */
-function useCut(text: string): [(element: HTMLElement | null) => void, boolean] {
-  const [element, setElement] = useState<HTMLElement | null>(null)
-  const [cut, setCut] = useState(false)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: new text may not resize the element, so it measures again
-  useEffect(() => {
-    if (!element) return
-    const measure = () => setCut(element.scrollWidth > element.clientWidth)
-    measure()
-    if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [element, text])
-  return [setElement, cut]
-}
-
 /** What a person typed is a message: set apart and full size, with the time it was sent. */
 export function PromptBox({
   text,
   queued,
   time,
+  role = "You",
 }: {
   text: string
   queued?: boolean
   time?: string
+  role?: string
 }) {
   return (
-    <div className="flex items-start gap-2 border-l border-blue-500 px-3 py-2">
-      <ChevronRightIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-blue-500" />
+    <div
+      className={cn(
+        "rounded-md px-2 py-1.5",
+        role === "Developer" && "bg-muted/50 ring-1 ring-inset ring-border/60",
+        role === "You" && "bg-primary/12 ring-1 ring-inset ring-border/50",
+      )}
+    >
+      <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-foreground">
+        {role === "Developer" ? <CodeIcon aria-hidden className="size-3.5 shrink-0" /> : null}
+        {role === "You" ? <UserIcon aria-hidden className="size-3.5 shrink-0" /> : null}
+        {role}
+      </div>
       <div className="min-w-0 flex-1">
         {queued ? (
           <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
@@ -192,15 +184,14 @@ export const BlockView = memo(function BlockView({
     prompt: TerminalIcon,
   } as const
   const Icon = block.type === "tool" || block.type === "question" ? null : icons[block.type]
-  const decorated = block.type !== "question" && (block.type !== "prompt" || block.daemon)
-  const tone =
-    block.type === "permission"
-      ? "border-orange-500"
-      : block.type === "error" || (block.type === "tool" && block.tool.status === "failed")
-        ? "border-red-500"
-        : block.type === "tool" && block.tool.status === "completed"
-          ? "border-green-500"
-          : "border-muted-foreground/50"
+  const decorated = !["question", "prompt", "message", "tool"].includes(block.type)
+  const labels: Record<string, string> = {
+    note: "Info",
+    child: "Subagent",
+    error: "Error",
+    raw: "Event",
+    plan: "Plan",
+  }
   return (
     <div data-block={block.type} data-block-id={block.id} title={formatStamp(block.createdAt)}>
       {block.subagent ? (
@@ -209,16 +200,25 @@ export const BlockView = memo(function BlockView({
         </div>
       ) : null}
       <div
-        className={cn(decorated && "flex items-start gap-2 border-l px-3 py-1", decorated && tone)}
+        className={cn(
+          decorated && "flex items-start gap-2 px-2 py-1 text-xs leading-4",
+          decorated && block.type !== "permission" && "ml-4",
+          block.type === "tool" && "flex items-start gap-2",
+        )}
       >
         {block.type === "tool" ? (
-          <div className="mt-1.5">
+          <div className="mt-0.5">
             <ToolKind kind={block.tool.kind} />
           </div>
         ) : decorated && Icon ? (
-          <Icon aria-hidden className="mt-1.5 size-3.5 shrink-0 text-muted-foreground" />
+          <Icon aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
         ) : null}
         <div className="min-w-0 flex-1">
+          {labels[block.type] ? (
+            <span className="mr-1 text-xs font-medium text-muted-foreground">
+              {labels[block.type]}
+            </span>
+          ) : null}
           <BlockBody
             block={block}
             picker={picker}
@@ -254,34 +254,24 @@ function BlockBody({
   const time = formatClock(block.createdAt)
   switch (block.type) {
     case "prompt":
-      return block.daemon ? (
-        <Foldable
-          folded={folded}
-          onToggle={onToggle}
-          summary={
-            <SummaryLine
-              start={
-                <>
-                  daemon prompt · {firstLine(block.text)} · {lineCount(block.text)}
-                </>
-              }
-              end={[time]}
-            />
-          }
-        >
-          <Markdown>{block.text}</Markdown>
-        </Foldable>
-      ) : (
-        <PromptBox text={block.text} time={time} />
-      )
+      return <PromptBox text={block.text} time={time} role={block.daemon ? "Developer" : "You"} />
     case "message":
-      return <Markdown>{block.text}</Markdown>
+      return (
+        <div className="rounded-md bg-muted/30 px-2 py-1.5 ring-1 ring-inset ring-border/40">
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
+            <BotIcon aria-hidden className="size-3.5 shrink-0" />
+            Assistant
+          </div>
+          <Markdown>{block.text}</Markdown>
+        </div>
+      )
     case "thought":
       return (
         <Foldable
           folded={folded}
           onToggle={onToggle}
           summary={<SummaryLine start={<>thought · {firstLine(block.text)}</>} end={[time]} />}
+          className="[&>button]:p-0 [&>div]:px-0"
         >
           <Markdown className="text-muted-foreground italic">{block.text}</Markdown>
         </Foldable>
@@ -301,21 +291,23 @@ function BlockBody({
         </ul>
       )
     case "tool":
-      return <ToolBlock block={block} folded={folded} onToggle={onToggle} />
+      return <ToolDetails block={block} />
     case "permission": {
       const answer = block.answer
         ? block.answer.decidedBy
           ? `${block.answer.name} · decided by ${block.answer.decidedBy}`
           : block.answer.name
         : undefined
-      const headline = `Permission · ${block.title}`
+      const headline = repeatsInput(block.title, block.command)
+        ? "Permission"
+        : `Permission · ${block.title}`
       const body = (
         <>
           {block.command ? (
-            <CodeBlock code={block.command} language="shell" caption="command" className="mt-1.5" />
+            <CodeBlock code={block.command} language="shell" caption="command" className="mt-0.5" />
           ) : null}
           {block.diff ? (
-            <CodeBlock code={block.diff} diff caption="diff" className="mt-1.5" />
+            <CodeBlock code={block.diff} diff caption="diff" className="mt-0.5" />
           ) : null}
           {block.aiNote ? (
             <div className="pt-1 font-mono text-muted-foreground">{block.aiNote}</div>
@@ -325,7 +317,7 @@ function BlockBody({
       const frame = "text-xs"
       if (!answer) {
         return (
-          <div className={cn(frame, "px-3 py-2")}>
+          <div className={cn(frame, "space-y-2")}>
             <div className="font-medium">
               <SummaryLine
                 start={headline}
@@ -357,7 +349,7 @@ function BlockBody({
     case "question":
       return picker
     case "note":
-      return <div className="font-mono text-xs text-muted-foreground">· {block.text}</div>
+      return <span className="font-mono text-xs text-muted-foreground">{block.text}</span>
     case "child":
       return <div className="font-mono text-xs text-muted-foreground">{block.text}</div>
     case "error":
@@ -376,75 +368,142 @@ function BlockBody({
   }
 }
 
-/** A tool call: one header line, and a body where it has anything to show or its header is cut. */
-function ToolBlock({
+/** Permission activity opens its response controls in the shared details workspace. */
+export const PermissionRow = memo(function PermissionRow({
   block,
-  folded,
-  onToggle,
+  selected,
+  onSelect,
+}: {
+  block: Extract<Block, { type: "permission" }>
+  selected: boolean
+  onSelect: (id: string, trigger: HTMLButtonElement) => void
+}) {
+  return (
+    <div data-block="permission" data-block-id={block.id}>
+      <button
+        type="button"
+        aria-pressed={selected}
+        onClick={(event) => onSelect(block.id, event.currentTarget)}
+        className={cn(
+          "ml-4 flex w-[calc(100%-1rem)] min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-xs outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50",
+          selected && "bg-muted",
+          !block.answer && "text-orange-500",
+        )}
+        title={`${block.title}\n${formatStamp(block.createdAt)}`}
+      >
+        <ShieldIcon aria-hidden className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate text-foreground">Permission · {block.title}</span>
+        <span
+          title={block.answer?.name}
+          className="max-w-1/3 shrink-0 truncate text-muted-foreground"
+        >
+          {block.answer?.name ?? "Needs approval"}
+        </span>
+      </button>
+    </div>
+  )
+})
+
+/** One selectable activity row. Tool content lives in the details workspace. */
+export const ToolRow = memo(function ToolRow({
+  block,
+  selected,
+  onSelect,
 }: {
   block: Extract<Block, { type: "tool" }>
-  folded: boolean
-  onToggle: () => void
+  selected: boolean
+  onSelect: (id: string, trigger: HTMLButtonElement) => void
 }) {
   const { tool } = block
   const subject = tool.subject ?? tool.title
-  const [startRef, cut] = useCut(subject)
-  const [now, setNow] = useState(() => Date.now())
+  const [now, setNow] = useState(Date.now)
   useEffect(() => {
     if (tool.endedAt || tool.status !== "in_progress") return
-    setNow(Date.now())
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [tool.endedAt, tool.status])
-  // A read's subject names its file, so its input says nothing more.
-  const input = tool.kind === "read" ? undefined : tool.inputText
-  const summary = (
-    <SummaryLine
-      title={`${subject}\n${formatStamp(block.createdAt)}`}
-      startRef={startRef}
-      start={
-        <>
-          <span className="mr-1.5 inline-flex items-center gap-1.5 align-[-2px]">
-            <ToolStatus status={tool.status} />
-          </span>
-          <span className="font-medium text-foreground">{subject}</span>
-        </>
-      }
-      end={[
-        duration(
-          tool.startedAt,
-          tool.endedAt ?? (tool.status === "in_progress" ? new Date(now).toISOString() : undefined),
-        ),
-      ]}
-    />
-  )
-  if (!input && !tool.output && !tool.diff && !cut) {
-    return (
-      <div className="flex items-start gap-1.5 px-2 py-1 font-mono text-xs text-muted-foreground">
-        <span className="min-w-0 flex-1">{summary}</span>
-      </div>
-    )
-  }
   return (
-    <Foldable folded={folded} onToggle={onToggle} summary={summary}>
-      <div className="space-y-1">
-        {input?.includes(subject) ? null : (
-          <p data-tool-subject className="font-mono text-xs break-words whitespace-pre-wrap">
-            {subject}
-          </p>
+    <div data-block="tool" data-block-id={block.id}>
+      <button
+        type="button"
+        aria-pressed={selected}
+        onClick={(event) => onSelect(block.id, event.currentTarget)}
+        title={`${subject}\n${formatStamp(block.createdAt)}`}
+        className={cn(
+          "flex w-[calc(100%-1rem)] ml-4 min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left font-mono text-xs text-muted-foreground outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50",
+          tool.status === "failed"
+            ? "text-status-danger-fg"
+            : tool.status === "completed"
+              ? "text-status-done-fg"
+              : "text-muted-foreground",
+          selected && "bg-muted text-foreground",
         )}
-        {input ? <CodeBlock code={input} language={tool.inputLanguage} caption="input" /> : null}
-        {tool.output ? (
-          <CodeBlock
-            code={tool.output}
-            language={tool.outputLanguage}
-            firstLine={tool.firstLine}
-            caption="output"
-          />
-        ) : null}
-        {tool.diff ? <CodeBlock code={tool.diff} diff caption="diff" /> : null}
+      >
+        <ToolKind kind={tool.kind} />
+        <ToolStatus status={tool.status} />
+        <span className="shrink-0 max-w-1/3 truncate font-medium text-foreground">
+          {firstLine(tool.title)}
+        </span>
+        <span className="min-w-0 flex-1 truncate">
+          {subject === tool.title ? firstLine(tool.output ?? "") : firstLine(subject)}
+        </span>
+        <span data-summary-end className="shrink-0 tabular-nums">
+          {duration(
+            tool.startedAt,
+            tool.endedAt ??
+              (tool.status === "in_progress" ? new Date(now).toISOString() : undefined),
+          )}
+        </span>
+      </button>
+    </div>
+  )
+})
+
+/** Keep command text in its readable, copyable input section. */
+function repeatsInput(title: string, input?: string, subject?: string): boolean {
+  if (!input?.trim() || !title.trim()) return false
+  const containsPhrase = (text: string, phrase: string) =>
+    ` ${text.trim().replace(/\s+/g, " ")} `.includes(` ${phrase.trim().replace(/\s+/g, " ")} `)
+  return (
+    containsPhrase(input, title) ||
+    containsPhrase(title, input) ||
+    Boolean(subject && input.includes(subject) && containsPhrase(title, subject))
+  )
+}
+
+/** Existing input, output and code changes, with shared highlighting and copy controls. */
+function ToolDetails({ block }: { block: Extract<Block, { type: "tool" }> }) {
+  const { tool } = block
+  const subject = tool.subject ?? tool.title
+  const input = tool.kind === "read" ? undefined : tool.inputText
+  return (
+    <div className="space-y-3 [&_pre]:leading-relaxed">
+      <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+        <ToolStatus status={tool.status} />
+        <h4 className="min-w-0 flex-1 font-sans text-sm font-semibold text-foreground break-words whitespace-pre-wrap">
+          {repeatsInput(tool.title, input, tool.subject) ? "Tool call" : tool.title}
+        </h4>
+        <span className="shrink-0">{formatClock(block.createdAt)}</span>
       </div>
-    </Foldable>
+      {subject === tool.title || input?.includes(subject) ? null : (
+        <p data-tool-subject className="font-mono text-xs break-words whitespace-pre-wrap">
+          {subject}
+        </p>
+      )}
+      {input ? <CodeBlock code={input} language={tool.inputLanguage} caption="input" /> : null}
+      {tool.output ? (
+        <CodeBlock
+          code={tool.output}
+          language={tool.outputLanguage}
+          firstLine={tool.firstLine}
+          caption="output"
+        />
+      ) : null}
+      {tool.diff ? <CodeBlock code={tool.diff} diff caption="diff" /> : null}
+      {!input && !tool.output && !tool.diff ? (
+        <p className="text-xs text-muted-foreground">No input, output or code changes available.</p>
+      ) : null}
+    </div>
   )
 }
 

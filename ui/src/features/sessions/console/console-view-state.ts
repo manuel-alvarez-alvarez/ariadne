@@ -12,8 +12,7 @@
  * Block folds and the transcript position are the interface the transcript
  * redesign builds on: `blockFolds` holds one preference per block id, and
  * `scrollTop` with `following` holds the reader's place. Write them with
- * `updateViewState`; a block with no preference follows the console's own
- * `folded`.
+ * `updateViewState`; a foldable block with no preference starts folded.
  */
 
 /** A message the daemon refused, kept so it can be sent again or edited. */
@@ -35,9 +34,7 @@ export type ConsoleViewState = {
   oldest: string | undefined
   /** True while the reader is at the newest block. */
   following: boolean
-  /** The whole console's fold: true folds long output and diffs. */
-  folded: boolean
-  /** A fold preference per block id; a block with none follows `folded`. */
+  /** A fold preference per block id; a foldable block with none starts folded. */
   blockFolds: Record<string, boolean>
   /** The child whose view is shown; none for `main`. */
   shown: string | undefined
@@ -51,7 +48,6 @@ const initial: ConsoleViewState = {
   anchor: undefined,
   oldest: undefined,
   following: true,
-  folded: true,
   blockFolds: {},
   shown: undefined,
   failed: [],

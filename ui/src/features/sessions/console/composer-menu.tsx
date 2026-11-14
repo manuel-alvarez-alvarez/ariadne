@@ -1,21 +1,14 @@
 /**
  * The plus menu beside the composer: the agent's slash commands, searchable,
  * and the actions of the session: Switch agent/model, Resume once it has
- * ended, Expand or collapse all, and Copy loaded transcript.
+ * ended, and Copy loaded transcript.
  *
  * A command is inserted into the composer for editing and is never sent from
  * here. Every entry is a button, so a click, a tap, Enter and Space all pick
  * it, and the arrow keys walk the list from the search field.
  */
 
-import {
-  ArrowRightLeftIcon,
-  ChevronsDownUpIcon,
-  ChevronsUpDownIcon,
-  ClipboardCopyIcon,
-  PlayIcon,
-  PlusIcon,
-} from "lucide-react"
+import { ArrowRightLeftIcon, ClipboardCopyIcon, PlayIcon, PlusIcon } from "lucide-react"
 import { type KeyboardEvent, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -40,8 +33,6 @@ export function ComposerMenu({
   onSwitch,
   onResume,
   resumePending,
-  folded,
-  onToggleFold,
   copyLabel,
   onCopy,
   returnFocus,
@@ -55,8 +46,6 @@ export function ComposerMenu({
   /** None while the session is live. */
   onResume?: () => void
   resumePending: boolean
-  folded: boolean
-  onToggleFold: () => void
   copyLabel: string
   onCopy: () => void
   /** Where the keyboard goes after a pick. */
@@ -81,12 +70,6 @@ export function ComposerMenu({
     ...(onResume && !resumePending
       ? [{ key: "resume", label: "Resume", icon: <PlayIcon />, run: onResume }]
       : []),
-    {
-      key: "fold",
-      label: folded ? "Expand all" : "Collapse all",
-      icon: folded ? <ChevronsUpDownIcon /> : <ChevronsDownUpIcon />,
-      run: onToggleFold,
-    },
     { key: "copy", label: copyLabel, icon: <ClipboardCopyIcon />, run: onCopy },
   ]
   const entries: Entry[] = [
