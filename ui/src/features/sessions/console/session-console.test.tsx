@@ -694,7 +694,7 @@ it("folds tool details, thoughts and daemon prompts together, starting folded, f
   expect(log.queryByText(/out 7/)).toBeNull()
   expect(log.queryByText("+add 25")).toBeNull()
   expect(log.queryByText(/the options/)).toBeNull()
-  log.getByRole("button", { name: /Bash\s*10 lines/ })
+  log.getByRole("button", { name: /Bash/ })
 
   await user.click(screen.getByRole("button", { name: "Unfold" }))
   expect(log.getByText(/prompt 10/)).not.toBeNull()

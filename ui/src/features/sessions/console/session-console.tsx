@@ -100,6 +100,7 @@ import {
   applySnapshot,
   blocksText,
   dequeuePrompt,
+  displayBlocks,
   emptyTranscript,
   oldestEventId,
   type PermissionOption,
@@ -581,7 +582,8 @@ function ConsolePane({
   // An open question waits on the user, so a live `main` draws it last,
   // directly above the input; a closed one keeps its place.
   const waiting = live && !child ? [...restored, ...blocks.filter(isOpenQuestion)] : []
-  const inPlace = waiting.length > 0 ? blocks.filter((block) => !isOpenQuestion(block)) : blocks
+  const visible = displayBlocks(blocks, [...restored, ...blocks])
+  const inPlace = waiting.length > 0 ? visible.filter((block) => !isOpenQuestion(block)) : visible
   const card = (block: QuestionBlock) => (
     <BlockView
       key={block.id}
@@ -929,7 +931,7 @@ function ConsolePane({
             ref={log}
             role="log"
             aria-label="Console transcript"
-            className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3"
+            className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-3"
             onScroll={(event) => {
               const el = event.currentTarget
               // A restore of the reader's place waits on the blocks: until it
