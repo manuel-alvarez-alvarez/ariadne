@@ -121,14 +121,16 @@ function HighlightedCode({
   const tokens = useTokens(code, language)
   if (firstLine === undefined) return tokens.map(run)
   const lines = tokenLines(tokens)
-  const width = String(firstLine + lines.length - 1).length
+  const digits = String(firstLine + lines.length - 1).length
+  // The gutter is border-box, so its `before:pr-3` padding must fit inside its width, beside the digits.
+  const gutter = `calc(${digits}ch + 0.75rem)`
   // The number is the line's generated content, so a selection and a copy skip it.
   return lines.map((line, index) => (
     <div
       // biome-ignore lint/suspicious/noArrayIndexKey: the lines of one text, never reordered
       key={index}
       data-line={firstLine + index}
-      style={{ "--gutter": `${width}ch` } as CSSProperties}
+      style={{ "--gutter": gutter } as CSSProperties}
       className="flex min-h-lh before:w-(--gutter) before:shrink-0 before:pr-3 before:text-right before:text-muted-foreground/70 before:content-[attr(data-line)] before:select-none"
     >
       <span className="min-w-0 flex-1">{line.map(run)}</span>
