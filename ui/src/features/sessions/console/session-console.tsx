@@ -78,8 +78,10 @@ import {
 } from "./console-view-state"
 import {
   answerRequest,
+  isOpenQuestion,
   openQuestion,
   pendingRequests,
+  type QuestionBlock,
   QuestionCard,
   restoredQuestions,
 } from "./questions"
@@ -576,6 +578,29 @@ function ConsolePane({
   const restored = child ? [] : restoredQuestions(requests, transcript)
   const question = live && !child ? openQuestion([...restored, ...blocks], answered) : undefined
   const questionId = question?.requestId
+  // An open question waits on the user, so a live `main` draws it last,
+  // directly above the input; a closed one keeps its place.
+  const waiting = live && !child ? [...restored, ...blocks.filter(isOpenQuestion)] : []
+  const inPlace = waiting.length > 0 ? blocks.filter((block) => !isOpenQuestion(block)) : blocks
+  const card = (block: QuestionBlock) => (
+    <BlockView
+      key={block.id}
+      block={block}
+      folded={blockFolds[block.id] ?? folded}
+      onToggle={toggleBlock}
+      picker={
+        <QuestionCard
+          sessionId={sessionId}
+          block={block}
+          live={live}
+          sent={answered.has(block.requestId)}
+          onAnswered={markAnswered}
+          folded={blockFolds[block.id] ?? folded}
+          onToggle={toggleBlock}
+        />
+      }
+    />
+  )
 
   /** Deliver one message: to the open question as its answer, else to the console. */
   function dispatch(text: string, requestId: string | undefined) {
@@ -929,36 +954,30 @@ function ConsolePane({
               if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
             }}
           >
-            {blocks.map((block) => (
-              <BlockView
-                key={block.id}
-                block={block}
-                folded={blockFolds[block.id] ?? folded}
-                onToggle={toggleBlock}
-                picker={
-                  block.type === "question" ? (
-                    <QuestionCard
-                      sessionId={sessionId}
-                      block={block}
-                      live={live}
-                      sent={answered.has(block.requestId)}
-                      onAnswered={markAnswered}
-                      folded={blockFolds[block.id] ?? folded}
-                      onToggle={toggleBlock}
-                    />
-                  ) : block.type === "permission" && block.id === pendingId ? (
-                    <PermissionPicker
-                      options={block.options}
-                      selected={selected}
-                      answering={answering}
-                      onSelect={setSelected}
-                      onAnswer={answerPick}
-                      onKeyDown={pickerKey}
-                    />
-                  ) : null
-                }
-              />
-            ))}
+            {inPlace.map((block) =>
+              block.type === "question" ? (
+                card(block)
+              ) : (
+                <BlockView
+                  key={block.id}
+                  block={block}
+                  folded={blockFolds[block.id] ?? folded}
+                  onToggle={toggleBlock}
+                  picker={
+                    block.type === "permission" && block.id === pendingId ? (
+                      <PermissionPicker
+                        options={block.options}
+                        selected={selected}
+                        answering={answering}
+                        onSelect={setSelected}
+                        onAnswer={answerPick}
+                        onKeyDown={pickerKey}
+                      />
+                    ) : null
+                  }
+                />
+              ),
+            )}
             {requestsError ? (
               <div
                 role="alert"
@@ -970,27 +989,7 @@ function ConsolePane({
                 </Button>
               </div>
             ) : null}
-            {child
-              ? null
-              : restored.map((block) => (
-                  <BlockView
-                    key={block.id}
-                    block={block}
-                    folded={blockFolds[block.id] ?? folded}
-                    onToggle={toggleBlock}
-                    picker={
-                      <QuestionCard
-                        sessionId={sessionId}
-                        block={block}
-                        live={live}
-                        sent={answered.has(block.requestId)}
-                        onAnswered={markAnswered}
-                        folded={blockFolds[block.id] ?? folded}
-                        onToggle={toggleBlock}
-                      />
-                    }
-                  />
-                ))}
+            {live ? null : restored.map(card)}
             {transcript.queuedPrompts.map((prompt) => (
               <div key={prompt.id} data-block="prompt">
                 <PromptBox text={prompt.text} queued />
@@ -1004,6 +1003,7 @@ function ConsolePane({
                 onEdit={() => editFailed(one)}
               />
             ))}
+            {waiting.map(card)}
           </div>
           {away ? (
             <Button

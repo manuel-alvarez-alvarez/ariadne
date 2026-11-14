@@ -292,13 +292,13 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
-            "To ask the user, call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`. Do not use it for agent questions. A turn that ends without the call ends the wait."
+            "To ask the user, call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`. Write no text after the call, and end the turn. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
         McpSeat::Agent => {
-            "Ask the user only where the task cannot continue without a user answer. Call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`. Do not use it for agent questions. A turn that ends without the call ends the wait."
+            "Ask the user only where the task cannot continue without a user answer. Call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`. Write no text after the call, and end the turn. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
         McpSeat::PullRequestReviewer | McpSeat::PullRequestKeeper => {
-            "Ask the user only where the request cannot continue without a user answer. Call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`. Do not use it for agent questions. A turn that ends without the call ends the wait."
+            "Ask the user only where the request cannot continue without a user answer. Call `wait_for_user` with a one-line hint and the question in its `question` field. Give options where the user picks one, and recommend one. Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`. Write no text after the call, and end the turn. Do not use it for agent questions. A turn that ends without the call ends the wait."
         }
     }
 }
@@ -970,6 +970,10 @@ pub(crate) mod tests {
         assert!(description("wait_for_user").contains(
             "Put the options, your pick and its reason in `options`, `recommended_option_id` and `recommendation_reason`, not in its text or your reply."
         ));
+        assert!(
+            description("wait_for_user")
+                .contains("Write no text after the call, and end the turn.")
+        );
         assert!(schema("wait_for_user").contains(
             "\"recommendation_reason\":{\"description\":\"Why you recommend that option. Give it only with `recommended_option_id`.\""
         ));
@@ -1018,6 +1022,10 @@ pub(crate) mod tests {
                     "Keep the options, the recommendation and its reason out of the question text. Put them in `options`, `recommended_option_id` and `recommendation_reason`."
                 ),
                 "{seat:?}: the console shows each option once: {instructions}"
+            );
+            assert!(
+                instructions.contains("Write no text after the call, and end the turn."),
+                "{seat:?}: the open question stays the last block: {instructions}"
             );
         }
 
@@ -1089,9 +1097,13 @@ pub(crate) mod tests {
     /// the recommendation and its reason out of the question text. Every seat
     /// can ask the user, and a console that shows an option twice is the
     /// same defect for each of them.
+    ///
+    /// The cap rises to 1800 for the rule to write nothing after the call:
+    /// the console keeps an open question last, and text after it reads
+    /// as if the agent went on.
     #[test]
     fn the_shared_rules_stay_small() {
-        const CAP: usize = 1750;
+        const CAP: usize = 1800;
         for seat in SEATS {
             let rules = session_rules(&seat);
             assert!(
@@ -1233,6 +1245,18 @@ pub(crate) mod tests {
                     "pull request reviewer session rules",
                     "pull request keeper session rules",
                     "wait_for_user description",
+                ][..],
+            ),
+            (
+                "writing nothing after a question",
+                &["Write no text after the call"][..],
+                &[
+                    "orchestrator session rules",
+                    "agent session rules",
+                    "pull request reviewer session rules",
+                    "pull request keeper session rules",
+                    "wait_for_user description",
+                    "orchestration skill",
                 ][..],
             ),
             (

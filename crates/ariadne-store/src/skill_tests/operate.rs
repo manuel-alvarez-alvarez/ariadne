@@ -412,6 +412,7 @@ fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
         "Put the title, context and question in the text.",
         "Put each option, with its consequence, in `options`.",
         "Put the pick in `recommended_option_id`, and the reason in `recommendation_reason`.",
+        "Write no text after the call, and end the turn.",
         "\"Two short questions fit in one turn.\" -> Ask one; the user answers each one with its full context.",
     ] {
         assert!(
