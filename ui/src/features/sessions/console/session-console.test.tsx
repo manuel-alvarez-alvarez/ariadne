@@ -1191,6 +1191,34 @@ it("folds a withdrawn and an expired question, and never an open one", () => {
   within(card).getByRole("button", { name: /^Main/ })
 })
 
+/** Whether `first` comes before `second` in the document. */
+function before(first: HTMLElement, second: HTMLElement) {
+  return (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+}
+
+it("keeps an open question below every later block, directly above the input", () => {
+  const { source } = renderConsole([QUESTION_EVENT(), event("agent_message", { text: "after" })])
+  const later = within(transcript()).getByText("after")
+  expect(before(later, questionCard())).toBe(true)
+
+  act(() => source.emit("event", event("agent_message", { text: "later still" })))
+  expect(before(within(transcript()).getByText("later still"), questionCard())).toBe(true)
+})
+
+it("draws a closed question in its own place, by its event order", () => {
+  renderConsole([
+    QUESTION_EVENT(),
+    event("agent_message", { text: "after" }),
+    event("agent_request.resolved", { request_id: "01RQ", resolution: "withdrawn" }),
+  ])
+  expect(before(questionCard(), within(transcript()).getByText("after"))).toBe(true)
+})
+
+it("draws an open question of a finished session in its event order", () => {
+  renderConsole([QUESTION_EVENT(), event("agent_message", { text: "after" })], "exited")
+  expect(before(questionCard(), within(transcript()).getByText("after"))).toBe(true)
+})
+
 const PENDING = {
   id: "01RQ",
   summary: "Pick a base",
@@ -1243,6 +1271,15 @@ it("restores a pending question older than the snapshot page on a load and a rec
   await waitFor(() =>
     expect(screen.queryByRole("region", { name: "Question · Pick a base" })).toBeNull(),
   )
+})
+
+it("keeps a restored pending question below every later block", async () => {
+  pendingList = [PENDING]
+  const { source } = renderConsole(quietPage(205))
+  await screen.findByRole("region", { name: "Question · Pick a base" })
+
+  act(() => source.emit("event", event("agent_message", { text: "after" })))
+  expect(before(within(transcript()).getByText("after"), questionCard())).toBe(true)
 })
 
 it("draws a pending question once where the snapshot already holds it, and closed where it closed", async () => {

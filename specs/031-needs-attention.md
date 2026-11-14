@@ -607,7 +607,13 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     beside the agent's pick, then ` · <reason>` where the question gives a
     `recommendation_reason`, and `Type a number, or your own answer.` until
     its resolution replaces that line with how it closed. Ariadne Desktop
-    draws it as a card (015 rule 22a). A permission the
+    draws it as a card (015 rule 22a). Both consoles keep an open question
+    after every later block, directly above the input, and draw a closed
+    one by event order (008 rule 37, 015 rule 22a). The `wait_for_user`
+    description and the session rules of every seat tell the agent to
+    write no text after the call, and to end the turn, so the question is
+    the last thing the agent says. Every shipped skill that asks the user
+    through the call says the same. A permission the
     daemon raised on one of Ariadne's own MCP tools and *allowed* by itself —
     by its mode, the AI permission model or a learned rule, never at the
     console — leaves no permission block in the console: the call's own
@@ -825,6 +831,14 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
   (`tools.rs::wait_for_user_posts_the_hint_and_the_question`)
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`,
   `mcp.rs::only_the_orchestrator_is_told_to_ask`).
+- The `wait_for_user` description, the session rules of every seat and the
+  `orchestration` skill tell the agent to write no text after the call, and
+  to end the turn, and no other text says it
+  (`mcp.rs::the_tool_texts_read_as_the_spec_words_them`,
+  `mcp.rs::only_the_orchestrator_is_told_to_ask`,
+  `mcp.rs::each_shared_rule_is_written_in_its_owner_alone`,
+  `skill_tests/operate.rs::the_orchestration_skill_asks_one_question_at_a_time_with_its_parts`),
+  and both consoles keep an open question above the input (008, 015).
 - Console input answers the newest request of its session alone, an older
   one expiring with the turn that does not raise it again, while another
   session's request stays, and withdrawal answers its named request alone

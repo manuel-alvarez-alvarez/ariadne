@@ -444,7 +444,7 @@ fn roll_call(agents: &[serde_json::Value]) -> String {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Flag that you wait for the user, and ask your question in `question`. Put the options, your pick and its reason in `options`, `recommended_option_id` and `recommendation_reason`, not in its text or your reply. Then end your turn. A turn that ends without the call ends the wait."
+        description = "Flag that you wait for the user, and ask in `question`. Put the options, your pick and its reason in `options`, `recommended_option_id` and `recommendation_reason`, not in its text or your reply. Write no text after the call, and end the turn. A turn that ends without the call ends the wait."
     )]
     async fn wait_for_user(
         &self,

@@ -25,7 +25,7 @@ import { SummaryLine } from "./blocks"
 import { Foldable } from "./foldable"
 import type { Block, QuestionResolution, Transcript } from "./transcript"
 
-type QuestionBlock = Extract<Block, { type: "question" }>
+export type QuestionBlock = Extract<Block, { type: "question" }>
 
 /**
  * The requests of a session that still wait for an answer, read with each
@@ -91,6 +91,11 @@ export async function answerRequest(
   )
 }
 
+/** Whether a block is a question that no answer, withdrawal or expiry has closed. */
+export function isOpenQuestion(block: Block): block is QuestionBlock {
+  return block.type === "question" && block.resolution === undefined
+}
+
 /**
  * The question the composer answers: the newest one in view that nothing has
  * closed and nobody has answered yet.
@@ -100,8 +105,7 @@ export function openQuestion(
   answered: ReadonlySet<string>,
 ): QuestionBlock | undefined {
   return blocks.findLast(
-    (block): block is QuestionBlock =>
-      block.type === "question" && block.resolution === undefined && !answered.has(block.requestId),
+    (block): block is QuestionBlock => isOpenQuestion(block) && !answered.has(block.requestId),
   )
 }
 
