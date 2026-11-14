@@ -331,7 +331,13 @@ Out: the daemon endpoints themselves (012).
     session's start and end, a cancelled or other non-`end_turn` stop,
     compaction and an `agent_request` hint; an error, with the note of the
     `session.diagnosis` whose `error_event_id` names it; and `kind · summary`
-    for a kind it does not know. Live `agent_message_chunk` and
+    for a kind it does not know. A person's prompt, an unfolded daemon prompt
+    and a question card's text are Markdown, drawn by `components/markdown.tsx`
+    as a message is: `h1` to `h3` in a visible scale above body text, lists
+    with their nesting, task-list checkboxes, `del`, `kbd` and inline code
+    styled, a single newline in a prompt still a line break, and a fenced
+    block a `CodeBlock`. Fold summaries and the hint stay plain text, and
+    `blocksText` keeps a prompt's raw text. Live `agent_message_chunk` and
     `agent_thought_chunk` events build one open block per speaker — the
     session or one subagent — and that speaker's stored `agent_message` or
     `agent_thought` closes it without repeating its text.
@@ -425,7 +431,8 @@ Out: the daemon endpoints themselves (012).
     The prompt that delivers the answer to the agent (a `user_prompt_submit`
     that carries a `request_id`, 031 rule 12) draws no prompt block, and
     `blocksText` leaves it out, so an answered question shows once, as its
-    card; the CLI attach pane still draws it.
+    card; the CLI attach pane still draws it. The question text is Markdown
+    (rule 21).
     A hint-only request stays the note `waiting for you · <hint>`.
     With every snapshot, a reconnect's included, the console reads the
     session's pending requests (`GET /v1/sessions/{id}/agent-requests`) and
@@ -465,7 +472,8 @@ Out: the daemon endpoints themselves (012).
     `BlockView` is memoized, and it compares a question card or a permission
     picker by its props, so a streamed chunk re-renders only the block it
     changes. A card or a picker whose own state changes renders again. A message, a person's prompt, a plan, a
-    permission and a question never fold. The whole summary is one button
+    permission and a question never fold. An unfolded daemon prompt is
+    Markdown, and its summary line stays plain text. The whole summary is one button
     with `aria-expanded`, so a click, Enter or Space opens that block alone;
     its content sits outside the button, so selecting it, a link in it and
     a Copy control never toggle it. A block's own choice is a fold
@@ -1545,6 +1553,13 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/console/session-console.test.tsx::answers a permission from its picker with the keyboard, and shows who decided`,
   `::picks a permission option with a click`,
   `::answers no permission on %s from an empty input`).
+- A prompt, an unfolded daemon prompt and a question's text render as
+  Markdown, with a single newline kept and a fence a `CodeBlock` (rules 21,
+  22a and 23a)
+  (`ui/src/features/sessions/console/blocks.test.tsx::renders a prompt as Markdown: headings, task lists, a fenced block, and a single newline still breaks`,
+  `::renders an unfolded daemon prompt as Markdown and keeps its summary plain`,
+  `::draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text`,
+  `ui/src/features/sessions/console/session-console.test.tsx::renders a question's text as Markdown, with a fence as a code block`).
 - A question is a card whose clicked choice posts at once to its own
   request's answer route; a failed post shows on the card and a retry
   succeeds; a custom answer posts as text; an answered card takes no answer

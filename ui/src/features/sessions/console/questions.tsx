@@ -15,6 +15,7 @@ import { Loader2Icon } from "lucide-react"
 import { type FormEvent, useState } from "react"
 
 import { type AgentRequestDto, api, unwrap } from "@/api"
+import { Markdown } from "@/components/markdown"
 import { Button } from "@/components/ui/button"
 import { describeError } from "@/lib/format"
 
@@ -153,7 +154,7 @@ export function QuestionCard({
       className="rounded-md border border-status-active/40 bg-status-active-soft/30 px-3 py-2 text-xs"
     >
       <div className="font-medium">Question · {block.hint}</div>
-      <p className="whitespace-pre-wrap break-words pt-1 text-sm">{question.text}</p>
+      <Markdown className="pt-1">{question.text}</Markdown>
       {recommended ? (
         <p className="pt-1 text-muted-foreground">Recommended: {recommended.label}</p>
       ) : null}

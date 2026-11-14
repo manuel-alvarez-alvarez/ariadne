@@ -80,7 +80,7 @@ export function PromptBox({
         </span>
       ) : null}
       <div className="flex items-start gap-3">
-        <p className="min-w-0 flex-1 whitespace-pre-wrap break-words">{text}</p>
+        <Markdown className="min-w-0 flex-1">{text}</Markdown>
         {time ? (
           <span
             data-block-time
@@ -181,7 +181,7 @@ function BlockBody({
             />
           }
         >
-          <p className="whitespace-pre-wrap break-words">{block.text}</p>
+          <Markdown>{block.text}</Markdown>
         </Foldable>
       ) : (
         <PromptBox text={block.text} time={time} />

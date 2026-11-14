@@ -21,10 +21,14 @@ const PROSE = [
   "[&>*+*]:mt-3",
   // Agents write prose with meaningful line breaks inside a paragraph.
   "[&_p]:whitespace-pre-wrap",
-  "[&_h1]:font-heading [&_h1]:text-base [&_h1]:font-semibold",
-  "[&_h2]:font-heading [&_h2]:text-sm [&_h2]:font-semibold",
-  "[&_h3]:font-heading [&_h3]:text-sm [&_h3]:font-medium",
+  "[&_h1]:font-heading [&_h1]:text-xl [&_h1]:leading-snug [&_h1]:font-semibold",
+  "[&_h2]:font-heading [&_h2]:text-lg [&_h2]:leading-snug [&_h2]:font-semibold",
+  "[&_h3]:font-heading [&_h3]:text-base [&_h3]:leading-snug [&_h3]:font-medium",
+  // A nested list keeps its own indent; a task list drops its bullets, not its indent.
   "[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5",
+  "[&_ul.contains-task-list]:list-none [&_li.task-list-item_input]:mr-1.5 [&_li.task-list-item_input]:align-middle",
+  "[&_del]:text-muted-foreground [&_del]:line-through",
+  "[&_kbd]:rounded [&_kbd]:border [&_kbd]:bg-muted [&_kbd]:px-1 [&_kbd]:py-0.5 [&_kbd]:font-mono [&_kbd]:text-xs",
   "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-3",
   "[&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs",
   "[&_pre_code]:bg-transparent [&_pre_code]:p-0",
@@ -35,6 +39,35 @@ const PROSE = [
   "[&_td]:border-b [&_td]:py-1 [&_td]:pr-3 [&_td]:align-top [&_td]:[overflow-wrap:anywhere]",
   "[&_img]:max-w-full",
 ].join(" ")
+
+type Node = { type: string; value?: string; children?: Node[]; data?: { hName: string } }
+
+/**
+ * Raw HTML stays off, but a person writes `<kbd>Ctrl</kbd>` for a key: the
+ * parser hands that over as an html node, the text, and a closing html node,
+ * and this turns each such run into a `kbd` element.
+ */
+function remarkKbd() {
+  const walk = (node: Node) => {
+    const kids = node.children
+    if (!kids) return
+    for (let open = 0; open < kids.length; open += 1) {
+      if (kids[open]?.type !== "html" || kids[open]?.value?.toLowerCase() !== "<kbd>") continue
+      const close = kids.findIndex(
+        (kid, at) => at > open && kid.type === "html" && kid.value?.toLowerCase() === "</kbd>",
+      )
+      if (close < 0) continue
+      const inside = kids.slice(open + 1, close)
+      kids.splice(open, close - open + 1, {
+        type: "kbd",
+        data: { hName: "kbd" },
+        children: inside,
+      })
+    }
+    kids.forEach(walk)
+  }
+  return walk
+}
 
 /** The text of a fenced block's `code` child, and the language its fence names. */
 function fence(children: ReactNode): { code: string; language: string | undefined } | undefined {
@@ -48,7 +81,7 @@ export function Markdown({ children, className }: { children: string; className?
   return (
     <div className={cn(PROSE, className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkKbd]}
         components={{
           // A fenced block is code: highlighted where the language is known,
           // with its Copy control, and never a scroll area of its own.

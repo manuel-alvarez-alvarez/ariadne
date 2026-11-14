@@ -1047,6 +1047,21 @@ it("draws a question as a card and submits a clicked choice at once to its reque
   expect(within(card).getByRole("button", { name: /^Main/ })).toHaveProperty("disabled", true)
 })
 
+it("renders a question's text as Markdown, with a fence as a code block", () => {
+  renderConsole([
+    event("agent_request", {
+      request_id: "01RQ",
+      hint: "Pick a base",
+      question: { text: "## Base\n\nPress <kbd>Ctrl</kbd>.\n\n```sh\ngit merge\n```" },
+    }),
+  ])
+  const card = questionCard()
+
+  expect(card.querySelector("h2")?.textContent).toBe("Base")
+  expect(card.querySelector("kbd")?.textContent).toBe("Ctrl")
+  expect(card.querySelector("[data-code-block] code")?.textContent).toBe("git merge")
+})
+
 it("shows a failed answer on the card and keeps it answerable for another attempt", async () => {
   answer(() => errorResponse(409, "conflict", "no ACP agent is running"))
   renderConsole([QUESTION_EVENT()])

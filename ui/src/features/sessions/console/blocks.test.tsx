@@ -270,3 +270,32 @@ it("re-renders only the block a streamed chunk changes", () => {
 
   expect(rendered).toEqual(["second"])
 })
+
+it("renders a prompt as Markdown: headings, task lists, a fenced block, and a single newline still breaks", () => {
+  const text = "# Plan\n- [x] done\n- [ ] todo\n\nline one\nline two\n\n```ts\nconst a = 1\n```"
+  const [block] = fold(event("user_prompt_submit", { text }))
+  const { container } = drawn(block as Block)
+
+  expect(container.querySelector("h1")?.textContent).toBe("Plan")
+  expect(container.querySelectorAll("input[type=checkbox]")).toHaveLength(2)
+  expect(container.querySelector("[data-code-block] code")?.textContent).toBe("const a = 1")
+  const paragraph = container.querySelector("p")
+  expect(paragraph?.textContent).toBe("line one\nline two")
+  expect(paragraph?.parentElement?.className).toContain("[&_p]:whitespace-pre-wrap")
+})
+
+it("renders an unfolded daemon prompt as Markdown and keeps its summary plain", () => {
+  const [block] = fold(event("user_prompt_submit", { text: "## Resume\n- one", source: "daemon" }))
+  const { container } = drawn(block as Block, false)
+
+  expect(container.querySelector("h2")?.textContent).toBe("Resume")
+  expect(screen.getByRole("button").querySelector("h2")).toBeNull()
+})
+
+it("draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text", () => {
+  const [block] = fold(event("user_prompt_submit", { text: "Press <kbd>Ctrl</kbd> and <b>x</b>" }))
+  const { container } = drawn(block as Block)
+
+  expect(container.querySelector("kbd")?.textContent).toBe("Ctrl")
+  expect(container.querySelector("b")).toBeNull()
+})
