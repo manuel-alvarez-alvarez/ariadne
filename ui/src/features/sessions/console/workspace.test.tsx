@@ -142,8 +142,13 @@ it("keeps selected details when resizing between a drawer and adjacent details",
   act(() => resize(1000))
   within(screen.getByRole("complementary", { name: "Tool details" })).getByText("first output")
   act(() => resize(500))
+  // Wait for the remounted sheet to receive focus before sending Escape.
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close tool details" })),
+  )
   await user.keyboard("{Escape}")
-  expect(screen.queryByRole("dialog", { name: "Tool details" })).toBeNull()
+  // The sheet exit transition completes asynchronously before removal and focus return.
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Tool details" })).toBeNull())
   expect(document.activeElement).toBe(within(log()).getByRole("button", { name: /Build/ }))
 })
 
@@ -268,10 +273,17 @@ it("closes a nested details drawer without closing the expanded console or cance
     resize(500)
   })
   fireEvent.click(within(log()).getByRole("button", { name: /Build/ }))
-  screen.getByRole("dialog", { name: "Tool details" })
+  const drawer = screen.getByRole("dialog", { name: "Tool details" })
+  // The nested sheet mounts and moves focus asynchronously before it can receive Escape.
+  await waitFor(() =>
+    expect(document.activeElement).toBe(
+      within(drawer).getByRole("button", { name: "Close tool details" }),
+    ),
+  )
   daemonFetch.mockClear()
   await user.keyboard("{Escape}")
-  expect(screen.queryByRole("dialog", { name: "Tool details" })).toBeNull()
+  // The sheet exit transition completes asynchronously before removal and focus return.
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Tool details" })).toBeNull())
   screen.getByRole("dialog", { name: "Session console" })
   expect(document.activeElement).toBe(within(log()).getByRole("button", { name: /Build/ }))
   expect(
@@ -368,7 +380,10 @@ it("keeps tool selection when a permission arrives and opens its drawer only on 
   const permission = screen.getByRole("dialog", { name: "Permission details" })
   expect(document.activeElement).toBe(within(permission).getByRole("listbox"))
   await user.keyboard("{Escape}")
-  expect(screen.queryByRole("dialog", { name: "Permission details" })).toBeNull()
+  // The sheet exit transition completes asynchronously before removal and focus return.
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Permission details" })).toBeNull(),
+  )
   screen.getByRole("textbox", { name: "Message the agent" })
   expect(document.activeElement).toBe(
     within(log()).getByRole("button", { name: /Permission · Deploy/ }),
