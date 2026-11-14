@@ -503,7 +503,8 @@ Out: the daemon endpoints themselves (012).
     Developer prompts have no individual
     fold control or saved fold preference. Thoughts retain individual folds.
     Questions use a purple marker and subtle background; pending questions never fold.
-    Entries have no colored left borders. Secondary icons align with the first text line.
+    Entries have no colored left borders. Secondary icons share the same horizontal inset and align with the first text line.
+    Thought summaries have no additional padding inside their activity row.
     Conversation messages have 12px separation; activity rows use 4px gaps and compact padding.
     The composer shares the conversation margin, with a compact pending-request control above it.
     A permission's header (`Permission ·` and the call) keeps one

@@ -198,7 +198,7 @@ export const BlockView = memo(function BlockView({
       ) : null}
       <div
         className={cn(
-          decorated && "flex items-start gap-2 py-0.5",
+          decorated && "flex items-start gap-2 px-2 py-1 text-xs leading-4",
           decorated && block.type !== "permission" && "ml-4",
           block.type === "tool" && "flex items-start gap-2",
         )}
@@ -208,7 +208,7 @@ export const BlockView = memo(function BlockView({
             <ToolKind kind={block.tool.kind} />
           </div>
         ) : decorated && Icon ? (
-          <Icon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+          <Icon aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
         ) : null}
         <div className="min-w-0 flex-1">
           {labels[block.type] ? (
@@ -268,6 +268,7 @@ function BlockBody({
           folded={folded}
           onToggle={onToggle}
           summary={<SummaryLine start={<>thought · {firstLine(block.text)}</>} end={[time]} />}
+          className="[&>button]:p-0 [&>div]:px-0"
         >
           <Markdown className="text-muted-foreground italic">{block.text}</Markdown>
         </Foldable>
