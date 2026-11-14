@@ -103,6 +103,8 @@ export type Block =
       /** The command the call runs, where it runs one. */
       command?: string
       diff?: string
+      /** Why the AI permission model had a part in the request, where it did (`ai_permission_note`). */
+      aiNote?: string
       options: PermissionOption[]
       answer?: { optionId?: string; name: string; decidedBy?: string }
     })
@@ -575,6 +577,7 @@ function blockOf(event: AgentEventDto): Block {
         ...(asker ? { askedBy: asker } : {}),
         command: commandOf(tool.input),
         diff: tool.diff,
+        ...(aiNote(payload) ? { aiNote: aiNote(payload) } : {}),
         options: list(payload, "options").flatMap((option) => {
           const id = str(option, "optionId")
           if (id === undefined) return []
@@ -754,6 +757,50 @@ function foldReply(blocks: Block[], event: AgentEventDto): void {
     ...block,
     answer: { optionId, name, decidedBy: str(event.payload, "decided_by") },
   }
+}
+
+/** The AI permission model's note on a request or a reply, as the TUI words it. */
+function aiNote(payload: unknown): string | undefined {
+  const label = str(payload, "label")
+  const metrics = aiMetrics(payload)
+  if (label !== undefined && metrics !== undefined) {
+    const decision =
+      str(payload, "decided_by") === "ai"
+        ? label === "deny"
+          ? "AI denied"
+          : "AI allowed"
+        : `AI said ${label}`
+    return `${decision} · ${metrics}`
+  }
+  const error = str(payload, "ai_error")
+  return error === undefined ? undefined : `AI ${error}`
+}
+
+function aiMetrics(payload: unknown): string | undefined {
+  const probabilities = at(payload, "probabilities")
+  if (typeof probabilities !== "object" || probabilities === null) return undefined
+  const count = Object.keys(probabilities).length
+  const number = (value: unknown) => (typeof value === "number" ? value : undefined)
+  const allowProbability = number(at(probabilities, "0"))
+  const denyProbability = number(at(probabilities, String(count - 1)))
+  const danger = number(at(payload, "danger"))
+  const allow = number(at(payload, "allow_threshold"))
+  const deny = number(at(payload, "deny_threshold"))
+  if (
+    allowProbability === undefined ||
+    denyProbability === undefined ||
+    danger === undefined ||
+    allow === undefined ||
+    deny === undefined
+  )
+    return undefined
+  const pct = (value: number) => Math.round(value * 100)
+  let metrics = `allow ${pct(allowProbability)}%, deny ${pct(denyProbability)}% · danger ${pct(danger)}% (allow up to ${pct(allow)}%, deny from ${pct(deny)}%)`
+  const tags = list(payload, "risk_tags").filter((tag): tag is string => typeof tag === "string")
+  if (tags.length > 0) metrics += ` · tags: ${tags.join(", ")}`
+  const cap = str(payload, "cap")
+  if (cap !== undefined) metrics += ` · capped by ${cap}`
+  return metrics
 }
 
 /** Whether a reply is the daemon's own allow, with nobody at the console. */
@@ -1139,6 +1186,7 @@ function blockText(block: Block): string {
         `Permission: ${block.title}`,
         block.command,
         block.diff,
+        block.aiNote,
         block.answer ? `-> ${block.answer.name}` : undefined,
       ]
         .filter(Boolean)

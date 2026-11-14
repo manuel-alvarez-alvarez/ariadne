@@ -243,6 +243,29 @@ it("answers a permission from its picker with the keyboard, and shows who decide
   within(transcript()).getByText("Reject · decided by console")
 })
 
+it("folds a permission when it is answered, even with the console unfolded", async () => {
+  const user = userEvent.setup()
+  const request = event("permission_request", {
+    acp: { toolCallId: "call-1", title: "Bash", rawInput: { command: "rm -rf build" } },
+    options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+  })
+  const { source } = renderConsole([request], "running")
+  await user.click(screen.getByRole("button", { name: "Unfold" }))
+  expect(transcript().textContent).toContain("rm -rf build")
+
+  act(() =>
+    source.emit(
+      "event",
+      event("permission.replied", { option_id: "allow", decided_by: "console" }),
+    ),
+  )
+
+  within(transcript()).getByText("Allow · decided by console")
+  expect(transcript().textContent).not.toContain("rm -rf build")
+  await user.click(within(transcript()).getByRole("button", { name: /Permission · Bash/ }))
+  expect(transcript().textContent).toContain("rm -rf build")
+})
+
 it.each([
   ["Shift+Enter", { shiftKey: true }],
   ["a composing Enter", { isComposing: true }],
