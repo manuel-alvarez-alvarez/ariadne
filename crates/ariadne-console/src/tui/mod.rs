@@ -418,6 +418,10 @@ impl Console {
         // dropped counts from its own prompt again, and a turn that began
         // while the stream was down counts from its prompt, not the old one.
         let mut finished = self.settled();
+        // The replay pins each open question as the live stream did, so a
+        // question that closed while the stream was down keeps the place of
+        // its close. A session that ends with the snapshot pins none.
+        let pinning = !self.ends_with(events);
         let mut parent = Vec::new();
         let mut children = Vec::new();
         self.commands = Vec::new();
@@ -438,20 +442,12 @@ impl Console {
                 continue;
             }
             self.follow_asking(event);
-            absorb(&mut parent, event);
+            match pinning {
+                true => absorb_over_questions(&mut parent, event),
+                false => absorb(&mut parent, event),
+            }
             self.follow_turn(event, now);
             self.follow_usage(event);
-        }
-        // A question the console holds over the input stays there, and one
-        // that closed while the stream was down goes where it would have
-        // closed: after the blocks the console holds above it.
-        if !self.has_ended() {
-            let shown = match self.in_child() {
-                true => &self.parked,
-                false => &self.items,
-            };
-            let held = open_questions(shown);
-            pin_questions(&mut parent, 0, &mut VecDeque::new(), &held);
         }
         // The view on the screen keeps what it drew. A child the snapshot
         // no longer holds leaves the parent's view drawn from its start.
@@ -526,7 +522,30 @@ impl Console {
             true => (&mut self.parked, 0),
             false => (&mut self.items, self.committed),
         };
-        pin_questions(items, from, &mut self.pending, &[]);
+        pin_questions(items, from, &mut self.pending);
+    }
+
+    /// Whether the session has ended once `events` are folded in: the
+    /// status the header has, moved as [`Console::follow_turn`] moves it.
+    fn ends_with(&self, events: &[AgentEventDto]) -> bool {
+        let status = match self.ended {
+            true => Some(self.header.status.as_str()),
+            false => events
+                .iter()
+                .filter_map(|event| status_of(&event.kind))
+                .next_back()
+                .or(Some(self.header.status.as_str())),
+        };
+        matches!(status, Some("exited" | "failed"))
+    }
+
+    /// Where the open questions pinned after every block start in `items`:
+    /// its end where none is pinned.
+    fn pinned_from(&self) -> usize {
+        match self.has_ended() || self.in_child() {
+            true => self.items.len(),
+            false => waiting_at(&self.items),
+        }
     }
 
     /// Fold one event of the session's own agent into the blocks in `items`.
@@ -594,7 +613,8 @@ impl Console {
                     *pending += grown;
                 }
             }
-            None => absorb(&mut self.items, event),
+            None if self.has_ended() => absorb(&mut self.items, event),
+            None => absorb_over_questions(&mut self.items, event),
         }
     }
 
@@ -894,12 +914,14 @@ impl Console {
     /// It never goes backwards: what is in the scrollback is in the
     /// scrollback, whatever a fresh snapshot makes of the items around it.
     fn settled(&self) -> usize {
+        // The open questions pinned after every block are not what is being
+        // written: the block before them is.
+        let blocks = self.pinned_from();
         let writing = self.view_running()
-            || self
-                .items
+            || self.items[..blocks]
                 .last()
                 .is_some_and(|last| is_open(last, true) || is_open(last, false));
-        let mut end = self.items.len().saturating_sub(usize::from(writing));
+        let mut end = blocks.saturating_sub(usize::from(writing));
         if let Some(pending) = self.pending.front().filter(|_| !self.in_child()) {
             // The turn a queued prompt waits behind is still writing the
             // block before the prompt, chunk by chunk: that block is the one
@@ -1286,41 +1308,49 @@ fn absorb(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
     }
 }
 
-/// The request ids of the `wait_for_user` questions in `items` that wait for
-/// an answer.
-fn open_questions(items: &[TranscriptItem]) -> Vec<String> {
-    items
-        .iter()
-        .filter_map(|item| match item {
-            TranscriptItem::UserQuestion {
-                request_id,
-                closed: None,
-                ..
-            } => Some(request_id.clone()),
-            _ => None,
-        })
-        .collect()
+/// Whether a block is a `wait_for_user` question that waits for an answer.
+fn is_waiting(item: &TranscriptItem) -> bool {
+    matches!(item, TranscriptItem::UserQuestion { closed: None, .. })
+}
+
+/// Where the run of open questions at the end of `items` starts.
+fn waiting_at(items: &[TranscriptItem]) -> usize {
+    items.len()
+        - items
+            .iter()
+            .rev()
+            .take_while(|item| is_waiting(item))
+            .count()
+}
+
+/// [`absorb`] under the open questions pinned at the end of `items`: the
+/// event folds into the blocks before them, so a chunk still grows the
+/// block it belongs to, and a question it asks goes after them. Only a
+/// close looks among the questions, for the one it closes, which then
+/// stays where it is.
+fn absorb_over_questions(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
+    if event.kind == "agent_request.resolved" {
+        absorb(items, event);
+        return;
+    }
+    let held = items.split_off(waiting_at(items));
+    let before = items.len();
+    absorb(items, event);
+    let (asked, written): (Vec<_>, Vec<_>) =
+        items.drain(before.min(items.len())..).partition(is_waiting);
+    items.extend(written);
+    items.extend(held);
+    items.extend(asked);
 }
 
 /// Move each `wait_for_user` question from `from` on that waits for an
-/// answer, or that `held` names, after every other block, in its order.
-/// `pending` keeps pointing at the prompts it pointed at.
-fn pin_questions(
-    items: &mut Vec<TranscriptItem>,
-    from: usize,
-    pending: &mut VecDeque<usize>,
-    held: &[String],
-) {
+/// answer after every other block, in its order. `pending` keeps pointing
+/// at the prompts it pointed at.
+fn pin_questions(items: &mut Vec<TranscriptItem>, from: usize, pending: &mut VecDeque<usize>) {
     let mut pinned = Vec::new();
     let mut at = from;
     while at < items.len() {
-        let pin = match &items[at] {
-            TranscriptItem::UserQuestion {
-                request_id, closed, ..
-            } => closed.is_none() || held.contains(request_id),
-            _ => false,
-        };
-        if !pin {
+        if !is_waiting(&items[at]) {
             at += 1;
             continue;
         }
