@@ -1914,7 +1914,7 @@
         "tags": [
           "pull-requests"
         ],
-        "summary": "What the request's session says of it: `ready` once the babysitting task\nbelieves every required approval and check reads green, on the head\n(`head_sha`, required with `ready: true`) it actually confirmed that\nagainst; and the head a review session posted its review on\n(`reviewed_sha`). Neither raises `waiting_user` on the session by\nitself (029): the claim alone is not confirmed evidence, and a\npr-reviewer session finishing its own review must notify nobody — the\n`pull_request` attention producer reads the forge's own evidence\nagainst this claim, for the head it names, and raises its own item\nonce it actually backs the claim up.",
+        "summary": "What the request's session says of it: `ready` once the babysitting task\nbelieves every required approval and check reads green, on the head\n(`head_sha`, required with `ready: true`) it actually confirmed that\nagainst; and the head a review session posted its review on\n(`reviewed_sha`), and the review session's own approval of the head\n(`approved`, on `head_sha`). None raises `waiting_user` on the session by\nitself (029): the claim alone is not confirmed evidence, and a\npr-reviewer session finishing its own review must notify nobody — the\n`pull_request` attention producer reads the forge's own evidence\nagainst this claim, for the head it names, and raises its own item\nonce it actually backs the claim up.",
         "operationId": "report",
         "parameters": [
           {
@@ -1948,7 +1948,9 @@
           },
           "400": {},
           "403": {},
-          "404": {}
+          "404": {},
+          "409": {},
+          "502": {}
         }
       }
     },
@@ -4344,19 +4346,19 @@
             },
             "description": "The answers the user can pick. With none, the user types the answer."
           },
-          "recommended_option_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The `id` of the option the agent recommends."
-          },
           "recommendation_reason": {
             "type": [
               "string",
               "null"
             ],
             "description": "Why the agent recommends that option. It needs\n`recommended_option_id`."
+          },
+          "recommended_option_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `id` of the option the agent recommends."
           },
           "text": {
             "type": "string",
@@ -6913,6 +6915,22 @@
           "babysit"
         ]
       },
+      "PullRequestApprovalDto": {
+        "type": "object",
+        "description": "An Ariadne review session approved the request on this exact head (029).",
+        "required": [
+          "head_sha",
+          "approved_at"
+        ],
+        "properties": {
+          "approved_at": {
+            "type": "string"
+          },
+          "head_sha": {
+            "type": "string"
+          }
+        }
+      },
       "PullRequestCommentDto": {
         "type": "object",
         "description": "One comment on a request, as the forge holds it now, read live (026),\nwith the marks Ariadne keeps of it.",
@@ -7017,6 +7035,17 @@
           "role"
         ],
         "properties": {
+          "ariadne_approval": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PullRequestApprovalDto",
+                "description": "Ariadne's own approval of the current head (029), null where its\nreview session approved no head or an earlier one. It is not the\nforge's review decision, and it says nothing of merge readiness."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "author_login": {
             "type": "string"
           },
@@ -7340,12 +7369,19 @@
         "type": "object",
         "description": "Body of `POST /v1/pull-requests/{id}/report`: what the request's session\nsays of it.",
         "properties": {
+          "approved": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The review session approves the request on `head_sha` (`true`), or\nwithdraws its approval (`false`) (029). Ariadne's own status alone:\nno forge approval is posted."
+          },
           "head_sha": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The head the session actually confirmed `ready` against — read off\nits own last `get_pull_request` call, never looked up again here.\nRequired wherever `ready` is `true`: a push landing between that\nread and this call must still be judged against the head the\nsession confirmed, not whatever the daemon's own cache has moved\non to since, or a push the session never actually saw could pass\nas though it had (031)."
+            "description": "The head the session actually confirmed `ready` against — read off\nits own last `get_pull_request` call, never looked up again here.\nRequired wherever `ready` or `approved` is `true`: a push landing between that\nread and this call must still be judged against the head the\nsession confirmed, not whatever the daemon's own cache has moved\non to since, or a push the session never actually saw could pass\nas though it had (031)."
           },
           "ready": {
             "type": [
