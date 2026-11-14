@@ -14,6 +14,7 @@ import {
   type Block,
   blocksText,
   dequeuePrompt,
+  displayBlocks,
   elapsed,
   emptyTranscript,
   oldestEventId,
@@ -870,4 +871,32 @@ it("keeps the time of the first terminal update as the end", () => {
     call({ status: "completed" }, "2026-11-14T10:00:09Z"),
   ])
   expect(blocks[0]?.type === "tool" && blocks[0].tool.endedAt).toBe("2026-11-14T10:00:05Z")
+})
+
+it("hides only a successful question call with its matching card", () => {
+  const events = [
+    event("pre_tool_use", { tool_name: "mcp__ariadne__wait_for_user", tool_call_id: "a" }),
+    event("post_tool_use", {
+      tool_call_id: "a",
+      acp: { toolCallId: "a", status: "completed", rawOutput: '{"id":"req-1"}' },
+    }),
+    event("agent_request", { request_id: "req-1", hint: "Pick", question: QUESTION }),
+    event("pre_tool_use", { tool_name: "mcp__ariadne__wait_for_user", tool_call_id: "b" }),
+    event("post_tool_use", {
+      tool_call_id: "b",
+      acp: { toolCallId: "b", status: "failed", rawOutput: '{"id":"req-1"}' },
+    }),
+    event("pre_tool_use", { tool_name: "mcp__ariadne__wait_for_user", tool_call_id: "c" }),
+    event("post_tool_use", {
+      tool_call_id: "c",
+      acp: { toolCallId: "c", status: "completed", rawOutput: '{"id":"other"}' },
+    }),
+  ]
+  const blocks = fold(events)
+  expect(
+    displayBlocks(blocks, blocks).map((block) =>
+      block.type === "tool" ? block.tool.id : block.type,
+    ),
+  ).toEqual(["question", "b", "c"])
+  expect(blocks).toHaveLength(4)
 })

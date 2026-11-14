@@ -418,7 +418,7 @@ Out: the daemon endpoints themselves (012).
     actions alone.
 22a. An `agent_request` event that carries a `question` (031 rule 11) is a
     question card (`console/questions.tsx`): a header with the hint and the
-    block's clock time at its right end, as a tool call's summary line has
+    block's clock time at its right end, as other timed blocks have
     it, the question text, one button per option with its description, and
     a field for a custom answer. The recommended option's button carries a
     `recommended` badge, and the question's `recommendation_reason`, where
@@ -472,9 +472,12 @@ Out: the daemon endpoints themselves (012).
     call's summary shows at its left the status mark, one icon per ACP kind
     (`read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`,
     and one more for any other kind) and the subject (rule 21). At its right
-    end, muted, it shows the output's line count, the duration once the call
-    has ended (`340ms`, `2.1s`, `1m 04s`) and the call's time as `HH:MM:SS`.
-    A tool call is one frame. Unfolded, it shows its input, its output and
+    end, muted, it shows elapsed duration (`340ms`, `2.1s`, `1m 04s`),
+    updated while the call runs and frozen when it completes or fails.
+    Tool rows have no outline and use compact spacing. A successful Ariadne
+    `wait_for_user` call is hidden only when its returned request id matches
+    a displayed question card. The recorded events remain intact; failed and
+    unmatched calls stay visible (proved by `ui/src/features/sessions/console/transcript.test.ts::hides only a successful question call with its matching card`). Unfolded, a tool shows its input, output and
     its diff, in that order, each bare under a muted caption line (rule
     23a2): `input`, `output` or `diff`, then the language label where one is
     known. A `read` shows no input, because its subject names the file. A
@@ -1531,15 +1534,15 @@ Out: the daemon endpoints themselves (012).
   `::keeps the tints of a diff's added, removed and hunk-header lines`,
   `::draws a fence in one light frame, its label and an icon-only Copy on one caption line`,
   `::draws a captioned block bare, under a caption that names the section and the language`).
-- A tool call is one frame with its input, output and diff under captions,
-  a summary of status, kind, subject, count, duration and time, and every
-  block shows its time; `BlockView` re-renders only the block a chunk
+- A tool call has no outline, with its input, output and diff under captions,
+  and a summary of status, kind, subject and elapsed duration; `BlockView` re-renders only the block a chunk
   changes (rules 23a and 23a2)
-  (`ui/src/features/sessions/console/blocks.test.tsx::draws a tool call in one frame, with its input, output and diff bare under their captions`,
+  (`ui/src/features/sessions/console/blocks.test.tsx::draws a tool call without a frame, with its input, output and diff under their captions`,
   `::copies one section's text from its icon-only control and never toggles the fold`,
-  `::names a call's status, kind and subject at the left of its summary, and its count, duration and time at the right`,
+  `::names a call's status, kind and subject at the left of its summary, and duration at the right`,
   `::gives every ACP kind its own icon and any other kind one more`,
   `::says how long a call took in the unit that fits it, once it has ended`,
+  `::updates a running tool duration and freezes it on completion`,
   `::shows a read's output with no input, in its file's language, numbered from its first line outside the text`,
   `::shows a permission's command as shell`,
   `::shows every block's time: the clock on a prompt and a summary line, and the full date on hover`,

@@ -1209,3 +1209,26 @@ function blockText(block: Block): string {
       return `${block.kind}: ${block.summary}`
   }
 }
+
+/** Hide a completed question call only when its returned request has a card. */
+export function displayBlocks(blocks: Block[], cards: Block[]): Block[] {
+  const ids = new Set(
+    cards.flatMap((block) => (block.type === "question" ? [block.requestId] : [])),
+  )
+  return blocks.filter((block) => {
+    if (
+      block.type !== "tool" ||
+      block.tool.status !== "completed" ||
+      !/ariadne.*wait_for_user/i.test(block.tool.title) ||
+      !block.tool.output
+    )
+      return true
+    try {
+      const result: unknown = JSON.parse(block.tool.output)
+      const id = str(result, "id")
+      return id === undefined || !ids.has(id)
+    } catch {
+      return true
+    }
+  })
+}

@@ -346,6 +346,13 @@ function ToolBlock({
   const { tool } = block
   const subject = tool.subject ?? tool.title
   const [startRef, cut] = useCut(subject)
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (tool.endedAt || tool.status !== "in_progress") return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [tool.endedAt, tool.status])
   // A read's subject names its file, so its input says nothing more.
   const input = tool.kind === "read" ? undefined : tool.inputText
   const summary = (
@@ -362,23 +369,24 @@ function ToolBlock({
         </>
       }
       end={[
-        tool.output ? lineCount(tool.output) : undefined,
-        duration(tool.startedAt, tool.endedAt),
-        formatClock(tool.startedAt ?? block.createdAt),
+        duration(
+          tool.startedAt,
+          tool.endedAt ?? (tool.status === "in_progress" ? new Date(now).toISOString() : undefined),
+        ),
       ]}
     />
   )
   if (!input && !tool.output && !tool.diff && !cut) {
     return (
-      <div className="flex items-start gap-1.5 rounded-md border px-2 py-1 font-mono text-xs text-muted-foreground">
+      <div className="flex items-start gap-1.5 px-2 py-1 font-mono text-xs text-muted-foreground">
         <span aria-hidden className="size-3.5 shrink-0" />
         <span className="min-w-0 flex-1">{summary}</span>
       </div>
     )
   }
   return (
-    <Foldable folded={folded} onToggle={onToggle} summary={summary} className="rounded-md border">
-      <div className="space-y-2.5">
+    <Foldable folded={folded} onToggle={onToggle} summary={summary}>
+      <div className="space-y-1">
         {input?.includes(subject) ? null : (
           <p data-tool-subject className="font-mono text-xs break-words whitespace-pre-wrap">
             {subject}
