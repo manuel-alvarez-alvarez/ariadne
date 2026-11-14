@@ -459,7 +459,8 @@ this control closes the drawer and reveals the question in the conversation.
 This works for subagent requests too.
 
 User, developer and assistant messages always remain expanded. Role labels identify
-them. Assistant headers have a bot icon and subtle background; Developer headers
+them. You headers have a person icon and subtle muted background. All three role icons share one vertical column.
+Assistant headers have a bot icon and subtle background; Developer headers
 have a code icon, muted background and fine outline. Both stay fully expanded.
 Compact secondary activity sits slightly indented, without left borders.
 Pending questions stay open. Answered questions can fold to show the question

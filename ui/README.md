@@ -121,6 +121,7 @@ User, developer and assistant messages always remain expanded. Unanswered questi
 stay open; answered summaries keep the question and selected answer. Secondary
 activity is compact and indented, with icons and labels instead of left borders.
 
+You messages use a person icon and subtle muted background. All three role icons align beside their headers.
 Assistant messages use a bot icon and subtle accent background. Developer prompts
 use a code icon, muted background and fine outline; their labels remain visible in both themes.
 

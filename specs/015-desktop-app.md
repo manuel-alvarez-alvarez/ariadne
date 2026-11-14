@@ -499,7 +499,8 @@ Out: the daemon endpoints themselves (012).
     User, developer (daemon) prompts and assistant messages never fold. Role labels
     identify them at the main conversation margin. Assistant headers have a bot icon and
     an accent-token background. Developer headers have a code icon, muted-token background
-    and subtle inset border-token outline. Both role icons share one horizontal position.
+    and subtle inset border-token outline. You headers have a person icon and subtle muted-token background, including queued prompts.
+    All three role icons share one horizontal position beside their headers, independent of message height.
     Labels and icon shapes distinguish roles without color alone.
     Developer prompts have no individual
     fold control or saved fold preference. Thoughts retain individual folds.

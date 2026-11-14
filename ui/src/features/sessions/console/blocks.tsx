@@ -19,6 +19,7 @@ import {
   TerminalIcon,
   Trash2Icon,
   TriangleAlertIcon,
+  UserIcon,
   WrenchIcon,
   XIcon,
 } from "lucide-react"
@@ -110,10 +111,12 @@ export function PromptBox({
       className={cn(
         "rounded-md px-2 py-1.5",
         role === "Developer" && "bg-muted/40 ring-1 ring-inset ring-border/70",
+        role === "You" && "bg-muted/20",
       )}
     >
       <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-foreground">
         {role === "Developer" ? <CodeIcon aria-hidden className="size-3.5 shrink-0" /> : null}
+        {role === "You" ? <UserIcon aria-hidden className="size-3.5 shrink-0" /> : null}
         {role}
       </div>
       <div className="min-w-0 flex-1">
