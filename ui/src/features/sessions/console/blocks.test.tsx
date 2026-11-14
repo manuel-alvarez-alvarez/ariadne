@@ -314,7 +314,7 @@ it("keeps a tool header on one line, with its full subject on hover and its fact
 
   const start = container.querySelector("[data-summary-end]")?.previousElementSibling
   expect(start?.className).toContain("truncate")
-  expect(start?.getAttribute("title")).toBe(LONG)
+  expect(start?.getAttribute("title")).toMatch(new RegExp(`^${LONG}\\n.*2026.*10:00:00`))
   expect(container.querySelector("[data-summary-end]")?.className).toContain("shrink-0")
   expect(container.querySelector("[data-summary-end]")?.textContent).toContain("10:00:00")
 })
@@ -357,6 +357,25 @@ it("gives a bodyless call a foldable body only when its header is cut", () => {
   expect(cut.container.querySelector("[data-tool-subject]")?.textContent).toBe(LONG)
 })
 
+it("measures a header again when its subject grows", () => {
+  const started = call("g", { title: "Read", kind: "read", status: "pending" })
+  const [short] = fold(started)
+  const [grown] = fold(started, call("g", { locations: [{ path: LONG }], status: "completed" }))
+  // The element's size never changes here, only its text, as with a `flex-1` header.
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(100)
+  vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.textContent && this.textContent.length > 50 ? 500 : 100
+  })
+  const { container, rerender } = drawn(short as Block, false)
+  expect(container.querySelector("button")).toBeNull()
+
+  rerender(<BlockView block={grown as Block} picker={null} folded={false} onToggle={() => {}} />)
+  expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("true")
+  expect(container.querySelector("[data-tool-subject]")?.textContent).toBe(LONG)
+})
+
 const permissionEvents = (extra: Record<string, unknown> = {}) => [
   event(
     "permission_request",
@@ -384,7 +403,9 @@ it("keeps a permission header on one line with its time, and shows the AI note",
   const end = container.querySelector("[data-summary-end]")
   expect(end?.textContent).toBe("09:00:00")
   expect(end?.previousElementSibling?.className).toContain("truncate")
-  expect(end?.previousElementSibling?.getAttribute("title")).toBe("Permission · Bash")
+  expect(end?.previousElementSibling?.getAttribute("title")).toMatch(
+    /^Permission · Bash\n.*2026.*9:00:00/,
+  )
   expect(container.textContent).toContain(
     "AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)",
   )

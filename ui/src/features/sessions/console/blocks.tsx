@@ -91,9 +91,10 @@ function SummaryLine({
 }
 
 /** Whether an element's text is cut by its width, kept current as it resizes. */
-function useCut(): [(element: HTMLElement | null) => void, boolean] {
+function useCut(text: string): [(element: HTMLElement | null) => void, boolean] {
   const [element, setElement] = useState<HTMLElement | null>(null)
   const [cut, setCut] = useState(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: new text may not resize the element, so it measures again
   useEffect(() => {
     if (!element) return
     const measure = () => setCut(element.scrollWidth > element.clientWidth)
@@ -102,7 +103,7 @@ function useCut(): [(element: HTMLElement | null) => void, boolean] {
     const observer = new ResizeObserver(measure)
     observer.observe(element)
     return () => observer.disconnect()
-  }, [element])
+  }, [element, text])
   return [setElement, cut]
 }
 
@@ -283,14 +284,24 @@ function BlockBody({
         return (
           <div className={cn(frame, "px-3 py-2")}>
             <div className="font-medium">
-              <SummaryLine start={headline} title={headline} end={[time]} />
+              <SummaryLine
+                start={headline}
+                title={`${headline}\n${formatStamp(block.createdAt)}`}
+                end={[time]}
+              />
             </div>
             {body}
             {picker}
           </div>
         )
       }
-      const summary = <SummaryLine start={headline} title={headline} end={[answer, time]} />
+      const summary = (
+        <SummaryLine
+          start={headline}
+          title={`${headline}\n${formatStamp(block.createdAt)}`}
+          end={[answer, time]}
+        />
+      )
       if (!block.command && !block.diff && !block.aiNote) {
         return <div className={cn(frame, "px-2 py-1 font-mono")}>{summary}</div>
       }
@@ -332,14 +343,14 @@ function ToolBlock({
   folded: boolean
   onToggle: () => void
 }) {
-  const [startRef, cut] = useCut()
   const { tool } = block
+  const subject = tool.subject ?? tool.title
+  const [startRef, cut] = useCut(subject)
   // A read's subject names its file, so its input says nothing more.
   const input = tool.kind === "read" ? undefined : tool.inputText
-  const subject = tool.subject ?? tool.title
   const summary = (
     <SummaryLine
-      title={subject}
+      title={`${subject}\n${formatStamp(block.createdAt)}`}
       startRef={startRef}
       start={
         <>

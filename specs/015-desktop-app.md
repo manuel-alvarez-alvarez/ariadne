@@ -468,11 +468,11 @@ Out: the daemon endpoints themselves (012).
     starts there, and the numbers are not part of the selected or copied
     text. A tool call's header keeps one line: text that does not fit ends
     in an ellipsis, the facts at the right end stay visible, and a hover on
-    the header shows the full text. The body shows the full subject above
+    the header shows the full text, then the full date and time. The body shows the full subject above
     the input, unless the input already holds it (a shell command's input
     is the command). A call with no input, output or diff is a plain line
-    until its header is cut; then it folds, and its body is the full
-    subject. A permission's header (`Permission ·` and the call) keeps one
+    until its header is cut, measured again when the subject changes; then it
+    folds, and its body is the full subject. A permission's header (`Permission ·` and the call) keeps one
     line the same way, with its time at the right end. A pending permission
     shows its header, command, diff, AI note and picker open, whatever the
     fold. An answered permission folds to one line when the reply
@@ -1530,6 +1530,7 @@ Out: the daemon endpoints themselves (012).
   `::keeps a tool header on one line, with its full subject on hover and its facts at the right end`,
   `::shows a call's full subject in its body where its input does not show it`,
   `::gives a bodyless call a foldable body only when its header is cut`,
+  `::measures a header again when its subject grows`,
   `::keeps a permission header on one line with its time, and shows the AI note`,
   `::keeps a pending permission open whatever the fold, and folds an answered one to one line`,
   `ui/src/features/sessions/console/session-console.test.tsx::folds a permission when it is answered, even with the console unfolded`,
