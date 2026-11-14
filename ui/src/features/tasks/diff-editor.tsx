@@ -20,10 +20,9 @@ import { javascript } from "@codemirror/lang-javascript"
 import { json } from "@codemirror/lang-json"
 import { markdown } from "@codemirror/lang-markdown"
 import { rust } from "@codemirror/lang-rust"
-import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language"
+import { syntaxHighlighting } from "@codemirror/language"
 import { getChunks, getOriginalDoc, unifiedMergeView } from "@codemirror/merge"
 import { EditorState, type Extension, RangeSetBuilder } from "@codemirror/state"
-import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark"
 import {
   type BlockInfo,
   Decoration,
@@ -35,6 +34,8 @@ import {
 } from "@codemirror/view"
 import { useTheme } from "next-themes"
 import { useEffect, useMemo, useRef } from "react"
+
+import { HIGHLIGHT_STYLES } from "@/lib/highlight-style"
 
 import { buildDiffDocuments, type DiffDocuments, type DiffFile } from "./diff-parse"
 
@@ -348,7 +349,7 @@ export function DiffEditor({ file, wrap }: { file: DiffFile; wrap: boolean }) {
           EditorView.decorations.of(hunkHeaderDecorations(docs)),
           diffTheme,
           EditorView.darkTheme.of(dark),
-          syntaxHighlighting(dark ? oneDarkHighlightStyle : defaultHighlightStyle),
+          ...HIGHLIGHT_STYLES[dark ? "dark" : "light"].map((style) => syntaxHighlighting(style)),
           ...languageFor(path),
           allAdded
             ? EditorView.decorations.of(addedLineDecorations(docs))

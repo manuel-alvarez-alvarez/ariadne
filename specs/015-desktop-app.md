@@ -460,12 +460,18 @@ Out: the daemon endpoints themselves (012).
     `max-height` of its own. The composer keeps its own six-line cap.
 23a2. Code is a `CodeBlock` (`components/code-block.tsx`), in the Markdown
     renderer's fenced blocks and in the console's tool output, commands and
-    diffs. It shows the language label where `lib/highlight.ts` knows the
-    language (a fence's name, or the extension of the file a `read` tool
-    names), colors comments, strings, numbers and keywords with the app's
-    status tokens in both themes, and shows an unknown language as plain
-    text. A diff keeps the green added and red removed lines, and a hunk
-    header muted. Copy puts the original text on the clipboard.
+    diffs. `lib/highlight.ts` resolves a fence's name, or the extension of
+    the file a `read` tool names, to a language of
+    `@codemirror/language-data`. The block shows that language's label and
+    parses the code with its CodeMirror grammar. The tokens take the light
+    and dark highlight styles of `lib/highlight-style.ts`. The console's code
+    and the task diff viewer share this module, so they share one colour
+    scheme. A grammar loads on demand: the block
+    shows the plain text first and the same text highlighted once the
+    grammar has loaded. The tokens of one text, language and theme are
+    computed once. An unknown language is plain text with no label. A diff
+    keeps the green added and red removed lines, and a hunk header muted.
+    Copy puts the original text on the clipboard.
 23a3. A reader who scrolls more than a few pixels from the newest output
     stops following and gets a `Jump to latest` button over the transcript,
     marked `New output` once the transcript changed since. The button
@@ -1441,8 +1447,21 @@ Out: the daemon endpoints themselves (012).
   `::offers Jump to latest with an unread marker once the reader scrolls away`,
   `::keeps the block the reader is on in place when a block above it changes height`,
   `::copies a fenced block's trailing blank lines as written`,
-  `ui/src/lib/highlight.test.ts::names the kind of each comment, string, number and keyword, and loses no text`,
-  `::returns an unknown language as one plain token`).
+  `ui/src/lib/highlight.test.ts::names a language by its fence or its extension, and labels it`,
+  `::leaves a name the data does not know, or plain text, unknown`,
+  `::reads an extension that is not only letters and digits`,
+  `::leaves a fence named after an object property unknown`,
+  `::loses no text`,
+  `::colours a JSON property name and a string value differently`,
+  `::colours Markdown headings, emphasis, links and fences`,
+  `::colours HTML tags and attributes`,
+  `::keeps a Python triple-quoted string as one string token`,
+  `::keeps a shell heredoc as one string token`,
+  `::colour by the light and the dark style of the task diff viewer`,
+  `ui/src/components/code-block.test.tsx::shows the plain text first and the same text highlighted once the grammar loads`,
+  `::shows a language the data does not know as plain text with no label`,
+  `::shows a fence named after an object property as plain text`,
+  `::keeps the tints of a diff's added, removed and hunk-header lines`).
 - The console retains a session's draft, fold and place apart per daemon and
   session, and keeps one open stream while shown (rule 24i)
   (`ui/src/features/sessions/console/composer.test.tsx::brings a session's draft and fold back after the console is unmounted`,

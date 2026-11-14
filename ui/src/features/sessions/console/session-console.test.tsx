@@ -738,14 +738,16 @@ it("draws no scroll area inside the transcript, and wraps long code", async () =
   expect(code?.closest("pre")?.className).toContain("whitespace-pre-wrap")
 })
 
-it("labels and highlights a fenced block of a known language, and leaves an unknown one plain", () => {
+it("labels and highlights a fenced block of a known language, and leaves an unknown one plain", async () => {
   renderConsole([
     event("agent_message", { text: "```rust\nfn main() {}\n```\n\n```mystery\nfn main() {}\n```" }),
   ])
   const blocks = Array.from(transcript().querySelectorAll("[data-code-block]"))
 
   expect(blocks[0]?.querySelector("[data-code-language]")?.textContent).toBe("Rust")
-  expect(blocks[0]?.querySelector("code span")?.textContent).toBe("fn")
+  await waitFor(() =>
+    expect(transcript().querySelector("[data-code-block] code span")?.textContent).toBe("fn"),
+  )
   expect(blocks[1]?.querySelector("[data-code-language]")?.textContent).toBe("")
   expect(blocks[1]?.querySelector("code span")).toBeNull()
 })

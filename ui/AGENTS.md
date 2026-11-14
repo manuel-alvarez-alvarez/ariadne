@@ -562,6 +562,33 @@ notes on the matching, both in `score.ts`:
 - cmdk sorts the rows *inside* a group and leaves the groups where they were
   written, so the palette orders the groups itself, by their best match.
 
+### Code highlighting
+
+`CodeBlock` (`src/components/code-block.tsx`) is the one entry point for code
+in the console and the Markdown renderer. `src/lib/highlight.ts` holds the
+highlighter it calls:
+
+- `knownLanguage`, `languageLabel` and `languageForPath` resolve a fence's
+  name or a file's extension through `@codemirror/language-data`. A small
+  alias table adds names the data does not have (`console`, `golang`,
+  `jsonc`), and `text`-like fences stay plain.
+- `loadGrammar` loads a language's CodeMirror grammar, a chunk of its own,
+  the first time a block shows that language. Until it loads, the block
+  shows plain text.
+- `highlight` parses the text with the grammar and splits it by
+  `@lezer/highlight`'s `highlightTree` into runs classed by the styles it
+  is given. It mounts the styles' CSS with `style-mod`, as an editor view
+  does.
+
+`src/lib/highlight-style.ts` holds `HIGHLIGHT_STYLES`, the one colour scheme:
+the light and dark highlight styles of both the task diff viewer
+(`src/features/tasks/diff-editor.tsx`) and `CodeBlock`. Change the colours
+there, so the two keep one colour scheme.
+
+`CodeBlock` keeps the newest highlighted texts in a small cache, keyed by
+language, theme and text, so the console does not parse a text again on a
+render or a remount. A diff keeps its line tints and is not parsed.
+
 ### UI components
 
 shadcn/ui in the `base-nova` style, which is built on
