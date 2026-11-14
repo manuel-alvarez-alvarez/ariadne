@@ -336,7 +336,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::a_result_is_compact_and_drops_empty_fields_at_every_depth`);
   a write answers its short acknowledgement
   (`tools.rs::a_write_answers_a_short_acknowledgement`,
-  `::a_created_task_answers_its_standing_and_its_staffing`), and a model
+  `::a_created_task_answers_its_standing_and_its_staffing`,
+  `::every_other_write_answers_a_short_acknowledgement`), and a model
   with no rank has no `rank` field
   (`::the_rank_of_each_model_reaches_the_orchestrator`).
 

@@ -2632,4 +2632,77 @@ mod tests {
             r#"{"agents":[{"model":"codex-acp:m","skills":["coding"],"step":"develop"}],"id":"01TASK","status":"pending"}"#
         );
     }
+
+    /// Every other write on a task answers its `id`, `status` and `step`
+    /// alone, and `update_task` adds the staffing; `complete_goal` answers
+    /// the goal's `id` and `status`.
+    #[tokio::test]
+    async fn every_other_write_answers_a_short_acknowledgement() {
+        const TASK: &str = r#"{"id":"01TASK","status":"failed","step":"develop",
+            "title":"T","reason":"R","agents":[{"id":"01A","step":"develop",
+            "model":"codex-acp:m","effort":"high","brief":null,"skills":["coding"]}]}"#;
+        const ACK: &str = r#"{"id":"01TASK","status":"failed","step":"develop"}"#;
+
+        let (endpoint, _) = recording_daemon_answering(TASK).await;
+        let agent = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let failed_step = agent
+            .fail_step(Parameters(FailStepReq {
+                reason: "Fix it.".into(),
+            }))
+            .await
+            .expect("fail the step");
+        assert_eq!(text_of(failed_step).await, ACK);
+        let failed_task = agent
+            .fail_task(Parameters(FailTaskReq {
+                reason: "Cannot.".into(),
+            }))
+            .await
+            .expect("fail the task");
+        assert_eq!(text_of(failed_task).await, ACK);
+
+        let orchestrator = orchestrator_at(&endpoint);
+        let retried = orchestrator
+            .retry_task(Parameters(TaskId {
+                task_id: "01TASK".into(),
+            }))
+            .await
+            .expect("retry");
+        assert_eq!(text_of(retried).await, ACK);
+        let cancelled = orchestrator
+            .cancel_task(Parameters(TaskId {
+                task_id: "01TASK".into(),
+            }))
+            .await
+            .expect("cancel");
+        assert_eq!(text_of(cancelled).await, ACK);
+
+        let updated = orchestrator
+            .update_task(Parameters(UpdateTaskReq {
+                task_id: "01TASK".into(),
+                title: Some("T".into()),
+                description: None,
+                agents: None,
+                depends_on: None,
+            }))
+            .await
+            .expect("update");
+        assert_eq!(
+            text_of(updated).await,
+            r#"{"agents":[{"effort":"high","model":"codex-acp:m","skills":["coding"],"step":"develop"}],"id":"01TASK","status":"failed","step":"develop"}"#
+        );
+
+        const GOAL: &str = r#"{"id":"01GOAL","status":"completed","title":"G","steps":[]}"#;
+        let (endpoint, _) = recording_daemon_answering(GOAL).await;
+        let completed = orchestrator_at(&endpoint)
+            .complete_goal(Parameters(Empty {}))
+            .await
+            .expect("complete the goal");
+        assert_eq!(
+            text_of(completed).await,
+            r#"{"id":"01GOAL","status":"completed"}"#
+        );
+    }
 }
