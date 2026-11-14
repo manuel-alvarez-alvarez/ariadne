@@ -463,10 +463,12 @@ export const ToolRow = memo(function ToolRow({
 /** Keep command text in its readable, copyable input section. */
 function repeatsInput(title: string, input?: string, subject?: string): boolean {
   if (!input?.trim() || !title.trim()) return false
+  const containsPhrase = (text: string, phrase: string) =>
+    ` ${text.trim().replace(/\s+/g, " ")} `.includes(` ${phrase.trim().replace(/\s+/g, " ")} `)
   return (
-    input.includes(title) ||
-    title.includes(input.trim()) ||
-    Boolean(subject && input.includes(subject) && title.includes(subject))
+    containsPhrase(input, title) ||
+    containsPhrase(title, input) ||
+    Boolean(subject && input.includes(subject) && containsPhrase(title, subject))
   )
 }
 

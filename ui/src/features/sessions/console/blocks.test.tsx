@@ -449,3 +449,22 @@ it("shows a repeated permission command only in its command section", () => {
   )
   expect(container.querySelector("code")?.textContent).toContain("echo hello")
 })
+
+it.each(["sh", "pwd"])("keeps descriptive tool headings for %s input", (command) => {
+  const [tool] = fold(
+    call("short", { title: "Bash", kind: "execute", status: "completed" }, undefined, { command }),
+  )
+  const shown = drawn(tool as Block)
+  expect(shown.container.querySelector("h4")?.textContent).toBe("Bash")
+  shown.unmount()
+})
+
+it.each(["sh", "pwd"])("keeps descriptive permission headings for %s input", (command) => {
+  const [permission] = fold(
+    event("permission_request", { tool_name: "Bash", tool_input: { command } }),
+  )
+  const { container } = drawn(permission as Block)
+  expect(container.querySelector("[data-summary-end]")?.previousElementSibling?.textContent).toBe(
+    "Permission · Bash",
+  )
+})
