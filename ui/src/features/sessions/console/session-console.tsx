@@ -951,9 +951,6 @@ function ConsolePane({
           pendingControl={tool?.id === request?.id ? null : pendingControl}
           returnTarget={requestTarget}
         >
-          <div className="border-b px-3 py-1.5 text-xs font-medium text-muted-foreground">
-            Conversation
-          </div>
           <HistoryLine history={history} onRetry={() => void loadOlder()} />
           <div className="relative flex min-h-0 flex-1 flex-col">
             <div

@@ -381,3 +381,12 @@ it("omits the global fold header button in embedded and expanded consoles", () =
   fireEvent.click(screen.getByRole("button", { name: "Expand the console" }))
   expect(screen.queryByRole("button", { name: /^(Fold|Unfold)$/ })).toBeNull()
 })
+
+it("omits the conversation strip while retaining the named transcript in both views", () => {
+  renderConsole()
+  screen.getByRole("log", { name: "Console transcript" })
+  expect(screen.queryByText("Conversation", { exact: true })).toBeNull()
+  fireEvent.click(screen.getByRole("button", { name: "Expand the console" }))
+  screen.getByRole("log", { name: "Console transcript" })
+  expect(screen.queryByText("Conversation", { exact: true })).toBeNull()
+})

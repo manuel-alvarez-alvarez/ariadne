@@ -539,7 +539,9 @@ Out: the daemon endpoints themselves (012).
     offers global fold controls in embedded or expanded views; no global fold state is retained.
     Ctrl-O has no handler in either browser or desktop console, embedded or expanded.
     The terminal console keeps its existing Ctrl-O behavior.
-23a1. Conversation and tool details scroll independently. A message, a tool's
+23a1. Conversation and tool details scroll independently.
+    Embedded and expanded views omit the static Conversation strip and its bottom border.
+    The transcript retains role `log` and the accessible name `Console transcript`; history controls remain available. A message, a tool's
     output, a command, a diff, a table, a thought and a question card grow
     with their content and wrap a wide line; none has an `overflow` or a
     `max-height` of its own. The composer keeps its own six-line cap.
@@ -1524,6 +1526,8 @@ Out: the daemon endpoints themselves (012).
   `::opens the switch dialog from the menu`,
   `::copies only the loaded transcript of the view shown, and names that scope`,
   `::omits global fold actions from the menu`).
+- Both console views omit the Conversation strip and retain the named transcript
+  (`ui/src/features/sessions/console/workspace.test.tsx::omits the conversation strip while retaining the named transcript in both views`).
 - The console folds thoughts into summaries,
   each on its own header, keeps the choice, and draws no nested scroll area
   (rules 23a to 23a3)
