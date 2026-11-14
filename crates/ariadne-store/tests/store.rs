@@ -6839,7 +6839,7 @@ async fn the_review_workflow_is_edited_within_its_shape_and_no_ordinary_goal_use
         ),
         (
             "workflow pr-review\n  review[Review]\n    skills: pr-reviewer\n    ranks: balanced\n    gate: committed\n",
-            "no gate",
+            "request-merged",
         ),
         (
             "workflow pr-review\n  review[Review]\n    skills: pr-reviewer\n    ranks: balanced\n  more[More]\n    skills: coding\n",
@@ -6853,7 +6853,7 @@ async fn the_review_workflow_is_edited_within_its_shape_and_no_ordinary_goal_use
     let edited = store
         .set_workflow_document(
             "pr-review",
-            "workflow pr-review\n  review[Look]\n    Look hard.\n    skills: pr-reviewer, research\n    ranks: frontier\n",
+            "workflow pr-review\n  review[Look]\n    Look hard.\n    skills: pr-reviewer, research\n    ranks: frontier\n    gate: request-merged\n",
         )
         .await
         .unwrap();
@@ -7015,15 +7015,15 @@ async fn the_babysit_workflow_is_edited_within_its_shape_and_no_ordinary_goal_us
             "balanced and frontier",
         ),
         (
-            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: fast\n    gate: request-merged\n",
-            "no gate",
+            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: balanced\n    gate: committed\n",
+            "request-merged",
         ),
         (
             "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit\n    ranks: fast\n  more[More]\n    skills: coding\n",
             "exactly one column",
         ),
         (
-            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit, pr-reviewer\n    ranks: balanced\n",
+            "workflow pr-babysit\n  babysit[Babysit]\n    skills: pr-babysit, pr-reviewer\n    ranks: balanced\n    gate: request-merged\n",
             "pr-reviewer",
         ),
     ] {
@@ -7034,7 +7034,7 @@ async fn the_babysit_workflow_is_edited_within_its_shape_and_no_ordinary_goal_us
     let edited = store
         .set_workflow_document(
             "pr-babysit",
-            "workflow pr-babysit\n  babysit[Keep]\n    Keep it.\n    skills: pr-babysit, research\n    ranks: balanced\n",
+            "workflow pr-babysit\n  babysit[Keep]\n    Keep it.\n    skills: pr-babysit, research\n    ranks: balanced\n    gate: request-merged\n",
         )
         .await
         .unwrap();
@@ -7104,4 +7104,45 @@ async fn a_turn_expiry_racing_an_undelivered_claim_always_expires_it() {
         assert_eq!(row.resolution.as_deref(), Some("expired"), "round {round}");
         assert!(row.answered_at.is_some(), "round {round}");
     }
+}
+
+#[tokio::test]
+async fn operation_gate_upgrade_preserves_custom_settings_and_history() {
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::raw_sql("CREATE TABLE workflows(name TEXT, document TEXT); CREATE TABLE goals(id TEXT, pr_operation TEXT, status TEXT); CREATE TABLE goal_steps(goal_id TEXT, gate TEXT, title TEXT);")
+        .execute(&pool).await.unwrap();
+    sqlx::raw_sql("INSERT INTO workflows VALUES ('pr-review', 'workflow pr-review\n  review[Custom]\n    skills: pr-reviewer\n    ranks: balanced\n'), ('pr-babysit', NULL), ('other', 'unchanged'); INSERT INTO goals VALUES ('active', 'review', 'active'), ('done', 'review', 'completed'), ('other', NULL, 'active'); INSERT INTO goal_steps VALUES ('active', NULL, 'Custom'), ('done', NULL, 'History'), ('other', NULL, 'Other');")
+        .execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0005_pr_operation_gates.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let document: String =
+        sqlx::query_scalar("SELECT document FROM workflows WHERE name = 'pr-review'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let parsed = ariadne_core::workflow::parse(&document).unwrap();
+    assert_eq!(parsed.steps[0].title, "Custom");
+    assert_eq!(
+        parsed.steps[0].gate,
+        Some(ariadne_core::workflow::StepGate::RequestMerged)
+    );
+    let rows: Vec<(String, Option<String>, String)> =
+        sqlx::query_as("SELECT goal_id, gate, title FROM goal_steps ORDER BY goal_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "active".into(),
+                Some("request-merged".into()),
+                "Custom".into()
+            ),
+            ("done".into(), None, "History".into()),
+            ("other".into(), None, "Other".into())
+        ]
+    );
 }

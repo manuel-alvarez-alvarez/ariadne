@@ -147,8 +147,8 @@ once the daemon has the agent up, opens that session's console in the
 panel. **Stop review** takes it down. Starting a review makes a goal of its
 own on the `pr-review` workflow, with one task whose agent is that session:
 the panel links it as **Review goal**, and it shows on the Goals board like
-any other goal. It completes when the request merges or closes, and **Stop
-review** cancels it; see [the `pr-review` workflow](workflows.md#the-pr-review-workflow).
+any other goal. It completes when the request merges. A close without merging
+fails its task and leaves the goal active. **Stop review** cancels it; see [the `pr-review` workflow](workflows.md#the-pr-review-workflow).
 The model must have a rank that workflow allows. The panel's Sessions tab lists the
 review session, and the task's keeping agent where a task opened the
 request; picking one opens its console in the panel.
@@ -212,8 +212,8 @@ session's console in the panel, the same way starting a review does. An
 beside Ariadne reviewing. **Stop babysit** takes it down. Starting makes a
 goal of its own on the `pr-babysit` workflow, with one task whose agent is
 the keeper session: the panel links it as **Babysit goal**, and it shows on
-the Goals board like any other goal. A merge or a close completes it, and
-**Stop babysit** cancels it. The panel's Sessions tab lists the keeper
+the Goals board like any other goal. A merge completes it. A close without
+merging fails its task and leaves the goal active. **Stop babysit** cancels it. The panel's Sessions tab lists the keeper
 session beside a review's.
 
 The keeper session loads `pr-babysit` — the same skill a task's `pr`

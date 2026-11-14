@@ -72,6 +72,7 @@ pub struct PrOperationOwner {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrOperationEnd {
     Completed,
+    Failed,
     Cancelled,
 }
 
@@ -421,7 +422,16 @@ impl Store {
             if status.is_terminal() || status == TaskStatus::Failed {
                 continue;
             }
-            let result = if end == PrOperationEnd::Completed && status == TaskStatus::InProgress {
+            let result = if end == PrOperationEnd::Failed {
+                self.transition_task(
+                    &task.id,
+                    TaskStatus::Failed,
+                    Actor::Daemon,
+                    Some(reason),
+                    None,
+                )
+                .await
+            } else if end == PrOperationEnd::Completed && status == TaskStatus::InProgress {
                 self.transition_task(
                     &task.id,
                     TaskStatus::Finished,
@@ -446,7 +456,26 @@ impl Store {
                 Err(e) => return Err(e),
             }
         }
+        if end == PrOperationEnd::Failed {
+            return Ok(Some(goal));
+        }
+        if end == PrOperationEnd::Completed {
+            let tasks = self
+                .list_tasks(crate::TaskFilter {
+                    goal_id: Some(goal.id.clone()),
+                    status: None,
+                })
+                .await?;
+            if tasks.is_empty()
+                || tasks
+                    .iter()
+                    .any(|task| task.status() != TaskStatus::Finished)
+            {
+                return Ok(Some(goal));
+            }
+        }
         let status = match end {
+            PrOperationEnd::Failed => unreachable!(),
             PrOperationEnd::Completed => GoalStatus::Completed,
             PrOperationEnd::Cancelled => GoalStatus::Cancelled,
         };

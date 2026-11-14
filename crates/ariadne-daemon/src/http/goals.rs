@@ -323,6 +323,11 @@ pub(super) async fn complete(
             goal.status
         )));
     }
+    if goal.pr_operation.is_some() {
+        return Err(ApiError::conflict(
+            "the request must merge before the operation completes",
+        ));
+    }
     let unfinished: Vec<String> = state
         .store
         .list_tasks(TaskFilter {

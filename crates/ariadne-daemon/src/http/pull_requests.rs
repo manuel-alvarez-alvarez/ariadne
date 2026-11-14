@@ -1183,7 +1183,7 @@ async fn hold_review_comments(
 /// the open goal and moves its pin and skills. The session waits while the
 /// request is a draft. A review of the user's own request posts as a
 /// comment; other reviews may request changes. The goal completes when the
-/// request merges or closes. Stopping cancels the goal and its task and ends
+/// request merges, and its task fails if the request closes. Stopping cancels the goal and its task and ends
 /// only the reviewer session, keeping any task or keeper that also works on
 /// the request.
 #[utoipa::path(put, path = "/v1/repositories/{id}/pull-requests/{number}/ariadne-review", tag = "pull-requests",
@@ -1395,7 +1395,7 @@ async fn check_operation_band(
 /// on the `pr-babysit` workflow: the model must be ranked inside that
 /// workflow's band, else 400. Asking again keeps the open goal and moves its
 /// pin and skills. A request a task already keeps is refused to avoid
-/// competing keepers. The goal completes when the request merges or closes.
+/// competing keepers. The goal completes when the request merges; its task fails on close.
 /// Stopping cancels the goal and its task and ends only the keeper session,
 /// preserving an asked review. Pushes use the head repository and remain
 /// subject to its permissions.

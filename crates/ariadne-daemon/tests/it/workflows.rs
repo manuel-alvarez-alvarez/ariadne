@@ -259,7 +259,7 @@ async fn the_pr_review_workflow_is_listed_edited_in_its_shape_and_closed_to_ordi
             put_json(
                 "/v1/workflows/pr-review",
                 serde_json::json!({"document":
-                    "workflow pr-review\n  review[Look]\n    Look hard.\n    skills: pr-reviewer, research\n    ranks: frontier\n"}),
+                    "workflow pr-review\n  review[Look]\n    Look hard.\n    skills: pr-reviewer, research\n    ranks: frontier\n    gate: request-merged\n"}),
             ),
             StatusCode::OK,
         )
@@ -323,7 +323,7 @@ async fn the_pr_babysit_workflow_is_listed_edited_in_its_shape_and_closed_to_ord
     for document in [
         "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: coding\n    ranks: balanced\n",
         "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: pr-babysit\n    ranks: fast\n",
-        "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: pr-babysit\n    ranks: balanced\n    gate: request-merged\n",
+        "workflow pr-babysit\n  babysit[Babysit]\n    Keep.\n    skills: pr-babysit\n    ranks: balanced\n",
     ] {
         let (status, _) = h
             .send(put_json(
@@ -338,7 +338,7 @@ async fn the_pr_babysit_workflow_is_listed_edited_in_its_shape_and_closed_to_ord
             put_json(
                 "/v1/workflows/pr-babysit",
                 serde_json::json!({"document":
-                    "workflow pr-babysit\n  babysit[Keep]\n    Keep it.\n    skills: pr-babysit, research\n    ranks: balanced\n"}),
+                    "workflow pr-babysit\n  babysit[Keep]\n    Keep it.\n    skills: pr-babysit, research\n    ranks: balanced\n    gate: request-merged\n"}),
             ),
             StatusCode::OK,
         )

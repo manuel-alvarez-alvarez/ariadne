@@ -119,7 +119,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    `pull_request_reviews.rs::a_push_reaches_an_idle_session_without_a_wait`.
 9. A request that turns merged or closed, or whose manual ask is stopped,
    has its reviewer session killed and its detached worktree removed. A
-   merge or a close completes the review goal and its task; a stop cancels
+   merge completes the review goal and its task; a close fails the task and leaves the goal active; a stop cancels
    both (rule 10b).
    Stopping review preserves an active keeper or task; stopping a keeper
    preserves an asked review. The request's row is removed when no work or
@@ -175,9 +175,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     - A repeated ask keeps the open goal, its task and its agent, and moves
       the pin and skills onto the agent. The live session runs on, and the
       next start uses the new pin.
-    - A merge or a close completes the task and the goal; a stop, a goal
+    - A merge completes the task and the goal; a close fails the task and leaves the goal active; a stop, a goal
       whose ask is gone, or an integration turned off cancels both. The next
-      ask after either makes a new goal and a new session: a session
+      ask after a stop makes a new goal and a new session: a session
       belongs to the goal it started under, and one from before goals is
       not adopted.
     - One lock per request (`Store::pr_operation_lock`) serializes a start,
@@ -334,10 +334,11 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `::a_repeated_review_start_keeps_the_open_goal_and_moves_its_pin`,
   `pull_request_reviews.rs::a_review_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it`,
   `::an_open_request_i_review_gets_one_session_detached_at_its_head`.
-- A merge or a close completes the goal and its task, a stop cancels both,
+- A merge completes the goal and its task, a close fails the task and leaves the goal active, a stop cancels both,
   and the next ask makes a new goal:
   `store.rs::ending_a_review_closes_its_task_and_goal_and_the_next_start_is_new`,
   `pull_request_reviews.rs::a_merged_request_completes_its_review_goal_and_task`,
+  `::a_closed_request_fails_its_review_task`,
   `::stopping_a_review_cancels_its_goal_and_the_next_ask_starts_a_new_one`.
 - A scheduler pass between a start's goal and its ask waits for the start,
   a stop and a start at once leave one whole state, and cancelling the goal

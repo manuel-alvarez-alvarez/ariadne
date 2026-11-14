@@ -1883,6 +1883,58 @@ async fn a_merged_request_completes_its_review_goal_and_task() {
     .await;
 }
 
+/// A closed request fails its task and leaves the failure visible.
+#[tokio::test]
+async fn a_closed_request_fails_its_review_task() {
+    use ariadne_core::workflow::PrOperation;
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, head) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&head)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    eventually(
+        TIMEOUT,
+        "the repository's first fetch to finish",
+        async || stub.fetches() >= 1,
+    )
+    .await;
+    let before = stub.fetches();
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    h.state.forge_poll.set_mode(&repo, Mode::WakeOnly);
+    let session = idle_session(&h, &id).await;
+    eventually(TIMEOUT, "the ask's own fetch to finish", async || {
+        stub.fetches() > before
+    })
+    .await;
+    let goal = h
+        .store
+        .active_pr_goal(&repo, 1, PrOperation::Review)
+        .await
+        .unwrap()
+        .unwrap();
+    let task_id = session.task_id.clone().unwrap();
+
+    stub.reprogram(script(&Shown {
+        state: "CLOSED",
+        ..Shown::open(&head)
+    }));
+    h.state.forge_poll.wake(&repo);
+    eventually(TIMEOUT, "the task to fail", async || {
+        h.flush_scheduler().await;
+        h.status(&task_id).await == ariadne_core::TaskStatus::Failed
+    })
+    .await;
+    assert_eq!(
+        h.store.get_goal(&goal.id).await.unwrap().status(),
+        ariadne_core::GoalStatus::Active
+    );
+    eventually(TIMEOUT, "the session to end", async || {
+        !h.session_status(&session).await.is_live()
+    })
+    .await;
+}
+
 /// The review column's band decides which models a review accepts: a model
 /// the user ranked outside it, or never ranked, is refused and starts no
 /// goal.

@@ -123,9 +123,9 @@ reads behind them ([026](026-pull-requests.md)).
     - A repeated ask keeps the open goal, its task and its agent and moves
       the pin and skills onto the agent; the keeper restarts on the new pin
       as rule 9 says, on the same session row where it can.
-    - A merge or a close completes the task and the goal; a stop, a goal
+    - A merge completes the task and the goal; a close fails the task and leaves the goal active; a stop, a goal
       whose ask is gone, or an integration turned off cancels both. The
-      next ask after either makes a new goal. A session belongs to the goal
+      next ask after a stop makes a new goal. A session belongs to the goal
       it started under: a keeper from before goals is not adopted at
       rollout and runs on as it did, with no goal, until the user asks
       again, and that ask makes the goal and puts a new session under it on
@@ -243,10 +243,11 @@ reads behind them ([026](026-pull-requests.md)).
   `store.rs::a_babysit_start_makes_one_active_goal_with_one_staffed_task`,
   `pull_request_babysit.rs::a_babysit_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it`,
   `::two_babysit_asks_at_once_make_one_goal`.
-- A merge or a close completes the goal and its task, a stop cancels both,
+- A merge completes the goal and its task, a close fails the task and leaves the goal active, a stop cancels both,
   and the next ask makes a new goal:
   `store.rs::a_repeated_babysit_start_keeps_its_goal_and_an_end_leaves_the_next_start_new`,
   `pull_request_babysit.rs::a_merged_request_completes_its_babysit_goal_and_task`,
+  `::a_closed_request_fails_its_babysit_task`,
   `::stopping_a_babysit_cancels_its_goal_and_the_next_ask_starts_a_new_one`.
 - Cancelling the goal from the Goals board stops the babysit for good:
   `pull_request_babysit.rs::cancelling_the_babysit_goal_stops_the_babysit_and_it_stays_stopped`.
