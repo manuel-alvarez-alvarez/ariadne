@@ -514,6 +514,23 @@ function ConsolePane({
     setAnswering(null)
   }, [pendingId])
 
+  // A permission folds when it is answered, whatever the console's fold is;
+  // the block's own choice, made while it waited, stays.
+  const askedId = useRef<string>(undefined)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a permission leaving the pending place folds
+  useEffect(() => {
+    const was = askedId.current
+    askedId.current = pendingId
+    if (was === undefined || was === pendingId) return
+    const block = transcript.blocks.find((one) => one.id === was)
+    if (block?.type !== "permission" || !block.answer) return
+    const kept = readViewState(keyRef.current).blockFolds
+    if (kept[was] !== undefined) return
+    const next = { ...kept, [was]: true }
+    setBlockFolds(next)
+    updateViewState(keyRef.current, { blockFolds: next })
+  }, [pendingId])
+
   const fail = useCallback((what: string, error: unknown) => {
     setTranscript((current) => appendError(current, `${what}: ${describeError(error)}`))
   }, [])

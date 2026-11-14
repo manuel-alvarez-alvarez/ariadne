@@ -475,7 +475,8 @@ Out: the daemon endpoints themselves (012).
     subject. A permission's header (`Permission ·` and the call) keeps one
     line the same way, with its time at the right end. A pending permission
     shows its header, command, diff, AI note and picker open, whatever the
-    fold. An answered permission folds to one line, its header and its
+    fold. An answered permission folds to one line when the reply
+    arrives, whatever the console's fold, its header and its
     answer (`decided by` where the payload names one); a click unfolds the
     command, the diff and the AI note, and the choice is kept per block
     like the others. The AI note is the TUI's (`AI said ask · allow 62%,
@@ -1526,6 +1527,12 @@ Out: the daemon endpoints themselves (012).
   `::shows a permission's command as shell`,
   `::shows every block's time: the clock on a prompt and a summary line, and the full date on hover`,
   `::re-renders only the block a streamed chunk changes`,
+  `::keeps a tool header on one line, with its full subject on hover and its facts at the right end`,
+  `::shows a call's full subject in its body where its input does not show it`,
+  `::gives a bodyless call a foldable body only when its header is cut`,
+  `::keeps a permission header on one line with its time, and shows the AI note`,
+  `::keeps a pending permission open whatever the fold, and folds an answered one to one line`,
+  `ui/src/features/sessions/console/session-console.test.tsx::folds a permission when it is answered, even with the console unfolded`,
   `ui/src/features/sessions/console/session-console-renders.test.tsx::draws a question card again for its own change, not for a message streamed after it`,
   `::draws a permission picker again for its own change, not for a message streamed after it`).
 - The console retains a session's draft, fold and place apart per daemon and
