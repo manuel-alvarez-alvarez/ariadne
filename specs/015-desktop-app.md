@@ -480,7 +480,9 @@ Out: the daemon endpoints themselves (012).
     or Space opens that call's details and focuses Close tool details.
     Details show the existing input, output and diff under their captions,
     in that order. A read omits its redundant input and keeps numbered output
-    in the file's language. The full subject appears unless the input contains it.
+    in the file's language. The full subject appears unless the input or heading contains it.
+    Tool and permission headings omit actual command or input text repeated in their input sections.
+    Generic Tool call and Permission labels preserve context alongside status and section labels.
     Calls with no content remain selectable and show an explicit empty state.
     Selection stays on the same block during stream updates and newer calls.
     It never follows new activity automatically. Closing details returns focus

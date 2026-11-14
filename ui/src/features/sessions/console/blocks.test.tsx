@@ -427,3 +427,25 @@ it("updates a running tool duration and freezes it on completion", () => {
   unmount()
   vi.useRealTimers()
 })
+
+it("shows a repeated tool command only in input", () => {
+  const [block] = fold(
+    call("run", { title: "Run echo hello", kind: "execute", status: "completed" }, undefined, {
+      command: "echo hello",
+    }),
+  )
+  const { container } = drawn(block as Block)
+  expect(container.querySelector("h4")?.textContent).toBe("Tool call")
+  expect(container.querySelector("code")?.textContent).toContain("echo hello")
+})
+
+it("shows a repeated permission command only in its command section", () => {
+  const [block] = fold(
+    event("permission_request", { tool_name: "echo hello", tool_input: { command: "echo hello" } }),
+  )
+  const { container } = drawn(block as Block)
+  expect(container.querySelector("[data-summary-end]")?.previousElementSibling?.textContent).toBe(
+    "Permission",
+  )
+  expect(container.querySelector("code")?.textContent).toContain("echo hello")
+})

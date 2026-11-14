@@ -298,7 +298,9 @@ function BlockBody({
           ? `${block.answer.name} · decided by ${block.answer.decidedBy}`
           : block.answer.name
         : undefined
-      const headline = `Permission · ${block.title}`
+      const headline = repeatsInput(block.title, block.command)
+        ? "Permission"
+        : `Permission · ${block.title}`
       const body = (
         <>
           {block.command ? (
@@ -457,6 +459,16 @@ export const ToolRow = memo(function ToolRow({
   )
 })
 
+/** Keep command text in its readable, copyable input section. */
+function repeatsInput(title: string, input?: string, subject?: string): boolean {
+  if (!input?.trim() || !title.trim()) return false
+  return (
+    input.includes(title) ||
+    title.includes(input.trim()) ||
+    Boolean(subject && input.includes(subject) && title.includes(subject))
+  )
+}
+
 /** Existing input, output and code changes, with shared highlighting and copy controls. */
 function ToolDetails({ block }: { block: Extract<Block, { type: "tool" }> }) {
   const { tool } = block
@@ -467,11 +479,11 @@ function ToolDetails({ block }: { block: Extract<Block, { type: "tool" }> }) {
       <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
         <ToolStatus status={tool.status} />
         <h4 className="min-w-0 flex-1 font-sans text-sm font-semibold text-foreground break-words whitespace-pre-wrap">
-          {tool.title}
+          {repeatsInput(tool.title, input, tool.subject) ? "Tool call" : tool.title}
         </h4>
         <span className="shrink-0">{formatClock(block.createdAt)}</span>
       </div>
-      {input?.includes(subject) ? null : (
+      {subject === tool.title || input?.includes(subject) ? null : (
         <p data-tool-subject className="font-mono text-xs break-words whitespace-pre-wrap">
           {subject}
         </p>
