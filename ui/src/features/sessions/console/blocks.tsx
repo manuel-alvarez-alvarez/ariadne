@@ -110,9 +110,8 @@ export function PromptBox({
     <div
       className={cn(
         "rounded-md px-2 py-1.5",
-        role === "Developer" &&
-          "bg-muted/60 outline outline-dashed -outline-offset-1 outline-border/70",
-        role === "You" && "bg-primary/5 ring-1 ring-inset ring-primary/15",
+        role === "Developer" && "bg-muted/50 ring-1 ring-inset ring-border/60",
+        role === "You" && "bg-primary/5 ring-1 ring-inset ring-border/50",
       )}
     >
       <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-foreground">
@@ -258,7 +257,7 @@ function BlockBody({
       return <PromptBox text={block.text} time={time} role={block.daemon ? "Developer" : "You"} />
     case "message":
       return (
-        <div className="rounded-md bg-accent/30 px-2 py-1.5 ring-1 ring-inset ring-border/40">
+        <div className="rounded-md bg-muted/30 px-2 py-1.5 ring-1 ring-inset ring-border/40">
           <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
             <BotIcon aria-hidden className="size-3.5 shrink-0" />
             Assistant

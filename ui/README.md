@@ -121,9 +121,9 @@ User, developer and assistant messages always remain expanded. Unanswered questi
 stay open; answered summaries keep the question and selected answer. Secondary
 activity is compact and indented, with icons and labels instead of left borders.
 
-You messages use a person icon, faint primary background and solid inset primary ring. All three role icons align beside their headers.
-Assistant messages use a bot icon, subtle accent background and faint solid inset border ring. Developer prompts
-use a code icon, muted background and fine dashed inset outline; their labels remain visible in both themes.
+You messages use a person icon, faint primary background and solid inset border ring. All three role icons align beside their headers.
+Assistant messages use a bot icon, subtle muted background and faint solid inset border ring. Developer prompts
+use a code icon, a slightly deeper shade of the same muted background and solid inset border ring; their labels remain visible in both themes.
 
 The two ⌘ chords answer to **either** modifier, on every platform: the app runs
 in a Tauri WebView and in a browser tab, and a chord that silently does nothing
