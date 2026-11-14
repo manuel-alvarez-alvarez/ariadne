@@ -466,13 +466,29 @@ Out: the daemon endpoints themselves (012).
     known. A `read` shows no input, because its subject names the file. A
     `read` output with a first line number has a line-number gutter that
     starts there, and the numbers are not part of the selected or copied
-    text. A permission shows its command bare under `command · Shell`.
+    text. A tool call's header keeps one line: text that does not fit ends
+    in an ellipsis, the facts at the right end stay visible, and a hover on
+    the header shows the full text, then the full date and time. The body shows the full subject above
+    the input, unless the input already holds it (a shell command's input
+    is the command). A call with no input, output or diff is a plain line
+    until its header is cut, measured again when the subject changes; then it
+    folds, and its body is the full subject. A permission's header (`Permission ·` and the call) keeps one
+    line the same way, with its time at the right end. A pending permission
+    shows its header, command, diff, AI note and picker open, whatever the
+    fold. An answered permission folds to one line when the reply
+    arrives, whatever the console's fold, its header and its
+    answer (`decided by` where the payload names one); a click unfolds the
+    command, the diff and the AI note, and the choice is kept per block
+    like the others. The AI note is the TUI's (`AI said ask · allow 62%,
+    deny 5% · danger 21% (allow up to 5%, deny from 65%)`), shown where the
+    request carries one. A permission shows its command bare under
+    `command · Shell`.
     Every block shows its time: a muted `HH:MM:SS` at the right of a summary
     line and of a prompt, and the full date and time on hover of any block.
     `BlockView` is memoized, and it compares a question card or a permission
     picker by its props, so a streamed chunk re-renders only the block it
-    changes. A card or a picker whose own state changes renders again. A message, a person's prompt, a plan, a
-    permission and a question never fold. An unfolded daemon prompt is
+    changes. A card or a picker whose own state changes renders again. A message, a person's prompt, a plan and a
+    question never fold, and a pending permission never folds. An unfolded daemon prompt is
     Markdown, and its summary line stays plain text. The whole summary is one button
     with `aria-expanded`, so a click, Enter or Space opens that block alone;
     its content sits outside the button, so selecting it, a link in it and
@@ -1511,6 +1527,13 @@ Out: the daemon endpoints themselves (012).
   `::shows a permission's command as shell`,
   `::shows every block's time: the clock on a prompt and a summary line, and the full date on hover`,
   `::re-renders only the block a streamed chunk changes`,
+  `::keeps a tool header on one line, with its full subject on hover and its facts at the right end`,
+  `::shows a call's full subject in its body where its input does not show it`,
+  `::gives a bodyless call a foldable body only when its header is cut`,
+  `::measures a header again when its subject grows`,
+  `::keeps a permission header on one line with its time, and shows the AI note`,
+  `::keeps a pending permission open whatever the fold, and folds an answered one to one line`,
+  `ui/src/features/sessions/console/session-console.test.tsx::folds a permission when it is answered, even with the console unfolded`,
   `ui/src/features/sessions/console/session-console-renders.test.tsx::draws a question card again for its own change, not for a message streamed after it`,
   `::draws a permission picker again for its own change, not for a message streamed after it`).
 - The console retains a session's draft, fold and place apart per daemon and
