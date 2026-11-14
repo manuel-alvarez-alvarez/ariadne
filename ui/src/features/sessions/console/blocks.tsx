@@ -111,7 +111,7 @@ export function PromptBox({
       className={cn(
         "rounded-md px-2 py-1.5",
         role === "Developer" && "bg-muted/50 ring-1 ring-inset ring-border/60",
-        role === "You" && "bg-primary/5 ring-1 ring-inset ring-border/50",
+        role === "You" && "bg-primary/12 ring-1 ring-inset ring-border/50",
       )}
     >
       <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-foreground">

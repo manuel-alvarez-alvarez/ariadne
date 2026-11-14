@@ -502,7 +502,7 @@ Out: the daemon endpoints themselves (012).
     identify them at the main conversation margin. Assistant headers have a bot icon and
     a muted-token background with a faint solid inset border-token ring.
     Developer headers have a code icon, a slightly deeper shade of the same muted-token background and a solid inset border-token ring.
-    You headers have a person icon, faint primary-token background and solid inset border-token ring, including queued prompts.
+    You headers have a person icon, restrained 12% primary-token background and solid inset border-token ring, including queued prompts.
     All three role icons share one horizontal position beside their headers, independent of message height.
     Labels and icon shapes distinguish roles without color alone.
     Developer prompts have no individual

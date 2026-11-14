@@ -459,7 +459,7 @@ this control closes the drawer and reveals the question in the conversation.
 This works for subagent requests too.
 
 User, developer and assistant messages always remain expanded. Role labels identify
-them. You headers have a person icon, faint primary background and solid inset border ring. All three role icons share one vertical column.
+them. You headers have a person icon, restrained 12% primary background and solid inset border ring. All three role icons share one vertical column.
 Assistant headers have a bot icon, subtle muted background and faint solid inset border ring; Developer headers
 have a code icon, a slightly deeper shade of the same muted background and solid inset border ring. Both stay fully expanded.
 Compact secondary activity sits slightly indented, without left borders.
