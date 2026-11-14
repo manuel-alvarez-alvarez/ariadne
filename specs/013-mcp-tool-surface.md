@@ -290,7 +290,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   session makes no lookup
   (`tools.rs::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`).
   `get_pull_request` reads the request, then the repository and the session
-  (`tools.rs::the_agents_request_tools_call_the_routes_of_the_request_its_task_opened`).
+  (`tools.rs::the_agents_request_tools_call_the_routes_of_the_request_its_task_opened`),
+  and starts the last two reads before either is answered
+  (`tools.rs::the_repository_and_session_reads_start_before_either_is_answered`).
 - A message to `orchestrator` makes no task read
   (`tools.rs::the_orchestrator_is_addressed_by_name_and_needs_no_agent_id`).
 - The pull request reviewer seat lists its ten tools and no task or

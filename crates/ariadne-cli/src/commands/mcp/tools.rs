@@ -1182,6 +1182,81 @@ mod tests {
         );
     }
 
+    /// How long the test below waits for the daemon to see both reads before
+    /// it calls them sequential. A pass never waits this long.
+    const BOTH_READS_STARTED: std::time::Duration = std::time::Duration::from_secs(10);
+
+    /// A daemon that answers neither the repository read nor the session read
+    /// until both have arrived, each on a connection of its own.
+    async fn daemon_holding_two_reads_until_both_arrive() -> String {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let endpoint = format!("http://{}", listener.local_addr().expect("addr"));
+        let both = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let both = both.clone();
+                tokio::spawn(async move {
+                    let mut raw = Vec::new();
+                    let mut buf = [0u8; 1024];
+                    while !raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match socket.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => raw.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                    let text = String::from_utf8_lossy(&raw);
+                    let path = text.split_whitespace().nth(1).unwrap_or_default();
+                    let answer = if path.starts_with("/v1/pull-requests?") {
+                        r#"{"pull_requests":[{"id":"01PR"}],"next_cursor":null}"#
+                    } else if path == "/v1/pull-requests/01PR" {
+                        r#"{"id":"01PR","repository_id":"01R"}"#
+                    } else {
+                        both.wait().await;
+                        if path.starts_with("/v1/repositories/") {
+                            r#"{"path":"/repos/widgets","forge":{"login":"me"}}"#
+                        } else {
+                            r#"{"worktree_path":"/wt/task"}"#
+                        }
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{answer}",
+                        answer.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        endpoint
+    }
+
+    /// The repository and the session reads of `get_pull_request` are both
+    /// under way before either one is answered.
+    #[tokio::test]
+    async fn the_repository_and_session_reads_start_before_either_is_answered() {
+        let endpoint = daemon_holding_two_reads_until_both_arrive().await;
+        let mcp = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let read = tokio::time::timeout(
+            BOTH_READS_STARTED,
+            mcp.get_pull_request(Parameters(Empty {})),
+        )
+        .await
+        .expect("both reads reach the daemon before either is answered")
+        .expect("read the request");
+        let ContentBlock::Text(text) = &read.content[0] else {
+            panic!("the request came back as something other than text");
+        };
+        let read: serde_json::Value = serde_json::from_str(&text.text).expect("json");
+        assert_eq!(read["worktree_path"], "/wt/task");
+        assert_eq!(read["repository_path"], "/repos/widgets");
+    }
+
     /// A lookup that finds no request keeps nothing: the next call looks up
     /// again.
     #[tokio::test]
