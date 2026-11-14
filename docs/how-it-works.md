@@ -104,3 +104,8 @@ Only main requires linear history. Direct pushes remain permitted.
 Merge main into published PR branches and push normally. Never rebase their published commits.
 Never force-push main. Require current GitHub CI before a GitHub squash merge.
 Other repositories retain their explicit landing policies.
+
+On the desktop Goals board, each goal has one task area. The Active filter
+hides finished and cancelled tasks. All, Finished, and custom filters show
+all tasks in matching goals. The heading counts visible tasks; goal progress
+counts include hidden tasks. See [the desktop specification](../specs/015-desktop-app.md).

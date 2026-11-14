@@ -220,7 +220,7 @@ export function GoalsListPage() {
         />
       ) : null}
 
-      {shown.length ? <GoalSwimlanes goals={shown} /> : null}
+      {shown.length ? <GoalSwimlanes goals={shown} activeOnly={active} /> : null}
 
       <CreateGoalDialog
         open={createOpen}

@@ -820,22 +820,14 @@ Out: the daemon endpoints themselves (012).
     `PUT /v1/dashboards/{name}` from `ViewDashboard`'s own `onSave`.
 38. Toasts show at the bottom left, clear of the header and the pane
     (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
-39. The goals board shows two global columns, "In progress" and "Done",
-    drawn once as headings at the top with totals across all listed goals,
-    including folded goals; cancelled tasks count as Done. In progress uses
-    66% and Done uses 34% of available column space, with a solid 2px, higher
-    contrast divider aligned between headings and cells and balanced padding
-    on both sides. Headings are larger and bolder. Each goal has a
-    subtle dotted outline around its plain-background task area across both
-    columns. Its header keeps title, collapse control, status, progress,
-    attention and tokens compact. Cards wrap into additional rows as needed,
-    increasing goal height. Both columns remain at readable minimum width and
-    the board scrolls horizontally in narrow windows. Each goal is one lane
-    under them, split into two cells. A task in `pending`,
-    `ready`, `in_progress` or `failed` sits in the In progress cell, a failed
-    one outlined in danger; a task in `finished` or `cancelled` sits in the
-    Done cell. A goal's workflow steps make no columns, and there is no
-    separate Cancelled section. The lane's row is one line: a collapse
+39. The goals board shows one global "Tasks" heading with the number of
+    visible tasks across listed goals, including folded goals. Each goal has
+    one task area with a subtle dotted outline. Active hides finished and
+    cancelled tasks; All, Finished and custom filters show every task in each
+    matching goal. Progress counts use all tasks. Finished cards have green
+    borders, cancelled cards gray borders, and failed cards red borders.
+    Cards wrap into rows as needed. The goal's workflow steps make no columns.
+    The lane's row is one line: a collapse
     chevron, the title as a link to `?goal=`, the goal status dot, `done/total`,
     the orchestrator attention badge, and the token figure at the right end.
     The title's tooltip gives the full title, each repository as
@@ -843,10 +835,10 @@ Out: the daemon endpoints themselves (012).
     failed and stalled. The row has no progress bar and no repository
     summary. A collapsed lane shows the one-line summary text and no cells.
     Lanes keep their order: attention first, then live, then terminal goals.
-    Each card stays one tab stop, and each cell is a named group
-    (`<goal>: <column>`).
-    A task card is three contained rows, for every status, in both board
-    columns and the goal panel. Its target minimum width is 18rem (about 288px):
+    Each card stays one tab stop, and each task area is a named group
+    (`<goal>: Tasks`).
+    A task card is three contained rows, for every status, on the board
+    and in the goal panel. Its target minimum width is 18rem (about 288px):
     the board fits fewer cards across, and a card shrinks inside a narrower
     panel. The card is a CSS `@container`, so its own width decides what is
     drawn, and no row overflows. Row 1 is the title (two lines with an
@@ -865,7 +857,7 @@ Out: the daemon endpoints themselves (012).
     workflow of more than five steps also folds the steps more than one from
     the current one behind an ellipsis. Each circle's tooltip names the step,
     its description, and its agent's model, effort and skills, with a link to
-    the agent's session, or says "none staffed". Row 3 is one line: the
+    the agent's session, or says "none staffed". Row 3 is anchored at the card bottom and is one line: the
     task's token figure (`↑input share ↓output`, including zero, rendered by
     the goal lane header's own `TokenFigure` at every width; its hover names
     Input and Output and lists one row per workflow step, and it is not a tab
@@ -879,7 +871,7 @@ Out: the daemon endpoints themselves (012).
     names appear only in tooltips and the accessible description, which also
     lists the whole workflow, the reasoning effort and per-agent usage. The
     card shows no branch, merge commit or dependency icon, is one link to
-    `?task=` with one tab stop, and keeps its border order: attention, failed,
+    `?task=` with one tab stop, and keeps its border order: finished, cancelled or failed status, attention,
     stalled. The goal panel's task list shows
     the same card (`ui/src/features/tasks/task-card.test.tsx`).
 40. The task panel of a stepped task draws one workflow section under its
@@ -1628,12 +1620,12 @@ Out: the daemon endpoints themselves (012).
   `::shows a field error on invalid JSON and disables Test`). These typing
   proofs wait for the dialog's opening focus to reach Examples before editing,
   so its deferred focus cannot interrupt the simulated keystrokes under load.
-- The board draws "In progress" and "Done" once as headings, however many
-  goals it shows, and files a task of each status in the cell rule 39 names
-  for it, stepped goals included
-  (`ui/src/features/goals/goal-swimlanes.test.tsx::draws the two column names once, however many goals`,
-  `::files a %s task under %s, not %s`,
-  `::keeps a stepped goal's tasks in the same two columns`).
+- The board shows one task area and counts visible tasks; Active hides terminal
+  tasks without changing progress
+  (`ui/src/features/goals/goal-swimlanes.test.tsx::shows all tasks in one area and counts them`,
+  `::hides terminal tasks under Active while preserving progress`).
+- Finished, cancelled and failed cards use their status borders
+  (`ui/src/features/tasks/task-card.test.tsx::outlines a %s task with its status color`).
 - A goal's lane is one line of chevron, title link, status, `done/total` and
   tokens, with no progress bar, and a folded lane shows its summary and no
   cells

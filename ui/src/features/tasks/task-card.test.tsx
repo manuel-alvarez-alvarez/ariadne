@@ -249,3 +249,19 @@ it("hovers the token figure into Input, Output and a row per step, with no tab s
   expect(screen.getAllByText("Output").length).toBeGreaterThan(0)
   expect(screen.getAllByText("Build").length).toBeGreaterThan(0)
 })
+
+it.each([
+  ["finished", "border-status-done/40"],
+  ["cancelled", "border-muted-foreground/40"],
+  ["failed", "border-status-danger/40"],
+] as const)("outlines a %s task with its status color", (status, border) => {
+  card({ status })
+  expect(screen.getByRole("link").parentElement?.classList.contains(border)).toBe(true)
+})
+
+it("anchors task usage and activity at the bottom of the card", () => {
+  card({ title: "A task with a long title" })
+  const link = screen.getByRole("link")
+  expect(link.classList.contains("h-full")).toBe(true)
+  expect(link.querySelector(".mt-auto")?.textContent).toContain("0")
+})

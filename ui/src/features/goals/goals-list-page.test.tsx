@@ -19,7 +19,7 @@ import { beforeEach, expect, it } from "vitest"
 
 import type { GoalDto } from "@/api"
 import { useSettingsStore } from "@/stores/settings"
-import { aGoal, aRepository } from "@/test/fixtures"
+import { aGoal, aRepository, aTask } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalsListPage } from "./goals-list-page"
 
@@ -347,4 +347,27 @@ it("has no Board/List toggle and no repository filter", async () => {
   expect(screen.queryByRole("button", { name: "List" })).toBeNull()
   expect(screen.queryByRole("button", { name: "Board" })).toBeNull()
   expect(screen.queryByRole("button", { name: "Filter by repository" })).toBeNull()
+})
+
+it("shows terminal tasks when leaving the Active filter", async () => {
+  const goal = aGoal({ status: "active" })
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input instanceof URL ? input : input.url,
+    )
+    return Promise.resolve(
+      jsonResponse(
+        url.pathname === "/v1/goals"
+          ? [goal]
+          : url.pathname === "/v1/tasks"
+            ? [aTask({ goal_id: goal.id, title: "Completed task", status: "finished" })]
+            : [],
+      ),
+    )
+  })
+  renderBoard("/goals?status=planning,active")
+  expect(await screen.findByRole("heading", { name: "Tasks (0)" })).toBeTruthy()
+  expect(screen.queryByText("Completed task")).toBeNull()
+  await userEvent.click(screen.getByRole("button", { name: "All" }))
+  expect(await screen.findByText("Completed task")).toBeTruthy()
 })

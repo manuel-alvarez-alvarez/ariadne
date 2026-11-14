@@ -1,16 +1,4 @@
-/**
- * The goals list as a board: two global columns, "In progress" and "Done",
- * drawn once at the top, and one slim lane per goal under them. A lane is one
- * line about its goal and two cells, one under each column, holding its task
- * cards.
- *
- * The board scrolls in both directions inside its own box, which is what keeps
- * the column headers stuck to its top edge.
- *
- * The lanes share a single task-list query (`GET /v1/tasks`), which the SSE
- * dispatcher invalidates on `task_created`/`task_updated`, so cards move
- * between cells without polling — same as the per-goal board.
- */
+/** Goal lanes and their task cards. */
 
 import { useQuery } from "@tanstack/react-query"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
@@ -32,30 +20,10 @@ import { cn, formatAbsolute } from "@/lib/format"
 import { paths } from "@/routes/paths"
 import { type BoardAttention, taskAttentionReason, useBoardAttention } from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"
-import {
-  LANE_COLUMNS,
-  type LaneColumnKey,
-  laneColumnOf,
-  laneCounts,
-  laneSummary,
-  orderLanes,
-} from "./lanes"
+import { laneCounts, laneSummary, orderLanes } from "./lanes"
 import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 
-/**
- * One template for the column header row and every lane's cells, so the two
- * columns line up down the board. Neither is narrower than a card reads at:
- * 18rem is what a card wants; it shrinks within a narrow cell.
- */
-const COLUMNS_GRID = "grid grid-cols-[minmax(0,66fr)_minmax(0,34fr)]"
-
-/**
- * What the board is laid out at before it gives up and scrolls: two columns at
- * the card floor, their gap and the padding either side, rounded up. It sits
- * on the block *inside* the scrollport, which is what makes a narrow window
- * scroll the board rather than squeeze its cards past reading.
- */
-const BOARD_WIDTH = "min-w-[42rem]"
+const BOARD_WIDTH = "min-w-[20rem]"
 
 /** The grid a cell lays its cards out on: as many 18rem-floor columns as fit. */
 const CELL_GRID =
@@ -94,7 +62,13 @@ const BOARD_BOX = "h-full rounded-lg border contain-paint"
  */
 const BOARD_FRAME = "relative min-h-0 flex-1"
 
-export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
+export function GoalSwimlanes({
+  goals,
+  activeOnly = false,
+}: {
+  goals: GoalDto[]
+  activeOnly?: boolean
+}) {
   const tasks = useQuery(taskListQueryOptions({}))
   const byGoal = useMemo(() => groupByGoal(tasks.data ?? [], goals), [tasks.data, goals])
   // Which cards — and which lanes — are asking for a person, off the sessions
@@ -112,15 +86,12 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
     () => orderLanes(goals, (goal) => laneNeedsAttention(goal.id, byGoal.get(goal.id), attention)),
     [goals, byGoal, attention],
   )
-  const totals = useMemo(() => {
-    const counts = { in_progress: 0, finished: 0 }
-    for (const goal of goals) {
-      const lane = byGoal.get(goal.id)
-      counts.in_progress += lane?.columns.get("in_progress")?.length ?? 0
-      counts.finished += lane?.columns.get("finished")?.length ?? 0
-    }
-    return counts
-  }, [byGoal, goals])
+  const visible = (task: TaskDto) =>
+    !activeOnly || (task.status !== "finished" && task.status !== "cancelled")
+  const total = goals.reduce(
+    (count, goal) => count + (byGoal.get(goal.id)?.all.filter(visible).length ?? 0),
+    0,
+  )
 
   const staleTasks = tasks.error && tasks.data !== undefined
   if (tasks.error && !staleTasks) {
@@ -152,7 +123,7 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
       <div className={BOARD_FRAME}>
         {/* A named region the keyboard can put focus into: the board scrolls both
           ways, and a scrollport nothing can focus only scrolls under a pointer
-          — the columns and lanes past its edges would be mouse-only. */}
+          — the lanes past its edges would be mouse-only. */}
         <section
           ref={board.ref}
           aria-label="Goals board"
@@ -164,19 +135,16 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
           )}
         >
           <div className={BOARD_WIDTH}>
-            <ColumnHeaders inProgress={totals.in_progress} done={totals.finished} />
+            <ColumnHeaders total={total} />
             {lanes.map((goal) => {
-              // A finished goal opens folded: five columns of cards that all sit
-              // in Merged is a 270px box that is 85% empty, and on a 900px
-              // screen the cards are scrolled off it entirely — so it reads as
-              // an empty lane. Its header says what happened instead. The user's
-              // own answer, either way, wins over this.
+              // Finished goals open folded unless the user chose otherwise.
               const collapsed = isCollapsed(goal.id, isTerminalGoalStatus(goal.status))
               return (
                 <Lane
                   key={goal.id}
                   goal={goal}
                   tasks={byGoal.get(goal.id)}
+                  visible={visible}
                   attention={attention}
                   collapsed={collapsed}
                   onToggle={() => setCollapsed(goal.id, !collapsed)}
@@ -192,35 +160,10 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   )
 }
 
-/**
- * The two column names, once, at the top of the board. Stuck to the
- * scrollport's top edge and opaque, because the lanes scroll underneath it.
- * Each name is a heading, so a screen reader hears the columns by name.
- */
-function ColumnHeaders({ inProgress, done }: { inProgress: number; done: number }) {
+function ColumnHeaders({ total }: { total: number }) {
   return (
-    <div
-      className={cn(
-        COLUMNS_GRID,
-        "sticky top-0 z-20 mx-2 border-x border-background bg-background py-2",
-      )}
-    >
-      {LANE_COLUMNS.map((column, index) => (
-        <h2
-          key={column.key}
-          className={cn(
-            "min-w-0 truncate pl-3 pr-3 text-sm font-semibold",
-            index === 1 && "border-l-2 border-border pl-3",
-          )}
-        >
-          <Tooltip>
-            <TooltipTrigger render={<span />}>
-              {column.label} ({column.key === "in_progress" ? inProgress : done})
-            </TooltipTrigger>
-            <TooltipContent>{column.hint}</TooltipContent>
-          </Tooltip>
-        </h2>
-      ))}
+    <div className="sticky top-0 z-20 mx-2 border-x border-background bg-background py-2">
+      <h2 className="px-3 text-sm font-semibold">Tasks ({total})</h2>
     </div>
   )
 }
@@ -229,6 +172,7 @@ function Lane({
   goal,
   tasks,
   attention,
+  visible,
   collapsed,
   onToggle,
 }: {
@@ -236,6 +180,7 @@ function Lane({
   tasks?: GoalTasks
   /** The whole board's index; the lane takes its own rows out of it. */
   attention: BoardAttention
+  visible: (task: TaskDto) => boolean
   collapsed: boolean
   onToggle: () => void
 }) {
@@ -313,38 +258,27 @@ function Lane({
       </header>
 
       {collapsed ? null : (
-        <div className={cn(COLUMNS_GRID, "pt-1 pb-2.5")}>
-          {LANE_COLUMNS.map((column, index) => (
-            // An empty cell is empty: whitespace already says the column has
-            // nothing in it, and a board of placeholders says nothing at all.
-            // biome-ignore lint/a11y/useSemanticElements: a fieldset is a form control; this names a cell
-            <div
-              key={column.key}
-              role="group"
-              aria-label={`${goal.title}: ${column.label}`}
-              className={cn(
-                CELL_GRID,
-                index === 0 && "pl-3 pr-3",
-                index === 1 && "border-l-2 border-border pl-3 pr-3",
-              )}
-            >
-              {column.key === "in_progress" && empty ? (
-                <p className="col-span-full text-xs text-muted-foreground">
-                  {goal.status === "planning"
-                    ? "No tasks yet — the orchestrator is still working"
-                    : "No tasks"}
-                </p>
-              ) : null}
-              {(tasks?.columns.get(column.key) ?? []).map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  steps={goal.steps}
-                  attention={attention.byTask.get(task.id)}
-                  lastActivityAt={attention.lastActivity.get(task.id)}
-                />
-              ))}
-            </div>
+        // biome-ignore lint/a11y/useSemanticElements: this group is not a form control
+        <div
+          className={cn(CELL_GRID, "px-3 pt-1 pb-2.5")}
+          role="group"
+          aria-label={`${goal.title}: Tasks`}
+        >
+          {empty ? (
+            <p className="col-span-full text-xs text-muted-foreground">
+              {goal.status === "planning"
+                ? "No tasks yet — the orchestrator is still working"
+                : "No tasks"}
+            </p>
+          ) : null}
+          {(tasks?.all ?? []).filter(visible).map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              steps={goal.steps}
+              attention={attention.byTask.get(task.id)}
+              lastActivityAt={attention.lastActivity.get(task.id)}
+            />
           ))}
         </div>
       )}
@@ -352,32 +286,19 @@ function Lane({
   )
 }
 
-/**
- * The loading board, shaped like the board it becomes: the two column names and
- * a few lanes on the same grid. Shown by the page while the goals load and by
- * the board while the tasks do, so a cold start is one skeleton, not two
- * unrelated ones in sequence.
- */
+/** The loading board follows the shape of its lanes. */
 export function BoardSkeleton() {
   return (
     <div className={BOARD_FRAME} aria-hidden>
       <div className={cn(BOARD_BOX, "overflow-hidden")}>
         <div className={BOARD_WIDTH}>
-          <div className={cn(COLUMNS_GRID, "border-b py-2")}>
-            {LANE_COLUMNS.map((column) => (
-              <Skeleton key={column.key} className="h-3 w-20" />
-            ))}
+          <div className="border-b py-2">
+            <Skeleton className="mx-3 h-3 w-20" />
           </div>
           {[0, 1, 2].map((lane) => (
             <div key={lane} className="border-b py-2.5 last:border-b-0">
               <Skeleton className="mx-3 h-4 w-48" />
-              <div className={cn(COLUMNS_GRID, "pt-2")}>
-                {LANE_COLUMNS.map((column, index) => (
-                  <div key={column.key}>
-                    {(lane + index) % 2 === 0 ? <Skeleton className="h-14 w-full" /> : null}
-                  </div>
-                ))}
-              </div>
+              <Skeleton className="mx-3 mt-2 h-14 w-48" />
             </div>
           ))}
         </div>
@@ -388,8 +309,6 @@ export function BoardSkeleton() {
 
 interface GoalTasks {
   all: TaskDto[]
-  /** Board cells, keyed by the lane's column keys (see `LANE_COLUMNS`). */
-  columns: Map<LaneColumnKey, TaskDto[]>
 }
 
 /**
@@ -412,10 +331,7 @@ function laneNeedsAttention(
   )
 }
 
-/**
- * The tasks of each lane, in the cell each one belongs in — which cell is
- * `laneColumnOf`'s answer.
- */
+/** Group the listed goals’ tasks for their lanes. */
 function groupByGoal(tasks: TaskDto[], goals: GoalDto[]): Map<string, GoalTasks> {
   const lanes = new Map<string, GoalTasks>()
   const goalsById = new Map(goals.map((goal) => [goal.id, goal]))
@@ -425,14 +341,10 @@ function groupByGoal(tasks: TaskDto[], goals: GoalDto[]): Map<string, GoalTasks>
     if (!goal) continue
     let lane = lanes.get(task.goal_id)
     if (!lane) {
-      lane = { all: [], columns: new Map() }
+      lane = { all: [] }
       lanes.set(task.goal_id, lane)
     }
     lane.all.push(task)
-    const column = laneColumnOf(task)
-    const cell = lane.columns.get(column)
-    if (cell) cell.push(task)
-    else lane.columns.set(column, [task])
   }
   return lanes
 }

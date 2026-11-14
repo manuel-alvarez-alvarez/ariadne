@@ -15,31 +15,6 @@ import type { GoalDto, TaskDto, TaskStatus } from "@/api"
 import { plural } from "@/lib/format"
 import { isTerminalGoalStatus } from "./status"
 
-/** The board's two columns, shared by every lane. */
-export type LaneColumnKey = "in_progress" | "finished"
-
-/**
- * The columns the board draws once, in order: what is still moving, then what
- * is over. Every lane splits into one cell for each.
- */
-export const LANE_COLUMNS: readonly { key: LaneColumnKey; label: string; hint: string }[] = [
-  {
-    key: "in_progress",
-    label: "In progress",
-    hint: "Pending, ready, under way, or failed and waiting on a retry.",
-  },
-  { key: "finished", label: "Done", hint: "Finished or cancelled." },
-]
-
-/**
- * The column a task's card sits in. Pending, ready, in progress and failed
- * tasks are still in progress, a failed one being a retry candidate; finished
- * and cancelled tasks are done.
- */
-export function laneColumnOf(task: Pick<TaskDto, "status">): LaneColumnKey {
-  return task.status === "finished" || task.status === "cancelled" ? "finished" : "in_progress"
-}
-
 /**
  * Which band a lane belongs to, lowest first: what is asking for a person,
  * then what is still moving, then what is done with.
@@ -85,7 +60,7 @@ interface LaneCounts {
    */
   pipeline: number
   finished: number
-  /** Retry candidates: they stay in the In progress column, outlined in danger. */
+  /** Retry candidates, outlined in danger. */
   failed: number
   /** A session stopped moving before it could report a task failure. */
   stalled: number

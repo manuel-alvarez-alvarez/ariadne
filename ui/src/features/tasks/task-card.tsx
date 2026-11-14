@@ -122,7 +122,7 @@ export function TaskCard({
         to={to}
         replace={to.replace}
         aria-describedby={hints.length > 0 ? hintsId : undefined}
-        className="block rounded-lg px-2.5 pt-2.5 pb-1.5 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+        className="flex h-full flex-col rounded-lg px-2.5 pt-2.5 pb-1.5 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
       >
         <div className="flex items-start gap-2">
           <p
@@ -162,7 +162,7 @@ export function TaskCard({
 
         <div
           className={cn(
-            "mt-1 flex min-w-0 items-center gap-x-2 text-xs whitespace-nowrap text-muted-foreground",
+            "mt-auto flex min-w-0 items-center gap-x-2 pt-1 text-xs whitespace-nowrap text-muted-foreground",
           )}
           style={task.pr_url ? { paddingRight: prLinkReserve(task.pr_url) } : undefined}
         >
@@ -259,6 +259,8 @@ function cardState(task: TaskDto): CardState | null {
  * whatever status the task is parked in.
  */
 function cardBorder(task: TaskDto, attention?: SessionAttention | null): string | undefined {
+  if (["finished", "cancelled", "failed"].includes(task.status))
+    return TASK_STATUS_META[task.status].border
   if (attention) return SESSION_ATTENTION_META[attention].border
   return TASK_STATUS_META[task.status].border ?? (task.stalled ? STALLED_META.border : undefined)
 }

@@ -2,71 +2,42 @@
 import { screen, within } from "@testing-library/react"
 import { expect, it } from "vitest"
 
-import type { TaskStatus } from "@/api"
 import { aGoal, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalSwimlanes } from "./goal-swimlanes"
 
 const GOAL_TITLE = "Ship the board"
 
-it("draws the two column names once, however many goals", async () => {
-  const goals = [aGoal({ id: "goal-a", title: "Alpha" }), aGoal({ id: "goal-b", title: "Beta" })]
-  daemonFetch.mockResolvedValue(jsonResponse([]))
-  renderScreen(<GoalSwimlanes goals={goals} />)
-
-  const headings = await screen.findAllByRole("heading", { level: 2 })
-  expect(headings.map((heading) => heading.textContent)).toEqual(["In progress (0)", "Done (0)"])
-  expect(screen.queryByText("Pending")).toBeNull()
-  expect(screen.queryByText("Cancelled")).toBeNull()
-})
-
-it("shows task totals across all listed goals in the column headings", async () => {
-  const goals = [
-    aGoal({ id: "goal-a", title: "Alpha" }),
-    aGoal({ id: "goal-b", title: "Beta", status: "completed" }),
-  ]
+it("shows all tasks in one area and counts them", async () => {
+  const goal = aGoal({ title: GOAL_TITLE })
   daemonFetch.mockResolvedValue(
     jsonResponse([
-      aTask({ id: "a1", goal_id: "goal-a", status: "pending" }),
-      aTask({ id: "a2", goal_id: "goal-a", status: "cancelled" }),
-      aTask({ id: "b1", goal_id: "goal-b", status: "finished" }),
+      aTask({ id: "one", goal_id: goal.id, title: "First", status: "pending" }),
+      aTask({ id: "two", goal_id: goal.id, title: "Second", status: "finished" }),
     ]),
   )
-  renderScreen(<GoalSwimlanes goals={goals} />)
-
-  expect(await screen.findByRole("heading", { name: "In progress (1)" })).toBeTruthy()
-  expect(screen.getByRole("heading", { name: "Done (2)" })).toBeTruthy()
+  renderScreen(<GoalSwimlanes goals={[goal]} />)
+  expect(await screen.findByRole("heading", { name: "Tasks (2)" })).toBeTruthy()
+  const area = screen.getByRole("group", { name: `${GOAL_TITLE}: Tasks` })
+  expect(within(area).getByText("First")).toBeTruthy()
+  expect(within(area).getByText("Second")).toBeTruthy()
 })
 
-it.each<[TaskStatus, string, string]>([
-  ["pending", "In progress", "Done"],
-  ["ready", "In progress", "Done"],
-  ["in_progress", "In progress", "Done"],
-  ["failed", "In progress", "Done"],
-  ["finished", "Done", "In progress"],
-  ["cancelled", "Done", "In progress"],
-])("files a %s task under %s, not %s", async (status, column, other) => {
-  const goal = aGoal({ title: GOAL_TITLE, steps: [] })
-  daemonFetch.mockResolvedValue(jsonResponse([aTask({ goal_id: goal.id, status })]))
-  renderScreen(<GoalSwimlanes goals={[goal]} />)
-
-  const cell = await screen.findByRole("group", { name: `${GOAL_TITLE}: ${column}` })
-  expect(within(cell).getByText("Wire the sessions screen")).toBeTruthy()
-  const otherCell = screen.getByRole("group", { name: `${GOAL_TITLE}: ${other}` })
-  expect(within(otherCell).queryByText("Wire the sessions screen")).toBeNull()
-})
-
-it("keeps a stepped goal's tasks in the same two columns", async () => {
-  const goal = aGoal({
-    title: GOAL_TITLE,
-    steps: [{ id: "build", title: "Build", description: "", skills: ["coding"], ranks: [] }],
-  })
-  daemonFetch.mockResolvedValue(jsonResponse([aTask({ goal_id: goal.id, step: "build" })]))
-  renderScreen(<GoalSwimlanes goals={[goal]} />)
-
-  const cell = await screen.findByRole("group", { name: `${GOAL_TITLE}: In progress` })
-  expect(within(cell).getByText("Wire the sessions screen")).toBeTruthy()
-  expect(screen.queryByRole("heading", { name: "Build" })).toBeNull()
+it("hides terminal tasks under Active while preserving progress", async () => {
+  const goal = aGoal({ title: GOAL_TITLE })
+  daemonFetch.mockResolvedValue(
+    jsonResponse([
+      aTask({ id: "one", goal_id: goal.id, title: "Waiting", status: "pending" }),
+      aTask({ id: "two", goal_id: goal.id, title: "Complete", status: "finished" }),
+      aTask({ id: "three", goal_id: goal.id, title: "Cancelled task", status: "cancelled" }),
+    ]),
+  )
+  renderScreen(<GoalSwimlanes goals={[goal]} activeOnly />)
+  expect(await screen.findByRole("heading", { name: "Tasks (1)" })).toBeTruthy()
+  expect(screen.getByText("Waiting")).toBeTruthy()
+  expect(screen.queryByText("Complete")).toBeNull()
+  expect(screen.queryByText("Cancelled task")).toBeNull()
+  expect(screen.getByText("1/2")).toBeTruthy()
 })
 
 it("draws a goal as one line: toggle, title link, status, progress and tokens", async () => {
@@ -95,5 +66,5 @@ it("shows the lane summary in place of the cells once folded", async () => {
   renderScreen(<GoalSwimlanes goals={[goal]} />)
 
   expect(await screen.findByText("1 task finished")).toBeTruthy()
-  expect(screen.queryByRole("group", { name: `${GOAL_TITLE}: Done` })).toBeNull()
+  expect(screen.queryByRole("group", { name: `${GOAL_TITLE}: Tasks` })).toBeNull()
 })

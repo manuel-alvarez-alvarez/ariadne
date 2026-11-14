@@ -23,12 +23,7 @@ interface StatusMeta {
   badge: string
   /** Solid dot classes, for the board column headers. */
   dot: string
-  /**
-   * Card border, for a status a card should be outlined by — the way
-   * `STALLED_META.border` outlines a stalled task. Only a failure has one: it
-   * sits in the Pending column beside tasks that have simply not started, and
-   * the outline is what tells the two apart at a glance.
-   */
+  /** Status-colored card border, when applicable. */
   border?: string
 }
 
@@ -60,12 +55,14 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
     hint: "The workflow completed.",
     badge: "bg-status-done-soft text-status-done-fg",
     dot: "bg-status-done",
+    border: "border-status-done/40",
   },
   cancelled: {
     label: "Cancelled",
     hint: "Cancelled by the user.",
     badge: "bg-muted text-muted-foreground",
     dot: "bg-muted-foreground/60",
+    border: "border-muted-foreground/40",
   },
   failed: {
     label: "Failed",
