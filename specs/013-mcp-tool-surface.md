@@ -368,7 +368,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   `description`, `usage`, timestamps or goal columns
   (`tools.rs::listing_tasks_gives_the_goal_columns_once_and_task_summaries`).
 - `get_task` gives the task with `goal_steps` and without `usage`,
-  `created_at` and `updated_at`
+  `created_at` and `updated_at`. A `null` `pr_url`, `reason` or
+  `merge_commit` is no field, by the result format above
   (`tools.rs::reading_a_task_drops_usage_and_timestamps`).
 - Seat lists include readiness for agents and keepers alone:
   `mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`.

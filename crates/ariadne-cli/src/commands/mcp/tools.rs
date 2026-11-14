@@ -2041,7 +2041,7 @@ mod tests {
                 "id": "01T", "goal_id": "01GOAL", "repo_id": "01R", "title": "t",
                 "description": "d", "status": "running", "step": "develop",
                 "depends_on": ["01D"], "branch": "b", "worktree_path": "/w",
-                "pr_url": null, "reason": null, "stalled": false, "merge_commit": null,
+                "stalled": false,
                 "agents": [{"step": "develop", "id": "01A"}],
                 "goal_steps": [{"id": "develop"}]
             })
