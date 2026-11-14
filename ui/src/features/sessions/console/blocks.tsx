@@ -14,7 +14,14 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react"
-import { isValidElement, type KeyboardEvent, memo, type ReactNode } from "react"
+import {
+  isValidElement,
+  type KeyboardEvent,
+  memo,
+  type ReactNode,
+  useEffect,
+  useState,
+} from "react"
 
 import { CodeBlock } from "@/components/code-block"
 import { Markdown } from "@/components/markdown"
@@ -47,11 +54,32 @@ function duration(from: string | undefined, to: string | undefined): string | un
   return `${Math.floor(ms / 60_000)}m ${String(Math.floor((ms % 60_000) / 1000)).padStart(2, "0")}s`
 }
 
-/** A summary line: what the block is at the left, and its muted facts and time at the right end. */
-function SummaryLine({ start, end }: { start: ReactNode; end: (string | undefined)[] }) {
+/**
+ * A summary line: what the block is at the left, and its muted facts and time
+ * at the right end. With `title` the left keeps one line, ends in an ellipsis
+ * where it does not fit, and shows that full text on hover; `startRef` hands
+ * the cut element out, for a caller that measures it.
+ */
+function SummaryLine({
+  start,
+  end,
+  title,
+  startRef,
+}: {
+  start: ReactNode
+  end: (string | undefined)[]
+  title?: string
+  startRef?: (element: HTMLElement | null) => void
+}) {
   return (
     <span className="flex min-w-0 items-start gap-3">
-      <span className="min-w-0 flex-1 break-words">{start}</span>
+      <span
+        ref={startRef}
+        title={title}
+        className={cn("min-w-0 flex-1", title === undefined ? "break-words" : "truncate")}
+      >
+        {start}
+      </span>
       <span data-summary-end className="flex shrink-0 gap-2 tabular-nums">
         {end.map((fact, index) =>
           // biome-ignore lint/suspicious/noArrayIndexKey: each place is one fact, never reordered
@@ -60,6 +88,22 @@ function SummaryLine({ start, end }: { start: ReactNode; end: (string | undefine
       </span>
     </span>
   )
+}
+
+/** Whether an element's text is cut by its width, kept current as it resizes. */
+function useCut(): [(element: HTMLElement | null) => void, boolean] {
+  const [element, setElement] = useState<HTMLElement | null>(null)
+  const [cut, setCut] = useState(false)
+  useEffect(() => {
+    if (!element) return
+    const measure = () => setCut(element.scrollWidth > element.clientWidth)
+    measure()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [element])
+  return [setElement, cut]
 }
 
 /** What a person typed is a message: set apart and full size, with the time it was sent. */
@@ -212,82 +256,50 @@ function BlockBody({
           ))}
         </ul>
       )
-    case "tool": {
-      const { tool } = block
-      // A read's subject names its file, so its input says nothing more.
-      const input = tool.kind === "read" ? undefined : tool.inputText
-      const summary = (
-        <SummaryLine
-          start={
-            <>
-              <span className="mr-1.5 inline-flex items-center gap-1.5 align-[-2px]">
-                <ToolStatus status={tool.status} />
-                <ToolKind kind={tool.kind} />
-              </span>
-              <span className="font-medium text-foreground">{tool.subject ?? tool.title}</span>
-            </>
-          }
-          end={[
-            tool.output ? lineCount(tool.output) : undefined,
-            duration(tool.startedAt, tool.endedAt),
-            formatClock(tool.startedAt ?? block.createdAt),
-          ]}
-        />
-      )
-      if (!input && !tool.output && !tool.diff) {
-        return (
-          <div className="flex items-start gap-1.5 rounded-md border px-2 py-1 font-mono text-xs text-muted-foreground">
-            <span aria-hidden className="size-3.5 shrink-0" />
-            <span className="min-w-0 flex-1">{summary}</span>
-          </div>
-        )
-      }
-      return (
-        <Foldable
-          folded={folded}
-          onToggle={onToggle}
-          summary={summary}
-          className="rounded-md border"
-        >
-          <div className="space-y-2.5">
-            {input ? (
-              <CodeBlock code={input} language={tool.inputLanguage} caption="input" />
-            ) : null}
-            {tool.output ? (
-              <CodeBlock
-                code={tool.output}
-                language={tool.outputLanguage}
-                firstLine={tool.firstLine}
-                caption="output"
-              />
-            ) : null}
-            {tool.diff ? <CodeBlock code={tool.diff} diff caption="diff" /> : null}
-          </div>
-        </Foldable>
-      )
-    }
-    case "permission":
-      return (
-        <div className="rounded-md border border-status-warn/40 bg-status-warn-soft/30 px-3 py-2 text-xs">
-          <div className="font-medium">Permission · {block.title}</div>
+    case "tool":
+      return <ToolBlock block={block} folded={folded} onToggle={onToggle} />
+    case "permission": {
+      const answer = block.answer
+        ? block.answer.decidedBy
+          ? `${block.answer.name} · decided by ${block.answer.decidedBy}`
+          : block.answer.name
+        : undefined
+      const headline = `Permission · ${block.title}`
+      const body = (
+        <>
           {block.command ? (
             <CodeBlock code={block.command} language="shell" caption="command" className="mt-1.5" />
           ) : null}
           {block.diff ? (
             <CodeBlock code={block.diff} diff caption="diff" className="mt-1.5" />
           ) : null}
-          {block.answer ? (
-            <div className="pt-1 font-mono text-muted-foreground">
-              <span aria-hidden>↳ </span>
-              {block.answer.decidedBy
-                ? `${block.answer.name} · decided by ${block.answer.decidedBy}`
-                : block.answer.name}
-            </div>
-          ) : (
-            picker
-          )}
-        </div>
+          {block.aiNote ? (
+            <div className="pt-1 font-mono text-muted-foreground">{block.aiNote}</div>
+          ) : null}
+        </>
       )
+      const frame = "rounded-md border border-status-warn/40 bg-status-warn-soft/30 text-xs"
+      if (!answer) {
+        return (
+          <div className={cn(frame, "px-3 py-2")}>
+            <div className="font-medium">
+              <SummaryLine start={headline} title={headline} end={[time]} />
+            </div>
+            {body}
+            {picker}
+          </div>
+        )
+      }
+      const summary = <SummaryLine start={headline} title={headline} end={[answer, time]} />
+      if (!block.command && !block.diff && !block.aiNote) {
+        return <div className={cn(frame, "px-2 py-1 font-mono")}>{summary}</div>
+      }
+      return (
+        <Foldable folded={folded} onToggle={onToggle} summary={summary} className={frame}>
+          {body}
+        </Foldable>
+      )
+    }
     case "question":
       return picker
     case "note":
@@ -308,6 +320,72 @@ function BlockBody({
         </div>
       )
   }
+}
+
+/** A tool call: one header line, and a body where it has anything to show or its header is cut. */
+function ToolBlock({
+  block,
+  folded,
+  onToggle,
+}: {
+  block: Extract<Block, { type: "tool" }>
+  folded: boolean
+  onToggle: () => void
+}) {
+  const [startRef, cut] = useCut()
+  const { tool } = block
+  // A read's subject names its file, so its input says nothing more.
+  const input = tool.kind === "read" ? undefined : tool.inputText
+  const subject = tool.subject ?? tool.title
+  const summary = (
+    <SummaryLine
+      title={subject}
+      startRef={startRef}
+      start={
+        <>
+          <span className="mr-1.5 inline-flex items-center gap-1.5 align-[-2px]">
+            <ToolStatus status={tool.status} />
+            <ToolKind kind={tool.kind} />
+          </span>
+          <span className="font-medium text-foreground">{subject}</span>
+        </>
+      }
+      end={[
+        tool.output ? lineCount(tool.output) : undefined,
+        duration(tool.startedAt, tool.endedAt),
+        formatClock(tool.startedAt ?? block.createdAt),
+      ]}
+    />
+  )
+  if (!input && !tool.output && !tool.diff && !cut) {
+    return (
+      <div className="flex items-start gap-1.5 rounded-md border px-2 py-1 font-mono text-xs text-muted-foreground">
+        <span aria-hidden className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1">{summary}</span>
+      </div>
+    )
+  }
+  return (
+    <Foldable folded={folded} onToggle={onToggle} summary={summary} className="rounded-md border">
+      <div className="space-y-2.5">
+        {input?.includes(subject) ? null : (
+          <p data-tool-subject className="font-mono text-xs break-words whitespace-pre-wrap">
+            {subject}
+          </p>
+        )}
+        {input ? <CodeBlock code={input} language={tool.inputLanguage} caption="input" /> : null}
+        {tool.output ? (
+          <CodeBlock
+            code={tool.output}
+            language={tool.outputLanguage}
+            firstLine={tool.firstLine}
+            caption="output"
+          />
+        ) : null}
+        {tool.diff ? <CodeBlock code={tool.diff} diff caption="diff" /> : null}
+      </div>
+    </Foldable>
+  )
 }
 
 const PLAN_MARKS: Record<string, string> = { completed: "✓", in_progress: "◐", pending: "○" }

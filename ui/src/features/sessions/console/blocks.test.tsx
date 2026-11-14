@@ -299,3 +299,120 @@ it("draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text"
   expect(container.querySelector("kbd")?.textContent).toBe("Ctrl")
   expect(container.querySelector("b")).toBeNull()
 })
+
+const LONG = `${"packages/very/deep/".repeat(12)}file.ts`
+
+it("keeps a tool header on one line, with its full subject on hover and its facts at the right end", () => {
+  const [block] = fold(
+    call(
+      "long",
+      { title: "Read", kind: "read", status: "completed", locations: [{ path: LONG }] },
+      at(10, 0, 0),
+    ),
+  )
+  const { container } = drawn(block as Block)
+
+  const start = container.querySelector("[data-summary-end]")?.previousElementSibling
+  expect(start?.className).toContain("truncate")
+  expect(start?.getAttribute("title")).toBe(LONG)
+  expect(container.querySelector("[data-summary-end]")?.className).toContain("shrink-0")
+  expect(container.querySelector("[data-summary-end]")?.textContent).toContain("10:00:00")
+})
+
+it("shows a call's full subject in its body where its input does not show it", () => {
+  const [read] = fold(
+    call("r", { title: "Read", kind: "read", status: "completed", content: [] }, undefined, {
+      file_path: LONG,
+    }),
+  )
+  vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(500)
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(100)
+  const { container, unmount } = drawn(read as Block, false)
+  expect(container.querySelector("[data-tool-subject]")?.textContent).toBe(LONG)
+  unmount()
+
+  const [shell] = fold(
+    call("s", { title: "Bash", kind: "execute", status: "completed", content: [] }, undefined, {
+      command: "echo hello",
+    }),
+  )
+  const shown = drawn(shell as Block, false)
+  expect(shown.container.querySelector("[data-tool-subject]")).toBeNull()
+  expect(shown.container.querySelector("code")?.textContent).toBe("echo hello")
+})
+
+it("gives a bodyless call a foldable body only when its header is cut", () => {
+  const [block] = fold(
+    call("c", { title: "Read", kind: "read", status: "completed", locations: [{ path: LONG }] }),
+  )
+  vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(100)
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(100)
+  const fits = drawn(block as Block, false)
+  expect(fits.container.querySelector("button")).toBeNull()
+  fits.unmount()
+
+  vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(500)
+  const cut = drawn(block as Block, false)
+  expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("true")
+  expect(cut.container.querySelector("[data-tool-subject]")?.textContent).toBe(LONG)
+})
+
+const permissionEvents = (extra: Record<string, unknown> = {}) => [
+  event(
+    "permission_request",
+    {
+      tool_name: "Bash",
+      tool_input: { command: "rm -rf target" },
+      options: [{ optionId: "allow", name: "Allow" }],
+      label: "ask",
+      danger: 0.21,
+      probabilities: { "0": 0.62, "1": 0.33, "2": 0.05 },
+      allow_threshold: 0.05,
+      deny_threshold: 0.65,
+      ...extra,
+    },
+    at(9, 0, 0),
+  ),
+]
+
+it("keeps a permission header on one line with its time, and shows the AI note", () => {
+  const [block] = fold(...permissionEvents())
+  const { container } = render(
+    <BlockView block={block as Block} picker={<i data-picker />} folded onToggle={() => {}} />,
+  )
+
+  const end = container.querySelector("[data-summary-end]")
+  expect(end?.textContent).toBe("09:00:00")
+  expect(end?.previousElementSibling?.className).toContain("truncate")
+  expect(end?.previousElementSibling?.getAttribute("title")).toBe("Permission · Bash")
+  expect(container.textContent).toContain(
+    "AI said ask · allow 62%, deny 5% · danger 21% (allow up to 5%, deny from 65%)",
+  )
+})
+
+it("keeps a pending permission open whatever the fold, and folds an answered one to one line", () => {
+  const pending = fold(...permissionEvents())[0] as Block
+  const open = render(
+    <BlockView block={pending} picker={<i data-picker />} folded onToggle={() => {}} />,
+  )
+  expect(open.container.querySelector("[data-picker]")).not.toBeNull()
+  expect(open.container.querySelector("code")?.textContent).toBe("rm -rf target")
+  open.unmount()
+
+  const answered = fold(
+    ...permissionEvents(),
+    event("permission.replied", { option_id: "allow", decided_by: "console" }, at(9, 0, 5)),
+  )[0] as Block
+  const onToggle = vi.fn()
+  const closed = render(<BlockView block={answered} picker={null} folded onToggle={onToggle} />)
+  expect(closed.container.querySelector("code")).toBeNull()
+  expect(closed.container.querySelector("[data-summary-end]")?.textContent).toBe(
+    "Allow · decided by console09:00:00",
+  )
+  fireEvent.click(screen.getByRole("button"))
+  expect(onToggle).toHaveBeenCalled()
+  closed.unmount()
+
+  const unfolded = drawn(answered, false)
+  expect(unfolded.container.querySelector("code")?.textContent).toBe("rm -rf target")
+})

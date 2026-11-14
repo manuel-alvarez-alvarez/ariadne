@@ -466,13 +466,28 @@ Out: the daemon endpoints themselves (012).
     known. A `read` shows no input, because its subject names the file. A
     `read` output with a first line number has a line-number gutter that
     starts there, and the numbers are not part of the selected or copied
-    text. A permission shows its command bare under `command · Shell`.
+    text. A tool call's header keeps one line: text that does not fit ends
+    in an ellipsis, the facts at the right end stay visible, and a hover on
+    the header shows the full text. The body shows the full subject above
+    the input, unless the input already holds it (a shell command's input
+    is the command). A call with no input, output or diff is a plain line
+    until its header is cut; then it folds, and its body is the full
+    subject. A permission's header (`Permission ·` and the call) keeps one
+    line the same way, with its time at the right end. A pending permission
+    shows its header, command, diff, AI note and picker open, whatever the
+    fold. An answered permission folds to one line, its header and its
+    answer (`decided by` where the payload names one); a click unfolds the
+    command, the diff and the AI note, and the choice is kept per block
+    like the others. The AI note is the TUI's (`AI said ask · allow 62%,
+    deny 5% · danger 21% (allow up to 5%, deny from 65%)`), shown where the
+    request carries one. A permission shows its command bare under
+    `command · Shell`.
     Every block shows its time: a muted `HH:MM:SS` at the right of a summary
     line and of a prompt, and the full date and time on hover of any block.
     `BlockView` is memoized, and it compares a question card or a permission
     picker by its props, so a streamed chunk re-renders only the block it
     changes. A card or a picker whose own state changes renders again. A message, a person's prompt, a plan, a
-    permission and a question never fold. An unfolded daemon prompt is
+    question never fold, and a pending permission never folds. An unfolded daemon prompt is
     Markdown, and its summary line stays plain text. The whole summary is one button
     with `aria-expanded`, so a click, Enter or Space opens that block alone;
     its content sits outside the button, so selecting it, a link in it and
