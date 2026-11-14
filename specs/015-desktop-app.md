@@ -974,9 +974,11 @@ Out: the daemon endpoints themselves (012).
     task's token figure (`↑input share ↓output`, including zero, rendered by
     the goal lane header's own `TokenFigure` at every width; its hover names
     Input and Output and lists one row per workflow step, and it is not a tab
-    stop) at the left, last activity at the
-    right, and, when the task has a `pr_url`, a compact PR link (icon and `#number`) in padding
-    reserved for it. The time shortens ("3 minutes ago" to "3m") and truncate as the card narrows. Last
+    stop) at the left, then, when the task has a `pr_url`, a compact PR link
+    (icon and `#number`; a real anchor outside the card's link with no tab stop,
+    and the hidden hints still name the request), then last activity at the
+    right end. A review or babysit task shows its goal's request through its `pr_url` (012 rule 3). The PR link and the time never overlap; the
+    token figure is cut first. The time shortens ("3 minutes ago" to "3m") and truncates as the card narrows. Last
     activity is the latest of the task's `updated_at` and the
     `last_activity_at` of every session of that task, previous ones included
     (read from the shared sessions query, which the event stream already

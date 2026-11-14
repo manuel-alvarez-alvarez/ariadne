@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/format"
 
 /** The request number a forge URL names (`/pull/12`, `/pulls/12`, `/merge_requests/12`). */
-function pullRequestNumber(url: string): number | null {
+export function pullRequestNumber(url: string): number | null {
   const match = /\/(?:pulls?|merge_requests)\/(\d+)(?:[/?#]|$)/.exec(url)
   return match ? Number(match[1]) : null
 }
@@ -20,6 +20,11 @@ function repositoryOf(url: string): string | null {
   } catch {
     return null
   }
+}
+
+/** What the compact link shows for a request number: `#12`, or `PR` with none. */
+export function pullRequestText(number: number | null): string {
+  return number != null ? `#${number}` : "PR"
 }
 
 /**
@@ -47,7 +52,7 @@ export function PrLink({
 }) {
   const n = number ?? pullRequestNumber(url)
   const repo = repository ?? repositoryOf(url)
-  const text = n != null ? `#${n}` : "PR"
+  const text = pullRequestText(n)
   const name = `Pull request ${n != null ? `#${n}` : ""}${repo ? ` in ${repo}` : ""}${context ? `: ${context}` : ""}`
   return (
     <Tooltip>

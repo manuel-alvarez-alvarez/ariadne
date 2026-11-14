@@ -1714,6 +1714,15 @@ async fn a_review_is_one_goal_with_one_staffed_task_and_a_repeat_keeps_it() {
     assert_eq!(task["status"], "in_progress");
     assert_eq!(task["step"], "review");
     assert_eq!(task["operation"], "review");
+    assert_eq!(task["pr_url"], goal_dto["pull_request"]["url"]);
+    assert!(
+        task["pr_url"].is_string(),
+        "the review task shows its request"
+    );
+    assert!(
+        tasks[0].pr_url.is_none(),
+        "the stored task pr_url is unchanged"
+    );
     assert_eq!(task["agents"].as_array().unwrap().len(), 1);
     assert_eq!(task["agents"][0]["skills"], json!(["pr-reviewer"]));
     assert_eq!(task["agents"][0]["session_id"], session.id);
