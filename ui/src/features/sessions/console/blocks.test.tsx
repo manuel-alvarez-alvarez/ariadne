@@ -6,7 +6,7 @@
  * block's time.
  */
 
-import { fireEvent, render, screen, within } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { afterEach, expect, it, vi } from "vitest"
 
 import type { AgentEventDto } from "@/api"
@@ -87,13 +87,13 @@ const edit = () =>
 const framed = (node: Element) =>
   /(^|\s)(border|border-[blrtxy]|bg-[\w/[\]-]+)(\s|$)/.test(node.getAttribute("class") ?? "")
 
-it("draws a tool call in one frame, with its input, output and diff bare under their captions", () => {
+it("draws a tool call without a frame, with its input, output and diff under their captions", () => {
   const { container } = drawn(edit())
 
   const frames = Array.from(container.querySelectorAll("*")).filter(
     (node) => node.tagName !== "BUTTON" && framed(node),
   )
-  expect(frames).toHaveLength(1)
+  expect(frames).toHaveLength(0)
   const sections = Array.from(container.querySelectorAll("[data-code-block]"))
   expect(
     sections.map((section) => section.querySelector("[data-code-caption]")?.textContent),
@@ -127,7 +127,7 @@ it("copies one section's text from its icon-only control and never toggles the f
   expect(onToggle).not.toHaveBeenCalled()
 })
 
-it("names a call's status, kind and subject at the left of its summary, and its count, duration and time at the right", () => {
+it("names a call's status, kind and subject at the left of its summary, and duration at the right", () => {
   const blocks = fold(
     call("run", { title: "Bash", kind: "execute", status: "pending" }, at(9, 5, 7), {
       command: "cargo test\n--all",
@@ -143,7 +143,7 @@ it("names a call's status, kind and subject at the left of its summary, and its 
   const summary = screen.getByRole("button", { expanded: false })
   expect(summary.querySelector("[data-tool-kind]")?.getAttribute("data-tool-kind")).toBe("execute")
   expect(within(summary).getByText("cargo test").className).toContain("text-foreground")
-  expect(summary.querySelector("[data-summary-end]")?.textContent).toBe("3 lines340ms09:05:07")
+  expect(summary.querySelector("[data-summary-end]")?.textContent).toBe("340ms")
   expect(summary.textContent).toMatch(/^completedexecutecargo test/)
 })
 
@@ -183,11 +183,11 @@ it("says how long a call took in the unit that fits it, once it has ended", () =
     return end
   }
 
-  expect(took(at(10, 0, 2, 100))).toBe("2.1s10:00:00")
-  expect(took(at(10, 1, 4))).toBe("1m 04s10:00:00")
+  expect(took(at(10, 0, 2, 100))).toBe("2.1s")
+  expect(took(at(10, 1, 4))).toBe("1m 04s")
   const running = fold(call("c", { title: "Bash", kind: "execute", status: "in_progress" }))
   const { container } = drawn(running[0] as Block)
-  expect(container.querySelector("[data-summary-end]")?.textContent).toBe("10:00:00")
+  expect(container.querySelector("[data-summary-end]")?.textContent).toBeTruthy()
 })
 
 it("shows a read's output with no input, in its file's language, numbered from its first line outside the text", () => {
@@ -316,7 +316,7 @@ it("keeps a tool header on one line, with its full subject on hover and its fact
   expect(start?.className).toContain("truncate")
   expect(start?.getAttribute("title")).toMatch(new RegExp(`^${LONG}\\n.*2026.*10:00:00`))
   expect(container.querySelector("[data-summary-end]")?.className).toContain("shrink-0")
-  expect(container.querySelector("[data-summary-end]")?.textContent).toContain("10:00:00")
+  expect(container.querySelector("[data-summary-end]")?.textContent).toBe("0ms")
 })
 
 it("shows a call's full subject in its body where its input does not show it", () => {
@@ -436,4 +436,23 @@ it("keeps a pending permission open whatever the fold, and folds an answered one
 
   const unfolded = drawn(answered, false)
   expect(unfolded.container.querySelector("code")?.textContent).toBe("rm -rf target")
+})
+
+it("updates a running tool duration and freezes it on completion", () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date(at(10, 0, 1)))
+  const running = fold(call("c", { title: "Run", status: "in_progress" }, at(10, 0, 0)))[0] as Block
+  const { rerender, unmount } = drawn(running)
+  expect(screen.getByText("1.0s")).toBeTruthy()
+  act(() => vi.advanceTimersByTime(1000))
+  expect(screen.getByText("2.0s")).toBeTruthy()
+  const finished = fold(
+    call("c", { title: "Run", status: "in_progress" }, at(10, 0, 0)),
+    call("c", { status: "completed" }, at(10, 0, 2)),
+  )[0] as Block
+  rerender(<BlockView block={finished} picker={null} folded={false} onToggle={() => {}} />)
+  vi.advanceTimersByTime(5000)
+  expect(screen.getByText("2.0s")).toBeTruthy()
+  unmount()
+  vi.useRealTimers()
 })
