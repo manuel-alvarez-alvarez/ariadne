@@ -7,8 +7,8 @@
  * workflow ({@link StepTrack}): circles, step names and arrows on one line,
  * for finished and cancelled tasks too. Row 3 is the task's `TokenFigure`
  * (`↑input share ↓output`, the goal lane header's own rendering, at every
- * width) at the left and the last activity at the right, with the PR link in
- * reserved padding. The figure's hover names Input and Output and lists one
+ * width) at the left, the PR link beside it, and the last activity at the
+ * right end; the figure is the part that is cut first. The figure's hover names Input and Output and lists one
  * row per workflow step.
  *
  * The card is an `@container`: its own width, not the window's, decides which
@@ -27,10 +27,11 @@
  * hint is collected into one hidden line instead ({@link cardHints}) and hung
  * off the link with `aria-describedby`, so what was only in a tooltip is read
  * where the card is landed on. The PR link is the one real anchor on the card
- * and sits outside the link, as a sibling laid over line 2's right end, with
- * no tab stop of its own.
+ * and sits outside the link, as a sibling laid over row 3 where the row holds its
+ * slot, with no tab stop of its own.
  */
 
+import { GitPullRequestIcon } from "lucide-react"
 import { useId } from "react"
 import { Link } from "react-router-dom"
 
@@ -57,10 +58,40 @@ import { findStep, stepTitle } from "./steps"
  */
 const NOT_A_STOP = -1
 
-/** Room line 2 leaves for the corner PR link: its inset, icon and gap, plus its `#number`, never more than the 40% the link itself may take. */
-function prLinkReserve(url: string): string {
-  const digits = /\/(?:pulls?|merge_requests)\/(\d+)/.exec(url)?.[1] ?? "PR"
-  return `min(calc(2rem + ${digits.length + 1}ch), calc(40% + 1.25rem))`
+/** The last activity time, short on a narrow card and in full on a wide one. */
+function ActivityTime({ at, hintTabIndex }: { at: string; hintTabIndex: number }) {
+  return (
+    <>
+      <When
+        at={at}
+        format="age"
+        label="last activity"
+        hintTabIndex={hintTabIndex}
+        className="@[20rem]:hidden"
+      />
+      <When
+        at={at}
+        label="last activity"
+        hintTabIndex={hintTabIndex}
+        className="hidden @[20rem]:inline"
+      />
+    </>
+  )
+}
+
+/** An invisible stand-in the size of the {@link PrLink} for `url`, in the link's own row. */
+function PrLinkSlot({ url }: { url: string }) {
+  const digits = /\/(?:pulls?|merge_requests)\/(\d+)/.exec(url)?.[1]
+  return (
+    <span
+      aria-hidden
+      data-pr-slot
+      className="invisible inline-flex h-4 shrink-0 items-center gap-1"
+    >
+      <GitPullRequestIcon className="size-3.5 shrink-0" />
+      <span>{digits ? `#${digits}` : "PR"}</span>
+    </span>
+  )
 }
 
 interface CardState {
@@ -160,12 +191,7 @@ export function TaskCard({
           <StepTrack task={task} steps={steps} />
         </div>
 
-        <div
-          className={cn(
-            "mt-auto flex min-w-0 items-center gap-x-2 pt-1 text-xs whitespace-nowrap text-muted-foreground",
-          )}
-          style={task.pr_url ? { paddingRight: prLinkReserve(task.pr_url) } : undefined}
-        >
+        <div className="mt-auto flex min-w-0 items-center gap-x-2 pt-1 text-xs whitespace-nowrap text-muted-foreground">
           <span className="min-w-0 flex-1 truncate">
             <TokenFigure
               usage={task.usage.total}
@@ -173,20 +199,11 @@ export function TaskCard({
               tabIndex={NOT_A_STOP}
             />
           </span>
-          <span className="min-w-0 shrink truncate">
-            <When
-              at={activity}
-              format="age"
-              label="last activity"
-              hintTabIndex={NOT_A_STOP}
-              className="@[20rem]:hidden"
-            />
-            <When
-              at={activity}
-              label="last activity"
-              hintTabIndex={NOT_A_STOP}
-              className="hidden @[20rem]:inline"
-            />
+          {/* Holds the PR link's place in this row, so the token figure is
+              the part that gives way; the real anchor is laid over it below. */}
+          {task.pr_url && <PrLinkSlot url={task.pr_url} />}
+          <span className="shrink-0">
+            <ActivityTime at={activity} hintTabIndex={NOT_A_STOP} />
           </span>
         </div>
       </Link>
@@ -200,16 +217,24 @@ export function TaskCard({
         </p>
       )}
 
-      {/* The PR link is the right end of line 2, beside the time: a real
-          anchor cannot sit inside the card's link, so it is laid over the
-          card's bottom-right corner, where line 2 leaves room for it. */}
+      {/* The PR link sits between the token figure and the time on row 3. A
+          real anchor cannot sit inside the card's link, so it is laid over
+          the row: this strip repeats the row's own layout, with the link
+          where the row holds its slot and the time as an invisible copy that
+          gives the link its place. */}
       {task.pr_url && (
-        <PrLink
-          url={task.pr_url}
-          context={task.title}
-          tabIndex={NOT_A_STOP}
-          className="absolute right-2.5 bottom-1.5 h-4 max-w-[40%] text-muted-foreground hover:text-foreground"
-        />
+        <div className="pointer-events-none absolute inset-x-2.5 bottom-1.5 flex h-4 items-center gap-x-2 text-xs whitespace-nowrap">
+          <span className="min-w-0 flex-1" />
+          <PrLink
+            url={task.pr_url}
+            context={task.title}
+            tabIndex={NOT_A_STOP}
+            className="pointer-events-auto h-4 shrink-0 text-muted-foreground hover:text-foreground"
+          />
+          <span aria-hidden className="invisible shrink-0">
+            <ActivityTime at={activity} hintTabIndex={NOT_A_STOP} />
+          </span>
+        </div>
       )}
     </div>
   )

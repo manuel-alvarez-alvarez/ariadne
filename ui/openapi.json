@@ -8167,7 +8167,7 @@
               "string",
               "null"
             ],
-            "description": "URL of the pull or merge request the task's `pr` column opened, once\nit has; null for a task landed directly."
+            "description": "URL of the pull or merge request the task's `pr` column opened, once\nit has; null for a task landed directly. On a review or babysit task (one\nwith an `operation`) that opened none, the goal's own request, in the\nresponse only."
           },
           "reason": {
             "type": [

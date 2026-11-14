@@ -147,31 +147,22 @@ it("says none staffed for a step with no agent", async () => {
   expect(await screen.findByText("none staffed")).toBeTruthy()
 })
 
-it("links the pull request and the updated time, and takes one tab stop", () => {
+it("links the pull request between the token figure and the time, and takes one tab stop", () => {
   card({ pr_url: "https://github.com/o/r/pull/7" })
   const pr = screen.getByRole("link", { name: /^Pull request #7\b/ })
   expect(pr.getAttribute("href")).toBe("https://github.com/o/r/pull/7")
   expect(pr.getAttribute("tabindex")).toBe("-1")
   expect(document.querySelector("time")).toBeTruthy()
-  // Line 2's right end, beside the time: laid over the card's corner rather
-  // than a row of its own, with line 2 leaving room for it.
-  expect(pr.className).toContain("absolute")
-  expect(pr.className).toContain("bottom-1.5")
-  expect(document.querySelector("time")?.parentElement?.parentElement?.style.paddingRight).toBe(
-    "min(2ch + 2rem, 40% + 1.25rem)",
-  )
-  expect(pr.parentElement?.children).toHaveLength(3) // card link, hints, PR: no third row
+  // The link's row holds an invisible slot between the figure and the time;
+  // the figure is the flexible part, the slot and the time never shrink.
+  const row = document.querySelector("[data-pr-slot]")?.parentElement as HTMLElement
+  expect(row.children).toHaveLength(3)
+  expect(row.children[0]?.className).toContain("flex-1")
+  expect(row.children[1]?.className).toContain("shrink-0")
+  expect(row.children[2]?.className).toContain("shrink-0")
+  expect(pr.parentElement?.className).toContain("bottom-1.5")
   const links = screen.getAllByRole("link")
   expect(links.filter((link) => link.getAttribute("tabindex") !== "-1")).toHaveLength(1)
-})
-
-it("caps the reserved room at the link's own 40% limit for a long pull request number", () => {
-  card({ pr_url: "https://github.com/o/r/pull/123456" })
-  const pr = screen.getByRole("link", { name: /^Pull request #123456\b/ })
-  expect(pr.className).toContain("max-w-[40%]")
-  expect(document.querySelector("time")?.parentElement?.parentElement?.style.paddingRight).toBe(
-    "min(7ch + 2rem, 40% + 1.25rem)",
-  )
 })
 
 it("shows no pull request link without a pr_url, and no branch", () => {
