@@ -151,7 +151,12 @@ export function TaskSessionView({
             </AlertDescription>
           </Alert>
         ) : (
-          <SessionDetailView session={session.data} context="task" />
+          <SessionDetailView
+            session={session.data}
+            context="task"
+            onResumed={(revived) => onSelect(revived.id)}
+            onSwitched={(successor) => onSelect(successor.id)}
+          />
         )}
       </PaneBody>
     </>

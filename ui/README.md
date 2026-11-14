@@ -99,6 +99,17 @@ Regenerating the API types after a daemon change is covered in
 | `Escape` | closes the palette, then the topmost panel |
 | `⌘Esc` / `Ctrl+Esc` | leaves a focused console for the pane or the modal around it |
 
+In a session's console, Enter sends and Shift+Enter adds a line; the composer
+grows to six lines and then scrolls. The plus menu beside it searches the
+agent's slash commands and offers Switch agent/model, Resume once the session
+has ended, Expand or Collapse all, and Copy loaded transcript, which copies
+only what the console has loaded for the view shown. A command from the menu
+or the suggestion list goes into the composer for you to edit; it is not sent.
+A message the daemon refuses stays in the transcript with Retry and Edit. With
+subagents, the bar of views is one Tab stop: the arrow keys move along it. A
+console keeps each session's draft, scroll place and folds while you expand it,
+collapse it or change tabs, until the app restarts.
+
 The two ⌘ chords answer to **either** modifier, on every platform: the app runs
 in a Tauri WebView and in a browser tab, and a chord that silently does nothing
 because the platform was sniffed wrong is worse than one that answers to both.

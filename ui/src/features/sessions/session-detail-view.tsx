@@ -161,8 +161,14 @@ type Tab = (typeof TABS)[number]
 export function SessionDetailView({
   session,
   context,
+  onResumed,
+  onSwitched,
 }: {
   session: SessionDto
+  /** Where to go once the console's Resume hands the session back. */
+  onResumed?: (session: SessionDto) => void
+  /** Where to go once the console's Switch creates a successor session. */
+  onSwitched?: (session: SessionDto) => void
   /**
    * What the view is embedded in. The link back to that goal or task is
    * dropped, since inside its own panel it would only point at itself.
@@ -333,6 +339,10 @@ export function SessionDetailView({
             autoFocus={focusTerminal}
             usage={{ input: session.usage.input_tokens, output: session.usage.output_tokens }}
             className="h-full min-h-0"
+            session={session}
+            canSwitch={goal.data?.status !== "cancelled"}
+            onResumed={onResumed}
+            onSwitched={onSwitched}
           />
         </TabsContent>
         <TabsContent value="activity" className="pt-3">

@@ -919,3 +919,57 @@ function list(value: unknown, key: string): unknown[] {
   const found = at(value, key)
   return Array.isArray(found) ? found : []
 }
+
+/**
+ * The blocks as plain text, one section per block, for the copy of a loaded
+ * transcript. It holds what the console has loaded and nothing older.
+ */
+export function blocksText(blocks: readonly Block[]): string {
+  return blocks.map(blockText).join("\n\n")
+}
+
+function blockText(block: Block): string {
+  switch (block.type) {
+    case "prompt":
+      return `> ${block.text}`
+    case "message":
+      return block.text
+    case "thought":
+      return `(thought) ${block.text}`
+    case "plan":
+      return block.entries.map((entry) => `[${entry.status}] ${entry.content}`).join("\n")
+    case "tool":
+      return [
+        `[${block.tool.status ?? "pending"}] ${block.tool.kind ? `${block.tool.kind} ` : ""}${block.tool.title}`,
+        block.tool.output,
+        block.tool.diff,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    case "permission":
+      return [
+        `Permission: ${block.title}`,
+        block.command,
+        block.diff,
+        block.answer ? `-> ${block.answer.name}` : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    case "question":
+      return [
+        `Question: ${block.question.text}`,
+        block.resolution
+          ? `-> ${block.resolution.state}${block.resolution.answer ? `: ${block.resolution.answer}` : ""}`
+          : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    case "note":
+    case "child":
+      return block.text
+    case "error":
+      return [`Error: ${block.text}`, block.diagnosis].filter(Boolean).join("\n")
+    case "raw":
+      return `${block.kind}: ${block.summary}`
+  }
+}

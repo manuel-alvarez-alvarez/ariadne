@@ -61,6 +61,38 @@ export function restoredQuestions(
   )
 }
 
+/**
+ * Post an answer for one request: an option's id or the user's own text. The
+ * card and the composer both answer through this, so neither can reach the
+ * console input route.
+ */
+export async function answerRequest(
+  sessionId: string,
+  requestId: string,
+  body: { option_id: string } | { text: string },
+): Promise<void> {
+  await unwrap(
+    api().POST("/v1/sessions/{session_id}/agent-requests/{request_id}/answer", {
+      params: { path: { session_id: sessionId, request_id: requestId } },
+      body,
+    }),
+  )
+}
+
+/**
+ * The question the composer answers: the newest one in view that nothing has
+ * closed and nobody has answered yet.
+ */
+export function openQuestion(
+  blocks: readonly Block[],
+  answered: ReadonlySet<string>,
+): QuestionBlock | undefined {
+  return blocks.findLast(
+    (block): block is QuestionBlock =>
+      block.type === "question" && block.resolution === undefined && !answered.has(block.requestId),
+  )
+}
+
 /** What the card is doing with an answer: the option it posts, or `custom`. */
 type Submitting = { state: "idle" } | { state: "posting"; what: string } | { state: "accepted" }
 
@@ -68,11 +100,17 @@ export function QuestionCard({
   sessionId,
   block,
   live,
+  sent = false,
+  onAnswered,
 }: {
   sessionId: string
   block: QuestionBlock
   /** The session takes input: a card of a finished session is history. */
   live: boolean
+  /** An answer for this request was accepted elsewhere, the composer's say. */
+  sent?: boolean
+  /** Told when this card's own answer is accepted. */
+  onAnswered?: (requestId: string) => void
 }) {
   const [submitting, setSubmitting] = useState<Submitting>({ state: "idle" })
   const [error, setError] = useState<string | null>(null)
@@ -80,19 +118,15 @@ export function QuestionCard({
   const { question, resolution } = block
   const options = question.options ?? []
   const recommended = options.find((option) => option.id === question.recommended_option_id)
-  const answerable = live && resolution === undefined && submitting.state === "idle"
+  const answerable = live && resolution === undefined && !sent && submitting.state === "idle"
 
   async function submit(what: string, body: { option_id: string } | { text: string }) {
     setSubmitting({ state: "posting", what })
     setError(null)
     try {
-      await unwrap(
-        api().POST("/v1/sessions/{session_id}/agent-requests/{request_id}/answer", {
-          params: { path: { session_id: sessionId, request_id: block.requestId } },
-          body,
-        }),
-      )
+      await answerRequest(sessionId, block.requestId, body)
       setSubmitting({ state: "accepted" })
+      onAnswered?.(block.requestId)
     } catch (failure) {
       setError(`Could not send the answer: ${describeError(failure)}`)
       setSubmitting({ state: "idle" })
@@ -145,7 +179,7 @@ export function QuestionCard({
           ))}
         </div>
       ) : null}
-      {resolution === undefined && live ? (
+      {resolution === undefined && live && !sent ? (
         <form onSubmit={submitCustom} className="flex gap-1.5 pt-2">
           <input
             aria-label="Your own answer"
@@ -168,7 +202,11 @@ export function QuestionCard({
           {error}
         </p>
       ) : null}
-      <Outcome resolution={resolution} accepted={submitting.state === "accepted"} live={live} />
+      <Outcome
+        resolution={resolution}
+        accepted={sent || submitting.state === "accepted"}
+        live={live}
+      />
     </section>
   )
 }

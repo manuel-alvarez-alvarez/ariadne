@@ -71,7 +71,15 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
             onRetry={() => void session.refetch()}
           />
         ) : (
-          <SessionDetailView session={session.data} />
+          <SessionDetailView
+            session={session.data}
+            onResumed={(revived) =>
+              setSearch(sessionPanelFrom(pathname, search, revived.id).search, { replace: true })
+            }
+            onSwitched={(successor) =>
+              setSearch(sessionPanelFrom(pathname, search, successor.id).search, { replace: true })
+            }
+          />
         )}
       </PaneBody>
     </PanelSheet>

@@ -115,7 +115,12 @@ export function GoalSessionView({
             </AlertDescription>
           </Alert>
         ) : (
-          <SessionDetailView session={session.data} context="goal" />
+          <SessionDetailView
+            session={session.data}
+            context="goal"
+            onResumed={(revived) => onSelect(revived.id)}
+            onSwitched={(successor) => onSelect(successor.id)}
+          />
         )}
       </PaneBody>
     </>

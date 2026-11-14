@@ -416,19 +416,27 @@ stream (008). It lives in `src/features/sessions/console/`:
   session's children from their `subagent_update` events, and `view` picks
   the blocks of `main` or of one child. A child's permission question is
   the session's, so it stays in `main`.
-- `session-console.tsx` draws the blocks, the input box and the cancel
+- `console-view-state.ts` retains, in memory and per daemon address and
+  session, what a console keeps while it is off screen: the draft, the
+  scroll position, whether it follows, the view shown, the fold and a fold
+  preference per block id. Write to it through `updateViewState`; a pane
+  mounted again reads it back.
+- `composer-menu.tsx` is the plus menu: the agent's commands and the session
+  actions. Switch and Resume are `SwitchSessionDialog` and `useResumeAction`
+  from `../session-actions.tsx`, the same ones the session panel uses.
+- `session-console.tsx` draws the blocks, the input box and the stop
   control. A prompt and a permission pick both post `{"text"}` to
   `POST /v1/sessions/{id}/console/input`. A cancel posts
-  `POST /v1/sessions/{id}/console/cancel` with no body. A failed post adds an
-  error block. `questions.tsx` draws a `wait_for_user` question as a card,
+  `POST /v1/sessions/{id}/console/cancel` with no body. A failed post is kept
+  in the transcript with Retry and Edit. `questions.tsx` draws a `wait_for_user` question as a card,
   and posts its answer to the request's own
   `POST /v1/sessions/{id}/agent-requests/{request_id}/answer`, never to the
   input route; a failed answer shows on the card. With every snapshot it
   reads `GET /v1/sessions/{id}/agent-requests` and restores a card for a
   pending question older than the snapshot's page. A session with subagents
   shows a bar of views, as the CLI
-  attach pane does (008 rules 30 to 36). Tab and Shift-Tab switch the view,
-  and a child's view is read-only. Escape there goes back to `main`, or
+  attach pane does (008 rules 30 to 36). the arrow keys switch the view
+  inside the bar, which is one Tab stop, and a child's view is read-only. Escape there goes back to `main`, or
   posts `{"subagent_id"}` to the cancel route for a running child that may
   be cancelled.
 

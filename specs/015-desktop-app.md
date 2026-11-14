@@ -348,9 +348,9 @@ Out: the daemon endpoints themselves (012).
     loaded.
 22. An input box posts a prompt as `{"text"}` to
     `POST /v1/sessions/{id}/console/input`: Enter sends it, and Shift+Enter
-    adds a line. A failed post, a `409` included, adds an error block. The
+    adds a line. A failed post is kept, rule 22d. The
     box is disabled, with the reason, while the session is not live. A
-    running turn shows a cancel control that posts
+    running turn shows a Stop control that posts
     `POST /v1/sessions/{id}/console/cancel` with no body, and Escape inside
     the console cancels it too. A `permission_request` with no
     `permission.replied` yet shows the call, its command or diff, and its
@@ -358,6 +358,43 @@ Out: the daemon endpoints themselves (012).
     click answers, and the answer is posted as `{"text": "<optionId>"}` to
     the same input route. The reply shows the chosen option and who decided
     (`decided_by`).
+22b. The composer starts at one line and grows with newlines and pasted text
+    to six lines, then scrolls inside. A Send control sits beside it,
+    disabled while the draft is blank or the session is not live, and Stop
+    stays beside it while a turn runs. Enter sends and Shift+Enter adds a
+    line; an Enter that ends an input-method composition does neither, and a
+    pasted text keeps its lines.
+22c. While a question card (rule 22a) waits for an answer, the composer
+    answers the newest such question, one restored from the pending list
+    included: its text posts as `{"text"}` to that
+    request's own answer route and never to the input route, and shows no
+    `queued` block. The card then shows `Answer sent`, and the next message
+    goes to the input route. A permission pick and a normal message keep the
+    input route.
+22d. A message the daemon refuses leaves the queue and stays in the
+    transcript with the error, a Retry and an Edit. Retry sends the same
+    text again, to the same request where it answered a question, and leaves
+    the draft as it is. Edit takes the text back into the composer in front
+    of any newer draft, and gives the composer the keyboard. Refused messages are
+    retained with the console's state (rule 24i), so Expand, Collapse and a
+    change of tab keep them, and a send that fails after the pane was
+    replaced shows in the pane now mounted.
+22e. A plus menu beside the composer searches, by name and description, the
+    agent's commands (rule 23b) and these actions: Switch agent/model, where
+    the session's goal is not cancelled; Resume, only while the session is
+    not live; Expand all or Collapse all, which also clears every block's
+    own fold; and `Copy loaded transcript (<view>)`, which copies the blocks
+    the console has loaded for the view shown, `main` or the child's title,
+    as text and nothing older. Switch and Resume are the session actions of
+    the session panel (`session-actions.tsx`), with the same dialog, toasts
+    and navigation to the successor or the revived session. A command picked
+    from the menu goes into the composer for editing in front of any draft,
+    with the caret after it, and is never sent. After a pick the composer
+    has the keyboard. Every entry is a button, so a click, a tap and the
+    keyboard reach it: the search field takes the keyboard on opening, Down
+    walks the entries, Up returns to the field and Enter in the field picks
+    the first match. The menu also shows in a child's view, with the
+    actions alone.
 22a. An `agent_request` event that carries a `question` (031 rule 11) is a
     question card (`console/questions.tsx`): the hint, the question text,
     `Recommended: <label>`, one button per option with its description, and
@@ -404,9 +441,11 @@ Out: the daemon endpoints themselves (012).
     suggestion list shows at most 8 of the listed commands whose name holds
     the typed text, each with its name, description and input hint, or says
     "no matching command". No list shows while a permission question waits.
-    Up and Down move the pick, Tab or Enter completes it into the input as
-    `/name `, and Escape closes the list without cancelling the turn; the next edit
-    of the input opens it again. A
+    Up and Down move the pick, Enter or a click or tap on an entry completes
+    it into the input, replacing only the command's first word and keeping
+    the text after it, keeps the input's keyboard, and Tab keeps
+    its browser meaning. Escape closes the list without cancelling the turn;
+    the next edit of the input opens it again. A
     picked command is sent as plain text through `/console/input`, as every
     prompt is.
 23d. A status row above the input shows the session's status, and while a
@@ -418,8 +457,7 @@ Out: the daemon endpoints themselves (012).
 23e. A sent prompt shows at once as a user prompt block tagged `queued`.
     The `user_prompt_submit` with `source: "console"` and the same text,
     newer than the send, replaces it: an older echo, such as one a resync
-    replays, does not. A failed post removes the queued block and adds an error
-    block. Each send is its own queued block: a failed post removes the
+    replays, does not. A failed post removes the queued block and keeps the message, rule 22d. Each send is its own queued block: a failed post removes the
     block of that send alone, even where an identical prompt is queued
     beside it, and where the echo of a later identical send came first, the
     failure clears the entry that echo left behind. A snapshot keeps a queued prompt it does not yet hold.
@@ -436,12 +474,15 @@ Out: the daemon endpoints themselves (012).
     mark of its state: `●` running, `✓` completed, `✗` failed, `⊘`
     cancelled, `◇` none. The child whose permission question waits carries
     `?`.
-24b. A click on a bar entry, Tab and Shift-Tab switch the view, in bar
-    order, and wrap around. A session with no child takes Tab as before.
+24b. A click on a bar entry switches the view. The bar is one Tab stop, on
+    the entry shown: Left and Right move between the entries, in bar order
+    and wrapping around, and Home and End go to the first and last; each
+    shows its view and keeps the keyboard on the bar. Tab and Shift-Tab are
+    the browser's.
 24c. A child's view shows only the events that carry its
     `payload.subagent.id`. A call's update merges only into the block of
     the same speaker, even under the same call id or title. It has no input
-    box and takes no typing. Its footer starts with `read-only`.
+    box and takes no typing. Its footer starts with `read-only`, then `arrows switch view`.
 24d. Escape in a child's view returns to `main`. Where the child's latest
     `capabilities.cancel` is true and its state is `running`, Escape posts
     `{"subagent_id": "<id>"}` to `POST /v1/sessions/{id}/console/cancel`
@@ -459,7 +500,21 @@ Out: the daemon endpoints themselves (012).
     `running`.
 24h. A snapshot, the one a reconnect brings included, rebuilds the bar and
     the views. A shown child that the snapshot no longer holds gives way to
-    `main`.
+    `main`, once a snapshot has said which children there are.
+24i. The console retains, in memory and per daemon address and session
+    (`console/console-view-state.ts`): the draft, the transcript's scroll
+    position and whether it follows the newest block, the view shown, the
+    refused messages, the console's fold and a fold preference per block id. Expanding the
+    console, collapsing it, and leaving the tab and coming back restore
+    them; another session or another daemon starts with its own. A reader
+    who scrolled up comes back to that place, not the bottom: the pane
+    loads older pages back to the oldest event it had loaded, then restores
+    the offset, so the place holds the same content. The console also
+    retains the first block in view and where its top sat, and puts that
+    block back there, so events that moved the page boundary do not move the
+    place. A browser
+    restart forgets them. Each console on screen holds one stream, and a
+    hidden one holds none.
 25. A session's view has two tabs over one space: the console, open by
     default, and the agent activity feed. The tab is in the URL (`?tab=`);
     the console's tab is `terminal` on the wire, so an older link still
@@ -1301,10 +1356,48 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/console/session-console.test.tsx::shows the bar only with a child, listing main and each child with its mark`,
   `::marks a completed and a cancelled child`,
   `ui/src/features/sessions/console/transcript.test.ts::lists each child in announcement order with its state and whether it may be cancelled`).
-- A click, Tab and Shift-Tab switch the view in bar order and wrap around,
-  and a session with no child keeps its Tab (rule 24b)
-  (`ui/src/features/sessions/console/session-console.test.tsx::switches the view with Tab, Shift-Tab and a click, in bar order, wrapping around`,
-  `::leaves Tab alone in a session with no child`).
+- The arrow keys switch the view inside the bar, which is one Tab stop, and
+  a click does too; Tab stays the browser's (rule 24b)
+  (`ui/src/features/sessions/console/session-console.test.tsx::switches the view with the arrow keys inside the bar and with a click, wrapping around`,
+  `::keeps Tab for the browser, and the view bar a single stop in the Tab order`).
+- The composer grows to six lines, sends from Enter and from Send, and keeps
+  a newline, a composition and a paste (rule 22b)
+  (`ui/src/features/sessions/console/composer.test.tsx::starts at one line, grows with its text to six lines, then scrolls inside`,
+  `::sends with Enter and the Send control, and keeps a newline, a composition and a paste`,
+  `::offers Stop beside Send while a turn runs`).
+- The composer answers an open question on its request's own route (rule 22c)
+  (`ui/src/features/sessions/console/composer.test.tsx::answers an open question from the composer on that request's own route`,
+  `::answers a question restored from the requests list from the composer`,
+  `::answers the newest of a restored and a loaded question`).
+- A refused message keeps its text with Retry and Edit, and the newer draft
+  (rule 22d)
+  (`ui/src/features/sessions/console/composer.test.tsx::keeps a refused message with Retry, and Retry sends the same text without touching the draft`,
+  `::returns a refused message for editing in front of the newer draft`,
+  `::keeps a refused message, with Retry and Edit, when the console is unmounted and mounted again`,
+  `::shows in the replacement pane a send that fails after the console was expanded`).
+- A suggestion completes the command's first word and keeps the text after it
+  (rule 23c)
+  (`ui/src/features/sessions/console/composer.test.tsx::completes a suggestion by keyboard or click and keeps the text after the command`).
+- The plus menu inserts a command for editing, offers Resume only when the
+  session ended and Switch only where it can, expands and collapses all, and
+  copies the loaded transcript of the view shown (rule 22e)
+  (`ui/src/features/sessions/console/composer.test.tsx::inserts a menu command in front of the draft for editing, and hands the composer focus`,
+  `::picks a menu entry with the keyboard`,
+  `::completes a suggestion on a click, keeping the composer's focus`,
+  `::offers Resume only once the session has ended, and resumes through the existing route`,
+  `::hides Resume while the session is live, and Switch where it cannot switch`,
+  `::keeps a draft of only spaces and newlines when a menu command is inserted`,
+  `::opens the switch dialog from the menu`,
+  `::copies only the loaded transcript of the view shown, and names that scope`,
+  `::expands and collapses everything from the menu`).
+- The console retains a session's draft, fold and place apart per daemon and
+  session, and keeps one open stream while shown (rule 24i)
+  (`ui/src/features/sessions/console/composer.test.tsx::brings a session's draft and fold back after the console is unmounted`,
+  `::keeps each daemon's and each session's state apart`,
+  `::restores the reader's place, not the bottom, when the console comes back`,
+  `::brings back the older page the reader had loaded, and their place in it, after the console expands`,
+  `::puts the block the reader was on back in place when new events move the page boundary`,
+  `::holds one open stream for the console shown, and none once it is hidden`).
 - A child's view shows its own events only, has no input and says
   `read-only` (rule 24c)
   (`ui/src/features/sessions/console/session-console.test.tsx::shows a child's own events read-only, and its questions and lines in main`,

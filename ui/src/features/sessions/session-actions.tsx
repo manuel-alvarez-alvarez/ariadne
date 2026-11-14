@@ -43,6 +43,115 @@ import { isLiveStatus } from "./session-display"
 const switchSchema = z.object({ model: modelRefField(), effort: z.string() })
 type SwitchForm = z.infer<typeof switchSchema>
 
+/**
+ * Resume a session that ended, with the toasts the panel's button gives. The
+ * daemon answers with this same session either way: live again when it really
+ * relaunched it, or untouched when its agent turned out to be alive after all
+ * (the scheduler may have respawned it already) — which its status says.
+ */
+export function useResumeAction(onResumed?: (session: SessionDto) => void) {
+  const resume = useResumeSession()
+  return {
+    pending: resume.isPending,
+    resume(id: string) {
+      resume.mutate(id, {
+        onSuccess: (revived) => {
+          if (!isLiveStatus(revived.status)) {
+            toast.info("That agent is already alive", {
+              description: `${shortId(revived.id)} has a running agent; nothing to resume.`,
+            })
+            return
+          }
+          toast.success("Session resumed", {
+            description: `${shortId(revived.id)} · same agent conversation`,
+          })
+          onResumed?.(revived)
+        },
+        onError: (error) => toast.error("Could not resume", { description: describeError(error) }),
+      })
+    },
+  }
+}
+
+/** The dialog that starts a session's successor on another agent or model. */
+export function SwitchSessionDialog({
+  session,
+  open,
+  onOpenChange,
+  onSwitched,
+}: {
+  session: SessionDto
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSwitched?: (session: SessionDto) => void
+}) {
+  const switched = useSwitchSession()
+  const models = useQuery({ ...modelsQueryOptions(), enabled: open })
+  const form = useForm<SwitchForm>({
+    resolver: zodResolver(switchSchema),
+    defaultValues: { model: session.model, effort: session.effort ?? "" },
+  })
+  useResetOnOpen(open, form, { model: session.model, effort: session.effort ?? "" }, switched)
+  return (
+    <FormDialog open={open} onOpenChange={onOpenChange} dirty={form.formState.isDirty}>
+      <FormDialogContent
+        title="Switch session"
+        description="Start this session's successor on another model or agent."
+        onSubmit={form.handleSubmit((values) => {
+          const effort = values.effort.trim()
+          switched.mutate(
+            { id: session.id, model: values.model.trim(), ...(effort ? { effort } : {}) },
+            {
+              onSuccess: (next) => {
+                onOpenChange(false)
+                toast.success("Session switched", { description: next.model })
+                if (next.id !== session.id) onSwitched?.(next)
+              },
+              onError: (error) =>
+                toast.error("Could not switch session", { description: describeError(error) }),
+            },
+          )
+        })}
+        submitLabel="Switch"
+        pending={switched.isPending}
+        submitDisabled={form.watch("model").trim().length === 0}
+        onKeyDown={submitOnChord}
+      >
+        <FormDialogBody>
+          <Field data-invalid={form.formState.errors.model ? "" : undefined}>
+            <FieldLabel htmlFor="switch-session-pin">Runs on</FieldLabel>
+            <Controller
+              control={form.control}
+              name="model"
+              render={({ field }) => (
+                <PinPicker
+                  id="switch-session-pin"
+                  label="Runs on"
+                  model={field.value}
+                  effort={form.watch("effort")}
+                  models={models.data}
+                  invalid={Boolean(form.formState.errors.model)}
+                  onChange={(pin) => {
+                    field.onChange(pin.model)
+                    form.setValue("effort", pin.effort, { shouldDirty: true })
+                  }}
+                />
+              )}
+            />
+            {form.formState.errors.model ? (
+              <FieldError>{form.formState.errors.model.message}</FieldError>
+            ) : (
+              <FieldDescription>
+                The agent and, after a <code>:</code>, the model of it.
+              </FieldDescription>
+            )}
+          </Field>
+        </FormDialogBody>
+      </FormDialogContent>
+    </FormDialog>
+  )
+}
+
 export function SessionActions({
   session,
   onResumed,
@@ -62,14 +171,7 @@ export function SessionActions({
   const [confirmKill, setConfirmKill] = useState(false)
   const [switchOpen, setSwitchOpen] = useState(false)
   const kill = useKillSession()
-  const resume = useResumeSession()
-  const switched = useSwitchSession()
-  const models = useQuery({ ...modelsQueryOptions(), enabled: switchOpen })
-  const form = useForm<SwitchForm>({
-    resolver: zodResolver(switchSchema),
-    defaultValues: { model: session.model, effort: session.effort ?? "" },
-  })
-  useResetOnOpen(switchOpen, form, { model: session.model, effort: session.effort ?? "" }, switched)
+  const resume = useResumeAction(onResumed)
   const live = isLiveStatus(session.status)
 
   return (
@@ -92,29 +194,8 @@ export function SessionActions({
         <Button
           variant="outline"
           size="sm"
-          pending={resume.isPending}
-          onClick={() => {
-            resume.mutate(session.id, {
-              onSuccess: (revived) => {
-                // The daemon answers with this same session either way: live
-                // again when it really relaunched it, or untouched when its
-                // agent turned out to be alive after all (the scheduler may
-                // have respawned it already) — which its status is what says.
-                if (!isLiveStatus(revived.status)) {
-                  toast.info("That agent is already alive", {
-                    description: `${shortId(revived.id)} has a running agent; nothing to resume.`,
-                  })
-                  return
-                }
-                toast.success("Session resumed", {
-                  description: `${shortId(revived.id)} · same agent conversation`,
-                })
-                onResumed?.(revived)
-              },
-              onError: (error) =>
-                toast.error("Could not resume", { description: describeError(error) }),
-            })
-          }}
+          pending={resume.pending}
+          onClick={() => resume.resume(session.id)}
         >
           <PlayIcon />
           Resume session
@@ -156,62 +237,12 @@ export function SessionActions({
           })
         }}
       />
-      <FormDialog open={switchOpen} onOpenChange={setSwitchOpen} dirty={form.formState.isDirty}>
-        <FormDialogContent
-          title="Switch session"
-          description="Start this session's successor on another model or agent."
-          onSubmit={form.handleSubmit((values) => {
-            const effort = values.effort.trim()
-            switched.mutate(
-              { id: session.id, model: values.model.trim(), ...(effort ? { effort } : {}) },
-              {
-                onSuccess: (next) => {
-                  setSwitchOpen(false)
-                  toast.success("Session switched", { description: next.model })
-                  if (next.id !== session.id) onSwitched?.(next)
-                },
-                onError: (error) =>
-                  toast.error("Could not switch session", { description: describeError(error) }),
-              },
-            )
-          })}
-          submitLabel="Switch"
-          pending={switched.isPending}
-          submitDisabled={form.watch("model").trim().length === 0}
-          onKeyDown={submitOnChord}
-        >
-          <FormDialogBody>
-            <Field data-invalid={form.formState.errors.model ? "" : undefined}>
-              <FieldLabel htmlFor="switch-session-pin">Runs on</FieldLabel>
-              <Controller
-                control={form.control}
-                name="model"
-                render={({ field }) => (
-                  <PinPicker
-                    id="switch-session-pin"
-                    label="Runs on"
-                    model={field.value}
-                    effort={form.watch("effort")}
-                    models={models.data}
-                    invalid={Boolean(form.formState.errors.model)}
-                    onChange={(pin) => {
-                      field.onChange(pin.model)
-                      form.setValue("effort", pin.effort, { shouldDirty: true })
-                    }}
-                  />
-                )}
-              />
-              {form.formState.errors.model ? (
-                <FieldError>{form.formState.errors.model.message}</FieldError>
-              ) : (
-                <FieldDescription>
-                  The agent and, after a <code>:</code>, the model of it.
-                </FieldDescription>
-              )}
-            </Field>
-          </FormDialogBody>
-        </FormDialogContent>
-      </FormDialog>
+      <SwitchSessionDialog
+        session={session}
+        open={switchOpen}
+        onOpenChange={setSwitchOpen}
+        onSwitched={onSwitched}
+      />
     </div>
   )
 }

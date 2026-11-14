@@ -13,6 +13,7 @@ import type { AgentEventDto } from "@/api"
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
 
+import { consoleViewKey, updateViewState } from "./console-view-state"
 import { SessionConsole } from "./session-console"
 
 const SESSION_ID = "01JSESS0000000000000000001"
@@ -58,6 +59,15 @@ function answer(reply: () => Response = () => new Response(null, { status: 204 }
 }
 
 beforeEach(() => {
+  updateViewState(consoleViewKey("http://127.0.0.1:7676", SESSION_ID), {
+    draft: "",
+    scrollTop: 0,
+    following: true,
+    folded: true,
+    blockFolds: {},
+    shown: undefined,
+    failed: [],
+  })
   pendingList = []
   pendingFailures = 0
   stubEventSource()
@@ -181,7 +191,7 @@ it("cancels a running turn from its control and from Escape inside the console",
   const user = userEvent.setup()
   renderConsole([event("user_prompt_submit", { text: "go" })], "running")
 
-  await user.click(screen.getByRole("button", { name: "Cancel the turn" }))
+  await user.click(screen.getByRole("button", { name: "Stop the turn" }))
   await waitFor(() => expect(posts).toHaveLength(1))
   fireEvent.keyDown(input(), { key: "Escape" })
   await waitFor(() => expect(posts).toHaveLength(2))
@@ -505,28 +515,34 @@ it("marks a completed and a cancelled child", () => {
   expect(tabs()).toEqual(["main *", "✓ Explorer", "⊘ Tester"])
 })
 
-it("switches the view with Tab, Shift-Tab and a click, in bar order, wrapping around", async () => {
+it("switches the view with the arrow keys inside the bar and with a click, wrapping around", async () => {
   const user = userEvent.setup()
   renderConsole([update(EXPLORER, "running"), update(TESTER, "running")])
+  const [main] = screen.getAllByRole("tab")
 
-  fireEvent.keyDown(input(), { key: "Tab" })
+  fireEvent.keyDown(main as Element, { key: "ArrowRight" })
   expect(tabs()).toEqual(["main", "● Explorer *", "● Tester"])
-  await waitFor(() => expect(document.activeElement).not.toBe(document.body))
-  fireEvent.keyDown(document.activeElement as Element, { key: "Tab" })
+  expect(document.activeElement).toBe(screen.getByRole("tab", { name: /Explorer/ }))
+  fireEvent.keyDown(document.activeElement as Element, { key: "ArrowRight" })
   expect(tabs()).toEqual(["main", "● Explorer", "● Tester *"])
-  fireEvent.keyDown(document.activeElement as Element, { key: "Tab" })
+  fireEvent.keyDown(document.activeElement as Element, { key: "ArrowRight" })
   expect(tabs()).toEqual(["main *", "● Explorer", "● Tester"])
-  fireEvent.keyDown(input(), { key: "Tab", shiftKey: true })
+  fireEvent.keyDown(document.activeElement as Element, { key: "ArrowLeft" })
   expect(tabs()).toEqual(["main", "● Explorer", "● Tester *"])
+  fireEvent.keyDown(document.activeElement as Element, { key: "Home" })
+  expect(tabs()).toEqual(["main *", "● Explorer", "● Tester"])
 
   await user.click(screen.getByRole("tab", { name: /Explorer/ }))
   expect(tabs()).toEqual(["main", "● Explorer *", "● Tester"])
 })
 
-it("leaves Tab alone in a session with no child", () => {
-  renderConsole()
+it("keeps Tab for the browser, and the view bar a single stop in the Tab order", () => {
+  renderConsole([update(EXPLORER, "running")])
 
   expect(fireEvent.keyDown(input(), { key: "Tab" })).toBe(true)
+  expect(tabs()).toEqual(["main *", "● Explorer"])
+  const stops = screen.getAllByRole("tab").filter((tab) => tab.tabIndex === 0)
+  expect(stops).toHaveLength(1)
 })
 
 it("shows a child's own events read-only, and its questions and lines in main", async () => {
@@ -554,7 +570,7 @@ it("shows a child's own events read-only, and its questions and lines in main", 
   expect(within(transcript()).queryByText("parent says")).toBeNull()
   expect(within(transcript()).queryByText(/asked by subagent/)).toBeNull()
   expect(screen.queryByRole("textbox", { name: "Message the agent" })).toBeNull()
-  screen.getByText("read-only · tab next view · esc back")
+  screen.getByText("read-only · arrows switch view · esc back")
 })
 
 it("goes back to main on Escape from a child that may not be cancelled", async () => {
@@ -573,7 +589,7 @@ it("cancels a running child that may be cancelled on Escape, and shows a refusal
   answer(() => errorResponse(409, "subagent_not_cancellable", "the subagent has ended"))
   renderConsole([update(EXPLORER, "running", true)], "running")
   await user.click(screen.getByRole("tab", { name: /Explorer/ }))
-  screen.getByText("read-only · tab next view · esc cancel")
+  screen.getByText("read-only · arrows switch view · esc cancel")
 
   fireEvent.keyDown(screen.getByRole("tab", { name: /Explorer/ }), { key: "Escape" })
 
@@ -685,7 +701,7 @@ it("suggests the agent's commands while the first word is typed, and completes t
     "ariaSelected",
     "true",
   )
-  fireEvent.keyDown(input(), { key: "Tab" })
+  fireEvent.keyDown(input(), { key: "Enter" })
   expect(input()).toHaveProperty("value", "/review ")
   expect(screen.queryByRole("listbox", { name: "Slash commands" })).toBeNull()
   expect(posts).toHaveLength(0)
@@ -776,8 +792,8 @@ it("removes the queued prompt and adds an error block when the send fails", asyn
   fireEvent.keyDown(input(), { key: "Enter" })
 
   await within(transcript()).findByText(/the session is not live/)
-  expect(within(transcript()).queryByText("ship it")).toBeNull()
   expect(within(transcript()).queryByText("queued")).toBeNull()
+  within(transcript()).getByText("ship it")
 })
 
 it("names the keys of the state in the footer", () => {
@@ -844,7 +860,8 @@ it("takes back only the failed send when the same prompt is sent twice at once",
 
   act(() => source.emit("event", event("user_prompt_submit", { text: "again", source: "console" })))
   expect(within(transcript()).queryByText("queued")).toBeNull()
-  expect(within(transcript()).getAllByText("again")).toHaveLength(1)
+  // The delivered prompt, and the refused one kept with its Retry.
+  expect(within(transcript()).getAllByText("again")).toHaveLength(2)
 })
 
 it("leaves nothing queued when the echo of the second send comes before the first send's failure", async () => {
@@ -872,7 +889,8 @@ it("leaves nothing queued when the echo of the second send comes before the firs
 
   await within(transcript()).findByText(/the first send was refused/)
   expect(within(transcript()).queryByText("queued")).toBeNull()
-  expect(within(transcript()).getAllByText("again")).toHaveLength(1)
+  // The delivered prompt, and the refused one kept with its Retry.
+  expect(within(transcript()).getAllByText("again")).toHaveLength(2)
 })
 
 const QUESTION_EVENT = () =>

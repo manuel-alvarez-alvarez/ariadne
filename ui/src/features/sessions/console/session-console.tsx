@@ -7,7 +7,9 @@
  * Each pane holds one stream for as long as it is on screen, so an Expand
  * into the modal and a Collapse back each close the old stream and open a
  * new one, and leaving the tab closes it. A snapshot replaces the transcript,
- * so a reconnect shows the session afresh rather than twice.
+ * so a reconnect shows the session afresh rather than twice. What the reader
+ * has set up, the draft, the place and the folds, outlives the pane in
+ * `console-view-state.ts`.
  *
  * The keyboard inside the console is the console's: Escape cancels a running
  * turn rather than closing the pane or the modal around it, and ⌘Escape
@@ -18,8 +20,8 @@
  * console, and Escape closes the slash-command list before it cancels a turn.
  *
  * A session with subagents shows a bar of views above the input: `main`, the
- * session's own, and one per child. A click, Tab and Shift-Tab switch the
- * view. A child's view is read-only: Escape there goes back to `main`, or
+ * session's own, and one per child. A click and the arrow keys inside the bar
+ * switch the view; the bar is one Tab stop. A child's view is read-only: Escape there goes back to `main`, or
  * cancels the child where it runs and said it may be cancelled.
  *
  * The extras the CLI's attach pane has (`crates/ariadne-console/src/tui/`):
@@ -35,6 +37,7 @@ import {
   Maximize2Icon,
   Minimize2Icon,
   PlugZapIcon,
+  SendIcon,
   SquareIcon,
 } from "lucide-react"
 import {
@@ -47,22 +50,42 @@ import {
   useState,
 } from "react"
 
-import { type AgentRequestDto, api, type SessionStatus, unwrap } from "@/api"
+import { toast } from "sonner"
+
+import { type AgentRequestDto, api, type SessionDto, type SessionStatus, unwrap } from "@/api"
 import { Markdown } from "@/components/markdown"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { copyText } from "@/lib/clipboard"
 import { cn, describeError, formatTokens } from "@/lib/format"
 import { useBaseUrl } from "@/stores/settings"
 
+import { SwitchSessionDialog, useResumeAction } from "../session-actions"
 import { isLiveStatus } from "../session-display"
+import { ComposerMenu } from "./composer-menu"
 import { ConsoleStream, type ConsoleStreamStatus, consoleStreamUrl } from "./console-stream"
-import { pendingRequests, QuestionCard, restoredQuestions } from "./questions"
+import {
+  type ConsoleViewState,
+  consoleViewKey,
+  type FailedSend,
+  readViewState,
+  updateViewState,
+  watchViewState,
+} from "./console-view-state"
+import {
+  answerRequest,
+  openQuestion,
+  pendingRequests,
+  QuestionCard,
+  restoredQuestions,
+} from "./questions"
 import {
   type AgentCommand,
   appendError,
   applyEvent,
   applySnapshot,
   type Block,
+  blocksText,
   dequeuePrompt,
   emptyTranscript,
   isTerminal,
@@ -87,12 +110,22 @@ const FOLDED_PROMPT_LINES = 6
 /** The most commands the suggestion list shows. */
 const SUGGESTIONS = 8
 
+/** The lines the composer grows to before it scrolls inside. */
+const COMPOSER_LINES = 6
+
+/** Numbers the sends of every console, so a retained failure never shares an id with a new send. */
+let sendCount = 0
+
 export function SessionConsole({
   sessionId,
   status,
   autoFocus,
   usage,
   className,
+  session,
+  canSwitch = true,
+  onResumed,
+  onSwitched,
 }: {
   sessionId: string
   status: SessionStatus
@@ -101,8 +134,17 @@ export function SessionConsole({
   /** What the session itself reports spending, the floor of the status row's totals. */
   usage?: TokenTotals
   className?: string
+  /** The session, for the menu's Switch; without it the menu offers none. */
+  session?: SessionDto
+  /** False where the session's goal is cancelled and a switch has nowhere to go. */
+  canSwitch?: boolean
+  /** Where to go once a resume hands the session back. */
+  onResumed?: (session: SessionDto) => void
+  /** Where to go once a switch creates a successor session. */
+  onSwitched?: (session: SessionDto) => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const menu = { session, canSwitch, onResumed, onSwitched }
 
   if (expanded) {
     return (
@@ -117,6 +159,7 @@ export function SessionConsole({
             status={status}
             autoFocus
             usage={usage}
+            {...menu}
             className="h-full"
             onCollapse={() => setExpanded(false)}
           />
@@ -131,6 +174,7 @@ export function SessionConsole({
       status={status}
       autoFocus={autoFocus}
       usage={usage}
+      {...menu}
       className={className}
       onExpand={() => setExpanded(true)}
     />
@@ -155,6 +199,10 @@ function ConsolePane({
   autoFocus,
   usage,
   className,
+  session,
+  canSwitch,
+  onResumed,
+  onSwitched,
   onExpand,
   onCollapse,
 }: {
@@ -163,10 +211,17 @@ function ConsolePane({
   autoFocus?: boolean
   usage?: TokenTotals
   className?: string
+  session?: SessionDto
+  canSwitch: boolean
+  onResumed?: (session: SessionDto) => void
+  onSwitched?: (session: SessionDto) => void
   onExpand?: () => void
   onCollapse?: () => void
 }) {
   const baseUrl = useBaseUrl()
+  const key = consoleViewKey(baseUrl, sessionId)
+  const keyRef = useRef(key)
+  keyRef.current = key
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript)
   /** The session's pending requests, as read with the last snapshot. */
   const [requests, setRequests] = useState<AgentRequestDto[]>([])
@@ -176,23 +231,38 @@ function ConsolePane({
   const reads = useRef(0)
   const [streamStatus, setStreamStatus] = useState<ConsoleStreamStatus>("connecting")
   const [streamError, setStreamError] = useState<string | null>(null)
-  const [draft, setDraft] = useState("")
+  const [draft, setDraft] = useState(() => readViewState(key).draft)
   const [selected, setSelected] = useState(0)
-  const [folded, setFolded] = useState(true)
+  const [folded, setFolded] = useState(() => readViewState(key).folded)
+  const [blockFolds, setBlockFolds] = useState(() => readViewState(key).blockFolds)
   const [cursor, setCursor] = useState(0)
   const [suggested, setSuggested] = useState(0)
   const [dismissed, setDismissed] = useState(false)
   const [now, setNow] = useState(Date.now)
   const [answering, setAnswering] = useState<string | null>(null)
   /** The child whose view is shown; none for `main`. */
-  const [shown, setShown] = useState<string | undefined>(undefined)
+  const [shown, setShown] = useState<string | undefined>(() => readViewState(key).shown)
+  /** True once a snapshot has said which children there are. */
+  const [snapshotted, setSnapshotted] = useState(false)
+  /** The sends the daemon refused, kept for a Retry or an Edit. */
+  const [failed, setFailed] = useState<FailedSend[]>(() => readViewState(key).failed)
+  /** The requests an accepted answer is in for, whose resolved event has yet to land. */
+  const [answered, setAnswered] = useState<ReadonlySet<string>>(new Set())
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [switchOpen, setSwitchOpen] = useState(false)
+  const caret = useRef<number | null>(null)
+  /** Where a pending restore of the reader's place goes, until the transcript has blocks. */
+  const restore = useRef<number | null>(null)
+  /** The oldest event id to load back to before the reader's place is restored. */
+  const backfill = useRef<string | undefined>(undefined)
+  /** The block to put back where the reader had it, once the history is back. */
+  const anchored = useRef<ConsoleViewState["anchor"]>(undefined)
   const body = useRef<HTMLDivElement>(null)
   const log = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
   const collapseButton = useRef<HTMLButtonElement>(null)
   const root = useRef<HTMLDivElement>(null)
-  const sends = useRef(0)
-  const following = useRef(true)
+  const following = useRef(readViewState(key).following)
   const [history, setHistory] = useState<History>({ state: "idle" })
   // Bumped when a snapshot or a new session replaces the transcript, so a page
   // still loading for the old one is dropped.
@@ -203,6 +273,19 @@ function ConsolePane({
   latestTranscript.current = transcript
   /** The scroll box's size before a prepend, to keep the reader's place after it. */
   const anchor = useRef<{ height: number; top: number } | null>(null)
+
+  // Another daemon or session in the same pane brings its own retained state.
+  const [loadedKey, setLoadedKey] = useState(key)
+  if (loadedKey !== key) {
+    setLoadedKey(key)
+    const kept = readViewState(key)
+    setDraft(kept.draft)
+    setFolded(kept.folded)
+    setBlockFolds(kept.blockFolds)
+    setShown(kept.shown)
+    setFailed(kept.failed)
+    setAnswered(new Set())
+  }
 
   const resetHistory = useCallback(() => {
     generation.current += 1
@@ -266,10 +349,17 @@ function ConsolePane({
     setTranscript(emptyTranscript())
     setRequests([])
     setRequestsError(null)
+    setSnapshotted(false)
     resetHistory()
+    const kept = readViewState(consoleViewKey(baseUrl, sessionId))
+    following.current = kept.following
+    restore.current = kept.following ? null : kept.scrollTop
+    backfill.current = kept.following ? undefined : kept.oldest
+    anchored.current = kept.following ? undefined : kept.anchor
     const stream = new ConsoleStream(consoleStreamUrl(baseUrl, sessionId), {
       onSnapshot: (events) => {
         resetHistory()
+        setSnapshotted(true)
         setTranscript((current) => applySnapshot(current, events))
         readRequests()
       },
@@ -292,15 +382,45 @@ function ConsolePane({
   }, [])
 
   // Follow the newest block, unless the reader scrolled up to read.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new transcript is what moves the bottom
   useLayoutEffect(() => {
     const el = log.current
     if (!el) return
     const kept = anchor.current
     anchor.current = null
-    if (kept) el.scrollTop = kept.top + (el.scrollHeight - kept.height)
+    if (restore.current !== null) {
+      if (transcript.blocks.length === 0) return
+      if (backfill.current !== undefined) {
+        // The history the reader had loaded comes back first, so the offset
+        // lands on the same content.
+        const oldest = oldestEventId(transcript)
+        const loaded = reached.current || history.state === "error"
+        if (!loaded && oldest !== undefined && oldest > backfill.current) return
+        backfill.current = undefined
+      }
+      el.scrollTop = restore.current
+      // The block the reader was on, not the old offset, says where: a page
+      // that crosses the old boundary shifts everything below it.
+      const place = anchored.current
+      const at = place && blockOffset(el, place.blockId)
+      if (place && at !== undefined) el.scrollTop += at - place.offset
+      anchored.current = undefined
+      restore.current = null
+    } else if (kept) el.scrollTop = kept.top + (el.scrollHeight - kept.height)
     else if (following.current) el.scrollTop = el.scrollHeight
-  }, [transcript])
+  }, [transcript, history])
+
+  // Load older pages until the history the reader had open is back.
+  useEffect(() => {
+    if (!snapshotted || backfill.current === undefined || history.state !== "idle") return
+    const oldest = oldestEventId(transcript)
+    if (oldest !== undefined && oldest > backfill.current) void loadOlder()
+  }, [snapshotted, transcript, history, loadOlder])
+
+  // What is loaded is retained, once a restore is not waiting on it.
+  useEffect(() => {
+    if (snapshotted && backfill.current === undefined)
+      updateViewState(keyRef.current, { oldest: oldestEventId(transcript) })
+  }, [snapshotted, transcript])
 
   const children = transcript.subagents
   // A snapshot that no longer holds the child shown goes back to `main`.
@@ -309,8 +429,11 @@ function ConsolePane({
   const runningChildren = children.filter((one) => one.state === "running").length
   const childCancellable = child?.cancel === true && child.state === "running"
   useEffect(() => {
-    if (shown !== undefined && child === undefined) setShown(undefined)
-  }, [shown, child])
+    if (snapshotted && shown !== undefined && child === undefined) {
+      setShown(undefined)
+      updateViewState(keyRef.current, { shown: undefined })
+    }
+  }, [snapshotted, shown, child])
 
   const live = isLiveStatus(status)
   const running = live && (status === "running" || transcript.running)
@@ -356,38 +479,144 @@ function ConsolePane({
 
   function edit(text: string, at: number) {
     setDraft(text)
+    updateViewState(keyRef.current, { draft: text })
     setCursor(at)
     setSuggested(0)
     setDismissed(false)
   }
 
-  function send() {
-    const text = draft
-    if (text.trim().length === 0) return
-    edit("", 0)
-    // Each send is its own queue entry, so a failure takes back that send alone.
-    sends.current += 1
-    const id = `queued:${sends.current}`
-    setTranscript((current) => queuePrompt(current, text, id))
-    post(text).catch((error) => {
-      setTranscript((current) => dequeuePrompt(current, id, text))
-      fail("Could not send the prompt", error)
-    })
+  /** Put `text` in the composer with the caret at `at`, and hand it the keyboard. */
+  function fill(text: string, at: number) {
+    edit(text, at)
+    caret.current = at
+    field.current?.focus()
   }
 
-  /** The suggestion list's keys: Up and Down move, Tab and Enter complete. True when taken. */
+  // The caret goes where the last insertion put it, once the new text is drawn.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the draft is what moves the caret
+  useLayoutEffect(() => {
+    const el = field.current
+    if (el && caret.current !== null) {
+      el.setSelectionRange(caret.current, caret.current)
+      caret.current = null
+    }
+  }, [draft])
+
+  // The composer is one line, grows with its text to six, then scrolls inside.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the draft is what changes the height
+  useLayoutEffect(() => {
+    const el = field.current
+    if (!el) return
+    const style = getComputedStyle(el)
+    const line = Number.parseFloat(style.lineHeight) || 20
+    const chrome =
+      Number.parseFloat(style.paddingTop || "0") +
+      Number.parseFloat(style.paddingBottom || "0") +
+      Number.parseFloat(style.borderTopWidth || "0") +
+      Number.parseFloat(style.borderBottomWidth || "0")
+    const most = line * COMPOSER_LINES + chrome
+    el.style.height = "auto"
+    el.style.height = `${Math.min(el.scrollHeight, most)}px`
+    el.style.overflowY = el.scrollHeight > most ? "auto" : "hidden"
+  }, [draft, child])
+
+  // A question restored from the requests list was asked before the page in
+  // view, so it comes first: the composer answers the newest.
+  const restored = child ? [] : restoredQuestions(requests, transcript)
+  const question = live && !child ? openQuestion([...restored, ...blocks], answered) : undefined
+  const questionId = question?.requestId
+
+  /** Deliver one message: to the open question as its answer, else to the console. */
+  function dispatch(text: string, requestId: string | undefined) {
+    // Each send is its own entry, so a failure takes back that send alone.
+    sendCount += 1
+    const id = `queued:${sendCount}`
+    // A failure can land after the pane is gone: it goes to the retained state.
+    const owner = keyRef.current
+    if (requestId === undefined) setTranscript((current) => queuePrompt(current, text, id))
+    const sent =
+      requestId === undefined ? post(text) : answerRequest(sessionId, requestId, { text })
+    sent.then(
+      () => {
+        if (requestId !== undefined) setAnswered((now) => new Set(now).add(requestId))
+      },
+      (error) => {
+        if (requestId === undefined) setTranscript((current) => dequeuePrompt(current, id, text))
+        const what = requestId === undefined ? "send the prompt" : "send the answer"
+        changeFailed(owner, (now) => [
+          ...now,
+          { id, text, requestId, message: `Could not ${what}: ${describeError(error)}` },
+        ])
+      },
+    )
+  }
+
+  // A send that fails after this pane replaced another lands in the retained
+  // state, and this pane follows it.
+  useEffect(() => {
+    const read = () => setFailed(readViewState(key).failed)
+    read()
+    return watchViewState(key, read)
+  }, [key])
+
+  /** Change the refused sends of the console `owner`, shown or not. */
+  function changeFailed(owner: string, change: (now: FailedSend[]) => FailedSend[]) {
+    const next = change(readViewState(owner).failed)
+    updateViewState(owner, { failed: next })
+  }
+
+  /** The text with the command's first word completed to `name`, the rest kept. */
+  function complete(name: string) {
+    const end = draft.search(/\s/)
+    const rest = end === -1 ? "" : draft.slice(end)
+    const head = `/${name}`
+    if (rest === "") fill(`${head} `, head.length + 1)
+    else fill(`${head}${rest}`, head.length + (rest.startsWith(" ") ? 1 : 0))
+  }
+
+  function send() {
+    const text = draft
+    if (!live || text.trim().length === 0) return
+    edit("", 0)
+    dispatch(text, questionId)
+    field.current?.focus()
+  }
+
+  function retry(one: FailedSend) {
+    changeFailed(keyRef.current, (now) => now.filter((other) => other.id !== one.id))
+    dispatch(one.text, one.requestId)
+  }
+
+  /** Take a failed message back into the composer, in front of any newer draft. */
+  function editFailed(one: FailedSend) {
+    changeFailed(keyRef.current, (now) => now.filter((other) => other.id !== one.id))
+    const text = draft.length === 0 ? one.text : `${one.text}\n${draft}`
+    fill(text, one.text.length)
+  }
+
+  /** A command's name into the composer, before whatever is already drafted. */
+  function insertCommand(name: string) {
+    const head = `/${name} `
+    fill(`${head}${draft}`, head.length)
+  }
+
+  /** The suggestion list's keys: Up and Down move, Enter completes. True when taken. */
   function suggestKey(event: KeyboardEvent): boolean {
     if (!suggestions) return false
     const count = suggestions.length
     if (event.key === "ArrowUp" && count > 0) setSuggested(Math.max(pickedSuggestion - 1, 0))
     else if (event.key === "ArrowDown" && count > 0)
       setSuggested(Math.min(pickedSuggestion + 1, count - 1))
-    else if ((event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) && count > 0) {
+    else if (event.key === "Enter" && !event.shiftKey && count > 0) {
       const command = suggestions[pickedSuggestion]
-      if (command) edit(`/${command.name} `, command.name.length + 2)
+      if (command) complete(command.name)
     } else return false
     event.preventDefault()
     return true
+  }
+
+  function markAnswered(requestId: string) {
+    setAnswered((now) => new Set(now).add(requestId))
   }
 
   function answer(option: PermissionOption) {
@@ -424,8 +653,10 @@ function ConsolePane({
   )
 
   /** Show the view of `to`, or `main` for none, and hand it the keyboard. */
-  const showView = useCallback((to: string | undefined) => {
+  const showView = useCallback((to: string | undefined, keepFocus = false) => {
     setShown(to)
+    updateViewState(keyRef.current, { shown: to })
+    if (keepFocus) return
     // The child's view has no input: the console itself keeps the keys.
     requestAnimationFrame(() => (to === undefined ? field.current : body.current)?.focus())
   }, [])
@@ -449,7 +680,11 @@ function ConsolePane({
   function onFieldKey(event: KeyboardEvent<HTMLTextAreaElement>) {
     // Shift+Enter is a new line, and an Enter that ends a composition is the
     // input method's: neither sends a prompt or answers a question.
-    if (event.key === "Enter" && (event.shiftKey || event.nativeEvent.isComposing)) return
+    if (
+      event.key === "Enter" &&
+      (event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229)
+    )
+      return
     // An empty input hands its keys to a waiting question, as the CLI does.
     if (draft.length === 0 && pickKey(event)) return
     if (suggestKey(event)) return
@@ -465,7 +700,6 @@ function ConsolePane({
     running,
     cancel,
     onCollapse,
-    children,
     child,
     childCancellable,
     suggesting: false,
@@ -475,7 +709,6 @@ function ConsolePane({
     running,
     cancel,
     onCollapse,
-    children,
     child,
     childCancellable,
     suggesting: suggestions !== undefined,
@@ -487,17 +720,7 @@ function ConsolePane({
     const el = body.current
     if (!el) return
     const onKey = (event: globalThis.KeyboardEvent) => {
-      const { children, child, childCancellable } = latest.current
-      // Tab and Shift-Tab walk the views in bar order, wrapping around. A
-      // session with no child keeps its Tab.
-      if (event.key === "Tab" && children.length > 0 && !event.metaKey && !event.ctrlKey) {
-        event.preventDefault()
-        const views = [undefined, ...children.map((one) => one.id)]
-        const at = views.indexOf(child?.id)
-        const step = event.shiftKey ? views.length - 1 : 1
-        switchers.current.showView(views[(at + step) % views.length])
-        return
-      }
+      const { child, childCancellable } = latest.current
       if (event.key !== "Escape") return
       event.preventDefault()
       event.stopPropagation()
@@ -519,6 +742,15 @@ function ConsolePane({
     return () => el.removeEventListener("keydown", onKey)
   }, [])
 
+  /** Fold or unfold everything, individual preferences included. */
+  const toggleFold = useRef(() => {})
+  toggleFold.current = () => {
+    const next = !folded
+    setFolded(next)
+    setBlockFolds({})
+    updateViewState(keyRef.current, { folded: next, blockFolds: {} })
+  }
+
   // Ctrl-O folds from anywhere in the console, the header's controls included.
   useEffect(() => {
     const el = root.current
@@ -526,11 +758,36 @@ function ConsolePane({
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key.toLowerCase() !== "o" || !event.ctrlKey || event.metaKey || event.altKey) return
       event.preventDefault()
-      setFolded((was) => !was)
+      toggleFold.current()
     }
     el.addEventListener("keydown", onKey)
     return () => el.removeEventListener("keydown", onKey)
   }, [])
+
+  const resume = useResumeAction(onResumed)
+  const viewName = child ? child.title : "main"
+  const menu = (
+    <ComposerMenu
+      open={menuOpen}
+      onOpenChange={setMenuOpen}
+      commands={child ? [] : transcript.availableCommands}
+      onCommand={insertCommand}
+      onSwitch={session && canSwitch ? () => setSwitchOpen(true) : undefined}
+      onResume={live ? undefined : () => resume.resume(sessionId)}
+      resumePending={resume.pending}
+      folded={folded}
+      onToggleFold={() => toggleFold.current()}
+      copyLabel={`Copy loaded transcript (${viewName})`}
+      onCopy={() => {
+        void copyText(blocksText(blocks)).then((copied) =>
+          copied
+            ? toast.success("Transcript copied", { description: `the loaded ${viewName} view` })
+            : toast.error("Could not copy the transcript"),
+        )
+      }}
+      returnFocus={() => field.current}
+    />
+  )
 
   return (
     <div
@@ -552,7 +809,7 @@ function ConsolePane({
         <Button
           size="xs"
           variant="ghost"
-          onClick={() => setFolded((was) => !was)}
+          onClick={() => toggleFold.current()}
           aria-keyshortcuts="Control+O"
         >
           {folded ? <ChevronsUpDownIcon /> : <ChevronsDownUpIcon />}
@@ -584,7 +841,15 @@ function ConsolePane({
           className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3"
           onScroll={(event) => {
             const el = event.currentTarget
+            // A restore of the reader's place waits on the blocks: until it
+            // lands, a scroll is the box shrinking, not the reader.
+            if (restore.current !== null) return
             following.current = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK_PX
+            updateViewState(keyRef.current, {
+              scrollTop: el.scrollTop,
+              anchor: firstInView(el),
+              following: following.current,
+            })
             if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
           }}
         >
@@ -592,10 +857,16 @@ function ConsolePane({
             <BlockView
               key={block.id}
               block={block}
-              folded={folded}
+              folded={blockFolds[block.id] ?? folded}
               picker={
                 block.type === "question" ? (
-                  <QuestionCard sessionId={sessionId} block={block} live={live} />
+                  <QuestionCard
+                    sessionId={sessionId}
+                    block={block}
+                    live={live}
+                    sent={answered.has(block.requestId)}
+                    onAnswered={markAnswered}
+                  />
                 ) : block.type === "permission" && block.id === pendingId ? (
                   <PermissionPicker
                     options={block.options}
@@ -622,12 +893,20 @@ function ConsolePane({
           ) : null}
           {child
             ? null
-            : restoredQuestions(requests, transcript).map((block) => (
+            : restored.map((block) => (
                 <BlockView
                   key={block.id}
                   block={block}
-                  folded={folded}
-                  picker={<QuestionCard sessionId={sessionId} block={block} live={live} />}
+                  folded={blockFolds[block.id] ?? folded}
+                  picker={
+                    <QuestionCard
+                      sessionId={sessionId}
+                      block={block}
+                      live={live}
+                      sent={answered.has(block.requestId)}
+                      onAnswered={markAnswered}
+                    />
+                  }
                 />
               ))}
           {transcript.queuedPrompts.map((prompt) => (
@@ -635,13 +914,21 @@ function ConsolePane({
               <PromptBox text={prompt.text} queued />
             </div>
           ))}
+          {failed.map((one) => (
+            <FailedMessage
+              key={one.id}
+              one={one}
+              onRetry={() => retry(one)}
+              onEdit={() => editFailed(one)}
+            />
+          ))}
         </div>
         {children.length > 0 ? (
           <ViewBar
             agents={children}
             shown={child?.id}
             asking={pending?.askedBy?.id}
-            onShow={showView}
+            onShow={(to, keepFocus) => showView(to, keepFocus)}
           />
         ) : null}
         <StatusRow
@@ -655,25 +942,35 @@ function ConsolePane({
         />
         {child ? (
           <div className="border-t px-3 py-2 font-mono text-xs text-muted-foreground">
-            read-only · tab next view · {childCancellable ? "esc cancel" : "esc back"}
+            <div className="flex items-center gap-2">
+              {menu}
+              <span>
+                read-only · arrows switch view · {childCancellable ? "esc cancel" : "esc back"}
+              </span>
+            </div>
           </div>
         ) : (
           <>
             <div className="flex items-end gap-2 border-t p-2">
+              {menu}
               <div className="min-w-0 flex-1">
                 <textarea
                   ref={field}
                   aria-label="Message the agent"
                   value={draft}
                   disabled={!live}
-                  rows={2}
+                  rows={1}
                   placeholder={
-                    live ? "Message the agent. Enter sends, Shift+Enter adds a line." : undefined
+                    !live
+                      ? undefined
+                      : question
+                        ? "Answer the question. Enter sends your answer."
+                        : "Message the agent. Enter sends, Shift+Enter adds a line."
                   }
                   onChange={(event) => edit(event.target.value, event.target.selectionStart)}
                   onSelect={(event) => setCursor(event.currentTarget.selectionStart)}
                   onKeyDown={onFieldKey}
-                  className="block max-h-40 min-h-10 w-full resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="block w-full resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
                 />
                 {live ? null : (
                   <p className="pt-1 text-xs text-muted-foreground">
@@ -681,22 +978,91 @@ function ConsolePane({
                   </p>
                 )}
                 {suggestions ? (
-                  <SuggestionList commands={suggestions} picked={pickedSuggestion} />
+                  <SuggestionList
+                    commands={suggestions}
+                    picked={pickedSuggestion}
+                    onPick={(command) => complete(command.name)}
+                  />
                 ) : null}
               </div>
               {running ? (
-                <Button size="sm" variant="outline" onClick={cancel} aria-label="Cancel the turn">
+                <Button size="sm" variant="outline" onClick={cancel} aria-label="Stop the turn">
                   <SquareIcon />
-                  Cancel
+                  Stop
                 </Button>
               ) : null}
+              <Button
+                size="sm"
+                onClick={send}
+                disabled={!live || draft.trim().length === 0}
+                aria-label="Send"
+              >
+                <SendIcon />
+                Send
+              </Button>
             </div>
             <Footer hints={footerHints({ live, running, asking: pending !== undefined, folded })} />
           </>
         )}
       </div>
+      {session ? (
+        <SwitchSessionDialog
+          session={session}
+          open={switchOpen}
+          onOpenChange={setSwitchOpen}
+          onSwitched={onSwitched}
+        />
+      ) : null}
     </div>
   )
+}
+
+function FailedMessage({
+  one,
+  onRetry,
+  onEdit,
+}: {
+  one: FailedSend
+  onRetry: () => void
+  onEdit: () => void
+}) {
+  return (
+    <div
+      role="alert"
+      data-block="failed"
+      className="space-y-1.5 rounded-md border border-status-danger/40 bg-status-danger-soft/40 px-3 py-2 text-xs"
+    >
+      <p className="text-status-danger-fg">{one.message}</p>
+      <p className="whitespace-pre-wrap break-words text-sm">{one.text}</p>
+      <div className="flex gap-1.5">
+        <Button size="xs" variant="outline" onClick={onRetry}>
+          Retry
+        </Button>
+        <Button size="xs" variant="outline" onClick={onEdit}>
+          Edit
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/** Where the top of block `blockId` sits below the top of the scroll box, if it is drawn. */
+function blockOffset(log: HTMLElement, blockId: string): number | undefined {
+  const block = Array.from(log.querySelectorAll<HTMLElement>("[data-block-id]")).find(
+    (one) => one.dataset.blockId === blockId,
+  )
+  return block ? block.getBoundingClientRect().top - log.getBoundingClientRect().top : undefined
+}
+
+/** The first block that reaches into view, with where its top sits. */
+function firstInView(log: HTMLElement): { blockId: string; offset: number } | undefined {
+  const top = log.getBoundingClientRect().top
+  for (const block of log.querySelectorAll<HTMLElement>("[data-block-id]")) {
+    const rect = block.getBoundingClientRect()
+    if (rect.bottom > top && block.dataset.blockId !== undefined)
+      return { blockId: block.dataset.blockId, offset: rect.top - top }
+  }
+  return undefined
 }
 
 function HistoryLine({ history, onRetry }: { history: History; onRetry: () => void }) {
@@ -727,7 +1093,11 @@ function HistoryLine({ history, onRetry }: { history: History; onRetry: () => vo
   return null
 }
 
-/** The views of a session with subagents: `main`, then each child with the mark of its state. */
+/**
+ * The views of a session with subagents: `main`, then each child with the
+ * mark of its state. The bar is one stop in the Tab order: the arrow keys,
+ * Home and End move between its views inside it.
+ */
 function ViewBar({
   agents,
   shown,
@@ -738,8 +1108,9 @@ function ViewBar({
   shown: string | undefined
   /** The child whose permission question waits. */
   asking: string | undefined
-  onShow: (to: string | undefined) => void
+  onShow: (to: string | undefined, keepFocus?: boolean) => void
 }) {
+  const bar = useRef<HTMLDivElement>(null)
   const views = [
     { id: undefined, label: "main" },
     ...agents.map((one) => ({
@@ -747,22 +1118,47 @@ function ViewBar({
       label: `${stateMark(one.state)} ${one.title}${one.id === asking ? " ?" : ""}`,
     })),
   ]
+  const at = Math.max(
+    views.findIndex((one) => one.id === shown),
+    0,
+  )
+
+  function onKeyDown(event: KeyboardEvent) {
+    const last = views.length - 1
+    const to =
+      event.key === "ArrowRight"
+        ? (at + 1) % views.length
+        : event.key === "ArrowLeft"
+          ? (at + last) % views.length
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? last
+              : undefined
+    if (to === undefined) return
+    event.preventDefault()
+    onShow(views[to]?.id, true)
+    bar.current?.querySelectorAll<HTMLElement>('[role="tab"]')[to]?.focus()
+  }
+
   return (
     <div
+      ref={bar}
       role="tablist"
       aria-label="Console views"
+      onKeyDown={onKeyDown}
       className="flex flex-wrap gap-1 border-t px-2 py-1 font-mono text-xs"
     >
-      {views.map((one) => (
+      {views.map((one, index) => (
         <button
           key={one.id ?? ""}
           type="button"
           role="tab"
           aria-selected={one.id === shown}
-          tabIndex={-1}
+          tabIndex={index === at ? 0 : -1}
           onClick={() => onShow(one.id)}
           className={cn(
-            "rounded px-1.5 py-0.5",
+            "rounded px-1.5 py-0.5 outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
             one.id === shown
               ? "bg-primary text-primary-foreground"
               : "text-muted-foreground hover:bg-muted",
@@ -790,7 +1186,15 @@ function suggest(
   return [...first, ...matching.filter((command) => !first.includes(command))].slice(0, SUGGESTIONS)
 }
 
-function SuggestionList({ commands, picked }: { commands: AgentCommand[]; picked: number }) {
+function SuggestionList({
+  commands,
+  picked,
+  onPick,
+}: {
+  commands: AgentCommand[]
+  picked: number
+  onPick: (command: AgentCommand) => void
+}) {
   if (commands.length === 0) {
     return <p className="pt-1 font-mono text-xs text-muted-foreground">no matching command</p>
   }
@@ -806,9 +1210,14 @@ function SuggestionList({ commands, picked }: { commands: AgentCommand[]; picked
           role="option"
           aria-selected={index === picked}
           tabIndex={-1}
+          // A press must not take the keyboard from the composer, and a tap
+          // or a click completes the command for editing.
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => onPick(command)}
+          onKeyDown={() => undefined}
           className={cn(
-            "flex items-baseline gap-2 rounded px-2 py-0.5",
-            index === picked && "bg-primary text-primary-foreground",
+            "flex cursor-pointer items-baseline gap-2 rounded px-2 py-1.5 hover:bg-muted",
+            index === picked && "bg-primary text-primary-foreground hover:bg-primary",
           )}
         >
           <span className="shrink-0">/{command.name}</span>
@@ -984,7 +1393,7 @@ function BlockView({
   folded: boolean
 }) {
   return (
-    <div data-block={block.type}>
+    <div data-block={block.type} data-block-id={block.id}>
       {block.subagent ? (
         <div className="pb-0.5 font-mono text-[11px] text-muted-foreground">
           ↳ {block.subagent.title}
