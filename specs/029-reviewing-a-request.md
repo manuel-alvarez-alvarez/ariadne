@@ -1,7 +1,7 @@
 ---
 id: reviewing-a-request
 status: current
-updated: 2026-11-13
+updated: 2026-11-14
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -23,6 +23,7 @@ tests:
   - crates/ariadne-cli/src/commands/attention.rs
   - crates/ariadne-cli/src/commands/attention/board.rs
   - crates/ariadne-cli/src/commands/pr.rs
+  - crates/ariadne-store/src/skill_tests/review.rs
   - ui/src/features/pull-requests/pull-requests-page.test.tsx
   - ui/src/features/pull-requests/pull-request-panel.test.tsx
 ---
@@ -33,14 +34,16 @@ Any open request, regardless of its author or assigned reviewers,
 gets a review session once the user asks Ariadne for one — never on its
 own. The ask makes one goal with one staffed task, and the review session is
 that task's agent (rule 10b). The daemon wakes it with the request and with
-each push. It posts one review in the user's name, and the approval stays
-the user's.
+each push. It posts one review in the user's name, and the forge approval stays
+the user's. It can mark the reviewed head Ariadne approved, a status of
+Ariadne's own (rule 15a).
 
 ## Scope
 
 In: which rows want a review session, the manual ask on any request, the
 goal and task it makes, its worktree, its news, its tools and routes, the
-verdict policy, and the attention it raises.
+verdict policy, Ariadne's own approval and how it shows, and the attention
+it raises.
 
 Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 ([026](026-pull-requests.md)); the skill catalog and staffing
@@ -255,8 +258,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     own the review is a comment whatever its `event`: no forge takes a
     change request from a request's own author.
 14. Every `event` but `request_changes` and `comment` answers 400 before the
-    forge sees a call. An approval is refused above all: the user gives it.
-    No route approves or merges.
+    forge sees a call. A forge approval is refused above all: the user gives
+    it. No route approves on the forge or merges.
 15. `report_pull_request` takes `reviewed_sha`, a hex sha, on a reviewer row,
     or on a row of the user's own with `review_asked`, alone, and `ready`,
     whether the keeping agent believes every required approval and
@@ -274,6 +277,26 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     current state instead of trusting either call, and withholds the
     readiness item once a later push leaves `ready_head_sha` behind the
     request's current head.
+15a. `report_pull_request` also takes `approved` from the review session
+    alone (`Seat::Reviewer`); any other session gets 403. `approved: true`
+    needs `head_sha`, a hex sha, else 400. The daemon reads the request off
+    the forge now, and a `head_sha` that is not a prefix of its head answers
+    409: an outdated head is never approved. A valid approval writes
+    `pull_request_approvals`, keyed by repository and number with the full
+    head, and keeps its first `approved_at` for the same head.
+    `approved: false` deletes it. The table is apart from
+    `pull_requests`, so stopping the review (rule 9), the row's removal and
+    a daemon restart keep it. Each fetch of the open list, and each detail
+    read, deletes an approval whose head differs from the head it read
+    (`Store::clear_moved_pull_request_approvals`), so the old head coming
+    back restores nothing. `PullRequestDto.ariadne_approval`, `head_sha`
+    and `approved_at`, is set only where the approval names the head that
+    answer reads, on a request Ariadne works on or not. It is not
+    `review_decision`, it is not `ready`, and it posts nothing to the forge.
+    The desktop shows **Ariadne approved** on the row and in the panel
+    beside the review decision pill, its hint naming the head. `pr ls` has
+    an `ariadne approval` column, and `pr inspect` an `ariadne approval`
+    row naming the head.
 16. Diffs, reviews and reports are accepted from the request's own session
     alone. Another session, or a call with no session, gets 403.
 16a. `POST /v1/pull-requests/{id}/comments/{comment_id}/resolve` resolves
@@ -298,7 +321,11 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     written first are 017 rule 11's to state, for `pr-reviewer` as for the
     other four review skills. It posts only new inline findings. It creates
     no summary, status table, summary comment, or summary draft. It records
-    the reviewed revision and evidence that covers its current head.
+    the reviewed revision and evidence that covers its current head. It
+    approves in Ariadne (rule 15a) only after a complete review, with
+    required checks green and no open P0 or P1; an open P2 does not block
+    it. It withdraws the approval when it finds a blocker later. It never
+    gives a forge approval.
 
     Each new finding has a title, its trigger, a failure and a fix. Where the fix replaces the commented line alone, a ```suggestion
     block under the fix holds the new text of that one line, and a fix
@@ -395,7 +422,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
   `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
 
 - The skill is within its caps, names the three priorities, permits
-  `request_changes` for P0 and P1, never approves or lands a request, and
+  `request_changes` for P0 and P1, approves in Ariadne alone and only with
+  no open P0 or P1, lets a P2 stay, withdraws on a later blocker, never
+  gives a forge approval or lands a request, and
   reuses verification evidence only for the reviewed head. A `Not changed:`
   reply gets no reply back, while a claimed fix that fails verification gets
   one `Still there: <why>.` reply; a small local fix carries a `suggestion`
@@ -415,6 +444,23 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 - A review's findings are inline comments titled `[Pn] Title`; a change
   request with no P0 inline and a comment with no title are refused:
   `pull_request_reviews.rs::a_review_posts_its_findings_by_priority_and_an_approval_is_refused`.
+- The review session approves only the forge's current head, refused with
+  409 on an earlier head, 400 with no head and 403 from another caller; a
+  withdrawal clears it; the list and the request show it beside the forge's
+  own decision; it outlives a stop; a push clears it and the old head
+  coming back restores nothing; no forge review is posted:
+  `pull_request_reviews.rs::an_approval_binds_to_its_head_outlives_a_stop_and_a_push_ends_it`.
+  The approval outlives its row and a reopen of the database:
+  `store.rs::an_approval_outlives_its_row_and_a_reopen_and_a_moved_head_ends_it_for_good`.
+  The reviewer tool sends `approved` with `head_sha`:
+  `tools.rs::tests::the_pull_request_reviewer_tools_call_the_routes_of_the_sessions_request`.
+  The desktop row and panel show **Ariadne approved** apart from the
+  review decision, and nothing where no approval names the head:
+  `pull-requests-page.test.tsx::shows Ariadne approved beside the forge's own review decision, never in its place`,
+  `pull-request-panel.test.tsx::shows Ariadne approved apart from the forge's decision, naming the approved head`,
+  `::shows no Ariadne approval where none names the head`.
+  `pr ls` and `pr inspect` show it apart from the review decision:
+  `pr.rs::tests::pr_ls_and_inspect_show_ariadne_approval_apart_from_the_forge_decision`.
 - The desktop's request panel starts an Ariadne review of any open request
   on the model and skills picked in its dialog — `pr-reviewer` always on and
   nothing else picked to start with — closes the dialog and opens the new
@@ -441,6 +487,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 ## Sources
 
 `crates/ariadne-store/migrations/0001_init.sql`,
+`crates/ariadne-store/migrations/0005_pull_request_approvals.sql`,
+`crates/ariadne-store/src/pull_request_approvals.rs`,
 `crates/ariadne-store/skills/pr-reviewer/SKILL.md`,
 `crates/ariadne-daemon/src/scheduler/pull_requests.rs`,
 `crates/ariadne-daemon/src/forge/news.rs`, `crates/ariadne-daemon/src/forge/poll.rs`,

@@ -992,7 +992,7 @@ pub(crate) mod tests {
         let schema = |name: &str| serde_json::to_string(&tool(name).input_schema).unwrap();
         assert_eq!(
             description("report_pull_request"),
-            "Tell Ariadne the state of your request. Set `ready` when readiness changes. Set `reviewed_sha` after a review round."
+            "Tell Ariadne the state of your request. Set `ready` when readiness changes. Set `reviewed_sha` after a review round. A reviewer sets `approved` with `head_sha` to approve that head, or `approved: false` to withdraw."
         );
         assert!(description("list_tasks").contains("as a summary"));
         assert!(description("list_models").contains("models an agent can run on"));

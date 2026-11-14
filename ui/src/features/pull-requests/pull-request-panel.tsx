@@ -54,7 +54,14 @@ import { paths, usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths
 import { pullRequestByKeyQueryOptions, useAskBabysit, useAskReview } from "./queries"
 import { StartBabysitDialog } from "./start-babysit-dialog"
 import { StartReviewDialog } from "./start-review-dialog"
-import { ARIADNE_BABYSITTING, ARIADNE_REVIEWING, CHECKS, REVIEW } from "./status"
+import {
+  ARIADNE_APPROVED,
+  ARIADNE_BABYSITTING,
+  ARIADNE_REVIEWING,
+  ariadneApprovedHint,
+  CHECKS,
+  REVIEW,
+} from "./status"
 
 const TABS = ["description", "sessions"] as const
 type Tab = (typeof TABS)[number]
@@ -302,6 +309,13 @@ function PullRequestHeader({
               <StatusBadge label={checks.label} tone={checks.tone} dot={checks.dot} />
             ) : null}
             {review ? <StatusBadge label={review.label} tone={review.tone} /> : null}
+            {pull.ariadne_approval ? (
+              <StatusBadge
+                label={ARIADNE_APPROVED.label}
+                tone={ARIADNE_APPROVED.tone}
+                hint={ariadneApprovedHint(pull.ariadne_approval.head_sha)}
+              />
+            ) : null}
             {pull.review_asked ? (
               <StatusBadge label={ARIADNE_REVIEWING.label} tone={ARIADNE_REVIEWING.tone} />
             ) : null}

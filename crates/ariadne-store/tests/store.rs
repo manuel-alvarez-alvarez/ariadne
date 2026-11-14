@@ -7105,3 +7105,88 @@ async fn a_turn_expiry_racing_an_undelivered_claim_always_expires_it() {
         assert!(row.answered_at.is_some(), "round {round}");
     }
 }
+
+/// An Ariadne approval (029) names one exact head and outlives the request's
+/// row and a reopen of the database. A read of another head clears it, a
+/// read of the same head keeps it, and the old head coming back restores
+/// nothing. A withdrawal removes it.
+#[tokio::test]
+async fn an_approval_outlives_its_row_and_a_reopen_and_a_moved_head_ends_it_for_good() {
+    let (store, dir, row) = store_with_my_pull_request().await;
+    let repo = row.repository_id.clone();
+    let first = "a".repeat(40);
+    let second = "b".repeat(40);
+    let approved = store
+        .approve_pull_request(&repo, row.number, &first)
+        .await
+        .unwrap();
+    assert_eq!(approved.head_sha, first);
+    let again = store
+        .approve_pull_request(&repo, row.number, &first)
+        .await
+        .unwrap();
+    assert_eq!(
+        again.approved_at, approved.approved_at,
+        "the same head keeps its first time"
+    );
+
+    store.delete_pull_request(&row.id).await.unwrap();
+    drop(store);
+    let store = Store::open(dir.path().join("test.db")).await.unwrap();
+    assert_eq!(
+        store
+            .pull_request_approval(&repo, row.number)
+            .await
+            .unwrap(),
+        Some(approved.clone()),
+        "the approval outlives the row and the reopen"
+    );
+
+    let same = store
+        .clear_moved_pull_request_approvals(&repo, &[(row.number, first.as_str())])
+        .await
+        .unwrap();
+    assert_eq!(same, 0, "the approved head keeps its approval");
+    let moved = store
+        .clear_moved_pull_request_approvals(&repo, &[(row.number, second.as_str())])
+        .await
+        .unwrap();
+    assert_eq!(moved, 1, "another head clears it");
+    store
+        .clear_moved_pull_request_approvals(&repo, &[(row.number, first.as_str())])
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .pull_request_approval(&repo, row.number)
+            .await
+            .unwrap(),
+        None,
+        "the old head coming back restores nothing"
+    );
+
+    store
+        .approve_pull_request(&repo, row.number, &second)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .withdraw_pull_request_approval(&repo, row.number)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        store
+            .pull_request_approval(&repo, row.number)
+            .await
+            .unwrap(),
+        None
+    );
+    assert!(
+        !store
+            .withdraw_pull_request_approval(&repo, row.number)
+            .await
+            .unwrap(),
+        "a second withdrawal finds nothing"
+    );
+}

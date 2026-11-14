@@ -260,10 +260,14 @@ pub(super) struct ReportPullRequestReq {
     /// a later change turns one back.
     pub ready: Option<bool>,
     /// The head sha you read every approval and check against, from your
-    /// own last `get_pull_request` call. Required with `ready: true`.
+    /// own last `get_pull_request` call. Required with `ready: true` or
+    /// `approved: true`.
     pub head_sha: Option<String>,
     /// The head sha your posted review is on.
     pub reviewed_sha: Option<String>,
+    /// Reviewer only. True approves `head_sha` in Ariadne, never on the
+    /// forge. False withdraws the approval.
+    pub approved: Option<bool>,
 }
 
 /// The two events a review takes. The user gives every approval.
@@ -901,15 +905,21 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Tell Ariadne the state of your request. Set `ready` when readiness changes. Set `reviewed_sha` after a review round."
+        description = "Tell Ariadne the state of your request. Set `ready` when readiness changes. Set `reviewed_sha` after a review round. A reviewer sets `approved` with `head_sha` to approve that head, or `approved: false` to withdraw."
     )]
     async fn report_pull_request(
         &self,
         Parameters(req): Parameters<ReportPullRequestReq>,
     ) -> Result<CallToolResult, McpError> {
-        if req.ready.is_none() && req.reviewed_sha.is_none() {
+        if req.ready.is_none() && req.reviewed_sha.is_none() && req.approved.is_none() {
             return Err(McpError::invalid_params(
-                "report `ready` or `reviewed_sha`",
+                "report `ready`, `reviewed_sha` or `approved`",
+                None,
+            ));
+        }
+        if req.approved == Some(true) && req.head_sha.is_none() {
+            return Err(McpError::invalid_params(
+                "Pass `head_sha` with `approved: true`: the head you reviewed.",
                 None,
             ));
         }
@@ -926,6 +936,7 @@ impl AriadneMcp {
                     ready: req.ready,
                     head_sha: req.head_sha,
                     reviewed_sha: req.reviewed_sha,
+                    approved: req.approved,
                 },
             )
             .await?,
@@ -1168,6 +1179,7 @@ mod tests {
             ready: Some(true),
             head_sha: Some("abc".into()),
             reviewed_sha: None,
+            approved: None,
         }))
         .await
         .expect("report");
@@ -1207,7 +1219,7 @@ mod tests {
         let report: serde_json::Value = serde_json::from_str(&seen[6].body).expect("json");
         assert_eq!(
             report,
-            serde_json::json!({"ready": true, "head_sha": "abc", "reviewed_sha": null})
+            serde_json::json!({"ready": true, "head_sha": "abc", "reviewed_sha": null, "approved": null})
         );
     }
 
@@ -1450,8 +1462,9 @@ mod tests {
         .expect("post the review");
         mcp.report_pull_request(Parameters(ReportPullRequestReq {
             ready: None,
-            head_sha: None,
+            head_sha: Some("abc".into()),
             reviewed_sha: Some("abc".into()),
+            approved: Some(true),
         }))
         .await
         .expect("report");
@@ -1487,7 +1500,10 @@ mod tests {
             ]})
         );
         let report: serde_json::Value = serde_json::from_str(&seen[2].body).expect("json");
-        assert_eq!(report["reviewed_sha"], "abc");
+        assert_eq!(
+            report,
+            serde_json::json!({"ready": null, "head_sha": "abc", "reviewed_sha": "abc", "approved": true})
+        );
     }
 
     /// Every refusal a tool builds, and every result string it writes rather
@@ -1543,6 +1559,7 @@ mod tests {
                 ready: None,
                 head_sha: None,
                 reviewed_sha: None,
+                approved: None,
             }))
             .await
             .expect_err("neither ready nor reviewed_sha");
@@ -1557,6 +1574,7 @@ mod tests {
                 ready: Some(true),
                 head_sha: None,
                 reviewed_sha: None,
+                approved: None,
             }))
             .await
             .expect_err("ready with no head_sha");
@@ -1566,6 +1584,26 @@ mod tests {
         );
         texts.push((
             "report_pull_request's head_sha refusal",
+            err.message.to_string(),
+        ));
+
+        let (endpoint, seen) = recording_daemon().await;
+        let err = agent_at(&endpoint)
+            .report_pull_request(Parameters(ReportPullRequestReq {
+                ready: None,
+                head_sha: None,
+                reviewed_sha: None,
+                approved: Some(true),
+            }))
+            .await
+            .expect_err("an approval with no head_sha");
+        assert_eq!(
+            err.message,
+            "Pass `head_sha` with `approved: true`: the head you reviewed."
+        );
+        assert!(seen.lock().expect("lock").is_empty(), "no daemon call");
+        texts.push((
+            "report_pull_request's approval refusal",
             err.message.to_string(),
         ));
 

@@ -573,7 +573,30 @@ pub(crate) async fn pull_request_dto_of(
     }
     let mut dto = pull_request_dto(row, session_id);
     dto.operations = operations;
+    dto.ariadne_approval =
+        approval_of(store, &dto.repository_id, dto.number, &dto.head_sha).await?;
     Ok(dto)
+}
+
+/// Ariadne's approval of a request where it names `head_sha`, the head the
+/// answer reads (029). An approval of another head is shown to nobody: the
+/// next read of that head clears it.
+pub(crate) async fn approval_of(
+    store: &Store,
+    repository_id: &str,
+    number: i64,
+    head_sha: &str,
+) -> Result<Option<ariadne_api::pull_requests::PullRequestApprovalDto>, StoreError> {
+    Ok(store
+        .pull_request_approval(repository_id, number)
+        .await?
+        .filter(|approval| !head_sha.is_empty() && approval.head_sha == head_sha)
+        .map(
+            |approval| ariadne_api::pull_requests::PullRequestApprovalDto {
+                head_sha: approval.head_sha,
+                approved_at: approval.approved_at,
+            },
+        ))
 }
 
 /// A request Ariadne works on as the API answers it: its live read and
@@ -618,6 +641,7 @@ pub(crate) fn pull_request_dto(
         role: pull.role,
         ready: pull.ready,
         operations: Vec::new(),
+        ariadne_approval: None,
     }
 }
 
@@ -665,6 +689,7 @@ pub(crate) fn forge_pull_dto(
         session_id: None,
 
         operations: Vec::new(),
+        ariadne_approval: None,
     }
 }
 
