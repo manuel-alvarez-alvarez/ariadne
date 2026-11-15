@@ -147,8 +147,8 @@ pub(super) struct FailStepReq {
 pub(super) struct OpenPullRequestReq {
     /// The title, in the repository's commit conventions.
     pub title: String,
-    /// The body: the repository's pull request template filled in, or three
-    /// sections: Why, What changed, How to test.
+    /// The body: the repository's pull request template, filled in. With no
+    /// template, three sections: Why, What changed, How to test.
     pub body: String,
 }
 
