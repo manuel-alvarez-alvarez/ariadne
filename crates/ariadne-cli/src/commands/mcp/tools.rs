@@ -62,7 +62,9 @@ pub(super) struct AgentReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct CreateTaskReq {
+    /// One line that names the task's outcome.
     pub title: String,
+    /// The ticket, with the sections your skill names, in order.
     pub description: String,
     /// The agents that work the workflow columns, one for each column.
     pub agents: Vec<AgentReq>,
@@ -75,8 +77,11 @@ pub(super) struct CreateTaskReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct UpdateTaskReq {
+    /// The task to edit, as `list_tasks` gives it.
     pub task_id: String,
+    /// A new title. Omit it to keep the title.
     pub title: Option<String>,
+    /// A new ticket. Omit it to keep the ticket.
     pub description: Option<String>,
     /// Replaces the whole staffing: one agent for each column. A model is
     /// required; `default` as an effort resets it.
@@ -140,10 +145,10 @@ pub(super) struct FailStepReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct OpenPullRequestReq {
-    /// Titled by the repository's own commit conventions.
+    /// The title, in the repository's commit conventions.
     pub title: String,
-    /// Filled from the repository's own template, or, with none, three
-    /// sections: Why, What changed, How to test.
+    /// The body: the repository's pull request template, filled in. With no
+    /// template, three sections: Why, What changed, How to test.
     pub body: String,
 }
 
@@ -212,7 +217,7 @@ pub(super) struct UserQuestionOption {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) struct WithdrawWaitForUserReq {
-    /// The `id` that `wait_for_user` answered with.
+    /// The `id` that `wait_for_user` returned.
     pub request_id: String,
 }
 
@@ -288,7 +293,9 @@ impl ReviewEvent {
     }
 }
 
-/// The severity: P0 is a critical risk, P1 is a proven defect, P2 is optional.
+/// The rank: P0 is a critical risk to behavior, data or security.
+/// P1 is a proven defect, an unmet requirement or a rule violation.
+/// P2 is an optional improvement.
 #[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub(super) enum Priority {
@@ -303,7 +310,7 @@ pub(super) struct ReviewFinding {
     /// The file, from the root of the worktree.
     pub path: String,
     /// The line of the defect in the new version of the file: one the
-    /// diff shows, numbered as get_diff shows it on its new side. A line
+    /// diff shows, numbered as `get_diff` shows it on its new side. A line
     /// the diff does not show is refused.
     pub line: i64,
     /// A short title of the defect, in a few words.
@@ -322,8 +329,7 @@ pub(super) struct SubmitReviewReq {
     /// Leave it empty.
     #[serde(default)]
     pub body: String,
-    /// One inline comment per new finding, on the line of the defect. Leave
-    /// it empty in a round with no new finding.
+    /// One inline comment per new finding, on the line of the defect.
     #[serde(default)]
     pub comments: Vec<ReviewFinding>,
 }
@@ -486,7 +492,7 @@ fn goal_ack(goal: &serde_json::Value) -> serde_json::Value {
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Flag that you wait for the user, and ask in `question`. Put the options, your pick and its reason in `options`, `recommended_option_id` and `recommendation_reason`, not in its text or your reply. Write no text after the call, and end the turn. A turn that ends without the call ends the wait."
+        description = "Flag that you wait for the user. Ask in `question`, with the options, your pick and its reason in `options`, `recommended_option_id` and `recommendation_reason`, not in its text. A later turn that ends without the call closes it. Withdraw a pending question before you change it. Returns its `id`."
     )]
     async fn wait_for_user(
         &self,
@@ -502,7 +508,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Withdraw one `wait_for_user` flag when the user no longer needs to answer."
+        description = "Withdraw one pending `wait_for_user` request by its `request_id`. Do it when the user no longer needs to answer, or before you ask again with another question."
     )]
     async fn withdraw_wait_for_user(
         &self,
@@ -516,7 +522,7 @@ impl AriadneMcp {
         json_result(serde_json::json!({"withdrawn": true}))
     }
     #[tool(
-        description = "Read a task: its column, status, branch, dependencies and agents. Each agent gives its column and skills. The goal columns give each one's ranks and gate."
+        description = "Read one task: its title, description, status, column, branch, dependencies, `pr_url` and `reason`. Each agent gives its `id`, column, model, skills and `session_id`. `goal_steps` gives each column's ranks and gate. Omit `task_id` for your own task."
     )]
     async fn get_task(
         &self,
@@ -526,7 +532,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Complete your column. Give the column report:\n- the outcome, in one line\n- the revision you checked\n- each check, its command and result\n- each assumption you made\n- each open concern\nFifteen lines at most. The last column ends the task. End your turn after this call."
+        description = "Complete your column. Put the column report in `reason`:\n- the outcome, in one line\n- the revision you checked\n- each check, its command and result\n- each assumption you made\n- each open concern\nFifteen lines at most. The last column ends the task. End your turn after this call."
     )]
     async fn complete_step(
         &self,
@@ -545,7 +551,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Fail your column. Give the return report: each must-fix finding, with its file, its failure and the fix wanted. A fail on the first column fails the task. End your turn after this call."
+        description = "Fail your column, and send the task back one column. Put the return report in `reason`: each must-fix finding, with its file, its failure and the fix wanted. A fail on the first column fails the task. End your turn after this call."
     )]
     async fn fail_step(
         &self,
@@ -562,7 +568,9 @@ impl AriadneMcp {
 
     // ---- orchestrator ----
 
-    #[tool(description = "Create one task in the goal.")]
+    #[tool(
+        description = "Create one task in the goal, staffed with one agent per column. Write `title` and `description` as the ticket your skill lays out. Returns the task's `id`, `status`, `step` and each agent's staffing."
+    )]
     async fn create_task(
         &self,
         Parameters(req): Parameters<CreateTaskReq>,
@@ -584,7 +592,9 @@ impl AriadneMcp {
         json_result(task_staffing_ack(&task))
     }
 
-    #[tool(description = "Edit a task that is pending, ready or failed.")]
+    #[tool(
+        description = "Edit a task that is pending, ready or failed: its `title`, `description`, `agents` or `depends_on`. Each field you pass replaces the whole value. Returns the task's `id`, `status`, `step` and each agent's staffing."
+    )]
     async fn update_task(
         &self,
         Parameters(req): Parameters<UpdateTaskReq>,
@@ -619,7 +629,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the skills an agent can load. Each entry gives the name and one line saying what that skill is for. Give an agent the skills its work needs and no more."
+        description = "List the skills an agent can load: each one's `name` and one-line `summary`. Pass a name in an agent's `skills` on `create_task`."
     )]
     async fn list_skills(
         &self,
@@ -645,7 +655,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Finalize the plan. This call starts every task of the plan and ends planning."
+        description = "Start every task of the plan and end planning. Call it once. Returns the goal's `id` and `status`."
     )]
     async fn finalize_plan(
         &self,
@@ -657,7 +667,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List every task of the goal as a summary. The result has `goal_steps`, the goal columns once, and `tasks`. A task gives no description and no usage. Use `get_task` to read one task."
+        description = "List every task of the goal as a summary. The result has `goal_steps`, the goal columns once, and `tasks`. Each task gives its `id`, `title`, `status`, `step`, `depends_on`, `branch`, `pr_url`, `reason`, `stalled` and `agents`. No description and no usage. Use `get_task` to read one task."
     )]
     async fn list_tasks(
         &self,
@@ -671,7 +681,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Start a failed task again from its first column. Rewrite it first with `update_task` where its ticket caused the failure. A task with a column nobody staffs is refused. A task waits for each unfinished dependency."
+        description = "Start a failed task again from its first column. Rewrite it first with `update_task` where its ticket caused the failure. A task with a column nobody staffs is refused. A task waits for each unfinished dependency. Returns the task's `id`, `status` and `step`."
     )]
     async fn retry_task(
         &self,
@@ -683,7 +693,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Give a task up for good. Use it where the goal no longer needs the task, or where nothing you can rewrite would make it work."
+        description = "Give a task up for good. Use it where the goal no longer needs the task, or where nothing you can rewrite would make it work. Returns the task's `id`, `status` and `step`."
     )]
     async fn cancel_task(
         &self,
@@ -695,7 +705,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Switch a session to the model or agent you give. The new session is briefed with a handoff of the old conversation."
+        description = "Move a session to another `model`, by the `session_id` beside its agent on `get_task`. The new session is briefed with a handoff of the old conversation."
     )]
     async fn switch_session(
         &self,
@@ -722,7 +732,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "End the goal. Call it once every task is finished or cancelled and the goal is met. Ariadne refuses it while any task is still going."
+        description = "End the goal. Call it once every task is finished or cancelled and the goal is met. Ariadne refuses it while any task is still going. Returns the goal's `id` and `status`."
     )]
     async fn complete_goal(
         &self,
@@ -736,7 +746,7 @@ impl AriadneMcp {
     // ---- agent ----
 
     #[tool(
-        description = "Give the task up, because you cannot do it as written. Ariadne records your reason on the task, and the user reads only that reason."
+        description = "Give the task up, because nobody can do it as written. Write why in `reason`: the user reads only that. Returns the task's `id`, `status` and `step`."
     )]
     async fn fail_task(
         &self,
@@ -756,7 +766,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Open the pull or merge request your task lands by. Ariadne runs the forge CLI and returns the URL. A second call on the same task returns that URL again and opens nothing."
+        description = "Open the pull or merge request your task lands by, after you push the branch. Ariadne runs the forge CLI and returns the URL with the task's `id`, `status` and `step`. A second call on the same task returns that URL again and opens nothing."
     )]
     async fn open_pull_request(
         &self,
@@ -776,7 +786,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Read the diff of the task branch against its base branch. On a pull request, read the diff of the request instead."
+        description = "Read the diff of the task branch against its base branch, as unified diff text. On a pull request, read the request's diff instead; `since` narrows it to the commits after that sha."
     )]
     async fn get_diff(
         &self,
@@ -800,7 +810,7 @@ impl AriadneMcp {
     // ---- the request a task opened ----
 
     #[tool(
-        description = "Read your pull request off the forge now. It gives its description, state, branches, checks and failed checks, and whether the head is behind its base. It also gives your worktree, the repository path and your login."
+        description = "Read your pull request off the forge now, with its description and branches. It gives `state`, `draft`, `head_sha`, `role`, `checks`, `failed_checks` and `behind_base`. It also gives your worktree, the repository path and your login. On a task, call it only after `open_pull_request`."
     )]
     async fn get_pull_request(
         &self,
@@ -821,7 +831,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the comments of your pull request, read off the forge now, with every field."
+        description = "List the comments of your pull request, read off the forge now. Each gives its `id`, `thread_id`, `author_login`, `body`, `path`, `line`, `answered` and `resolved`. Set `unanswered_only` for the threads that wait on your answer."
     )]
     async fn list_comments(
         &self,
@@ -835,7 +845,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Read one comment of your pull request off the forge now, with every field."
+        description = "Read one comment of your pull request off the forge now, by its `comment_id`. It gives the same fields as `list_comments`."
     )]
     async fn get_comment(
         &self,
@@ -848,7 +858,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Reply once to one comment of your pull request. Ariadne posts the reply on the forge."
+        description = "Reply once to one comment of your pull request, by its `comment_id`. Ariadne posts `body` on the forge."
     )]
     async fn reply_comment(
         &self,
@@ -873,7 +883,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Resolve one of your own fixed review threads. Ariadne resolves it on the forge."
+        description = "Resolve one thread you opened, by the `comment_id` of a comment in it. Do it after you verify the fix at the current head. Ariadne resolves it on the forge."
     )]
     async fn resolve_thread(
         &self,
@@ -886,7 +896,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Mark your draft ready for review after every check on its head is green."
+        description = "Mark your draft request ready for review, by its `head_sha`, after every check on that head is green. Ariadne accepts it only where `get_pull_request` gives `role: author`."
     )]
     async fn mark_ready_for_review(
         &self,
@@ -945,7 +955,9 @@ impl AriadneMcp {
 
     // ---- pull request reviewer ----
 
-    #[tool(description = "Post new inline findings in the user's name.")]
+    #[tool(
+        description = "Post one review round in the user's name: the new inline findings in `comments`, under `event`. Call it once per round, and not in a round with no new finding. It resolves no thread: use `resolve_thread`."
+    )]
     async fn submit_review(
         &self,
         Parameters(req): Parameters<SubmitReviewReq>,
