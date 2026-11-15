@@ -212,8 +212,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
     One column has one verdict. `code-review` ends the column: it fails the
     step on a must-fix finding, completes it otherwise, and never fails it
     on an optional one. `architecture-review` adds its findings to the one
-    verdict of the agent that loaded it, and names a step call only where
-    it is the only review skill loaded. `code-review` moves no ref and
+    verdict of the skill loaded beside it, as one `Architecture` line
+    under the repository conventions heading, and names no step call: of
+    its 23 staffings over 158 goals, none stood alone. It lists the
+    boundaries the diff changes before it maps any, and a diff that
+    changes none gets the pass line with no map. `code-review` moves no ref and
     names no `git checkout`: the task worktree is shared with the agent
     whose commit it judges, and a review that detached HEAD there once left
     that agent's fix commit off the branch. It reviews the branch revision
@@ -511,7 +514,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`skill_tests/review.rs::every_review_skill_states_the_shared_rules_in_the_same_words`).
 - `code-review` judges a spec change and a hot-path change by their lenses
   (`skill_tests/review.rs::the_review_skill_judges_a_spec_and_a_hot_path_by_their_lenses`),
-  and `architecture-review` adds to the one verdict of its column
+  and `architecture-review` adds one line to the one verdict of its
+  column and names no step call
   (`skill_tests/review.rs::architecture_review_adds_to_the_one_verdict_of_its_column`).
 - An agent is written on the pin it was given, whole
   (`store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`), and no
