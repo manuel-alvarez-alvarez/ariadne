@@ -154,7 +154,8 @@ every other kebab-case word in it; the wire spells the same gate
    of the briefing — and call `complete_step` with the column report and
    the full sha of the base branch, read with `git rev-parse`, as
    `merge_commit`. The repository's hooks run the suite at that push, and
-   the agent runs no check the push hook runs; with no remote, the agent
+   the agent runs no check the push hook runs, except the checks
+   `conflict-resolution` runs on a conflict in step 2; with no remote, the agent
    runs the checks the repository names for a landing. The squash goes
    onto the merge base rather than the base branch's or the upstream's
    name, since the base can move while the push runs. A failure has one

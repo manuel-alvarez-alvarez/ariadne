@@ -80,7 +80,8 @@ that fits.
 Never force-push any branch or remote, including with `--force-with-lease`.
 Never push the task branch by its name. Never change a file of the task,
 except to resolve a conflict in step 2. Never commit anything but the merge
-of step 2 and the squash. Never run a check that the push hook runs.
+of step 2 and the squash. Never run a check that the push hook runs, except
+the checks that `conflict-resolution` runs in step 2.
 
 ## Do not tell yourself
 
