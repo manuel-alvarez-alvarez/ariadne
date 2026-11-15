@@ -13,6 +13,7 @@ import {
   applySnapshot,
   type Block,
   blocksText,
+  collapseRuns,
   dequeuePrompt,
   displayBlocks,
   elapsed,
@@ -899,4 +900,93 @@ it("hides only a successful question call with its matching card", () => {
     ),
   ).toEqual(["question", "b", "c"])
   expect(blocks).toHaveLength(4)
+})
+
+function row(id: string, type: "note" | "error" | "prompt"): Block {
+  const base = { id, createdAt: "2026-11-14T10:00:00Z" }
+  return type === "prompt"
+    ? { ...base, type, text: id, daemon: false }
+    : { ...base, type, text: id }
+}
+
+function shown(items: ReturnType<typeof collapseRuns>): string[] {
+  return items.map((item) =>
+    item.kind === "block" ? item.block.id : `${item.expanded ? "fewer" : "earlier"}:${item.hidden}`,
+  )
+}
+
+it("cuts a run of activity rows to its last 3 under a control, and leaves a short run whole", () => {
+  const blocks = ["a", "b", "c", "d", "e"].map((id) => row(id, "note"))
+  expect(shown(collapseRuns(blocks.slice(0, 3), {}, undefined))).toEqual(["a", "b", "c"])
+  expect(shown(collapseRuns(blocks, {}, undefined))).toEqual(["earlier:2", "c", "d", "e"])
+  expect(shown(collapseRuns(blocks, { a: true }, undefined))).toEqual([
+    "fewer:2",
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+  ])
+})
+
+it("bounds a run by a conversation block, and keeps the choice of a run as rows join it", () => {
+  const notes = (ids: string) => ids.split("").map((id) => row(id, "note"))
+  const blocks = [...notes("abcd"), row("p", "prompt"), ...notes("wxyz")]
+  expect(shown(collapseRuns(blocks, {}, undefined))).toEqual([
+    "earlier:1",
+    "b",
+    "c",
+    "d",
+    "p",
+    "earlier:1",
+    "x",
+    "y",
+    "z",
+  ])
+  expect(shown(collapseRuns([...blocks, row("v", "note")], { w: true }, undefined))).toContain(
+    "fewer:2",
+  )
+})
+
+it("keeps an error, a pending permission and the selected row in place among hidden ones", () => {
+  const permission: Block = {
+    id: "perm",
+    createdAt: "2026-11-14T10:00:00Z",
+    type: "permission",
+    title: "Bash",
+    options: [],
+  }
+  const blocks = [
+    row("a", "note"),
+    row("boom", "error"),
+    permission,
+    row("b", "note"),
+    row("c", "note"),
+    row("d", "note"),
+    row("e", "note"),
+  ]
+  expect(shown(collapseRuns(blocks, {}, "b"))).toEqual([
+    "earlier:1",
+    "boom",
+    "perm",
+    "b",
+    "c",
+    "d",
+    "e",
+  ])
+})
+
+it("shows the control over every run of more than 3 rows, also when no row hides", () => {
+  const error = (id: string): Block => row(id, "error")
+  const blocks = [error("e1"), error("e2"), row("a", "note"), row("b", "note")]
+  expect(shown(collapseRuns(blocks, {}, undefined))).toEqual(["earlier:0", "e1", "e2", "a", "b"])
+})
+
+it("keeps the choice of a run when rows join it at either end", () => {
+  const notes = (ids: string) => ids.split("").map((id) => row(id, "note"))
+  const opened = { c: true }
+  const names = (blocks: Block[]) => shown(collapseRuns(blocks, opened, undefined))[0]
+  expect(names(notes("abcde"))).toBe("fewer:2")
+  expect(names(notes("zyabcde"))).toBe("fewer:4")
+  expect(names(notes("abcdefg"))).toBe("fewer:4")
 })

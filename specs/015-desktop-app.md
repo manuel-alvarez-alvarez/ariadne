@@ -574,6 +574,26 @@ Out: the daemon endpoints themselves (012).
     bottom by scrolling does too. Streaming, older pages loading and folds
     leave the offset of a reader who scrolled away, and keep a following
     reader at the newest output, a resized panel too.
+23a4. In `main` and in the view of each subagent, each run of activity rows
+    shows only its last 3 rows. An activity row is an indented row: a tool,
+    permission, thought, plan, note, subagent line, error or event row. A
+    prompt, an agent message and a question card are conversation blocks and
+    never hide; they, the start of the view and its end bound a run. A run of
+    3 rows or fewer shows all of them and no control. A longer run has, above
+    its last 3 rows, a button `Show N earlier`, where N is the number of rows
+    it hides (0 where every older row shows in place), with `aria-expanded`. A pending permission, an error and the
+    selected tool or permission row show in place however old; the other
+    older rows stay hidden. A click, Enter or Space on the button shows every
+    row of the run; it then reads `Show fewer` and returns the run to its
+    last 3 rows. While a turn runs, each new row of the newest run pushes the
+    oldest shown row under the button. The choice is kept per run, under
+    the id of a row of the run, in the console's view state like a fold (rule
+    24i), and a run keeps it when rows join it at either end. Hidden rows stay in the transcript, and
+    `Copy loaded transcript` copies them. Opening or closing a run keeps the
+    reader's place as a fold does (rule 23a3): a reader at the newest output
+    stays there, and a reader who scrolled away keeps the block they were on
+    where it was; where the toggle hides that block, the reader keeps the
+    button where it was. The number 3 has no setting.
 23b. The latest `available_commands_update` event replaces the command
     list, whole: a later list, an empty one included, replaces the earlier
     one. A list whose payload carries a `subagent`, of any value, is ignored, and the event
@@ -644,7 +664,7 @@ Out: the daemon endpoints themselves (012).
 24i. The console retains, in memory and per daemon address and session
     (`console/console-view-state.ts`): the draft, the transcript's scroll
     position and whether it follows the newest block, the view shown, the
-    refused messages and a fold preference per block id. Expanding the
+    refused messages, a fold preference per block id and the activity runs shown whole. Expanding the
     console, collapsing it, and leaving the tab and coming back restore
     them; another session or another daemon starts with its own. A reader
     who scrolled up comes back to that place, not the bottom: the pane
@@ -1532,7 +1552,7 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/sessions/console/workspace.test.tsx::omits the conversation strip while retaining the named transcript in both views`).
 - The console folds thoughts into summaries,
   each on its own header, keeps the choice, and draws no nested scroll area
-  (rules 23a to 23a3)
+  (rules 23a to 23a4)
   (`ui/src/features/sessions/console/session-console.test.tsx::keeps developer prompts expanded and identifies their role`,
   `::folds thoughts while prompts stay expanded and tool rows stay compact`,
   `::folds one thought and keeps the choice across a remount and a stream update`,
@@ -1542,6 +1562,19 @@ Out: the daemon endpoints themselves (012).
   `::offers Jump to latest with an unread marker once the reader scrolls away`,
   `::keeps the block the reader is on in place when a block above it changes height`,
   `::copies a fenced block's trailing blank lines as written`,
+  `::shows the last 3 rows of a run under a control that opens and closes it, and keeps the choice`,
+  `::pushes the oldest shown row under the control as a turn adds rows`,
+  `::copies the hidden rows with the loaded transcript`,
+  `::folds the activity runs of a subagent's view as well as main's`,
+  `::keeps a reader who scrolled away in place when closing a run hides the block they were on`,
+  `::keeps a following reader at the newest output when a run opens`,
+  `::keeps the block a reader is on in place when a run above it opens`,
+  `::keeps the block a reader is on in place when a run above it closes`,
+  `ui/src/features/sessions/console/transcript.test.ts::cuts a run of activity rows to its last 3 under a control, and leaves a short run whole`,
+  `::bounds a run by a conversation block, and keeps the choice of a run as rows join it`,
+  `::keeps an error, a pending permission and the selected row in place among hidden ones`,
+  `::shows the control over every run of more than 3 rows, also when no row hides`,
+  `::keeps the choice of a run when rows join it at either end`,
   `ui/src/lib/highlight.test.ts::names a language by its fence or its extension, and labels it`,
   `::leaves a name the data does not know, or plain text, unknown`,
   `::reads an extension that is not only letters and digits`,

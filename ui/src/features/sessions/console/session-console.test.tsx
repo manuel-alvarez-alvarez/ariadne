@@ -1361,3 +1361,172 @@ it("copies a fenced block's trailing blank lines as written", () => {
   expect(written).toEqual(["last line\n\n"])
   vi.unstubAllGlobals()
 })
+
+function notes(count: number) {
+  return Array.from({ length: count }, (_, at) =>
+    event("agent_thought", { text: `idea ${at + 1}` }),
+  )
+}
+
+it("shows the last 3 rows of a run under a control that opens and closes it, and keeps the choice", () => {
+  const activity = notes(5)
+  const { source } = renderConsole(activity)
+  const log = within(transcript())
+  expect(log.queryByRole("button", { name: /thought · idea 2/ })).toBeNull()
+  const control = log.getByRole("button", { name: "Show 2 earlier" })
+  expect(control.getAttribute("aria-expanded")).toBe("false")
+  fireEvent.click(control)
+  expect(log.getByRole("button", { name: "Show fewer" }).getAttribute("aria-expanded")).toBe("true")
+  log.getByRole("button", { name: /thought · idea 1/ })
+  act(() => source.emit("event", event("agent_thought", { text: "idea 6" })))
+  log.getByRole("button", { name: /thought · idea 1/ })
+  cleanup()
+  stubEventSource()
+  renderConsole([...activity])
+  fireEvent.click(within(transcript()).getByRole("button", { name: "Show fewer" }))
+  expect(within(transcript()).queryByRole("button", { name: /thought · idea 1/ })).toBeNull()
+  within(transcript()).getByRole("button", { name: "Show 2 earlier" })
+})
+
+it("pushes the oldest shown row under the control as a turn adds rows", () => {
+  const { source } = renderConsole(notes(3))
+  const log = within(transcript())
+  expect(log.queryByRole("button", { name: /Show \d+ earlier/ })).toBeNull()
+  act(() => source.emit("event", event("agent_thought", { text: "idea 4" })))
+  log.getByRole("button", { name: "Show 1 earlier" })
+  expect(log.queryByRole("button", { name: /thought · idea 1/ })).toBeNull()
+})
+
+it("copies the hidden rows with the loaded transcript", async () => {
+  const written = vi.fn((_text: string) => Promise.resolve())
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: written } })
+  renderConsole(notes(5))
+  await userEvent.click(screen.getByRole("button", { name: "Commands and session actions" }))
+  await userEvent.click(screen.getByRole("button", { name: "Copy loaded transcript (main)" }))
+  await waitFor(() => expect(written).toHaveBeenCalled())
+  expect(written.mock.calls[0]?.[0]).toContain("idea 1")
+  vi.unstubAllGlobals()
+})
+
+it("folds the activity runs of a subagent's view as well as main's", async () => {
+  const user = userEvent.setup()
+  const child = Array.from({ length: 5 }, (_, at) =>
+    event("agent_thought", { text: `child idea ${at + 1}`, subagent: EXPLORER }),
+  )
+  renderConsole([update(EXPLORER, "running"), ...child])
+  await user.click(within(bar()).getByRole("tab", { name: /Explorer/ }))
+  const log = within(transcript())
+  expect(log.queryByRole("button", { name: /child idea 1/ })).toBeNull()
+  await user.click(log.getByRole("button", { name: "Show 2 earlier" }))
+  log.getByRole("button", { name: /child idea 1/ })
+})
+
+/** A scroll box of 1000px with the reader `top` down, and the blocks' tops from `tops`. */
+function scrollBox(tops: (block: HTMLElement) => number) {
+  const log = transcript()
+  const box = { top: 100 }
+  Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => 1000 })
+  Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 200 })
+  Object.defineProperty(log, "scrollTop", {
+    configurable: true,
+    get: () => box.top,
+    set: (value: number) => {
+      box.top = value
+    },
+  })
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const at = this.dataset.blockId ? tops(this) : 0
+    return {
+      top: at,
+      bottom: at + 20,
+      left: 0,
+      right: 0,
+      width: 0,
+      height: 20,
+      x: 0,
+      y: at,
+      toJSON() {},
+    }
+  })
+  return box
+}
+
+it("keeps a reader who scrolled away in place when closing a run hides the block they were on", async () => {
+  const user = userEvent.setup()
+  renderConsole(notes(5))
+  const log = transcript()
+  await user.click(within(log).getByRole("button", { name: "Show 2 earlier" }))
+  // The control sits above the box; "idea 1" is the first block in view.
+  // Closing the run moves the control 60px down: the content above it grew.
+  const box = scrollBox((block) =>
+    block.dataset.blockId?.startsWith("run:")
+      ? block.textContent === "Show fewer"
+        ? -500
+        : -440
+      : block.textContent?.includes("idea 1")
+        ? 40
+        : -500,
+  )
+  fireEvent.scroll(log)
+
+  // Closing hides "idea 1", the block the reader was on.
+  await user.click(within(log).getByRole("button", { name: "Show fewer" }))
+
+  expect(box.top).toBe(160)
+  vi.restoreAllMocks()
+})
+
+it("keeps a following reader at the newest output when a run opens", async () => {
+  const user = userEvent.setup()
+  renderConsole(notes(5))
+  const log = transcript()
+  const box = scrollBox(() => 0)
+  box.top = 0
+  await user.click(within(log).getByRole("button", { name: "Show 2 earlier" }))
+
+  expect(box.top).toBe(1000)
+  vi.restoreAllMocks()
+})
+
+it("keeps the block a reader is on in place when a run above it opens", async () => {
+  const user = userEvent.setup()
+  renderConsole([...notes(5), event("agent_message", { text: "reading here" })])
+  const log = transcript()
+  // The message sits 40px down; opening the run pushes it 120px lower.
+  const box = scrollBox((block) =>
+    block.dataset.block === "message"
+      ? within(log).queryByRole("button", { name: "Show fewer" })
+        ? 160
+        : 40
+      : -500,
+  )
+  fireEvent.scroll(log)
+
+  await user.click(within(log).getByRole("button", { name: "Show 2 earlier" }))
+
+  expect(box.top).toBe(220)
+  vi.restoreAllMocks()
+})
+
+it("keeps the block a reader is on in place when a run above it closes", async () => {
+  const user = userEvent.setup()
+  renderConsole([...notes(5), event("agent_message", { text: "reading here" })])
+  const log = transcript()
+  await user.click(within(log).getByRole("button", { name: "Show 2 earlier" }))
+  const box = scrollBox((block) =>
+    block.dataset.block === "message"
+      ? within(log).queryByRole("button", { name: "Show fewer" })
+        ? 160
+        : 40
+      : -500,
+  )
+  box.top = 300
+  fireEvent.scroll(log)
+
+  await user.click(within(log).getByRole("button", { name: "Show fewer" }))
+
+  expect(box.top).toBe(180)
+  vi.restoreAllMocks()
+})

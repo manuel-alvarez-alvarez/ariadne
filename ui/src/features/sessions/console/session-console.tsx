@@ -56,7 +56,7 @@ import { useBaseUrl } from "@/stores/settings"
 
 import { SwitchSessionDialog, useResumeAction } from "../session-actions"
 import { isLiveStatus } from "../session-display"
-import { BlockView, PermissionPicker, PermissionRow, PromptBox, ToolRow } from "./blocks"
+import { BlockView, PermissionPicker, PermissionRow, PromptBox, RunToggle, ToolRow } from "./blocks"
 import { Composer, suggest } from "./composer"
 import { ComposerMenu } from "./composer-menu"
 import { ConsoleStream, type ConsoleStreamStatus, consoleStreamUrl } from "./console-stream"
@@ -91,6 +91,7 @@ import {
   applyEvent,
   applySnapshot,
   blocksText,
+  collapseRuns,
   dequeuePrompt,
   displayBlocks,
   emptyTranscript,
@@ -229,6 +230,7 @@ function ConsolePane({
   const [requestReveal, setRequestReveal] = useState(0)
   const requestFocus = useRef<string | undefined>(undefined)
   const [blockFolds, setBlockFolds] = useState(() => readViewState(key).blockFolds)
+  const [runExpansions, setRunExpansions] = useState(() => readViewState(key).runExpansions)
   const [cursor, setCursor] = useState(0)
   const [suggested, setSuggested] = useState(0)
   const [dismissed, setDismissed] = useState(false)
@@ -262,6 +264,8 @@ function ConsolePane({
   const seen = useRef(transcript)
   /** The block the reader was last on, and where its top sat, for layout changes above it. */
   const placed = useRef<ConsoleViewState["anchor"]>(undefined)
+  /** Where a toggled run's control sat: the place to keep where the toggle hides the anchor. */
+  const runAnchor = useRef<ConsoleViewState["anchor"]>(undefined)
   const [history, setHistory] = useState<History>({ state: "idle" })
   // Bumped when a snapshot or a new session replaces the transcript, so a page
   // still loading for the old one is dropped.
@@ -282,6 +286,7 @@ function ConsolePane({
     const kept = readViewState(key)
     setDraft(kept.draft)
     setBlockFolds(kept.blockFolds)
+    setRunExpansions(kept.runExpansions)
     setShown(kept.shown)
     setFailed(kept.failed)
     setAnswered(new Set())
@@ -417,18 +422,25 @@ function ConsolePane({
   useLayoutEffect(() => {
     const el = log.current
     if (el && following.current && restore.current === null) pin(el, pinned)
-  }, [blockFolds])
+  }, [blockFolds, runExpansions])
 
   // Blocks above a reader who scrolled away change height when they fold,
   // unfold or take output; the block the reader was on stays where it was.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the changes are the trigger, the effect reads none of them
   useLayoutEffect(() => {
     const el = log.current
-    const place = placed.current
+    let place = placed.current
+    const fallback = runAnchor.current
+    runAnchor.current = undefined
     if (!el || !place || following.current || restore.current !== null) return
-    const at = blockOffset(el, place.blockId)
+    let at = blockOffset(el, place.blockId)
+    if (at === undefined && fallback) {
+      place = fallback
+      at = blockOffset(el, place.blockId)
+      placed.current = fallback
+    }
     if (at !== undefined && at !== place.offset) el.scrollTop += at - place.offset
-  }, [transcript, blockFolds])
+  }, [transcript, blockFolds, runExpansions])
 
   // A panel that is resized, or a block that grows after it is drawn, keeps a
   // following reader at the newest output too.
@@ -820,6 +832,20 @@ function ConsolePane({
     updateViewState(keyRef.current, { blockFolds: next })
   }, [])
 
+  /** Show every row of one activity run, or its last 3 again, and keep the choice. */
+  const toggleRun = useCallback((runId: string, rows: string[], expanded: boolean) => {
+    // The block a reader who scrolled away stands on may hide; the control stays.
+    const el = log.current
+    const at = el ? blockOffset(el, `run:${runId}`) : undefined
+    runAnchor.current =
+      at !== undefined && !following.current ? { blockId: `run:${runId}`, offset: at } : undefined
+    const next = { ...readViewState(keyRef.current).runExpansions }
+    if (expanded) for (const id of rows) next[id] = false
+    else next[runId] = true
+    setRunExpansions(next)
+    updateViewState(keyRef.current, { runExpansions: next })
+  }, [])
+
   const resume = useResumeAction(onResumed)
   const viewName = child ? child.title : "main"
   const menu = (
@@ -988,8 +1014,20 @@ function ConsolePane({
                 if (el.scrollTop <= TOP_SLACK_PX) void loadOlder()
               }}
             >
-              {inPlace.map((block) =>
-                block.type === "tool" ? (
+              {collapseRuns(inPlace, runExpansions, selectedTool).map((item) => {
+                if (item.kind === "control")
+                  return (
+                    <RunToggle
+                      key={`run:${item.runId}`}
+                      runId={item.runId}
+                      rows={item.rows}
+                      hidden={item.hidden}
+                      expanded={item.expanded}
+                      onToggle={toggleRun}
+                    />
+                  )
+                const block = item.block
+                return block.type === "tool" ? (
                   <ToolRow
                     key={block.id}
                     block={block}
@@ -1013,8 +1051,8 @@ function ConsolePane({
                     onToggle={toggleBlock}
                     picker={null}
                   />
-                ),
-              )}
+                )
+              })}
               {requestsError ? (
                 <div
                   role="alert"
