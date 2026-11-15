@@ -1,7 +1,7 @@
 ---
 id: workflows
 status: current
-updated: 2026-11-14
+updated: 2026-11-15
 areas: [core, store, api, daemon, prompts, cli]
 commits: []
 tests:
@@ -134,26 +134,44 @@ every other kebab-case word in it; the wire spells the same gate
    `pr-babysit`; `pr-review` refuses it. `pr-reviewer` is allowed in
    `pr-review` alone, where rule 11 requires it.
 4. The `merge` skill is shipped alongside the two workflows
-   (`crates/ariadne-store/skills/merge/SKILL.md`): fetch the base where a
-   remote exists, integrate the upstream base according to repository policy before
-   creating its squash commit onto the merge base (a rebase that stops on a
-   conflict goes to `conflict-resolution`, which alone states the conflict
-   method), check `git diff --stat`,
-   push where a remote exists, then
+   (`crates/ariadne-store/skills/merge/SKILL.md`). Its agent lands the
+   reviewed task or returns it, and fixes no code: it never changes a file
+   of the task, except to resolve a conflict in its step 2, and commits nothing but the merge of its step 2 and the
+   squash. The steps: fetch the
+   base where a remote exists; read the repository's history rules and test
+   whether the branch is published with `git ls-remote --heads`, then merge
+   the upstream into a published branch and rebase an unpublished one onto
+   it (a rebase or merge that stops on a conflict goes to
+   `conflict-resolution`, which alone states the conflict method, and whose
+   document the skill locates as `../conflict-resolution/SKILL.md` beside
+   its own, since the briefing's index names a path only for a staffed
+   skill); squash onto the merge base with a message of a subject in the
+   repository's commit convention, a body of up to three sentences and no
+   other line; check `git diff --stat`; push `HEAD:<base>` where a remote
+   exists, one push at a time — a shell that returns before the hook ends
+   is a push still running, waited for and never started again — then
    fast-forward the base branch in the primary checkout — the `Repo:` path
    of the briefing — and call `complete_step` with the column report and
-   the base branch's sha as `merge_commit`. The repository's hooks run the
-   suite at that push; with
-   no remote, the agent runs the checks the repository names for a landing. The
-   squash goes onto the merge base rather than the base branch's name,
-   since the base can move while the push runs; a `git diff --stat` that
-   lists a file the task did not touch, a rejected push, or a fast-forward
-   that fails, says the base moved, and the agent starts again from the
-   fetch. It never force-pushes any branch or remote, including with
-   `--force-with-lease`. No skill
-   merges a request: a human does. It obeys the STE rules and size caps of
-   006 and the shipped-skill tests of `skill_tests/`, the same as every
-   other skill in the catalog.
+   the full sha of the base branch, read with `git rev-parse`, as
+   `merge_commit`. The repository's hooks run the suite at that push, and
+   the agent runs no check the push hook runs, except the checks
+   `conflict-resolution` runs on a conflict in step 2; with no remote, the agent
+   runs the checks the repository names for a landing. The squash goes
+   onto the merge base rather than the base branch's or the upstream's
+   name, since the base can move while the push runs. A failure has one
+   owner, and the skill's rules are read in order, the first that fits
+   applying: a failed check — a hook that fails is one, never a moved base
+   — that names a file of the task goes back to the previous column
+   through `fail_step` with the check's output; a failed check that names
+   no file of the task goes to the orchestrator through `send_message`,
+   and nothing lands; else the base moved — a push rejected as not a
+   fast-forward, a `git diff --stat` that lists a file the task did not
+   touch, or a fast-forward that fails — and the agent starts again from
+   the fetch. It never
+   force-pushes any branch or remote, including with `--force-with-lease`.
+   No skill merges a request: a human does. It obeys the STE rules and
+   size caps of 006 and the shipped-skill tests of `skill_tests/`, the
+   same as every other skill in the catalog.
 5. The daemon exposes the catalog at `/v1/workflows`, mirroring the skill
    routes (017) and their error codes:
    - `GET /v1/workflows` — list every workflow, shipped and written.
