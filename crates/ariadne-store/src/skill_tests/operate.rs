@@ -101,45 +101,76 @@ fn a_late_squash_keeps_what_another_landing_put_on_the_base_branch() {
     );
 }
 
-/// The merge column's skill runs its steps in order — fetch, rebase on
-/// the current upstream, squash, guard, push, fast-forward, the step call — and
-/// a human merges every request: no skill names the command that would
-/// let an agent merge one itself, on either forge.
+/// The merge column's skill runs its steps in order — fetch, the publish
+/// test, rebase or merge on the current upstream, squash with a message of
+/// subject and body alone, guard, one push, fast-forward, the full sha and
+/// the step call — and a human merges every request: no skill names the
+/// command that would let an agent merge one itself, on either forge.
+///
+/// The publish test is a command, not a guess: of 132 live landings, four
+/// agents tested and the rest assumed. The push names one push at a time,
+/// since two agents whose shell returned before the hook ended pushed again
+/// and set three hooks on one cargo lock. The sibling document's path is
+/// relative, since the index names a path only for a staffed skill and the
+/// run directory links every catalog skill beside this one.
 #[test]
 fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
     let document = default_skill_document("merge").unwrap();
     let text = unwrapped(document);
     let mut at = 0;
     for step in [
-        "`<upstream>` is `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.",
         "Where a remote exists, run `git fetch <remote> <base>`.",
-        "For an unpublished branch, rebase the task branch onto the current `<upstream>`.",
+        "Read the repository's history rules first.",
+        "Then run `git ls-remote --heads <remote> <branch>`.",
+        "Where it names the branch, the branch is published: merge `<upstream>` into it.",
+        "Else, or with no remote, rebase the task branch onto the current `<upstream>`.",
         "Where the rebase or the merge stops on a conflict, follow `conflict-resolution`.",
-        "Only after that rebase, squash the branch into one commit.",
+        "Its document is `../conflict-resolution/SKILL.md`, relative to the directory of this one.",
+        "Only after that rebase or merge, squash the branch into one commit.",
         "git reset --soft \"$(git merge-base <upstream> HEAD)\" && git commit",
+        "Take the subject from the repository's commit convention.",
+        "Write a body of up to three sentences on what changed and why. Write no other line.",
         "git diff --stat <upstream> HEAD",
         "git push <remote> HEAD:<base>",
+        "The hooks run the checks. Start one push.",
+        "Where the shell returns before the push ends, the hook still runs: wait for that process to end.",
+        "Start no second push while one runs.",
         "git -C <repo> merge --ff-only <remote>/<base>",
         "else `git -C <repo> fetch <remote> <base>:<base>`",
         "With no remote: run the checks the repository names for a landing.",
-        "Call `complete_step` with the column report and the sha of `<base>` as `merge_commit`.",
+        "Read the full sha with `git -C <repo> rev-parse <base>`.",
+        "Call `complete_step` with the column report and that sha as `merge_commit`.",
     ] {
         let found = text[at..]
             .find(step)
             .unwrap_or_else(|| panic!("the merge skill has no {step} after its last step"));
         at += found + step.len();
     }
+    // The names are rules, not steps: the primary checkout and `<upstream>`.
+    for name in [
+        "The primary checkout is the `Repo:` path of your briefing.",
+        "`<upstream>` is `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.",
+    ] {
+        assert!(
+            text.contains(name),
+            "the merge skill does not define {name}"
+        );
+    }
+    // A failure has one owner: the base moved goes round again, a check
+    // that names a file of the task returns the task, and a check that
+    // names none is the orchestrator's. The merge agent fixes no code.
+    for route in [
+        "The base moved: a refused push, a file outside the task in `git diff --stat`, or a failed fast-forward. Start again from step 1.",
+        "A failed check that names a file of the task. Call `fail_step` with the check's output.",
+        "A failed check that names no file of the task. Send it to the orchestrator with `send_message`. Land nothing.",
+        "Never change a file of the task. Never commit anything but the squash.",
+        "Never run a check that the push hook runs.",
+    ] {
+        assert!(text.contains(route), "the merge skill does not say {route}");
+    }
     assert!(
-        text.contains("A refused push or a failed check is a fix on the task branch."),
-        "the merge skill does not name a refused push as a task-branch fix"
-    );
-    assert!(
-        text.contains("The hooks run the checks."),
-        "the merge skill does not leave the push checks to the repository hooks"
-    );
-    assert!(
-        text.contains("The primary checkout is the `Repo:` path of your briefing."),
-        "the merge skill does not name the primary checkout"
+        !text.contains("is a fix on the task branch"),
+        "the merge skill still hands the fix to the merge agent"
     );
     assert!(
         document.contains("```sh\n   git push <remote> HEAD:<base>\n   ```"),
